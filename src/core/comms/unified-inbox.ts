@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirty-five local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates thirty-six local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -230,6 +230,39 @@
  *               belongs to. An absent journal is 'missing' (dispatch never
  *               ran); an unreadable one 'unavailable', never an empty plan
  *               passed off as fact.
+ *   peer-inbox  peer mail this host's live-enrolled callsigns are admitted
+ *               to read — the same admission proofs `phm agentnet peers
+ *               read` runs per session and the `peerInbox` section of
+ *               `phm agents bus status` counts fleet-wide: a retained bus
+ *               envelope counts when a live coordination-ledger row proves
+ *               this host sent it to an enrolled callsign (id, target, send
+ *               instant, 24h window and body digest all matching) or when
+ *               the private dispatch journal proves this host published
+ *               that work.result outcome to the addressed callsign. Until
+ *               now the only surfaces were that bare count and the
+ *               sessioned `peers read`, so admitted mail — a peer's
+ *               question, review ask or task — was invisible to the one
+ *               pending view. Each admitted envelope whose body the bus
+ *               source does not already own (claimable work, a worker
+ *               handoff or a `work.post`/`work.status`/`work.claim`/
+ *               `work.release`/`wake` feed body — those pending things
+ *               list under `bus`/`wakes`, one pending thing one item;
+ *               `work.result` stays, since the feed reads it as job
+ *               evidence and the peer-dispatch source lists only
+ *               unpublished outcomes) lists as a warn `peer-message` naming the enrolled
+ *               callsigns whose session admits it, the sender and a
+ *               scrubbed body summary, with `since` the store receipt
+ *               time and `expiresAt` the envelope's own TTL deadline;
+ *               `jobIds` carries the body's own job citations. Act:
+ *               `phm agentnet peers read --id`, `phm agents bus show`,
+ *               `phm agentnet peers read`. An absent bindings file or bus
+ *               store is 'missing' (no peer can hold admitted mail), an
+ *               unreadable bindings, ledger, journal or bus store
+ *               'unavailable' — an unreadable journal leaves work.result
+ *               mail unprovable, so the total is unknown rather than a
+ *               ledger-only undercount — and a bounded scan that could not
+ *               cover every retained receipt degrades the source, pending
+ *               a stated floor, never a complete count passed off as fact.
  *   session-handoff  open session-handoff checkpoints — the same
  *               `listSessionHandoffs` bounded journal scan
  *               `phm checkpoint handoff list`, `fleet_session_handoffs`,
@@ -657,7 +690,7 @@ import { JOB_THREAD_PREFIX } from '../fleet/agent-messages.js';
 import { classifyNeedsYou } from '../needs-you/classify.js';
 import { planSeatHandoffs, type SeatHandoffsPlan } from '../bots/seats.js';
 import type { WorkDispatchJournal } from '../agentnet/work-dispatch-journal.js';
-import { workResultBodySchema } from '../agents/bus-v2-schema.js';
+import { busBodyKind, workResultBodySchema } from '../agents/bus-v2-schema.js';
 import { realHome } from '../real-home.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { z } from 'zod';
@@ -692,7 +725,7 @@ const SUGGESTED_LEASE_MS = 600_000;
 export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
   'owner-delivery', 'owner-pair', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
-  'peer-dispatch', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
+  'peer-dispatch', 'peer-inbox', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
   'send-gate', 'router-queue', 'channel-health',
 ] as const;
@@ -715,7 +748,7 @@ export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
   'owner-reply-undelivered', 'owner-pair-waiting', 'draft-approval', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
   'board-delivery', 'board-task', 'work-board-received', 'work-board-assigned', 'work-board-blocked',
-  'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'session-handoff', 'org-membership', 'gmail-over-target',
+  'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'peer-message', 'session-handoff', 'org-membership', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
   'inbox-proposal', 'slack-request', 'slack-send-unconfirmed', 'leader-message-undelivered',
   'leader-request', 'leader-request-incomplete', 'leader-reply-unconfirmed', 'leader-digest-unconfirmed',
@@ -905,6 +938,40 @@ export interface OrgOutboxRead {
   events: readonly OrgOutboxEvent[];
 }
 
+/** One bus envelope the peer-inbox admission proofs accept for at least one
+ * live-enrolled callsign — the itemization detail behind the `peerInbox`
+ * count `phm agents bus status` reports. Fields are the stored envelope's
+ * own untrusted values plus the sorted callsigns whose `peers read` session
+ * admits it; bodies stay opaque here and are summarized only at item build. */
+export interface PeerInboxPending {
+  /** The original envelope's wire id — `peers read --id` and `agents bus show` take it. */
+  readonly id: string;
+  readonly from: string;
+  readonly to: string;
+  /** The envelope's own P0..P3 band, carried for severity mapping. */
+  readonly priority: string;
+  /** Store receipt time (epoch ms) — the same stamp `peers read` reports. */
+  readonly receivedAt: number;
+  /** The envelope's own TTL in ms — `receivedAt + ttl` is its real expiry. */
+  readonly ttl: number;
+  readonly body: unknown;
+  /** Live-enrolled callsigns this envelope is admitted for, sorted. */
+  readonly admittedFor: readonly string[];
+}
+
+/** The resolved peer-inbox read: 'missing' a verified-empty peer plane or
+ * bus store (no enrolled callsign can hold admitted mail), 'available' the
+ * full admitted set, 'unavailable' any input the admission proofs cannot
+ * read — an unreadable journal leaves work.result mail unprovable, so the
+ * total is unknown rather than a ledger-only undercount. `truncated` marks
+ * a bounded bus scan that could not cover every retained receipt: `messages`
+ * is then a floor, never a complete list passed off as fact. */
+export interface PeerInboxRead {
+  state: 'missing' | 'available' | 'unavailable';
+  messages: readonly PeerInboxPending[];
+  truncated: boolean;
+}
+
 export interface UnifiedInboxOptions {
   /** Shared runs context (`~/.ashlr-runs`): needs-you, teammate text/task and draft stores. */
   runsDir?: string;
@@ -949,6 +1016,10 @@ export interface UnifiedInboxOptions {
   readSeatHandoffs?: typeof planSeatHandoffs;
   /** Peer-dispatch journal seam; default reads `agentnet/work-dispatch.json` under the bus root like `phm agentnet peers dispatch`. */
   readPeerDispatch?: (options: { busRoot?: string }) => WorkDispatchJournal;
+  /** Peer-inbox seam; default applies `readPeerInbox`'s admission proofs fleet-wide — the same bindings, coordination-ledger, dispatch-journal and bus-store reads `phm agentnet peers read` and the `peerInbox` section of `phm agents bus status` resolve. */
+  readPeerInbox?: (options: { busRoot?: string; bindings?: string; now?: () => number }) => PeerInboxRead;
+  /** Peer bindings path override — the same `PeerBusOptions.bindings`/`agentnetBindings` resolution the peer verbs and the bus-status probe apply (`<realHome>/.ashlr/agentnet/bindings.json`); a `busRoot` override never relocates it. */
+  agentnetBindings?: string;
   /** Session-handoff seam; default reads `<runsDir>/handoffs` through `listSessionHandoffs` — the same bounded journal scan `phm checkpoint handoff list`, `fleet_session_handoffs`, the bus-status probe and `work mine`'s sessions section serve. */
   readSessionHandoffs?: (options: { runsDir?: string }) => SessionHandoffList;
   /** Org-plane outbox seam; default reads `<runsDir>/org/agents.json` like `phm fleet org-sync`/`org-board`. */
@@ -2446,6 +2517,251 @@ function peerDispatchItems(read: NonNullable<UnifiedInboxOptions['readPeerDispat
   return { report: { state: 'healthy', pending: items.length }, items };
 }
 
+/**
+ * The peer-inbox plane's private-file gate — `readPeerJson`'s exact custody
+ * rule restated locally for the same Tier-1 closure reason the dispatch
+ * journal schema above is mirrored: no symlinks, hardlinks, public or
+ * foreign-owned files and no unbounded reads, anchored at the store the
+ * file belongs to. Errors never include contents.
+ */
+function readPeerPlaneJson(path: string, anchorPath: string): unknown {
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.nlink !== 1 ||
+      (process.platform !== 'win32' && (stat.mode & 0o777) !== 0o600) ||
+      (process.getuid !== undefined && stat.uid !== process.getuid())) {
+    throw new Error('peer-storage-unavailable');
+  }
+  const read = readStableRegularFile(path, {
+    anchorPath, maxFileBytes: 512 * 1024, remainingBytes: 512 * 1024,
+  });
+  if (!read.ok) throw new Error('peer-storage-unavailable');
+  return JSON.parse(read.text);
+}
+
+/**
+ * The peer bindings and coordination-ledger schemas, restated locally field
+ * for field against `slack-identities.ts`'s `bindingSchema`/`readPeerBindings`
+ * and `peer-bus.ts`'s `rowSchema` — the same mirror discipline the dispatch
+ * journal above keeps, so this source and `phm agentnet peers read` /
+ * `agents bus status`'s `peerInbox` section agree on what the stores say. A
+ * schema change on the agentnet side must move this mirror too.
+ */
+const peerInboxLabel = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}(?![\s\S])/).refine(v => scrubSecrets(v) === v);
+const peerInboxReference = z.string().min(1).max(128).regex(/^[a-zA-Z0-9_.:/#-]+(?![\s\S])/).refine(v => scrubSecrets(v) === v);
+const peerInboxId = z.string().regex(/^peer-[a-f0-9-]{36}(?![\s\S])/);
+const peerInboxBindingSchema = z.object({
+  callsign: peerDispatchCallsign, lane: peerInboxLabel, sessionId: peerInboxLabel,
+  sessionHash: z.string().regex(/^[a-f0-9]{64}(?![\s\S])/), expiresAt: z.number().int().nonnegative(),
+  teamId: z.string().regex(/^T[A-Z0-9]{2,32}(?![\s\S])/),
+  userId: z.string().regex(/^[UW][A-Z0-9]{2,32}(?![\s\S])/),
+  botId: z.string().regex(/^B[A-Z0-9]{2,32}(?![\s\S])/),
+  topic: peerInboxLabel,
+}).strict();
+const peerInboxBindingsSchema = z.object({ version: z.literal(1),
+  peers: z.array(peerInboxBindingSchema).max(128) }).strict();
+const peerInboxRowSchema = z.object({ id: peerInboxId, fromAgent: peerDispatchCallsign,
+  target: peerInboxReference, origin: peerInboxId,
+  digest: z.string().regex(/^[a-f0-9]{64}(?![\s\S])/), hopCount: z.number().int().min(1).max(8),
+  threadId: peerInboxReference, at: z.number().int().nonnegative() }).strict();
+const peerInboxLedgerSchema = z.array(peerInboxRowSchema).max(1024);
+type PeerInboxLedgerRow = z.infer<typeof peerInboxRowSchema>;
+
+/** The live-admission window `readPeerInbox`/`probePeerInbox` apply to ledger rows — 24h from the recorded send instant. */
+const PEER_INBOX_LIVE_MS = 86_400_000;
+/** The wire id shape `consumePeerWork` stamps on published work.result replies — the same expression the sessioned read and the status probe apply. */
+const PEER_INBOX_WORK_RESULT_ID = /^(pw-[a-f0-9]{32})-(reserved|admitted|complete|failed)$/;
+
+/** `workDispatchResultBody` restated: the exact body the journal proves this host published for one receipt. */
+function peerInboxResultBody(row: z.infer<typeof peerDispatchReceiptSchema>): unknown {
+  return workResultBodySchema.parse({
+    kind: row.kind, jobId: row.jobId, claimKey: row.claimKey, queueId: row.queueId,
+    receiptId: row.receiptId, outcome: row.outcome, ...(row.reason ? { reason: row.reason } : {}),
+  });
+}
+
+/** The bindings path the peer verbs resolve — `agentnetPaths().bindings` under `realHome()` or the caller's override; a `busRoot` override never relocates it. Undefined when no real home exists. */
+function peerInboxBindingsPath(override: string | undefined): string | undefined {
+  if (override !== undefined) return override;
+  const home = realHome();
+  return home === null ? undefined : join(home, '.ashlr', 'agentnet', 'bindings.json');
+}
+
+/**
+ * The fleet-wide admitted peer-mail read — `probePeerInbox`'s count applied
+ * per envelope instead of summed, so the unified inbox can itemize what
+ * `phm agentnet peers read` would return for this host's live-enrolled
+ * callsigns. Same inputs, same proofs, same states: the bindings file's
+ * live callsigns, the coordination ledger's admission rows and the dispatch
+ * journal's published work.result receipts, paged through the same bounded
+ * live-receipt scan. A `work.*`/`wake` body is admitted too but the bus and
+ * wakes sources already own those pending things, so the read returns every
+ * admitted envelope and the item builder drops the covered kinds — one
+ * pending thing one item. Never throws: any unreadable input reports
+ * 'unavailable', never an empty backlog passed off as fact.
+ */
+function readPeerInboxSource(options: { busRoot?: string; bindings?: string; now?: () => number }): PeerInboxRead {
+  const unavailable: PeerInboxRead = { state: 'unavailable', messages: [], truncated: false };
+  try {
+    const busRoot = peerDispatchBusRoot(options.busRoot);
+    const bindingsPath = peerInboxBindingsPath(options.bindings);
+    if (bindingsPath === undefined) return unavailable;
+    const now = options.now ?? Date.now;
+    const nowMs = now();
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) return unavailable;
+    let enrolled: 'missing' | 'available';
+    try { lstatSync(bindingsPath); enrolled = 'available'; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') enrolled = 'missing';
+      else return unavailable;
+    }
+    const callsigns = new Set<string>();
+    if (enrolled === 'available') {
+      try {
+        const parsed = peerInboxBindingsSchema.parse(readPeerPlaneJson(bindingsPath, dirname(bindingsPath)));
+        // The same uniqueness rule `readPeerBindings` enforces — a conflicting
+        // file refuses every peer verb, so it proves no admission here either.
+        for (const key of ['callsign', 'userId', 'botId', 'sessionHash'] as const) {
+          if (new Set(parsed.peers.map(peer => peer[key])).size !== parsed.peers.length) {
+            throw new Error('peer-binding-conflict');
+          }
+        }
+        for (const peer of parsed.peers) if (peer.expiresAt > nowMs) callsigns.add(peer.callsign);
+      } catch { return unavailable; }
+    }
+    // No live-enrolled callsign can hold admitted mail: an empty set is
+    // proven without touching the bus store, ledger or journal.
+    if (callsigns.size === 0) {
+      return { state: enrolled === 'missing' ? 'missing' : 'available', messages: [], truncated: false };
+    }
+    const store = inspectBusInbox({ root: busRoot, now });
+    if (store.source === 'missing') return { state: 'missing', messages: [], truncated: false };
+    if (store.source !== 'available') return unavailable;
+    const ledgerFile = join(busRoot, 'agentnet', 'coordination.json');
+    let ledgerRows: PeerInboxLedgerRow[] = [];
+    if (existsSync(ledgerFile)) {
+      try { ledgerRows = peerInboxLedgerSchema.parse(readPeerPlaneJson(ledgerFile, busRoot)); }
+      catch { return unavailable; }
+    }
+    const journal = readPeerDispatchJournal({ busRoot });
+    // work.result replies admit only on journal proof; an unreadable journal
+    // leaves that half of the read unprovable, so the total is unknown.
+    if (journal.status === 'unavailable') return unavailable;
+    const dispatched = new Map(journal.receipts.map(receipt => [receipt.receiptId, receipt]));
+    const admittedRows = new Map<string, PeerInboxLedgerRow[]>();
+    for (const row of ledgerRows) {
+      if (!callsigns.has(row.target) || row.at > nowMs || nowMs - row.at >= PEER_INBOX_LIVE_MS) continue;
+      const list = admittedRows.get(row.id);
+      if (list) list.push(row); else admittedRows.set(row.id, [row]);
+    }
+    const workResultAdmitted = (original: NonNullable<BusInboxReceipt['originalEnvelope']>): boolean => {
+      if (!callsigns.has(original.to)) return false;
+      const match = PEER_INBOX_WORK_RESULT_ID.exec(original.id);
+      if (!match) return false;
+      const receipt = dispatched.get(match[1]!);
+      return receipt !== undefined && receipt.peer === original.to && receipt.sent === match[2] &&
+        receipt.outcome === match[2] && original.from === receipt.consumer &&
+        JSON.stringify(original.body) === JSON.stringify(peerInboxResultBody(receipt));
+    };
+    const admitted = new Map<string, PeerInboxPending>();
+    let after = 0, truncated = false;
+    const maxPages = Math.ceil(BUS_INBOX_MAX_MESSAGES / BUS_INBOX_MAX_READ);
+    for (let page = 0; page < maxPages; page++) {
+      const result = listBusInboxAfter(after, BUS_INBOX_MAX_READ,
+        { root: busRoot, now, includeOriginalEnvelope: true });
+      if (result.status !== 'ok') {
+        if (page === 0) return unavailable;
+        truncated = true; break;
+      }
+      for (const receipt of result.messages) {
+        const original = receipt.originalEnvelope;
+        if (original === undefined) continue;
+        const digest = createHash('sha256').update(JSON.stringify(original)).digest('hex');
+        const ledgerMatches = (admittedRows.get(original.id) ?? [])
+          .filter(row => receipt.receivedAt === row.at && row.digest === digest);
+        const resultAdmitted = workResultAdmitted(original);
+        if (ledgerMatches.length === 0 && !resultAdmitted) continue;
+        const prior = admitted.get(original.id);
+        const admittedFor = new Set(prior?.admittedFor ?? []);
+        for (const row of ledgerMatches) admittedFor.add(row.target);
+        if (resultAdmitted) admittedFor.add(original.to);
+        admitted.set(original.id, {
+          id: original.id, from: original.from, to: original.to, priority: original.priority,
+          receivedAt: receipt.receivedAt, ttl: original.ttl, body: original.body,
+          admittedFor: [...admittedFor].sort(),
+        });
+      }
+      after = result.nextCursor;
+      if (result.messages.length < BUS_INBOX_MAX_READ) break;
+      if (page === maxPages - 1) truncated = true;
+    }
+    return { state: 'available', messages: [...admitted.values()], truncated };
+  } catch { return unavailable; }
+}
+
+/** Body kinds the bus/work-feed projection already owns — an admitted peer
+ * envelope carrying one of these is the same pending thing a `bus`/`wakes`
+ * item already lists, so it stays under that source. `work.result` is
+ * deliberately absent: the feed reads results as job evidence but never
+ * lists the reply itself, and the peer-dispatch source covers only
+ * unpublished outcomes — a published result the peer has not read is
+ * admitted mail with no other surface. */
+const PEER_INBOX_FEED_KINDS: ReadonlySet<string> = new Set(
+  ['work.post', 'work.status', 'work.claim', 'work.release', 'wake']);
+
+/**
+ * Admitted peer mail the bus source does not already own — `peer.message`
+ * bodies (a peer's task, review, handoff, query or social note), published
+ * `work.result` replies the peer has not read, and any other admitted shape
+ * no feed projection covers. Each lists as a warn
+ * `peer-message` — agent coordination awaiting a sessioned `peers read`,
+ * never Mason-blocking — naming the enrolled callsigns whose session
+ * admits it (the actionable half of the read: which `PHM_AGENTNET_*`
+ * session has this pending), a scrubbed body summary as title and the
+ * envelope's real receipt/TTL times; a stored P0 band maps to high like
+ * every other source's priority carry. `jobIds` keeps only the body's own
+ * provable citations. Act: `peers read --id` (the admission-correct
+ * filtered read), `agents bus show` (works without a session) and bare
+ * `peers read`. The source states are the read's own — 'missing' a
+ * verified-absent bindings file, bus store or peer plane, 'unavailable'
+ * any input the proofs cannot read — and a truncated bounded scan degrades
+ * it with pending a stated floor.
+ */
+function peerInboxItems(read: NonNullable<UnifiedInboxOptions['readPeerInbox']>,
+  options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: PeerInboxRead;
+  try { result = read({ busRoot: options.busRoot, bindings: options.agentnetBindings, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  const items = result.messages
+    .filter(message => !isClaimableWork(message.body) && !isWorkerHandoffBody(message.body) &&
+      !PEER_INBOX_FEED_KINDS.has(busBodyKind(message.body) ?? ''))
+    .map((message): Omit<UnifiedInboxItem, 'priority'> => {
+      const expiry = message.receivedAt + message.ttl;
+      // ECMAScript's Date range ends at ±8.64e15 ms; an out-of-range expiry
+      // stays null — unknown, never an invalid timestamp.
+      const expiresAt = Number.isSafeInteger(expiry) && expiry <= 8_640_000_000_000_000 ? iso(expiry) : null;
+      return {
+        id: `peer-inbox:${message.id}`,
+        source: 'peer-inbox',
+        kind: 'peer-message',
+        severity: message.priority === 'P0' ? 'high' : 'warn',
+        blocking: false,
+        title: oneLine(busBodySummary(message.body) ?? `peer mail ${message.from} → ${message.to}`, TITLE_MAX),
+        detail: oneLine(`admitted for ${message.admittedFor.join(', ')}`, DETAIL_MAX) || null,
+        since: iso(message.receivedAt),
+        expiresAt,
+        ...jobIdsField(busBodyJobIds(message.body)),
+        act: [
+          `phm agentnet peers read --id ${message.id}`,
+          `phm agents bus show ${message.id}`,
+          'phm agentnet peers read',
+        ],
+      };
+    });
+  return { report: { state: result.truncated ? 'degraded' : 'healthy', pending: items.length }, items };
+}
+
 /** The resume bound `planSessionResume` enforces — a checkpoint older than
  * 24h refuses resume and failover, so `expiresAt` reports that real deadline. */
 const SESSION_HANDOFF_RESUME_WINDOW_MS = 24 * 3_600_000;
@@ -3881,6 +4197,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const wakes = wakeItems(options.readWakes ?? ((o) => readAllWakes(undefined, { root: o.root, runsRoot: o.runsRoot, now: o.now })), options);
   const seats = await seatItems(options.readSeatHandoffs ?? planSeatHandoffs, now);
   const peerDispatch = peerDispatchItems(options.readPeerDispatch ?? readPeerDispatchJournal, options);
+  const peerInbox = peerInboxItems(options.readPeerInbox ?? readPeerInboxSource, options);
   const sessionHandoffs = sessionHandoffItems(options.readSessionHandoffs ?? ((o) => listSessionHandoffs(
     o.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs'), { state: 'open' })), options);
   const orgOutbox = orgOutboxItems(options.readOrgOutbox ?? readOrgPlaneOutbox, options);
@@ -3923,6 +4240,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     wakes: wakes.report,
     seats: seats.report,
     'peer-dispatch': peerDispatch.report,
+    'peer-inbox': peerInbox.report,
     'session-handoff': sessionHandoffs.report,
     'org-outbox': orgOutbox.report,
     gmail: gmail.report,
@@ -3943,7 +4261,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'router-queue': routerQueue.report,
     'channel-health': channelHealth.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

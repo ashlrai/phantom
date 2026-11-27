@@ -24,7 +24,7 @@ import { DEFAULT_TEAM } from '../src/core/teams/tools.js';
 import { markTeammateTextsAnswered, recordTeammateText } from '../src/core/comms/imessage-teammate-inbox.js';
 import { writeEmailDropConfig, type EmailDropConfig } from '../src/core/comms/email-drop-config.js';
 import { EMAIL_OUTBOX_MAX_BYTES } from '../src/core/comms/email-outbox.js';
-import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { createAgentChannel, registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../src/core/fleet/bus-mailbox.js';
 import { BusBoard, type BusBoardPendingPeers, type BusBoardPendingTask, type BusBoardTaskHold } from '../src/core/fleet/bus-board.js';
@@ -150,6 +150,7 @@ describe('readUnifiedInbox sources', () => {
         wakes: { state: 'healthy', pending: 0 },
         seats: { state: 'missing', pending: 0 },
         'peer-dispatch': { state: 'missing', pending: 0 },
+        'peer-inbox': { state: 'missing', pending: 0 },
         'session-handoff': { state: 'missing', pending: 0 },
         'org-outbox': { state: 'missing', pending: 0 },
         'email-inbox': { state: 'missing', pending: 0 },
@@ -2545,6 +2546,196 @@ describe('readUnifiedInbox peer dispatch', () => {
     expect(byText.items).toEqual([]);
     const byPeer = await read({ filter: { contains: 'peer peer-a' } });
     expect(byPeer.items.map(i => i.id).sort()).toEqual([`peer-dispatch:${receiptId('4')}`, `peer-dispatch:${receiptId('b')}`].sort());
+  });
+});
+
+describe('readUnifiedInbox peer inbox', () => {
+  // `root` is assigned in beforeEach, so every path resolves lazily at call time.
+  const agentnetDir = () => join(root, 'agentnet');
+  const bindingsFile = () => join(agentnetDir(), 'bindings.json');
+  const binding = (n: number, expiresAt: number) => ({ callsign: `agent${n}`, lane: `lane-${n}`,
+    sessionId: `session-${n}`, sessionHash: n.toString(16).padStart(64, 'a'),
+    expiresAt, teamId: 'TTEAM', userId: `UAGENT${n}`, botId: `BAGENT${n}`, topic: 'mesh' });
+  /** The bindings file `readPeerBindings` validates — mode 0600 under a private dir; the inbox resolves it through the `agentnetBindings` option, never `busRoot`. */
+  const writeBindings = (peers: unknown[]) => {
+    mkdirSync(agentnetDir(), { recursive: true, mode: 0o700 });
+    writeFileSync(bindingsFile(), JSON.stringify({ version: 1, peers }), { mode: 0o600 });
+    return bindingsFile();
+  };
+  const peerId = (n: number) => `peer-123e4567-e89b-42d3-a456-4266141740${String(n).padStart(2, '0')}`;
+  const peerMessage = (id: string, to: string, text = 'ping') => ({ kind: 'peer.message',
+    peer: { fromAgent: 'agent0', toAgent: to, kind: 'query', text, refs: [], threadId: id, origin: id, hopCount: 1 } });
+  const peerEnvelope = (id: string, to: string, body: unknown = peerMessage(id, to), ttl = 86_400_000) =>
+    ({ id, from: 'agent0', to, priority: 'P2', ttl, body });
+  /** Post an envelope and return the stored original, its receipt stamp and the digest `sendPeerMessage` writes into the coordination ledger — the ledger admission proof's three parts. */
+  const postPeerMail = (id: string, to: string, body?: unknown, at = now, ttl?: number) => {
+    expect(appendBusInbox(peerEnvelope(id, to, body, ttl), { root: busRoot, now: () => at }).status).toBe('posted');
+    const page = listBusInboxAfter(0, 100, { root: busRoot, now: () => now, includeOriginalEnvelope: true });
+    const receipt = page.status === 'ok' ? page.messages.find(m => m.envelope.id === id) : undefined;
+    const original = receipt?.originalEnvelope;
+    if (receipt === undefined || original === undefined) throw new Error('fixture envelope missing');
+    return { original, receivedAt: receipt.receivedAt,
+      digest: createHash('sha256').update(JSON.stringify(original)).digest('hex') };
+  };
+  const writeLedger = (rows: unknown[]) => {
+    const dir = join(busRoot, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'coordination.json'), JSON.stringify(rows), { mode: 0o600 });
+  };
+  const ledgerRow = (id: string, target: string, at: number, digest: string) => ({
+    id, fromAgent: 'agent0', target, origin: id, digest, hopCount: 1, threadId: 'thread', at });
+  const writeJournal = (receipts: unknown[]) => {
+    const dir = join(busRoot, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'work-dispatch.json'), JSON.stringify({ version: 1, receipts }), { mode: 0o600 });
+  };
+
+  it('lists only mail the admission proofs accept, naming the callsigns whose session admits it', async () => {
+    // agent2's binding expired: nothing addressed to it can be read back now.
+    const bindings = writeBindings([binding(1, now + 60_000), binding(2, now - 1), binding(3, now + 60_000)]);
+    const admitted = postPeerMail(peerId(1), 'agent1');
+    postPeerMail(peerId(2), 'agent2');
+    postPeerMail(peerId(3), 'agent9');
+    // Same peer shape but no ledger row: unproven mail never lists.
+    postPeerMail(peerId(4), 'agent1');
+    // Retained and live (48h TTL) but its ledger row is past the 24h admission
+    // window — the send is too old for `peers read` to admit it back.
+    const stale = postPeerMail(peerId(5), 'agent1', undefined, now - 25 * 3_600_000, 48 * 3_600_000);
+    const forged = postPeerMail(peerId(6), 'agent1');
+    writeLedger([
+      ledgerRow(admitted.original.id, 'agent1', admitted.receivedAt, admitted.digest),
+      // A second live callsign's row admits the same envelope — channel sends write one row per target.
+      ledgerRow(admitted.original.id, 'agent3', admitted.receivedAt, admitted.digest),
+      ledgerRow(peerId(2), 'agent2', now, 'a'.repeat(64)),
+      ledgerRow(peerId(3), 'agent9', now, 'a'.repeat(64)),
+      ledgerRow(stale.original.id, 'agent1', stale.receivedAt, stale.digest),
+      // Right id, target and instant but a digest the stored body cannot match.
+      ledgerRow(forged.original.id, 'agent1', forged.receivedAt, 'a'.repeat(64)),
+    ]);
+    const inbox = await read({ agentnetBindings: bindings });
+    expect(inbox.sources['peer-inbox']).toEqual({ state: 'healthy', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'peer-inbox');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: `peer-inbox:${admitted.original.id}`, kind: 'peer-message',
+      severity: 'warn', blocking: false,
+      title: 'peer.message query agent0->agent1: ping',
+      detail: 'admitted for agent1, agent3',
+      since: new Date(admitted.receivedAt).toISOString(),
+      expiresAt: new Date(admitted.receivedAt + 86_400_000).toISOString(),
+      act: [
+        `phm agentnet peers read --id ${admitted.original.id}`,
+        `phm agents bus show ${admitted.original.id}`,
+        'phm agentnet peers read',
+      ],
+    });
+  });
+
+  it('keeps feed-owned bodies under their own source and lists journal-proven work.result replies', async () => {
+    const bindings = writeBindings([binding(1, now + 60_000)]);
+    const message = postPeerMail(peerId(1), 'agent1');
+    // Claimable work and a work.post announcement are admitted too, but the
+    // bus source already owns those pending things — one pending thing one item.
+    const claimable = postPeerMail(peerId(7), 'agent1', { kind: 'work', text: 'fake claimable' });
+    const announced = postPeerMail(peerId(8), 'agent1', { kind: 'work.post', jobId: 'RQ-ANNOUNCED',
+      title: 'fake announced job', provider: 'codex-cmp', repo: 'ashlrai/phantom', claimKeys: ['queue:RQ-ANNOUNCED'] });
+    // A published work.result reply the feed never lists as an item: the
+    // journal's sent outcome is the admission proof.
+    const receiptId = `pw-${'a'.repeat(32)}`;
+    const resultBody = { kind: 'work.result', jobId: 'RQ-PEER-1', claimKey: 'repo:ashlrai/phantom',
+      queueId: `peer-work-${'b'.repeat(32)}`, receiptId, outcome: 'complete' };
+    const result = postPeerMail(`${receiptId}-complete`, 'agent1', resultBody);
+    writeJournal([{ ...resultBody, peer: 'agent1', consumer: 'agent0',
+      digest: 'c'.repeat(64), at: result.receivedAt, sent: 'complete', outcome: 'complete' }]);
+    writeLedger([
+      ledgerRow(message.original.id, 'agent1', message.receivedAt, message.digest),
+      ledgerRow(claimable.original.id, 'agent1', claimable.receivedAt, claimable.digest),
+      ledgerRow(announced.original.id, 'agent1', announced.receivedAt, announced.digest),
+    ]);
+    const inbox = await read({ agentnetBindings: bindings });
+    expect(inbox.sources['peer-inbox']).toEqual({ state: 'healthy', pending: 2 });
+    const byId = new Map(inbox.items.filter(i => i.source === 'peer-inbox').map(i => [i.id, i]));
+    expect([...byId.keys()].sort()).toEqual([`peer-inbox:${message.original.id}`, `peer-inbox:${result.original.id}`].sort());
+    expect(byId.get(`peer-inbox:${result.original.id}`)).toMatchObject({
+      kind: 'peer-message', severity: 'warn', blocking: false,
+      title: 'work.result RQ-PEER-1: complete', jobIds: ['RQ-PEER-1'],
+      detail: 'admitted for agent1',
+    });
+    // The excluded bodies still surface under their owning sources instead.
+    expect(inbox.items.some(i => i.source === 'bus' && i.id.includes(claimable.original.id))).toBe(true);
+  });
+
+  it('reports missing and unreadable admission inputs honestly, never a fabricated empty', async () => {
+    // No bindings file at all: no peer can hold admitted mail — verified missing.
+    const missing = await read();
+    expect(missing.sources['peer-inbox']).toEqual({ state: 'missing', pending: 0 });
+
+    // Live callsign but no bus store: still verified missing.
+    const noStore = await read({ agentnetBindings: writeBindings([binding(1, now + 60_000)]) });
+    expect(noStore.sources['peer-inbox']).toEqual({ state: 'missing', pending: 0 });
+
+    // Live callsign, retained mail, corrupt ledger: the read cannot prove
+    // anything — unavailable with a null pending, never a ledger-only undercount.
+    const bindings = writeBindings([binding(1, now + 60_000)]);
+    postPeerMail(peerId(1), 'agent1');
+    mkdirSync(join(busRoot, 'agentnet'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(busRoot, 'agentnet', 'coordination.json'), '{not json', { mode: 0o600 });
+    const degraded = await read({ agentnetBindings: bindings });
+    expect(degraded.sources['peer-inbox']).toEqual({ state: 'unavailable', pending: null });
+    expect(degraded.items.filter(i => i.source === 'peer-inbox')).toHaveLength(0);
+
+    // Corrupt bindings refuse every peer verb — and this read — the same way.
+    writeFileSync(bindingsFile(), '{not json', { mode: 0o600 });
+    const corruptBindings = await read({ agentnetBindings: bindings });
+    expect(corruptBindings.sources['peer-inbox']).toEqual({ state: 'unavailable', pending: null });
+
+    // A throwing seam reports unavailable while other sources still list.
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const throwing = await read({ agentnetBindings: bindings,
+      readPeerInbox: () => { throw new Error('boom'); } });
+    expect(throwing.sources['peer-inbox']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+
+    // Seam states map through unchanged; a truncated scan degrades.
+    const seam = (state: 'missing' | 'available' | 'unavailable', truncated = false) =>
+      read({ agentnetBindings: bindings, readPeerInbox: () => ({ state, messages: [], truncated }) });
+    expect((await seam('missing')).sources['peer-inbox']).toEqual({ state: 'missing', pending: 0 });
+    expect((await seam('unavailable')).sources['peer-inbox']).toEqual({ state: 'unavailable', pending: null });
+    expect((await seam('available', true)).sources['peer-inbox']).toEqual({ state: 'degraded', pending: 0 });
+    expect((await seam('available')).sources['peer-inbox']).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('filters by source, kind, job citation and contains like every other source', async () => {
+    const bindings = writeBindings([binding(1, now + 60_000)]);
+    const message = postPeerMail(peerId(1), 'agent1');
+    const receiptId = `pw-${'c'.repeat(32)}`;
+    const resultBody = { kind: 'work.result', jobId: 'RQ-FILTER', claimKey: 'repo:ashlrai/phantom',
+      queueId: `peer-work-${'d'.repeat(32)}`, receiptId, outcome: 'failed', reason: 'repo-denied' };
+    const result = postPeerMail(`${receiptId}-failed`, 'agent1', resultBody);
+    writeJournal([{ ...resultBody, peer: 'agent1', consumer: 'agent0',
+      digest: 'e'.repeat(64), at: result.receivedAt, sent: 'failed', outcome: 'failed' }]);
+    writeLedger([ledgerRow(message.original.id, 'agent1', message.receivedAt, message.digest)]);
+    const readPeer = (filter: UnifiedInboxOptions['filter']) =>
+      read({ agentnetBindings: bindings, filter });
+
+    const bySource = await readPeer({ source: 'peer-inbox' });
+    expect(bySource.total).toBe(2);
+    expect(bySource.items.every(i => i.source === 'peer-inbox' && i.kind === 'peer-message')).toBe(true);
+
+    const byKind = await readPeer({ kind: 'peer-message', source: 'peer-inbox' });
+    expect(byKind.total).toBe(2);
+
+    const byJob = await readPeer({ job: 'RQ-FILTER' });
+    const peerJobItems = byJob.items.filter(i => i.source === 'peer-inbox');
+    expect(peerJobItems.map(i => i.id)).toEqual([`peer-inbox:${result.original.id}`]);
+    expect(peerJobItems[0]!.jobIds).toEqual(['RQ-FILTER']);
+
+    const byText = await readPeer({ contains: 'peer.message query' });
+    expect(byText.items.filter(i => i.source === 'peer-inbox').map(i => i.id))
+      .toEqual([`peer-inbox:${message.original.id}`]);
+    const byOutcome = await readPeer({ contains: 'work.result RQ-FILTER' });
+    expect(byOutcome.items.filter(i => i.source === 'peer-inbox').map(i => i.id))
+      .toEqual([`peer-inbox:${result.original.id}`]);
   });
 });
 

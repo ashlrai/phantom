@@ -2024,7 +2024,13 @@ partial bounded scan; 0 on a verified-empty peer plane or bus store, null
 when bindings, ledger, journal or bus store cannot be read — an
 unreadable journal leaves work.result mail unprovable, so the total is
 unknown rather than a ledger-only undercount, never callsigns, digests,
-threads or bodies), the transport dead-letter sink's retained
+threads or bodies), itemized per envelope by the unified inbox's
+`peer-inbox` source as `peer-message` items — the same proofs applied
+message-by-message instead of summed, minus the `work.*`/`wake` bodies
+the `bus`/`wakes` sources already own, each naming the enrolled callsigns
+whose session admits it and deep-linking `phm agentnet peers read --id`,
+`phm agents bus show` and bare `phm agentnet peers read`), the transport
+dead-letter sink's retained
 delivery-failure reports — the `status` envelopes the router files under
 the reserved `bus.dead-letter` address when delivery provably never
 landed ("Dead letters" above), kept in the same bus store under their own
@@ -2822,7 +2828,17 @@ and retryable. The unified comms inbox's `peer-dispatch` source lists the same
 journal's receipts whose `sent` trails `outcome` — results a peer still awaits
 that no other surface enumerates (the dispatch feed page reports only the
 current proposals) — each deep-linking `phm agentnet peers dispatch --apply`;
-an absent journal reports `missing`, an unreadable one `unavailable`.
+an absent journal reports `missing`, an unreadable one `unavailable`. Its
+`peer-inbox` source itemizes the admitted side of this same read fleet-wide —
+every retained envelope the ledger rows or journal receipts prove this host's
+live-enrolled callsigns may read, minus the claimable-work, handoff and
+`work.post`/`work.status`/`work.claim`/`work.release`/`wake` bodies the `bus`
+and `wakes` sources already own (a published `work.result` reply stays — the
+feed reads it as job evidence, never a pending item) — each `peer-message`
+item naming the
+enrolled callsigns whose session admits it and deep-linking
+`phm agentnet peers read --id`; `phm agents bus status`'s `peerInbox` probe
+counts the same set without listing it.
 Comms-disabled or revoked peers receive no sends. Results stay on the local bus;
 Slack delivery is not part of this consumer.
 
