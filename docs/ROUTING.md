@@ -728,8 +728,10 @@ inclusive report-start cutoff for job and merge-queue receipts, including
 merge-queue receipts used to infer first-pass CI. The evidence is post-publish
 queue-side context — it never replaces the jobs ledger's merge
 verdict and never feeds routing by itself. The same joined check
-record also resolves `ci_first_pass`
-fill-only when no jobs row recorded a verdict: any recorded check
+record also resolves `ci_first_pass` when no jobs row recorded a boolean
+verdict. Conflicting boolean verdicts leave the job's first-pass CI unknown
+(`null`) even when a later receipt repeats one of them or the queue has check
+observations. When the jobs ledger has no verdict, any recorded check
 failure — required or unrelated — reads `false` even beside a later
 `checks_passed` boundary or a merge (a rerun or a new head got it
 green, which is not a first pass). A `checks_passed` boundary reads

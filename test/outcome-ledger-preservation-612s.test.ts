@@ -2389,6 +2389,31 @@ describe('router outcome merge-events join', () => {
     expect(byId.get('J7')?.ci_first_pass).toBe(true);
   });
 
+  it.each([true, false])('withholds disputed first-pass CI despite replay and queue evidence (first verdict %s)', async (first) => {
+    const firstVerdict = {
+      job: 'J1', pr_url: 'https://github.com/ashlrai/phantom/pull/51', ci_first_pass: first,
+    };
+    const agreedVerdict = {
+      job: 'J2', pr_url: 'https://github.com/ashlrai/phantom/pull/52', ci_first_pass: first,
+    };
+    const root = runsDir([
+      firstVerdict,
+      { ...firstVerdict, phase: 'MERGED', ci_first_pass: !first, ts: '2026-11-01T00:00:00Z' },
+      firstVerdict,
+      agreedVerdict,
+      agreedVerdict,
+    ].map(row => JSON.stringify(row)).join('\n'));
+    writeMergeEvents(root, [mergeEvent(51, 'checks_passed'), mergeEvent(52, 'checks_passed')]);
+
+    const { outcomes } = await readRouterOutcomes({ runsDir: root });
+    expect(outcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        job_id: 'J1', merged: true, ci_first_pass: null, merge_queue: expect.objectContaining({ checks_passed: 1 }),
+      }),
+      expect.objectContaining({ job_id: 'J2', ci_first_pass: first }),
+    ]));
+  });
+
   it('joins only merge-queue receipts dated through the report time', async () => {
     const root = runsDir([58, 59, 60].map(pr => JSON.stringify({
       job: `J${pr}`, pr_url: `https://github.com/ashlrai/phantom/pull/${pr}`,
