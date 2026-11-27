@@ -12,6 +12,7 @@ test('projects bounded observations without free text and expires availability',
   await mkdir(join(root, 'queue'));
   const now = Date.parse('2026-01-01T12:00:00Z');
   await writeFile(join(root, 'queue/status.json'), JSON.stringify({ last_tick: '2026-01-01T12:00:00Z', paused: false, mem_free_pct: 50,
+    admission: { cap: 3, running: 1 },
     lanes: { work: { running: 1, target: 3, effective_target: 2, queued: 0, held: false, held_reason: '/secret/path' } }, rollup_24h: { by_lane: { work: { merged: 2 } } }, secret: 'private-value' }));
   await writeFile(join(root, 'queue/claimed.tsv'), 'job-1\twork\twork\t12:00\t1767268800\n');
   const report = await fleetStatusApi(root, () => now);
