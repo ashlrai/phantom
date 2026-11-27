@@ -50,7 +50,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent`, `job`, `from`, `excludeFrom` and `id` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'channel', 'priority', 'contains', 'id', 'thread', 'inReplyTo', 'bodyKind', 'result']);
+const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'channel', 'topic', 'priority', 'contains', 'id', 'thread', 'inReplyTo', 'bodyKind', 'result']);
 const LABEL_KEYS = ['job', 'from', 'excludeFrom', 'id', 'thread', 'inReplyTo', 'bodyKind'] as const;
 
 export interface FleetAgentWakesArgs {
@@ -68,6 +68,8 @@ export interface FleetAgentWakesArgs {
   excludeFrom?: string;
   /** Keep only hints addressed to `group:<name>:*` of this channel — the same room prefix `phm agents bus wakes --channel` and every other bus read's channel filter match. */
   channel?: string;
+  /** Keep only hints addressed under one `group:<room>:<topic>` topic — the same `groupAddressTopicOf` verdict every bus read's `topic` applies, composing with `channel` into one room AND topic. */
+  topic?: string;
   /** Keep only hints in one exact P0–P3 band, decided on the resolved referent — the same match `phm agents bus wakes --priority` applies. */
   priority?: BusPriority;
   /** Keep only hints whose resolved referent text carries this needle — the shared `--contains` rule. */
@@ -118,6 +120,11 @@ export function parseFleetAgentWakesArgs(args: Record<string, unknown>): FleetAg
   if (channel !== undefined) {
     if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
     parsed.channel = channel;
+  }
+  const topic = args.topic;
+  if (topic !== undefined) {
+    if (typeof topic !== 'string' || !agentChannelNameSchema.safeParse(topic).success) return null;
+    parsed.topic = topic;
   }
   const priority = args.priority;
   if (priority !== undefined) {
@@ -187,6 +194,7 @@ export async function readFleetAgentWakes(
     ...(args.from === undefined ? {} : { from: args.from }),
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
     ...(args.channel === undefined ? {} : { channel: args.channel }),
+    ...(args.topic === undefined ? {} : { topic: args.topic }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
     ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),

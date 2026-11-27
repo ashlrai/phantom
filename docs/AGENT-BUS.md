@@ -528,7 +528,7 @@ untrusted data: a wake is a hint to read the inbox and grants no authority.
 **Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]
 [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
 [--job <id>]
-[--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>]
+[--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--topic <topic>]
 [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]`
 returns one page of
@@ -593,7 +593,14 @@ handoffs alike, matched on the delivery address rather than the reported
 kind — so an agent in several rooms reads one room's pending mail in one
 filtered read; it composes with `--kind` to separate a room's direct mail
 from its assignments, and a channel the agent is not a member of simply
-has no mail to show. `--contains` keeps only mail whose scrubbed
+has no mail to show. `--topic` keeps only mail addressed under one
+`group:<room>:<topic>` topic — the same `groupAddressTopicOf` verdict
+`agents bus work feed --topic`, `work next --topic`, `channel read
+--topic` and `comms bus next --topic` apply, narrower than `--channel`'s
+room prefix and composing with it into one room AND one topic — so "which
+of my pending mail concerns topic deploy" is one filtered read across
+every room the agent belongs to; a `dm`, `handoff` or `legacy` row names
+no group topic and never matches. `--contains` keeps only mail whose scrubbed
 one-line summary — the same text the `--frame` read renders per row —
 carries the needle as a case-insensitive substring, whitespace collapsed
 on both sides, so "did anyone send me mail about X" is one filtered read
@@ -704,7 +711,7 @@ reports — so an agent on the unified surface can wait for mail without
 polling `inbox` in a loop or dropping to the raw-envelope stream.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
-[--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
+[--channel <name>] [--topic <topic>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]` lists wake
 hints for the agent — addressed under any spelling that resolves to its
 identity, exact first then lowercase, the same fold the inbox read
@@ -743,7 +750,15 @@ and every other filter: on a per-agent read it narrows to one room's
 hints for that agent (a channel the agent does not belong to simply has
 no hints to show), and on `--all` it answers "which hints concern room
 X" in one fleet read, with `matched` counting it inside the queue-tail
-match like `from`/`excludeFrom`. A ref that resolves to no registered identity keeps exact-label
+match like `from`/`excludeFrom`. `--topic` keeps only hints addressed
+under one `group:<room>:<topic>` topic — the same `groupAddressTopicOf`
+verdict `inbox --topic`, `channel read --topic` and `work feed --topic`
+apply, narrower than `--channel`'s room prefix and composing with it
+into one room AND one topic — decided on the hint's own `to` label like
+`--channel`, so it needs no referent resolution and composes with the
+addressee scope and every other filter; a `bus.send` or claim-holder
+hint whose `to` is an agent label names no group topic and never
+matches, and `matched` counts it inside the queue-tail match. A ref that resolves to no registered identity keeps exact-label
 matching instead — the page reports `scope: 'label'` (vs `'identity'`),
 `agent` the queried label verbatim, and only hints whose `to` is that label
 match — so hints queued under a bare coordination or routing label, like the

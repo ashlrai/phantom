@@ -1010,6 +1010,80 @@ describe('channel-filtered inbox reads', () => {
   });
 });
 
+describe('topic-filtered reads', () => {
+  it('keeps only mail addressed under one group topic on the inbox read', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    createAgentChannel({ name: 'ops', createdBy: 'atlas', members: ['nova'] }, options);
+    // Channel posts under distinct topics of two rooms; a DM names no group topic.
+    await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'deploy', text: 'deploy one', id: 'tp-rel-dep' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'general', text: 'release chat', id: 'tp-rel-gen' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'ops', topic: 'deploy', text: 'ops deploy', id: 'tp-ops-dep' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm', id: 'tp-dm' }, options);
+
+    // The verdict is room-agnostic: 'deploy' keeps the release AND ops deploy posts.
+    const deploy = readAgentInbox('nova', { topic: 'deploy' }, options);
+    expect(deploy.status === 'ok' && deploy.messages.map(m => m.envelope.id).sort())
+      .toEqual(['tp-ops-dep', 'tp-rel-dep']);
+    // --channel composes into one room AND one topic.
+    expect(readAgentInbox('nova', { channel: 'release', topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'tp-rel-dep' } }] });
+    expect(readAgentInbox('nova', { channel: 'release', topic: 'general' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'tp-rel-gen' } }] });
+    expect(readAgentInbox('nova', { channel: 'ops', topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'tp-ops-dep' } }] });
+    // A topic no room carries reads empty, never an error.
+    expect(readAgentInbox('nova', { topic: 'absent' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    // --matched counts only the accepted rows; an invalid topic is refused.
+    const counted = readAgentInbox('nova', { topic: 'deploy', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(2);
+    expect(readAgentInbox('nova', { topic: 'Bad Topic' }, options)).toMatchObject({ status: 'invalid' });
+    // The unfiltered page still sees the dm and every topic the filter skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages).toHaveLength(4);
+  });
+
+  it('keeps only hints addressed under one group topic on the wakes reads', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    // Hints addressed to group topics of two rooms plus nova's own agent label.
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-rel-dep', from: 'agent:atlas', to: 'group:release:deploy' },
+      { root: options.runsRoot });
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-rel-gen', from: 'agent:atlas', to: 'group:release:general' },
+      { root: options.runsRoot });
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-ops-dep', from: 'agent:atlas', to: 'group:ops:deploy' },
+      { root: options.runsRoot });
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-dm', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+
+    // Fleet-wide the verdict is room-agnostic and an agent label never matches.
+    const fleet = readAllWakes(undefined, options, { topic: 'deploy' });
+    expect(fleet.status === 'ok' && fleet.wakes.map(w => w.id).sort()).toEqual(['wk-ops-dep', 'wk-rel-dep']);
+    if (fleet.status !== 'ok') throw new Error('unreachable');
+    expect(fleet.matched).toBe(2);
+    expect(readAllWakes(undefined, options, { topic: 'general' }))
+      .toMatchObject({ status: 'ok', wakes: [{ id: 'wk-rel-gen' }] });
+    expect(readAllWakes(undefined, options, { topic: 'Bad Topic' })).toMatchObject({ status: 'invalid' });
+
+    // Scoped to a release member, the room's topic hints reach her queue and
+    // the ops hint (a room she is not in) and her dm (no group topic) drop out.
+    const mine = readAgentWakes('nova', undefined, options, { topic: 'deploy' });
+    expect(mine).toMatchObject({ status: 'ok', matched: 1 });
+    if (mine.status !== 'ok') throw new Error('unreachable');
+    expect(mine.wakes.map(w => w.id)).toEqual(['wk-rel-dep']);
+    expect(readAgentWakes('nova', undefined, options, { topic: 'general' }))
+      .toMatchObject({ status: 'ok', wakes: [{ id: 'wk-rel-gen' }] });
+    // The unfiltered member read sees her room's hints plus her dm — never ops.
+    const all = readAgentWakes('nova', undefined, options);
+    expect(all.status === 'ok' && all.wakes.map(w => w.id).sort())
+      .toEqual(['wk-dm', 'wk-rel-dep', 'wk-rel-gen']);
+  });
+});
+
 describe('contains-filtered reads', () => {
   it('narrows inbox and channel pages to rows whose summary carries the needle', async () => {
     const options = setup();
@@ -2669,7 +2743,7 @@ describe('terminal work.status wakes live claim holders', () => {
     expect(agentWakeClaimHolderSuffix({ ...row, claimHolder: 'unresolved' })).toBe(' claim-holder=unresolved');
     expect(agentWakeClaimHolderSuffix({ ...row, claimHolder: 'unknown' })).toBe(' claim-holder=unknown');
     expect(agentWakeClaimHolderSuffix({ ...row,
-      claimHolder: { statusId: 'w-h-1', jobId: 'RQ-H-1', status: 'done' } }))
+      claimHolder: { statusId: 'w-h-1', jobId: 'RQ-H-1', status: 'done', priority: 'P2' } }))
       .toBe(' claim-holder job=RQ-H-1 status=done receipt=w-h-1');
   });
 });
@@ -3762,7 +3836,7 @@ describe('CLI session adapters', () => {
     expect(busAgentView('has space', {}, options)).toMatchObject({ status: 'invalid', self: false });
     const broken = setup();
     register(broken, 'atlas');
-    writeFileSync(join(broken.root, 'agent-identities', 'registry.json'), 'not json{');
+    writeFileSync(join(broken.root!, 'agent-identities', 'registry.json'), 'not json{');
     expect(busAgentView('atlas', {}, broken)).toMatchObject({ status: 'unavailable', ref: 'atlas' });
   });
 
