@@ -66,6 +66,8 @@ count once per dispatch. A later defer or skip clears pending readiness.
 Exact replays of timestamped admission receipts cannot re-arm consumed or
 cleared readiness or cancel a newer ready decision. Admissions without a
 parseable timestamp retain their ledger order.
+For timestamped receipts covered by replay detection, reserializing the same
+JSON fields with different key order or whitespace still counts as a replay.
 The learner uses the first identifier-safe classification on a row, skipping
 case-insensitive `unknown` values. A row with no usable classification leaves
 the last observed class intact while the lane stays the same. When the
