@@ -17,6 +17,19 @@ function setup(classification = 'probable-flake') {
 }
 
 describe('resident CI reruns', () => {
+  it.each([true, false])('preserves rerun deduplication only for a complete receipt at the tail cutoff (complete: %s)', async (complete) => {
+    const { opts, gh } = setup();
+    const attempt = { at: new Date(opts.now!()).toISOString(), repo: 'org/repo', head: 'a'.repeat(40), runId: 123, pr: 1, outcome: 'attempt' };
+    const tail = `${JSON.stringify(attempt)}\n`;
+    const padding = ' '.repeat(4 * 1024 * 1024 - Buffer.byteLength(tail));
+    writeFileSync(opts.journalPath!, `\n${complete ? '\n' : 'x'}${tail}${padding}`);
+
+    expect(readCiReruns(opts.journalPath!, opts.now!()).counts.attempted).toBe(complete ? 1 : 0);
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos['org/repo']?.skippedDuplicate).toBe(complete ? 1 : 0);
+    expect(gh).toHaveBeenCalledTimes(complete ? 0 : 1);
+  });
+
   it('journals before rerunning and deduplicates by workflow run even when the reported head changes', async () => {
     const { opts, gh, report } = setup();
     gh.mockImplementation(async () => {

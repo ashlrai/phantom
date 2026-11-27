@@ -653,7 +653,9 @@ run remains eligible. When the baseline report assigns multiple heads to one
 run, maintenance records a status error and skips dispatch for that run.
 Reads tolerate malformed rows and
 are bounded to the last 4 MiB, so deduplication, counts and recurrence cover
-that retained read window. Rerun identity compares repository names
+that retained read window. The reader discards a row cut off at the start
+of the window and retains a complete row starting exactly at that boundary.
+Rerun identity compares repository names
 case-insensitively, so a configuration casing change preserves duplicate
 protection, pending verdicts and the polling cursor. Raw journal entries
 retain their recorded spelling. Recurring-flake groups combine attempt and
