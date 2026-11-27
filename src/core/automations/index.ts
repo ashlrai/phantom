@@ -22,28 +22,21 @@ import type { AutomationInput, AutomationV1 } from './types.js';
 import { AutomationInputError, canonicalPlaybookRef } from './validate.js';
 
 export * from './types.js';
-export { AutomationInputError, canonicalPlaybookRef } from './validate.js';
+export { AutomationInputError } from './validate.js';
 export { AUTOMATION_TEMPLATES, automationTemplate } from './templates.js';
 export { parseRrule, nextOccurrence, describeRrule } from './rrule.js';
 export {
   automationsOverview,
-  automationStats,
   fireAutomation,
-  lastBlockedReason,
   receiveTelegramTask,
   receiveWebhook,
   reviewFiring,
   runAutomationsTick,
-  triggerSummary,
   type AutomationEngineDeps,
-  type AutomationsTickSummary,
-  type ReviewResult,
-  type WebhookResult,
 } from './engine.js';
-export type { AutomationDecider, AutomationTriageAnswer, AutomationTriageInput } from './triage.js';
-export type { AutomationGh } from './github.js';
-export type { AutomationLaneDeps, LaneOutcome, LaneStatus } from './lanes.js';
-export { readAutomationJournal, readAutomationState, saveAutomation, type AutomationJournalRecord } from './store.js';
+export type { AutomationDecider } from './triage.js';
+export type { AutomationLaneDeps, LaneStatus } from './lanes.js';
+export { readAutomationJournal, readAutomationState } from './store.js';
 
 export async function listAutomations(): Promise<AutomationV1[]> {
   return (await readAutomations()).automations;

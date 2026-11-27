@@ -17,6 +17,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import { importRoutines } from '../core/automations/import.js';
+import { formatLocalStamp, isRecord } from '../core/automations/validate.js';
 
 import {
   AUTOMATION_LANES,
@@ -34,7 +35,7 @@ import {
   type AutomationView,
 } from '../core/automations/index.js';
 
-export const AUTOMATIONS_USAGE = [
+const AUTOMATIONS_USAGE = [
   'Usage: ashlr automations <command>',
   '',
   '  list [--json]                         Automations with last fired, next run, queue, spend, success rate',
@@ -110,13 +111,7 @@ function clean(text: string): string {
   return home && home.length > 1 ? text.split(home).join('~') : text;
 }
 
-function when(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
+const when = (iso: string | null): string => formatLocalStamp(iso) ?? '—';
 
 function viewLines(view: AutomationView): string[] {
   const { automation: a, stats: s } = view;
@@ -175,11 +170,11 @@ async function cmdAdd(deps: AutomationsCliDeps, p: Parsed): Promise<number> {
       deps.err(`Could not read ${clean(file!)} as JSON.`);
       return 1;
     }
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (!isRecord(parsed)) {
       deps.err('The file must hold one automation object.');
       return 1;
     }
-    input = parsed as Record<string, unknown>;
+    input = parsed;
   }
   const name = str(p, '--name');
   if (name !== undefined) input['name'] = name;

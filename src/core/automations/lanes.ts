@@ -158,6 +158,21 @@ export function resolveLaneDeps(deps: AutomationLaneDeps = {}): Required<Automat
 export const KILL_REASON = 'Stop is on (KILL) — automations dispatch nothing until it is cleared.';
 export const NO_GRANT_REASON = 'No standing grant is in force — automations only dispatch work under the grant.';
 
+/** Fail-closed KILL check: unknown or throwing counts as active. */
+export async function readKillActive(deps: Required<AutomationLaneDeps>): Promise<boolean> {
+  try { return await deps.killActive(); } catch { return true; }
+}
+
+/** Fail-closed standing-policy read: unknown or throwing counts as no grant. */
+export async function readStandingPolicy(deps: Required<AutomationLaneDeps>): Promise<EffectivePolicy | null> {
+  try { return await deps.policy(); } catch { return null; }
+}
+
+/** Fail-closed per-session cost read: unknown or throwing is not free (+Infinity). */
+export async function readEstimateUsd(lane: AutomationV1['lane'], deps: Required<AutomationLaneDeps>): Promise<number> {
+  try { return await deps.estimateUsd(lane); } catch { return Number.POSITIVE_INFINITY; }
+}
+
 export function repoInPolicy(policy: EffectivePolicy, repo: string): boolean {
   const lower = repo.toLowerCase();
   return policy.repos.some((entry) => entry.nameWithOwner.toLowerCase() === lower);
@@ -168,14 +183,17 @@ export function grantRepos(policy: EffectivePolicy | null): string[] {
   return policy ? policy.repos.map((r) => r.nameWithOwner) : [];
 }
 
+/** Process-wide gate refusal (KILL or no standing grant); null when clear. */
+export async function globalGateRefusal(deps: Required<AutomationLaneDeps>): Promise<string | null> {
+  if (await readKillActive(deps)) return KILL_REASON;
+  return (await readStandingPolicy(deps)) ? null : NO_GRANT_REASON;
+}
+
 /** KILL first (every lane), then the grant (every lane that does work). Null = clear. */
 export async function laneGateRefusal(lane: AutomationV1['lane'], repo: string, deps: Required<AutomationLaneDeps>): Promise<string | null> {
-  let kill = true;
-  try { kill = await deps.killActive(); } catch { kill = true; }
-  if (kill) return KILL_REASON;
+  if (await readKillActive(deps)) return KILL_REASON;
   if (lane === 'leader-review') return null;
-  let policy: EffectivePolicy | null = null;
-  try { policy = await deps.policy(); } catch { policy = null; }
+  const policy = await readStandingPolicy(deps);
   if (!policy) return NO_GRANT_REASON;
   if (!repoInPolicy(policy, repo)) return `${repo} is not in the standing grant's current stage.`;
   return null;
@@ -222,7 +240,7 @@ export function buildAutomationPrompt(automation: AutomationV1, firing: Automati
 }
 
 /** Fleet dedupe keys are short identifiers without spaces (task-source cleanRef). */
-export function fleetDedupeKey(firing: AutomationFiringV1): string {
+function fleetDedupeKey(firing: AutomationFiringV1): string {
   return `automation:${firing.automationId}:${firing.id}`.slice(0, 190);
 }
 
@@ -230,8 +248,19 @@ export function fleetDedupeKey(firing: AutomationFiringV1): string {
 // Dispatch
 // ---------------------------------------------------------------------------
 
-const CLOUD_DEFER: ReadonlySet<string> = new Set(['budget', 'seat-unavailable', 'rate-limited', 'timeout']);
 const DEVIN_REFUSE: ReadonlySet<string> = new Set(['not-enabled', 'not-connected', 'auth', 'forbidden', 'invalid-request']);
+
+function remoteFailureOutcome(
+  lane: 'cloud' | 'devin',
+  res: { task: { id: string; sessionUrl: string | null } | null; error: string | null; failure: string | null },
+  fallbackReason: string,
+  refuseCodes?: ReadonlySet<string>,
+): LaneOutcome {
+  const reason = res.error ?? fallbackReason;
+  if (res.task) return { kind: 'failed', reason, ref: { lane, id: res.task.id, url: res.task.sessionUrl } };
+  if (res.failure === null || (refuseCodes && refuseCodes.has(res.failure))) return { kind: 'refused', reason };
+  return { kind: 'deferred', reason };
+}
 
 /**
  * Hand one claimed firing to its lane. The caller has already applied the
@@ -289,10 +318,7 @@ export async function dispatchToLane(
           reason: 'Claude cloud session started.',
         };
       }
-      const reason = res.error ?? 'The cloud lane did not start the session.';
-      if (res.task) return { kind: 'failed', reason, ref: { lane: 'cloud', id: res.task.id, url: res.task.sessionUrl } };
-      if (res.failure && CLOUD_DEFER.has(res.failure)) return { kind: 'deferred', reason };
-      return res.failure === null ? { kind: 'refused', reason } : { kind: 'deferred', reason };
+      return remoteFailureOutcome('cloud', res, 'The cloud lane did not start the session.');
     }
 
     case 'devin': {
@@ -305,7 +331,7 @@ export async function dispatchToLane(
         ...(firing.playbookId ? { playbook: firing.playbookId } : {}),
       });
       if (res.ok && res.task) {
-        const usd = await deps.estimateUsd('devin');
+        const usd = await readEstimateUsd('devin', deps);
         return {
           kind: 'dispatched',
           ref: { lane: 'devin', id: res.task.id, url: res.task.sessionUrl },
@@ -313,12 +339,9 @@ export async function dispatchToLane(
           reason: 'Devin session started.',
         };
       }
-      const reason = res.error ?? 'The Devin lane did not start the session.';
-      if (res.task) return { kind: 'failed', reason, ref: { lane: 'devin', id: res.task.id, url: res.task.sessionUrl } };
       // The fleet opt-in and "not in the standing grant" come back as not-enabled
       // too — both can change, but not on their own within the queue's lifetime.
-      if (res.failure && DEVIN_REFUSE.has(res.failure)) return { kind: 'refused', reason };
-      return res.failure === null ? { kind: 'refused', reason } : { kind: 'deferred', reason };
+      return remoteFailureOutcome('devin', res, 'The Devin lane did not start the session.', DEVIN_REFUSE);
     }
   }
 }
