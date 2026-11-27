@@ -1171,6 +1171,9 @@ evidence, the starvation view uses lane-local headroom.
 measurement for their idle alarms. A confirmed fleet stop clears the alarm,
 and limited shared capacity bounds the reported free slots. The lane's target
 and running count remain visible separately.
+An idle alarm also requires a known zero lane-open READY count. If shared
+queue evidence is missing or degraded, a lane with free slots and zero
+queued jobs reports unknown lane-open supply and raises no idle alarm.
 The desktop lane
 card (Ops, Lanes on this Mac) shows the same line. The Leader posts one chat notice
 when a lane has been starved for 30 minutes, at most once per lane every 6 hours,

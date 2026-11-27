@@ -2629,7 +2629,8 @@ const EMPTY_TAGS: ReadonlySet<string> = new Set([
 
 /**
  * Folds empty-tags.jsonl text into each job's recorded empty tag. The
- * latest eligible append wins for each job. Legacy rows lack timestamps.
+ * first eligible append in the supplied ledger bytes wins for each job.
+ * Legacy rows lack timestamps.
  * Timestamped rows require a parseable time at or before the cutoff.
  * Only rows with the exact job.empty-tag.v1 schema, a bounded job id and a tag in the closed EMPTY_TAGS vocabulary count;
  * malformed JSON, other schemas, out-of-vocabulary tags and non-object
@@ -2657,7 +2658,7 @@ export function foldEmptyTags(text: string, throughMs = Infinity): Map<string, s
       if (!Number.isFinite(at) || at > throughMs) continue;
     }
     const job = row['job'];
-    if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
+    if (typeof job !== 'string' || job.length === 0 || job.length > 200 || tags.has(job)) continue;
     const tag = row['tag'];
     if (typeof tag !== 'string' || !EMPTY_TAGS.has(tag)) continue;
     tags.set(job, tag);

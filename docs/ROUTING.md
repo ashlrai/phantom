@@ -683,7 +683,8 @@ append to `metrics/empty-tags.jsonl` from empty-final-reason's verdict
 vocabulary. New receipts carry their recording time. Router outcomes and
 improvement discovery exclude receipts recorded after their start time and
 receipts with invalid timestamps. Older receipts without timestamps remain
-eligible, and the last eligible append for each job supplies the tag. The
+eligible. The first eligible append in the retained evidence supplies each
+job's tag, matching the writer's first-write rule. The
 tag attaches regardless of the standing finish verdict —
 it is the fleet's post-hoc triage of the job's final output, distinct
 from the finish row's own `empty`/`empty_class` measures — and rows

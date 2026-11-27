@@ -2066,11 +2066,13 @@ describe('router outcome market handoff advisory join', () => {
 });
 
 describe('router outcome empty-tag join', () => {
-  it('folds job.empty-tag.v1 rows to each job\'s recorded tag, last row wins', () => {
+  it('folds job.empty-tag.v1 rows to each job\'s first eligible tag in append order', () => {
     const tags = foldEmptyTags([
-      JSON.stringify(emptyTag('J1', 'already_done')),
-      JSON.stringify(emptyTag('J1', 'pool_cap')),          // repeated job: last append stands
+      JSON.stringify(emptyTag('J1', 'bogus')),
+      JSON.stringify(emptyTag('J1', 'already_done', { ts: '2026-11-02T00:00:00Z' })),
+      JSON.stringify(emptyTag('J1', 'pool_cap', { ts: '2026-11-01T00:00:00Z' })),
       JSON.stringify(emptyTag('J2', 'unknown')),
+      JSON.stringify(emptyTag('J2', 'blocked')),
       JSON.stringify(emptyTag('J3', 'no_change_needed', { lane: 'beta' })),
       JSON.stringify(emptyTag('J4', 'not_a_tag')),
       JSON.stringify(emptyTag('J5', 'blocked', { schema: 'jobs.empty-tags.v1' })),
@@ -2082,7 +2084,7 @@ describe('router outcome empty-tag join', () => {
       '[1,2]',
       '',
     ].join('\n'));
-    expect(tags.get('J1')).toBe('pool_cap');
+    expect(tags.get('J1')).toBe('already_done');
     expect(tags.get('J2')).toBe('unknown');
     expect(tags.get('J3')).toBe('no_change_needed');
     expect(tags.size).toBe(3);
@@ -2117,6 +2119,7 @@ describe('router outcome empty-tag join', () => {
     const root = runsDir(['AT', 'FUTURE', 'INVALID'].map(job =>
       JSON.stringify({ job, lane: 'alpha', phase: 'CLOSED', ts: cutoff })).join('\n'));
     writeEmptyTags(root, [
+      emptyTag('AT', 'unknown', { ts: future }),
       emptyTag('AT', 'already_done', { ts: cutoff }),
       emptyTag('AT', 'blocked', { ts: future }),
       emptyTag('FUTURE', 'unknown', { ts: future }),
