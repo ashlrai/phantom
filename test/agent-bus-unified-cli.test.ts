@@ -273,6 +273,45 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['wakes', '--all', '--channel='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
+  it('filters wakes by the topic component of the to label', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas'])).json).toMatchObject({ status: 'created' });
+    // P0 channel posts wake the room's group:<name>:<topic> address.
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--topic', 'deploy',
+      '--text', 'ship it', '--priority', 'P0', '--id', 'wt-rel-deploy'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas',
+      '--text', 'general post', '--priority', 'P0', '--id', 'wt-rel-gen'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['channel', 'post', 'ops', '--from', 'atlas', '--topic', 'deploy',
+      '--text', 'page ops', '--priority', 'P0', '--id', 'wt-ops-deploy'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'hi',
+      '--priority', 'P0', '--id', 'wt-dm'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+
+    // Fleet-wide: --topic answers "which hints concern topic X" across rooms.
+    const deploy = await run(['wakes', '--all', '--topic', 'deploy']);
+    expect(deploy.json).toMatchObject({ status: 'ok', scope: 'fleet', matched: 2 });
+    expect(deploy.json.wakes.map((w: { id: string }) => w.id)).toEqual(['wt-rel-deploy', 'wt-ops-deploy']);
+    // It composes with --channel into one room AND one topic.
+    const opsDeploy = await run(['wakes', '--all', '--channel', 'ops', '--topic', 'deploy']);
+    expect(opsDeploy.json.wakes.map((w: { id: string }) => w.id)).toEqual(['wt-ops-deploy']);
+    expect((await run(['wakes', '--all', '--topic', 'absent'])).json)
+      .toMatchObject({ matched: 0, wakes: [] });
+    // Per-agent: nova belongs to release, so the room's deploy hint shows;
+    // the ops room's same-topic hint is outside her addressee scope.
+    const novaDeploy = await run(['wakes', 'nova', '--topic', 'deploy']);
+    expect(novaDeploy.json).toMatchObject({ matched: 1 });
+    expect(novaDeploy.json.wakes.map((w: { id: string }) => w.id)).toEqual(['wt-rel-deploy']);
+    expect(await run(['wakes', 'nova', '--topic', 'Bad Name']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['wakes', '--all', '--topic='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('filters wakes by the resolved referent thread label and reply citation', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

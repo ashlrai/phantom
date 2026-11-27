@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { appendBusInbox, listBusInboxAfter, scanBusInbox, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxOptions, type BusInboxPost, type BusInboxReceipt, type BusInboxScan } from '../fleet/bus-inbox.js';
 import { BUS_PRIORITIES, isClaimableWork, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
-import { groupAddress, isGroupPresenceBody } from '../fleet/bus-group.js';
+import { groupAddress, groupAddressTopicOf, isGroupPresenceBody } from '../fleet/bus-group.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { createBusWakeHook, type BusWakeResult } from '../fleet/bus-wake.js';
@@ -1639,10 +1639,10 @@ export type AllWakesPage =
   | { status: 'ok'; scope: 'fleet'; wakes: AgentWakeRow[]; matched: number; truncated: boolean }
   | { status: 'unavailable' | 'invalid'; reason: string };
 
-/** The filter set every wake read shares: one job id, sender include/exclude, one channel, one priority band, contains text, one v2 thread label, one reply citation, one body-kind discriminator, one work-result outcome, the exclusive upper time bound and one exact hint id. */
-interface WakeFilter { job?: string; from?: string; excludeFrom?: string; channel?: string; contains?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome }
+/** The filter set every wake read shares: one job id, sender include/exclude, one channel, one topic, one priority band, contains text, one v2 thread label, one reply citation, one body-kind discriminator, one work-result outcome, the exclusive upper time bound and one exact hint id. */
+interface WakeFilter { job?: string; from?: string; excludeFrom?: string; channel?: string; topic?: string; contains?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome }
 
-type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; channel?: string; containsNeedle?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome }
+type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; channel?: string; topic?: string; containsNeedle?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome }
   | { ok: false; reason: string };
 
 /** Validate the shared wakes filter set before any store is touched. */
@@ -1688,6 +1688,10 @@ function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
   if (channel !== undefined && (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success)) {
     return { ok: false, reason: 'Invalid channel name.' };
   }
+  const topic = filter.topic;
+  if (topic !== undefined && (typeof topic !== 'string' || !agentChannelNameSchema.safeParse(topic).success)) {
+    return { ok: false, reason: 'Invalid channel topic.' };
+  }
   const before = filter.before;
   if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) {
     return { ok: false, reason: 'Invalid before.' };
@@ -1696,7 +1700,7 @@ function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
   if (containsNeedle === null) return { ok: false, reason: 'Invalid contains filter.' };
   return { ok: true, ...(job === undefined ? {} : { job }),
     ...(from === undefined ? {} : { from }), ...(excludeFrom === undefined ? {} : { excludeFrom }),
-    ...(channel === undefined ? {} : { channel }),
+    ...(channel === undefined ? {} : { channel }), ...(topic === undefined ? {} : { topic }),
     ...(priority === undefined ? {} : { priority }),
     ...(before === undefined ? {} : { before }),
     ...(id === undefined ? {} : { id }),
@@ -1862,7 +1866,18 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
  * for that agent — a channel the agent does not belong to simply has no
  * hints to show) and with every other filter, `matched` counting it with
  * the rest of the queue-tail match; a name no hint addresses matches
- * nothing rather than erroring. `filter.contains` keeps only hints whose
+ * nothing rather than erroring. `filter.topic` keeps only hints whose own
+ * `to` label parses to that exact topic component through the shared
+ * `groupAddressTopicOf` — the same match `channel read --topic`,
+ * `thread --topic`, `dead-letters --topic`, `work feed --topic` and every
+ * other bus read's topic filter apply — grammar-validated by the same
+ * channel-name rule and decided on the hint's address alone like
+ * `channel`, so it needs no referent resolution, composes with `channel`
+ * into one room AND one topic and with every other filter, `matched`
+ * counting it inside the queue-tail match, a `to` that is not a
+ * well-formed `group:<room>:<topic>` label never matching, a topic no
+ * hint addresses matching nothing rather than erroring, and a malformed
+ * topic answering `invalid`. `filter.contains` keeps only hints whose
  * resolved referent text carries the needle — a `bus.send` hint's live
  * message summary or a claim-holder hint's citing `work.status` detail,
  * the same scrubbed one-line text the row reports — so "which wake was
@@ -1952,6 +1967,7 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
   const page = readWakeRows(sinceAt, options, read.registry, wake =>
     (parsed.id === undefined || wake.id === parsed.id) &&
     (channelPrefix === undefined || wake.to.startsWith(channelPrefix)) &&
+    (parsed.topic === undefined || groupAddressTopicOf(wake.to) === parsed.topic) &&
     (fromMatch === undefined || fromMatch(wake.from)) &&
     (excludeFromMatch === undefined || !excludeFromMatch(wake.from)) &&
     // The addressee label folds to its identity exactly as the inbox read
@@ -1974,12 +1990,16 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
  * claim-holder fan-out writes, which no identity ref can name). Rows
  * carry the same `claimHolder`/`message` resolution `readAgentWakes`
  * annotates, so fleet triage costs the same zero extra reads; the
- * `since`/`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/
+ * `since`/`job`/`from`/`excludeFrom`/`channel`/`topic`/`contains`/`priority`/`before`/
  * `thread`/`inReplyTo`/`bodyKind`/`result`
  * filters behave identically — `channel` keeps only hints whose own `to`
  * label sits under `group:<name>:*`, the room prefix every other bus read's
  * channel filter matches, decided on the address alone inside the
- * queue-tail match so `matched` counts it with the rest, `before` keeps
+ * queue-tail match so `matched` counts it with the rest, `topic` keeps
+ * only hints whose own `to` parses to that exact topic component through
+ * the same `groupAddressTopicOf` match every other bus read's topic
+ * filter applies, composing with `channel` into one room AND one topic,
+ * `before` keeps
  * only hints recorded strictly before its epoch-ms cutoff — the same
  * exclusive upper bound `readAgentWakes`' `filter.before` applies on the
  * hint's queue time — including the fail-closed
@@ -2009,6 +2029,7 @@ export function readAllWakes(sinceAt: number | undefined, options: UnifiedBusOpt
   const page = readWakeRows(sinceAt, options, read.registry, wake =>
     (parsed.id === undefined || wake.id === parsed.id) &&
     (channelPrefix === undefined || wake.to.startsWith(channelPrefix)) &&
+    (parsed.topic === undefined || groupAddressTopicOf(wake.to) === parsed.topic) &&
     (fromMatch === undefined || fromMatch(wake.from)) &&
     (excludeFromMatch === undefined || !excludeFromMatch(wake.from)), parsed);
   if (page.status !== 'ok') return page;
