@@ -115,6 +115,18 @@ describe('nodes offload', () => {
     expect(unknown.moves).toEqual([]);
   });
 
+  it('never moves a ready row whose job already runs on a node under the bridge id', async () => {
+    // The claim bridge enqueues a ready row as `ready:<job>:<attempt>`
+    // (routerJobId in drive/nodes/ready-bridge.ts), so jobsRunning carries
+    // node job ids, not ready-row ids. A re-queued row for the same job must
+    // still count as running.
+    const running = [node('node-a', { slots: 2 }), node('node-b', { slots: 4 })];
+    const live = [{ id: 'ready:j1:1', state: 'running', claim: { nodeId: 'node-a', session: 1, jobId: 'ready:j1:1', expiresAt: NOW + 30_000 } } as unknown as NodesState['jobs'][number]];
+    const report = await readNodesOffload(deps(busy, { nodes: running, running: live }), { dryRun: true });
+    expect(report.stays.find(s => s.job === 'j1')?.why).toMatch(/already running/);
+    expect(report.moves.map(m => m.job)).toEqual(['j2', 'j3']);
+  });
+
   it('resolves market lanes to the node cap the bridge requires; host-bound lanes stay', async () => {
     // job.lane is a market lane: codex-personal needs the codex cap — the same
     // map the claim bridge applies (remoteLaneCap in unfed-market). `omlx` only
