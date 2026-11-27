@@ -13,28 +13,31 @@
  * `after <deps>` / `depends[ =]<deps>` declare job or PR dependencies;
  * `esc=<pool> after <N> failed` is an escalation spec, never a dependency.
  */
-import { createHash } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { rqDigest } from './rq-backlog.js';
 
 /** The seven fleet repositories restock may route to, as ~/Projects/ashlrai/<name>. */
 export const FLEET_REPOS = ['phantom', 'phantom-secrets', 'locus', 'lexicon', 'ashlr-stack', 'ashlr-plugin', 'ashlr-md'] as const;
 export type FleetRepo = typeof FLEET_REPOS[number];
 
-export type LintReason =
-  | 'unparseable'         // `- READY` line that fails the candidate grammar
-  | 'bad-id'              // job id does not start with an uppercase letter or has bad characters
-  | 'dup-line'            // the same job id appears on an earlier candidate line
-  | 'no-repo'             // no repo= attribute and no LAND-<repo>-<n> id fallback
-  | 'bad-repo'            // repo= is not one of the seven fleet repositories
-  | 'repo-folder-missing' // ~/Projects/ashlrai/<repo> is not a directory
-  | 'github-protected'    // task touches .github/ outside an explicit negation
-  | 'no-file-path'        // task text names no concrete file path
-  | 'no-test-command'     // task text names no test/verification or acceptance
-  | 'bad-dep'             // a dependency token is malformed
-  | 'unlanded-dep'        // a job/PR dependency has no landed/merged evidence
-  | 'unknown-pool';       // pool= is outside the caller-supplied pool set
+export const RESTOCK_LINT_REASONS = [
+  'unparseable',         // `- READY` line that fails the candidate grammar
+  'bad-id',              // job id does not start with an uppercase letter or has bad characters
+  'dup-line',            // the same job id appears on an earlier candidate line
+  'no-repo',             // no repo= attribute and no LAND-<repo>-<n> id fallback
+  'bad-repo',            // repo= is not one of the seven fleet repositories
+  'repo-folder-missing', // ~/Projects/ashlrai/<repo> is not a directory
+  'github-protected',    // task touches .github/ outside an explicit negation
+  'no-file-path',        // task text names no concrete file path
+  'no-test-command',     // task text names no test/verification or acceptance
+  'bad-dep',             // a dependency token is malformed
+  'unlanded-dep',        // a job/PR dependency has no landed/merged evidence
+  'unknown-pool',        // pool= is outside the caller-supplied pool set
+] as const;
+
+export type LintReason = (typeof RESTOCK_LINT_REASONS)[number];
 
 export interface RestockEscalation {
   /** Escalation target pool from esc=<pool>; null when only `after N failed` is present. */
@@ -144,7 +147,6 @@ export const restockReposRoot = (): string => join(homedir(), 'Projects', 'ashlr
 const defaultIsDir = (path: string): boolean => {
   try { return statSync(path).isDirectory(); } catch { return false; }
 };
-const digest = (value: string): string => createHash('sha256').update(value).digest('hex');
 
 type ParsedLine =
   | { kind: 'other' }
@@ -269,18 +271,18 @@ function repoOf(attrs: string, jobId: string): string | null {
  * candidates and return null; the document-level lint counts them as ignored.
  */
 export function lintRestockLine(line: string, lineNumber: number, options: RestockLintOptions = {},
-  context: { statuses?: Map<string, string>; seen?: Set<string> } = {}): { candidate: RestockCandidate } | { drop: RestockDrop } | null {
+  context: { statuses?: Map<string, string>; seen?: Set<string>; landed?: ReadonlySet<string> } = {}): { candidate: RestockCandidate } | { drop: RestockDrop } | null {
   const parsed = parseLine(line);
   if (parsed.kind === 'other') return null;
   const drop = (jobId: string | null, reasons: LintReason[]): { drop: RestockDrop } =>
-    ({ drop: { line: lineNumber, jobId, reasons, sha: digest(line) } });
+    ({ drop: { line: lineNumber, jobId, reasons, sha: rqDigest(line) } });
   if (parsed.kind === 'malformed') return drop(parsed.jobId, ['unparseable']);
   const { jobId, attrs, task } = parsed;
   const repo = repoOf(attrs, jobId);
   const { deps, escalation } = parseDepsAndEscalation(attrs, jobId, repo);
   const reasons: LintReason[] = [];
   const isDir = options.isDir ?? defaultIsDir;
-  const landed = landedKeys(options.landed ?? new Set());
+  const landed = context.landed ?? landedKeys(options.landed ?? new Set());
   const statuses = context.statuses ?? new Map();
 
   if (!/^[A-Z]/.test(jobId) || !JOB_ID.test(jobId)) reasons.push('bad-id');
@@ -302,11 +304,11 @@ export function lintRestockLine(line: string, lineNumber: number, options: Resto
   }
   const pool = POOL_ATTR.exec(attrs)?.[1];
   if (options.pools && pool && pool !== 'any' && !options.pools.has(pool)) reasons.push('unknown-pool');
-  if (reasons.length > 0) return drop(jobId, reasons);
+  if (reasons.length > 0 || deps === 'bad') return drop(jobId, reasons);
   return {
     candidate: {
       line: lineNumber, raw: line, jobId, repo: repo as FleetRepo, attrs, task,
-      deps: (deps === 'bad' ? [] : deps).map((dep) => dep.key), escalation,
+      deps: deps.map((dep) => dep.key), escalation,
     },
   };
 }
@@ -318,11 +320,12 @@ export function lintRestockLine(line: string, lineNumber: number, options: Resto
  */
 export function lintRestockDocument(text: string, options: RestockLintOptions = {}): RestockLintReport {
   const statuses = documentStatuses(text);
+  const landed = landedKeys(options.landed ?? new Set());
   const seen = new Set<string>();
   const report: RestockLintReport = { candidates: 0, accepted: [], drops: [] };
   const lines = text.split('\n');
   for (const [index, line] of lines.entries()) {
-    const verdict = lintRestockLine(line, index + 1, options, { statuses, seen });
+    const verdict = lintRestockLine(line, index + 1, options, { statuses, seen, landed });
     if (verdict === null) continue;
     report.candidates++;
     if ('drop' in verdict) report.drops.push(verdict.drop);

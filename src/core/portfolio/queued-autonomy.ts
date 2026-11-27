@@ -19,7 +19,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
-import type { EngineId, EngineTier, RepairTreatment, WorkItem, WorkSource } from '../types.js';
+import type { EngineId, EngineTier, RepairTreatment, WorkItem } from '../types.js';
 import {
   REJECTED_CAPTURE_REPAIR_MAX_AGE_MS,
   isActionableSelfHealItem,
@@ -27,10 +27,8 @@ import {
 import { generatedRepairGenerationId } from '../fleet/generated-repair-lifecycle.js';
 import { repairTreatmentForUnitId, repairTreatmentUnitId } from '../fleet/generated-repair-identity.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
+import { isPlainRecord, isSha256Hex, isWorkSource } from './scoring.js';
 
-const WORK_SOURCES = new Set<WorkSource>([
-  'issue', 'todo', 'test', 'dep', 'doc', 'security', 'plugin', 'self', 'lint', 'goal', 'hygiene', 'invent',
-]);
 const ENGINE_IDS = new Set<EngineId>([
   'builtin', 'local-coder', 'ashlrcode', 'aw', 'claude', 'codex', 'hermes', 'kimi', 'nim', 'opencode', 'meta-muse', 'grok',
 ]);
@@ -63,19 +61,17 @@ function validRepairParentMetadata(item: Partial<WorkItem>): boolean {
     typeof item.repairParentItemId === 'string' &&
     item.repairParentItemId.length > 0 &&
     item.repairParentItemId.length <= 180 &&
-    typeof item.repairParentSource === 'string' &&
-    WORK_SOURCES.has(item.repairParentSource as WorkSource) &&
+    isWorkSource(item.repairParentSource) &&
     (item.repairParentBackend === null ||
       (typeof item.repairParentBackend === 'string' && ENGINE_IDS.has(item.repairParentBackend as EngineId))) &&
     (item.repairParentTier === null ||
       (typeof item.repairParentTier === 'string' && ENGINE_TIERS.has(item.repairParentTier as EngineTier))) &&
-    typeof item.repairParentObjectiveHash === 'string' &&
-    /^[a-f0-9]{64}$/.test(item.repairParentObjectiveHash)
+    isSha256Hex(item.repairParentObjectiveHash)
   );
 }
 
 function isWorkItemLike(value: unknown): value is WorkItem {
-  if (!value || typeof value !== 'object') return false;
+  if (!isPlainRecord(value)) return false;
   const item = value as Partial<WorkItem>;
   return (
     typeof item.id === 'string' &&
@@ -98,7 +94,7 @@ export function isStrictWorkItem(value: unknown): value is WorkItem {
   if (!isWorkItemLike(value)) return false;
   if (!(value.id.length > 0 && value.id.length <= 180 &&
     isAbsolute(value.repo) && value.repo.length <= 4096 &&
-    WORK_SOURCES.has(value.source) &&
+    isWorkSource(value.source) &&
     value.title.length > 0 && value.title.length <= 240 &&
     value.detail.length > 0 && value.detail.length <= 4_000 &&
     Number.isInteger(value.value) && value.value >= 1 && value.value <= 5 &&
@@ -115,7 +111,7 @@ export function isStrictWorkItem(value: unknown): value is WorkItem {
   )) return false;
   const treatmentMetadataPresent = value.repairTreatmentUnitId !== undefined || value.repairTreatment !== undefined;
   if (treatmentMetadataPresent && (
-    typeof value.repairTreatmentUnitId !== 'string' || !/^[a-f0-9]{64}$/.test(value.repairTreatmentUnitId) ||
+    !isSha256Hex(value.repairTreatmentUnitId) ||
     !REPAIR_TREATMENTS.has(value.repairTreatment as RepairTreatment) ||
     !/:proposal-repair-nodiff:[0-9a-f]{12}$/i.test(value.id) ||
     !value.tags.includes('diagnostic-reslice') ||
@@ -159,19 +155,17 @@ function sanitizeStrictWorkItem(value: unknown): WorkItem | null {
   };
 }
 
+function extractWorkItemRows(parsed: unknown): unknown[] | undefined {
+  if (Array.isArray(parsed)) return parsed;
+  if (isPlainRecord(parsed) && Array.isArray(parsed['items'])) return parsed['items'];
+  return undefined;
+}
+
 function readWorkItemsFile(filePath: string): WorkItem[] {
   try {
     if (!existsSync(filePath)) return [];
-    const raw = JSON.parse(readFileSync(filePath, 'utf8')) as unknown;
-    if (Array.isArray(raw)) return raw.filter(isWorkItemLike);
-    if (
-      raw &&
-      typeof raw === 'object' &&
-      Array.isArray((raw as { items?: unknown }).items)
-    ) {
-      return (raw as { items: unknown[] }).items.filter(isWorkItemLike);
-    }
-    return [];
+    const rows = extractWorkItemRows(JSON.parse(readFileSync(filePath, 'utf8')) as unknown);
+    return rows ? rows.filter(isWorkItemLike) : [];
   } catch {
     return [];
   }
@@ -251,11 +245,7 @@ function readWorkItemsFileStrict(filePath: string): StrictWorkItemsFileRead {
     } catch {
       return strictUnavailable();
     }
-    const rows = Array.isArray(parsed)
-      ? parsed
-      : parsed && typeof parsed === 'object' && Array.isArray((parsed as { items?: unknown }).items)
-        ? (parsed as { items: unknown[] }).items
-        : undefined;
+    const rows = extractWorkItemRows(parsed);
     if (!rows) return strictUnavailable();
     if (rows.length > MAX_QUEUED_AUTONOMY_ROWS_PER_FILE) {
       return strictUnavailable(MAX_QUEUED_AUTONOMY_ROWS_PER_FILE, true);
@@ -285,16 +275,10 @@ function isQueuedAutonomyItem(item: WorkItem): boolean {
   return isActionableSelfHealItem(item, maxAgeMs === undefined ? undefined : { maxAgeMs });
 }
 
-/** Return all queued self-heal/invent items without mutating any state. */
-export function loadQueuedAutonomyItems(): WorkItem[] {
-  const root = join(homedir(), '.ashlr');
-  const queued = [
-    ...readWorkItemsFile(join(root, 'self-heal-queue.json')),
-    ...readWorkItemsFile(join(root, 'backlog.json')),
-  ];
+function dedupeQueuedAutonomyItems(candidates: Iterable<WorkItem>): WorkItem[] {
   const seen = new Set<string>();
   const result: WorkItem[] = [];
-  for (const item of queued) {
+  for (const item of candidates) {
     if (!isQueuedAutonomyItem(item)) continue;
     const key = `${resolve(item.repo)}\0${item.id}`;
     if (seen.has(key)) continue;
@@ -302,6 +286,15 @@ export function loadQueuedAutonomyItems(): WorkItem[] {
     result.push(item);
   }
   return result;
+}
+
+/** Return all queued self-heal/invent items without mutating any state. */
+export function loadQueuedAutonomyItems(): WorkItem[] {
+  const root = join(homedir(), '.ashlr');
+  return dedupeQueuedAutonomyItems([
+    ...readWorkItemsFile(join(root, 'self-heal-queue.json')),
+    ...readWorkItemsFile(join(root, 'backlog.json')),
+  ]);
 }
 
 /**
@@ -334,18 +327,9 @@ export function loadQueuedAutonomyItemsDetailed(): QueuedAutonomyReadResult {
   const filesUnavailable = reads.filter((read) => read.state === 'unavailable').length;
   const rowsScanned = reads.reduce((total, read) => total + read.rowsScanned, 0);
   const limitExceeded = reads.some((read) => read.limitExceeded);
-  const seen = new Set<string>();
-  const items: WorkItem[] = [];
-  for (const read of reads) {
-    if (read.state !== 'complete') continue;
-    for (const item of read.items) {
-      if (!isQueuedAutonomyItem(item)) continue;
-      const key = `${resolve(item.repo)}\0${item.id}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      items.push(item);
-    }
-  }
+  const items = dedupeQueuedAutonomyItems(
+    reads.flatMap((read) => (read.state === 'complete' ? read.items : [])),
+  );
   return {
     items,
     sourceState: filesUnavailable > 0 ? 'unavailable' : 'complete',
