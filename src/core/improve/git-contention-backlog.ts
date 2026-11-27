@@ -79,6 +79,7 @@ import { join } from 'node:path';
 
 import { CLOUD_REPO_PATTERN } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
+import { gitOperationReceiptKey } from '../fleet/jobs-ledger-dialect.js';
 import { readLedgerTail, ROUTER_OUTCOME_LEDGER_LIMIT, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../router/outcomes.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -187,7 +188,7 @@ function rowTs(row: Record<string, unknown>): number {
  * event/type/kind precedence job-latency's boundaryEvent applies), an
  * operation inside the five-name vocabulary, non-empty machine and lane
  * strings, an in-window timestamp, and failed/retries in their recorded
- * shapes. Identical receipt lines count once. elapsed_ms is
+ * shapes. Replays of the same receipt count once. elapsed_ms is
  * accepted but not carried: no recorded verdict makes a slow operation
  * adverse.
  */
@@ -195,8 +196,7 @@ export function parseGitContentionRows(text: string, cutoffMs: number, nowMs: nu
   const out: GitOperationRecord[] = [];
   const seen = new Set<string>();
   for (const line of text.split(/\r?\n/)) {
-    const receipt = line.trim();
-    if (!receipt || seen.has(receipt)) continue;
+    if (!line.trim()) continue;
     let row: unknown;
     try { row = JSON.parse(line); } catch { continue; }
     if (row === null || typeof row !== 'object' || Array.isArray(row)) continue;
@@ -211,6 +211,8 @@ export function parseGitContentionRows(text: string, cutoffMs: number, nowMs: nu
     if (typeof lane !== 'string' || lane.trim() === '') continue;
     const atMs = rowTs(r);
     if (!Number.isFinite(atMs) || atMs < cutoffMs || atMs > nowMs) continue;
+    const receipt = gitOperationReceiptKey(r, line);
+    if (seen.has(receipt)) continue;
     seen.add(receipt);
     const failedRaw = r['failed'];
     const failed = typeof failedRaw === 'boolean' ? failedRaw : null;
