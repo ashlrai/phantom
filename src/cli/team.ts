@@ -51,6 +51,7 @@ function flag(args: string[], name: string): string | undefined {
 
 export async function cmdTeam(argv: string[]): Promise<number> {
   const args = [...argv];
+  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   const json = args.includes('--json'); if (json) args.splice(args.indexOf('--json'), 1);
   const team = flag(args, '--team') ?? DEFAULT_TEAM;
   const name = normalizeHandle(flag(args, '--as') ?? process.env['PHM_TEAM_USER'] ?? userInfo().username);

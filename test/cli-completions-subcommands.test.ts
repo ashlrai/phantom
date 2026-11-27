@@ -59,7 +59,8 @@ describe('completions offer every dispatched verb', () => {
     inbox: ['submit'],
     authority: ['resident'],
     daemon: ['pause', 'resume', 'doctor'],
-    fleet: ['stray-slots', 'stray-stop'],
+    fleet: ['stray-slots', 'stray-stop', 'pace', 'lane-truth'],
+    nodes: ['offload', '--discover'],
     universe: [
       'controller', 'console', 'resources', 'firm', 'preparation-measurement',
       'preparation-measurement-capture', 'preparation-measurement-compare',
@@ -68,6 +69,9 @@ describe('completions offer every dispatched verb', () => {
     mcp: ['ecosystem', 'run'],
     models: ['list'],
     notify: ['session'],
+    org: ['show', 'join', 'plan', 'init'],
+    team: ['list', 'add', 'show', 'view', 'join', 'invite', 'remove', 'role', 'link', 'approve', 'deny', 'claim', 'release', 'say'],
+    onboard: ['--ecosystem', '--rollback', '--yes', '--json', '--locus-firm'],
   };
 
   it.each(Object.entries(expected))('bash completes `phm %s` verbs', async (cmd, verbs) => {
