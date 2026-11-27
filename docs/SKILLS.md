@@ -205,8 +205,11 @@ the 7-day window. The trajectory join and skill-use diagnostics allow up to
 eight daily ledger partitions for that window, including both UTC date
 boundaries. Existing record and byte limits still apply. Only the corpus's newest revision in a `candidate` or
 `verified` status qualifies. If records for that revision disagree on its
-status, discovery withholds its brief regardless of their timestamps.
-A conflict on a superseded revision does not affect a newer revision.
+status or content hash, discovery withholds its brief regardless of their
+timestamps. Discovery also requires the recorded outcome digest to match the
+current card. Selections without a recorded content hash can contribute
+historical tallies but those tallies cannot trigger a brief. A conflict on a
+superseded revision does not affect a newer revision.
 The items keep the association-not-causation framing since
 shadow selections never steered those runs. Withdrawing or rewriting a card
 itself remains an owner-only act on the host-signed ledger.

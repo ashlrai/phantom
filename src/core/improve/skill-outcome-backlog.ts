@@ -37,7 +37,7 @@
  *    (no live cards can exist) and 'degraded' withholds the whole source —
  *    partially corrupt card history cannot prove which revision is live.
  *  - Live revisions only. An outcome row counts only while its exact
- *    (skillId, revision) is still the corpus's newest revision for that
+ *    (skillId, revision, content hash) is still the corpus's newest revision for that
  *    skill and its status is candidate or verified — the card states that
  *    are not already withdrawn. A superseded revision's adverse history is
  *    evidence the fleet already replaced, and a deprecated or revoked card
@@ -142,15 +142,20 @@ function fieldText(value: string, max: number = MAX_FIELD_CHARS): string {
   return scrubSecrets(value).replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, max);
 }
 
-/** Newest revision per skillId, with every observed status for that revision. */
+/** Newest revision per skillId, with the recorded statuses and content hashes. */
 function latestCards(cards: readonly SkillCard[]) {
-  const latest = new Map<string, { card: SkillCard; statuses: Set<SkillCard['status']> }>();
+  const latest = new Map<string, {
+    card: SkillCard;
+    statuses: Set<SkillCard['status']>;
+    hashes: Set<SkillCard['contentHash']>;
+  }>();
   for (const card of cards) {
     const old = latest.get(card.skillId);
     if (!old || card.revision > old.card.revision) {
-      latest.set(card.skillId, { card, statuses: new Set([card.status]) });
+      latest.set(card.skillId, { card, statuses: new Set([card.status]), hashes: new Set([card.contentHash]) });
     } else if (card.revision === old.card.revision) {
       old.statuses.add(card.status);
+      old.hashes.add(card.contentHash);
       if (card.ts > old.card.ts) old.card = card;
     }
   }
@@ -243,9 +248,10 @@ export async function skillOutcomeBacklogItems(opts: SkillOutcomeItemsOptions): 
       const tally = realizedTally(row);
       if (tally.adverse < SKILL_OUTCOME_ADVERSE_RECURRING) continue;
       const current = latest.get(row.skillId);
-      if (!current || current.statuses.size !== 1) continue;
+      if (!current || current.statuses.size !== 1 || current.hashes.size !== 1) continue;
       const { card } = current;
       if (card.revision !== row.skillRevision || !LIVE_STATUSES.has(card.status)) continue;
+      if (!row.skillContentHash || row.skillContentHash !== card.contentHash) continue;
       candidates.push({ row, card, tally });
     }
     // Strongest recorded evidence first; identity fields last so the order is total.

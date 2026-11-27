@@ -1892,7 +1892,9 @@ describe('Trajectory records', () => {
     expect(summary.skillObservation).not.toHaveProperty('conflicting');
   });
 
-  it.each([null, 'a', 'b'])('attributes only undisputed skill revisions (conflicting trajectory: %s)', (conflictingTrajectory) => {
+  it.each([null, 'a', 'b', 'missing'])('attributes only undisputed skill revisions (additional evidence: %s)', (additionalEvidence) => {
+    const conflictingTrajectory = additionalEvidence === 'missing' ? null : additionalEvidence;
+    const extraTrajectory = additionalEvidence === 'missing' ? 'b' : conflictingTrajectory;
     const outcomeFor = (
       id: string,
       action: 'merged' | 'rejected',
@@ -1979,15 +1981,15 @@ describe('Trajectory records', () => {
           skillUse({ eventId: 'use-c-alpha-sel', skillId: 'skill.alpha', skillRevision: 1, ts: TS2, trajectoryId: 'traj-c', runId: 'run-c', proposalId: 'prop-c' }),
           skillUse({ eventId: 'use-c-alpha-outcome', skillId: 'skill.alpha', skillRevision: 1, ts: TS3, selectedAt: TS2, stage: 'outcome', outcome: 'merged', trajectoryId: 'traj-c', runId: 'run-c', proposalId: 'prop-c' }),
           skillUse({ eventId: 'use-d-beta2', skillId: 'skill.beta', skillRevision: 2, contentHash: 'b'.repeat(64), ts: TS3, trajectoryId: 'traj-d', runId: 'run-d', proposalId: 'prop-d' }),
-          ...(conflictingTrajectory ? [skillUse({
-            eventId: 'use-alpha-conflict',
+          ...(extraTrajectory ? [skillUse({
+            eventId: 'use-alpha-extra',
             skillId: 'skill.alpha',
             skillRevision: 1,
-            contentHash: 'c'.repeat(64),
+            contentHash: additionalEvidence === 'missing' ? undefined : 'c'.repeat(64),
             stage: 'outcome',
-            trajectoryId: `traj-${conflictingTrajectory}`,
-            runId: `run-${conflictingTrajectory}`,
-            proposalId: `prop-${conflictingTrajectory}`,
+            trajectoryId: `traj-${extraTrajectory}`,
+            runId: `run-${extraTrajectory}`,
+            proposalId: `prop-${extraTrajectory}`,
           })] : []),
         ],
       }),
@@ -2003,18 +2005,21 @@ describe('Trajectory records', () => {
         ...(conflictingTrajectory ? [] : [{
           skillId: 'skill.alpha',
           skillRevision: 1,
+          ...(additionalEvidence === 'missing' ? {} : { skillContentHash: 'a'.repeat(64) }),
           selections: 3,
           outcomes: { merged: 2, rejected: 1 },
         }]),
         {
           skillId: 'skill.beta',
           skillRevision: 1,
+          skillContentHash: 'a'.repeat(64),
           selections: 1,
           outcomes: { merged: 1 },
         },
         {
           skillId: 'skill.beta',
           skillRevision: 2,
+          skillContentHash: 'b'.repeat(64),
           selections: 1,
           outcomes: { merged: 1 },
           realized: { reverted: 1 },
