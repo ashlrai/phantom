@@ -37,7 +37,7 @@ function compareVerdictPosition(a: VerdictCursor, b: VerdictCursor): number {
 }
 
 /** Keep one verdict per workflow run as of the observation time. */
-function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
+export function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
   const runs = new Map<string, { first: Entry; verdictConflict: boolean; testConflict: boolean }>();
   for (const entry of entries) {
     if (entry.outcome !== 'verdict' || Date.parse(entry.at) > nowMs) continue;
@@ -80,18 +80,25 @@ export function observedAttempts(entries: readonly Entry[], nowMs: number): Entr
     testConflict ? { ...first, test: undefined, tests: undefined } : first);
 }
 
-/** Expand each observed attempt once for each triggering test. */
-function summarizeFlakes(attempts: readonly Entry[], nowMs: number, verdicts: readonly Entry[]) {
-  const recentAttempts = attempts.filter(entry => Date.parse(entry.at) >= nowMs - RECURRING_FLAKE_WINDOW_MS);
-  const attemptsByRun = new Map(recentAttempts.map(entry => [rerunKey(entry), entry]));
-  const testsByAttempt = recentAttempts.flatMap(entry => triggeringTests(entry).map(test => ({ ...entry, test })));
-  const attributedVerdicts = verdicts.filter(verdict => {
+/** Attribute workflow verdicts only to a matching single-test attempt in the window. */
+export function attributedTestVerdicts(attempts: readonly Entry[], verdicts: readonly Entry[], nowMs: number): Entry[] {
+  const cutoff = nowMs - RECURRING_FLAKE_WINDOW_MS;
+  const attemptsByRun = new Map(attempts.filter(entry => Date.parse(entry.at) >= cutoff)
+    .map(entry => [rerunKey(entry), entry]));
+  return verdicts.filter(verdict => {
+    if (!verdict.test) return false;
     const attempt = attemptsByRun.get(rerunKey(verdict));
     if (!attempt || Date.parse(attempt.at) > Date.parse(verdict.at)) return false;
     const tests = triggeringTests(attempt);
     return tests.length === 1 && tests[0] === verdict.test;
   });
-  return recurringFlakes([...testsByAttempt, ...attributedVerdicts], { nowMs });
+}
+
+/** Expand each observed attempt once for each triggering test. */
+function summarizeFlakes(attempts: readonly Entry[], nowMs: number, verdicts: readonly Entry[]) {
+  const recentAttempts = attempts.filter(entry => Date.parse(entry.at) >= nowMs - RECURRING_FLAKE_WINDOW_MS);
+  const testsByAttempt = recentAttempts.flatMap(entry => triggeringTests(entry).map(test => ({ ...entry, test })));
+  return recurringFlakes([...testsByAttempt, ...attributedTestVerdicts(recentAttempts, verdicts, nowMs)], { nowMs });
 }
 
 /** Reconcile call receipts without treating replays as new calls. */

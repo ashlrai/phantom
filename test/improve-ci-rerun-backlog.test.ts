@@ -44,7 +44,7 @@ interface Row {
 
 let runSeq = 0;
 /** One probable-flake rerun lifecycle: attempt, the gh call result, then the resolved verdict. */
-const rerun = (repo: string, test: string, head: string, pr: number, verdict: 'pass' | 'fail' | 'inconclusive', days: number): Row[] => {
+const rerun = (repo: string, test: string, head: string, pr: number, verdict: 'pass' | 'fail' | 'inconclusive', days: number): [Row, Row, Row] => {
   const runId = 1000 + ++runSeq;
   const at = daysAgo(days);
   return [
@@ -206,16 +206,36 @@ describe('ciRerunBacklogItems', () => {
     expect(await discover([...rows, ...third, { ...replay, test: undefined }])).toEqual([]);
   });
 
-  it('omits disputed attempts from per-test backlog context', async () => {
-    const rows = [
-      ...rerun(REPO, TEST_A, sha(1), 11, 'fail', 1),
-      ...rerun(REPO, TEST_A, sha(2), 12, 'fail', 2),
-      ...rerun(REPO, TEST_A, sha(3), 13, 'fail', 3),
-    ];
-    const journalPath = writeJournal([...rows, { ...rows[0]!, at: daysAgo(0.5), test: TEST_B }]);
+  it('omits disputed attempts and their verdicts from per-test backlog context', async () => {
+    const disputed = rerun(REPO, TEST_A, sha(6), 16, 'fail', 1);
+    const journalPath = writeJournal([
+      ...failingVerdicts(),
+      ...disputed,
+      { ...disputed[0]!, at: daysAgo(0.5), test: TEST_B },
+    ]);
     const items = await ciRerunBacklogItems({ repo: REPO, journalPath, now: NOW });
     expect(items).toHaveLength(1);
-    expect(items[0]?.prompt).toContain('2 distinct rerun attempts were recorded for the same test');
+    expect(items[0]?.prompt).toContain('5 distinct rerun attempts were recorded for the same test');
+    expect(items[0]?.prompt).toContain('3 recorded rerun verdicts concluded failure');
+  });
+
+  it.each([
+    ['missing', null],
+    ['different head', { head: sha(99) }],
+    ['different test', { test: TEST_B }],
+    ['shared', { tests: [TEST_A, TEST_B] }],
+    ['expired', { at: daysAgo(8) }],
+    ['later than the verdict', { at: daysAgo(0.5) }],
+  ] as const)('withholds a verdict with a %s attempt', async (_label, override) => {
+    const [attempt, call, verdict] = rerun(REPO, TEST_A, sha(3), 13, 'fail', 1);
+    const journalPath = writeJournal([
+      ...rerun(REPO, TEST_A, sha(1), 11, 'fail', 1),
+      ...rerun(REPO, TEST_A, sha(2), 12, 'fail', 2),
+      ...(override ? [{ ...attempt, ...override, tests: 'tests' in override ? [...override.tests] : undefined }] : []),
+      call,
+      verdict,
+    ]);
+    expect(await ciRerunBacklogItems({ repo: REPO, journalPath, now: NOW })).toEqual([]);
   });
 
   it('ignores verdict rows without a test id and rows for other repositories', async () => {

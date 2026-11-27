@@ -479,6 +479,13 @@ The same module exports `observedAttempts(entries, nowMs)` for journal
 consumers. It returns the earliest visible attempt per case-insensitive
 repository and workflow run ID. Conflicting head SHAs or sets of triggering
 test IDs clear both per-test fields while preserving the attempt count.
+`observedVerdicts(entries, nowMs)` returns the earliest visible verdict per
+case-insensitive repository and workflow run ID. Conflicting heads or verdicts
+withhold the run, and conflicting tests withhold per-test attribution.
+`attributedTestVerdicts(attempts, verdicts, nowMs)` takes these reconciled
+observations and retains verdicts with a matching repository, head SHA, run ID
+and single triggering test on an attempt inside the recurrence window and
+at or before the verdict.
 `src/core/fleet/ci-flakes.ts` exports `recurringFlakes(rows, opts?)`,
 `flakeJobId(repo, test)` and `enqueueFlakeFixes(flakes, absoluteQueuePath)`:
 a test probable-flaking on at least three distinct heads within seven days

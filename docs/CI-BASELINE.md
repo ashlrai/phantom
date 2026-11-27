@@ -722,7 +722,10 @@ such as PR-caused failures. A `fail` verdict is evidence the classification may 
 rerun firing rules are unchanged. In recurring-failure briefs from
 `phm improve discover`, a shared attempt counts once for each recorded
 triggering test. The shared workflow verdict does not count toward any
-test's recurring-failure threshold.
+test's recurring-failure threshold. Discovery requires the same matching
+single-test attempt as stabilization, including its repository, head SHA,
+workflow run ID and time ordering. A verdict whose attempt is missing,
+expired or disputed remains eligible for the workflow-level tally.
 Discovery counts one attempt per repository and workflow run ID,
 and at most one verdict per repository and workflow run ID. The earliest
 observed receipt sets each attempt or verdict's time in the recurrence
