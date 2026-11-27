@@ -587,8 +587,9 @@ cost/latency file (`[{provider, model, harness, tokensPerJob, minutesPerJob}]`)
 and lane outcomes (`{provider: {attempts, merged}}`). It prints a plan only; it
 never launches work. Providers passed with `--exhausted` are never routed.
 Among placements within 1e-12 of the highest normalized score, the planner
-prefers the one that needs fewer bytes of new model weights. If the load is
-also equal, it keeps provider, model and node order.
+prefers the one that needs fewer bytes of new model weights. For equal loads,
+it keeps provider and model order, then prefers the node with fewer jobs
+assigned by the current plan. A remaining tie uses node ID order.
 When a placement reserves memory to load a local model, later placements on
 that node reuse the reservation only for the same provider, model and harness.
 Capacity files must record CPU and memory headroom, kernel pressure, and

@@ -148,6 +148,7 @@ interface NodeState {
   node: RouteNode;
   /** Provider/model/harness combinations loaded by earlier placements in this plan. */
   loaded: Set<string>;
+  placements: number;
   bytes: number;
   cores: number | null;
   /** Allow for binary roundoff relative to the original CPU budget. */
@@ -179,7 +180,7 @@ function nodeStates(input: RouterInput): NodeState[] {
       const footprints = Object.entries(node.doc.per_harness_footprint)
         .filter(([, fp]) => !footprintExpired(fp, at, input.nowMs));
       const currentNode = { ...node, doc: { ...node.doc, per_harness_footprint: Object.fromEntries(footprints) } };
-      return { node: currentNode, loaded: new Set(), bytes: node.doc.mem_free.headroom_bytes ?? 0,
+      return { node: currentNode, loaded: new Set(), placements: 0, bytes: node.doc.mem_free.headroom_bytes ?? 0,
         cores, cpuRoundoff: (cores ?? 0) * Number.EPSILON, blocked };
     });
 }
@@ -251,12 +252,19 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
     }));
     const highestScore = scored.reduce((highest, { score }) => score > highest ? score : highest, -1);
     // Compare against the true maximum so successive ties cannot move the cutoff.
-    // Equal loads keep the first candidate in (provider, model, node) order.
+    // Preserve provider/model order for equal loads. Within that choice,
+    // spread placements across nodes before falling back to node ID order.
     const selected = scored.reduce<typeof scored[number] | undefined>((best, entry) => {
       if (!(entry.score >= highestScore - 1e-12)) return best;
-      return !best || entry.candidate.load < best.candidate.load ? entry : best;
+      if (!best || entry.candidate.load < best.candidate.load) return entry;
+      const candidate = entry.candidate;
+      const incumbent = best.candidate;
+      if (candidate.load === incumbent.load && candidate.cost.provider === incumbent.cost.provider &&
+          candidate.cost.model === incumbent.cost.model && candidate.state.placements < incumbent.state.placements) return entry;
+      return best;
     }, undefined);
     const { candidate: best, score: bestScore } = selected ?? scored[0]!;
+    best.state.placements++;
     best.state.bytes -= best.fp.mem_bytes_max + best.load;
     if (best.localModelKey !== null) best.state.loaded.add(best.localModelKey);
     if (best.state.cores !== null && best.fp.cpu_cores_per_session !== null) {
