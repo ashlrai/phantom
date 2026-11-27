@@ -338,6 +338,27 @@ describe('CI baseline evidence', () => {
     expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'incomplete-check' }]);
     expect(report.groups).toEqual([]);
   });
+  it.each(['master', 'PR'])('withholds %s evidence when only a checkout-free aggregator failed', async source => {
+    const { gh } = github({ count: 1, pass: true, gate: true, runConclusion: 'failure',
+      masterRunConclusion: source === 'master' ? 'failure' : 'success' });
+    const jobsEndpoint = source === 'master' ? '/runs/1/jobs?' : '/runs/2/jobs?';
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      if (!args[1]?.includes(jobsEndpoint)) return result;
+      const page = JSON.parse(result.stdout);
+      page.jobs[0].conclusion = 'success';
+      page.jobs[1].conclusion = 'failure';
+      return { ...result, stdout: JSON.stringify(page) };
+    });
+    if (source === 'master') {
+      expect(report.master.known).toBe(false);
+      expect(report.groups[0]).toMatchObject({ classification: 'unknown', master: 'unknown' });
+    } else {
+      expect(report.master.known).toBe(true);
+      expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'incomplete-check' }]);
+      expect(report.groups).toEqual([]);
+    }
+  });
   it('tolerates inert no-checkout aggregator jobs but rejects unverifiable evidence', async () => {
     // Merge Gate never checks out the workspace, so its log cannot carry the
     // checkout SHA marker. An inert aggregator log is dropped from evidence
