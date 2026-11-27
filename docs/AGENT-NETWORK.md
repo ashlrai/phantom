@@ -46,7 +46,9 @@ the worker or wait about 30 seconds for the session to expire, then retry.
 Usage refusals during enrollment name the flag at fault — a missing `--owner`
 or `--node`, one alias reused for `--primary` and `--backup`, or a repeat join
 that changes a saved identity flag — as exit-2 errors instead of one generic
-identity refusal.
+identity refusal. Enrollment flags cannot be combined with the explicit
+join's `--caps`/`--slots`: that mix is refused by name, since enrollment probes
+this machine's lanes and capacity itself.
 When the pool cannot be reached at all, join prints per-host approval steps
 instead: the host-check and `ssh-copy-id` commands to run on this computer, and
 a reminder that each pool Mac needs Phantom installed with `phm` on its SSH PATH.
