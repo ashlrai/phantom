@@ -762,7 +762,7 @@ function budgetCredit(view: PoolBudgetView): FleetLaneCreditView {
 function usageCredit(row: UsageJournalRow, nowMs: number): FleetLaneCreditView {
   const fresh = row.pctUsed !== null && readingIsFresh({
     observedAt: row.observedAt, staleAfter: row.staleAfter, nowMs,
-  });
+  }) && (row.resetAt === null || nowMs < Date.parse(row.resetAt));
   return {
     state: fresh ? 'observed' : 'unknown',
     label: fresh ? `${100 - row.pctUsed!}% window` : 'unknown',
