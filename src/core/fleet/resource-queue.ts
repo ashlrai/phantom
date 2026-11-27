@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { laneLaunchTarget } from './lane-launch-target.js';
 import { readSource } from './runs-parked-queue.js';
 import { derivedRowCodes, marketContext, marketLaneView, parseReadyMarketRows, readySpecCell, type ReadyMarketRow } from './unfed-market.js';
 
@@ -42,7 +43,8 @@ export async function readResourceQueue(runsDir: string, now: number, status: un
   const lanes = new Map(Object.entries(object(snapshot.lanes)).flatMap(([lane, raw]) => {
     const row = object(raw), running = count(row.running), target = count(row.effective_target ?? row.target);
     if (running === null || target === null || typeof row.held !== 'boolean' || !Object.hasOwn(ctx.slots, lane)) return [];
-    return [[lane, marketLaneView(lane, running, target, row.held, ctx)] as const];
+    const configuredTarget = count(object(ctx.slots[lane]).target);
+    return [[lane, marketLaneView(lane, running, laneLaunchTarget(target, configuredTarget), row.held, ctx)] as const];
   }));
   const rows = lines.flatMap((line, index) => {
     const cells = line.replace(/\r$/, '').split('\t');

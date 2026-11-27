@@ -41,7 +41,8 @@ export async function routeExpiringCapacity(runsDir: string, plan: Plan, now: ()
     for (const [order, dest] of candidates.entries()) {
       const view = queue.lanes.get(dest.lane);
       if (!view || view.running !== dest.running || Date.parse(dest.deadline) <= now()) continue;
-      const slots = Math.min(dest.target, view.target) - dest.running;
+      const target = Math.min(dest.target, view.target);
+      const slots = target - dest.running;
       if (slots <= 0) continue;
       const alreadyHinted = rows.filter(({ row, index }) => !allocated.has(index) &&
         row.hint === dest.lane && queue.eligible(row, dest.lane, true)).length;
@@ -59,7 +60,7 @@ export async function routeExpiringCapacity(runsDir: string, plan: Plan, now: ()
         needed--;
         receipts.push({ schema: 'work-market.v1', event: 'queue_reroute', ts: tickAt / 1000, job: row.id,
           preferred_lane: row.hint, target_lane: dest.lane, deadline_at: dest.deadline,
-          running: dest.running, target: dest.target, reason_codes: ['resource_plan_under_target', dest.reason] });
+          running: dest.running, target, reason_codes: ['resource_plan_under_target', dest.reason] });
       }
     }
     if (receipts.length) {
