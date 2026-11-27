@@ -2000,9 +2000,9 @@ the claimable work-feed jobs. Exit 0 on
 coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the twenty
-dependencies every verb above touches plus the outbound send gate every
-write verb passes through: the message store (retained/live/expired
+**Status.** `phm agents bus status [--json]` is a read-only probe of the
+twenty-one dependencies every verb above touches plus the outbound send
+gate every write verb passes through: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
 the wake queue (state, observed hint count before the row cap, and whether
 the bounded tail or cap truncated older hints), the bus hop log every
@@ -2131,7 +2131,20 @@ report unavailable (`source` plus `messages`/`proposals`/`returns`
 counts of the live pending surface — posted coordination mail, advisory
 assignment proposals and unpublished RESULT intents still inside their
 TTLs; 0 on a verified-missing ledger, null when unreadable, never agent
-labels, repos, task text, bodies or record ids), the channel adapter
+labels, repos, task text, bodies or record ids), the org plane's
+membership outbox (`<runsRoot>/org/agents.json`, the `org.agents.v1`
+store `phm fleet org-sync`/`org-board` read under the same runs root —
+`options.runsRoot`, `ASHLR_RUNS_DIR` or `~/.ashlr-runs`, never the bus
+`root` override): the `org.membership` events the chart recorded but
+`phm fleet org-sync --apply` has not yet confirmed posted, read through
+`previewOrgOutbox` — the same replay `org-sync` previews and the unified
+inbox org-outbox source itemizes — so a corrupt, unsafe or otherwise
+invalid store is named here instead of leaving status green while the
+bus cannot see staffing changes it never received (`source` plus a
+`pending` count of distinct events the apply pass would post — the same
+pending count the unified inbox reports; 0 on a verified-missing store
+or a fully delivered ledger, null when unreadable, never role ids,
+actors, revisions, proposals or bodies), the channel adapter
 registry `listChannelRegistry` reads — the same projection `agents bus
 channels list`, `agents bus channels test` and the comms-agent adapter
 probe serve — behind every channel-addressed send's delivery decision
