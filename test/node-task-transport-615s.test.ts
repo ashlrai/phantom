@@ -91,11 +91,12 @@ describe('embedded node task transport (#6822 slice)', () => {
     expect(args.filter(a => a.startsWith('--task-part=')).every(a => a.length - 12 <= 4000)).toBe(true);
     const nodes = new DriveNodes(new MemoryStore());
     const flags = parseNodeFleetFlags('enqueue', args);
-    expect(runNodeFleet('enqueue', flags, nodes, () => 'unknown')).toEqual({ jobId: 'j1', enqueued: true });
+    expect(runNodeFleet('enqueue', flags, nodes, () => 'unknown'))
+      .toMatchObject({ jobId: 'j1', enqueued: true, route: { nodeId: null } });
     // A part that looks like a flag is still data.
     const dashed = task('--task-part=still text');
     expect(runNodeFleet('enqueue', parseNodeFleetFlags('enqueue', ['--job', 'j2', '--owner', 'ashlr', '--pack', 'codex-file', ...nodeTaskArgs(dashed)]), nodes, () => 'unknown'))
-      .toEqual({ jobId: 'j2', enqueued: true });
+      .toMatchObject({ jobId: 'j2', enqueued: true, route: { nodeId: null } });
   });
 
   it('rejects malformed digests, bad text and unsupported packs without echoing the text', () => {
