@@ -335,8 +335,8 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     : data.schema === 'dispatchd.status.v1' && Number.isFinite(tickMs) && nowMs >= tickMs && nowMs - tickMs <= STATUS_FRESH_MS;
   const published = isRecord(data.unfed_capacity) ? data.unfed_capacity : null;
   const ctx = published === null ? marketContext(market) : null;
-  const operatorHolds = published === null && ctx === null
-    ? new Set((market?.hold ?? '').split(/\s+/u).filter(Boolean)) : null;
+  const operatorHolds = published === null
+    ? ctx?.holds ?? new Set((market?.hold ?? '').split(/\s+/u).filter(Boolean)) : null;
   const stop = fleetStopVerdict(data);
   // An admission-stopped tick never ran the market: the dispatcher's own
   // _waiting then uses the raw lane column from JID+tier-valid rows.
@@ -348,6 +348,7 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
   const waiting = published === null ? hints?.waiting ?? null
     : count(published.waiting) ? published.waiting : null;
   const resources: UnfedResource[] = [];
+  let hasLaneAdvertisement = false;
   for (const [lane, value] of Object.entries(data.lanes)) {
     if (!LANE.test(lane) || !isRecord(value) || !count(value.running)) throw new Error('invalid lane');
     if (!count(value.target)) throw new Error('invalid lane');
@@ -356,7 +357,8 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     const configuredTarget = isRecord(slot) && count(slot.target) ? slot.target : null;
     const target = laneLaunchTarget(tickTarget, configuredTarget);
     const statusHeld = value.held === true;
-    const view = ctx === null ? null : marketLaneView(lane, value.running, target, statusHeld, ctx);
+    const view = ctx !== null && isRecord(slot) ? marketLaneView(lane, value.running, target, statusHeld, ctx) : null;
+    hasLaneAdvertisement ||= view !== null;
     const held = view?.held ?? (statusHeld || operatorHolds?.has(lane) === true);
     const headroom = Math.max(0, target - value.running);
     const readyHinted = hints === null ? null : hints.byLane.get(lane) ?? 0;
@@ -395,7 +397,7 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     schema: FLEET_UNFED_SCHEMA,
     readOnly: true,
     source: published ? 'dispatcher' : 'derived',
-    derivedReasons: ctx !== null && readyTsv !== null,
+    derivedReasons: hasLaneAdvertisement && readyTsv !== null,
     statusAsOf,
     statusFresh,
     fleetStop: stop ?? publishedFleetStop(resources),
