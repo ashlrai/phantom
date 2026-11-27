@@ -1229,7 +1229,11 @@ Add `--json` for `{ v, failed, groups: [{ error, count, samples, jobs }] }`, or
 # Lane queue counts
 
 Run `phm fleet queue-counts --json` for ready, parked and running counts and
-the oldest wait per lane. `oldestWaitSeconds` covers ready and parked jobs and
+the oldest wait per lane. A missing or unreadable `ready.tsv` leaves ready,
+parked and stale counts unknown for each lane and in the totals. A readable
+file with malformed rows reports counts from the readable rows and marks the
+source degraded. Merge counts can still be measured from the merge ledger.
+`oldestWaitSeconds` covers ready and parked jobs and
 measures each job's current queue dwell in `~/.ashlr-runs/metrics/jobs.jsonl`:
 `enqueue`/`queued` rows, `launch_failed` retries and retried `task_outcome`
 rows are arrivals, while `claim`, `batch_claim` and `launch` end a dwell, so a

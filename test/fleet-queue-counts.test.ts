@@ -342,6 +342,23 @@ it('marks a malformed queue as degraded and keeps counts null-safe', async () =>
   expect(report.notes.some(n => n.includes('unreadable or has malformed rows'))).toBe(true);
 });
 
+it('withholds unreadable supply counts while retaining independently measured merges', async () => {
+  const readyFile = join(queueDir, 'ready.tsv');
+  await mkdir(readyFile);
+  await writeFile(join(queueDir, 'jobs.jsonl'), merge('m-1', 'devin', minutesAgo(5)));
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.sources.ready).toBe('degraded');
+  expect(report.sources.ledger).toBe('healthy');
+  const expected = { ready: null, parked: null, stale: null, blockedReasons: [], merges: 1 };
+  expect(report.totals).toMatchObject(expected);
+  expect(report.lanes).toMatchObject([{ lane: 'devin', ...expected, oldestWaitSeconds: null }]);
+  await rm(readyFile, { recursive: true });
+  await writeFile(readyFile, '');
+  const empty = await getLaneQueueCounts({ runsDir: root, now });
+  expect(empty.sources.ready).toBe('healthy');
+  expect(empty.totals).toMatchObject({ ready: 0, parked: 0, stale: 0, merges: 1 });
+});
+
 it('prints blocked reasons and notes in text output', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), row('PARKED-HOLD.devin', 'a-1', 'devin'));
   const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
