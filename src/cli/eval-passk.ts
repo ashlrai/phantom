@@ -40,6 +40,7 @@ import {
   PASSK_DEFAULT_K,
   PASSK_DEFAULT_TRIALS,
   PASSK_MAX_TRIALS,
+  PASSK_REPORT_SCHEMA,
   type LaneScores,
   type PassKDataset,
   type PassKReport,
@@ -47,6 +48,7 @@ import {
 import { buildDefaultRunner, type EngineRunner } from '../core/eval/swe-bench.js';
 import { evalPassKSchedule } from '../core/eval/passk-schedule.js';
 import type { ScheduleUnit } from '../core/steward/schedule.js';
+import { isEvalHelpArgs } from './eval-args.js';
 import { installScheduleUnits } from './steward.js';
 import { makeColors, isTty, pad } from './ui.js';
 
@@ -275,7 +277,7 @@ export async function cmdEvalPassK(args: string[], overrides: EvalPassKCliDeps =
   const err = overrides.err ?? ((t: string) => console.error(t));
   const readFile = overrides.readFile ?? ((p: string) => readFileSync(p, 'utf8'));
 
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
+  if (isEvalHelpArgs(args)) {
     out(USAGE);
     return 0;
   }
@@ -388,7 +390,7 @@ export async function cmdEvalPassK(args: string[], overrides: EvalPassKCliDeps =
   if (parsed.baseline !== undefined) {
     try {
       const raw = JSON.parse(readFile(parsed.baseline)) as PassKReport;
-      if (raw?.schema !== 'eval.passk.v1' || !Array.isArray(raw.lanes)) throw new Error('bad shape');
+      if (raw?.schema !== PASSK_REPORT_SCHEMA || !Array.isArray(raw.lanes)) throw new Error('bad shape');
       prior = raw;
     } catch {
       err('error: could not read the baseline report');
