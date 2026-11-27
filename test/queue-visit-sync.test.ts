@@ -97,6 +97,20 @@ describe('queueVisitsFromJobs', () => {
     expect(at(noRetry, 'RQ-E', 'claimed', 2)).toBeDefined();
   });
 
+  it('bounds a re-enqueued attempt READY arrival by the re-enqueue stamp', () => {
+    const { visits } = queueVisitsFromJobs(ledger(
+      { event: 'enqueue', job: 'RQ-R', lane: 'codex', ts: T('14:00:00') },
+      { event: 'launch', job: 'RQ-R', lane: 'codex', ts: T('14:00:30') },
+      { event: 'finish', job: 'RQ-R', lane: 'codex', ts: T('14:02:00') },
+      { event: 'enqueue', job: 'RQ-R', lane: 'devin', ts: T('14:03:00') },
+      { event: 'launch', job: 'RQ-R', lane: 'devin', ts: T('14:05:00') },
+      { event: 'finish', job: 'RQ-R', lane: 'devin', ts: T('14:07:00') },
+    ), NOW);
+    expect(at(visits, 'RQ-R', 'READY', 2)).toEqual({ id: 'RQ-R:a2', station: 'READY', pool: 'devin', arrivedAt: ms('14:03:00'), startedAt: ms('14:05:00'), completedAt: ms('14:05:00') });
+    // The first stint keeps its own arrival; the re-enqueue does not leak backward.
+    expect(at(visits, 'RQ-R', 'READY', 1)?.arrivedAt).toBe(ms('14:00:00'));
+  });
+
   it('completes READY for DONE-NOOP jobs resolved before launch', () => {
     const { visits } = queueVisitsFromJobs(ledger(
       { event: 'enqueue', job: 'RQ-F', lane: 'codex', ts: T('14:00:00') },
@@ -153,8 +167,8 @@ describe('queueVisitsFromJobs', () => {
 
 describe('queueReadyVisits', () => {
   const jobs = new Map([
-    ['RQ-WAIT', { enqueueAt: ms('14:10:00'), lane: 'codex', launches: 0 }],
-    ['RQ-LAUNCHED', { enqueueAt: ms('14:00:00'), lane: 'codex', launches: 1 }],
+    ['RQ-WAIT', { enqueueAt: ms('14:10:00'), lane: 'codex', launches: 0, lastLaunchAt: null }],
+    ['RQ-LAUNCHED', { enqueueAt: ms('14:00:00'), lane: 'codex', launches: 1, lastLaunchAt: ms('14:00:30') }],
   ]);
   const queue = [
     '- READY RQ-WAIT (P0, pool=codex, tier=work, repo=phantom, enq=1762340000): Scope.',
@@ -171,6 +185,18 @@ describe('queueReadyVisits', () => {
   it('falls back to the enq= epoch token and skips unbounded arrivals', () => {
     expect(queueReadyVisits('- READY RQ-NEW enq=1762341600', new Map(), NOW)[0]?.arrivedAt).toBe(1762341600 * 1000);
     expect(queueReadyVisits('- READY RQ-NEW', new Map(), NOW)).toEqual([]);
+  });
+
+  it('admits a re-queued job only when the line stamp postdates its last launch', () => {
+    const requeued = new Map([
+      ['RQ-R', { enqueueAt: ms('14:00:00'), lane: 'codex', launches: 1, lastLaunchAt: ms('14:00:30') }],
+    ]);
+    const enq = (s: string) => `- READY RQ-R (P1, pool=devin, tier=work, repo=phantom, enq=${Math.floor(ms(s) / 1000)}): Scope.`;
+    expect(queueReadyVisits(enq('14:03:00'), requeued, NOW))
+      .toEqual([{ id: 'RQ-R:a2', station: 'READY', pool: 'devin', arrivedAt: ms('14:03:00') }]);
+    // A stamp from before the last launch is the old stint's, not re-arrival evidence.
+    expect(queueReadyVisits(enq('14:00:10'), requeued, NOW)).toEqual([]);
+    expect(queueReadyVisits('- READY RQ-R (P1, pool=devin): Scope.', requeued, NOW)).toEqual([]);
   });
 });
 
