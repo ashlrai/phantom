@@ -303,6 +303,29 @@ describe('cmdFleetLaneStarve', () => {
     expect(code).toBe(0);
     expect(JSON.parse(lines[0]!).lanes).toEqual([]);
   });
+  it('honors a new operator hold before the dispatcher updates, while keeping other lane alerts', async () => {
+    const status = JSON.parse(STATUS);
+    status.lanes['claude-api'].held = false;
+    status.lanes.devin.queued = 1;
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify(status));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), 'RQ-OPEN-1\tphantom\tclaude-api\twork\t/prompt\t{"preferred_lane":null}');
+    writeFileSync(join(dir, 'HOLD'), '  claude-api\tcodex\n devin-other\n');
+    const { code, lines } = await run();
+    expect(code).toBe(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      lanes: [{ lane: 'devin' }],
+      open_rows: 1,
+    });
+  });
+  it('exits 2 without a verdict when operator holds cannot be read', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), STATUS);
+    mkdirSync(join(dir, 'HOLD'));
+    const { code, lines } = await run();
+    expect(code).toBe(2);
+    expect(JSON.parse(lines[0]!)).toEqual({
+      schema: 'fleet.lane-starve.v1', readOnly: true, error: 'Cannot read the runs directory HOLD file.',
+    });
+  });
   it('exits 2 when status.json is missing', async () => {
     const { code, lines } = await run();
     expect(code).toBe(2);
