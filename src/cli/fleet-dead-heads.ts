@@ -7,7 +7,7 @@ import { queueDeadHeads } from '../core/fleet/queue-dead-heads.js';
 import { parseReadyTsv } from '../core/fleet/lane-console.js';
 
 const usage = `ashlr fleet dead-heads [--json] [--root PATH] [--cap N]
-Read-only skip evidence; positions are one-based per lane. Default cap: 4 launchable lines.`;
+Read-only skip evidence. Positions count unique READY jobs per lane, starting at 1. Default cap: 4 launchable jobs.`;
 
 /** router-queue.md is append-mostly Markdown history; same 32 MiB bound the other market readers use. */
 const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
@@ -48,8 +48,8 @@ export async function cmdFleetDeadHeads(args: string[]): Promise<number> {
       readText(join(root, 'queue/router-queue.md'), ROUTER_QUEUE_MAX_BYTES).catch(() => ''),
     ]);
     const reasons = new Map<string, string>();
-    for (const row of parseReadyTsv(ready, routerQueue).rows) {
-      if (!row.id || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(row.id) || /^PARKED-/i.test(row.pool) || reasons.has(row.id)) continue;
+    for (const row of parseReadyTsv(ready, routerQueue, true).rows) {
+      if (row.status !== 'READY' || !row.id || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(row.id) || /^PARKED-/i.test(row.pool)) continue;
       try { reasons.set(row.id, await readText(join(root, 'queue/run', `${row.id}.skipped-empty`), 4096)); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
