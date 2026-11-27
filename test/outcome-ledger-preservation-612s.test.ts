@@ -2879,6 +2879,24 @@ describe('router outcome reward-signals join', () => {
     expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3', 'J4']);
   });
 
+  it('withholds reward evidence for a job ID shared by different repositories', async () => {
+    const prUrl = 'https://github.com/other/phantom/pull/15';
+    const result = await readRouterOutcomes({
+      runsDir: runsDir([
+        { job: 'J1', lane: 'alpha', repo: 'other/phantom', event: 'publish', pr_url: prUrl },
+        { job: 'J2', lane: 'alpha', repo: 'ASHLRAI/Phantom', phase: 'VERIFIED' },
+      ].map(row => JSON.stringify(row)).join('\n')),
+      ashlarDir: rewardLedger([rewardRow('J1', true), rewardRow('J2', true)]),
+      authorityEvidence: null,
+    });
+    expect(result.outcomes).toMatchObject([
+      { job_id: 'J1', repo: 'other/phantom', merged: null, ttm_s: null,
+        ci_wall_s: null, cost_usd: null, pool_pct_used: null },
+      { job_id: 'J2', repo: 'ASHLRAI/Phantom', merged: true, ttm_s: 3600,
+        ci_wall_s: 600, cost_usd: 0.75, pool_pct_used: 2.5 },
+    ]);
+  });
+
   it('withholds CI timing when an undated boundary could belong to the dated pair', async () => {
     const rows = [
       { job: 'J1', event: 'ci_start', ts: '2026-11-01T00:00:00Z' },
