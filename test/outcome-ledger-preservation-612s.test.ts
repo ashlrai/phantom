@@ -3311,6 +3311,19 @@ describe('router outcome launch-cost join', () => {
     });
   });
 
+  it('keeps the newest recorded launch when an older probe arrives late', async () => {
+    const root = runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:05:00Z"}\n');
+    const older = launchCostRow('J1-aaaabbbbcccc', 'measured', { startedAt: '2026-11-01T00:00:00Z' });
+    const newer = launchCostRow('J1-ddddeeeeffff', 'partial', { startedAt: '2026-11-01T00:02:00Z', peakProcesses: 8 });
+    for (const receipts of [[newer, older], [older, newer]]) {
+      writeLaunchCosts(root, receipts);
+      const result = await readRouterOutcomes({ runsDir: root });
+      expect(result.outcomes[0]).toMatchObject({
+        launch_cost_status: 'partial', launch_peak_processes: 8,
+      });
+    }
+  });
+
   it('keeps launch_cost fields null and reports launch_cost_state when the ledger is absent, refused or the jobs read failed', async () => {
     const missing = await readRouterOutcomes({ runsDir: runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n') });
     expect(missing).toMatchObject({ state: 'read', launch_cost_state: 'missing', launch_cost_truncated: false });
