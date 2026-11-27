@@ -367,6 +367,28 @@ describe('CI baseline evidence', () => {
       expect(report.freshness.every(p => p.state === 'unknown')).toBe(true);
     }
   });
+  it('withholds PR freshness and master pass evidence from unverified checkouts with no test output', async () => {
+    const analyze = (onMaster: boolean) => {
+      const { gh } = github({ count: 1, pass: true, ...(onMaster
+        ? { extraMasterJob: 'success' }
+        : { extraPrJob: 'success' }) });
+      const endpoint = `repos/owner/repo/actions/jobs/${onMaster ? 30 : 40}/logs`;
+      return analyzeCiBaseline('owner/repo', args => args[1] === endpoint
+        ? Promise.resolve({
+          ok: true,
+          stdout: '##[group]Run actions/checkout@v4\nwith:\n  fetch-depth: 0\n##[endgroup]\n',
+          stderr: '',
+        })
+        : gh(args));
+    };
+    const pr = await analyze(false);
+    expect(pr.freshness).toMatchObject([{ state: 'unknown', reason: 'unreadable-log-or-unverified-checkout' }]);
+    expect(pr.groups).toEqual([]);
+
+    const baseline = await analyze(true);
+    expect(baseline.master.known).toBe(false);
+    expect(baseline.groups).toMatchObject([{ classification: 'unknown', action: 'unknown', master: 'unknown' }]);
+  });
   it('does not infer independence with unresolved imports', async () => {
     const report = await analyzeCiBaseline('owner/repo', github({ imports: "import helper from '#helper';" }).gh);
     expect(report.groups[0]?.classification).toBe('unknown');

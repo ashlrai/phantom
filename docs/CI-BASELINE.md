@@ -18,8 +18,10 @@ dependency-audit job), recording `actions/checkout` steps whose resolved
 The bound revision or checkout ref must equal the analyzed head exactly; an
 unpinned checkout (which falls back to the event's merge commit on pull
 requests), a non-SHA ref or a second checkout of anything else leaves the
-job unverifiable. Jobs that never check out the workspace (aggregators such
-as Merge Gate) cannot emit any proof; their logs are dropped from evidence
+job unverifiable. A checkout step with an unverifiable ref leaves the run
+unknown even when the job emits no recognizable check results. Jobs that
+never check out the workspace (aggregators such as Merge Gate) cannot emit
+any proof; their logs are dropped from evidence
 only when they carry no parseable failure or per-test pass output. The
 default reporter's green-module pass lines are expected from checkout jobs
 that never bound a receipt, so they neither verify nor poison a run; any
