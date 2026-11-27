@@ -614,6 +614,19 @@
  *     journal had no reader at all — queue-writer.mjs only re-exports
  *     the writer — so every report a user filed sat in an append-only
  *     file nobody opened, never work;
+ *   - the desktop change-request journal's recurring adverse outcomes:
+ *     the per-request {v, id, jobId, surface, createdAt, status} rows
+ *     the console's Improve this screen request box appends to
+ *     ~/.ashlr/router/change-requests.jsonl through submitChangeRequest,
+ *     each joined to its drop-job fate (readDropJobFates) and phantom
+ *     PR state (readRequestPrs) exactly the way listChangeRequests
+ *     computes them for the newest-20 pane — folded per
+ *     (surface, rejected|closed-unmerged) cell across distinct request
+ *     ids inside the retained journal (changeRequestsBacklogItems
+ *     below). Until now the joined view was only a point-in-time pane,
+ *     so requests dying at drop ingest — invisible to every
+ *     jobs.jsonl feeder — and request PRs closing unmerged never became
+ *     work;
  *   - the Eng Ops autofix ledgers' recurring adverse evidence: the
  *     per-action LedgerLine rows appendLedger writes to
  *     <runs>/ledger/autofix.jsonl and the per-transition
@@ -1839,6 +1852,7 @@ import { catalogRefreshBacklogItems } from './catalog-refresh-backlog.js';
 import { automationBacklogItems } from './automation-backlog.js';
 import { gatewayActivityBacklogItems } from './gateway-activity-backlog.js';
 import { frictionFlagBacklogItems } from './friction-flag-backlog.js';
+import { changeRequestsBacklogItems } from './change-requests-backlog.js';
 import { routineBacklogItems } from './routine-backlog.js';
 import { autofixBacklogItems } from './autofix-backlog.js';
 import { launchdRunsBacklogItems } from './launchd-runs-backlog.js';
@@ -2887,6 +2901,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet's own repository inherits the items since the journal
   // describes this install's console and carries no repository column.
   items.push(...await frictionFlagBacklogItems({ repo }));
+
+  // Desktop change-request journal: the console's Improve this screen request
+  // box appends one status row per accepted typed request to
+  // ~/.ashlr/router/change-requests.jsonl through submitChangeRequest — the
+  // sibling of the flag journal above, but for requests that become RQ-PHX
+  // drop jobs. A queued row is only the intake receipt: the request's real
+  // outcome lives in the drop-job fate (a rejected ingest never becomes a
+  // job, invisible to every jobs.jsonl feeder) and the resolved PR state.
+  // Until now listChangeRequests' joined view was only a newest-20 pane —
+  // recurring request deaths never became work. Rows count only under the
+  // writer's contract (the UIREQ id shape, the RQ-PHX-<id> jobId derivation,
+  // the surface pattern, a parseable createdAt and status 'queued'), the
+  // fold reuses the same bounded fates/PR joins the pane uses, requests
+  // carry no expiry so every retained row folds, a (surface, class) cell
+  // emits only at CHANGE_REQUEST_MIN_CELL distinct request ids, rows whose
+  // fate/PR evidence aged out of the bounded joins classify unknown rather
+  // than failing, malformed lines are counted, and only the fleet's own
+  // repository inherits the items since the journal describes this
+  // install's console and carries no repository column.
+  items.push(...await changeRequestsBacklogItems({ repo }));
 
   // Scheduled-routine attempt journal: the `phm routines` scheduler's own
   // per-attempt record — runs.jsonl under the Ashlr home's routines

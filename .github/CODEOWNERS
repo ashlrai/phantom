@@ -615,6 +615,7 @@
 /test/improve-branch-gardener-backlog.test.ts @masonwyatt23
 /test/improve-capacity-history-backlog.test.ts @masonwyatt23
 /test/improve-catalog-refresh-backlog.test.ts @masonwyatt23
+/test/improve-change-requests-backlog.test.ts @masonwyatt23
 /test/improve-ci-rerun-backlog.test.ts @masonwyatt23
 /test/improve-claude-recovery-backlog.test.ts @masonwyatt23
 /test/improve-cli-boundary.test.ts @masonwyatt23
