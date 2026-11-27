@@ -3,10 +3,10 @@
  * inbox — `projectCoordinationInbox`, the same projection
  * `phm fleet coordination inbox --agent <name>` serves. The ledger's agent
  * labels are coordination names, not bus routing labels: `agent` is required
- * and matched exactly (plus the `all` broadcast), and `from` matches the
- * recorded sender exactly — nothing resolves through the agent registry.
- * `from`, `since`, `before` and `contains` take the same names and rules the
- * CLI flags share — validation delegates to the one
+ * and matched exactly (plus the `all` broadcast), and `from`/`excludeFrom`
+ * match the recorded sender exactly — nothing resolves through the agent
+ * registry. `from`, `excludeFrom`, `since`, `before` and `contains` take the
+ * same names and rules the CLI flags share — validation delegates to the one
  * `parseCoordinationInboxFilters` parser, so an MCP client can never
  * disagree with the CLI about what a filter means; `since` is the inclusive
  * lower bound and `before` the exclusive upper bound composing one
@@ -25,9 +25,9 @@ import {
   type CoordinationInboxFilterInput, type CoordinationInboxFilters, type CoordinationInboxView,
 } from '../core/fleet/coordination-inbox.js';
 
-/** The ledger's own agent-label grammar — the same bound `from` validates under. */
+/** The ledger's own agent-label grammar — the same bound `from`/`excludeFrom` validate under. */
 const AGENT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const FILTER_KEYS = ['from', 'since', 'before', 'contains'] as const;
+const FILTER_KEYS = ['from', 'excludeFrom', 'since', 'before', 'contains'] as const;
 const INBOX_KEYS: ReadonlySet<string> = new Set(['agent', ...FILTER_KEYS]);
 
 /** Resolved inbox read — the addressed agent plus the shared filter set the CLI read applies. */

@@ -13,6 +13,8 @@ const CONTAINS_MAX = 512;
 export interface CoordinationInboxFilters {
   /** Exact sender label; proposals carry no sender and never match it. */
   from?: string;
+  /** Exact sender label to drop; proposals carry no sender and stay listed. */
+  excludeFrom?: string;
   /** Inclusive lower bound on the record's `at` stamp, epoch ms. */
   since?: number;
   /** Exclusive upper bound on the record's `at` stamp, epoch ms. */
@@ -23,6 +25,7 @@ export interface CoordinationInboxFilters {
 
 export interface CoordinationInboxFilterInput {
   from?: string;
+  excludeFrom?: string;
   /** `15m`, `2h`, `1d`, epoch ms or an ISO time — the shared parseSince grammar. */
   since?: string;
   before?: string;
@@ -43,6 +46,10 @@ export function parseCoordinationInboxFilters(input: CoordinationInboxFilterInpu
   if (input.from !== undefined) {
     if (!IDENT.test(input.from)) return { ok: false };
     filters.from = input.from;
+  }
+  if (input.excludeFrom !== undefined) {
+    if (!IDENT.test(input.excludeFrom)) return { ok: false };
+    filters.excludeFrom = input.excludeFrom;
   }
   if (input.since !== undefined) {
     const since = parseSince(input.since, now);
@@ -77,8 +84,11 @@ const fold = (text: string): string => text.toLowerCase().replace(/\s+/g, ' ');
  * the bus reads apply. `--contains` keeps messages whose scrubbed body and
  * proposals whose repo and task carry the needle; `--from` keeps only posts
  * the named sender label wrote, so every proposal drops out of a sender
- * read. An unknown board stays unknown with empty lists — filters never
- * fabricate rows.
+ * read, and `--exclude-from` drops posts the named sender label wrote under
+ * the same exact match — proposals carry no sender, so an exclusion read
+ * keeps them. Naming one label in both `--from` and `--exclude-from`
+ * matches no message. An unknown board stays unknown with empty lists —
+ * filters never fabricate rows.
  */
 export function projectCoordinationInbox(board: FleetBoard, agent: string, filters: CoordinationInboxFilters = {}): CoordinationInboxView {
   const windowed = (at: number): boolean =>
@@ -88,6 +98,7 @@ export function projectCoordinationInbox(board: FleetBoard, agent: string, filte
   const messages = board.messages.filter(message =>
     (message.to === agent || message.to === 'all') &&
     (filters.from === undefined || message.from === filters.from) &&
+    (filters.excludeFrom === undefined || message.from !== filters.excludeFrom) &&
     windowed(message.at) &&
     (needle === undefined || fold(message.body).includes(needle)));
   const proposals = filters.from !== undefined ? [] : board.proposals.filter(proposal =>

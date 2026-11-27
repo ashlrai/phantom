@@ -56,7 +56,7 @@ describe('fleet coordination inbox real MCP handler', () => {
     const tool = tools.find(t => t.name === name);
     expect(tool?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false, required: ['agent'] });
     expect(Object.keys((tool?.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}).sort())
-      .toEqual(['agent', 'before', 'contains', 'from', 'since']);
+      .toEqual(['agent', 'before', 'contains', 'excludeFrom', 'from', 'since']);
     expect(tool?.annotations?.readOnlyHint).toBe(true);
     expect(tool?.annotations).toEqual(tools.find(t => t.name === 'fleet_coordination_returns')?.annotations);
   });
@@ -75,6 +75,15 @@ describe('fleet coordination inbox real MCP handler', () => {
     expect(fromAlice.value.messages.map((m: { id: string }) => m.id).sort()).toEqual(['m-all', 'm-deploy']);
     // Proposals carry no sender, so a sender read drops every proposal.
     expect(fromAlice.value.proposals).toEqual([]);
+
+    const noAlice = await read({ agent: 'bob', excludeFrom: 'alice' });
+    expect(noAlice.value.messages.map((m: { id: string }) => m.id)).toEqual(['m-lunch']);
+    // Proposals carry no sender, so an exclusion read keeps them all.
+    expect(noAlice.value.proposals).toHaveLength(2);
+
+    const both = await read({ agent: 'bob', from: 'alice', excludeFrom: 'alice' });
+    expect(both.value.messages).toEqual([]);
+    expect(both.value.proposals).toEqual([]);
 
     const deploy = await read({ agent: 'bob', contains: 'DEPLOY' });
     expect(deploy.value.messages.map((m: { id: string }) => m.id).sort()).toEqual(['m-all', 'm-deploy']);
@@ -117,6 +126,8 @@ describe('fleet coordination inbox real MCP handler', () => {
     { agent: 42 },
     { agent: 'bob', from: 'bad from' },
     { agent: 'bob', from: 7 },
+    { agent: 'bob', excludeFrom: 'bad sender' },
+    { agent: 'bob', excludeFrom: 7 },
     { agent: 'bob', since: 'not-a-time' },
     { agent: 'bob', before: 'whenever' },
     { agent: 'bob', contains: '' },
