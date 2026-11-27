@@ -2856,9 +2856,23 @@ describe('router outcome reward-signals join', () => {
     });
     // Out-of-shape consumed fields drop to null without discarding the row.
     expect(rewards.get('J6')).toEqual({
-      merged: true, ttm_s: 0.5, ci_wall_s: null, cost_usd: null,
+      merged: true, ttm_s: null, ci_wall_s: null, cost_usd: null,
       repo: null, pool_pct_used: null,
     });
+  });
+
+  it('skips contradictory lifecycle receipts before choosing the first usable reward', () => {
+    const rewards = foldRewardSignals([
+      rewardRow('J1', true, { mergedAt: null }),
+      rewardRow('J1', true),
+      rewardRow('J2', true, { mergedAt: 'not a date' }),
+      rewardRow('J3', true, { mergedAt: '2026-10-31T23:59:59.000Z' }),
+      rewardRow('J4', false, { mergedAt: '2026-11-01T01:00:00.000Z' }),
+      rewardRow('J5', true, { mergedAt: '2026-11-01T00:00:00.000Z', timeToMergeMs: 0 }),
+    ].map(row => JSON.stringify(row)).join('\n'));
+    expect([...rewards.keys()]).toEqual(['J1', 'J5']);
+    expect(rewards.get('J1')).toMatchObject({ merged: true, ttm_s: 3600 });
+    expect(rewards.get('J5')).toMatchObject({ merged: true, ttm_s: 0 });
   });
 
   it('joins only reward receipts available when the report started', async () => {
@@ -3088,7 +3102,7 @@ describe('router outcome reward-signals join', () => {
     ].join('\n'));
     const ashlarDir = rewardLedger([
       rewardRow('J1', false, { timeToMergeMs: 5_000 }),
-      rewardRow('J2', true, { timeToMergeMs: 5_000 }),
+      rewardRow('J2', true, { dispatchedAt: '2026-11-01T00:59:55.000Z', timeToMergeMs: 5_000 }),
     ]);
     const result = await readRouterOutcomes({ runsDir: root, ashlarDir, authorityEvidence: null });
     expect(result.outcomes).toMatchObject([
