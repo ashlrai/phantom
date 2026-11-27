@@ -99,7 +99,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   disk: ['--wt-dir', '--runs-dir', '--tmp-dir', '--json', '--help'],
   nodes: ['plan', 'doctor', 'pool', '--json', '--can-take', '--node', '--help'],
-  map: ['--json', '--help'],
+  map: ['edges', 'replay', '--json', '--help'],
   'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--worktree-failed-hours', '--help'],
   autofix: ['--apply', '--dry-run', '--json', '--only', '--older-than', '--stuck-minutes', 'release-stuck-draft', 'launchd-crashloop', 'stuck-lane', 'outside-load', '--help'],
   desktop: ['install', 'list-apps', 'windows', 'focus', 'read', 'scroll', 'type', 'click', 'screenshot', 'doctor', '--upgrade', '--rollback', '--require-app', '--to', '--apply', '--json', '--app', '--window', '--text', '--x', '--y', '--dx', '--dy', '--ref', '--help'],
@@ -121,7 +121,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirrors the verb check in src/cli/repos-rank.ts (cmdReposRank).
   repos: ['list', 'add', 'remove', 'stage', 'priority', 'rank', 'proposals', '--json', '--recompute', '--help'],
   'release-articles': ['status', 'metadata', 'enable', 'disable', 'import', 'sync', '--help'],
-  release: ['status', 'notes', 'autonomy', '--since', '--write', '--json', '--file', '--help'],
+  release: ['status', 'notes', 'autonomy', 'cadence', '--since', '--write', '--json', '--file', '--help'],
   releases: ['--json', '--help'],
   agents: ['apps', 'bus', 'conversations', 'help', 'list', 'messages', 'roster', 'show', 'validate', 'versions'],
   // Mirror the verb switch in src/cli/wb.ts (cmdWb).
@@ -148,7 +148,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   website: ['status', 'auto', 'pause', 'off', 'request', 'run', 'prepare', 'commission'],
   wire: ['claude', 'codex', 'cursor', 'gemini', 'all', 'status'],
   notify: ['test', 'session', 'route', 'rules'],
-  telemetry: ['status', 'test'],
+  telemetry: ['status', 'test', 'routing', 'merge-throughput'],
   node: ['bootstrap', 'join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'release', 'withdraw', 'result', 'bridge', 'list', 'status', 'leave', 'pool', 'watch', 'worker', 'run-once', 'rpc', 'lanes', 'capacity', 'route', 'measure', 'self-update', 'light', 'replica', '--leader'],
   sandbox: ['list', 'diff', 'cleanup', 'gc'],
   enroll: ['add', 'remove', 'list', 'kill'],
@@ -162,11 +162,12 @@ const SUBCOMMANDS: Record<string, string[]> = {
   worker: ['setup', 'status'],
   prs: ['triage'],
   pr: ['resolve-conflicts', '--repo', '--pr', '--limit', '--root', '--out', '--allowlist', '--apply', '--json'],
+  worktrees: ['report', 'prune', '--json', '--reap', '--dry-run', '--apply', '--plan', '--status', '--stale-hours', '--dir', '--help'],
   fleet: [
     'status', 'session', 'watch', 'events', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
-    'empties', 'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'feedback', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'merge-batch-run', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'ideation', 'drive', 'wt-census', 'unfed', 'autopilot', 'launches', 'lane-auth', 'reverts', 'vitals',
+    'empties', 'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'feedback', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'merge-batch-run', 'rebase-plan', 'merge-plan', 'merge-throughput', 'bus', 'usage', 'research-digest', 'ideation', 'drive', 'wt-census', 'unfed', 'autopilot', 'launches', 'lane-auth', 'reverts', 'vitals',
     // Registered verbs the docs show (see FLEET_SUBCOMMAND_LOADERS). Each one
     // passes test/cli-help-no-side-effects; a registry verb whose --help still
     // misbehaves stays out until it is fixed.
