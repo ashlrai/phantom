@@ -216,6 +216,30 @@ describe('router calibration', () => {
     expect(report.arms).toMatchObject([{ arm: 'codex', resolved: 1,
       wallTimeMs: { actual, paired: actual === null ? 0 : 1 } }]);
   });
+  it.each([
+    [{ ts: '2026-01-01T00:00:00Z' }, undefined, 2000],
+    [{ ts: '2026-01-01T00:00:01Z' }, undefined, 2000],
+    [{ ts: '2026-01-01T00:00:02Z' }, undefined, null],
+    [{ ts: '2026-01-01T00:00:03Z' }, undefined, null],
+    [{ ts: '2026-01-01T00:00:04Z' }, undefined, 2000],
+    [{}, undefined, null],
+    [{ ts: 'invalid' }, undefined, null],
+    [{ ts: '2026-01-01T00:00:00Z', at: '2026-01-01T00:00:02Z' }, undefined, null],
+    [{ launched: false }, undefined, 2000],
+    [{ launch_dedupe: false }, undefined, 2000],
+    [{ ts: '2026-01-01T00:00:02Z' }, 1500, 1500],
+  ])('uses launch reservation evidence %j with explicit duration %s', (reservation, duration, actual) => {
+    const report = calibrateRouting(
+      row({ event: 'launch', job: 'RQ-SOLO', lane: 'codex',
+        ts: '2026-01-01T00:00:01Z', predicted_wall_time_ms: 2000 }) +
+      row({ event: 'finish', job: 'RQ-SOLO', ts: '2026-01-01T00:00:03Z', wall_time_ms: duration }) +
+      row({ job: 'RQ-SOLO', outcome: 'MERGED' }) +
+      row({ event: 'claim', job: 'RQ-SOLO', launch_dedupe: true, ...reservation }) +
+      row({ event: 'claim', job: 'RQ-RESERVED-ONLY', launch_dedupe: true }),
+    );
+    expect(report.arms).toMatchObject([{ arm: 'codex', jobs: 1, resolved: 1,
+      wallTimeMs: { actual, paired: actual === null ? 0 : 1 } }]);
+  });
   it.each([false, true])('keeps an unlabeled standalone launch out of the batch arm (claim last: %s)', (claimLast) => {
     const claim = row({ event: 'batch_claim', job: 'RQ-FALLBACK', lane: 'codex', ts: '2026-01-01T00:00:00Z' });
     const launch = row({ event: 'launch', job: 'RQ-FALLBACK', lane: 'unknown',
