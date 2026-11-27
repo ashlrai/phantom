@@ -39,9 +39,10 @@ async function fixture(files: Record<string, unknown>, jsonl: unknown[] = []) {
   return root;
 }
 const disk = { sampled_at: 100, previous_sampled_at: 90, free_gb: 200, timed_out: false, growth_gb_per_h: null, hours_to_reuse_only: null, directories: [{ path: 'logs', size_gb: 2, delta_gb: -1 }] };
+const dispatcher = { last_tick: new Date(100_000).toISOString(), lanes: { claude: { running: 1, target: 8, queued: 3 } } };
 
 it('keeps the disk contract byte-compatible and adds launch evidence only as extra fields', async () => {
-  const root = await fixture({ 'disk-growth.json': disk, 'status.json': { lanes: { claude: { running: 1, target: 8, queued: 3 } } } }, [row]);
+  const root = await fixture({ 'disk-growth.json': disk, 'status.json': dispatcher }, [row]);
   const old = await readFleetVitals(root, 100_000);
   const host = await readHostVitals(root, 100_000);
   expect(host).toMatchObject({ schema: 'fleet.vitals.v1', status: old.status, disk: old.disk });
@@ -61,8 +62,8 @@ it('an absent launch source never changes the disk status', async () => {
 });
 
 it.each(['over_host', 'over_owned', 'settling', 'pressure', 'admit'])('does not guess the undocumented %s controller schema', async reason => {
-  const root = await fixture({ 'admission-ctl.json': { reason }, 'status.json': { lanes: { claude: { running: 1, target: 8, queued: 3 } } } });
-  expect(await readLaunchVitals(root)).toEqual({ reason: null, nextWindowSeconds: null, queued: 3, lanes: [{ lane: 'claude', running: 1, target: 8, queued: 3 }] });
+  const root = await fixture({ 'admission-ctl.json': { reason }, 'status.json': dispatcher });
+  expect(await readLaunchVitals(root, 100_000)).toEqual({ reason: null, nextWindowSeconds: null, queued: 3, lanes: [{ lane: 'claude', running: 1, target: 8, queued: 3 }] });
 });
 it('projects the guard reason and pacing at the report time across both views', async () => {
   const now = 1795350000 * 1000;
@@ -86,7 +87,31 @@ it('projects the guard reason and pacing at the report time across both views', 
 });
 
 it('does not invent a queue total when a lane is missing its count', async () => {
-  expect((await readLaunchVitals(await fixture({ 'status.json': { lanes: { claude: { running: 0 } } } }))).queued).toBeNull();
+  const root = await fixture({ 'status.json': { ...dispatcher, lanes: { claude: { running: 0 } } } });
+  expect(await readLaunchVitals(root, 100_000)).toMatchObject({ queued: null, lanes: [{ lane: 'claude', running: 0 }] });
+});
+
+it.each([
+  undefined, 'invalid', new Date(99_999).toISOString(), new Date(160_001).toISOString(),
+])('keeps dispatcher counts unknown with unusable last_tick %s and projects the fresh guard', async last_tick => {
+  const root = await fixture({
+    'status.json': { ...dispatcher, last_tick },
+    'admission-ctl.json': { ts: 160, settle_s: 30, last_admit: 150, why: 'settle', total_running: 1, max_total_running: 8 },
+  });
+  expect(await readLaunchVitals(root, 160_000)).toEqual({
+    reason: 'waiting between starts', nextWindowSeconds: 20, queued: null,
+    lanes: [{ lane: 'claude', running: null, target: null, queued: null }],
+  });
+});
+
+it('accepts the freshness boundary and distinguishes an empty lane map from an invalid one', async () => {
+  const root = await fixture({ 'status.json': dispatcher });
+  expect((await readLaunchVitals(root, 160_000)).queued).toBe(3);
+  const path = join(root, 'queue/status.json');
+  await writeFile(path, JSON.stringify({ ...dispatcher, lanes: {} }));
+  expect((await readLaunchVitals(root, 160_000)).queued).toBe(0);
+  await writeFile(path, JSON.stringify({ ...dispatcher, lanes: [] }));
+  expect((await readLaunchVitals(root, 160_000)).queued).toBeNull();
 });
 
 it('reads measured, partial and unknown launch costs while projecting only metadata', async () => {
