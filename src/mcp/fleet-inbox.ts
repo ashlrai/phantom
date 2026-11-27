@@ -13,6 +13,7 @@ import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } fro
 import { busBodyKind, busBodyResultOutcome, busBodyThread, WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
+import { groupAddressTopicOf } from '../core/fleet/bus-group.js';
 
 export const MAX_FLEET_BUS_INBOX_READ = BUS_INBOX_MAX_READ;
 export const DEFAULT_FLEET_BUS_INBOX_READ = 50;
@@ -46,6 +47,16 @@ export interface FleetBusInboxFilters {
    * dependence — the addressed `agents bus inbox --channel` resolves the
    * same prefix only across channels the agent belongs to. */
   channel?: string;
+  /** Group-address topic filter: keeps only envelopes addressed to a
+   * well-formed `group:<room>:<topic>` label carrying this exact topic
+   * component — the same `groupAddressTopicOf` match `phm comms bus
+   * read|watch --group-topic`, `fleet bus-follow --group-topic` and every
+   * curated bus read's `topic` filter apply, composing with `channel` into
+   * one room AND one topic while an agent address, a bare label or a
+   * `group:<room>` without a topic never matches. `topic` stays the
+   * protocol-v1 body topic, so the two compose rather than collide; the
+   * value takes the strict channel-name grammar and needs no registry. */
+  groupTopic?: string;
   /** One job id the body must name (the shared `busBodyJobMatch` rule). */
   job?: string;
   /** Exact body-kind discriminator the body must carry (the shared
@@ -92,7 +103,7 @@ export interface FleetBusInboxDeps {
 }
 
 const INBOX_KEYS = new Set(['after', 'limit', 'to', 'from',
-  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'thread', 'job', 'bodyKind', 'result', 'channel', 'since', 'before', 'contains']);
+  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'groupTopic', 'thread', 'job', 'bodyKind', 'result', 'channel', 'since', 'before', 'contains']);
 /** The printable-label rule `--thread`, `--job` and the address fields share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
@@ -161,6 +172,11 @@ export function parseFleetBusInboxArgs(args: Record<string, unknown>): FleetBusI
   if (channel !== undefined) {
     if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
     filters.channel = channel;
+  }
+  const groupTopic = args['groupTopic'];
+  if (groupTopic !== undefined) {
+    if (typeof groupTopic !== 'string' || !agentChannelNameSchema.safeParse(groupTopic).success) return null;
+    filters.groupTopic = groupTopic;
   }
   const since = args['since'];
   if (since !== undefined) {
@@ -239,6 +255,7 @@ export async function readFleetBusInbox(input: FleetBusInboxArgs, deps: FleetBus
     (filters?.bodyKind === undefined || busBodyKind(envelope.body) === filters.bodyKind) &&
     (filters?.result === undefined || busBodyResultOutcome(envelope.body) === filters.result) &&
     (filters?.channel === undefined || envelope.to.startsWith(`group:${filters.channel}:`)) &&
+    (filters?.groupTopic === undefined || groupAddressTopicOf(envelope.to) === filters.groupTopic) &&
     (filters?.since === undefined || receivedAt >= filters.since) &&
     (filters?.before === undefined || receivedAt < filters.before) &&
     (filters?.contains === undefined || busReadContainsMatch(envelope.body, filters.contains)));

@@ -2650,7 +2650,24 @@ the filter composes conjunctively with every other read filter, filtered
 rows still advance `bus-follow` checkpoints and `comms bus` page cursors
 exactly like every other filter, and a `comms bus --checkpoint` consumer
 binds the `--channel` value into its filter identity, so a room change
-fails closed. `--contains <text>`
+fails closed. `--group-topic <topic>` narrows
+`comms bus read|watch`, `fleet bus-follow` and `fleet_bus_inbox`'s
+`groupTopic` to envelopes addressed to a well-formed
+`group:<room>:<topic>` label carrying that exact topic component — the
+same `groupAddressTopicOf` match `channel read --topic`, the work
+feed's `--topic`, `comms bus next --topic`, `phm messages --topic` and
+every other curated bus read's topic filter apply, decided on the raw
+`to` label across every room with
+no registry dependence so unknown channel state never widens a read; the
+value takes the strict channel-name grammar, composes conjunctively with
+`--channel`/`channel` into one room AND one topic while an agent address,
+a bare label or a `group:<room>` without a topic never matches, and stays
+distinct from `--topic`/`topic` — the protocol-v1 body topic — so the two
+compose rather than collide. Filtered rows still advance `bus-follow`
+checkpoints and `comms bus` page cursors exactly like every other filter,
+and a `comms bus --checkpoint` consumer binds the raw `--group-topic`
+value into its filter identity, so a topic change fails closed.
+`--contains <text>`
 narrows `comms bus read|watch` and `fleet bus-follow` to envelopes whose
 scrubbed one-line summary carries the needle — the same
 `busReadContainsMatch` rule `agents bus inbox --contains`,

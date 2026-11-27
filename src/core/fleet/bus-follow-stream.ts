@@ -5,6 +5,7 @@ import { BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxPage } from './bus-
 import { BUS_PRIORITIES, BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches,
   type BusEnvelope, type BusPriority, type BusProtocolKind } from './bus-envelope.js';
 import { agentChannelNameSchema, agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
+import { groupAddressTopicOf } from './bus-group.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
 import { busBodyKind, busBodyResultOutcome, busBodyThread, WORK_RESULT_OUTCOMES,
   type WorkResultOutcome } from '../agents/bus-v2-schema.js';
@@ -127,6 +128,19 @@ export interface BusFollowRequest {
    * checkpoints still advance past filtered rows exactly like every other
    * filter. */
   topic?: string;
+  /** Optional group-address topic filter: only envelopes addressed to a
+   * well-formed `group:<room>:<topic>` label carrying this exact topic
+   * component emit — the same `groupAddressTopicOf` match
+   * `channel read --topic`, the work feed's `--topic`, `comms bus
+   * next --topic`, `phm messages --topic`, `comms bus
+   * read|watch --group-topic` and `fleet_bus_inbox`'s `groupTopic` apply,
+   * composing with `channel` into one room AND one topic while an agent
+   * address, a bare label or a `group:<room>` without a topic never
+   * matches. `topic` stays the protocol-v1 body topic, so the two compose
+   * rather than collide; the value takes the strict channel-name grammar
+   * and matching needs no registry. Checkpoints still advance past
+   * filtered rows exactly like every other filter. */
+  groupTopic?: string;
   /** Optional body-kind filter: only envelopes whose body carries that exact
    * kind discriminator emit — the same `busBodyKind` own-field exact match
    * `agents bus inbox --body-kind`, `agents bus channel read --body-kind`,
@@ -173,6 +187,7 @@ export function validBusFollowRequest(request: BusFollowRequest): boolean {
     (request.inReplyTo === undefined || label(request.inReplyTo)) &&
     (request.kind === undefined || (BUS_PROTOCOL_KINDS as readonly string[]).includes(request.kind)) &&
     (request.topic === undefined || isTopicPattern(request.topic)) &&
+    (request.groupTopic === undefined || agentChannelNameSchema.safeParse(request.groupTopic).success) &&
     (request.bodyKind === undefined || label(request.bodyKind)) &&
     (request.result === undefined ||
       (WORK_RESULT_OUTCOMES as readonly string[]).includes(request.result)) &&
@@ -270,6 +285,7 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
       for (const row of page.messages) {
         if (!addressedTo(row.envelope.to, row.envelope.from)) continue;
         if (channelPrefix !== undefined && !row.envelope.to.startsWith(channelPrefix)) continue;
+        if (request.groupTopic !== undefined && groupAddressTopicOf(row.envelope.to) !== request.groupTopic) continue;
         if (request.id !== undefined && row.envelope.id !== request.id) continue;
         if (request.inReplyTo !== undefined && !busBodyInReplyToMatch(row.envelope.body, request.inReplyTo)) continue;
         if (request.job !== undefined && !busBodyJobMatch(row.envelope.body, request.job)) continue;

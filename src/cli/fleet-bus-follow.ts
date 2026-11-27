@@ -3,7 +3,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 import { followBusStream, validBusFollowRequest, type BusFollowRecord, type BusFollowRequest } from '../core/fleet/bus-follow-stream.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = 'Usage: ashlr fleet bus-follow --after <nonnegative-safe-cursor> --duration-ms <1..3600000> [--id <id>] [--in-reply-to <id>] [--to <agent-or-topic>] [--channel <name>] [--job <id>] [--from <agent-or-label>] [--exclude-from <agent-or-label>] [--priority P0..P3] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--interval-ms <100..60000>] [--root <absolute>] --json';
+const usage = 'Usage: ashlr fleet bus-follow --after <nonnegative-safe-cursor> --duration-ms <1..3600000> [--id <id>] [--in-reply-to <id>] [--to <agent-or-topic>] [--channel <name>] [--group-topic <topic>] [--job <id>] [--from <agent-or-label>] [--exclude-from <agent-or-label>] [--priority P0..P3] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--interval-ms <100..60000>] [--root <absolute>] --json';
 
 interface Dependencies {
   /** Receives one scrubbed JSON line per record; resolves when the line is accepted. */
@@ -70,6 +70,14 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
       '--id and --in-reply-to keep only the exact envelope id or bodies replying to it, and --kind and ' +
       '--topic narrow on the protocol-v1 body fields — the same filters comms bus read|watch and ' +
       'fleet_bus_inbox apply to this store; ' +
+      '--group-topic keeps only envelopes addressed to a well-formed group:<room>:<topic> label ' +
+      'carrying that exact topic component — the same groupAddressTopicOf match channel read ' +
+      '--topic, the work feed\'s --topic, comms bus next --topic, phm messages --topic, ' +
+      'comms bus read|watch --group-topic and fleet_bus_inbox\'s groupTopic apply, composing with ' +
+      '--channel into one room AND one topic while an agent address, a bare label or a group:<room> ' +
+      'without a topic never matches, decided on the to label with no registry dependence and the ' +
+      'strict channel-name grammar; --topic stays the protocol-v1 body topic, so the two compose ' +
+      'rather than collide; ' +
       '--body-kind keeps only envelopes whose body carries that exact kind discriminator — the v2 kind ' +
       'field, a protocol-v1 protocol.kind or a type/schema notice key, matched exactly like the ' +
       'agents bus inbox --body-kind and phm messages --body-kind reads apply, so a body carrying no ' +
@@ -87,7 +95,7 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
   let json = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json' && !json) { json = true; continue; }
-    const match = /^(--after|--duration-ms|--id|--in-reply-to|--to|--channel|--job|--from|--exclude-from|--priority|--kind|--topic|--body-kind|--result|--thread|--since|--before|--contains|--interval-ms|--root)(?:=(.*))?$/.exec(args[i]!);
+    const match = /^(--after|--duration-ms|--id|--in-reply-to|--to|--channel|--group-topic|--job|--from|--exclude-from|--priority|--kind|--topic|--body-kind|--result|--thread|--since|--before|--contains|--interval-ms|--root)(?:=(.*))?$/.exec(args[i]!);
     if (!match || Object.hasOwn(values, match[1]!)) return invalid();
     const value = match[2] ?? args[++i];
     if (value === undefined || value === '' || value.startsWith('--')) return invalid();
@@ -106,7 +114,7 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
   const request: BusFollowRequest = {
     after: number('--after'), durationMs: number('--duration-ms'),
     intervalMs: values['--interval-ms'] === undefined ? undefined : number('--interval-ms'),
-    to: values['--to'], channel: values['--channel'], job: values['--job'], from: values['--from'], excludeFrom: values['--exclude-from'],
+    to: values['--to'], channel: values['--channel'], groupTopic: values['--group-topic'], job: values['--job'], from: values['--from'], excludeFrom: values['--exclude-from'],
     priority: values['--priority'] as BusFollowRequest['priority'],
     kind: values['--kind'] as BusFollowRequest['kind'], topic: values['--topic'], bodyKind: values['--body-kind'],
     result: values['--result'] as BusFollowRequest['result'],

@@ -4946,7 +4946,14 @@ share (`comms bus read|watch --channel`, `fleet bus-follow --channel`,
 `fleet_bus_inbox`'s `channel`, `wakes --channel`, `phm messages --channel`,
 the work feed's `--channel`; the addressed `agents bus inbox --channel`
 resolves the same prefix only across the agent's member channels), strict
-channel-name grammar with no registry dependence — each
+channel-name grammar with no registry dependence — and
+`groupTopic`/`--group-topic`, the shared `groupAddressTopicOf` topic-component
+match on the raw `to` label every bus read's `--topic`/`topic` applies under
+its own spelling (`comms bus read|watch --group-topic`, `fleet
+bus-follow --group-topic`, `fleet_bus_inbox`'s `groupTopic` here, where
+`topic` stays the protocol-v1 body topic), strict channel-name grammar with
+no registry dependence, composing with `channel` into one room AND one topic
+— each
 skipping non-matching rows while checkpoints still advance past them.
 Claim tokens and `work.result`
 queueId/receiptId never appear in a summary.

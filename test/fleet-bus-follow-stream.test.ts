@@ -142,6 +142,62 @@ it('rejects an invalid --channel before touching the store', async () => {
   expect(existsSync(join(root, 'bus-inbox'))).toBe(false);
 });
 
+it('delivers only envelopes addressed to group:<room>:<topic> carrying that topic', async () => {
+  post('eng-general', 'group:eng:general');
+  post('ops-general', 'group:ops:general');
+  post('eng-alerts', 'group:eng:alerts');
+  post('direct', 'worker-a');
+  post('eng-bare', 'group:eng');
+  post('bad-room', 'group:Eng:general');
+  post('bad-topic', 'group:eng:General');
+  post('deep', 'group:eng:general:extra');
+  const { records, pending, expire } = follow({ groupTopic: 'general' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  // One topic across every room; agent addresses, bare rooms and malformed
+  // group labels never match.
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['eng-general', 'ops-general']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 8 });
+});
+
+it('composes --group-topic with --channel into one room and one topic', async () => {
+  post('eng-general', 'group:eng:general');
+  post('ops-general', 'group:ops:general');
+  post('eng-alerts', 'group:eng:alerts');
+  const { records, pending, expire } = follow({ channel: 'eng', groupTopic: 'general' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['eng-general']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('keeps --group-topic distinct from the protocol-v1 --topic', async () => {
+  post('room-mail', 'group:eng:general');
+  post('protocol-mail', 'fleet.deploy', { body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' } } });
+  const { records, pending, expire } = follow({ groupTopic: 'general' });
+  expire();
+  await pending;
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['room-mail']);
+  const protocol = follow({ topic: 'fleet.*' });
+  protocol.expire();
+  await protocol.pending;
+  expect(messages(protocol.records).map(row => row.envelope.id)).toEqual(['protocol-mail']);
+});
+
+it('rejects an invalid --group-topic before touching the store', async () => {
+  const list = vi.fn(listBusInboxAfter);
+  for (const groupTopic of ['Eng', 'has space', 'x'.repeat(33), '-lead', 'group:eng', 'eng:general']) {
+    const { records, pending } = follow({ groupTopic }, { list });
+    const result = await pending;
+    expect(result.status).toBe('invalid');
+    expect(messages(records)).toEqual([]);
+  }
+  expect(list).not.toHaveBeenCalled();
+  expect(existsSync(join(root, 'bus-inbox'))).toBe(false);
+});
+
 it('keeps channel posts out of the stream when the identity registry is unreadable', async () => {
   expect(registerAgentIdentity({ handle: 'worker-a' }, { root }).status).toBe('created');
   expect(createAgentChannel({ name: 'eng', createdBy: 'worker-a' }, { root }).status).toBe('created');
@@ -311,6 +367,12 @@ it('bus-follow rejects invalid arguments before touching the store', async () =>
     ['--after', '0', '--duration-ms', '100', '--channel', 'x'.repeat(33), '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--channel=', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--channel', 'eng', '--channel', 'ops', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--group-topic', 'Eng', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--group-topic', 'has space', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--group-topic', 'x'.repeat(33), '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--group-topic', 'group:eng', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--group-topic=', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--group-topic', 'general', '--group-topic', 'alerts', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--job', 'bad label', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--job=', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--job', 'RQ-1', '--job', 'RQ-2', '--root', root, '--json'],
@@ -386,6 +448,21 @@ it('filters the CLI stream by --channel', async () => {
   expect(code).toBe(0);
   const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
   expect(messages(rows).map(row => row.envelope.id)).toEqual(['eng-1', 'eng-2']);
+  expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 4 });
+});
+
+it('filters the CLI stream by --group-topic', async () => {
+  post('eng-general', 'group:eng:general');
+  post('noise', 'worker-a');
+  post('ops-general', 'group:ops:general');
+  post('eng-alerts', 'group:eng:alerts');
+  const emitted: string[] = [];
+  const code = await cmdFleetBusFollow(['--after', '0', '--duration-ms', '250', '--interval-ms', '100',
+    '--group-topic', 'general', '--root', root, '--json'],
+    { emit: (json: string) => { emitted.push(json); } });
+  expect(code).toBe(0);
+  const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
+  expect(messages(rows).map(row => row.envelope.id)).toEqual(['eng-general', 'ops-general']);
   expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 4 });
 });
 
