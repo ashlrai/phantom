@@ -1010,6 +1010,79 @@ describe('channel-filtered inbox reads', () => {
   });
 });
 
+describe('topic-filtered inbox reads', () => {
+  it('keeps only mail addressed to one topic component across every member room', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    createAgentChannel({ name: 'ops', createdBy: 'atlas', members: ['nova'] }, options);
+    // Room traffic under two topics, plus a channel-addressed handoff on deploy.
+    await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'deploy', text: 'release deploy', id: 'tp-rel-dep' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'general', text: 'release general', id: 'tp-rel-gen' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'ops', topic: 'deploy', text: 'ops deploy', id: 'tp-ops-dep' }, options);
+    expect(appendBusInbox({ id: 'tp-ho-dep', from: 'agent:atlas', to: 'group:release:deploy', priority: 'P2', ttl: 60_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-TP-1', prompt: 'room assignment' } }, options).status).toBe('posted');
+    // Direct mail never carries a group address, so it never matches a topic.
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm', id: 'tp-dm' }, options);
+    // Malformed group labels still reach the inbox as release mail — the
+    // channel prefix matches — but their topic component parses to nothing,
+    // so --topic never keeps them while --channel still does.
+    expect(appendBusInbox({ id: 'tp-deep', from: 'agent:atlas', to: 'group:release:deploy:extra', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: 'deep label' } }, options).status).toBe('posted');
+    expect(appendBusInbox({ id: 'tp-empty', from: 'agent:atlas', to: 'group:release:', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: 'empty topic' } }, options).status).toBe('posted');
+
+    // The topic component matches across every member room at once — the
+    // same groupAddressTopicOf rule phm messages --topic applies.
+    const deploy = readAgentInbox('nova', { topic: 'deploy' }, options);
+    if (deploy.status !== 'ok') throw new Error(`unexpected ${deploy.status}`);
+    expect(deploy.messages.map(m => `${m.kind}:${m.envelope.id}`).sort())
+      .toEqual(['channel:tp-ops-dep', 'channel:tp-rel-dep', 'handoff:tp-ho-dep'].sort());
+    // --channel composes into one room AND one topic.
+    const narrowed = readAgentInbox('nova', { topic: 'deploy', channel: 'release' }, options);
+    expect(narrowed.status === 'ok' && narrowed.messages.map(m => `${m.kind}:${m.envelope.id}`).sort())
+      .toEqual(['channel:tp-rel-dep', 'handoff:tp-ho-dep'].sort());
+    // --kind separates the room's direct mail from its assignments under one topic.
+    const channelOnly = readAgentInbox('nova', { topic: 'deploy', kind: 'channel' }, options);
+    expect(channelOnly.status === 'ok' && channelOnly.messages.map(m => m.envelope.id).sort())
+      .toEqual(['tp-ops-dep', 'tp-rel-dep']);
+    // A different topic and --matched count only the accepted rows.
+    expect(readAgentInbox('nova', { topic: 'general' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'tp-rel-gen' } }] });
+    const counted = readAgentInbox('nova', { topic: 'deploy', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(3);
+    // The malformed labels show under --channel but never under --topic.
+    const release = readAgentInbox('nova', { channel: 'release' }, options);
+    expect(release.status === 'ok' && release.messages.map(m => m.envelope.id).sort())
+      .toEqual(['tp-deep', 'tp-empty', 'tp-ho-dep', 'tp-rel-dep', 'tp-rel-gen']);
+    // The unfiltered page still sees everything the filter skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages).toHaveLength(7);
+  });
+
+  it('refuses an invalid topic name and reads a topic no room uses as empty', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    createAgentChannel({ name: 'other', createdBy: 'atlas' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'deploy', text: 'release deploy', id: 'tq-rel' }, options);
+    // 'other' exists but nova is not a member, so its deploy post never
+    // reaches nova's inbox — the topic filter cannot widen membership.
+    await postChannelMessage({ from: 'atlas', channel: 'other', topic: 'deploy', text: 'other deploy', id: 'tq-oth' }, options);
+
+    for (const bad of ['Bad Topic', '../x', 'deploy:extra', '', 'a'.repeat(33)]) {
+      expect(readAgentInbox('nova', { topic: bad }, options)).toMatchObject({ status: 'invalid' });
+    }
+    expect(readAgentInbox('nova', { topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'tq-rel' } }] });
+    expect(readAgentInbox('nova', { topic: 'absent' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages.map(m => m.envelope.id)).toEqual(['tq-rel']);
+  });
+});
+
 describe('contains-filtered reads', () => {
   it('narrows inbox and channel pages to rows whose summary carries the needle', async () => {
     const options = setup();
