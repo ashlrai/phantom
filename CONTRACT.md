@@ -5115,8 +5115,8 @@ cursor order, each row annotated with the same `held`/`holder`/`job`/
 `readBusEnvelopeById` report, and `rootFound`/`complete`/`sourceFailure`
 keeping a proven miss distinct from an unreadable walk. `filters` is the
 shared bus-read filter set `BusThreadFilters` declares — `to`/`from`/
-`excludeFrom`/`channel`/`job`/`priority`/`thread`/`inReplyTo`/`bodyKind`/
-`result`/`since`/`before`/`contains` — applied by `readBusThread` to the
+`excludeFrom`/`channel`/`topic`/`job`/`priority`/`thread`/`inReplyTo`/
+`bodyKind`/`result`/`since`/`before`/`contains` — applied by `readBusThread` to the
 projected chain members only under the same matcher rules `followBusStream`
 builds, so the walk, `rootFound` and the scan honesty fields still describe
 the whole chain and a root whose every member a filter excludes reports

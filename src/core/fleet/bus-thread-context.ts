@@ -1,6 +1,7 @@
 import { isProxy } from 'node:util/types';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 import { BUS_PRIORITIES, type BusPriority } from './bus-envelope.js';
+import { groupAddressTopicOf } from './bus-group.js';
 import { annotateLiveEvidence, busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch,
   type BusEnvelopeLookupJob } from '../agents/bus-unified.js';
 import { agentChannelNameSchema, agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry, resolveAgent } from '../agents/bus-identity.js';
@@ -66,8 +67,11 @@ const label = (value: unknown): value is string =>
 /**
  * The read filters the reply-chain read shares with every other bus read —
  * the `fleet bus-follow`/`fleet_bus_inbox`/`agents bus inbox` family minus
- * the filters that name the read itself (`id` roots the chain here) or a
- * delivery axis the chain does not carry (`kind`, `topic`). Every field is
+ * the filters that name the read itself (`id` roots the chain here) or the
+ * protocol-v1 delivery axes the chain does not carry (`kind`, `topic` — the
+ * `protocol.kind`/`protocol.topic` fields those reads filter on; the
+ * group-address `topic` is an address filter like `channel`, so it joins
+ * the set). Every field is
  * optional and conjunctive: a chain member must satisfy all of them to stay
  * in `messages`. The filters narrow the projected members only — they never
  * change which envelopes the `inReplyTo` walk selects, so `rootFound`,
@@ -84,7 +88,13 @@ const label = (value: unknown): value is string =>
  * the sender-inclusion rule and `excludeFrom` the sender-exclusion rule
  * (`agentRefAddressMatcher`); an unreadable registry or unresolvable ref
  * keeps exact-label matching, never widening. `channel` keeps members
- * addressed to `group:<channel>:*`; `job` the `busBodyJobMatch` citation
+ * addressed to `group:<channel>:*`; `topic` keeps members whose `to`
+ * parses to that exact topic component of a well-formed
+ * `group:<room>:<topic>` address through the shared `groupAddressTopicOf` —
+ * the same match every other bus read's `--topic` applies, composing with
+ * `channel` into one room AND one topic while an agent address, a bare
+ * `group:<room>` or a malformed topic never matches; `job` the
+ * `busBodyJobMatch` citation
  * rule; `priority` the exact P0..P3 band; `thread` the `busBodyThread`
  * label on note/context bodies; `inReplyTo` the own-property
  * `busBodyInReplyToMatch` citation; `bodyKind` the `busBodyKind`
@@ -99,6 +109,11 @@ export interface BusThreadFilters {
   from?: string;
   excludeFrom?: string;
   channel?: string;
+  /** Keep only members addressed to a well-formed `group:<room>:<topic>`
+   * label carrying this exact topic component — decided on the raw `to`
+   * through `groupAddressTopicOf` with no registry dependence, so an agent
+   * address, a bare `group:<room>` or a malformed topic never matches. */
+  topic?: string;
   job?: string;
   priority?: BusPriority;
   thread?: string;
@@ -125,6 +140,7 @@ export function validBusThreadFilters(filters: BusThreadFilters | undefined): bo
     (filters.from === undefined || label(filters.from)) &&
     (filters.excludeFrom === undefined || label(filters.excludeFrom)) &&
     (filters.channel === undefined || agentChannelNameSchema.safeParse(filters.channel).success) &&
+    (filters.topic === undefined || agentChannelNameSchema.safeParse(filters.topic).success) &&
     (filters.job === undefined || label(filters.job)) &&
     (filters.priority === undefined || BUS_PRIORITIES.includes(filters.priority)) &&
     (filters.thread === undefined || label(filters.thread)) &&
@@ -189,7 +205,7 @@ function annotateThreadSenders(messages: BusThreadMessage[], options: BusInboxOp
 /**
  * The per-member predicate `filters` describes — the same matcher set
  * `followBusStream` builds once per read: the addressed-to, channel,
- * sender-include/exclude, job, reply-citation, priority, body-kind,
+ * topic, sender-include/exclude, job, reply-citation, priority, body-kind,
  * work-result, thread-label, receivedAt-window and contains rules every
  * bus read shares, resolved against one registry read so a thread can
  * never disagree with the inbox or follow about what a ref or needle
@@ -210,6 +226,7 @@ function busThreadRowFilter(filters: BusThreadFilters, options: BusInboxOptions)
     const envelope = row.envelope;
     if (addressedTo !== undefined && !addressedTo(envelope.to, envelope.from)) return false;
     if (channelPrefix !== undefined && !envelope.to.startsWith(channelPrefix)) return false;
+    if (filters.topic !== undefined && groupAddressTopicOf(envelope.to) !== filters.topic) return false;
     if (filters.inReplyTo !== undefined && !busBodyInReplyToMatch(envelope.body, filters.inReplyTo)) return false;
     if (filters.job !== undefined && !busBodyJobMatch(envelope.body, filters.job)) return false;
     if (fromMatch !== undefined && !fromMatch(envelope.from)) return false;
