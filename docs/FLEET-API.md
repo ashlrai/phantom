@@ -59,6 +59,12 @@ named nested type. Relative source links refer to the source checkout.
 | POST | `/api/fleet/pause` | none | [inline {ok, action, service, activation, fleet, mutation?}](../src/core/web/api.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{}' 'http://127.0.0.1:7777/api/fleet/pause'` |
 | POST | `/api/fleet/resume` | none | [inline {ok, action, service, activation, fleet, mutation?}](../src/core/web/api.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{}' 'http://127.0.0.1:7777/api/fleet/resume'` |
 
+The Pulse strip and `phm fleet pulse --lanes --json` share
+`GET /api/verse/fleet/runs/pulse/lanes`. Each fleet-wide running or capacity
+total requires that measurement for every reported lane. An empty lane list
+or a missing measurement yields `null` for that total. Per-lane measurements
+and independent ledger metrics remain available.
+
 ## Fleet control
 
 | Method | Path | Query | Response type / source | Handler | Curl example |

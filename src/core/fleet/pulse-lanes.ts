@@ -15,9 +15,9 @@ export interface LaneSlotRead { lane: string; running: number | null; capacity: 
 export interface PulseLanesInputs { throughput: ThroughputReport | null; slots: LaneSlotRead[] | null }
 
 const round = (n: number, places: number): number => Math.round(n * 10 ** places) / 10 ** places;
-const sumKnown = (values: (number | null)[]): number | null => {
-  const known = values.filter((v): v is number => v !== null);
-  return known.length ? known.reduce((a, b) => a + b, 0) : null;
+const sumComplete = (values: (number | null)[]): number | null => {
+  if (values.length === 0 || !values.every(v => v !== null)) return null;
+  return values.reduce((total, value) => total + value, 0);
 };
 const percent = (rate: number | null): string => rate === null ? 'unknown' : `${Math.round(rate * 100)}%`;
 const laneLine = (row: Omit<PulseLaneV1, 'line'>): string => {
@@ -50,7 +50,7 @@ export function buildPulseLanes(inputs: PulseLanesInputs, now: number): PulseLan
   const series: PulseSeriesV1 = { merged_per_h: (report?.buckets ?? []).map(hour => hour.merged ?? 0),
     median_open_to_merge_s: (report?.buckets ?? []).map(hour => hour.median_publish_to_merge_s), empty_rate: (report?.buckets ?? []).map(hour => hour.empty_rate) };
   const totals: PulseLanesV1['totals'] = {
-    running: sumKnown(lanes.map(l => l.running)), capacity: sumKnown(lanes.map(l => l.capacity)),
+    running: sumComplete(lanes.map(l => l.running)), capacity: sumComplete(lanes.map(l => l.capacity)),
     merged_per_h: merged === null ? null : round(merged / hours, 2), median_open_to_merge_s: t?.median_publish_to_merge_s ?? null,
     empty_rate: t?.empty_rate ?? null, merged, finished, series,
   };
