@@ -165,6 +165,17 @@ describe('CI baseline evidence', () => {
     const fail = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
     expect(fail.groups[0]?.action).toBe('unknown');
   });
+  it('uses the final master job verdict when its log includes a failed attempt', async () => {
+    const { gh } = github({ count: 1, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      if (!args[1]?.endsWith('/jobs/10/logs')) return result;
+      return { ...result, stdout: `${fixture('shared')}\n${result.stdout}` };
+    });
+    expect(report.groups).toMatchObject([
+      { master: 'pass', classification: 'probable-flake', action: 'rerun-failed' },
+    ]);
+  });
   it('keeps a newer same-SHA run on another branch out of master evidence', async () => {
     const { gh } = github({ count: 1, pass: true });
     const report = await analyzeCiBaseline('owner/repo', async args => {

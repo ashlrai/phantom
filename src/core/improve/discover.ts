@@ -1655,6 +1655,7 @@ import type { Proposal } from './loop.js';
 import { nightlyLearningBacklogItems } from './nightly-backlog.js';
 import { fleetPolicyBacklogItems } from './policy-backlog.js';
 import { localGateBacklogItems } from './gate-backlog.js';
+import { cosReconcileBacklogItems } from './cos-reconcile-backlog.js';
 import { passkAlertBacklogItems } from './passk-backlog.js';
 import { frictionBacklogItems } from './friction-backlog.js';
 import { tickHealthBacklogItems } from './tick-health-backlog.js';
@@ -1853,6 +1854,13 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // healthy-only evidence bar: a missing, unreadable or partially corrupt
   // ledger yields no items.
   items.push(...await localGateBacklogItems({ repo }));
+
+  // Chief-of-staff reconcile ledger: manual resolutions of reply sends that
+  // ended 'uncertain' or stale 'sending' become backlog items too — until
+  // now they only surfaced in `phm fleet cos status`, a point-in-time
+  // lookup someone had to run and read. Same healthy-only evidence bar:
+  // a missing, unreadable or partially corrupt ledger yields no items.
+  items.push(...await cosReconcileBacklogItems({ repo }));
 
   // Pass^k eval alerts: the nightly golden-set eval's recorded regressions
   // become backlog items too — until now they only surfaced in
