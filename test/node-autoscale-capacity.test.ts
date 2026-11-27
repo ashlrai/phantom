@@ -433,4 +433,33 @@ describe('phm node capacity / route CLI', () => {
     expect(JSON.parse(lines[1]!).error.message).toMatch(/node-capacity\.v1/);
     expect(JSON.parse(lines[2]!).error.message).toMatch(/node-capacity\.v1/);
   });
+
+  it('refuses a repeated single-value flag but allows the repeatable ones', async () => {
+    const { cmdNodeCapacity, cmdNodeRoute } = await import('../src/cli/node-capacity.js');
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (line: string) => { lines.push(line); };
+    try {
+      // A second --costs/--jobs/--nodes/--outcomes/--runs-dir file is user error:
+      // the route takes exactly one of each, so the repeat is refused before any
+      // file is read rather than silently planning from the first.
+      for (const dup of ['--costs', '--jobs', '--outcomes', '--runs-dir', '--nodes']) {
+        lines.length = 0;
+        expect(await cmdNodeRoute(['--capacity', 'a', dup, 'x', dup, 'y', '--json'])).toBe(2);
+        expect(JSON.parse(lines[0]!).error.message).toContain(`${dup} was given more than once`);
+      }
+      // --capacity documents and --exhausted lists are repeatable by design, so
+      // a repeat passes argv validation and fails later on the missing file.
+      lines.length = 0;
+      expect(await cmdNodeRoute(['--capacity', 'a', '--capacity', 'b', '--costs', 'c', '--jobs', 'd', '--json'])).toBe(2);
+      expect(JSON.parse(lines[0]!).error.message).not.toContain('more than once');
+      // capacity's valued flags are all single-value.
+      lines.length = 0;
+      expect(await cmdNodeCapacity(['--out', 'a', '--out', 'b', '--json'])).toBe(2);
+      expect(JSON.parse(lines[0]!).error.message).toContain('--out was given more than once');
+      lines.length = 0;
+      expect(await cmdNodeCapacity(['--node', 'a', '--node', 'b', '--json'])).toBe(2);
+      expect(JSON.parse(lines[0]!).error.message).toContain('--node was given more than once');
+    } finally { console.log = log; }
+  });
 });

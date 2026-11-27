@@ -28,10 +28,24 @@ function flagValues(args: string[], name: string): string[] {
   return out;
 }
 
-function validate(args: string[], valued: string[], bare: string[]): string | null {
+/** Argv check shared by both verbs. A valued flag in `repeatable` may appear
+ * more than once (route's --capacity documents and --exhausted lists); every
+ * other valued flag takes exactly one value, so a repeat is a usage error
+ * rather than a silently ignored second file — the same rule self-update's
+ * flag table already follows. */
+function validate(args: string[], valued: string[], bare: string[], repeatable: readonly string[] = []): string | null {
+  const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
-    if (valued.includes(args[i]!)) { if (i + 1 >= args.length || args[i + 1]!.startsWith('--')) return `${args[i]} needs a value`; i++; continue; }
-    if (!bare.includes(args[i]!)) return `unknown argument ${args[i]}`;
+    const arg = args[i]!;
+    if (valued.includes(arg)) {
+      if (i + 1 >= args.length || args[i + 1]!.startsWith('--')) return `${arg} needs a value`;
+      if (!repeatable.includes(arg)) {
+        if (seen.has(arg)) return `${arg} was given more than once`;
+        seen.add(arg);
+      }
+      i++; continue;
+    }
+    if (!bare.includes(arg)) return `unknown argument ${arg}`;
   }
   return null;
 }
@@ -104,7 +118,7 @@ const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every(s => 
 
 export async function cmdNodeRoute(args: string[]): Promise<number> {
   const json = args.includes('--json');
-  const problem = validate(args, ['--capacity', '--costs', '--jobs', '--outcomes', '--runs-dir', '--nodes', '--exhausted'], ['--json', '--outcomes-ledger']);
+  const problem = validate(args, ['--capacity', '--costs', '--jobs', '--outcomes', '--runs-dir', '--nodes', '--exhausted'], ['--json', '--outcomes-ledger'], ['--capacity', '--exhausted']);
   if (problem) return fail(json, 'route', `${problem}\n${NODE_CAPACITY_USAGE}`);
   const runsDir = flagValues(args, '--runs-dir')[0];
   if (runsDir !== undefined && !args.includes('--outcomes-ledger')) {
