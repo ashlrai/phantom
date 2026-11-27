@@ -700,9 +700,11 @@ pass+fail, null when nothing has resolved). Each repository and workflow run
 ID contributes at most one verdict, using the earliest observed timestamp.
 Disagreement on the head SHA or verdict withholds that run from the tallies.
 Disagreement on the triggering test withholds only its per-test attribution.
-The recent entries still show the raw receipts. Recurring-flake entries carry the
-same per-test verdict tallies and the `RQ-CIFLAKE-*` brief names them. A
-workflow verdict enters the per-test tally only when the baseline report
+The recent entries still show the raw receipts. Recurring-flake entries and
+`RQ-CIFLAKE-*` briefs tally verdicts only when the retained journal has an
+attempt for the same repository, head SHA and run ID within the recurrence
+window, at or before the verdict time. The attempt must consistently name
+the same single test as the verdict. The loop records a test on a verdict when the baseline report
 identifies a single triggering test and records no other failures for that
 workflow run. Other recorded failures include groups ineligible for a rerun,
 such as PR-caused failures. A `fail` verdict is evidence the classification may be wrong, not proof;
