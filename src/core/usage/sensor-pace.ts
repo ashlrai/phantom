@@ -10,7 +10,7 @@ import { budgetFor, spendAllowsPayPerUse } from '../spend/budget-policy.js';
 import { readSpendBudget } from '../spend/budget-store.js';
 import type { UsageSensorLaneView, UsageSensorReport } from './sensor-reading.js';
 
-export const PACE_SAFETY_MARGIN = 0.15;
+const PACE_SAFETY_MARGIN = 0.15;
 
 export type PaceReason = 'kill' | 'pay-per-use' | 'unknown' | 'paced' | 'uncapped' | 'exhausted';
 
@@ -96,13 +96,6 @@ export interface SchedulerPaceAdvice {
   uncapped?: boolean;
 }
 
-const FLEET_FROM_SENSOR: Partial<Record<UsageSensorLaneView['lane'], FleetEngine>> = {
-  'codex-personal': 'codex',
-  'claude-max': 'claude-cli',
-  'grok-bot': 'grok-cli',
-  local: 'local',
-};
-
 /** Advice for the fleet scheduler. Devin's ACU row is not a CLI slot change. */
 export function fleetPaceAdvice(report: UsageSensorReport): Partial<Record<FleetEngine, SchedulerPaceAdvice>> {
   const byLane = new Map(report.lanes.map((lane) => [lane.lane, lane]));
@@ -124,7 +117,6 @@ export function fleetPaceAdvice(report: UsageSensorReport): Partial<Record<Fleet
       continue;
     }
     if (!row || row.status !== 'fresh') continue;
-    if (!FLEET_FROM_SENSOR[row.lane] && engine !== 'grok-cli') continue;
     advice[engine] = {
       remaining: row.remaining,
       resetAt: row.resetAt,

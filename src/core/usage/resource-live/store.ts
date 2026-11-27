@@ -10,6 +10,9 @@ import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../../fleet/local-store-lock.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
+import { CODEX_HOME_SEGMENT_RE } from '../live/browser.js';
+import { isFiniteNumber, isUsageRecord } from '../runway.js';
+import { canonicalIsoTimestampSchema } from '../sensor-reading.js';
 import { EMPTY_RESET_STATE } from './reset-rule.js';
 import { antigravityExecutionContext, antigravityGroupsSchema } from './antigravity-quota.js';
 import {
@@ -29,19 +32,19 @@ const fileSchema = z.object({
 });
 
 export function resourceLiveStateDir(runsDir: string): string {
-  if (!isAbsolute(runsDir) || /(?:^|\/)\.codex[^/]*(?:\/|$)/.test(runsDir)) throw new Error('resource-live runs dir refused');
+  if (!isAbsolute(runsDir) || CODEX_HOME_SEGMENT_RE.test(runsDir)) throw new Error('resource-live runs dir refused');
   return join(runsDir, 'state');
 }
 export const resourceLivePath = (runsDir: string): string => join(resourceLiveStateDir(runsDir), 'resource-live.json');
 export const resetDecisionDir = (runsDir: string): string => join(runsDir, 'bus', 'masbot');
 
-const instant = z.string().refine(value => {
-  const time = Date.parse(value);
-  return Number.isFinite(time) && new Date(time).toISOString() === value;
-});
+export const asRecordObject = (value: unknown): Record<string, unknown> => (isUsageRecord(value) ? value : {});
+export const nonNegativeFinite = (value: unknown): number | null => (isFiniteNumber(value) && value >= 0 ? value : null);
+
+const instant = canonicalIsoTimestampSchema;
 const amount = z.number().finite().nonnegative().nullable();
 const ids = RESOURCE_LIVE_ALLOWANCES.map(row => row.id) as [ResourceLiveId, ...ResourceLiveId[]];
-export const resourceIdSchema = z.union([z.enum(ids),
+const resourceIdSchema = z.union([z.enum(ids),
   z.custom<`custom:${string}`>(value => typeof value === 'string' && /^custom:[a-z0-9][a-z0-9-]{0,62}$/.test(value))]);
 
 export const readingSchema = z.object({
@@ -136,18 +139,16 @@ export function parseResourceLiveSidecar(raw: unknown, custom: readonly Resource
   }
   const poll: Partial<Record<ResourceLiveId, PollState>> = {};
   const history: Partial<Record<ResourceLiveId, HistorySample[]>> = {};
-  const record = (value: unknown): Record<string, unknown> =>
-    value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
   for (const id of accepted as Set<ResourceLiveId>) {
-    const state = pollSchema.safeParse(record(file['poll'])[id]);
+    const state = pollSchema.safeParse(asRecordObject(file['poll'])[id]);
     if (state.success) poll[id] = state.data;
-    const rows = record(file['history'])[id];
+    const rows = asRecordObject(file['history'])[id];
     if (Array.isArray(rows)) {
       const kept = rows.flatMap(row => { const sample = sampleSchema.safeParse(row); return sample.success ? [sample.data] : []; });
       if (kept.length) history[id] = kept.slice(-HISTORY_PER_ALLOWANCE);
     }
   }
-  const rule = record(file['reset_rule']);
+  const rule = asRecordObject(file['reset_rule']);
   const fable = draftedSchema.safeParse(rule['fable'] ?? null);
   const weekly = draftedSchema.safeParse(rule['weekly'] ?? null);
   const generated = instant.safeParse(file['generated_at']);
@@ -198,6 +199,11 @@ export async function updateEvidence<T>(runsDir: string, update: (readings: Reco
 
 export async function readResourceHistoryFile(runsDir: string): Promise<unknown | null> {
   return readPrivateJson(resourceHistoryPath(runsDir), 8 * 1024 * 1024);
+}
+
+/** Read `<runsDir>/queue/status.json` privately with a 1 MiB cap; returns null when missing or invalid. */
+export async function readResourceDispatchStatus(runsDir: string): Promise<unknown | null> {
+  return readPrivateJson(join(runsDir, 'queue', 'status.json'), 1024 * 1024);
 }
 
 export async function readPrivateJson(path: string, cap: number): Promise<unknown | null> {

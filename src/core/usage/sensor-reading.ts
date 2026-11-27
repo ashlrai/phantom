@@ -18,13 +18,13 @@ export const USAGE_SENSOR_SCHEMA = 'usage.sensors.v1' as const;
 export const USAGE_SENSOR_STALE_MS = 15 * 60_000;
 export const SENSOR_TIMESTAMP_BASELINE = { timestamped: 9, total: 12 } as const;
 /** How many prior points the burn slope may use. */
-export const SENSOR_BURN_SAMPLES = 4;
+const SENSOR_BURN_SAMPLES = 4;
 /** Included-usage forecast is on pace when exhaustion lands within this share of the time left. */
-export const FORECAST_ON_PACE_FRACTION = 0.15;
+const FORECAST_ON_PACE_FRACTION = 0.15;
 
 export type ForecastVsReset = 'early' | 'on-pace' | 'underuse' | 'unknown';
 
-export const USAGE_SENSOR_LANES = [
+const USAGE_SENSOR_LANES = [
   'devin',
   'devin-swe-flash',
   'devin-weekly',
@@ -47,7 +47,7 @@ export type UsageSensorLane = (typeof USAGE_SENSOR_LANES)[number];
 
 export const ACTIVE_USAGE_SENSOR_LANES = USAGE_SENSOR_LANES.filter(lane => lane !== 'codex-cmp');
 
-export const USAGE_SENSOR_SOURCES = [
+const USAGE_SENSOR_SOURCES = [
   'anthropic-admin-cost',
   'devin-api-v3-daily',
   'devin-api-v3-org-cycle',
@@ -72,20 +72,20 @@ export const USAGE_SENSOR_SOURCES = [
 export type UsageSensorSource = (typeof USAGE_SENSOR_SOURCES)[number];
 export type UsageSensorUnit = 'percent' | 'acu';
 
-const timestamp = z.string().refine(value => {
+export const canonicalIsoTimestampSchema = z.string().refine(value => {
   const time = Date.parse(value);
   return Number.isFinite(time) && new Date(time).toISOString() === value;
 });
 
 export const usageSensorReadingSchema = z.object({
   lane: z.enum(USAGE_SENSOR_LANES),
-  observedAt: timestamp,
+  observedAt: canonicalIsoTimestampSchema,
   source: z.enum(USAGE_SENSOR_SOURCES),
-  staleAfter: timestamp,
+  staleAfter: canonicalIsoTimestampSchema,
   used: z.number().finite().nonnegative().nullable(),
   limit: z.number().finite().nonnegative().nullable(),
   unit: z.enum(['percent', 'acu']).nullable(),
-  resetAt: timestamp.nullable(),
+  resetAt: canonicalIsoTimestampSchema.nullable(),
 }).strict();
 
 export type UsageSensorReading = z.infer<typeof usageSensorReadingSchema>;

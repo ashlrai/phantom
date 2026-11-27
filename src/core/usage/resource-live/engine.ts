@@ -10,7 +10,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { mkdir, open, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { planBurnDown } from './burn-down.js';
 import { planBankedReset, readBankedResets } from './banked-resets.js';
@@ -20,8 +20,8 @@ import { customResourceSources, readCustomResources } from './custom.js';
 import { evaluateResetRule, renderResetDecision } from './reset-rule.js';
 import { NEEDS_SIGNIN, type ResourceLiveObservation, type ResourceLiveSource, type ResourceLiveSources } from './source-types.js';
 import {
-  HISTORY_PER_ALLOWANCE, parseResourceLiveSidecar, readResourceLiveFile, readingSchema, resetDecisionDir, resourceLivePath,
-  resourceLiveStateDir, toReading, unverified, usable,
+  HISTORY_PER_ALLOWANCE, asRecordObject, parseResourceLiveSidecar, readResourceDispatchStatus, readResourceLiveFile,
+  readingSchema, resetDecisionDir, resourceLivePath, resourceLiveStateDir, toReading, unverified, usable,
   appendResourceHistory, readResourceHistoryFile, resourceHistoryPath,
 } from './store.js';
 import {
@@ -30,7 +30,7 @@ import {
   type ResourceLiveReading, type ResourceLiveReason, type ResourceLiveSidecar,
 } from './types.js';
 
-export const SOURCE_DEADLINE_MS = 20_000;
+const SOURCE_DEADLINE_MS = 20_000;
 /** A lock older than this belongs to a pass that died. */
 export const LOCK_STALE_MS = 5 * 60_000;
 
@@ -139,20 +139,13 @@ async function acquireLock(path: string, nowMs: number): Promise<() => Promise<v
 /** Lanes with a running job, from the dispatcher's status file. Unreadable or old means none. */
 export async function readActiveLanes(runsDir: string, nowMs: number): Promise<Set<string>> {
   const active = new Set<string>();
-  try {
-    const path = join(runsDir, 'queue', 'status.json');
-    const info = await stat(path);
-    if (!info.isFile() || info.size > 1024 * 1024) return active;
-    const status = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
-    const tick = typeof status['last_tick'] === 'string' ? Date.parse(status['last_tick']) : NaN;
-    if (!Number.isFinite(tick) || tick > nowMs || nowMs - tick > 5 * 60_000) return active;
-    const lanes = status['lanes'];
-    if (lanes === null || typeof lanes !== 'object' || Array.isArray(lanes)) return active;
-    for (const [lane, row] of Object.entries(lanes as Record<string, unknown>)) {
-      const running = row !== null && typeof row === 'object' ? (row as Record<string, unknown>)['running'] : null;
-      if (typeof running === 'number' && running > 0) active.add(lane);
-    }
-  } catch { /* No status file means no lane is known to be active. */ }
+  const status = asRecordObject(await readResourceDispatchStatus(runsDir));
+  const tick = typeof status['last_tick'] === 'string' ? Date.parse(status['last_tick']) : NaN;
+  if (!Number.isFinite(tick) || tick > nowMs || nowMs - tick > 5 * 60_000) return active;
+  for (const [lane, row] of Object.entries(asRecordObject(status['lanes']))) {
+    const running = asRecordObject(row)['running'];
+    if (typeof running === 'number' && running > 0) active.add(lane);
+  }
   return active;
 }
 

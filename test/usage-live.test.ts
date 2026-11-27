@@ -2,7 +2,10 @@ import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { profileDirAllowed, readSite, usageBrowserDir, type BrowserSession } from '../src/core/usage/live/browser.js';
+import {
+  absolutePathOrUndefined, isSafeUsageDir, openUsageBrowserSession, profileDirAllowed, readSite, usageBrowserDir,
+  type BrowserSession,
+} from '../src/core/usage/live/browser.js';
 import { evaluateAlerts, nextWakeMs, renderFirstReadings, runLiveUsageTick } from '../src/core/usage/live/engine.js';
 import { USAGE_SITES, bindingWindow, needsSignin, parseResetPhrase, parseVisibleWindows } from '../src/core/usage/live/sites.js';
 import { presentUsageSensors, type UsageSensorReading } from '../src/core/usage/sensor-reading.js';
@@ -87,6 +90,21 @@ describe('sign-in detection and browser reads', () => {
     expect(profileDirAllowed('/Users/x/.ashlr-runs/usage-browser/../../.codex-2', home)).toBe(false);
     expect(profileDirAllowed('/Users/x/Library/Application Support/Google/Chrome', home)).toBe(false);
     expect(profileDirAllowed('relative', home)).toBe(false);
+    expect(isSafeUsageDir('/tmp/usage-runs')).toBe(true);
+    expect(isSafeUsageDir('/Users/x/.codex/runs')).toBe(false);
+    expect(isSafeUsageDir('relative/runs')).toBe(false);
+    expect(absolutePathOrUndefined('/tmp/runs')).toBe('/tmp/runs');
+    expect(absolutePathOrUndefined('relative')).toBeUndefined();
+  });
+  it('opens a validated usage browser session or reports refused/unavailable', async () => {
+    const home = tmp();
+    const session = fakeBrowser({});
+    const ok = await openUsageBrowserSession({ home, headed: false, launch: async () => session });
+    expect(ok).toEqual({ ok: true, session });
+    expect(await openUsageBrowserSession({ home, headed: false, launch: async () => { throw new Error('missing'); } }))
+      .toEqual({ ok: false, reason: 'unavailable' });
+    expect(await openUsageBrowserSession({ home: '/Users/x/.codex', headed: false, launch: async () => session }))
+      .toEqual({ ok: false, reason: 'refused' });
   });
 });
 

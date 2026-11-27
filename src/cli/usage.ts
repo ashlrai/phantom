@@ -89,7 +89,7 @@ function pad(s: string, len: number): string {
 // Render
 // ---------------------------------------------------------------------------
 
-function renderTable(usage: import('../core/usage/frontier-usage.js').FrontierUsage): void {
+function renderTable(usage: FrontierUsage): void {
   console.log('');
   console.log(bold('  Frontier Usage') + dim(' — ' + new Date(usage.generatedAt).toLocaleTimeString()));
   console.log('');

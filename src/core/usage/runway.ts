@@ -70,17 +70,27 @@ export interface RunwaySnapshot {
   shares?: PoolShareSnapshot;
 }
 
-const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-const round1 = (n: number): number => Math.round(n * 10) / 10;
-const round2 = (n: number): number => Math.round(n * 100) / 100;
-/** "3d 4h", "5h 12m", "40m"; same shape as spend.ts spendCountdown. */
-export function runwayHours(hours: number): string {
-  if (!(hours > 0)) return 'now';
-  const minutes = Math.floor(hours * 60);
-  const d = Math.floor(minutes / 1440); const h = Math.floor(minutes % 1440 / 60); const m = minutes % 60;
+export const isUsageRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+export const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+const num = isFiniteNumber;
+export const round1 = (n: number): number => Math.round(n * 10) / 10;
+export const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/** Format a whole minute count as "3d 4h", "5h 12m", or "40m". */
+export function formatDurationMinutes(minutes: number): string {
+  const d = Math.floor(minutes / 1440);
+  const h = Math.floor((minutes % 1440) / 60);
+  const m = minutes % 60;
   return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
-const hoursText = runwayHours;
+
+/** "3d 4h", "5h 12m", "40m"; shared by runway and spend countdowns. */
+export function runwayHours(hours: number): string {
+  if (!(hours > 0)) return 'now';
+  return formatDurationMinutes(Math.floor(hours * 60));
+}
 
 /** The pure verdict for one pool. A missing reading makes the state unknown; nothing is inferred. */
 export function runway(input: RunwayInput): PoolRunway {
@@ -95,7 +105,7 @@ export function runway(input: RunwayInput): PoolRunway {
   const safe = round2(left / reset!);
   if (left === 0) {
     return { ...base, state: 'starve', hoursToEmpty: 0, idleHours: round2(reset!), unusedAtResetPercent: 0, safeBurnPerHour: 0,
-      advice: `used up, idle ${hoursText(reset!)} until reset: send nothing new here` };
+      advice: `used up, idle ${runwayHours(reset!)} until reset: send nothing new here` };
   }
   // A full reading with no burn rate is still unknown: we will not guess how fast it drains.
   if (burn === null) return { ...base, safeBurnPerHour: safe, reason: 'no burn rate yet', advice: 'unknown: no burn rate yet' };
@@ -106,7 +116,7 @@ export function runway(input: RunwayInput): PoolRunway {
   const idle = reset! - empty;
   if (idle >= Math.max(RUNWAY_STARVE_MIN_IDLE_HOURS, reset! * RUNWAY_STARVE_MIN_IDLE_SHARE)) {
     return { ...known, state: 'starve', hoursToEmpty: round2(empty), idleHours: round2(idle),
-      advice: `runs out in ${hoursText(empty)}, ${hoursText(idle)} before reset: frontier and high-yield work only; slow to ${safe}%/h` };
+      advice: `runs out in ${runwayHours(empty)}, ${runwayHours(idle)} before reset: frontier and high-yield work only; slow to ${safe}%/h` };
   }
   const timed = { ...known, hoursToEmpty: round2(empty) };
   return unused >= RUNWAY_SPARE_PERCENT
@@ -130,7 +140,7 @@ export function runwayHeadline(pools: readonly PoolRunway[]): string {
       ? 'Unknown: the dispatcher status is missing or stale.' : 'Unknown: no pool has a burn rate yet.';
   }
   const parts: string[] = [];
-  if (starve.length > 0) parts.push(`${starve.map(row => `${row.pool} runs out ${hoursText(row.idleHours ?? 0)} early`).join(', ')}: frontier work only there`);
+  if (starve.length > 0) parts.push(`${starve.map(row => `${row.pool} runs out ${runwayHours(row.idleHours ?? 0)} early`).join(', ')}: frontier work only there`);
   if (spend.length > 0) parts.push(`send filler to ${spend.map(row => row.pool).join(', ')}`);
   if (parts.length === 0) parts.push('Every measured pool is on pace');
   const sentence = parts.join('; ');
@@ -163,11 +173,11 @@ export function isRunwaySnapshot(value: unknown): value is RunwaySnapshot {
  *   on_pace   neither.
  *   unknown   any reading is missing, or the reset time has already passed. Never guessed.
  */
-export const POOL_SHARE_SCHEMA = 'fleet.pools.v1' as const;
+const POOL_SHARE_SCHEMA = 'fleet.pools.v1' as const;
 export type PoolShareState = 'starving' | 'wasting' | 'on_pace' | 'unknown';
 export const POOL_SHARE_STATES: readonly PoolShareState[] = ['wasting', 'on_pace', 'starving', 'unknown'];
-export const POOL_STARVING_RUNWAY_SHARE = 0.8;
-export const POOL_WASTING_PROJECTED_PERCENT = 90;
+const POOL_STARVING_RUNWAY_SHARE = 0.8;
+const POOL_WASTING_PROJECTED_PERCENT = 90;
 
 export interface PoolShareInput {
   pool: string;
@@ -209,7 +219,7 @@ export interface PoolShare {
 }
 
 export interface PoolShareSnapshot {
-  schema: typeof POOL_SHARE_SCHEMA;
+  schema: 'fleet.pools.v1';
   asOf: string | null;
   /** The pool that should take the next ordinary job; null when no pool is known to have room. */
   next_pool: string | null;
