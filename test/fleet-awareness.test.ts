@@ -33,7 +33,7 @@ test('pool dispatch prefers measured free slots and shares one host budget acros
   f.add('mbp-w1', { hostId: 'mbp', slots: 3 }); f.add('mbp-w2', { hostId: 'mbp', slots: 3 });
   f.add('air', { slots: 1 }); f.add('held', { slots: 0, held: 'memory-pressure' });
   for (let i = 0; i < 6; i++) f.enqueue(`j${i}`);
-  expect(f.plan().map(r => r.nodeId)).toEqual(['mbp-w1', 'mbp-w1', 'air', 'mbp-w1', null, null]);
+  expect(f.plan().map(r => r.nodeId)).toEqual(['mbp-w1', 'mbp-w2', 'air', 'mbp-w1', null, null]);
   const node = f.state.nodes[0]!;
   expect(f.run('pull', ['--node', node.nodeId, '--session', String(node.session)]).pulled).toBe(true);
   const report = projectFleetAwareness(f.state, f.now(), { schema: 'dispatchd.status.v1', last_tick: new Date(f.now()).toISOString(), paused: null,
@@ -42,6 +42,21 @@ test('pool dispatch prefers measured free slots and shares one host budget acros
   expect(report.lanes[0]).toMatchObject({ running: 2, target: 5, effectiveTarget: 4, floor: 1, queued: 6, available: 2 });
   expect(report.queue).toEqual({ nodePending: 5, laneQueued: 6 });
   expect(f.plan().filter(r => r.nodeId)).toHaveLength(3);
+});
+
+test('an idle pool sibling can pull while a worker on the same host holds a claim', () => {
+  const f = fixture();
+  const busy = f.add('worker-a', { hostId: 'mac', slots: 2 });
+  const idle = f.add('worker-b', { hostId: 'mac', slots: 2 });
+  const pull = (worker: typeof busy) => f.run('pull', ['--node', worker.nodeId, '--session', String(worker.session)]);
+  f.enqueue('first');
+  expect(pull(busy)).toMatchObject({ pulled: true, job: { id: 'first' } });
+  f.enqueue('second');
+  expect(f.plan()[0]).toMatchObject({ jobId: 'second', nodeId: idle.nodeId });
+  expect(pull(idle)).toMatchObject({ pulled: true, job: { id: 'second' } });
+  f.enqueue('third');
+  expect(pull(busy).pulled).toBe(false);
+  expect(pull(idle).pulled).toBe(false);
 });
 
 test('unknown, stale, future and expired reports never become pool capacity; exact two-interval boundary is fresh', () => {

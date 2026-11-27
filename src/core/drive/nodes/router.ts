@@ -102,7 +102,8 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
 }
 
 /** Deterministic plan: pools rank measured free host slots per observed execution millisecond;
- * standalone legacy queues retain their load policy. Ties break by node ID.
+ * Equal-scoring workers on the same host prefer lower load, then node ID.
+ * Standalone legacy queues retain their load policy.
  * Pure: the same state and clock always produce the same plan. Jobs without an
  * owner scope are never routed, so a legacy job cannot leak across scopes.
  */
@@ -131,7 +132,12 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
         const h = hosts.get(n.nodeId)!;
         return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency) : -load.get(n.nodeId)!;
       };
-      if (!best || score(node) > score(best)) best = node;
+      const nodeScore = score(node);
+      const bestScore = best ? score(best) : -Infinity;
+      if (!best || nodeScore > bestScore ||
+          (state.pool && nodeScore === bestScore && host === hosts.get(best.nodeId) && load.get(node.nodeId)! < load.get(best.nodeId)!)) {
+        best = node;
+      }
     }
     if (best) {
       const host = hosts.get(best.nodeId);
