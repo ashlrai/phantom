@@ -852,7 +852,16 @@ fleet-wide `--all` read under `scope: 'fleet'`), `since`/`job`/`from`/
 hints, claim-holder citations and resolved referents — or the whole
 fleet's pending hints in one call — without shelling out
 to `phm`; it accepts no caller root or path and passes a refused or
-unavailable page through untouched.
+unavailable page through untouched. `--frame <cli>` prints the page as the
+same bounded block the inbox and channel-read `--frame`s produce —
+identical markers, scrub and clip bound — with each hint's bracket naming
+its id, recorded sender and addressee labels and the resolved referent's
+own priority plus the same held/holder/job evidence, and the resolved
+summary or claim-holder detail as payload; a hint whose referent is
+`unresolved` or `unknown` shows that state with no invented band or
+payload, so the claim-holder `wh-…` hints an inbox frame can never carry
+still reach a CLI's next turn as untrusted data. It is a CLI-only
+rendering, so `fleet_agent_wakes` takes no `frame` argument.
 
 **Lookup.** `phm agents bus show <id>` resolves one retained envelope by the
 wire id wake hints, `work mine` items and claim operations cite — the third

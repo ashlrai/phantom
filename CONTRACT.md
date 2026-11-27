@@ -5060,7 +5060,17 @@ show the shared `busInboxJobMarker` (`job=<id>:<state>` plus `result=<outcome>`
 when the feed job cites a `work.result`, and `claimable=`
 when the claims join computed it) the same way. `frameBusChannelRead(cli,
 channel, messages)` renders a channel page through the same markers, scrub
-and bound, each bracket naming `#<channel>:<topic>`. Identities
+and bound, each bracket naming `#<channel>:<topic>`. `frameBusWakes(cli,
+wakes)` renders a wake-hint page (`agents bus wakes [--all] --frame <cli>`)
+through the same markers, scrub and bound: each line leads with the
+resolved referent's own priority — the live message a `bus.send` hint
+points at or the citing `work.status` receipt behind a claim-holder `wh-…`
+hint — names the hint id, its recorded sender and addressee labels and the
+same held/holder/job bracket evidence, and carries the resolved summary or
+the claim-holder detail as payload; a hint whose referent is `unresolved`
+or `unknown` shows that state with no invented band or payload, so the
+claim-holder hints an inbox frame can never carry still reach a CLI's next
+turn as untrusted data. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
