@@ -41,6 +41,11 @@ launch and reward arms still cause an error. Claim timestamps provide no executi
 Calibration withholds elapsed wall time inferred from launch and finish when
 a batch claim for the same job falls at or between those timestamps or has
 no usable timestamp. Explicit wall-time measurements remain eligible.
+A solo launch reservation (`claim` with `launch_dedupe: true`) also withholds
+the elapsed-time fallback when it occurs after launch and at or before finish,
+or when its timestamp is missing, invalid, or conflicting. A reservation at
+or before launch can belong to that launch. The reservation alone supplies
+neither a calibrated job nor an execution measurement.
 Batch session wrappers and node-pool telemetry are excluded. Lifecycle receipts
 explicitly marked `launched: false`, such as admission-time `DONE-NOOP`
 outcomes, contribute no jobs, verdicts or measurements. A ledger containing
