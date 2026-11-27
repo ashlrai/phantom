@@ -2197,7 +2197,12 @@ attempt log; read it with a file transport whose addresses include
 `ashlr agents bus dead-letters` — the unified bus's fleet-level list of the
 same live letters, each with its parsed delivery-failure report and the
 `exhausted`/`expired`/`no-route`/`other` classification `agents bus status`
-tallies. The
+tallies. The read filters on the letter envelope and the report's kept
+evidence — `--since`/`--before`, `--contains`, `--priority`, `--id`,
+`--reason`, the `--from`/`--exclude-from`/`--to` sender and recipient
+matchers, `--channel`/`--topic` on the original recipient's room address
+and `--body-kind` on the original kind — never on fields the letter
+dropped. The
 unified comms inbox (`phm comms inbox`, kind `bus-dead-letter`) lists each
 live letter as pending attention — the mail provably never arrived — naming
 the reason, attempt count and original routing metadata the letter kept. The

@@ -107,7 +107,7 @@ describe('readBusDeadLetters', () => {
     }
   });
 
-  it('filters by reason, sender, recipient, channel, kind, id, contains and time', () => {
+  it('filters by reason, sender, recipient, channel, topic, kind, id, contains and time', () => {
     const options = setup();
     register(options.root, 'atlas', 'nova', 'ghost');
     postLetter(options, 'dl-a', deadLetterBody({ id: 'orig-a', from: 'agent:nova', to: 'agent:atlas', reason: 'exhausted' }));
@@ -126,6 +126,16 @@ describe('readBusDeadLetters', () => {
     expect(ok(readBusDeadLetters({ ...base, to: 'atlas' })).letters.map(i => i.id)).toEqual(['dl-a']);
     // --channel keeps reports whose original recipient is a room address.
     expect(ok(readBusDeadLetters({ ...base, channel: 'eng' })).letters.map(i => i.id)).toEqual(['dl-b']);
+    // --topic keeps reports whose original recipient is a well-formed
+    // group:<room>:<topic> address carrying that exact topic component —
+    // dl-b's group:eng:alerts matches 'alerts' across every room, while the
+    // room name itself, an agent address and a bare group:<room> never do.
+    expect(ok(readBusDeadLetters({ ...base, topic: 'alerts' })).letters.map(i => i.id)).toEqual(['dl-b']);
+    expect(ok(readBusDeadLetters({ ...base, topic: 'eng' })).matched).toBe(0);
+    expect(ok(readBusDeadLetters({ ...base, topic: 'missing' })).matched).toBe(0);
+    // --channel and --topic compose into one room AND one topic.
+    expect(ok(readBusDeadLetters({ ...base, channel: 'eng', topic: 'alerts' })).letters.map(i => i.id)).toEqual(['dl-b']);
+    expect(ok(readBusDeadLetters({ ...base, channel: 'ops', topic: 'alerts' })).matched).toBe(0);
     // --body-kind keeps the original envelope kind.
     expect(ok(readBusDeadLetters({ ...base, bodyKind: 'note' })).letters.map(i => i.id)).toEqual(['dl-b']);
     // --id matches the letter's own wire id or the original's.
@@ -186,6 +196,8 @@ describe('readBusDeadLetters', () => {
       .toMatchObject({ status: 'invalid' });
     expect(readBusDeadLetters({ root: fresh.root, now: fresh.now, reason: 'bogus' as never }))
       .toMatchObject({ status: 'invalid' });
+    expect(readBusDeadLetters({ root: fresh.root, now: fresh.now, topic: 'BAD TOPIC!' }))
+      .toMatchObject({ status: 'invalid' });
     expect(readBusDeadLetters({ root: fresh.root, now: fresh.now, since: -1 }))
       .toMatchObject({ status: 'invalid' });
   });
@@ -211,6 +223,21 @@ describe('agents bus dead-letters (cli)', () => {
 
     const filtered = await run(['dead-letters', '--reason', 'expired'], options.root);
     expect(filtered.json).toMatchObject({ matched: 0, letters: [] });
+
+    // --topic narrows on the original recipient's group-address topic; a
+    // topic nothing carries is an honest empty match.
+    postLetter(options, 'dl-2', deadLetterBody({ id: 'orig-2', to: 'group:eng:alerts' }));
+    const byTopic = await run(['dead-letters', '--topic', 'alerts'], options.root);
+    expect(byTopic.json).toMatchObject({ matched: 1 });
+    expect(byTopic.json.letters[0]).toMatchObject({ id: 'dl-2', to: 'group:eng:alerts' });
+    const composed = await run(['dead-letters', '--channel', 'eng', '--topic', 'alerts'], options.root);
+    expect(composed.json).toMatchObject({ matched: 1 });
+    const wrongRoom = await run(['dead-letters', '--channel', 'ops', '--topic', 'alerts'], options.root);
+    expect(wrongRoom.json).toMatchObject({ matched: 0, letters: [] });
+    const noTopic = await run(['dead-letters', '--topic', 'deploys'], options.root);
+    expect(noTopic.json).toMatchObject({ matched: 0, letters: [] });
+    const badTopic = await run(['dead-letters', '--topic', 'BAD TOPIC!'], options.root);
+    expect(badTopic.code).toBe(2);
   });
 
   it('prints human lines, a missing-store note and usage errors', async () => {

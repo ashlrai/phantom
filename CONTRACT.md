@@ -5112,7 +5112,11 @@ recipient through `agentRefAddressMatcher` (unreadable registry keeps
 literal-label matching; a report proving no such label never matches, and
 `excludeFrom` drops unprovable senders the same way `work mine` does),
 `channel` keeps reports whose original recipient carries `group:<name>:`,
-`bodyKind` the original envelope kind, `limit` (1..100, default the max)
+`topic` keeps reports whose original recipient is a well-formed
+`group:<room>:<topic>` address carrying that exact topic component — the
+same `groupAddressTopicOf` match every bus read's `--topic` applies,
+composing with `channel` into one room and one topic — `bodyKind` the
+original envelope kind, `limit` (1..100, default the max)
 caps `letters` while `matched` reports the filtered total and `truncated`
 marks the cut. Items sort in the same claim order `work mine`'s deadLetters
 section uses — priority band, then cursor. `source` is `missing` with real
