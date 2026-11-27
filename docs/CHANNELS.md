@@ -653,7 +653,34 @@ the source, since a throwing read is itself the degraded/unknown evidence
 and `unavailable`/`missing` never apply to a live probe that always
 resolves; deep links `phm fleet channel-health`, `phm channels slack
 status`, `phm imessage doctor`, `phm comms health --json`, `phm comms
-cycle`, `phm channels`) — and each item carries `act` deep-link commands (`phm fleet
+cycle`, `phm channels`) — and operator
+guidance still 'queued' for a running session (the per-session store
+`phm fleet guidance append|read|list` and the fleet console's
+session-guidance API serve — `<runsDir>/queue/guidance/<job>.jsonl`,
+where a record starts 'queued' and only a consumer ack line moves it to
+'delivered' or 'requeued'; until now the one comms store whose whole
+purpose is delivering a message to a running agent was invisible to the
+unified view, the one place an agent checks for pending comms, so
+appended guidance sat undelivered and unacked unseen: each session
+whose folded entries still hold at least one 'queued' message lists as
+ONE warn `session-guidance` item naming the job id, `since` the oldest
+still-queued message's recorded `at` — null when no queued timestamp
+parses, the wait's start stays unknown — and `expiresAt` null, guidance
+waiting for its consumer never a guessed deadline; the detail counts
+the queued messages, names the lane and delivery strategy label and
+quotes the newest queued text, already scrubbed at write; the
+enumeration applies `listSessionGuidance`'s own candidate rules — a
+`<job>.jsonl` name whose stem passes `isGuidanceJobId`, newest file
+first, bounded to `GUIDANCE_LIST_MAX_JOBS` — then folds each through
+`readSessionGuidance`, the same per-job read `phm fleet guidance read`
+serves, so the surfaces can never disagree; a missing guidance
+directory is `missing` (verified-empty: no guidance can be pending), an
+unlistable one `unavailable`, and a listing holding a file the bounded
+read refuses — oversized or non-regular — or more candidates than the
+inspection cap degrades the source: every readable session's queued
+rows still list while the refused file's pending count stays unknown,
+never a fabricated 0; deep links `phm fleet guidance read <job>`, `phm
+fleet guidance list`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -673,7 +700,8 @@ claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`,
 `phm agents bus status`, `phm fleet status`, `phm fleet resume`, `phm
 queue stuck`, `phm fleet unfed --json`, `phm queue`, `phm fleet
 channel-health`, `phm channels slack status`, `phm imessage doctor`, `phm
-comms health --json`, `phm comms cycle`). It never claims, replies, or mutates; a source
+comms health --json`, `phm comms cycle`, `phm fleet guidance
+read <job>`, `phm fleet guidance list`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
@@ -687,8 +715,8 @@ that provably name that job — a bus or mailbox body's `busBodyJobMatch`
 citation, a feed job's id, a board task's fleet item or a delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job, a
 seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
-peer-dispatch receipt's job, a session-handoff journal's job id or a
-router-queue row's own READY id —
+peer-dispatch receipt's job, a session-handoff journal's job id, a
+router-queue row's own READY id or a guidance session's job id —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound
