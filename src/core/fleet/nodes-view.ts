@@ -217,8 +217,15 @@ export function buildNodesView(
 
   const nodes = machines.map((machine): NodeRow => {
     const live = machine.records.filter(record => !mirrorStale && record.expiresAt > nowMs);
-    // Absence proves "not running" only where the list is authoritative and current.
-    const silenceKnown = state !== null ? !mirrorStale : machine.isSelf && registry?.source === 'none';
+    // Absence proves "not running" only where the registry could hold that
+    // machine's record and the list is authoritative and current. The
+    // standalone registry is single-host — every record in it is this
+    // computer's session — so a tailnet peer's silence there says nothing
+    // about whether its own Phantom runs; it stays unknown, the same answer
+    // the 'none' and 'elsewhere' sources give. Pool registries are the fleet
+    // roster and cover every machine.
+    const covered = registry?.source !== 'local' || machine.isSelf;
+    const silenceKnown = covered && (state !== null ? !mirrorStale : machine.isSelf && registry?.source === 'none');
     const phantom = live.length ? 'running' : silenceKnown ? 'not-running' : UNKNOWN;
     // A claim counts only while the session that took it can still act on it:
     // unexpired claim, unexpired record on this machine, same node and session.
