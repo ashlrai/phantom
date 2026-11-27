@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirty-six local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates thirty-seven local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -634,6 +634,31 @@
  *               transports, not a store that can be absent. Act: `phm fleet channel-health`, `phm channels
  *               slack status`, `phm imessage doctor`, `phm comms health
  *               --json`, `phm comms cycle`, `phm channels`.
+ *   stranded    finished jobs that pushed their branch but whose publish
+ *               then aborted — usually the default-branch fetch — so no
+ *               pull request exists for the pushed work (the same
+ *               `readStrandedBranches` scan `phm jobs stranded`, `phm jobs
+ *               stranded --requeue` and the stranded-requeue self-tick
+ *               hook serve, so the surfaces can never disagree). Until
+ *               now the stranded backlog had no unified-inbox surface:
+ *               every other pending-work read looks forward at work not
+ *               yet claimed, while a job that finished and lost its PR
+ *               sat invisible — the one view an agent checks for work
+ *               never named it. Each stranded branch lists as a warn
+ *               `stranded-branch` citing the job id — the same id
+ *               `phm jobs stranded --requeue` recovers as `<job>R2` —
+ *               `since` the publish log's last-write time the reported
+ *               age is measured from (null when the read cannot prove
+ *               one — age unknown stays unknown) and `expiresAt` null:
+ *               stranded work waits for a recovery decision, never a
+ *               guessed deadline. `recovered` branches — a later
+ *               `RESULT PR` line proves the PR exists after all — never
+ *               list; an absent runs dir is 'missing' (verified-empty:
+ *               no publish log can exist), an unreadable one
+ *               'unavailable', and a report with unreadable logs
+ *               'degraded' — the listed branches are a floor, never a
+ *               complete set. Act: `phm jobs stranded`, `phm jobs
+ *               stranded --requeue --apply`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -713,6 +738,7 @@ import { readKillSwitch, type KillSwitchReadResult } from '../sandbox/policy.js'
 import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
 import { readChannelHealth } from '../fleet/channel-health.js';
 import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
+import { readStrandedBranches, type StrandedBranch } from '../fleet/stranded-branches.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
@@ -727,7 +753,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'owner-delivery', 'owner-pair', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'peer-inbox', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
-  'send-gate', 'router-queue', 'channel-health',
+  'send-gate', 'router-queue', 'channel-health', 'stranded',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -756,7 +782,7 @@ export const UNIFIED_INBOX_KINDS = [
   'coordination-message', 'coordination-assignment', 'coordination-return-unposted',
   'claim-drift-bus', 'claim-drift-coordination', 'claim-drift-owner',
   'send-gate-kill', 'send-gate-pause', 'router-queue-job',
-  'channel-blocked', 'channel-degraded', 'channel-unknown',
+  'channel-blocked', 'channel-degraded', 'channel-unknown', 'stranded-branch',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -784,7 +810,8 @@ export interface UnifiedInboxItem extends AttentionItem {
    * the job-carrying-thread rule `BusBoard.pendingFor` applies), a
    * conversation thread's `jobs`, a teammate task's `jobId`, a seat handoff's
    * node-job refs, a peer-dispatch receipt's peer-announced `jobId`, a
-   * session-handoff journal's job id, or a router-queue row's own READY id.
+   * session-handoff journal's job id, a router-queue row's own READY id,
+   * or a stranded publish's own job id.
    * Absent when the item names no job — unknown stays out of a
    * `--job` match rather than being guessed in.
    */
@@ -908,6 +935,18 @@ export interface MailboxPendingRead {
 export interface RouterQueueStuckRead {
   state: UnifiedInboxSourceState;
   jobs: readonly StuckJob[];
+}
+
+/** The resolved stranded-branches read: `readStrandedBranches`' own report
+ * mapped onto the unified source states — 'missing' a verified-absent runs
+ * dir (no publish log can exist), 'unavailable' an unreadable one,
+ * 'degraded' a report whose status is 'unknown' (some publish logs could
+ * not be read — the listed branches are a floor, never a complete set),
+ * 'healthy' a clean read. `branches` stays empty whenever the state is not
+ * 'healthy'/'degraded'. */
+export interface StrandedRead {
+  state: UnifiedInboxSourceState;
+  branches: readonly StrandedBranch[];
 }
 
 /** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
@@ -1059,6 +1098,10 @@ export interface UnifiedInboxOptions {
    * slack/imessage bridge projection `phm fleet channel-health` and
    * `phm channels` serve. */
   readChannelHealth?: typeof readChannelHealth;
+  /** Stranded-branches seam; default reads `<runsDir>/*.publish` through
+   * `readStrandedBranches` — the same scan `phm jobs stranded` and the
+   * stranded-requeue self-tick serve. */
+  readStranded?: (options: { runsDir?: string; now?: () => number }) => Promise<StrandedRead>;
   /** Config seam for the telegram leg; default `loadConfigReadOnlyStrict` —
    * a malformed config reports the telegram channel unknown, never a
    * guessed default. */
@@ -4046,6 +4089,79 @@ async function channelHealthItems(options: UnifiedInboxOptions): Promise<{ repor
 }
 
 /**
+ * Finished jobs that pushed their branch but whose publish then aborted —
+ * usually the default-branch fetch — so no pull request exists for the
+ * pushed work. This is the same `readStrandedBranches` scan `phm jobs
+ * stranded`, `phm jobs stranded --requeue` and the stranded-requeue
+ * self-tick hook serve, so the inbox and those surfaces can never
+ * disagree. Until now the stranded backlog had no unified-inbox surface:
+ * every other pending-work read (bus, board, feed, queue) looks forward at
+ * work not yet claimed, while a job that finished and lost its PR sat
+ * invisible — the unified view, the one place an agent looks for work,
+ * never named it. Each stranded branch lists as a warn
+ * `stranded-branch` citing the job id — the same id `phm jobs stranded
+ * --requeue` recovers as `<job>R2` — `since` the publish log's last-write
+ * time the reported age is measured from (null when the read cannot prove
+ * one — age unknown stays unknown) and `expiresAt` null: stranded work
+ * waits for a recovery decision, never a guessed deadline. `recovered`
+ * branches — a later `RESULT PR` line proves the PR exists after all —
+ * never reach this list, and an absent runs dir is 'missing'
+ * (verified-empty: no publish log can exist) while an unreadable one is
+ * 'unavailable', never an empty backlog passed off as fact. A degraded
+ * read — some publish logs could not be read — still lists the branches
+ * it proved and says the set may be incomplete; the job id is the item's
+ * own citation, so `--job` matches.
+ */
+async function strandedItems(read: NonNullable<UnifiedInboxOptions['readStranded']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: StrandedRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const nowMs = (options.now ?? Date.now)();
+  const degraded = result.state === 'degraded';
+  const items = result.branches.map((branch): Omit<UnifiedInboxItem, 'priority'> => ({
+    id: `stranded:${branch.job}`,
+    source: 'stranded',
+    kind: 'stranded-branch',
+    severity: 'warn',
+    blocking: false,
+    title: oneLine(`Job ${branch.job} pushed a branch but opened no PR`, TITLE_MAX),
+    detail: oneLine([
+      `publish aborted (${branch.reason})`,
+      branch.repo === null ? null : `repo ${branch.repo}`,
+      branch.ageHours === null ? 'age unknown' : `branch ${branch.ageHours}h old`,
+      branch.filesChanged === null ? null : `${branch.filesChanged} files changed`,
+      degraded ? 'some publish logs unreadable — the stranded set may be incomplete' : null,
+    ].filter((part): part is string => part !== null && part !== '').join(' · '), DETAIL_MAX) || null,
+    since: branch.ageHours === null ? null : iso(nowMs - branch.ageHours * 3_600_000),
+    expiresAt: null,
+    jobIds: [branch.job],
+    act: ['phm jobs stranded', 'phm jobs stranded --requeue --apply'],
+  }));
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real stranded-branches read: `readStrandedBranches` over every
+ * publish log in the shared runs dir (`sinceHours` null — a stranded
+ * branch never ages out of the pending set). An absent runs dir is
+ * 'missing' — verified-empty, no publish log can exist — any other read
+ * failure 'unavailable', and a report whose status is 'unknown' — some
+ * publish logs could not be read — 'degraded': the listed branches are a
+ * floor, never a complete set. */
+async function readStrandedSource(options: { runsDir?: string; now?: () => number }): Promise<StrandedRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  try {
+    const report = await readStrandedBranches(dir, { sinceHours: null, now: options.now?.() });
+    return { state: report.status === 'unknown' ? 'degraded' : 'healthy', branches: report.branches };
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? 'missing' : 'unavailable', branches: [] };
+  }
+}
+
+/**
  * The same drop inbox `runEmailDropOnce` scans, resolved at the shared runs
  * dir: saved email-drop config → `inboxDir` → `readEmailDropInbox`. A missing
  * config or inbox dir is 'missing' (the pass treats an absent inbox as an
@@ -4222,6 +4338,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const sendGate = sendGateItems(options.readKillSwitch ?? readKillSwitch, options.probePause ?? probePauseState);
   const routerQueue = await routerQueueItems(options.readRouterQueue ?? readRouterQueueSource, options);
   const channelHealth = await channelHealthItems(options);
+  const stranded = await strandedItems(options.readStranded ?? readStrandedSource, options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -4260,8 +4377,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'send-gate': sendGate.report,
     'router-queue': routerQueue.report,
     'channel-health': channelHealth.report,
+    stranded: stranded.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items, ...stranded.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
