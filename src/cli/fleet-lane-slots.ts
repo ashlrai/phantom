@@ -1,4 +1,5 @@
 import { buildFleetLiveSnapshot } from '../core/verse/fleet-live-api.js';
+import { STALE_STANDING_TICK_REASON } from '../core/fleet/fleet-types.js';
 import { brandBadge, terminalColor } from '../core/brand/registry.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { readFleetLiveReplica, refreshFleetReplicaOnRead, stampLocalFleetSnapshot } from '../core/fleet/fleet-replica.js';
@@ -16,7 +17,7 @@ export async function cmdFleetLaneSlots(args: string[]): Promise<number> {
   await refreshFleetReplicaOnRead();
   const snapshot = readFleetLiveReplica() ?? stampLocalFleetSnapshot((await buildFleetLiveSnapshot()).snapshot);
   const lanes = snapshot.lanes.map(lane => ({ ...lane,
-    slots: lane.capReason === 'No standing tick has reported lanes in the last 10 minutes.' ? null : lane.slots,
+    slots: lane.capReason === STALE_STANDING_TICK_REASON ? null : lane.slots,
   }));
   const result = sanitizePublicJson({ schema: 'fleet.lane-slots.v1', source: snapshot.source, lanes });
   const color = terminalColor();
