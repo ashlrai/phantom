@@ -307,6 +307,18 @@ describe('CI baseline evidence', () => {
     expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
     expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
   });
+  it('withholds master pass evidence when a verified sibling failure is unparsed', async () => {
+    const { gh } = github({ count: 1, pass: true, extraMasterJob: 'failure' });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      if (args[1]?.endsWith('/jobs/30/logs')) {
+        return { ok: true, stdout: `/usr/bin/git log -1 --format=%H\n${master}\n${fixture('unknown')}`, stderr: '' };
+      }
+      return gh(args);
+    });
+    expect(report.master.known).toBe(false);
+    expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
+    expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
+  });
   it('withholds PR freshness when the workflow failed without a failed job', async () => {
     const report = await analyzeCiBaseline('owner/repo', github({
       count: 1, pass: true, masterRunConclusion: 'success', runConclusion: 'failure', prJobConclusion: 'success',

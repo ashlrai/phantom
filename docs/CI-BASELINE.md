@@ -39,7 +39,9 @@ reached a verdict still makes the run's logs unusable. `skipped` and `neutral` c
 deliberate non-verdicts. A workflow whose conclusion is `failure` is also
 incomplete when it lists no failed job, including when it lists no jobs
 at all. A passing job in such a workflow cannot supply master pass
-evidence for a flake rerun.
+evidence for a flake rerun. Master pass evidence is also withheld when a
+checkout-verified master job fails without a parseable failure identity.
+Parsed failures from other master jobs remain available.
 Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
 identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
 and capped at 2,000 characters per failure, with at most 100 failures per log.
