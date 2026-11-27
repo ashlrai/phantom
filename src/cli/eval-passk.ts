@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 
 import type { EvalLane } from '../core/eval/agent-output.js';
+import { formatEvalPct } from '../core/eval/dataset-jsonl.js';
 import {
   derivePassKAlerts,
   laneScoresPath,
@@ -41,12 +42,14 @@ import {
   PASSK_DEFAULT_TRIALS,
   PASSK_MAX_TRIALS,
   type LaneScores,
+  type PassKAlert,
   type PassKDataset,
   type PassKReport,
 } from '../core/eval/passk.js';
 import { buildDefaultRunner, type EngineRunner } from '../core/eval/swe-bench.js';
 import { evalPassKSchedule } from '../core/eval/passk-schedule.js';
 import type { ScheduleUnit } from '../core/steward/schedule.js';
+import { isEvalHelpRequest, parseStrictEvalFlags } from './eval-cli-shared.js';
 import { installScheduleUnits } from './steward.js';
 import { makeColors, isTty, pad } from './ui.js';
 
@@ -106,51 +109,34 @@ interface ParsedRunArgs {
 }
 
 function parseRunArgs(args: string[]): ParsedRunArgs {
-  const parsed: ParsedRunArgs = { lanes: [], json: false, gate: false };
-  const valueFlags = new Set(['--dataset', '--repo-base', '--lane', '--trials', '--k', '--limit', '--write', '--baseline']);
-  const seenSingle = new Set<string>();
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (arg === '--json') {
-      if (parsed.json) { parsed.usageError = 'repeated argument: --json'; return parsed; }
-      parsed.json = true;
-      continue;
-    }
-    if (arg === '--gate') {
-      if (parsed.gate) { parsed.usageError = 'repeated argument: --gate'; return parsed; }
-      parsed.gate = true;
-      continue;
-    }
-    if (valueFlags.has(arg)) {
-      if (arg !== '--lane' && seenSingle.has(arg)) { parsed.usageError = `repeated argument: ${arg}`; return parsed; }
-      seenSingle.add(arg);
-      const value = args[++i];
-      if (value === undefined || value.startsWith('-')) {
-        parsed.usageError = `${arg} requires a value`;
-        return parsed;
-      }
-      if (arg === '--lane') {
-        const match = LANE_SPEC.exec(value);
-        if (!match) { parsed.usageError = '--lane takes <lane>:<engine> (e.g. local:local-coder)'; return parsed; }
-        parsed.lanes.push({ lane: match[1]!, model: match[2]! });
-        continue;
-      }
-      if (arg === '--trials' || arg === '--k' || arg === '--limit') {
-        const n = Number(value);
-        if (!Number.isSafeInteger(n) || n < 1) { parsed.usageError = `${arg} requires a positive integer`; return parsed; }
-        if (arg === '--trials') {
-          if (n > PASSK_MAX_TRIALS) { parsed.usageError = `--trials must be <= ${PASSK_MAX_TRIALS}`; return parsed; }
-          parsed.trials = n;
-        } else if (arg === '--k') parsed.k = n;
-        else parsed.limit = n;
-        continue;
-      }
-      const key = { '--dataset': 'dataset', '--repo-base': 'repoBase', '--write': 'write', '--baseline': 'baseline' }[arg] as 'dataset' | 'repoBase' | 'write' | 'baseline';
-      parsed[key] = value;
-      continue;
-    }
-    parsed.usageError = `unknown argument: ${arg}`;
-    return parsed;
+  const scanned = parseStrictEvalFlags(args, {
+    booleans: ['--json', '--gate'],
+    values: ['--dataset', '--repo-base', '--trials', '--k', '--limit', '--write', '--baseline'],
+    repeatable: ['--lane'],
+  });
+  const parsed: ParsedRunArgs = {
+    dataset: scanned.values.get('--dataset'),
+    repoBase: scanned.values.get('--repo-base'),
+    write: scanned.values.get('--write'),
+    baseline: scanned.values.get('--baseline'),
+    lanes: [],
+    json: scanned.flags.has('--json'),
+    gate: scanned.flags.has('--gate'),
+    usageError: scanned.usageError,
+  };
+  if (parsed.usageError) return parsed;
+  for (const raw of scanned.repeated.get('--lane') ?? []) {
+    const match = LANE_SPEC.exec(raw);
+    if (!match) { parsed.usageError = '--lane takes <lane>:<engine> (e.g. local:local-coder)'; return parsed; }
+    parsed.lanes.push({ lane: match[1]!, model: match[2]! });
+  }
+  for (const [flag, key] of [['--trials', 'trials'], ['--k', 'k'], ['--limit', 'limit']] as const) {
+    const raw = scanned.values.get(flag);
+    if (raw === undefined) continue;
+    const n = Number(raw);
+    if (!Number.isSafeInteger(n) || n < 1) { parsed.usageError = `${flag} requires a positive integer`; return parsed; }
+    if (flag === '--trials' && n > PASSK_MAX_TRIALS) { parsed.usageError = `--trials must be <= ${PASSK_MAX_TRIALS}`; return parsed; }
+    parsed[key] = n;
   }
   if (parsed.k !== undefined && parsed.trials !== undefined && parsed.k > parsed.trials) {
     parsed.usageError = '--k must be <= --trials';
@@ -163,7 +149,13 @@ function parseRunArgs(args: string[]): ParsedRunArgs {
 // ---------------------------------------------------------------------------
 
 function pct(v: number | null): string {
-  return v === null ? 'n/a' : `${(v * 100).toFixed(1)}%`;
+  return v === null ? 'n/a' : formatEvalPct(v);
+}
+
+function formatPassKAlert(alert: PassKAlert): string {
+  const where = alert.taskId ? ` ${alert.taskId}` : '';
+  const dimension = alert.dimension ? ` ${alert.dimension}` : '';
+  return `${alert.lane}/${alert.model}:${where}${dimension} ${alert.kind} ${pct(alert.before)} → ${pct(alert.after)}`;
 }
 
 function renderReport(report: PassKReport): void {
@@ -188,9 +180,7 @@ function renderReport(report: PassKReport): void {
   if (report.alerts.length > 0) {
     console.log(`  ${red('alerts:')} ${report.alerts.length} regression(s)`);
     for (const alert of report.alerts.slice(0, 10)) {
-      const where = alert.taskId ? ` ${alert.taskId}` : '';
-      const dimension = alert.dimension ? ` ${alert.dimension}` : '';
-      console.log(`    ${red('⚠')} ${alert.lane}/${alert.model}:${where}${dimension} ${alert.kind} ${pct(alert.before)} → ${pct(alert.after)}`);
+      console.log(`    ${red('⚠')} ${formatPassKAlert(alert)}`);
     }
     if (report.alerts.length > 10) console.log(`    ${dim(`… ${report.alerts.length - 10} more`)}`);
     console.log('');
@@ -275,11 +265,12 @@ export async function cmdEvalPassK(args: string[], overrides: EvalPassKCliDeps =
   const err = overrides.err ?? ((t: string) => console.error(t));
   const readFile = overrides.readFile ?? ((p: string) => readFileSync(p, 'utf8'));
 
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
+  if (isEvalHelpRequest(args)) {
     out(USAGE);
     return 0;
   }
 
+  const storeOpts = { rootDir: overrides.rootDir };
   const schedDeps: SchedDeps = {
     out,
     err,
@@ -298,7 +289,7 @@ export async function cmdEvalPassK(args: string[], overrides: EvalPassKCliDeps =
     }
     const json = rest.includes('--json');
     if (sub === 'scores') {
-      const { state, scores } = readLaneScores({ rootDir: overrides.rootDir });
+      const { state, scores } = readLaneScores(storeOpts);
       if (scores === null) {
         if (json) out(JSON.stringify({ state, scores: null }));
         else err(`no lane-scores projection yet (state: ${state}) — run \`phm eval passk\` first`);
@@ -308,7 +299,7 @@ export async function cmdEvalPassK(args: string[], overrides: EvalPassKCliDeps =
       else renderScores(scores, state);
       return 0;
     }
-    const journal = loadPassKAlerts({ rootDir: overrides.rootDir });
+    const journal = loadPassKAlerts(storeOpts);
     if (json) {
       out(JSON.stringify({ state: journal.state, alerts: journal.alerts, dropped: journal.dropped }, null, 2));
       return 0;
@@ -318,9 +309,7 @@ export async function cmdEvalPassK(args: string[], overrides: EvalPassKCliDeps =
       return 0;
     }
     for (const line of journal.alerts) {
-      const where = line.alert.taskId ? ` ${line.alert.taskId}` : '';
-      const dimension = line.alert.dimension ? ` ${line.alert.dimension}` : '';
-      out(`${line.ts} ${line.alert.lane}/${line.alert.model}:${where}${dimension} ${line.alert.kind} ${pct(line.alert.before)} → ${pct(line.alert.after)}`);
+      out(`${line.ts} ${formatPassKAlert(line.alert)}`);
     }
     return 0;
   }
@@ -384,7 +373,7 @@ export async function cmdEvalPassK(args: string[], overrides: EvalPassKCliDeps =
 
   // Baseline resolution — an explicit --baseline file wins over the most
   // recent persisted report (swe-bench stance).
-  let prior: PassKReport | undefined = loadLastPassKReport({ rootDir: overrides.rootDir });
+  let prior: PassKReport | undefined = loadLastPassKReport(storeOpts);
   if (parsed.baseline !== undefined) {
     try {
       const raw = JSON.parse(readFile(parsed.baseline)) as PassKReport;
@@ -417,7 +406,7 @@ export async function cmdEvalPassK(args: string[], overrides: EvalPassKCliDeps =
   // Publish: report, latest pointer, lane-scores projection, alerts journal.
   let published: { reportPath: string; scoresPath: string };
   try {
-    published = publishPassKReport(report, { rootDir: overrides.rootDir });
+    published = publishPassKReport(report, storeOpts);
   } catch {
     err('error: could not publish the report');
     return 1;
@@ -438,9 +427,9 @@ export async function cmdEvalPassK(args: string[], overrides: EvalPassKCliDeps =
       published: {
         report: published.reportPath,
         scores: published.scoresPath,
-        alerts: passkAlertsPath({ rootDir: overrides.rootDir }),
-        dir: passkDir({ rootDir: overrides.rootDir }),
-        laneScores: laneScoresPath({ rootDir: overrides.rootDir }),
+        alerts: passkAlertsPath(storeOpts),
+        dir: passkDir(storeOpts),
+        laneScores: laneScoresPath(storeOpts),
       },
     }, null, 2));
   } else {
