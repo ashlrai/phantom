@@ -78,6 +78,25 @@ it('keeps a bounded conflict trend, then reports unknown when ready.tsv disappea
   expect(read.board?.conflictingPrs.count).toBeNull();
 });
 
+it('uses distinct earlier samples after the Leader clock moves backward', async () => {
+  await seed();
+  await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS - 60_000 });
+  const ready = join(queueDir, 'ready.tsv');
+  await writeFile(ready, row('READY', 'RQ-REBASE-PHANTOM-1234-abc1234', 'devin', 'work'));
+  await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  await writeFile(ready, '');
+  await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS + 60_000 });
+  await seed();
+  expect((await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS })).wrote).toBe(true);
+  const { board } = await readFleetBoard({ runsDir: root });
+  expect(board?.conflictingPrs).toEqual({
+    count: 2,
+    delta: 0,
+    trend: 'flat',
+    history: [{ at: minutesAgo(1), count: 2 }, { at: minutesAgo(0), count: 2 }],
+  });
+});
+
 it('counts lane-open work by tier without attributing it to a lane', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), [
     'RQ-OPEN\tphantom\t\tfrontier\tprompts/open.md',
