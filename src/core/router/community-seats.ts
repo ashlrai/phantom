@@ -51,16 +51,13 @@
  *   - Nothing here routes, weights or applies anything — the tallies are
  *     reported as evidence context only.
  */
-import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
-
 import {
   outsidePrOutcomeJournalPath,
   parseOutsidePrOutcomeJournal,
   type OutsidePrOutcomeJournalRow,
   type OutsidePrScanJournalRow,
 } from '../fleet/outside-pr-outcome-ledger.js';
-import { readLedgerTail } from './outcomes.js';
+import { readLedgerTail, resolveRouterRunsDir, type LedgerTailState } from './outcomes.js';
 
 /** Journal tail cap — the same 8 MiB bound the improve fold's dedup read applies. */
 export const COMMUNITY_SEATS_JOURNAL_MAX_BYTES = 8 * 1024 * 1024;
@@ -70,22 +67,22 @@ export const COMMUNITY_SEATS_JOURNAL_MAX_BYTES = 8 * 1024 * 1024;
  * covers the same cohort `phm fleet outside-outcomes` reports live.
  */
 export const COMMUNITY_SEATS_DEFAULT_WINDOW_DAYS = 30;
-export const COMMUNITY_SEATS_MAX_WINDOW_DAYS = 365;
+const COMMUNITY_SEATS_MAX_WINDOW_DAYS = 365;
 /**
  * Future-skew ceiling on mergedAt stamps — the sibling feeds' one-minute
  * tolerance for clock drift between the recording host and the merge
  * timestamp's source.
  */
-export const COMMUNITY_SEATS_FUTURE_SKEW_MS = 60_000;
+const COMMUNITY_SEATS_FUTURE_SKEW_MS = 60_000;
 /** Defensive bound on distinct agent buckets reported. */
-export const COMMUNITY_SEATS_MAX_SEATS = 32;
+const COMMUNITY_SEATS_MAX_SEATS = 32;
 /** Repo names quoted per coverage note; the scan lists at most MAX_REPOS upstream. */
 const COMMUNITY_SEATS_MAX_DEGRADED_REPOS = 8;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Journal-tail read states; readLedgerTail never returns 'too-large' (the tail is always bounded). */
-export type CommunitySeatsState = 'read' | 'missing' | 'unreadable' | 'not-file';
+export type CommunitySeatsState = LedgerTailState;
 
 /** One attributed agent's in-window outside-merge tallies. */
 export interface CommunitySeatOutcome {
@@ -204,8 +201,7 @@ export async function readOutsidePrCommunitySeats(opts: {
   /** Clock anchoring the window and `since` (default: now). */
   now?: Date;
 } = {}): Promise<OutsidePrCommunitySeatsRead> {
-  const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
-  if (!isAbsolute(runsDir)) throw new RangeError('runsDir must be an absolute path');
+  const runsDir = resolveRouterRunsDir(opts.runsDir);
   const path = opts.journalPath ?? outsidePrOutcomeJournalPath(runsDir);
   const windowDays = Math.min(
     COMMUNITY_SEATS_MAX_WINDOW_DAYS,

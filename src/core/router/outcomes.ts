@@ -1,7 +1,7 @@
 import { constants } from 'node:fs';
-import { lstat, open } from 'node:fs/promises';
+import { lstat, mkdir, open } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import { ashlrHome } from '../cloud/store.js';
@@ -235,7 +235,7 @@ export const ROUTER_MERGE_EVENTS_LEDGER_RELATIVE = join('metrics', 'merge-events
  * passk projection resolves under (ASHLR_HOME honored). Unlike the
  * runs-dir ledgers it is not joined under runsDir.
  */
-export const ROUTER_REWARD_LEDGER_RELATIVE = join('metrics', 'reward-signals.jsonl');
+const ROUTER_REWARD_LEDGER_RELATIVE = join('metrics', 'reward-signals.jsonl');
 /**
  * The launch-cost ledger's path relative to the runs dir —
  * `<runs>/metrics/launch-cost.jsonl`, the bounded append-only
@@ -987,12 +987,44 @@ export interface RouterOutcome {
 }
 
 export type LedgerReadState = 'read' | 'missing' | 'unreadable' | 'not-file' | 'too-large';
+export type LedgerTailState = Exclude<LedgerReadState, 'too-large'>;
 
 export type LedgerRead = { state: 'read'; text: string } | { state: Exclude<LedgerReadState, 'read'> };
 
 export type LedgerTailRead =
   | { state: 'read'; text: string; truncated: boolean }
-  | { state: 'missing' | 'unreadable' | 'not-file' };
+  | { state: Exclude<LedgerTailState, 'read'> };
+
+export function tailTruncated(read: LedgerTailRead): boolean {
+  return read.state === 'read' && read.truncated;
+}
+
+export function defaultRouterRunsDir(runsDir?: string): string {
+  return runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+}
+
+export function resolveRouterRunsDir(runsDir?: string): string {
+  const resolved = defaultRouterRunsDir(runsDir);
+  if (!isAbsolute(resolved)) throw new RangeError('runsDir must be an absolute path');
+  return resolved;
+}
+
+/** Safe append of one JSONL line with O_NOFOLLOW (when exposed) and mode 0600. */
+export async function appendLedgerLine(path: string, line: string, invalidMessage: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const noFollow = constants.O_NOFOLLOW || 0;
+  const fd = await open(
+    path,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | noFollow | constants.O_NONBLOCK,
+    0o600,
+  );
+  try {
+    if (!(await fd.stat()).isFile()) throw new Error(invalidMessage);
+    await fd.writeFile(`${line}\n`);
+  } finally {
+    await fd.close();
+  }
+}
 
 async function openLedger(path: string): Promise<
   { state: 'opened'; handle: Awaited<ReturnType<typeof open>> } |
@@ -1087,15 +1119,50 @@ export async function readLedgerTail(path: string, maxBytes = ROUTER_OUTCOME_LED
 }
 
 type Row = Record<string, unknown>;
-const str = (r: Row, ...keys: string[]): string | null => {
+
+export function isLedgerRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function parseJsonObjectLine(line: string): Record<string, unknown> | null {
+  try {
+    const value: unknown = JSON.parse(line);
+    return isLedgerRecord(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function firstTrimmedString(row: Record<string, unknown>, ...keys: string[]): string | null {
   for (const k of keys) {
-    const v = r[k];
+    const v = row[k];
     if (typeof v === 'string' && v.trim()) return v.trim();
   }
   return null;
-};
+}
+
+export function nonNegativeSafeInt(value: unknown): number | null {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null;
+}
+
+export function incrementTally(map: Map<string, number>, key: string): void {
+  map.set(key, (map.get(key) ?? 0) + 1);
+}
+
+export function rankTallyEntries<T>(
+  map: ReadonlyMap<string, number>,
+  limit: number,
+  build: (key: string, count: number) => T,
+): T[] {
+  return [...map.entries()]
+    .sort(([aKey, aCount], [bKey, bCount]) => bCount - aCount || aKey.localeCompare(bKey))
+    .slice(0, limit)
+    .map(([key, count]) => build(key, count));
+}
+
+const str = firstTrimmedString;
 const num = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
-const count = (v: unknown): number | null => Number.isSafeInteger(v) && (v as number) >= 0 ? v as number : null;
+const count = nonNegativeSafeInt;
 /** Exit statuses are safe integers of either sign — dispatchd records signal exits as negatives. */
 const exitStatus = (v: unknown): number | null => Number.isSafeInteger(v) ? v as number : null;
 /** Recorded ledger labels (failure classifications, usage provenance) join only bounded identifier-shaped values; anything else is skipped, never recorded raw. */
@@ -1731,15 +1798,12 @@ function foldRouterOutcomesWithCiCoverage(
   let malformed = 0;
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    try {
-      const value: unknown = JSON.parse(line);
-      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-        const row = value as Row;
-        if ((ledgerEventTs(row, null) ?? -Infinity) <= throughMs) rows.push(row);
-      } else malformed++;
-    } catch {
+    const row = parseJsonObjectLine(line);
+    if (row === null) {
       malformed++;
+      continue;
     }
+    if ((ledgerEventTs(row, null) ?? -Infinity) <= throughMs) rows.push(row);
   }
   // fleet.session-pool.v1 and phm-node-runner.v1 rows resolve their job
   // identity differently: `job` is the per-attempt id and `jobId` the
@@ -2321,14 +2385,8 @@ export function foldSpendCosts(text: string, asOfMs = Infinity): Map<string, num
   const incomplete = new Set<string>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
-    const r = value as Row;
+    const r = parseJsonObjectLine(line);
+    if (r === null) continue;
     const at = parseLedgerTs(r['ts']) ?? parseLedgerTs(r['at']) ?? parseLedgerTs(r['timestamp']);
     if (at !== null && at > asOfMs) continue;
     const j = str(r, 'job', 'job_id', 'id');
@@ -2364,14 +2422,8 @@ export function foldRouteDecisionWorkClasses(text: string, throughEpochSeconds =
   for (const line of text.split('\n')) {
     // Cheap prefilter: route decisions are the bulk of the file.
     if (!line.includes('"route_decision"')) continue;
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
-    const row = value as Row;
+    const row = parseJsonObjectLine(line);
+    if (row === null) continue;
     if (row['schema'] !== 'work-market.v1' || row['event'] !== 'route_decision') continue;
     const job = row['job'];
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
@@ -2501,14 +2553,8 @@ export function foldRouteDecisions(text: string, throughEpochSeconds = Infinity)
   for (const line of text.split('\n')) {
     // Cheap prefilter: route decisions are the bulk of the file.
     if (!line.includes('"route_decision"')) continue;
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
-    const row = value as Row;
+    const row = parseJsonObjectLine(line);
+    if (row === null) continue;
     if (row['schema'] !== 'work-market.v1' || row['event'] !== 'route_decision') continue;
     const job = row['job'];
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
@@ -2519,8 +2565,7 @@ export function foldRouteDecisions(text: string, throughEpochSeconds = Infinity)
     const lane = row['chosen_lane'];
     const preferred = row['preferred_lane'];
     const override = row['override'];
-    const overrideReason = override !== null && typeof override === 'object' && !Array.isArray(override)
-      ? (override as Row)['reason'] : undefined;
+    const overrideReason = isLedgerRecord(override) ? override['reason'] : undefined;
     const reasons = boundedReasonList(row['reason_codes']);
     const rejected = marketRejectedLanes(row['rejected_lanes']);
     const decision: MarketRouteDecision = {
@@ -2578,14 +2623,8 @@ export function foldMarketHandoffAdvisories(text: string, throughEpochSeconds = 
     // Cheap prefilter: the advisory value string appears under whichever
     // event-alias key the row carries.
     if (!line.includes('"session_handoff_advisory"')) continue;
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
-    const row = value as Row;
+    const row = parseJsonObjectLine(line);
+    if (row === null) continue;
     const job = row['job'];
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const ts = row['ts'];
@@ -2615,14 +2654,8 @@ function latestJobsHandoffAdvisoryMs(text: string, throughMs: number): Map<strin
   const latest = new Map<string, number | null>();
   for (const line of text.split('\n')) {
     if (!line.includes('"session_handoff_advisory"')) continue;
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
-    const row = value as Row;
+    const row = parseJsonObjectLine(line);
+    if (row === null) continue;
     if (handoffAdvisory(row) === null) continue;
     if ((ledgerEventTs(row, null) ?? -Infinity) > throughMs) continue;
     const job = str(row, 'job', 'job_id', 'jobId', 'id');
@@ -2662,14 +2695,8 @@ export function foldEmptyTags(text: string, throughMs = Infinity): Map<string, s
   for (const line of text.split('\n')) {
     // Cheap prefilter: the schema marker is on every real row.
     if (!line.includes(EMPTY_TAG_SCHEMA)) continue;
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
-    const row = value as Row;
+    const row = parseJsonObjectLine(line);
+    if (row === null) continue;
     if (row['schema'] !== EMPTY_TAG_SCHEMA) continue;
     const ts = row['ts'];
     if (ts !== undefined) {
@@ -2834,18 +2861,11 @@ function parseMergeEvents(text: string, throughMs = Infinity): { evidence: Map<s
   for (const line of text.split('\n')) {
     const receipt = line.trim();
     if (!receipt) continue;
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch {
+    const row = parseJsonObjectLine(line);
+    if (row === null) {
       coverage.unattributed = true;
       continue;
     }
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-      coverage.unattributed = true;
-      continue;
-    }
-    const row = value as Row;
     const at = row['at'];
     const atMs = typeof at === 'string' ? Date.parse(at) : NaN;
     if (atMs > throughMs) continue;
@@ -3002,14 +3022,8 @@ function foldRewardSignalsThrough(text: string, throughMs: number): Map<string, 
   const rewards = new Map<string, RewardOutcomeEvidence>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
-    const r = value as Row;
+    const r = parseJsonObjectLine(line);
+    if (r === null) continue;
     const jobId = str(r, 'jobId');
     const dispatchedAt = typeof r['dispatchedAt'] === 'string' ? Date.parse(r['dispatchedAt']) : NaN;
     const recordedAt = typeof r['recordedAt'] === 'string' ? Date.parse(r['recordedAt']) : NaN;
@@ -3020,7 +3034,7 @@ function foldRewardSignalsThrough(text: string, throughMs: number): Map<string, 
         dispatchedAt > throughMs || recordedAt > throughMs || mergedAt > throughMs) continue;
     if (rewards.has(jobId)) continue;
     const cost = r['cost'];
-    const costRow = cost !== null && typeof cost === 'object' && !Array.isArray(cost) ? cost as Row : null;
+    const costRow = isLedgerRecord(cost) ? cost : null;
     const ttmMs = r['merged'] ? num(r['timeToMergeMs']) : null;
     const ciWallMs = num(r['ciWallMs']);
     const repo = str(r, 'repo');
@@ -3095,14 +3109,8 @@ function* launchCostReceipts(text: string): Generator<{
 }> {
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
-    const r = value as Row;
+    const r = parseJsonObjectLine(line);
+    if (r === null) continue;
     const lane = str(r, 'lane');
     const launchId = str(r, 'launchId');
     const startedAt = r['startedAt'];
@@ -3200,14 +3208,8 @@ function foldCrossReviewsThrough(text: string, asOfMs: number): Map<string, Cros
   }>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
-    const row = value as Row;
+    const row = parseJsonObjectLine(line);
+    if (row === null) continue;
     if (row['schemaVersion'] !== CROSS_REVIEW_SCHEMA || row['kind'] !== 'review') continue;
     const repo = row['repo'];
     const pr = row['pr'];
@@ -3539,8 +3541,7 @@ export async function readRouterOutcomes(opts: {
   authorityEvidence?: readonly RouterOutcomeEvidenceRow[] | null;
 } = {}): Promise<RouterOutcomeRead> {
   const reportStartedAt = Date.now();
-  const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
-  if (!isAbsolute(runsDir)) throw new RangeError('runsDir must be an absolute path');
+  const runsDir = resolveRouterRunsDir(opts.runsDir);
   if (opts.ashlarDir !== undefined && !isAbsolute(opts.ashlarDir)) throw new RangeError('ashlarDir must be an absolute path');
   const laneScores = readLaneScores({ rootDir: opts.ashlarDir });
   const path = join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
@@ -3548,36 +3549,36 @@ export async function readRouterOutcomes(opts: {
   const empty: RouterOutcomeFold = { outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0, session_rows: 0 };
   const spendRead = await readLedgerTail(join(runsDir, ROUTER_SPEND_LEDGER_RELATIVE));
   const spendState = spendRead.state;
-  const spendTruncated = spendRead.state === 'read' ? spendRead.truncated : false;
+  const spendTruncated = tailTruncated(spendRead);
   const marketRead = await readLedgerTail(join(runsDir, ROUTER_MARKET_LEDGER_RELATIVE));
   const marketState = marketRead.state;
-  const marketTruncated = marketRead.state === 'read' ? marketRead.truncated : false;
+  const marketTruncated = tailTruncated(marketRead);
   const marketThrough = reportStartedAt / 1000;
   const workClasses = marketRead.state === 'read' && (read.state === 'read' || opts.onRecordedWorkClasses)
     ? foldRouteDecisionWorkClasses(marketRead.text, marketThrough) : new Map<string, string>();
   opts.onRecordedWorkClasses?.(workClasses);
   const emptyTagRead = await readLedgerTail(join(runsDir, ROUTER_EMPTY_TAGS_LEDGER_RELATIVE));
   const emptyTagState = emptyTagRead.state;
-  const emptyTagTruncated = emptyTagRead.state === 'read' ? emptyTagRead.truncated : false;
+  const emptyTagTruncated = tailTruncated(emptyTagRead);
   const mergeEventsRead = await readLedgerTail(join(runsDir, ROUTER_MERGE_EVENTS_LEDGER_RELATIVE));
   const mergeEventsState = mergeEventsRead.state;
-  const mergeEventsTruncated = mergeEventsRead.state === 'read' ? mergeEventsRead.truncated : false;
+  const mergeEventsTruncated = tailTruncated(mergeEventsRead);
   // The reward ledger lives under the ASHLR home root, not runsDir —
   // resolved exactly like passk's lane-scores projection so both
   // ashlarDir-rooted reads agree on the root (ASHLR_HOME honored).
   const ashlarRoot = opts.ashlarDir ?? ashlrHome();
   const rewardRead = await readLedgerTail(join(ashlarRoot, ROUTER_REWARD_LEDGER_RELATIVE));
   const rewardState = rewardRead.state;
-  const rewardTruncated = rewardRead.state === 'read' ? rewardRead.truncated : false;
+  const rewardTruncated = tailTruncated(rewardRead);
   const launchCostRead = await readLedgerTail(join(runsDir, ROUTER_LAUNCH_COST_LEDGER_RELATIVE));
   const launchCostState = launchCostRead.state;
-  const launchCostTruncated = launchCostRead.state === 'read' ? launchCostRead.truncated : false;
+  const launchCostTruncated = tailTruncated(launchCostRead);
   // The cross-review ledger lives under the ASHLR home root, not runsDir —
   // the same root ashlarRoot resolves for the eval passk projection and
   // the reward-signals ledger (ASHLR_HOME honored).
   const crossReviewRead = await readLedgerTail(join(ashlarRoot, ROUTER_CROSS_REVIEW_LEDGER_RELATIVE));
   const crossReviewState = crossReviewRead.state;
-  const crossReviewTruncated = crossReviewRead.state === 'read' ? crossReviewRead.truncated : false;
+  const crossReviewTruncated = tailTruncated(crossReviewRead);
   const revertLedger = await liveRevertOutcomeKeys(opts.ashlarDir, reportStartedAt);
   if (read.state !== 'read') {
     return { ...empty, state: read.state, path, eval_state: laneScores.state,
