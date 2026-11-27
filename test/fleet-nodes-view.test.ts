@@ -24,7 +24,8 @@ const node = (nodeId: string, extra: Partial<NodeRecord> = {}): NodeRecord => ({
 const POOL = { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' };
 const JOIN = 'phm node join --owner acme --primary primary-mac --backup backup-mac';
 const registry = (nodes: NodeRecord[], jobs: NodesState['jobs'] = [], extra: Partial<NodesRegistry> = {}): NodesRegistry => ({
-  source: 'pool-witness', selfNode: 'node-a', pool: POOL, state: { version: 'drive.nodes.v1', sequence: 9, observedAt: NOW - 1_000, nodes, leader: null, jobs }, ...extra,
+  source: 'pool-witness', selfNode: 'node-a', pool: POOL, state: { version: 'drive.nodes.v1', sequence: 9, observedAt: NOW - 1_000, nodes,
+    leader: nodes[0] ? { nodeId: nodes[0].nodeId, session: nodes[0].session, token: 1, expiresAt: NOW + 5_000 } : null, jobs }, ...extra,
 });
 const tailnet = (peers: Record<string, unknown>[], backend = 'Running') => JSON.stringify({
   BackendState: backend, Self: { HostName: 'node-a' }, Peer: Object.fromEntries(peers.map((peer, i) => [`key-${i}`, peer])),

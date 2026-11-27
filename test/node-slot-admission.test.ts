@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DriveNodes } from '../src/core/drive/nodes/index.js';
 import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
 import { emptyState, parseState, type NodesState, type NodesStore } from '../src/core/drive/nodes/state.js';
-import { planRoutes } from '../src/core/drive/nodes/router.js';
+import { nodeCapacityView, planRoutes } from '../src/core/drive/nodes/router.js';
 
 class MemoryStore implements NodesStore {
   state = emptyState();
@@ -50,6 +50,27 @@ describe('node slot admission', () => {
     expect(nodes.pull(air)).toBeNull();
     expect(nodes.pull(pro)).toBeNull();
     expect(nodes.plan()[0]?.fix).toContain('no free job slots');
+  });
+
+  it.each([false, true])('reuses a slot fenced by leader expiry (pool: %s)', pooled => {
+    const store = new MemoryStore();
+    let now = 1_000;
+    const nodes = new DriveNodes(store, { now: () => now, leaderTtlMs: 20 });
+    const worker = nodes.join('worker', { owners: ['mason'], slots: 1 })!;
+    if (pooled) store.state.pool = { primary: 'worker', backup: 'backup', active: 'primary', epoch: worker.session, heartbeatAt: now };
+    nodes.heartbeat(worker, { capacity: { hostId: 'host', sampledAtMs: now, slots: 1, ramBytes: 1024, held: null } });
+    nodes.enqueue('old', { owner: 'mason' });
+    const old = nodes.pull(worker)!.claim;
+    nodes.enqueue('new', { owner: 'mason' });
+    now += 19;
+    expect(nodes.plan()).toMatchObject([{ jobId: 'new', nodeId: null }]);
+    now++;
+    expect(nodes.plan()).toEqual([{ jobId: 'new', owner: 'mason', nodeId: 'worker' }]);
+    expect(nodeCapacityView(nodes.snapshot(), now)[0]).toMatchObject({ running: 0, freeSlots: 1 });
+    expect(nodes.pull(worker)?.job.id).toBe('new');
+    expect(nodes.renewClaim(old)).toBeNull();
+    expect(nodes.complete(old, 'late')).toBe(false);
+    expect(nodes.view(['mason']).jobs.find(job => job.id === 'old')?.claimedBy).toBeUndefined();
   });
 
   it('holds immediately at zero slots and resumes from a fresh heartbeat', () => {
