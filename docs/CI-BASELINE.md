@@ -45,6 +45,10 @@ deliberate non-verdicts. A workflow whose conclusion is `failure` is also
 incomplete when it lists no failed job, including when it lists no jobs
 at all. A passing job in such a workflow cannot supply master pass
 evidence for a flake rerun.
+A checkout-verified master job that failed without a parseable failure also
+leaves master evidence unknown and prevents green sibling jobs from supplying
+pass evidence for a flake rerun or branch update. Identifiable failures from
+verified sibling jobs remain available.
 Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
 identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
 and capped at 2,000 characters per failure, with at most 100 failures per log.

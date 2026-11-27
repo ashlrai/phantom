@@ -269,6 +269,15 @@ describe('CI baseline evidence', () => {
     expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline', master: 'fail' });
     expect(report.freshness.every(p => p.state === 'fresh')).toBe(true);
   });
+  it.each([true, false])('withholds master pass evidence on an unexplained verified failure (passing sibling: %s)', async pass => {
+    const { gh } = github({ count: 1, pass, extraMasterJob: 'failure' });
+    const report = await analyzeCiBaseline('owner/repo', args => args[1]?.endsWith('/jobs/30/logs')
+      ? Promise.resolve({ ok: true, stdout: `/usr/bin/git log -1 --format=%H\n${master}\n${fixture('unknown')}`, stderr: '' })
+      : gh(args));
+    expect(report.master.known).toBe(false);
+    expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
+    expect(report.groups).toMatchObject([{ classification: 'unknown', master: pass ? 'unknown' : 'fail' }]);
+  });
   it('keeps verified sibling evidence when an incomplete job has no log', async () => {
     const { gh } = github({ extraMasterJob: 'cancelled' });
     const report = await analyzeCiBaseline('owner/repo', args => args[1]?.endsWith('/jobs/30/logs')
