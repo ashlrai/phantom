@@ -94,6 +94,27 @@ describe('lane plan and caps probe', () => {
     expect(probeLocalModelCaps(deps({ headroom: headroom(), platform: 'linux' }))).toEqual([]);
     expect(probeLocalModelCaps(deps({ headroom: headroom(60, 0, 4) }))).toEqual([]);
   });
+
+  it('the disabled backoff reason names the config path this probe read', () => {
+    const probe = localLanePlan(deps({ headroom: headroom() }));
+    expect(probe.plan.backoff).toBe('disabled');
+    expect(probe.plan.backoffReason).toBe(`Enable with ${configPath} {"schemaVersion":1,"enabled":true}`);
+  });
+
+  it('names the relocated ASHLR_HOME path, not the default-home spelling', () => {
+    const relocated = mkdtempSync(join(tmpdir(), 'phm-ashlr-home-'));
+    const prior = process.env.ASHLR_HOME;
+    process.env.ASHLR_HOME = relocated;
+    try {
+      const probe = localLanePlan({ totalBytes: () => 16 * GiB, platform: 'darwin' });
+      expect(probe.plan.backoff).toBe('disabled');
+      expect(probe.plan.backoffReason).toContain(join(relocated, 'local-lanes.json'));
+      expect(probe.plan.backoffReason).not.toContain('~/.ashlr');
+    } finally {
+      if (prior === undefined) delete process.env.ASHLR_HOME; else process.env.ASHLR_HOME = prior;
+      rmSync(relocated, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('probeNodeLanes merges provider sign-ins with local model caps', () => {
