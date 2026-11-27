@@ -316,9 +316,10 @@ export function devinContextNote(model: Pick<DevinModel, 'contextTokens'>): stri
   return `${Math.round(n / 1_000)}K ctx`;
 }
 
-/** A family is free when every model in it is. */
+/** A family is free when every verified model in it is; unverified rows are guesses, not catalog evidence. */
 export function devinFamilyIsFree(family: DevinModelFamily): boolean {
-  return family.models.length > 0 && family.models.every((m) => m.pricing.free);
+  const verified = family.models.filter((m) => !m.unverified);
+  return verified.length > 0 && verified.every((m) => m.pricing.free);
 }
 
 /** What the Resources card says about the catalog. Pure. */
@@ -334,11 +335,12 @@ export interface DevinModelsSummary {
 export function summarizeDevinModels(catalog: DevinModelCatalog, section: AshlrConfig['devin'] | undefined): DevinModelsSummary {
   const defaultId = devinDefaultModelId(section, catalog);
   const model = resolveDevinModel(defaultId, catalog);
+  const observed = catalog.families.filter((f) => f.models.some((m) => !m.unverified));
   return {
     source: catalog.source,
     fetchedAt: catalog.fetchedAt,
-    freeFamilies: catalog.families.filter(devinFamilyIsFree).map((f) => f.label),
-    paidFamilyCount: catalog.families.filter((f) => !devinFamilyIsFree(f)).length,
+    freeFamilies: observed.filter(devinFamilyIsFree).map((f) => f.label),
+    paidFamilyCount: observed.filter((f) => !devinFamilyIsFree(f)).length,
     defaultModel: {
       id: defaultId,
       label: model?.label ?? defaultId,
