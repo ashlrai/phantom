@@ -933,6 +933,15 @@ shared `groupAddressTopicOf` — decided on the raw routing label with no
 registry dependence, the same match every other bus read's `--topic`
 applies, composing with `--channel` into one room AND one topic while an
 agent address, a bare `group:<room>` or a malformed topic never matches.
+On the unified surface only, `--frame <cli>` prints the same chain — the
+verdict header and every receipt's summary and held/holder/job evidence —
+as one bounded block marked untrusted under BEGIN/END UNTRUSTED AGENT BUS
+THREAD markers, the same scrub, flattening and 32 KiB clip bound the
+inbox, channel-read, wakes, `work mine` and `work feed` frames apply with
+the cut stated, so a host can hand a whole exchange to a CLI's next turn
+as data in a single block; `--json` carries it as `framed` beside the
+full projection, and a proven miss frames its own not-found verdict
+rather than an invented chain.
 All three surfaces read with live evidence: every message
 carries the same `held`/`holder`/`job`/`fromAgent` annotations `agents bus
 inbox`, `agents bus channel read` and `agents bus show` report — whether

@@ -496,6 +496,49 @@ describe('phm agents bus (unified)', () => {
     expect(human).toContain('kindless follow-up');
   });
 
+  it('frames the reply chain as untrusted data', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'root question', '--id', 'tf-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'nova', '--to', 'atlas', '--text', 'classified answer',
+      '--reply-to', 'tf-1', '--id', 'tf-2'])).json).toMatchObject({ status: 'posted' });
+    expect(appendBusInbox({ id: 'tf-3', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { inReplyTo: 'tf-2', text: 'kindless follow-up' } }, { root }).status).toBe('posted');
+
+    // --frame prints the whole chain — verdict header and every receipt's
+    // summary and evidence — as one bounded block under its own markers;
+    // --json carries it on `framed` beside the full projection.
+    const framed = await run(['thread', 'tf-1', '--frame', 'claude']);
+    expect(framed.code).toBe(0);
+    expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS THREAD');
+    expect(framed.json.framed).toContain('thread tf-1: 3 message(s)');
+    expect(framed.json.framed).toContain('tf-1');
+    expect(framed.json.framed).toContain('tf-2');
+    expect(framed.json.framed).toContain('tf-3');
+    expect(framed.json.framed).toContain('root question');
+    expect(framed.json.framed).toContain('classified answer');
+    expect(framed.json.framed).toContain('kindless follow-up');
+    expect(framed.json.framed).toContain('END UNTRUSTED AGENT BUS THREAD');
+    // A thread block can never pass for an inbox page, a digest or a feed.
+    expect(framed.json.framed).not.toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
+    expect(framed.json.framed).not.toContain('WORK DIGEST');
+    expect(framed.json.framed).not.toContain('WORK FEED');
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const framedText: string[] = [];
+    expect(await runAgentsBusUnified(['thread', 'tf-1', '--frame', 'grok', '--root', root],
+      t => framedText.push(t), () => {}, {})).toBe(0);
+    expect(framedText.join('\n')).toContain('BEGIN UNTRUSTED AGENT BUS THREAD');
+    expect(framedText.join('\n')).toContain('kindless follow-up');
+    expect(framedText.join('\n')).not.toContain('"status"');
+    // A proven miss frames its own not-found verdict, never an invented chain.
+    const missing = await run(['thread', 'tf-404', '--frame', 'claude']);
+    expect(missing.code).toBe(1);
+    expect(missing.json.framed).toContain('not-found');
+    expect(missing.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS THREAD');
+    expect(await run(['thread', 'tf-1', '--frame', 'gemini'])).toMatchObject({ code: 2 });
+  });
+
   it('filters the reply chain members through the shared bus-read flags', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
