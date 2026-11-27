@@ -7,12 +7,13 @@ import { join } from 'node:path';
 import { readJobYieldParts } from '../fleet/metrics-series.js';
 import { capacityRunwayState, type RouteSources } from '../routing/decision-candidates.js';
 import { validResetCalendarPool } from '../routing/reset-pressure.js';
+import { isQueueRecord } from './schema.js';
 
 /** True when some capacity entry runs dry before its reset at the measured burn. */
 export function anyPoolStarves(capacity: unknown, nowMs: number): boolean {
-  if (capacity === null || typeof capacity !== 'object' || Array.isArray(capacity)) return false;
-  return Object.entries(capacity as Record<string, unknown>).some(([pool, raw]) => {
-    const entry = { ...(raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}), pool };
+  if (!isQueueRecord(capacity)) return false;
+  return Object.entries(capacity).some(([pool, raw]) => {
+    const entry = { ...(isQueueRecord(raw) ? raw : {}), pool };
     return validResetCalendarPool(entry) && capacityRunwayState(entry, nowMs) === 'starve';
   });
 }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
+import { isEnoent } from './schema.js';
 import { isQueueVisit, queueVisitKey, type QueueVisit } from './stats.js';
 
 /** `$ASHLR_HOME/queue/visits.jsonl` (default `~/.ashlr/...`), resolved per call so a test HOME is honoured. */
@@ -13,12 +14,15 @@ export const queueJournalPath = (): string => {
   return join(root, 'queue', 'visits.jsonl');
 };
 
+function parseVisitLine(line: string): QueueVisit | null {
+  let value: unknown;
+  try { value = JSON.parse(line); } catch { return null; }
+  return isQueueVisit(value) ? value : null;
+}
+
 /** Record metadata only: reuse the visit id at each transition; retries need a new id. */
 export async function recordQueueVisit(visit: QueueVisit, path = queueJournalPath()): Promise<void> {
-  if (!isQueueVisit(visit)) throw new Error('Invalid queue visit');
-  const { id, station, pool, arrivedAt, startedAt, completedAt } = visit;
-  await mkdir(dirname(path), { recursive: true });
-  await appendFile(path, JSON.stringify({ id, station, pool, arrivedAt, startedAt, completedAt }) + '\n', { mode: 0o600 });
+  await appendQueueVisits([visit], path);
 }
 
 /**
@@ -43,14 +47,13 @@ export async function readQueueVisits(path = queueJournalPath()): Promise<QueueV
   let content: string;
   try { content = await readFile(path, 'utf8'); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    if (isEnoent(error)) return [];
     throw new Error('Cannot read queue journal');
   }
   return content.split('\n').filter(line => line.trim()).map((line, index) => {
-    let value: unknown;
-    try { value = JSON.parse(line); } catch { throw new Error(`Invalid queue journal line ${index + 1}`); }
-    if (!isQueueVisit(value)) throw new Error(`Invalid queue journal line ${index + 1}`);
-    return value;
+    const visit = parseVisitLine(line);
+    if (!visit) throw new Error(`Invalid queue journal line ${index + 1}`);
+    return visit;
   });
 }
 
@@ -69,7 +72,7 @@ export const VISIT_JOURNAL_MAX_BYTES = 4 * 1024 * 1024;
  * no producer can append a newer snapshot for it. Kept well past the
  * largest documented window so manual queries still see honest history.
  */
-export const VISIT_JOURNAL_RECENT_MS = 30 * 24 * 60 * 60 * 1000;
+const VISIT_JOURNAL_RECENT_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface QueueJournalCompactionOptions {
   /** Epoch-ms clock for the retention cutoff (default: Date.now()). */
@@ -139,7 +142,7 @@ export async function compactQueueVisits(
   try {
     size = (await stat(path)).size;
   } catch (error) {
-    return compactionResult((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable');
+    return compactionResult(isEnoent(error) ? 'missing' : 'unreadable');
   }
   if (size <= maxBytes) return { ...compactionResult('read', size, 0, 'under-cap') };
   let content: string;
@@ -151,10 +154,9 @@ export async function compactQueueVisits(
   const lines = content.split('\n').filter((line) => line.trim() !== '');
   const visits: QueueVisit[] = [];
   for (const line of lines) {
-    let value: unknown;
-    try { value = JSON.parse(line); } catch { return compactionResult('unreadable', size, lines.length, 'malformed'); }
-    if (!isQueueVisit(value)) return compactionResult('unreadable', size, lines.length, 'malformed');
-    visits.push(value);
+    const visit = parseVisitLine(line);
+    if (!visit) return compactionResult('unreadable', size, lines.length, 'malformed');
+    visits.push(visit);
   }
   // Latest snapshot index per reader key; earlier snapshots of a surviving
   // key are superseded dead weight.

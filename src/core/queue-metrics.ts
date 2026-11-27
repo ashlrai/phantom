@@ -1,3 +1,5 @@
+import { isQueueRecord } from './queue/schema.js';
+
 /** Local, single-server station metrics. Rates are jobs/hour; W is observed
  * arrival-to-completion time in hours (not an M/M/1 forecast). Each row is one
  * station visit. Missing completion/start timestamps represent unfinished work.
@@ -59,18 +61,17 @@ export function queueReportFromText(text: string): QueueReport {
   let rows: unknown = input;
   let start: number | undefined;
   let end: number | undefined;
-  if (input && typeof input === 'object' && !Array.isArray(input)) {
-    const envelope = input as Record<string, unknown>;
-    if ('events' in envelope) {
-      rows = envelope['events'];
-      start = timestamp(envelope['start'], 'start');
-      end = timestamp(envelope['end'], 'end');
+  if (isQueueRecord(input)) {
+    if ('events' in input) {
+      rows = input['events'];
+      start = timestamp(input['start'], 'start');
+      end = timestamp(input['end'], 'end');
     } else { rows = [input]; }
   }
   if (!Array.isArray(rows)) throw new Error('Expected an events array, JSONL visits, or {start,end,events}');
   const visits = rows.map((row: unknown, i) => {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error(`Event ${i + 1}: expected a visit object`);
-    const r = row as Record<string, unknown>;
+    if (!isQueueRecord(row)) throw new Error(`Event ${i + 1}: expected a visit object`);
+    const r = row;
     if (typeof r['station'] !== 'string' || !r['station'].trim() || [...r['station']].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) throw new Error(`Event ${i + 1}: invalid station`);
     const arrived = timestamp(r['arrivedAt'], `Event ${i + 1} arrivedAt`);
     const started = r['startedAt'] === undefined ? undefined : timestamp(r['startedAt'], `Event ${i + 1} startedAt`);

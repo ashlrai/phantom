@@ -39,10 +39,11 @@ import { parseReadyRows, readReadyText, type ReadyRow } from '../fleet/ready-row
 import { readLaneTargets } from '../fleet/runs-lane-targets.js';
 import { replaceQueueText } from './dedupe.js';
 import { queueAgeText, type QueueActionRequest, type QueueActionV1, type QueueOrderV1, type QueueSteerCode } from './order-types.js';
-import { ROUTER_LINE, appendGuarded, cycleOf, eventClock, parked, repoKey, supersedeQueue } from './supersede.js';
+import { isEnoent } from './schema.js';
+import { ROUTER_LINE, appendGuarded, cycleOf, eventClock, parked, repoKey, rewriteRouterLineStatus, supersedeQueue } from './supersede.js';
 
 export const READY_BACKUP = 'ready.tsv.bak';
-export const DROP_ARCHIVE = 'dropped.tsv';
+const DROP_ARCHIVE = 'dropped.tsv';
 // router-queue.md envelopes resolve spec-less ready rows' requirements; the
 // same 32 MiB bound the unfed report and queue supply read it under.
 const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
@@ -109,8 +110,13 @@ export const flockReady: TakeReadyLock = queueDir => new Promise((resolve, rejec
 });
 
 const missing = (error: unknown): never => {
-  throw (error as NodeJS.ErrnoException).code === 'ENOENT' ? new QueueSteerError('queue-missing') : error;
+  throw isEnoent(error) ? new QueueSteerError('queue-missing') : error;
 };
+
+async function readRouterQueueEnvelope(queueDir: string): Promise<string | null> {
+  const source = await readSource(join(queueDir, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false);
+  return source.state === 'healthy' ? source.text : null;
+}
 
 /** Lanes a job may move to: the dispatcher's lanes and the drop lanes, minus held ones. */
 async function openLanes(runsDir: string): Promise<string[]> {
@@ -127,11 +133,9 @@ export async function readQueueOrder(opts: QueueOrderOptions = {}): Promise<Queu
   // A spec-less row's lane hint lives in its router-queue.md envelope; read it
   // once, and only when such a row is queued. Missing or over-bound leaves the
   // lane column, the market's own fallback.
-  let routerQueueText: string | null = null;
-  if (live.some(row => row.raw.split('\t').length === 5)) {
-    const source = await readSource(join(queueDir, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false);
-    routerQueueText = source.state === 'healthy' ? source.text : null;
-  }
+  const routerQueueText = live.some(row => row.raw.split('\t').length === 5)
+    ? await readRouterQueueEnvelope(queueDir)
+    : null;
   const plan = await supersedeQueue({ runsDir }).catch(() => null);
   const newer = new Map(plan?.superseded.map(job => [`${job.repo}\n${job.id}`, job.supersededBy]));
   // A job's age is the age of its prompt, which the producer writes as it queues the row.
@@ -176,7 +180,7 @@ function marketHint(row: ReadyRow, routerQueue?: string | null): string | null {
 }
 
 /** Pure: the rows after the action, or null when the queue already is the way the action wants it. */
-export function planQueueAction(rows: readonly ReadyRow[], req: QueueActionRequest, routerQueue?: string | null): ReadyRow[] | null {
+function planQueueAction(rows: readonly ReadyRow[], req: QueueActionRequest, routerQueue?: string | null): ReadyRow[] | null {
   const mine = rows.filter(row => row.id === req.id && !parked(row));
   if (!mine.length) return null;
   const rest = rows.filter(row => !mine.includes(row));
@@ -243,7 +247,7 @@ async function markDropped(queueDir: string, id: string): Promise<void> {
     const marked = text.split('\n').map(line => {
       const match = ROUTER_LINE.exec(line);
       return match && match[4] === id && match[2]!.toUpperCase() !== 'RUNNING'
-        ? line.replace(ROUTER_LINE, (all, lead: string, status: string) => `${lead}DROPPED${all.slice(lead.length + status.length)}`) : line;
+        ? rewriteRouterLineStatus(line, 'DROPPED') : line;
     }).join('\n');
     if (marked === text) return;
     try { replaceQueueText(path, text, marked); return; } catch { /* the file changed under us: read it again */ }
@@ -276,10 +280,7 @@ export async function steerQueue(req: QueueActionRequest, opts: QueueOrderOption
       // needs it. Missing or over-bound leaves the lane column.
       let routerQueueText: string | null | undefined;
       const routerQueue = async (): Promise<string | null> => {
-        if (routerQueueText === undefined) {
-          const source = await readSource(join(queueDir, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false);
-          routerQueueText = source.state === 'healthy' ? source.text : null;
-        }
+        if (routerQueueText === undefined) routerQueueText = await readRouterQueueEnvelope(queueDir);
         return routerQueueText;
       };
       if (!from) {

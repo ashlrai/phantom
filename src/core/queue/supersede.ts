@@ -26,8 +26,9 @@ import { join } from 'node:path';
 import { defaultRunsDir } from '../fleet/landed-closes-read.js';
 import { parseReadyRows, readReadyText, rewriteReadyRows, type RewriteReadyRowsOptions } from '../fleet/ready-row-edit.js';
 import { replaceQueueText } from './dedupe.js';
+import { isEnoent } from './schema.js';
 
-export const SUPERSEDE_ARCHIVE = 'superseded.tsv';
+const SUPERSEDE_ARCHIVE = 'superseded.tsv';
 export interface QueueJob {
   id: string; repo: string;
   /** False for a claimed or running job: it can supersede older cycles but is never superseded itself. */
@@ -75,6 +76,11 @@ export function planSupersede(jobs: readonly QueueJob[]): SupersededJob[] {
 
 // The same line shape the restocker reads: "- READY <id> (repo=..)" or "- CLAIMED <time> <who> <id> (repo=..)".
 export const ROUTER_LINE = /^(\s*-\s+)(READY|CLAIMED|RUNNING)\b((?:\s+\S+)*?)\s+([A-Za-z0-9][\w.-]*)(?: r\d+)?\s+\(([^)]*)\)/i;
+/** Replace the status word on a router-queue line while preserving indentation and all trailing fields. */
+export function rewriteRouterLineStatus(line: string, nextStatus: string): string {
+  return line.replace(ROUTER_LINE, (all, lead: string, status: string) =>
+    `${lead}${nextStatus}${all.slice(lead.length + status.length)}`);
+}
 function routerJobs(text: string): Array<QueueJob & { line: number }> {
   return text.split('\n').flatMap((line, index) => {
     const match = ROUTER_LINE.exec(line), repo = /\brepo\s*=\s*([\w./-]+)/i.exec(match?.[5] ?? '')?.[1];
@@ -103,7 +109,7 @@ export interface SupersedeOptions extends RewriteReadyRowsOptions { runsDir?: st
 /** Plan over ready.tsv and router-queue.md; with apply, archive and mark the older cycles. Dry run by default. */
 export async function supersedeQueue(opts: SupersedeOptions = {}): Promise<SupersedeReport> {
   const queueDir = join(opts.runsDir ?? defaultRunsDir(), 'queue');
-  const absent = (error: unknown): null => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; };
+  const absent = (error: unknown): null => { if (isEnoent(error)) return null; throw error; };
   const routerPath = join(queueDir, 'router-queue.md');
   const [readyText, routerText] = await Promise.all([readReadyText(join(queueDir, 'ready.tsv')).catch(absent), readFile(routerPath, 'utf8').catch(absent)]);
   if (readyText === null && routerText === null) throw new Error('Queue unavailable');
@@ -129,7 +135,7 @@ export async function supersedeQueue(opts: SupersedeOptions = {}): Promise<Super
     const lines = routerText.split('\n');
     for (const job of router) {
       const by = newer.get(jobKey(job));
-      if (by) lines[job.line] = lines[job.line]!.replace(ROUTER_LINE, (all, lead: string, status: string) => `${lead}SUPERSEDED-BY-${by}${all.slice(lead.length + status.length)}`);
+      if (by) lines[job.line] = rewriteRouterLineStatus(lines[job.line]!, `SUPERSEDED-BY-${by}`);
     }
     if (lines.join('\n') !== routerText) replaceQueueText(routerPath, routerText, lines.join('\n'));
   }
