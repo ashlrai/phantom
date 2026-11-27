@@ -72,13 +72,17 @@ function ms(iso: string | null): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
+function currentPhaseStart(run: FleetLiveRun, started: number | null, nowMs: number): number | null {
+  const since = ms(run.phaseStartedAt);
+  return since === null || since > nowMs || (started !== null && since < started) ? null : since;
+}
+
 /** The run's stuck verdict, or null when phase age cannot be established. */
 export function stuckRun(run: FleetLiveRun, nowMs: number): StuckRun | null {
   const timeoutMs = PHASE_TIMEOUT_MS[run.phase];
   if (run.outcome === 'owner-lane' || timeoutMs === null) return null;
-  const since = ms(run.phaseStartedAt);
-  const started = ms(run.startedAt);
-  if (since === null || since > nowMs || (started !== null && since < started)) return null;
+  const since = currentPhaseStart(run, ms(run.startedAt), nowMs);
+  if (since === null) return null;
   const ended = ms(run.endedAt);
   if (ended !== null && ended >= since && ended <= nowMs) return null;
   const phaseAgeMs = nowMs - since;
@@ -101,7 +105,8 @@ export function computeLaneHealth(live: FleetLiveSnapshotV1, nowMs: number = Dat
       if (started === null || started < sinceMs || started > untilMs) continue;
       calls++;
       const ended = ms(run.endedAt);
-      if (run.outcome === null || ended === null || ended < started || ended > untilMs) continue;
+      const earliestEnd = currentPhaseStart(run, started, untilMs) ?? started;
+      if (run.outcome === null || ended === null || ended < earliestEnd || ended > untilMs) continue;
       latencies.push(ended - started);
       if (run.outcome === 'failed') failed++;
     }
