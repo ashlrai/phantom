@@ -681,16 +681,28 @@
  *               freed it already, so it is stuck work, not a wait.
  *               `jobIds` carries the parked job's own id plus the gate
  *               ids its detail names, so `--job` finds the row under the
- *               parked job and under every job it waits on. `since`/
+ *               parked job and under every job it waits on. Every OTHER
+ *               parked reason — BYHAND, HOLD, MERGERATE, QUOTA and the
+ *               rest of the free-form `PARKED-<reason>` vocabulary — had
+ *               no inbox surface either: `phm fleet queue-parked` prints
+ *               them as `parked REASON (lane): count [jobs]` groups, so
+ *               each non-dependency reason+lane group now lists once as
+ *               info `parked-group` carrying the group's true count, its
+ *               lane and the projection's own eight-job cap named as a
+ *               floor (`+N more` when the group is larger), with `jobIds`
+ *               the listed ids so `--job` finds a listed member — parked
+ *               under a non-dependency reason is a hold, never a proven
+ *               gate wait or stale park, so it stays info rather than
+ *               borrowing the dep kinds' verdicts. `since`/
  *               `expiresAt` stay null throughout: ready.tsv rows keep no
- *               park timestamp and a parked job waits for its gates or an
- *               unpark pass, never a guessed deadline; no item is
- *               Mason-blocking. A missing `ready.tsv` is 'missing'
- *               (verified-empty — no parked rows can exist), an
- *               unreadable or malformed one 'degraded' — the listed rows
- *               are a floor, never a complete set — and a throwing read
- *               'unavailable', never an empty queue passed off as fact.
- *               Act: `phm fleet queue-parked`, `phm fleet parked`,
+ *               park timestamp and a parked job waits for its gates, its
+ *               reason's resolution or an unpark pass, never a guessed
+ *               deadline; no item is Mason-blocking. A missing `ready.tsv`
+ *               is 'missing' (verified-empty — no parked rows can exist),
+ *               an unreadable or malformed one 'degraded' — the listed
+ *               rows are a floor, never a complete set — and a throwing
+ *               read 'unavailable', never an empty queue passed off as
+ *               fact. Act: `phm fleet queue-parked`, `phm fleet parked`,
  *               `phm fleet autopilot --once`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
@@ -770,7 +782,7 @@ import type { WorkItemState } from './work-item-state.js';
 import { readKillSwitch, type KillSwitchReadResult } from '../sandbox/policy.js';
 import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
 import { readStuckJobs, type StuckJob as RunningStuckJob, type StuckJobsReport } from '../fleet/running-stuck.js';
-import { readFleetQueue, type FleetQueueV1, type ParkedMetDep, type ParkedUnmetDep } from '../fleet/runs-parked-queue.js';
+import { isDependencyParkedReason, readFleetQueue, type FleetQueueV1, type ParkedGroup, type ParkedMetDep, type ParkedUnmetDep } from '../fleet/runs-parked-queue.js';
 import { readChannelHealth } from '../fleet/channel-health.js';
 import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
 
@@ -802,7 +814,9 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
  * `bus-work`/`bus-handoff`/`bus-dead-letter`, the `board` source into
  * `board-delivery`/`board-task`, `work-board` into its three pending
  * states and `claim-drift` into its three row
- * classes, so `kind` is the finer classification
+ * classes, the `queue-parked` source into its dependency-gate
+ * waiting/stale split plus one `parked-group` item per non-dependency
+ * parked reason and lane, so `kind` is the finer classification
  * `--kind` filters on. */
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
@@ -818,7 +832,7 @@ export const UNIFIED_INBOX_KINDS = [
   'send-gate-kill', 'send-gate-pause', 'router-queue-job',
   'stuck-ghost', 'stuck-job',
   'channel-blocked', 'channel-degraded', 'channel-unknown',
-  'parked-dep-waiting', 'parked-dep-stale',
+  'parked-dep-waiting', 'parked-dep-stale', 'parked-group',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -984,17 +998,21 @@ export interface JobsStuckSourceRead {
   jobs: readonly RunningStuckJob[];
 }
 
-/** The resolved queue-parked read: `readFleetQueue`'s dependency-gated
- * rows mapped onto the unified source states — 'missing' a verified-absent
+/** The resolved queue-parked read: `readFleetQueue`'s parked rows mapped
+ * onto the unified source states — 'missing' a verified-absent
  * `queue/ready.tsv` (no parked rows can exist), 'unavailable' any read
  * failure (the parked set is unknown, never an empty queue), 'degraded' a
  * partial read (listed rows are a floor), 'healthy' the full read.
  * `waiting`/`stale` stay empty whenever the state is 'missing'/
- * 'unavailable'. */
+ * 'unavailable'. `groups` carries the parked groups whose reason is NOT a
+ * dependency gate — the `DEP`/`DEPENDENCY` rows stay on `waiting`/`stale`
+ * so no row lists twice — each the projection's own reason+lane rollup
+ * with its true count and up to eight listed job ids. */
 export interface QueueParkedRead {
   state: UnifiedInboxSourceState;
   waiting: readonly ParkedUnmetDep[];
   stale: readonly ParkedMetDep[];
+  groups: readonly ParkedGroup[];
 }
 
 /** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
@@ -4068,19 +4086,22 @@ async function readJobsStuckSource(options: { runsDir?: string; now?: () => numb
 }
 
 /**
- * PARKED-DEP rows in the dispatch ready queue — the same `readFleetQueue`
+ * PARKED rows in the dispatch ready queue — the same `readFleetQueue`
  * `depDetail` projection `phm fleet queue-parked`, `phm fleet parked` and
  * the autopilot's `stale-parked-deps` gap serve, so this source and those
- * surfaces can never disagree. Each row lists once under its own state:
- * gates still lacking a MERGED outcome list as info `parked-dep-waiting`
- * (queued work correctly waiting on named jobs), a row whose gates ALL
- * merged yet was never unparked lists as warn `parked-dep-stale` (stuck
- * work — the auto-unpark pass should have freed it). `jobIds` carries the
- * parked job's own id plus the gate ids the detail names, so `--job`
- * finds the row under the parked job and under every job it waits on.
- * `since`/`expiresAt` stay null throughout: ready.tsv rows keep no park
- * timestamp and a parked job waits for its gates or an unpark pass, never
- * a guessed deadline; no item is Mason-blocking.
+ * surfaces can never disagree. Each dependency-gated row lists once under
+ * its own state: gates still lacking a MERGED outcome list as info
+ * `parked-dep-waiting` (queued work correctly waiting on named jobs), a
+ * row whose gates ALL merged yet was never unparked lists as warn
+ * `parked-dep-stale` (stuck work — the auto-unpark pass should have freed
+ * it). `jobIds` carries the parked job's own id plus the gate ids the
+ * detail names, so `--job` finds the row under the parked job and under
+ * every job it waits on. Every non-dependency parked reason+lane group
+ * lists once as info `parked-group` — the same rollup those reads print —
+ * with `jobIds` the group's own listed job ids. `since`/`expiresAt` stay
+ * null throughout: ready.tsv rows keep no park timestamp and a parked job
+ * waits for its gates or an unpark pass, never a guessed deadline; no item
+ * is Mason-blocking.
  */
 async function queueParkedItems(read: NonNullable<UnifiedInboxOptions['readQueueParked']>,
   options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
@@ -4119,6 +4140,25 @@ async function queueParkedItems(read: NonNullable<UnifiedInboxOptions['readQueue
       ...jobIdsField([row.job, ...row.gates]),
       act: ['phm fleet queue-parked', 'phm fleet autopilot --once'],
     })),
+    // Every other parked reason lists once per reason+lane group — the same
+    // rollup `phm fleet queue-parked`'s `parked REASON (lane): count [jobs]`
+    // lines print — so a BYHAND/HOLD/MERGERATE backlog is visible here too,
+    // not only the dependency-gated rows above. `count` is the group's true
+    // total while `jobs` is the projection's own eight-id cap, so the detail
+    // names the overflow rather than passing the listed ids off as the set.
+    ...result.groups.map((group): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `queue-parked:${group.reason}:${group.lane ?? 'unknown'}`,
+      source: 'queue-parked',
+      kind: 'parked-group',
+      severity: 'info',
+      blocking: false,
+      title: oneLine(`${group.count} job${group.count === 1 ? '' : 's'} parked ${group.reason}`, TITLE_MAX),
+      detail: oneLine(`lane ${group.lane ?? 'unknown'} · jobs ${group.jobs.join(', ')}${group.count > group.jobs.length ? ` · +${group.count - group.jobs.length} more` : ''} — parked under a non-dependency reason, never a gate wait or stale park${degraded}`, DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      ...jobIdsField(group.jobs),
+      act: ['phm fleet queue-parked', 'phm fleet parked'],
+    })),
   ];
   return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
 }
@@ -4137,9 +4177,10 @@ async function readQueueParkedSource(options: { runsDir?: string; now?: () => nu
     const ready = view.sources.ready;
     const state: UnifiedInboxSourceState = ready === 'missing' ? 'missing'
       : ready === 'degraded' ? 'degraded' : 'healthy';
-    return { state, waiting: view.unmetDeps ?? [], stale: view.metDeps ?? [] };
+    return { state, waiting: view.unmetDeps ?? [], stale: view.metDeps ?? [],
+      groups: view.groups.filter((group) => !isDependencyParkedReason(group.reason)) };
   } catch {
-    return { state: 'unavailable', waiting: [], stale: [] };
+    return { state: 'unavailable', waiting: [], stale: [], groups: [] };
   }
 }
 

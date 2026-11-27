@@ -713,24 +713,34 @@ the source, since a throwing read is itself the degraded/unknown evidence
 and `unavailable`/`missing` never apply to a live probe that always
 resolves; deep links `phm fleet channel-health`, `phm channels slack
 status`, `phm imessage doctor`, `phm comms health --json`, `phm comms
-cycle`, `phm channels`) — and PARKED-DEP rows in the dispatch ready queue
+cycle`, `phm channels`) — and PARKED rows in the dispatch ready queue
 (the same `readFleetQueue` `depDetail` projection `phm fleet
 queue-parked`, `phm fleet parked` and the autopilot's `stale-parked-deps`
 gap serve, over `<runsDir>/queue/ready.tsv` plus `metrics/jobs.jsonl`, so
 the surfaces can never disagree: until now the parked dependency backlog
 had no inbox surface — the router-queue source lists only READY rows in
 `queue/router-queue.md`, so a job parked on `DEPENDENCY GATE` ids was
-invisible to the one view an agent checks for work; each parked row lists
-once under its own state — gates still lacking a MERGED outcome list as
-info `parked-dep-waiting` naming the unmet gate ids, queued work correctly
-waiting on named jobs, while a row whose gate ids ALL show MERGED yet was
-never unparked lists as warn `parked-dep-stale`, since the auto-unpark pass
-should have freed it already so it is stuck work, not a wait — `jobIds`
-carries the parked job's own id plus the gate ids its detail names, so
-`--job` finds the row under the parked job and under every job it waits
-on; `since`/`expiresAt` stay null throughout — ready.tsv rows keep no park
-timestamp and a parked job waits for its gates or an unpark pass, never a
-guessed deadline — and no item is Mason-blocking; a missing `ready.tsv`
+invisible to the one view an agent checks for work; each dependency-gated
+row lists once under its own state — gates still lacking a MERGED outcome
+list as info `parked-dep-waiting` naming the unmet gate ids, queued work
+correctly waiting on named jobs, while a row whose gate ids ALL show
+MERGED yet was never unparked lists as warn `parked-dep-stale`, since the
+auto-unpark pass should have freed it already so it is stuck work, not a
+wait — `jobIds` carries the parked job's own id plus the gate ids its
+detail names, so `--job` finds the row under the parked job and under
+every job it waits on; every OTHER parked reason — BYHAND, HOLD,
+MERGERATE, QUOTA and the rest of the free-form `PARKED-<reason>`
+vocabulary — had no inbox surface either, so each non-dependency
+reason+lane group now lists once as info `parked-group`, the same
+`parked REASON (lane): count [jobs]` rollup those reads print, carrying
+the group's true count, its lane and the projection's own eight-job cap
+named as a floor (`+N more` when larger) with `jobIds` the listed ids —
+a non-dependency park is a hold, never a proven gate wait or stale park,
+so it stays info rather than borrowing the dep kinds' verdicts;
+`since`/`expiresAt` stay null throughout — ready.tsv rows keep no park
+timestamp and a parked job waits for its gates, its reason's resolution
+or an unpark pass, never a guessed deadline — and no item is
+Mason-blocking; a missing `ready.tsv`
 is `missing` (verified-empty: no parked rows can exist), an unreadable or
 malformed one `degraded` — the listed rows are a floor, never a complete
 set — and a throwing read `unavailable`, never an empty queue passed off
@@ -775,7 +785,8 @@ job-carrying thread, a conversation thread's jobs, a teammate task's job, a
 seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
 peer-dispatch receipt's job, a session-handoff journal's job id, a
 router-queue row's own READY id, a jobs-stuck marker's own job id, or a
-queue-parked row's own job id or one of the gate ids its detail names —
+queue-parked row's own job id, one of the gate ids its detail names, or
+one of a parked group's listed job ids —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound
