@@ -296,6 +296,34 @@ describe('plan', () => {
 });
 
 describe('cmdOrg', () => {
+  it('skips team planning without an org file and leaves the plan fields unknown', async () => {
+    const home = tmp();
+    vi.stubEnv('ASHLR_HOME', home);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      expect(await cmdOrg(['plan', '--queue', join(home, 'unread-queue.json'), '--json'])).toBe(0);
+      expect(JSON.parse(log.mock.lastCall![0])).toEqual({
+        schema: 'org.plan.v1', state: 'not-configured', generatedAt: null, leader: null,
+        budgets: null, roles: null, assignments: null, unassigned: null, held: null, joinsDir: null,
+      });
+      expect(await cmdOrg(['plan'])).toBe(0);
+      expect(log).toHaveBeenLastCalledWith('Team org not configured; planning skipped.');
+      expect(await cmdOrg(['plan', '--queue', '--json'])).toBe(1);
+      expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ schema: 'org.error.v1', error: { code: 'rejected' } });
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('rejects an invalid or unreadable org file rather than skipping the plan', async () => {
+    const dir = tmp(), invalid = join(dir, 'org.toml');
+    writeFileSync(invalid, 'version = [');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    for (const [file, message] of [[invalid, expect.stringContaining('org.toml is not valid TOML at line 1.')],
+      [dir, 'Could not read org.toml.']] as const) {
+      expect(await cmdOrg(['plan', '--file', file, '--json'])).toBe(1);
+      expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ schema: 'org.error.v1', error: { code: 'rejected', message } });
+    }
+  });
+
   it('show and plan emit JSON; join writes under ASHLR_HOME only', async () => {
     const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
     const out: string[] = []; vi.spyOn(console, 'log').mockImplementation((s) => { out.push(String(s)); });
@@ -650,9 +678,8 @@ describe('cmdOrg', () => {
         lanes: { 'codex-personal': { running: 1, target: 20, queued: 59, held: false } },
       }));
       const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-      expect(await cmdOrg(['plan', '--json'])).toBe(1);
-      expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ schema: 'org.error.v1', command: 'plan',
-        error: { code: 'rejected', message: expect.stringContaining('No org file') } });
+      expect(await cmdOrg(['plan', '--json'])).toBe(0);
+      expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ schema: 'org.plan.v1', state: 'not-configured', assignments: null });
       expect(await cmdOrg(['plan', '--file', 'docs/examples/org.toml', '--json'])).toBe(0);
       expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ schema: 'org.plan.v1', assignments: [] });
     } finally {
