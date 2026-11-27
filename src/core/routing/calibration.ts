@@ -48,9 +48,11 @@ function field(row: Row, ...names: string[]): unknown {
   for (const name of names) if (row[name] !== undefined && row[name] !== null) return row[name];
   return undefined;
 }
-function stringField(row: Row, ...names: string[]): string | undefined {
-  const value = field(row, ...names);
-  return typeof value === 'string' && value.trim() ? value : undefined;
+function posthogJobId(row: Row): string | undefined {
+  const ids = new Set([row['jobId'], row['job_id']].filter(
+    (value): value is string => typeof value === 'string' && value.trim() !== '',
+  ));
+  return ids.size === 1 ? ids.values().next().value : undefined;
 }
 function observedArm(...values: unknown[]): string | undefined {
   for (const value of values) {
@@ -204,7 +206,7 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
   if (rows.length && !recognized) throw new Error('No recognized dispatch events');
   let unmatchedPosthogRuns = 0;
   if (posthogJson !== undefined) for (const row of parseExport(posthogJson)) {
-    const id = stringField(row, 'jobId', 'job_id');
+    const id = posthogJobId(row);
     const job = id ? jobs.get(id) : undefined;
     if (!job || (!job.launched && !job.batchLanes && job.rewardMerged === undefined)) { unmatchedPosthogRuns++; continue; }
     metrics(job, row);
