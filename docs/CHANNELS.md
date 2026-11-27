@@ -628,7 +628,32 @@ source — every READY row still lists but its launch state is
 unproven, and the detail says so — an absent queue file is `missing`
 (verified-empty: no READY rows can exist) and an unreadable one
 `unavailable`, never an empty queue passed off as fact; deep links
-`phm queue stuck`, `phm fleet unfed --json`, `phm queue`) — and each item carries `act` deep-link commands (`phm fleet
+`phm queue stuck`, `phm fleet unfed --json`, `phm queue`) — and owner-channel
+transport health (the slack and iMessage bridges through `readChannelHealth`
+— the same projection `phm fleet channel-health` and `phm channels` serve —
+plus the Telegram poller through `telegramEnabled` + `readTelegramHealth`,
+the same read `phm comms health --json` serves, so the surfaces can never
+disagree: until now a dead bridge or a stale poller was invisible here —
+`phm channels` could show a channel ready while its process was gone, and an
+agent had to already know which diagnostic to run to learn owner traffic
+was not flowing; a configured bridge that is BLOCKED lists as high
+`channel-blocked`, DEGRADED as warn `channel-degraded` and UNKNOWN as warn
+`channel-unknown` — evidence incomplete or a receipt overdue, never called
+a decision — while a channel nobody configured (`BLOCKED` with
+`configured:false`, the overview's `not-set-up` row) and a LIVE one never
+list, since setup state is not pending work; the telegram leg lists only
+when `telegramEnabled` — the same gate the comms cycle's poll applies — as
+one `channel-degraded` item naming each failed check (a recorded poll
+error, no poll inside the 7-minute liveness window, no successful poll
+yet), and an unreadable main config or a throwing poll read lists
+`channel-unknown` instead; `since`/`expiresAt` stay null throughout —
+health keeps no condition-start time and a degraded channel waits for
+repair, never a guessed deadline — and either leg's own failure degrades
+the source, since a throwing read is itself the degraded/unknown evidence
+and `unavailable`/`missing` never apply to a live probe that always
+resolves; deep links `phm fleet channel-health`, `phm channels slack
+status`, `phm imessage doctor`, `phm comms health --json`, `phm comms
+cycle`, `phm channels`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -646,7 +671,9 @@ replies`, `phm leader replies`, `phm comms send-owner`, `phm fleet
 coordination board`, `phm fleet coordination inbox --agent`, `phm fleet
 claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`,
 `phm agents bus status`, `phm fleet status`, `phm fleet resume`, `phm
-queue stuck`, `phm fleet unfed --json`, `phm queue`). It never claims, replies, or mutates; a source
+queue stuck`, `phm fleet unfed --json`, `phm queue`, `phm fleet
+channel-health`, `phm channels slack status`, `phm imessage doctor`, `phm
+comms health --json`, `phm comms cycle`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
