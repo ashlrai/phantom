@@ -85,6 +85,25 @@ it('reads the production ledger dialects: enqueue arrival, PUBLISHED/published p
   expect(merge.phases.find(p => p.phase === 'open_to_merge')).toMatchObject({ total_seconds: 150, measured_jobs: 1, missing_jobs: 1 });
 });
 
+it('excludes non-execution receipts without losing recorded timings for the same job', () => {
+  const rows = [
+    { job: 'RQ-SKIPPED', event: 'outcome', state: 'DONE-NOOP', launched: false, ts: '2026-01-01T00:00:00Z' },
+    { job: 'RQ-A', event: 'launch', ts: '2026-01-01T00:00:10Z' },
+    { job: 'RQ-A', event: 'finish', ts: '2026-01-01T00:00:20Z' },
+    { job: 'RQ-A', event: 'publish', ts: '2026-01-01T00:00:30Z' },
+    { job: 'RQ-A', event: 'claim', launched: false, ts: '2026-01-01T00:00:40Z' },
+    { job: 'RQ-A', event: 'merged', ts: '2026-01-01T00:00:50Z' },
+  ];
+  const ledger = rows.map(row => JSON.stringify(row)).join('\n');
+  const jobs = jobLatency(ledger);
+  const merges = mergeQueueLatency(ledger);
+  for (const report of [jobs, merges]) expect(report).toMatchObject({ jobs: 1, ignored_events: 0 });
+  expect(jobs.phases.find(p => p.phase === 'worker'))
+    .toMatchObject({ total_seconds: 10, measured_jobs: 1, missing_jobs: 0 });
+  expect(merges.phases.find(p => p.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: 20, measured_jobs: 1, missing_jobs: 0 });
+});
+
 it('uses terminal verdicts even when earlier fields carry publish or unknown states', () => {
   const text = [
     { job: 'RQ-M', event: 'publish', ts: '2026-01-01T00:01:00Z' },
