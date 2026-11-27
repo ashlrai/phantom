@@ -142,6 +142,26 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(String(log.mock.calls[0]?.[0])).not.toContain('detail=');
   });
 
+  it('frames the feed lines as untrusted data under --frame <cli>', async () => {
+    append(post);
+    const log = output();
+    expect(await cmdFleetWorkFeed(['--root', root, '--frame', 'claude'])).toBe(0);
+    const framed = String(log.mock.calls.at(-1)?.[0]);
+    expect(framed).toContain('BEGIN UNTRUSTED AGENT BUS WORK FEED');
+    expect(framed).toContain('fake-job');
+    expect(framed).toContain('Review');
+    expect(framed).toContain('END UNTRUSTED AGENT BUS WORK FEED');
+    // --json carries the same block on `framed` beside the full projection.
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--frame', 'devin', '--json'])).toBe(0);
+    const payload = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      jobs: { id: string }[]; framed: string };
+    expect(payload.jobs[0]?.id).toBe('fake-job');
+    expect(payload.framed).toContain('BEGIN UNTRUSTED AGENT BUS WORK FEED');
+    expect(payload.framed).toContain('fake-job');
+    expect(await cmdFleetWorkFeed(['--root', root, '--frame', 'gemini'])).toBe(2);
+  });
+
   it('carries the newest work.result citation onto the job and its human line', async () => {
     append(post);
     now += 10;

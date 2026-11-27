@@ -11,7 +11,7 @@ import {
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, busWorkJobDispatch, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
-import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusInbox, frameBusWakes, frameBusWorkMine, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
+import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusInbox, frameBusWakes, frameBusWorkFeed, frameBusWorkMine, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, claimNextBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   waitClaimNextBusWorkJob,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope,
@@ -68,7 +68,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--exclude-owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--exclude-owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>] [--frame <cli>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work claim-next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>] [--exclude-announcer <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--wait-ms <1..300000>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>] [--frame <cli>]
@@ -1434,6 +1434,13 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }),
           excludeOwnerMatch: excludeOwner === undefined ? undefined : busWorkFeedOwnerMatcher(excludeOwner, { root: options.root }) });
       const paged = limit === undefined ? result : sliceBusWorkFeedView(result, limit);
+      const frame = one('--frame');
+      if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
+      if (frame !== undefined) {
+        const framed = frameBusWorkFeed(frame as BusCli, formatBusWorkFeed(paged));
+        out(json ? JSON.stringify({ ...paged, framed }) : framed);
+        return paged.status === 'ok' ? 0 : 1;
+      }
       out(json ? JSON.stringify(paged) : formatBusWorkFeed(paged).join('\n'));
       return paged.status === 'ok' ? 0 : 1;
     }
