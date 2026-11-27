@@ -1056,8 +1056,13 @@ read `~/.ashlr-runs/queue` (including `router-queue.md` for spec-less row
 envelopes);
 set `ASHLR_RUNS_DIR` to inspect another runs directory.
 
-`launchable` reports zero free slots for a lane with `held: true`, while
-keeping its published occupancy, launch target and ready supply visible.
+`launchable` reports zero free slots for a held lane, a dispatcher pause,
+an explicit admission stop, or a full fleet cap. When the snapshot reports
+usable fleet cap and running counts, each lane shares the same remaining
+fleet slots as a ceiling. Summing lane free slots can overstate fleet
+capacity. An admission timestamp, when present, must match `last_tick`.
+Without usable fleet admission evidence, the report uses lane-local
+headroom. Published occupancy, launch targets and ready supply stay visible.
 
 The leader's compact brief (`leader.compact-brief.v1`) counts each lane's
 `queued`/`queuedReady` by the same market-resolved hint, reports lane-open
