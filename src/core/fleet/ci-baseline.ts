@@ -2214,9 +2214,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       }
       const output = lines(r.stdout);
       // Every direct checkout receipt must identify the analyzed head,
-      // including when a log reports both forms of proof.
+      // including when a log reports both forms of proof. A later checkout
+      // starts a new workspace whose revision needs its own proof.
       let directProof = false;
       for (const [index, line] of output.entries()) {
+        if (CHECKOUT_GROUP.test(line)) directProof = false;
         const bound = BOUND_LINE.exec(line);
         const gitLog = /(?:^|\/)git log -1 --format=%H$/.test(line);
         if (!bound && !gitLog) continue;

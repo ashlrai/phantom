@@ -19,7 +19,10 @@ dependency-audit job), recording `actions/checkout` steps whose resolved
 `with: ref:` input is the analyzed head in every checkout group of the log.
 Every Git SHA echo and source-binding receipt in the same job log must
 identify the analyzed head, even when both forms of proof appear together.
-A later conflicting receipt invalidates earlier matching proof. For jobs
+A later conflicting receipt invalidates earlier matching proof. A checkout
+step after a matching direct receipt requires fresh proof of the revision,
+either a subsequent direct receipt or checkout ref echoes that pin every
+checkout step to the analyzed head. For jobs
 using checkout ref echoes as proof, the ref must equal the analyzed head exactly. An
 unpinned checkout (which falls back to the event's merge commit on pull
 requests), a non-SHA ref or a second checkout of anything else leaves the
