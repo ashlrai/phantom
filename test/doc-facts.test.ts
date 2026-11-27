@@ -177,6 +177,15 @@ const DOCS = [
   'docs/VERSE.md',
   'docs/fleet-health.md',
   'docs/fleet/pr-hygiene.md',
+  // The remaining fleet/ and nodes/ operating guides docs/llms.txt routes
+  // agents to (docs/README.md links the muse runbook). fleet/unwired-modules
+  // stays out on purpose: it names `phm nodes dispatch`, a command the CLI
+  // does not offer yet.
+  'docs/fleet/conflict-risk.md',
+  'docs/fleet/lane-hold.md',
+  'docs/fleet/main-health.md',
+  'docs/fleet/superseded-route.md',
+  'docs/nodes/MUSE.md',
   // Guides held out until completion offered the job, leader, node, notify,
   // release, inbox, apps, mcp, daemon and authority verbs they document.
   'docs/APPS-CONTROL.md',
