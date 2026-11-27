@@ -1531,7 +1531,11 @@ export interface RouterWeightProposalReport {
   community_seats_window_days: number | null;
   /**
    * Per attributed-agent outside-merge tallies — prs/reverted/kept/unknown
-   * inside the window, model always null (gh records none). Null unless
+   * inside the window plus the journaled open→merge latency
+   * (`ttm_known`/`ttm_minutes_mean`) and review-evidence
+   * (`reviews_known`/`reviewed`/`unreviewed`/`approved`/
+   * `changes_requested`/`review_required`) tallies, each with its own
+   * honest denominator; model always null (gh records none). Null unless
    * community_seats_state==='read'; an empty array then means no outside
    * merges were journaled inside the window, a real measurement.
    */

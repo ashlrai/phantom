@@ -19,7 +19,7 @@ const AT = NOW.toISOString();
 const pr = (number: number, reverted: OutsidePrOutcomeV1['reverted'], over: Partial<OutsidePrOutcomeV1> = {}): OutsidePrOutcomeV1 => ({
   repo: 'acme/widgets', number, title: `outside fix ${number}`,
   author: 'ext-dev', head: 'fix/x', mergedAt: '2026-11-15T00:00:00.000Z',
-  agent: null, model: null, reverted, ...over,
+  createdAt: null, reviews: null, agent: null, model: null, reverted, ...over,
 });
 
 const outcomes = (prs: OutsidePrOutcomeV1[], over: Partial<OutsidePrOutcomesV1> = {}): OutsidePrOutcomesV1 => ({
@@ -60,7 +60,10 @@ describe('syncOutsidePrOutcomes', () => {
     expect(scanRows).toHaveLength(1);
     expect(outcomeRows.map((r) => r['number'])).toEqual([7, 8, 9]);
     for (const row of outcomeRows) {
-      expect(row).toMatchObject({ v: 1, at: AT, repo: 'acme/widgets', agent: null, model: null, mergedAt: '2026-11-15T00:00:00.000Z' });
+      expect(row).toMatchObject({
+        v: 1, at: AT, repo: 'acme/widgets', agent: null, model: null,
+        mergedAt: '2026-11-15T00:00:00.000Z', createdAt: null, reviews: null,
+      });
     }
     expect(outcomeRows.find((r) => r['number'] === 7)).toMatchObject({ reverted: 'yes', author: 'ext-dev' });
     // Convention-attributed agent rides the row; unattributed stays null, model always null.
@@ -83,7 +86,7 @@ describe('syncOutsidePrOutcomes', () => {
     expect(readJournal(runsDir)).toHaveLength(5);
   });
 
-  it('appends a new outcome row only when a PR is new or its verdict changes', async () => {
+  it('appends a new outcome row only when a PR is new or its recorded evidence changes', async () => {
     const first = await syncOutsidePrOutcomes({
       runsDir, now: () => NOW,
       list: async () => outcomes([pr(7, 'no'), pr(8, 'yes')]),
@@ -103,6 +106,48 @@ describe('syncOutsidePrOutcomes', () => {
     expect(parsed.verdicts.get('acme/widgets#7')).toBe('yes');
     expect(parsed.verdicts.get('acme/widgets#9')).toBe('no');
     expect(parsed.outcomes).toHaveLength(3);
+  });
+
+  it('re-journals a PR when its verdict is unchanged but open/review evidence changed', async () => {
+    const evidence = { createdAt: '2026-11-14T00:00:00.000Z', reviews: { decision: 'APPROVED' as const, latest: 1 } };
+    const first = await syncOutsidePrOutcomes({
+      runsDir, now: () => NOW,
+      list: async () => outcomes([pr(7, 'no', evidence)]),
+    });
+    expect(first.appended).toBe(1);
+
+    // A review lands after merge: same verdict, new review evidence → one new row.
+    const second = await syncOutsidePrOutcomes({
+      runsDir, now: () => NOW,
+      list: async () => outcomes([pr(7, 'no', {
+        createdAt: evidence.createdAt,
+        reviews: { decision: 'CHANGES_REQUESTED', latest: 2 },
+      })]),
+    });
+    expect(second.appended).toBe(1);
+    const rows = readJournal(runsDir).filter((r) => r['kind'] === OUTSIDE_PR_OUTCOME_SCHEMA && r['number'] === 7);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({
+      reverted: 'no', createdAt: '2026-11-14T00:00:00.000Z',
+      reviews: { decision: 'CHANGES_REQUESTED', latest: 2 },
+    });
+
+    // Identical evidence goes quiet; losing the fields entirely is also a change.
+    const third = await syncOutsidePrOutcomes({
+      runsDir, now: () => NOW,
+      list: async () => outcomes([pr(7, 'no', {
+        createdAt: evidence.createdAt,
+        reviews: { decision: 'CHANGES_REQUESTED', latest: 2 },
+      })]),
+    });
+    expect(third.appended).toBe(0);
+    const fourth = await syncOutsidePrOutcomes({
+      runsDir, now: () => NOW,
+      list: async () => outcomes([pr(7, 'no')]),
+    });
+    expect(fourth.appended).toBe(1);
+    const parsed = parseOutsidePrOutcomeJournal(readFileSync(join(runsDir, JOURNAL), 'utf8'));
+    expect(parsed.outcomes.at(-1)).toMatchObject({ number: 7, createdAt: null, reviews: null });
   });
 
   it('writes nothing when gh is absent — no tool, no evidence', async () => {
@@ -183,6 +228,36 @@ describe('parseOutsidePrOutcomeJournal', () => {
     expect(parsed.outcomes).toHaveLength(5);
     expect(parsed.outcomes.map((r) => r.agent)).toEqual(['devin', null, null, null, null]);
     expect(parsed.outcomes.every((r) => r.model === null)).toBe(true);
+    // Rows written before the evidence fields existed read them as null, never as zero.
+    expect(parsed.outcomes.every((r) => r.createdAt === null && r.reviews === null)).toBe(true);
+  });
+
+  it('parses journaled createdAt and review evidence tolerantly', () => {
+    const row = (number: number, extra: Record<string, unknown>): string => JSON.stringify({
+      v: 1, kind: OUTSIDE_PR_OUTCOME_SCHEMA, at: AT, repo: 'acme/widgets', number,
+      title: 't', author: 'ext-dev', agent: null, model: null,
+      mergedAt: '2026-11-15T00:00:00.000Z', reverted: 'yes', ...extra,
+    });
+    const parsed = parseOutsidePrOutcomeJournal([
+      row(51, { createdAt: '2026-11-14T00:00:00.000Z', reviews: { decision: 'APPROVED', latest: 2 } }),
+      row(52, { createdAt: 'not a date', reviews: { decision: null, latest: 0 } }),
+      row(53, { createdAt: 42, reviews: { decision: 'CHANGES_REQUESTED' } }),
+      row(54, { reviews: { decision: 'MAYBE', latest: -1 } }),
+      row(55, { reviews: 'not an object' }),
+    ].join('\n'));
+    expect(parsed.outcomes).toHaveLength(5);
+    expect(parsed.outcomes[0]).toMatchObject({
+      createdAt: '2026-11-14T00:00:00.000Z', reviews: { decision: 'APPROVED', latest: 2 },
+    });
+    // createdAt keeps the recorded string like mergedAt does — folds
+    // Date.parse it and treat unparseable stamps as no evidence; a
+    // non-string value nulls. A reviews object missing `latest` drops
+    // the whole evidence.
+    expect(parsed.outcomes[1]).toMatchObject({ createdAt: 'not a date', reviews: { decision: null, latest: 0 } });
+    expect(parsed.outcomes[2]).toMatchObject({ createdAt: null, reviews: null });
+    // Out-of-vocabulary decision and negative latest both reject honestly.
+    expect(parsed.outcomes[3]).toMatchObject({ reviews: null });
+    expect(parsed.outcomes[4]).toMatchObject({ reviews: null });
   });
 
   it('returns an empty parse for an empty journal', () => {

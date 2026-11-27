@@ -40,6 +40,12 @@
  *   - 'unknown' never counts as held or reverted. A revert verdict is
  *     'yes' only when the standing revert ledger positively matched the
  *     PR; 'unknown' tallies separately and never moves a rate.
+ *   - Latency and review evidence stay honest. `ttm_known` counts only
+ *     merges whose journaled `createdAt` parses at or before `mergedAt`;
+ *     `reviews_known` counts only rows carrying a journaled `reviews`
+ *     object — pre-fields rows read as unknown, never as unreviewed or
+ *     zero-latency. `unreviewed` is a real gh signal (latestReviews
+ *     empty), distinct from evidence never captured.
  *   - Windowed on the merge. mergedAt is when the outside PR landed —
  *     the same evidence clock the improve fold applies; rows whose
  *     mergedAt does not parse or sits past the evaluation-time skew
@@ -104,6 +110,26 @@ export interface CommunitySeatOutcome {
   kept: number;
   /** Merges whose revert verdict the ledger could not support ('unknown'). */
   unknown: number;
+  /**
+   * Merges whose journaled createdAt parses at or before mergedAt — the
+   * open→merge latency denominator. Rows lacking a usable createdAt
+   * (pre-fields rows, gh gaps) never count.
+   */
+  ttm_known: number;
+  /** Mean open→merge minutes over ttm_known, one decimal; null when ttm_known is 0. */
+  ttm_minutes_mean: number | null;
+  /** Merges carrying a journaled reviews object — the review-evidence denominator. */
+  reviews_known: number;
+  /** reviews_known rows with at least one recorded reviewer (latestReviews non-empty). */
+  reviewed: number;
+  /** reviews_known rows gh returned with zero reviews — a real unreviewed signal, not missing evidence. */
+  unreviewed: number;
+  /** reviews_known rows whose reviewDecision is APPROVED. */
+  approved: number;
+  /** reviews_known rows whose reviewDecision is CHANGES_REQUESTED. */
+  changes_requested: number;
+  /** reviews_known rows whose reviewDecision is REVIEW_REQUIRED. */
+  review_required: number;
 }
 
 /** Coverage context from the journal's newest scan receipt; null when none parsed. */
@@ -134,6 +160,7 @@ export interface OutsidePrCommunitySeatsRead {
 }
 
 const mergedMs = (row: OutsidePrOutcomeJournalRow): number => Date.parse(row.mergedAt);
+const createdMs = (row: OutsidePrOutcomeJournalRow): number => (row.createdAt === null ? NaN : Date.parse(row.createdAt));
 
 /**
  * Pure: fold the journal's newest-per-PR outcome rows into per-agent
@@ -141,7 +168,9 @@ const mergedMs = (row: OutsidePrOutcomeJournalRow): number => Date.parse(row.mer
  * the evaluation time plus the future-skew tolerance, which is corrupt
  * evidence that never reaches a cell; rows whose mergedAt does not parse
  * are skipped the same way. 'unknown' verdicts tally as context and
- * never toward kept or reverted.
+ * never toward kept or reverted. Open→merge minutes count only when both
+ * stamps parse and the PR did not "open" after it merged; review tallies
+ * count only rows carrying a journaled reviews object.
  */
 export function foldCommunitySeats(
   rows: readonly OutsidePrOutcomeJournalRow[],
@@ -149,16 +178,39 @@ export function foldCommunitySeats(
 ): CommunitySeatOutcome[] {
   const sinceMs = opts.nowMs - opts.windowDays * DAY_MS;
   const untilMs = opts.nowMs + COMMUNITY_SEATS_FUTURE_SKEW_MS;
-  const byAgent = new Map<string | null, { prs: number; reverted: number; kept: number; unknown: number; repos: Set<string> }>();
+  const byAgent = new Map<string | null, {
+    prs: number; reverted: number; kept: number; unknown: number; repos: Set<string>;
+    ttmKnown: number; ttmMinutes: number;
+    reviewsKnown: number; reviewed: number; unreviewed: number;
+    approved: number; changesRequested: number; reviewRequired: number;
+  }>();
   for (const row of rows) {
     const mergedAtMs = mergedMs(row);
     if (!Number.isFinite(mergedAtMs) || mergedAtMs < sinceMs || mergedAtMs > untilMs) continue;
-    const cell = byAgent.get(row.agent) ?? { prs: 0, reverted: 0, kept: 0, unknown: 0, repos: new Set<string>() };
+    const cell = byAgent.get(row.agent) ?? {
+      prs: 0, reverted: 0, kept: 0, unknown: 0, repos: new Set<string>(),
+      ttmKnown: 0, ttmMinutes: 0,
+      reviewsKnown: 0, reviewed: 0, unreviewed: 0,
+      approved: 0, changesRequested: 0, reviewRequired: 0,
+    };
     cell.prs += 1;
     cell.repos.add(row.repo);
     if (row.reverted === 'yes') cell.reverted += 1;
     else if (row.reverted === 'unknown') cell.unknown += 1;
     else cell.kept += 1;
+    const openedMs = createdMs(row);
+    if (Number.isFinite(openedMs) && openedMs <= mergedAtMs) {
+      cell.ttmKnown += 1;
+      cell.ttmMinutes += (mergedAtMs - openedMs) / 60_000;
+    }
+    if (row.reviews !== null) {
+      cell.reviewsKnown += 1;
+      if (row.reviews.latest > 0) cell.reviewed += 1;
+      else cell.unreviewed += 1;
+      if (row.reviews.decision === 'APPROVED') cell.approved += 1;
+      else if (row.reviews.decision === 'CHANGES_REQUESTED') cell.changesRequested += 1;
+      else if (row.reviews.decision === 'REVIEW_REQUIRED') cell.reviewRequired += 1;
+    }
     byAgent.set(row.agent, cell);
   }
   return [...byAgent.entries()]
@@ -170,6 +222,14 @@ export function foldCommunitySeats(
       reverted: c.reverted,
       kept: c.kept,
       unknown: c.unknown,
+      ttm_known: c.ttmKnown,
+      ttm_minutes_mean: c.ttmKnown === 0 ? null : Math.round((c.ttmMinutes / c.ttmKnown) * 10) / 10,
+      reviews_known: c.reviewsKnown,
+      reviewed: c.reviewed,
+      unreviewed: c.unreviewed,
+      approved: c.approved,
+      changes_requested: c.changesRequested,
+      review_required: c.reviewRequired,
     }))
     .sort((a, b) => b.prs - a.prs || (a.agent ?? '').localeCompare(b.agent ?? ''))
     .slice(0, COMMUNITY_SEATS_MAX_SEATS);

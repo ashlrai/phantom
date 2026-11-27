@@ -1238,7 +1238,14 @@ per-agent tallies — each recorded `agent` attribution (the
 branch/login convention the sync records, `null` rendered as
 `unattributed`, `model` always `null` because the journal never
 records one) with its PR count, `reverted`/`kept`/`unknown` revert
-verdict counts, and the distinct repo count — and
+verdict counts, the distinct repo count, and the journaled merge
+evidence: `ttm_known`/`ttm_minutes_mean` (open→merge latency over the
+rows whose `createdAt` stamp parses at or before `mergedAt`) and
+`reviews_known`/`reviewed`/`unreviewed`/`approved`/
+`changes_requested`/`review_required` (gh's recorded review evidence —
+rows journaled before the fields existed, or gh rows missing them,
+count in no denominator and read as unknown, never as zero reviews or
+zero latency) — and
 `community_seats_coverage` carries the newest scan row's recorded
 `source_state`/`revert_ledger` plus the degraded repo list so a
 partial community picture reads as partial. `community_seats_truncated`

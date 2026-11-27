@@ -20,7 +20,13 @@
  * recorded evidence the change came through that tool's convention —
  * never a claim about which model or runtime produced the diff — and
  * anything unmatched stays null, an honest unknown rather than a guess.
- * `model` is always null: no gh field records it. An absent `gh` reports
+ * `model` is always null: no gh field records it. Each row also carries
+ * the merge's own timestamps and review evidence — `createdAt` (PR open
+ * time, so open→merge latency is computable) and `reviews` (gh's
+ * `latestReviews` count plus its computed `reviewDecision`, the same
+ * fields cloud/tracker.ts reads for fleet task outcomes) — so a
+ * community seat's outcome record covers more than the revert verdict.
+ * An absent `gh` reports
  * sourceState 'missing'; an unreadable revert ledger marks every revert
  * verdict 'unknown' rather than implying "not reverted"; a missing ledger
  * is a genuine empty evidence set. Never throws; malformed gh rows are
@@ -46,7 +52,7 @@ const MAX_MERGED_PER_REPO = 200;
 const MAX_REPOS = 10;
 const DEFAULT_WINDOW_DAYS = 30;
 const MAX_WINDOW_DAYS = 365;
-const MERGED_PR_FIELDS = 'number,title,author,mergedAt,headRefName';
+const MERGED_PR_FIELDS = 'number,title,author,mergedAt,headRefName,createdAt,latestReviews,reviewDecision';
 
 /**
  * Agent products whose default pushed-branch namespace is `<product>/…`
@@ -140,10 +146,29 @@ export function outsidePrAgentAttribution(head: string, author: string | null): 
 
 export type OutsidePrRevertVerdict = 'yes' | 'no' | 'unknown';
 
+/** GitHub's computed review decision on a merged PR (same vocabulary cloud/tracker.ts validates). */
+export type OutsidePrReviewDecision = 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED';
+
+/**
+ * gh's review evidence for one merged PR: `decision` is gh's computed
+ * reviewDecision (null when gh recorded none — never a guess), `latest`
+ * the number of reviewers whose latest review stands (0 means gh
+ * returned no reviews — a real "unreviewed" signal, distinct from
+ * evidence never captured).
+ */
+export interface OutsidePrReviewEvidence {
+  decision: OutsidePrReviewDecision | null;
+  latest: number;
+}
+
 export interface OutsidePrOutcomeV1 {
   repo: string; number: number; title: string;
   /** gh author login, or null when gh recorded none (ghost author). */
   author: string | null; head: string; mergedAt: string;
+  /** When the PR opened (ISO), or null when gh recorded none — open→merge latency needs both stamps. */
+  createdAt: string | null;
+  /** gh's review evidence for the merge; null when gh returned no parseable review fields. */
+  reviews: OutsidePrReviewEvidence | null;
   /** Agent product attributed by recorded branch/login convention; null = no known convention matched. */
   agent: string | null;
   /** gh never records which model produced a change — always null. */
@@ -248,7 +273,24 @@ function isoTime(value: unknown): string | null {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 
-interface RawMergedPr { number: number; title: string; author: string | null; head: string; mergedAt: string }
+interface RawMergedPr { number: number; title: string; author: string | null; head: string; mergedAt: string; createdAt: string | null; reviews: OutsidePrReviewEvidence | null }
+
+const REVIEW_DECISIONS: ReadonlySet<string> = new Set(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']);
+
+/**
+ * gh's review evidence for one PR row, or null when the bounded review
+ * list was not returned — partial evidence is an honest unknown, never a
+ * guessed zero. `latestReviews` must be an array for the row to count as
+ * recorded (empty is a real "no reviews"); an out-of-vocabulary
+ * reviewDecision reads as null, matching cloud/tracker.ts's validation.
+ */
+function parseReviewEvidence(raw: Record<string, unknown>): OutsidePrReviewEvidence | null {
+  const latest = raw['latestReviews'];
+  if (!Array.isArray(latest)) return null;
+  const d = raw['reviewDecision'];
+  const decision = typeof d === 'string' && REVIEW_DECISIONS.has(d) ? d as OutsidePrReviewDecision : null;
+  return { decision, latest: latest.length };
+}
 
 /** Parse `gh pr list --state merged --json <MERGED_PR_FIELDS>`; malformed entries are dropped. */
 function parseMergedList(parsed: unknown): RawMergedPr[] {
@@ -261,7 +303,10 @@ function parseMergedList(parsed: unknown): RawMergedPr[] {
     const head = text(raw['headRefName']);
     const mergedAt = isoTime(raw['mergedAt']);
     if (n === null || title === null || head === null || mergedAt === null) continue;
-    out.push({ number: n, title, author: authorLogin(raw['author']), head, mergedAt });
+    out.push({
+      number: n, title, author: authorLogin(raw['author']), head, mergedAt,
+      createdAt: isoTime(raw['createdAt']), reviews: parseReviewEvidence(raw),
+    });
   }
   return out;
 }
@@ -339,7 +384,10 @@ async function computeOutsidePrOutcomes(opts: ListOutsidePrOutcomesOptions): Pro
         agentCell.prs += 1;
         if (reverted === 'yes') agentCell.reverted += 1;
         agentCounts.set(agent, agentCell);
-        return { repo, number: pr.number, title: pr.title, author: pr.author, head: pr.head, mergedAt: pr.mergedAt, agent, model: null, reverted };
+        return {
+          repo, number: pr.number, title: pr.title, author: pr.author, head: pr.head, mergedAt: pr.mergedAt,
+          createdAt: pr.createdAt, reviews: pr.reviews, agent, model: null, reverted,
+        };
       });
     return { repo, state: 'healthy' as const, listed: rows.length, hitLimit: rows.length >= limit, prs };
   });

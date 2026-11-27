@@ -51,6 +51,11 @@
  *    product the sync's recorded branch/login convention matched
  *    (outsidePrAgentAttribution), or null for the unattributed bucket;
  *    prompts quote that tally and never claim a model — gh records none.
+ *  - Review evidence is evidence, not blame. Reverted merges' journaled
+ *    createdAt/reviews fields tally usable open→merge latency and gh's
+ *    recorded review coverage — including merges gh shows as unreviewed
+ *    or still CHANGES_REQUESTED. Pre-fields rows count in neither
+ *    denominator; unknown review coverage is quoted as unknown, never 0.
  *  - Dedup is downstream. The item id embeds a stable hash of the repo
  *    identity (never the counts or timestamps), so a refresh
  *    re-derives the same id and appendUserBacklogItems adds only what
@@ -129,6 +134,20 @@ export interface OutsidePrBacklogCell {
   authors: Array<{ author: string | null; reverted: number }>;
   /** Reverted merges by journaled agent attribution (null = unattributed), most reverted first. */
   agents: Array<{ agent: string | null; reverted: number }>;
+  /**
+   * Reverted merges whose journaled createdAt parses at or before
+   * mergedAt — the open→merge latency denominator. Rows lacking a usable
+   * createdAt never count, so the mean below is never a guessed zero.
+   */
+  ttm_known: number;
+  /** Mean open→merge minutes over ttm_known reverted merges; null when ttm_known is 0. */
+  ttm_minutes_mean: number | null;
+  /** Reverted merges carrying a journaled reviews object — the review-evidence denominator. */
+  reviews_known: number;
+  /** reviews_known reverted merges gh returned with zero reviewers — a real "merged unreviewed" signal. */
+  unreviewed: number;
+  /** reviews_known reverted merges whose reviewDecision stands CHANGES_REQUESTED at journal time. */
+  changes_requested: number;
   /** Up to MAX_EXAMPLES reverted merges, most recent merge first. */
   examples: Array<{ number: number; title: string; author: string | null; mergedAt: string }>;
   /** ISO bounds of the reverted merges' mergedAt; null when none carried a parseable one. */
@@ -185,12 +204,35 @@ export function foldOutsidePrCells(
     }
     if (reverted < OUTSIDE_PR_REVERTED_RECURRING) continue;
     const times = revertedRows.map(mergedMs).filter(Number.isFinite);
+    let ttmKnown = 0;
+    let ttmMinutes = 0;
+    let reviewsKnown = 0;
+    let unreviewed = 0;
+    let changesRequested = 0;
+    for (const row of revertedRows) {
+      const openedMs = row.createdAt === null ? NaN : Date.parse(row.createdAt);
+      const mergedAtMs = mergedMs(row);
+      if (Number.isFinite(openedMs) && Number.isFinite(mergedAtMs) && openedMs <= mergedAtMs) {
+        ttmKnown += 1;
+        ttmMinutes += (mergedAtMs - openedMs) / 60_000;
+      }
+      if (row.reviews !== null) {
+        reviewsKnown += 1;
+        if (row.reviews.latest === 0) unreviewed += 1;
+        if (row.reviews.decision === 'CHANGES_REQUESTED') changesRequested += 1;
+      }
+    }
     cells.push({
       repo,
       merged: repoRows.length,
       reverted,
       unknown,
       kept,
+      ttm_known: ttmKnown,
+      ttm_minutes_mean: ttmKnown === 0 ? null : Math.round((ttmMinutes / ttmKnown) * 10) / 10,
+      reviews_known: reviewsKnown,
+      unreviewed,
+      changes_requested: changesRequested,
       authors: [...authorCounts.entries()]
         .map(([author, count]) => ({ author, reverted: count }))
         .sort((a, b) => b.reverted - a.reverted || (a.author ?? '').localeCompare(b.author ?? ''))
@@ -246,6 +288,27 @@ function agentsText(cell: OutsidePrBacklogCell): string {
   return ` Reverted merges by attributed agent (the journal's recorded branch/login convention — 'unattributed' means no known convention matched, and the model is never recorded): ${parts.join(', ')}.`;
 }
 
+/**
+ * The review/latency evidence the journaled rows carry for the reverted
+ * merges — how fast they landed and whether gh recorded any review at
+ * all. Denominators are stated so "no evidence" never reads as "no
+ * review"; an empty string when no reverted row carried either field.
+ */
+function reviewText(cell: OutsidePrBacklogCell): string {
+  const parts: string[] = [];
+  if (cell.ttm_known > 0 && cell.ttm_minutes_mean !== null) {
+    parts.push(`${cell.ttm_known} of the reverted merges carry a usable open→merge time (mean ${cell.ttm_minutes_mean} minutes)`);
+  }
+  if (cell.reviews_known > 0) {
+    const reviewBits = [`${cell.reviews_known} of the reverted merges carry journaled review evidence`];
+    if (cell.unreviewed > 0) reviewBits.push(`${cell.unreviewed} of those gh returned with zero reviewers — merged without a recorded review`);
+    if (cell.changes_requested > 0) reviewBits.push(`${cell.changes_requested} still stood CHANGES_REQUESTED when the sync read them`);
+    parts.push(reviewBits.join('; '));
+  }
+  if (parts.length === 0) return '';
+  return ` Review and merge-speed evidence (journaled gh fields — rows written before these fields existed count in no denominator): ${parts.join('; ')}.`;
+}
+
 function examplesText(cell: OutsidePrBacklogCell): string {
   if (cell.examples.length === 0) return '';
   const parts = cell.examples.map((example) => {
@@ -285,7 +348,7 @@ function outsidePrPrompt(
     : `Outside contributors' pull requests on ${cell.repo} keep being merged and then reverted — ${cell.reverted} of the recorded ${cell.merged} outside merges inside the ${windowHours}-hour window carry a standing revert verdict, the self-improvement work this backlog exists for.`;
   const scope = `The reverts themselves are evidence, not the defect — what is in scope is this repository's outside-PR path: whether review or merge gates treat non-fleet heads differently than fleet work, whether CONTRIBUTING or CI bars outside contributions can realistically pass, whether auto-merge or merge-queue policy lets weak outside PRs land and then get reverted by hand, and whether the fleet's own merge machinery should route outside heads through a different lane. Fix the cause in ${cell.repo}. Run the affected suite. ` + NO_CHANGE;
   const lines = [lead, '',
-    `An "outside" PR is a merged pull request whose head is not a fleet 'codex-bridge/*' branch and whose author is not the fleet App — community work the fleet's own ledgers never record. Each journaled row is one such merge joined to the standing revert set: 'yes' means a revert of that PR is standing, 'no' means none is, 'unknown' means the revert ledger could not be read when the sync ran. ${tallyText(cell)}${seenText(cell)}${authorsText(cell)}${agentsText(cell)}${examplesText(cell)}`,
+    `An "outside" PR is a merged pull request whose head is not a fleet 'codex-bridge/*' branch and whose author is not the fleet App — community work the fleet's own ledgers never record. Each journaled row is one such merge joined to the standing revert set: 'yes' means a revert of that PR is standing, 'no' means none is, 'unknown' means the revert ledger could not be read when the sync ran. ${tallyText(cell)}${seenText(cell)}${authorsText(cell)}${agentsText(cell)}${reviewText(cell)}${examplesText(cell)}`,
     '', EVIDENCE, '', scope];
   const coverage = coverageText(scan);
   if (coverage.length > 0) lines.push('', ...coverage);
