@@ -201,6 +201,41 @@ describe('currentUnfed', () => {
     });
   });
 
+  it.each([
+    { running: 1 },
+    { target: 3 },
+    { held: true },
+    { headroom: 3 },
+    { unfed: false },
+  ])('rejects contradictory published lane evidence (%j)', (contradiction) => {
+    const lanes = { a: { running: 0, target: 3, effective_target: 2 }, b: { running: 0, target: 2 } };
+    const entry = { running: 0, target: 2, headroom: 2, held: false, unfed: true, waiting_elsewhere: 1 };
+    const unfed_capacity = {
+      waiting: 2,
+      lanes: {
+        a: { ...entry, ...contradiction, blocked: { admission_stopped: 1 } },
+        b: { ...entry, blocked: { missing_capability: 1 } },
+      },
+    };
+
+    const report = currentUnfed(JSON.stringify({ lanes, unfed_capacity }), null);
+    expect(report).toMatchObject({ fleetStop: null, unfedLanes: ['b'], unfedSlots: null });
+    expect(report.resources[0]).toMatchObject({ waitingElsewhere: null, unfed: null, blocked: {} });
+    expect(report.resources[1]).toMatchObject({ waitingElsewhere: 1, unfed: true, blocked: { missing_capability: 1 } });
+  });
+
+  it('ignores positive waiting and stop counts on held or full lanes', () => {
+    const lanes = { a: { running: 0, target: 2, held: true }, b: { running: 2, target: 2 } };
+    const entry = { waiting_elsewhere: 1, blocked: { global_admission: 1 } };
+    const unfed_capacity = { waiting: 1, lanes: { a: entry, b: entry } };
+
+    const report = currentUnfed(JSON.stringify({ lanes, unfed_capacity }), null);
+    expect(report).toMatchObject({ fleetStop: null, unfedLanes: [], unfedSlots: 0 });
+    for (const resource of report.resources) {
+      expect(resource).toMatchObject({ waitingElsewhere: 0, unfed: false, blocked: {} });
+    }
+  });
+
   it.each(['derived', 'dispatcher'] as const)('bounds %s unfed slots by the shared waiting count', (source) => {
     const lanes = { a: { running: 0, target: 2 }, b: { running: 0, target: 2 } };
     const entry = { waiting_elsewhere: 1, blocked: { missing_capability: 1 } };

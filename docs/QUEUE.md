@@ -421,6 +421,10 @@ unknown for lanes with spare capacity unless the tick recorded zero waiting
 rows. A lane count above the tick's total is invalid, so it follows
 the same fallback and its blocker counts are omitted. A separate ready-file read
 still supplies current hint counts.
+Published lane counts and blockers apply only to unheld lanes with launch
+headroom. When an entry also records running, target, hold, headroom or an
+unfed flag, those fields must agree with the tick's lane state and waiting
+count. Rejected entries cannot supply the fallback fleet-stop verdict.
 Actual placement depends on eligibility
 and admission. The command then folds the unfed ticks of the last `--window` hours (default 24, at
 most 168): ticks unfed and slot-ticks lost per lane, with the leading reasons.
