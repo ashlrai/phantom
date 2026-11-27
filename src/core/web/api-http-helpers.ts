@@ -29,10 +29,44 @@ export function sendJson(res: ServerResponse, status: number, body: unknown): vo
 
 export const DEFAULT_MAX_BODY_BYTES = 65_536;
 
-/** Read a bounded request body, decoding UTF-8 once after all chunks arrive. */
+/** Narrow an unknown value to a plain non-array object record. */
+export function isWebRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Constant-time UTF-8 string comparison for tokens and secrets. */
+export function timingSafeTextEqual(left: string, right: string): boolean {
+  try {
+    const ba = Buffer.from(left, 'utf8');
+    const bb = Buffer.from(right, 'utf8');
+    return ba.length === bb.length && timingSafeEqual(ba, bb);
+  } catch {
+    return false;
+  }
+}
+
+/** Read a fetch Response body up to `maxBytes`, returning null if absent or oversized. */
+export async function readBoundedResponseBody(response: Response, maxBytes: number): Promise<Buffer | null> {
+  const declared = Number(response.headers.get('content-length') ?? '0');
+  if (declared > maxBytes || !response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) { await reader.cancel(); return null; }
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks, total);
+  } finally { reader.releaseLock(); }
+}
+
 /**
- * Buffer chunks as bytes and decode once so split multi-byte UTF-8 characters
- * remain intact.
+ * Read a bounded request body, buffering raw bytes and decoding UTF-8 once
+ * after all chunks arrive so split multi-byte characters remain intact.
  */
 export function readBody(req: IncomingMessage, maxBytes: number = DEFAULT_MAX_BODY_BYTES): Promise<string> {
   return new Promise<string>((resolve, reject) => {
@@ -64,20 +98,9 @@ function headerValue(req: IncomingMessage, name: string): string {
   return raw ?? '';
 }
 
-function safeEqual(a: string, b: string): boolean {
-  try {
-    const ba = Buffer.from(a, 'utf8');
-    const bb = Buffer.from(b, 'utf8');
-    if (ba.length !== bb.length) return false;
-    return timingSafeEqual(ba, bb);
-  } catch {
-    return false;
-  }
-}
-
 /** Require the shared token and JSON content type before dispatching a mutation. */
 export function passesMutationGate(req: IncomingMessage, res: ServerResponse, token: string): boolean {
-  if (!safeEqual(headerValue(req, 'x-ashlr-token'), token)) {
+  if (!timingSafeTextEqual(headerValue(req, 'x-ashlr-token'), token)) {
     sendJson(res, 401, { error: 'unauthorized: missing or invalid x-ashlr-token' });
     return false;
   }

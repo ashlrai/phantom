@@ -1,13 +1,11 @@
-import { createRequire } from 'node:module';
 import { isAbsolute, parse, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { types } from 'node:util';
 import { validateResourceObservations, validateResourcePool, type ResourceAssignmentExclusion,
   type ResourceObservation, type ResourcePool } from '../resources/pool-policy.js';
 import { validateResourceBindings, type ResourceBinding } from '../resources/worker.js';
 import { expandResourceQuotaDenials } from '../resources/quota-scope.js';
 import type { ResourceConsoleEvidence } from '../resources/console-types.js';
-import { createBoundedReadWorker, ReadProjectionError, type BoundedReadWorkerOptions } from './bounded-read-worker.js';
+import { createBoundedReadWorker, ReadProjectionError, resolveBoundedWorkerEntrypoint, type BoundedReadWorkerOptions } from './bounded-read-worker.js';
 import { degradedResourceConsoleEvidence, validateResourceConsoleResponse } from './resource-console-public.js';
 
 export interface ResourceConsoleReadScope { root: string; pool: ResourcePool; bindings: ResourceBinding[]; observationsFile: string;
@@ -181,12 +179,7 @@ function withholdExactWorkers(evidence: ResourceConsoleEvidence, blocked: Set<st
 }
 
 function workerEntrypoint(): URL {
-  if (import.meta.url.endsWith('/resource-console-reads.ts')) {
-    const loader = pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm/api')).href;
-    const source = new URL('./resource-console-worker.ts', import.meta.url).href;
-    return new URL(`data:text/javascript,${encodeURIComponent(`import { register } from ${JSON.stringify(loader)}; register(); await import(${JSON.stringify(source)});`)}`);
-  }
-  return new URL('./resource-console-worker.js', import.meta.url);
+  return resolveBoundedWorkerEntrypoint(import.meta.url, 'resource-console-reads.ts', 'resource-console-worker');
 }
 
 /** Pinned configuration and one private file; browser requests cannot choose paths. */
@@ -206,8 +199,13 @@ export function createResourceConsoleReader(options: ResourceConsoleReadScope,
         const value = await transport.read('snapshot', captured);
         if (closed) throw new ReadProjectionError('Resource console reader is closed', 'READ_PROJECTION_CLOSED');
         const evidence = validateResourceConsoleResponse(value, scope.pool, scope.bindings);
-        return captured ? withholdResourceConsoleWorkers(evidence, unavailableManagedResourceWorkers(scope, captured, Date.now()),
-          unavailableManagedResourceWorkers(scope, captured, Date.now(), true)) : evidence;
+        if (!captured) return evidence;
+        const nowMs = Date.now();
+        return withholdResourceConsoleWorkers(
+          evidence,
+          unavailableManagedResourceWorkers(scope, captured, nowMs),
+          unavailableManagedResourceWorkers(scope, captured, nowMs, true),
+        );
       }
       catch (error) {
         if (closed) throw error;

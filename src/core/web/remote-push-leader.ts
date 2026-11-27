@@ -1,11 +1,11 @@
 /** Content-free notifications derived from the same sources as the Leader pane. */
 import { parseInboxAt } from '../../web-ui/routes/verse/fleet/interject-ack-model.js';
+import { isWebRecord } from './api-http-helpers.js';
 
 interface PushLeaderLine { who: string; source: string; at: number; text: string }
-const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
 export function validLeaderReplies(value: unknown): value is PushLeaderLine[] {
-  return Array.isArray(value) && value.length <= 3000 && value.every(line => record(line)
+  return Array.isArray(value) && value.length <= 3000 && value.every(line => isWebRecord(line)
     && typeof line.who === 'string' && typeof line.source === 'string' && typeof line.at === 'number'
     && typeof line.text === 'string');
 }
@@ -26,24 +26,24 @@ export async function readLeaderRepliesForPush(read: (path: string) => Promise<u
     read('/api/verse/leader/thread?limit=50'), read('/api/verse/fleet/runs'),
     read('/api/verse/comms/owner-thread?limit=100'),
   ]);
-  const threadRows = Array.isArray(thread) ? thread : record(thread) ? thread.messages : null;
-  if (!Array.isArray(threadRows) || !record(fleet) || !Array.isArray(fleet.outbox)
-    || !record(owner) || owner.schema !== 'comms.owner-thread.v1' || owner.unavailable === true
-    || !Array.isArray(owner.messages) || (record(owner.status) && (owner.status.kill === true || owner.status.paused === true))) {
+  const threadRows = Array.isArray(thread) ? thread : isWebRecord(thread) ? thread.messages : null;
+  if (!Array.isArray(threadRows) || !isWebRecord(fleet) || !Array.isArray(fleet.outbox)
+    || !isWebRecord(owner) || owner.schema !== 'comms.owner-thread.v1' || owner.unavailable === true
+    || !Array.isArray(owner.messages) || (isWebRecord(owner.status) && (owner.status.kill === true || owner.status.paused === true))) {
     throw new Error('Leader read unavailable');
   }
   const lines: PushLeaderLine[] = [];
   for (const row of threadRows) {
-    if (!record(row) || (row.from !== 'leader' && row.from !== 'mason') || typeof row.channel !== 'string'
+    if (!isWebRecord(row) || (row.from !== 'leader' && row.from !== 'mason') || typeof row.channel !== 'string'
       || typeof row.at !== 'string' || typeof row.text !== 'string') throw new Error('Leader thread malformed');
     lines.push({ who: row.from, source: row.channel, at: Date.parse(row.at), text: row.text });
   }
   for (const row of fleet.outbox) {
-    if (!record(row) || typeof row.at !== 'string' || typeof row.text !== 'string') throw new Error('Leader outbox malformed');
+    if (!isWebRecord(row) || typeof row.at !== 'string' || typeof row.text !== 'string') throw new Error('Leader outbox malformed');
     lines.push({ who: 'leader', source: 'outbox', at: parseInboxAt(row.at, Date.now()) ?? Date.parse(row.at), text: row.text });
   }
   for (const row of owner.messages) {
-    if (!record(row) || (row.direction !== 'inbound' && row.direction !== 'outbound') || typeof row.channel !== 'string'
+    if (!isWebRecord(row) || (row.direction !== 'inbound' && row.direction !== 'outbound') || typeof row.channel !== 'string'
       || typeof row.at !== 'string' || typeof row.text !== 'string') throw new Error('Owner thread malformed');
     lines.push({ who: row.direction === 'outbound' ? 'leader' : 'mason', source: row.channel, at: Date.parse(row.at), text: row.text });
   }

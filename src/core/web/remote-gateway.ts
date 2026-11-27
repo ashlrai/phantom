@@ -12,6 +12,7 @@ import { TextDecoder } from 'node:util';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { isWebRecord, readBoundedResponseBody } from './api-http-helpers.js';
 import { createRemoteAccessVerifier, parseRemoteAccessConfig, verifyRemoteAccessHeader, type RemoteAccessConfig, type RemoteAccessIdentity } from './remote-access.js';
 import { checkRemoteEnvelope, classifyRemoteRoute, validateRemoteMutation, type RemoteRouteDecision } from './remote-gateway-policy.js';
 import type { RemoteDeviceStore } from './remote-device-store.js';
@@ -70,11 +71,8 @@ function cookieValue(req: IncomingMessage, name = COOKIE_NAME): string | null {
 }
 
 function hash(value: string): string { return createHash('sha256').update(value).digest('hex'); }
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 function shape(value: unknown, required: readonly string[], optional: readonly string[] = []): value is Record<string, unknown> {
-  return object(value) && required.every((key) => Object.hasOwn(value, key))
+  return isWebRecord(value) && required.every((key) => Object.hasOwn(value, key))
     && Object.keys(value).every((key) => required.includes(key) || optional.includes(key));
 }
 async function bodyText(req: IncomingMessage): Promise<string | null> {
@@ -94,25 +92,8 @@ async function bodyText(req: IncomingMessage): Promise<string | null> {
 async function jsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
   const text = await bodyText(req);
   if (text === null) return null;
-  try { const parsed: unknown = JSON.parse(text); return object(parsed) ? parsed : null; }
+  try { const parsed: unknown = JSON.parse(text); return isWebRecord(parsed) ? parsed : null; }
   catch { return null; }
-}
-async function boundedResponse(response: Response, maxBytes: number): Promise<Buffer | null> {
-  const declared = Number(response.headers.get('content-length') ?? '0');
-  if (declared > maxBytes || !response.body) return null;
-  const reader = response.body.getReader();
-  const chunks: Buffer[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) { await reader.cancel(); return null; }
-      chunks.push(Buffer.from(value));
-    }
-    return Buffer.concat(chunks, total);
-  } finally { reader.releaseLock(); }
 }
 function parsedMutation(decision: RemoteRouteDecision, body: string): unknown | null {
   try {
@@ -126,7 +107,7 @@ const REMOTE_COS_ASK_PATH = '/api/verse/fleet/cos/ask';
 // a gateway-asserted fact. Every write this listener forwards arrived from a
 // paired phone, so the inbox body is re-serialized with the pinned source.
 export function pinRemoteInboxBody(path: string, parsed: unknown, raw: string): string {
-  if (path !== REMOTE_INBOX_PATH || !object(parsed) || typeof parsed.text !== 'string') return raw;
+  if (path !== REMOTE_INBOX_PATH || !isWebRecord(parsed) || typeof parsed.text !== 'string') return raw;
   return JSON.stringify({ text: parsed.text, source: 'Phantom mobile' });
 }
 // The paired-phone assertion itself rides an internal header this listener
@@ -256,7 +237,7 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
       if (response.status >= 300 && response.status < 400) return null;
       if (response.status === 204) return { status: 204, body: '' };
       if (!(response.headers.get('content-type') ?? '').startsWith('application/json')) return null;
-      const bytes = await boundedResponse(response, MAX_JSON_BYTES);
+      const bytes = await readBoundedResponseBody(response, MAX_JSON_BYTES);
       if (!bytes || bytes.includes(options.hub.mutationToken)
         || bytes.includes(options.hub.readToken)) return null;
       return { status: response.status, body: bytes.toString('utf8') };
@@ -352,7 +333,7 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
           }
           if (target === '/remote/pair/complete') {
             if (!shape(body, ['pendingId', 'response']) || typeof body.pendingId !== 'string'
-              || registrationOwners.get(body.pendingId)?.owner !== preauth.key || !object(body.response)) {
+              || registrationOwners.get(body.pendingId)?.owner !== preauth.key || !isWebRecord(body.response)) {
               json(res, 403, { code: 'PAIRING_DENIED', error: 'Pairing unavailable' }); return;
             }
             const completed = await options.pairing.phone.completeRegistration(identity, body.pendingId,
@@ -368,7 +349,7 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
             if (!begun) { json(res, 403, { code: 'AUTH_DENIED', error: 'Device authentication unavailable' }); return; }
             json(res, 200, begun); return;
           }
-          if (!shape(body, ['challengeId', 'response']) || typeof body.challengeId !== 'string' || !object(body.response)) {
+          if (!shape(body, ['challengeId', 'response']) || typeof body.challengeId !== 'string' || !isWebRecord(body.response)) {
             json(res, 400, { code: 'INVALID_BODY', error: 'Invalid authentication response' }); return;
           }
           const verified = await options.pairing.phone.completeAuthentication(identity, body.challengeId,
@@ -409,7 +390,7 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
           if (!begun) { json(res, 403, { code: 'STEP_UP_DENIED', error: 'Device authentication unavailable' }); return; }
           json(res, 200, begun); return;
         }
-        if (typeof body.challengeId !== 'string' || !object(body.response)) {
+        if (typeof body.challengeId !== 'string' || !isWebRecord(body.response)) {
           json(res, 400, { code: 'INVALID_BODY', error: 'Invalid step-up response' }); return;
         }
         const result = await options.pairing.phone.runWithStepUp(identity, body.challengeId,
@@ -460,7 +441,7 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
               redirect: 'manual', signal: AbortSignal.timeout(5_000),
             });
             const contentType = upstream.headers.get('content-type') ?? '';
-            const bytes = upstream.status === 200 ? await boundedResponse(upstream, MAX_JSON_BYTES) : null;
+            const bytes = upstream.status === 200 ? await readBoundedResponseBody(upstream, MAX_JSON_BYTES) : null;
             if (upstream.status !== 200) await upstream.body?.cancel();
             if (bytes && /^(?:text\/html|text\/css|application\/(?:javascript|manifest\+json)|image\/(?:svg\+xml|png|webp)|font\/woff2?)(?:;|$)/.test(contentType)) {
               hubAsset = { bytes, contentType };
@@ -541,7 +522,7 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
         if (route.kind === 'read') {
           const type = upstream.headers.get('content-type') ?? '';
           if (!type.startsWith('application/json')) { json(res, 502, { code: 'HUB_BAD_RESPONSE', error: 'Local Hub returned unexpected content' }); return; }
-          const bytes = await boundedResponse(upstream, MAX_JSON_BYTES);
+          const bytes = await readBoundedResponseBody(upstream, MAX_JSON_BYTES);
           if (!bytes || [...hubSecrets, localCookie, upstreamHeaders.cookie ?? '']
             .filter(Boolean).some((secret) => bytes.includes(secret) || bytes.includes(secret.replace(/^ashlr_read_session=/, '')))) {
             json(res, 502, { code: 'HUB_BAD_RESPONSE', error: 'Local Hub response rejected' }); return;

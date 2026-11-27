@@ -38,9 +38,10 @@ import { loadBacklog } from '../portfolio/backlog.js';
 import type { Backlog } from '../types.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { passesMutationGate, readBody, sendJson } from './api.js';
+import { isWebRecord } from './api-http-helpers.js';
 
 export const IDEAS_DRAFT_PATH = '/api/ideas/draft';
-export const IDEAS_DRAFT_MAX = 8;
+const IDEAS_DRAFT_MAX = 8;
 const DRAFT_LANE = 'claude';
 const DRAFT_TIER = 'work';
 const TITLE_CHARS = 160;
@@ -160,7 +161,7 @@ export async function handleIdeasDraftApi(
     sendJson(res, 400, { error: 'expected a bounded JSON body' });
     return true;
   }
-  if (typeof body !== 'object' || body === null || Array.isArray(body)
+  if (!isWebRecord(body)
     || Object.keys(body).some(key => key !== 'ideaIds' && key !== 'confirmCollisions')) {
     sendJson(res, 400, { error: 'expected only ideaIds and confirmCollisions' });
     return true;
