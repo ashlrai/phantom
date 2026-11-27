@@ -2241,7 +2241,8 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // the analyzer consumes; any recognizable failure or pass output in
       // an unverifiable log keeps the whole run unknown rather than letting
       // unattributed evidence pass as head-verified.
-      if (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line))) return null;
+      if (output.some(line => CHECKOUT_GROUP.test(line) || PASS_LINE.test(line)) ||
+          parseBaselineFailures(r.stdout, repo).length > 0) return null;
     }
     return { entries: result, incomplete };
   }
