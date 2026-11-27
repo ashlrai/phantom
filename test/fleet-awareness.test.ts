@@ -58,6 +58,35 @@ test('unknown, stale, future and expired reports never become pool capacity; exa
   expect(projectFleetAwareness(legacy.state, legacy.now()).hosts[0]?.freeSlots).toBeNull();
 });
 
+test('delayed capacity samples cannot clear or reinstate a newer host hold', () => {
+  const f = fixture();
+  const sibling = f.add('a-worker', { hostId: 'mac', slots: 2 });
+  const reporter = f.add('b-worker', { hostId: 'mac', slots: 2 });
+  f.enqueue();
+  const readyAt = f.now();
+  f.advance(1000);
+  const heldAt = f.now();
+  f.beat(reporter.nodeId, { hostId: 'mac', slots: 0, held: 'memory-pressure' });
+
+  f.advance(1000);
+  f.beat(reporter.nodeId, { hostId: 'mac', slots: 2, sampledAtMs: readyAt });
+  expect(reporter).toMatchObject({
+    heartbeatAt: f.now(),
+    slots: 0,
+    capacity: { sampledAtMs: heldAt, held: 'memory-pressure' },
+  });
+  expect(f.plan()[0]?.nodeId).toBeNull();
+  expect(f.run('pull', ['--node', sibling.nodeId, '--session', String(sibling.session)])).toMatchObject({ pulled: false });
+
+  const recoveredAt = f.now();
+  f.beat(reporter.nodeId, { hostId: 'mac', slots: 2 });
+  f.advance(1000);
+  f.beat(reporter.nodeId, { hostId: 'mac', slots: 0, held: 'memory-pressure', sampledAtMs: heldAt });
+  expect(reporter).toMatchObject({ slots: 2, capacity: { sampledAtMs: recoveredAt, held: null } });
+  expect(f.plan()[0]?.nodeId).toBe(sibling.nodeId);
+  expect(f.run('pull', ['--node', sibling.nodeId, '--session', String(sibling.session)])).toMatchObject({ pulled: true });
+});
+
 test.each([
   { paused: 'disk guard' },
   { admission: { admit: false } },
