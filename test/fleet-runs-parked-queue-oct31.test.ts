@@ -125,4 +125,20 @@ describe('fleet parked queue', () => {
       expect(result.skipsLast24h).toBe(1);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
+  it('honors ASHLR_RUNS_DIR when no runsDir is passed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fleet-queue-env-'));
+    const previous = process.env.ASHLR_RUNS_DIR;
+    try {
+      await mkdir(join(dir, 'queue'));
+      await writeFile(join(dir, 'queue/ready.tsv'), ['status\tid\tlane', 'PARKED-BYHAND.codex-local\tJOB-ENV\tcodex-local'].join('\n'));
+      await writeFile(join(dir, 'queue/precheck-skips.tsv'), '');
+      process.env.ASHLR_RUNS_DIR = dir;
+      const result = await readFleetQueue({ now: () => now });
+      expect(result.sources.ready).toBe('healthy');
+      expect(result.groups).toEqual([{ reason: 'BYHAND', lane: 'codex-local', count: 1, jobs: ['JOB-ENV'] }]);
+    } finally {
+      if (previous === undefined) delete process.env.ASHLR_RUNS_DIR; else process.env.ASHLR_RUNS_DIR = previous;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
