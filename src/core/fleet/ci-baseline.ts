@@ -561,6 +561,32 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   '.github/scripts/ci-fast-inputs.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-green-reuse.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-mcp-selection.mjs': ['.github/workflows/ci.yml'],
+  // ci-fast-run's affected-test step spawns scripts/test-ci.mjs (and
+  // node --test for plan.node shards) against a plan ci-fast-select
+  // wrote: a crash in the orchestrator, the plan producer, the spawned
+  // wrapper or the vitest config/setup surface it executes under all
+  // prints the same unnamed step marker, so the closed input list
+  // enumerates that whole runtime contract rather than the import
+  // closure alone.
+  '.github/scripts/ci-fast-run.mjs': [
+    '.github/workflows/ci.yml',
+    '.github/scripts/ci-fast-select.mjs',
+    'scripts/test-ci.mjs',
+    'src/core/run/tool-path.ts',
+    'scripts/vitest-progress-reporter.mjs',
+    'vitest.config.ts',
+    'vitest.config.web.ts',
+    'vitest.config.mock-compat.ts',
+    'src/web-ui/test/setup.ts',
+    'test/setup/home.ts',
+    'test/setup/home-isolation-guard.ts',
+    'test/config/realio-lane-membership.mjs',
+    'test/config/serial-cpu-lane-membership.mjs',
+    'test/config/weighted-sequencer.mjs',
+    'package.json',
+    'package-lock.json',
+    'tsconfig.json',
+  ],
   // The memory benchmark gate runs `tsx scripts/benchmark-memory.ts`
   // (npm run bench:memory -- --check): its import closure covers the
   // benchmark, its floors file and the whole src/core/memory
@@ -1314,9 +1340,10 @@ const SECRET_GATE_INPUTS: Record<string, readonly string[]> = {
 // fix restores. Like the other non-test identities these groups can
 // never resolve through a vitest pass line: shared-baseline, pr-caused
 // or unknown -- never probable-flake. Scripts whose pure steps only
-// appear in jobs the analyzer's evidence never sees (macOS/Windows
-// lanes, release pipelines, merge-group-only attribution) are
-// deliberately not listed.
+// appear in jobs the analyzer's evidence never sees (release
+// pipelines, merge-group-only attribution) are deliberately not
+// listed; the os_sensitive fast lanes emit checkout-pinned job logs
+// on pull requests, so their pure steps are listed too.
 const CI_SCRIPT_GATE_MAX = 8;
 const CI_SCRIPT_GATES: Record<string, string> = {
   'ci-fetch-range.mjs': '(fetch-range)',
@@ -1333,6 +1360,14 @@ const CI_SCRIPT_GATES: Record<string, string> = {
   'ci-fast-inputs.mjs': '(fast-inputs)',
   'ci-green-reuse.mjs': '(green-reuse)',
   'ci-mcp-selection.mjs': '(mcp-selection)',
+  // ci-fast-run orchestrates the affected-test shards. On the
+  // fast-windows and fast-macos lanes its step is a pure single-script
+  // run, and a plan-file read/parse failure, spawn error or child exit
+  // that prints no vitest FAIL, TAP `not ok` or [test-ci] verdict
+  // leaves only the step marker. The ubuntu fast-gate invokes it inside
+  // a mixed verify/run/write step, which stays unattributed, and a
+  // companion test failure still suppresses the group.
+  'ci-fast-run.mjs': '(fast-run)',
 };
 const CI_SCRIPT_GATE_FILES = new Set(Object.keys(CI_SCRIPT_GATES).map(base => `.github/scripts/${base}`));
 const CI_STEP_GROUP = /^##\[group\]Run(?:\s+(.*))?$/;

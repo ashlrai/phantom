@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40), s
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; sameHead?: boolean; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
+function github(options: { count?: number; sameHead?: boolean; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; fastRun?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -65,7 +65,7 @@ function github(options: { count?: number; sameHead?: boolean; touched?: string;
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/') || endpoint.includes('/jobs/30/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.installSmoke ? 'install-smoke-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.fastRun ? 'script-fast-run' : options.install ? 'install-shared' : options.installSmoke ? 'install-smoke-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : prHead;
       let prefix: string;
       if (options.checkoutRef !== undefined) {
@@ -1404,7 +1404,7 @@ describe('CI baseline evidence', () => {
     for (const bad of [
       step(['set -euo pipefail', 'npm run build'], ['build failed']),
       step(['actions/setup-node@820762786026740c76f36085b0efc47a31fe5020'], ['with:', '  node-version: \'22\'']),
-      step(['node .github/scripts/ci-fast-run.mjs'], ['spawn failed']),
+      step(['node .github/scripts/ci-os-gate.mjs'], ['Gate (linux) failed']),
       step(['node .github/scripts/ci-pack-smoke.mjs capture "$RUNNER_TEMP"'], ['Error: Cannot find module']),
       step(['node .github/scripts/ci-fetch-range.mjs', 'node .github/scripts/ci-dep-graph.mjs update'], ['boom']),
       step(['node ./.github/scripts/ci-fetch-range.mjs'], ['boom']),
@@ -1526,6 +1526,76 @@ describe('CI baseline evidence', () => {
     }
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ fastSelect: true, count: 1, pass: true, contents }).gh);
+    expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('attributes ci-fast-run step failures on the os_sensitive fast lanes', () => {
+    // The fast-windows/fast-macos "Run affected tests" step is a pure
+    // single-script run: a plan-file read failure, spawn error or child
+    // exit that prints no vitest FAIL, TAP `not ok` or [test-ci] verdict
+    // leaves only the step marker, and it groups under the gate script.
+    const failures = parseBaselineFailures(fixture('script-fast-run'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual(['.github/scripts/ci-fast-run.mjs > (fast-run)']);
+    expect(failures[0]).toMatchObject({ file: '.github/scripts/ci-fast-run.mjs', names: '(fast-run)' });
+    expect(failures[0]?.excerpt).toContain('fast-gate-plan.json');
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('script-fast-run').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    // A vitest FAIL line in the step's own output means the companion
+    // runner owns the failure: the gate group is suppressed and the
+    // vitest failure itself still parses.
+    const vitest = [
+      '##[group]Run node .github/scripts/ci-fast-run.mjs',
+      'node .github/scripts/ci-fast-run.mjs',
+      'shell: /usr/bin/bash -e {0}',
+      '##[endgroup]',
+      'FAIL  |unit| test/example.test.ts > suite > case',
+      '##[error]Process completed with exit code 1.',
+    ].join('\n');
+    expect(parseBaselineFailures(vitest).map(f => f.testId)).toEqual(['test/example.test.ts > suite > case']);
+  });
+  it('groups ci-fast-run crashes and attributes plan, runner and config inputs', async () => {
+    const contents = {
+      '.github/scripts/ci-fast-run.mjs': "import { spawn } from 'node:child_process';\nimport { readFileSync, writeFileSync } from 'node:fs';\nimport { proveReuse } from './ci-green-reuse.mjs';",
+      '.github/scripts/ci-green-reuse.mjs': "import { createHash } from 'node:crypto';",
+      '.github/scripts/ci-fast-select.mjs': "import { writeFileSync } from 'node:fs';",
+      'scripts/test-ci.mjs': "import { readFileSync } from 'node:fs';",
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ fastRun: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0]).toMatchObject({
+      testId: '.github/scripts/ci-fast-run.mjs > (fast-run)',
+      classification: 'shared-baseline',
+      action: 'queue-master-fix',
+      master: 'fail',
+      prs: [1, 2],
+    });
+    // The workflow step definition, the gate script itself, its import
+    // closure, the plan producer and the spawned runner's config/setup
+    // surface are inputs: touching any of them is pr-caused. Unlike the
+    // pure gates, tsconfig and the vitest configs are real runtime
+    // inputs here, not harness ambient.
+    for (const touched of [
+      '.github/workflows/ci.yml',
+      '.github/scripts/ci-fast-run.mjs',
+      '.github/scripts/ci-fast-select.mjs',
+      '.github/scripts/ci-green-reuse.mjs',
+      'scripts/test-ci.mjs',
+      'vitest.config.ts',
+      'vitest.config.web.ts',
+      'src/web-ui/test/setup.ts',
+      'tsconfig.json',
+    ]) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ fastRun: true, touched, contents }).gh);
+      expect(caused.groups[0]?.action, touched).toBe('pr-caused');
+    }
+    // Unrelated changes share the baseline.
+    for (const touched of ['src/core/status.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ fastRun: true, touched, contents }).gh);
+      expect(shared.groups[0]?.classification, `${touched} -> fast-run`).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ fastRun: true, count: 1, pass: true, contents }).gh);
     expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('attributes npm ci install failures to the dependency manifests', () => {

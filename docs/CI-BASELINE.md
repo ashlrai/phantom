@@ -462,18 +462,24 @@ marker to the step's script when every script line is a `node --test`
 invocation or one whitelisted gate script, all gate lines naming the
 same file: `ci-fetch-range`, `ci-source-binding`, `ci-site-lane`,
 `ci-mac-rotation`, `ci-dep-graph`, `ci-fast-select`, `ci-fast-inputs`,
-`ci-green-reuse` and `ci-mcp-selection` group under
+`ci-green-reuse`, `ci-mcp-selection` and `ci-fast-run` group under
 `.github/scripts/<script> > (<gate>)`. Mixed bash, `uses:` actions,
 non-whitelisted scripts and ambiguous multi-script steps stay
 unattributed, and a `not ok` or vitest `FAIL` line in the step's own
 output means the companion test runner owns the failure -- the gate
 group is suppressed. Each gate's inputs are the script, its import
 closure and `.github/workflows/ci.yml` (the step definition), with no
-vitest harness ambient set; like the other non-test identities these
-groups classify `shared-baseline`, `pr-caused` or `unknown` -- never
-`probable-flake`. Scripts whose pure steps only appear in jobs the
-analyzer's evidence never sees (macOS/Windows lanes, release
-pipelines, merge-group-only attribution) are not listed.
+vitest harness ambient set; `ci-fast-run` widens that closed list with
+the plan producer (`ci-fast-select`), the spawned test wrapper
+(`scripts/test-ci.mjs` and the reporter/tool-path reads it loads) and
+the vitest config/setup surface the affected-test and web shards
+execute under, because a crash in any of them prints the same unnamed
+step marker on the os_sensitive fast lanes. Like the other non-test
+identities these groups classify `shared-baseline`, `pr-caused` or
+`unknown` -- never `probable-flake`. The os_sensitive fast lanes emit
+checkout-pinned job logs on pull requests, so their pure steps are
+listed; scripts whose pure steps only appear in release pipelines or
+merge-group-only jobs stay unlisted.
 
 The `Install dependencies` steps run a bare `npm ci` (with or without
 `--ignore-scripts`/`--no-audit`/`--no-fund`), so a broken manifest or
