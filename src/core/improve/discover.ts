@@ -1917,6 +1917,7 @@ import { reviewBlocksBacklogItems } from './review-blocks-backlog.js';
 import { capacityHistoryBacklogItems } from './capacity-history-backlog.js';
 import { laneTargetChangesBacklogItems } from './lane-target-changes-backlog.js';
 import { amplifyBacklogItems } from './amplify-backlog.js';
+import { fleetHopSpoolBacklogItems } from './fleet-hop-spool-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4060,6 +4061,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the fleet's own repository inherits the items since the exports
   // describe this install's fleet.
   items.push(...await growthBacklogItems({ repo }));
+
+  // Fleet-hop telemetry spool (~/.ashlr/telemetry/fleet-hop-spool.jsonl):
+  // the queue.v1 fleet_hop outbox emitFleetHop appends to whenever the
+  // PostHog capture POST fails or POSTHOG_AGENT_FLEET_TOKEN is unset —
+  // one event per PR station exit, drained only by a manual
+  // `phantom exec -- node scripts/fleet-hop.mjs --replay` that nothing
+  // schedules (fleetHopSpoolBacklogItems below). Until now the file's
+  // only readers were point-in-time: collectFleetHopEvents scans it as
+  // the merged-PR cost rollup's undelivered floor and the replay
+  // itself retries it, so hops backing up across days — egress broken,
+  // key missing, or replay never run — never became work. The spool is
+  // pending state rather than an event stream, so there is no evidence
+  // window: every parsed row awaits delivery and the cell emits only
+  // at the recurring bars of three contract-valid rows across two
+  // distinct UTC days, test:true rows count toward recurrence while
+  // their share is reported, truncated tails are stated as lower
+  // bounds with the file's byte size, and only the fleet's own
+  // repository inherits the item since the spool describes this
+  // install's telemetry pipe.
+  items.push(...await fleetHopSpoolBacklogItems({ repo }));
   return { items, errors };
 }
 

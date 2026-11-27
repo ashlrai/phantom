@@ -641,6 +641,7 @@
 /test/improve-eval-gate-backlog.test.ts @masonwyatt23
 /test/improve-feedback-submissions-backlog.test.ts @masonwyatt23
 /test/improve-fleet-gap-backlog.test.ts @masonwyatt23
+/test/improve-fleet-hop-spool-backlog.test.ts @masonwyatt23
 /test/improve-friction-flag-backlog.test.ts @masonwyatt23
 /test/improve-gap-proposal-backlog.test.ts @masonwyatt23
 /test/improve-gateway-activity-backlog.test.ts @masonwyatt23
