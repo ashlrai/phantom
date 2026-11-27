@@ -57,8 +57,7 @@
  *    prompt can quote the refusal share, but never emit on their own.
  *  - The journal carries no per-job repository dimension — it describes
  *    this install's queue intake. Items therefore emit only when the
- *    backlog target's repository name is 'phantom', the same
- *    last-segment rule the sibling fleet-evidence sources apply;
+ *    backlog target is 'ashlrai/phantom' or its bare shorthand 'phantom';
  *    self-improvement pointed at another repository never inherits
  *    this install's evidence it cannot attribute. Rows whose src went
  *    unrecorded group as 'unknown' and never emit, the same
@@ -110,7 +109,7 @@ const GENERATION_LEDGER_MAX_BYTES = 4 * 1024 * 1024;
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
 const MAX_TITLE_CHARS = 200;
 /** The fleet's own repository label: generation evidence is this install's machinery, never another target's. */
-const FLEET_REPO_NAME = 'phantom';
+const FLEET_REPO = 'ashlrai/phantom';
 /** Example job ids quoted per cell inside one prompt. */
 const MAX_EXAMPLES = 3;
 /** The catch-all src bucket — a missing src is corrupt evidence, never a channel. */
@@ -135,11 +134,6 @@ export interface GeneratorYieldItemsOptions {
    * ledger is missing — withheld evidence, never zero-filled tallies.
    */
   ledgerText?: string | null;
-}
-
-/** The repository name both vocabularies record: the last path segment, lowercased. */
-function fleetRepoName(repo: string): string {
-  return (repo.split('/').pop() ?? repo).trim().toLowerCase();
 }
 
 /** Ledger-recorded names are unbounded-shaped strings; scrub, flatten and cap before use. */
@@ -352,7 +346,8 @@ function cellItem(cell: GenerationCell, repo: string, windowDays: number, trunca
 export async function generatorYieldBacklogItems(opts: GeneratorYieldItemsOptions): Promise<CloudBacklogItem[]> {
   try {
     const repo = opts.repo.trim();
-    if (repo === '' || fleetRepoName(repo) !== FLEET_REPO_NAME) return [];
+    const repoKey = repo.toLowerCase();
+    if (repoKey !== FLEET_REPO && repoKey !== 'phantom') return [];
     const now = opts.now ?? Date.now();
     let text: string | null;
     let truncated = false;
