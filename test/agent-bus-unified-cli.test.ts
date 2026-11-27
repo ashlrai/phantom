@@ -1534,6 +1534,7 @@ describe('phm agents bus (unified)', () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CLI-CLAIM', '--title', 'Claim me',
       '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-CLI-CLAIM', '--claim', 'repo:ashlrai/phantom',
+      '--tier', 'work', '--scope', 'src/core/**', '--acceptance', 'tests green',
       '--id', 'cli-wc'])).json).toMatchObject({ status: 'posted' });
 
     // The default resolves the declared queue:<jobId> key; --owner defaults to PHM_AGENT_ID.
@@ -1542,7 +1543,9 @@ describe('phm agents bus (unified)', () => {
     expect(claimed.code).toBe(0);
     expect(claimed.json).toMatchObject({ status: 'acquired',
       job: { id: 'RQ-CLI-CLAIM', owner: 'agent:atlas', status: 'queued', repo: 'ashlrai/phantom',
-        postId: 'cli-wc', statusId: null },
+        postId: 'cli-wc', statusId: null, to: 'leaders', provider: expect.any(String),
+        claimKeys: ['queue:RQ-CLI-CLAIM', 'repo:ashlrai/phantom'], updatedAt: expect.any(Number),
+        dispatch: { tier: 'work', scope: 'src/core/**', acceptance: 'tests green' } },
       claim: { claimKey: 'queue:RQ-CLI-CLAIM', owner: 'worker-1', leaseMs: 600000 } });
     expect(claimed.json.claim.token).toMatch(/^[a-f0-9]{64}$/);
     // The new hold joins the job on the feed read, owner label and all.
@@ -1576,6 +1579,9 @@ describe('phm agents bus (unified)', () => {
       '--lease-ms', '600000', '--owner', 'worker-3', '--root', root], t => text.push(t), () => {}, {})).toBe(1);
     expect(text.join('\n')).toContain('conflict repo:ashlrai/phantom');
     expect(text.join('\n')).toContain('RQ-CLI-CLAIM(queued)');
+    // The echoed job line carries the announcement's dispatch spec, so the
+    // work order is visible without a separate `work feed --job` read.
+    expect(text.join('\n')).toContain('tier=work scope="src/core/**" acceptance="tests green"');
   });
 
   it('claims the next claimable work-feed job in one step', async () => {

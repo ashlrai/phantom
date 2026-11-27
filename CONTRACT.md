@@ -3371,10 +3371,15 @@ declared claim keys (`queue:<jobId>` preferred, else the first declared; an
 explicit `key` must be declared) and acquires through the same
 `executeBusClaimBody` path, so overlap with every other claim origin still
 decides in one place. `BusWorkJobClaimResult` echoes the announced job
-(`{id, owner, repo, title, status, detail?, postId, statusId}` — `postId`/
-`statusId` the feed job's retained `work.post`/`work.status` receipt wire
-ids, so `agents bus show <postId>` reads the announcement behind every
-outcome that found it) on every outcome that found it:
+(`{id, owner, repo, title, status, detail?, postId, statusId, to, provider,
+claimKeys, dispatch?, updatedAt}` — `postId`/`statusId` the feed job's retained
+`work.post`/`work.status` receipt wire ids, so `agents bus show <postId>`
+reads the announcement behind every outcome that found it; `to`/`provider`/
+`claimKeys`/`dispatch?`/`updatedAt` the announcement's own routing label,
+resolved provider, full declared claim-key set, optional dispatch spec and
+newest receipt time, so the claim response is the complete work order and a
+claimant never re-reads `work feed --job` for it) on every outcome that
+found it:
 `acquired` carries the claim with the fencing token for its acquirer only,
 `conflict` the holder without one, and
 `invalid`/`refused`/`unavailable`/`retryable`/`full` carry a slug `reason`
