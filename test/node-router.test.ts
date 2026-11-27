@@ -54,6 +54,22 @@ describe('node router', () => {
     expect(nodes).toEqual(['a', 'b', 'a', 'b']);
   });
 
+  it('scopes the preview without skipping earlier reservations on a shared node', () => {
+    const f = fixture();
+    const shared = f.box.join('shared', { owners: ['a', 'b'], slots: 1 })!;
+    f.box.enqueue('first', { owner: 'a' });
+    f.box.enqueue('second', { owner: 'b' });
+
+    const scoped = f.box.plan('b');
+    expect(scoped).toEqual([expect.objectContaining({ jobId: 'second', owner: 'b', nodeId: null })]);
+    expect(scoped).toEqual(f.box.view(['b']).routes);
+    const pulled = f.box.pull(shared)!;
+    expect(pulled.job.id).toBe('first');
+    expect(f.box.complete(pulled.claim, 'done')).toBe(true);
+    expect(f.box.plan('b')).toEqual([{ jobId: 'second', owner: 'b', nodeId: 'shared' }]);
+    expect(f.box.pull(shared)?.job.id).toBe('second');
+  });
+
   it('requires a live local gh-auth heartbeat for gh jobs and explains the fix', () => {
     const f = fixture();
     const s = f.box.join('n', { owners: ['o'], caps: ['gh'] })!;
