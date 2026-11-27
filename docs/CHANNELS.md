@@ -760,7 +760,24 @@ is `missing` (verified-empty: no parked rows can exist), an unreadable or
 malformed one `degraded` — the listed rows are a floor, never a complete
 set — and a throwing read `unavailable`, never an empty queue passed off
 as fact; deep links `phm fleet queue-parked`, `phm fleet parked`, `phm
-fleet autopilot --once`) — and each item carries `act` deep-link commands (`phm fleet
+fleet autopilot --once`) — and FIXUP-MAIN jobs whose published fix PRs
+never reached a terminal outcome (the same `readStuckFixes` fold of
+`<runsDir>/metrics/jobs.jsonl` `phm fleet stuck-fixes` and the needs-you
+strip serve, so the surfaces can never disagree: until now a guardian
+fix that published its PR and then went quiet had no item-level inbox
+surface — the ledger already knew the job id, repo, PR url and publish
+time, but only the fleet command, the runs-history route and the strip
+could see it; each stuck fix lists once — `stuck-fix` at warn, escalated
+to high at the one-hour mark the strip calls urgent — naming the repo,
+the minutes the PR has been silent and deep-linking the PR url in the
+detail, `since` the recorded publish time and `expiresAt` null, since a
+fix PR waits on its merge outcome, never a guessed deadline; `jobIds`
+carries the FIXUP-MAIN job's own id so `--job` finds it; a missing
+`jobs.jsonl` is `missing` (verified-empty: no fix job can be on record),
+an unreadable or ledger-unknown read `unavailable` — the stuck set is
+unknown, never an empty list passed off as fact — and a torn ledger line
+is skipped, never fatal; no item is Mason-blocking; deep links `phm
+fleet stuck-fixes`, `phm fleet main-health`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -783,7 +800,8 @@ queue stuck`, `phm fleet unfed --json`, `phm queue`, `phm jobs stuck`,
 `phm fleet stray-stop --stuck --apply`, `phm fleet
 channel-health`, `phm channels slack status`, `phm imessage doctor`, `phm
 comms health --json`, `phm comms cycle`, `phm fleet queue-parked`, `phm
-fleet parked`, `phm fleet autopilot --once`). It never claims, replies, or mutates; a source
+fleet parked`, `phm fleet autopilot --once`, `phm fleet stuck-fixes`,
+`phm fleet main-health`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
@@ -799,9 +817,10 @@ delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job, a
 seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
 peer-dispatch receipt's job, a session-handoff journal's job id, a
-router-queue row's own READY id, a jobs-stuck marker's own job id, or a
+router-queue row's own READY id, a jobs-stuck marker's own job id, a
 queue-parked row's own job id, one of the gate ids its detail names, or
-one of a parked group's listed job ids —
+one of a parked group's listed job ids, or a stuck-fix row's own
+FIXUP-MAIN job id —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound

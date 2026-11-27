@@ -16,8 +16,9 @@ import { appendDraft as appendCommsDraft, writeInbox as writeCommsInbox, type Co
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type StuckFixesSourceRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
 import type { ParkedGroup, ParkedMetDep, ParkedUnmetDep } from '../src/core/fleet/runs-parked-queue.js';
+import type { StuckFixRow } from '../src/core/fleet/stuck-fixes.js';
 import type { StuckJob as RunningStuckJob } from '../src/core/fleet/running-stuck.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
@@ -5461,6 +5462,121 @@ describe('readUnifiedInbox queue parked', () => {
     const byGateStale = await readParked(pending, { filter: { job: 'RQ-DONE' } });
     expect(byGateStale.items.filter(i => i.source === 'queue-parked').map(i => i.id).sort())
       .toEqual(['queue-parked:RQ-STALE', 'queue-parked:RQ-WAIT']);
+  });
+});
+
+describe('readUnifiedInbox stuck fixes', () => {
+  const fixesRead = (over: Partial<StuckFixesSourceRead> = {}): StuckFixesSourceRead => ({
+    state: 'healthy', stuck: [], ...over,
+  });
+  const readFixes = (s: StuckFixesSourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readStuckFixes: async () => s, ...extra });
+  const stuckFix = (over: Partial<StuckFixRow> = {}): StuckFixRow => ({
+    job: 'FIXUP-MAIN-ashlrai-phantom-abc1234', repo: 'ashlrai/phantom',
+    prUrl: 'https://github.com/ashlrai/phantom/pull/4242',
+    publishedAt: new Date(now - 45 * 60_000).toISOString(), ageMinutes: 45, ...over,
+  });
+
+  it('lists each stuck fix PR as a warn naming repo, PR url, job id, publish time and acts', async () => {
+    const inbox = await readFixes(fixesRead({ stuck: [
+      stuckFix(),
+      stuckFix({ job: 'FIXUP-MAIN-ashlrai-website-def5678', repo: null,
+        prUrl: 'https://github.com/ashlrai/website/pull/77', ageMinutes: 130,
+        publishedAt: new Date(now - 130 * 60_000).toISOString() }),
+    ] }));
+    expect(inbox.sources['stuck-fixes']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'stuck-fixes');
+    expect(items).toHaveLength(2);
+
+    const fix = items.find(i => i.id === 'stuck-fixes:FIXUP-MAIN-ashlrai-phantom-abc1234')!;
+    expect(fix).toMatchObject({
+      kind: 'stuck-fix', severity: 'warn', blocking: false,
+      title: 'ashlrai/phantom fix PR stuck 45 min',
+      since: new Date(now - 45 * 60_000).toISOString(), expiresAt: null,
+      jobIds: ['FIXUP-MAIN-ashlrai-phantom-abc1234'],
+      act: ['phm fleet stuck-fixes', 'phm fleet main-health'],
+    });
+    expect(fix.detail).toContain('job FIXUP-MAIN-ashlrai-phantom-abc1234');
+    expect(fix.detail).toContain('https://github.com/ashlrai/phantom/pull/4242');
+    expect(fix.detail).toContain('no MERGED/CLOSED outcome recorded');
+
+    // Past the hour mark the same row the needs-you strip calls urgent
+    // lists 'high' here; an unknown repo falls back to the job id in the title.
+    const old = items.find(i => i.id === 'stuck-fixes:FIXUP-MAIN-ashlrai-website-def5678')!;
+    expect(old).toMatchObject({ severity: 'high', title: 'unknown repo fix PR stuck 130 min' });
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readFixes(fixesRead({ state: 'missing', stuck: [stuckFix()] }));
+    expect(missing.sources['stuck-fixes']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+
+    const unavailable = await readFixes(fixesRead({ state: 'unavailable', stuck: [stuckFix()] }));
+    expect(unavailable.sources['stuck-fixes']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+
+    const throwing = await read({ readStuckFixes: async () => { throw new Error('ledger boom'); } });
+    expect(throwing.sources['stuck-fixes']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+
+    // A degraded read still lists what it found, pending counted.
+    const degraded = await readFixes(fixesRead({ state: 'degraded', stuck: [stuckFix()] }));
+    expect(degraded.sources['stuck-fixes']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(1);
+  });
+
+  it('reads the real metrics/jobs.jsonl under runsDir: stuck, terminal, fresh and non-fix rows', async () => {
+    mkdirSync(join(runsDir, 'metrics'), { recursive: true, mode: 0o700 });
+    const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
+    writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), [
+      // Stuck: PR published 45m ago, no terminal row.
+      JSON.stringify({ job: 'FIXUP-MAIN-ashlrai-phantom-abc1234', repo: 'ashlrai/phantom',
+        url: 'https://github.com/ashlrai/phantom/pull/4242', ts: iso(45 * 60_000) }),
+      // Terminal: a MERGED row for the same job — never stuck.
+      JSON.stringify({ job: 'FIXUP-MAIN-ashlrai-phantom-merged99', state: 'MERGED',
+        url: 'https://github.com/ashlrai/phantom/pull/9', ts: iso(50 * 60_000) }),
+      // Fresh: PR published 10m ago — inside the 20-minute bound.
+      JSON.stringify({ job: 'FIXUP-MAIN-ashlrai-phantom-fresh11',
+        url: 'https://github.com/ashlrai/phantom/pull/10', ts: iso(10 * 60_000) }),
+      // Not a fix job: ordinary job ids never list.
+      JSON.stringify({ job: 'RQ-OTHER-1', url: 'https://github.com/ashlrai/phantom/pull/11', ts: iso(90 * 60_000) }),
+      // Torn line: skipped by the fold, never fatal.
+      '{not json',
+    ].join('\n'), { mode: 0o600 });
+
+    const inbox = await read();
+    expect(inbox.sources['stuck-fixes']).toEqual({ state: 'healthy', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'stuck-fixes');
+    expect(items.map(i => i.id)).toEqual(['stuck-fixes:FIXUP-MAIN-ashlrai-phantom-abc1234']);
+    expect(items[0]).toMatchObject({ kind: 'stuck-fix', severity: 'warn', jobIds: ['FIXUP-MAIN-ashlrai-phantom-abc1234'] });
+    expect(items[0]!.since).toBe(iso(45 * 60_000));
+  });
+
+  it('reports a missing ledger as missing and an unlistable one as unavailable', async () => {
+    // No metrics/jobs.jsonl at all — verified-absent, no fix PR can be on record.
+    const missing = await read();
+    expect(missing.sources['stuck-fixes']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+
+    // A directory where the ledger belongs is a read failure, not verified-empty.
+    mkdirSync(join(runsDir, 'metrics', 'jobs.jsonl'), { recursive: true });
+    const unavailable = await read();
+    expect(unavailable.sources['stuck-fixes']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = fixesRead({ stuck: [stuckFix(), stuckFix({ job: 'FIXUP-MAIN-ashlrai-phantom-zzz9999' })] });
+    const bySource = await readFixes(pending, { filter: { source: 'stuck-fixes' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'stuck-fixes')).toBe(true);
+    const byKind = await readFixes(pending, { filter: { kind: 'stuck-fix' } });
+    expect(byKind.items).toHaveLength(2);
+    expect(byKind.sources['stuck-fixes']).toEqual({ state: 'healthy', pending: 2 });
+    // The FIXUP-MAIN job id is the item's own citation — --job names it directly.
+    const byJob = await readFixes(pending, { filter: { job: 'FIXUP-MAIN-ashlrai-phantom-zzz9999' } });
+    expect(byJob.items.filter(i => i.source === 'stuck-fixes').map(i => i.id))
+      .toEqual(['stuck-fixes:FIXUP-MAIN-ashlrai-phantom-zzz9999']);
   });
 });
 
