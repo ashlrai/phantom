@@ -237,13 +237,16 @@ export function readFleetReplica(now = Date.now()): { source: FleetReplicaSource
   let replica: FleetReplica | null = null;
   try { replica = parseReplica(cache?.replica); } catch { /* no valid observation */ }
   const asOf = replica?.generatedAt ?? null;
-  const age = asOf && validStamp(cache?.receivedAt)
-    ? Math.max(0, now - Date.parse(asOf), now - Date.parse(cache.receivedAt)) : null;
+  const receivedAt = validStamp(cache?.receivedAt) ? Date.parse(cache.receivedAt) : null;
+  const clockMovedBack = receivedAt !== null && receivedAt > now;
+  const age = asOf && receivedAt !== null && !clockMovedBack
+    ? Math.max(now - Date.parse(asOf), now - receivedAt) : null;
   const stale = age === null || age > FRESH_MS;
   return { source: {
     machine: replica?.machine ?? leader, via: 'leader-replica', asOf,
     ageSeconds: age === null ? null : Math.floor(age / 1000), stale,
-    reason: stale ? `leader unreachable since ${cache?.receivedAt ?? 'never reached'}` : null,
+    reason: clockMovedBack ? 'leader replica receipt is ahead of the worker clock'
+      : stale ? `leader unreachable since ${cache?.receivedAt ?? 'never reached'}` : null,
   }, replica: stale ? null : replica };
 }
 export function fleetReplicaStatus(now = Date.now()) {
@@ -292,7 +295,8 @@ export async function syncFleetReplica(options: { leader?: string; claims?: read
   if (!leader) return fleetReplicaStatus();
   const cache = readCache(leader);
   const now = Date.now();
-  if (!options.force && cache && now - Date.parse(cache.lastAttemptAt) < SYNC_MS) return fleetReplicaStatus();
+  const attemptAge = cache ? now - Date.parse(cache.lastAttemptAt) : null;
+  if (!options.force && attemptAge !== null && attemptAge >= 0 && attemptAge < SYNC_MS) return fleetReplicaStatus();
   const root = poolDirectory();
   const next: Cache = { leader, lastAttemptAt: new Date(now).toISOString(), lastError: null,
     receivedAt: cache?.receivedAt ?? null, replica: cache?.replica ?? null };

@@ -429,6 +429,9 @@ grant is in force there; no grant is imported. After two minutes without a
 fresh observation, the worker exposes null slot and busy counts (not zero),
 and reports when the leader was last reached. Queue and resource requests
 return 503 with the observation source and reason when data is unavailable.
+If the worker clock moves behind the receipt time, the cached observation
+has unknown age and counts until a usable snapshot arrives. A refresh attempt
+dated ahead of the worker clock does not delay the next refresh.
 
 The tree carries `version: 1`; it changes only when a field is removed or
 changes meaning. Every node has `provider`, `model`, `state` (`running`,
