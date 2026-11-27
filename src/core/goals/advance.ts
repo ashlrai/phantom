@@ -154,8 +154,8 @@ const M270_FRONTIER_CANDIDATES: readonly EngineId[] = ['claude', 'codex', 'kimi'
  * checks mergeAuthority config independently — an engine promoted here does NOT
  * gain merge authority.
  */
-function resolveFrontierTrio(cfg: AshlrConfig, engineTierOf: typeof import('../run/sandboxed-engine.js').engineTierOf): EngineId[] {
-  return M270_FRONTIER_CANDIDATES.filter((e) => engineTierOf(e, cfg) === 'frontier');
+function resolveFrontierTrio(cfg: AshlrConfig, resolveEngineSpec: typeof import('../run/engine-registry.js').resolveEngineSpec): EngineId[] {
+  return M270_FRONTIER_CANDIDATES.filter((e) => resolveEngineSpec(e, cfg)?.tier === 'frontier');
 }
 
 /**
@@ -186,8 +186,8 @@ async function resolveFrontierEngines(cfg: AshlrConfig): Promise<EngineId[]> {
     // engineInstalled is NOT called here because this function may run in contexts
     // where engines.js is not loaded; the caller guards on an empty result and
     // falls back to the swarm path.
-    const { engineTierOf } = await import('../run/sandboxed-engine.js');
-    return resolveFrontierTrio(cfg, engineTierOf).filter((e) => allowed.has(e));
+    const { resolveEngineSpec } = await import('../run/engine-registry.js');
+    return resolveFrontierTrio(cfg, resolveEngineSpec).filter((e) => allowed.has(e));
   } catch {
     return [];
   }
