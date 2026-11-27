@@ -152,7 +152,7 @@ export async function readPoolsWaste(opts: { runsDir?: string; now?: () => numbe
     import('./runs-resource-ledger.js'), import('./pools-view.js'), import('./usage-history.js'), import('./queue-supply.js'), import('./runs-dir-state.js'),
   ]);
   const runs = opts.runsDir === undefined ? {} : { runsDir: opts.runsDir };
-  const view = buildPoolsView(await readResourceLedger({ ...runs, now: () => nowMs }), nowMs, await readUsageSamples({ nowMs }));
+  const view = buildPoolsView(await readResourceLedger({ ...runs, now: () => nowMs }), nowMs, await readUsageSamples({ ...runs, nowMs }));
   const [supply, state] = await Promise.all([
     readQueueSupply({ ...runs, now: () => nowMs }).catch(() => null),
     readFleetRunsDirState({ ...runs, now: () => nowMs }).catch(() => null),

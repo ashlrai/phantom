@@ -171,6 +171,36 @@ describe('readers', () => {
     }
   });
 
+  it('reads stored usage samples from the same runs dir as the ledger', async () => {
+    const runsDir = await mkdtemp(join(tmpdir(), 'phantom-queue-supply-'));
+    try {
+      const queue = join(runsDir, 'queue');
+      const pool = 'codex-supply-test';
+      const reset = at(31);
+      await mkdir(queue);
+      await mkdir(join(runsDir, 'metrics'));
+      await writeFile(join(queue, 'status.json'), JSON.stringify({
+        last_tick: at(0), lanes: { [pool]: { running: 0, target: 2 } },
+        // No reported burn: the burn can only come from the stored readings.
+        budget: { [pool]: { weekly_used_pct: 72, observed_at: at(-0.1), reset_at: reset } },
+      }));
+      await writeFile(join(queue, 'ready.tsv'), '');
+      await writeFile(join(runsDir, 'dispatch-events.log'), '');
+      await writeFile(join(runsDir, 'metrics', 'usage-history.json'), JSON.stringify({
+        schema: 'fleet.usage-history.v1',
+        rows: [
+          { pool, used_pct: 40, observed_at: at(-5), reset_at: reset, source: 'test' },
+          { pool, used_pct: 56, observed_at: at(-2.5), reset_at: reset, source: 'test' },
+        ],
+      }));
+      const data = await readQueueSupply({ runsDir, now: () => NOW });
+      // The stored readings fit a ~6.5 %/h burn: 28% left idles about 4.3 h, not the 31 h to reset.
+      expect(row(data, pool)).toMatchObject({ state: 'empty', ready: 0, idle_hours: 4.3 });
+    } finally {
+      await rm(runsDir, { recursive: true, force: true });
+    }
+  });
+
   it('counts ready jobs by lane and leaves parked rows out', () => {
     const tsv = ['RQ-A\tphantom\tclaude\twork\t/p/a', 'RQ-B\tphantom\tclaude\twork\t/p/b', 'RQ-C\tphantom\tPARKED-BYHAND.codex-local\twork\t/p/c', ''].join('\n');
     expect(countReady(tsv)).toEqual({ claude: 2 });
