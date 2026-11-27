@@ -1070,7 +1070,11 @@ status or a job with no claim keys refuses before any lease; a refused or
 unreadable feed refuses rather than claiming against a guessed job. The
 result echoes the announced job — with the feed's `postId`/`statusId`
 receipt citations, so `agents bus show <postId>` reads the announcement
-behind every outcome — and, on `acquired`, the fencing token for its
+behind every outcome, plus the announcement's own routing label `to`,
+resolved `provider`, full declared `claimKeys`, optional `dispatch` spec
+and newest `updatedAt`, so the claim response is the complete work order
+and a claimant never re-reads `work feed --job` for it — and, on
+`acquired`, the fencing token for its
 acquirer only; a conflict names the holder, never a token. Every outcome
 that resolved the job also carries `scope` — the live coordination holds on
 the job's declared claim keys, each `{claimKey, owner, leaseUntil}` under the
