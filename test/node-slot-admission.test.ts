@@ -97,4 +97,51 @@ describe('node slot admission', () => {
     expect(nodes.view(['mason']).nodes[0]?.slots).toBe(0);
     expect(() => executeNodeFleet('join', ['--node', 'bad', '--owner', 'mason', '--slots', '65'], nodes)).toThrow();
   });
+
+  it.each([
+    ['memory-unmeasured', 'memory could not be measured'],
+    ['memory-pressure', 'memory pressure'],
+    ['disk-unmeasured', 'free disk could not be measured'],
+    ['disk-pressure', 'free disk is below the floor'],
+  ] as const)('names a reported %s hold in the unroutable fix', (held, words) => {
+    const { nodes } = fixture();
+    const session = nodes.join('held-node', { owners: ['mason'] })!;
+    nodes.heartbeat(session, { capacity: { hostId: 'h', ramBytes: 16 * 1024 ** 3, slots: 0, held, sampledAtMs: 1000 } });
+    nodes.enqueue('job', { owner: 'mason' });
+    const fix = nodes.plan()[0]?.fix ?? '';
+    expect(fix).toContain(words);
+    expect(fix).toContain('phm node status');
+    // A held node is not busy: the wait-for-work advice cannot help it.
+    expect(fix).not.toContain('Wait for work to finish');
+  });
+
+  it('keeps the wait advice for a node at its slot bound without a hold', () => {
+    const { nodes } = fixture();
+    nodes.join('zero', { owners: ['mason'], slots: 0 });
+    nodes.enqueue('job', { owner: 'mason' });
+    expect(nodes.plan()[0]?.fix).toContain('Wait for work to finish');
+  });
+
+  it('names the hold and the busy bound when both block a job', () => {
+    const { nodes } = fixture();
+    const held = nodes.join('held-node', { owners: ['mason'] })!;
+    nodes.heartbeat(held, { capacity: { hostId: 'h', ramBytes: 16 * 1024 ** 3, slots: 0, held: 'memory-unmeasured', sampledAtMs: 1000 } });
+    nodes.join('busy-node', { owners: ['mason'], slots: 1 });
+    nodes.enqueue('first', { owner: 'mason' });
+    nodes.enqueue('second', { owner: 'mason' });
+    const fix = nodes.plan().find(a => a.jobId === 'second')?.fix ?? '';
+    expect(fix).toContain('memory could not be measured');
+    expect(fix).toContain('at their slot bound');
+  });
+
+  it('names a pool host hold from the shared capacity view', () => {
+    const store = new MemoryStore();
+    const now = 1_000;
+    store.state.pool = { primary: 'a', backup: 'b', active: 'primary', epoch: 1, heartbeatAt: now };
+    const nodes = new DriveNodes(store, { now: () => now });
+    const session = nodes.join('worker', { owners: ['mason'] })!;
+    nodes.heartbeat(session, { capacity: { hostId: 'shared-host', ramBytes: 16 * 1024 ** 3, slots: 0, held: 'disk-unmeasured', sampledAtMs: now } });
+    nodes.enqueue('job', { owner: 'mason' });
+    expect(nodes.plan()[0]?.fix).toContain('free disk could not be measured');
+  });
 });

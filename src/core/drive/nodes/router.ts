@@ -101,6 +101,29 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
   return hosts;
 }
 
+/** Plain words for the capacity holds a node sample can report (isNodeCapacity);
+ * the same codes `phm node pull` already translates for its empty-pull note. */
+const HELD_WORDS: Record<string, string> = {
+  'memory-unmeasured': 'memory could not be measured',
+  'memory-pressure': 'memory pressure',
+  'disk-unmeasured': 'free disk could not be measured',
+  'disk-pressure': 'free disk is below the floor',
+};
+
+/** The unroutable-job fix when capacity is the blocker. A node whose last beat
+ * reported a hold is not "busy": an unmeasured hold (a platform with no memory
+ * reader stays held forever, docs/NODES.md) never recovers, so the fix names the
+ * hold and the command that shows it instead of advising a wait that cannot
+ * help. A node merely at its slot bound keeps the wait advice. */
+function capacityFix(owner: string, held: ReadonlySet<string>, busy: boolean): string {
+  if (held.size === 0) {
+    return `Nodes owned by '${owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`;
+  }
+  const words = [...held].map(h => HELD_WORDS[h] ?? h).join(' and ');
+  const others = busy ? ' Other eligible nodes are at their slot bound.' : '';
+  return `Nodes owned by '${owner}' are held (${words}).${others} Held nodes take no work until a beat reports headroom again. Run: phm node status --owner ${owner}`;
+}
+
 /** Deterministic plan: pools rank measured free host slots per observed execution millisecond;
  * standalone legacy queues retain their load policy. Ties break by node ID.
  * Pure: the same state and clock always produce the same plan. Jobs without an
@@ -109,6 +132,16 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
 export function planRoutes(state: NodesState, now: number, owner?: string): RouteAssignment[] {
   const capacity = nodeCapacityView(state, now);
   const hosts = new Map(capacity.flatMap(h => h.nodeIds.map(id => [id, h] as const)));
+  // The hold a capacity-blocked node reported, or null when the block is a full
+  // slot bound, stale or absent telemetry. Pool routing gates on the shared host
+  // view, whose held comes from any fresh measured member of that physical host.
+  const holdOf = (node: NodeRecord): string | null => {
+    const host = state.pool ? hosts.get(node.nodeId) : undefined;
+    if (host) return host.held;
+    // A reported hold always zeroes the advertised bound (isNodeCapacity), so a
+    // positive bound with a stale held sample is busy, not held.
+    return node.slots === 0 ? node.capacity?.held ?? null : null;
+  };
   const measuredLatency = capacity.map(h => h.latency.medianMs).filter((n): n is number => n !== null && n > 0);
   const neutralLatency = measuredLatency.length ? measuredLatency.reduce((a, b) => a + b, 0) / measuredLatency.length : 1;
   const reserved = new Map<string, number>();
@@ -119,14 +152,26 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
     const reasons = new Map<string, number>();
+    const heldBlocked = new Set<string>();
+    let slotsBusy = false;
     let best: NodeRecord | null = null;
     for (const node of nodes) {
       const why = shortfall(node, job);
       if (why) { reasons.set(why.split(':')[0]!, 1); continue; }
-      if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) { reasons.set('capacity', 1); continue; }
+      if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) {
+        reasons.set('capacity', 1);
+        const held = holdOf(node);
+        if (held === null) slotsBusy = true; else heldBlocked.add(held);
+        continue;
+      }
       const host = hosts.get(node.nodeId);
       if (state.pool && (!host || !host.eligibleNodeIds.includes(node.nodeId) ||
-          (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) { reasons.set('capacity', 1); continue; }
+          (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) {
+        reasons.set('capacity', 1);
+        const held = holdOf(node);
+        if (held === null) slotsBusy = true; else heldBlocked.add(held);
+        continue;
+      }
       const score = (n: NodeRecord) => {
         const h = hosts.get(n.nodeId)!;
         return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency) : -load.get(n.nodeId)!;
@@ -145,7 +190,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
     const fix = !nodes.some(n => n.owners?.includes(job.owner!))
       ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
       : reasons.has('capacity')
-        ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
+        ? capacityFix(job.owner, heldBlocked, slotsBusy)
       : reasons.has('declined') && !reasons.has('caps')
         ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
       : reasons.has('caps')
