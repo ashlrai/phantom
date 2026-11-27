@@ -405,6 +405,19 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
         // worker's 'no-local-provider-login' hold makes for a lane-less join.
         autoCaps = lanes;
         if (lanes.length > 0) flags.set('--caps', lanes.join(','));
+      } else {
+        // An explicit --caps that names nothing is a scripting accident
+        // (`--caps "$EMPTY"`), not a deliberate empty advertisement: silently
+        // joining with zero work caps where a bare join would have
+        // auto-detected this machine's sign-ins leaves a first-run node that
+        // looks joined but can never take a lane job. The pool wire still
+        // accepts an empty --caps (a lane-less worker legitimately joins with
+        // none), so this refusal stays on the standalone CLI path only.
+        const named = (flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean);
+        if (named.length === 0) {
+          throw new UsageError('bad-caps', '--caps needs at least one capability.',
+            'Omit --caps to auto-detect this machine\'s sign-ins, or name capabilities such as build,gh. Run: phm node --help');
+        }
       }
       // A standalone join advertises this build as a `phm-<version>` cap, the same
       // report a pool worker sends, so `phm node self-update` reads a real version

@@ -44,7 +44,9 @@ text mode; a probe that finds no sign-ins reports `autoCaps: []` and says so,
 since the node then advertises no sign-in lanes. Sign in to a provider CLI
 or `gh` and join again, or pass `--caps` to choose the advertisement
 yourself — an explicit list replaces the sign-in detection entirely
-(local-model and version caps still merge in). Either way, advertise only
+(local-model and version caps still merge in), and a `--caps` that names no
+capability is refused: omit the flag to auto-detect or name at least one.
+Either way, advertise only
 what this computer
 can actually do: jobs select nodes that advertise all their required
 capabilities and share their owner scope. For `gh` jobs, sign in locally

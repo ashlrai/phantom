@@ -83,7 +83,8 @@ when `gh auth status` passes — reported as `autoCaps` in `--json` and named in
 text mode; an empty probe reports `autoCaps: []` and says so, since the node
 then advertises no sign-in lanes. An explicit `--caps` list is the complete
 manual advertisement and skips that probe (the local-model and `phm-<version>`
-caps still merge in).
+caps still merge in); a `--caps` that names no capability is refused
+(`bad-caps`) — omit the flag to auto-detect or name at least one capability.
 A job with no live node prints a `phm node join --owner` fix that names the
 caps it needs.
 
