@@ -2762,7 +2762,9 @@ match event names case-insensitively. Timestamps follow the shared
 jobs-ledger parser, including space-separated datetimes with UTC offsets.
 Per-job phase totals and job counts exclude
 `RQ-BATCH-*` session wrappers and node-pool telemetry
-(`fleet.session-pool.v1` and `phm-node-runner.v1`). Batch member rows
+(`fleet.session-pool.v1` and `phm-node-runner.v1`). Both reports also skip
+receipts explicitly marked `launched: false`. Other receipts for the same
+job remain eligible. Batch member rows
 still contribute their own recorded boundaries. Excluded rows do not
 count as ignored events. Merge and close verdicts across
 `outcome|state|status|phase|result|conclusion` take precedence over a publish
