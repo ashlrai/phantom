@@ -41,6 +41,11 @@ export async function runAgentsCli(
   if (args[0] === 'bus' && AGENTS_BUS_UNIFIED_VERBS.has(args.find((arg, i) => i > 0 && arg !== '--json') ?? '')) {
     return runAgentsBusUnified(args.slice(1), out, err);
   }
+  // `agents <verb> --help`/`-h` prints the contract help from any position for
+  // the verbs this dispatcher owns (mesh, edges, bus contract/channels). The
+  // `agents bus` namespace keeps its exact-grammar refusal (contract help,
+  // exit 2) that test/cli-help-no-side-effects pins in HELP_STRICT_REFUSALS.
+  if (args[0] !== 'bus' && (args.includes('--help') || args.includes('-h'))) { out(HELP); return 0; }
   const json = args.includes('--json');
   if (args.filter(arg => arg === '--json').length > 1) {
     err(json ? JSON.stringify({ error: 'invalid-argument' }) : HELP);

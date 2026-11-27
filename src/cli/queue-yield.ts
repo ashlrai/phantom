@@ -1,6 +1,9 @@
 import { readGeneratorYield } from '../core/queue/generator-yield.js';
 
+const USAGE = 'Usage: phm queue yield [--since 24h] [--json]';
+
 export async function cmdQueueYield(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   let hours = 24; let json = false; let seenSince = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json' && !json) json = true;
@@ -9,7 +12,7 @@ export async function cmdQueueYield(args: string[]): Promise<number> {
       const match = /^(\d+(?:\.\d+)?)(h|d)$/.exec(args[++i] ?? '');
       if (!match) { console.error('Use --since with hours or days, such as 24h.'); return 2; }
       hours = Number(match[1]) * (match[2] === 'd' ? 24 : 1);
-    } else { console.error('Usage: phm queue yield [--since 24h] [--json]'); return 2; }
+    } else { console.error(USAGE); return 2; }
   }
   if (!Number.isFinite(hours) || hours <= 0) { console.error('Since must be positive.'); return 2; }
   const report = await readGeneratorYield(undefined, hours);
