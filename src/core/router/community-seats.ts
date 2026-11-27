@@ -276,7 +276,7 @@ export async function readOutsidePrCommunitySeats(opts: {
       window_days: windowDays, since, seats: [], coverage: null,
     };
   }
-  const parsed = parseOutsidePrOutcomeJournal(read.text);
+  const parsed = parseOutsidePrOutcomeJournal(read.text, nowMs);
   return {
     state: 'read',
     path,

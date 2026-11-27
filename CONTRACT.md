@@ -1499,7 +1499,14 @@ no-follow tail read and `parseOutsidePrOutcomeJournal`, resolving
 `runsDir` like `readRouterOutcomes` (ASHLR_RUNS_DIR, then
 `~/.ashlr-runs`); `journalPath` overrides the location and `runsDir`
 must be absolute when given. The read state is `'read'` or the tail
-read's `'missing'`/`'unreadable'`/`'not-file'`; on `'read'` the fold
+read's `'missing'`/`'unreadable'`/`'not-file'`. The parser's optional
+`throughMs` argument bounds receipts by their recorded `at` timestamp
+(inclusive) before the last appended outcome per PR and scan are
+selected. With the bound, unparseable receipt stamps count as ignored
+rows, and future receipts are skipped. Without the argument the parser
+reads all recognized receipts in append order. Community-seat reads and
+outside-PR improvement discovery pass their report time as the bound.
+On `'read'` the fold
 keeps each PR's newest outcome row inside the `windowDays` window keyed
 on `mergedAt` (unparseable stamps and stamps past `now` plus the
 future-skew bound are skipped, never counted), tallies them per recorded

@@ -227,6 +227,26 @@ describe('readOutsidePrCommunitySeats', () => {
     expect(read.coverage).toBeNull();
   });
 
+  it('selects verdicts and coverage from receipts visible at report time', async () => {
+    const later = new Date(NOW + 1);
+    writeJournal([
+      outcomeLine('acme/widgets', 11, 'no', 'devin', 2),
+      scanLine(),
+      outcomeLine('acme/widgets', 11, 'yes', 'devin', 2, { at: later.toISOString() }),
+      scanLine({ at: later.toISOString(), sourceState: 'degraded' }),
+      outcomeLine('acme/widgets', 11, 'unknown', 'devin', 2, { at: 'invalid' }),
+      scanLine({ at: 'invalid' }),
+    ]);
+    const before = await readOutsidePrCommunitySeats({ runsDir: runs, now: new Date(NOW) });
+    expect(before.seats).toMatchObject([{ prs: 1, kept: 1, reverted: 0 }]);
+    expect(before.coverage?.source_state).toBe('healthy');
+    expect(before.ignored_rows).toBe(2);
+
+    const after = await readOutsidePrCommunitySeats({ runsDir: runs, now: later });
+    expect(after.seats).toMatchObject([{ prs: 1, kept: 0, reverted: 1 }]);
+    expect(after.coverage?.source_state).toBe('degraded');
+  });
+
   it('marks a cut tail truncated while still folding the retained rows', async () => {
     // A padding line larger than the tail bound pushes the window into it;
     // the valid rows written after it stay inside the retained bytes.

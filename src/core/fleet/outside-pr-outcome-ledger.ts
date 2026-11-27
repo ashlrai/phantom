@@ -234,8 +234,10 @@ export interface OutsidePrJournalParse {
  * counted in `ignored`, never thrown on and never defaulted into
  * evidence; a foreign `kind` is ignored the same way — this file is
  * dedicated, so anything else is corruption, not data.
+ * Bounded reads require a parseable receipt timestamp and skip future
+ * receipts before selecting the standing verdict and scan.
  */
-export function parseOutsidePrOutcomeJournal(text: string): OutsidePrJournalParse {
+export function parseOutsidePrOutcomeJournal(text: string, throughMs?: number): OutsidePrJournalParse {
   const verdicts = new Map<string, OutsidePrRevertVerdict>();
   const byKey = new Map<string, OutsidePrOutcomeJournalRow>();
   let scan: OutsidePrScanJournalRow | null = null;
@@ -254,21 +256,26 @@ export function parseOutsidePrOutcomeJournal(text: string): OutsidePrJournalPars
       continue;
     }
     const kind = raw['kind'];
-    if (kind === OUTSIDE_PR_OUTCOME_SCHEMA) {
-      const row = parseOutcomeRow(raw);
-      if (row === null) {
+    const row = kind === OUTSIDE_PR_OUTCOME_SCHEMA ? parseOutcomeRow(raw)
+      : kind === OUTSIDE_PR_SCAN_SCHEMA ? parseScanRow(raw) : null;
+    if (row === null) {
+      ignored += 1;
+      continue;
+    }
+    if (throughMs !== undefined) {
+      const at = Date.parse(row.at);
+      if (!Number.isFinite(at)) {
         ignored += 1;
         continue;
       }
+      if (at > throughMs) continue;
+    }
+    if (row.kind === OUTSIDE_PR_OUTCOME_SCHEMA) {
       const key = outsidePrJournalKey(row.repo, row.number);
       verdicts.set(key, row.reverted);
       byKey.set(key, row);
-    } else if (kind === OUTSIDE_PR_SCAN_SCHEMA) {
-      const row = parseScanRow(raw);
-      if (row === null) ignored += 1;
-      else scan = row;
     } else {
-      ignored += 1;
+      scan = row;
     }
   }
   return { verdicts, outcomes: [...byKey.values()], scan, ignored };

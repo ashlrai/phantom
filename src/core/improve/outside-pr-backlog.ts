@@ -411,7 +411,7 @@ export async function outsidePrBacklogItems(opts: OutsidePrBacklogOptions = {}):
     const tail = await readLedgerTail(journalPath, OUTSIDE_PR_JOURNAL_MAX_BYTES);
     if (tail.state !== 'read' && tail.state !== 'missing') return [];
     const parsed: OutsidePrJournalParse = tail.state === 'read'
-      ? parseOutsidePrOutcomeJournal(tail.text)
+      ? parseOutsidePrOutcomeJournal(tail.text, nowMs)
       : { verdicts: new Map(), outcomes: [], scan: null, ignored: 0 };
     const cells = foldOutsidePrCells(parsed.outcomes, { nowMs, windowHours });
     // A truncated tail or ignored journal lines can only hide merges —

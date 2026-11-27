@@ -354,6 +354,21 @@ describe('outsidePrBacklogItems', () => {
     expect(items[0]!.prompt).toContain('recorded floor');
   });
 
+  it('waits for future revert evidence before surfacing a recurring failure', async () => {
+    const later = new Date(NOW + 1);
+    const dir = await runsDir('runs-future', [
+      outcomeLine('acme/widgets', 41, 'no', 2),
+      outcomeLine('acme/widgets', 42, 'yes', 3),
+      outcomeLine('acme/widgets', 43, 'yes', 4),
+      outcomeLine('acme/widgets', 44, 'no', 5),
+      outcomeLine('acme/widgets', 41, 'yes', 2, { at: later.toISOString() }),
+    ]);
+    expect(await outsidePrBacklogItems({ runsDir: dir, now: new Date(NOW) })).toEqual([]);
+    const items = await outsidePrBacklogItems({ runsDir: dir, now: later });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.prompt).toContain('3 of the recorded 4 outside merges');
+  });
+
   it('derives stable ids per repo so a refresh re-adds nothing', async () => {
     const dir = await runsDir('runs-stable', [...RECURRING, scanLine()]);
     const opts = { runsDir: dir, now: new Date(NOW) };
