@@ -8,6 +8,7 @@ export interface StateMirror {
   compareAndSwap(revision: string | null, snapshot: StateSnapshot): Promise<boolean>;
 }
 const REF = 'refs/drive/state-v1';
+const GIT_OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const EMPTY: StateSnapshot = { schema: 'drive-state.v1', records: [] };
 
 /** A caller-provisioned local bare repo, never a source checkout or network remote. */
@@ -36,12 +37,12 @@ export class GitStateMirror implements StateMirror {
     await this.check();
     const refs = await this.git(['for-each-ref', '--format=%(objectname)', REF]);
     if (!refs) return { revision: null, snapshot: { ...EMPTY, records: [] } };
-    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(refs)) throw new Error('Invalid state mirror revision');
+    if (!GIT_OID.test(refs)) throw new Error('Invalid state mirror revision');
     return { revision: refs, snapshot: parseState(await this.git(['cat-file', 'blob', refs])) };
   }
   async compareAndSwap(revision: string | null, snapshot: StateSnapshot): Promise<boolean> {
     const serialized = serializeState(snapshot);
-    if (revision !== null && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(revision)) throw new Error('Invalid state mirror revision');
+    if (revision !== null && !GIT_OID.test(revision)) throw new Error('Invalid state mirror revision');
     await this.check();
     const oid = await this.git(['hash-object', '-w', '--stdin'], serialized);
     try {

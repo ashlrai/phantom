@@ -1,11 +1,19 @@
 import { createPhantomSelfDrive, createDesktopAdapters, type ToolCall, type VerseRequest } from '../verse/desktop-adapters.js';
+import { asDriveRecord } from './pool-routing.js';
 
 export const DRIVE_TARGETS = ['devin', 'claude', 'codex', 'phantom'] as const;
 export type DriveTarget = typeof DRIVE_TARGETS[number];
-export type AppAction = 'start' | 'status' | 'send-prompt' | 'read-result';
+const APP_ACTIONS = ['start', 'status', 'send-prompt', 'read-result'] as const;
+export type AppAction = typeof APP_ACTIONS[number];
+export const DEFAULT_DRIVE_ORIGIN = 'http://127.0.0.1:7777';
 export interface AppRequest { target: DriveTarget; action: AppAction; handle?: string; prompt?: string; seat?: string; projectPath: string }
 export interface AppPorts { request: VerseRequest; desk?: ToolCall }
-const record = (v: unknown): Record<string, unknown> => v !== null && typeof v === 'object' ? v as Record<string, unknown> : {};
+export function isDriveTarget(value: string | undefined): value is DriveTarget {
+  return value !== undefined && (DRIVE_TARGETS as readonly string[]).includes(value);
+}
+export function isAppAction(value: string | undefined): value is AppAction {
+  return value !== undefined && (APP_ACTIONS as readonly string[]).includes(value);
+}
 const validHandle = (s: string | undefined): s is string => !!s && /^[A-Za-z0-9_-]{1,80}$/.test(s);
 
 /** Never fall back after a mutation: a lost response might already have spent. */
@@ -27,8 +35,8 @@ export function createAppAdapter(target: DriveTarget, ports: AppPorts) {
     if (action === 'start') {
       const discovery = await ports.request('GET', '/api/verse/bootstrap');
       if (discovery.status !== 200) throw new Error('Seat discovery unavailable');
-      const seats = record(discovery.json)['seats'];
-      const seat = Array.isArray(seats) ? seats.map(record).find(s =>
+      const seats = asDriveRecord(discovery.json)['seats'];
+      const seat = Array.isArray(seats) ? seats.map(asDriveRecord).find(s =>
         (target === 'phantom' || s['engine'] === target) && (input.seat ? s['id'] === input.seat : target !== 'phantom')) : undefined;
       if (!seat || typeof seat['id'] !== 'string') {
         // Only the existing DESK driver may touch a GUI. Its grants and
@@ -43,7 +51,7 @@ export function createAppAdapter(target: DriveTarget, ports: AppPorts) {
     }
     // Verify ownership before reading or sending: handles cannot cross targets.
     const detail = await ports.request('GET', `/api/verse/sessions/${handle}`);
-    const session = record(record(detail.json)['session']);
+    const session = asDriveRecord(asDriveRecord(detail.json)['session']);
     if (detail.status !== 200 || (target !== 'phantom' && session['engine'] !== target)) throw new Error('Session target mismatch or unavailable');
     if (action === 'send-prompt') {
       const result = await ports.request('POST', `/api/verse/sessions/${handle}/turns`, { text: prompt!.trim() });
@@ -80,8 +88,8 @@ export function loopbackDeskCall(origin: string, bearer: string): ToolCall {
       headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
     });
-    const body = record(await response.json());
-    const result = record(body['result']);
+    const body = asDriveRecord(await response.json());
+    const result = asDriveRecord(body['result']);
     if (!response.ok || body['error'] || !Array.isArray(result['content'])) throw new Error('DESK refused operation');
     return result as unknown as Awaited<ReturnType<ToolCall>>;
   };
