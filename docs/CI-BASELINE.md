@@ -554,6 +554,40 @@ job-memory, lifecycle (`started`/`exited`), aggregate
 unparsed: `exited` lines fire on ordinary test failures and on the
 stop-others SIGTERM cascade, so they can never be runner identities.
 
+The Rust toolchain jobs get the same treatment. The
+native-macos-broker-foundation job runs `rustfmt --check`, `cargo
+check`, `cargo clippy --lib --locked -- -D warnings` and `cargo test
+--lib --locked -- --nocapture` against `desktop/src-tauri`, and the
+release-build job compiles the same crate through tauri; none of their
+output carries a vitest, TAP, typecheck or lint shape, so a red master
+in the native broker used to mark every open PR unknown. Three
+identities cover the toolchain's own verdicts. rustc and clippy
+`error[EXXXX]:`/`error:` headers own their `--> <path>:<line>:<col>`
+primary spans -- crate-relative paths like `src/lib.rs` resolve under
+`desktop/src-tauri/`, absolute runner paths resolve through the same
+`/<repo>/<repo>/` checkout marker as TAP locations, and registry or
+sysroot paths never match, so dependency diagnostics stay unparsed;
+`warning:` spans never group, matching the eslint errors-only rule, and
+a `main`-thread `panicked at` line (a build-script or harness-level
+failure) groups under `(rust)` without a test verdict. cargo test
+panics group per file under `(rust-test)` only when the run printed a
+`test result: FAILED` verdict and the panicking thread is a test the
+run reported `... FAILED` (or no per-test FAILED lines appeared at
+all); `<unnamed>` threads and caught panics inside passing tests mint
+no group. `rustfmt --check` `Diff in <path> at line <n>:` headers
+group per file under `(rustfmt)`. Because the crate compiles as one
+unit, every `.rs` failure's dependency set is the workflow's own
+native-input fingerprint -- the exact files and
+`desktop/src-tauri/{src,capabilities,icons}/` prefixes ci.yml's
+cargo-inputs step hashes for the native cache key, enumerated once
+from the master tree; an unreadable or truncated tree fails the
+closure closed (unknown), never an empty set. Like the other
+non-test identities these groups can never resolve through a vitest
+pass line: `shared-baseline`, `pr-caused` or `unknown` -- never
+`probable-flake`. Cargo's own `error: could not compile`/`error:
+aborting` summaries, dependency diagnostics, doctest output and
+passing runs stay unparsed.
+
 Two unaffected fresh PRs at distinct head commits sharing a failure produce
 `queue-master-fix` and a ready brief. PRs at the same commit remain visible in
 the group but contribute only one head toward that threshold. Test/import
