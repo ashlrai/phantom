@@ -367,6 +367,7 @@ describe('lanes, presence and the router seam', () => {
     try {
       await vi.advanceTimersByTimeAsync(0);
       await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+      await vi.waitFor(() => expect(h.ticks.at(-1)?.holdProduction).toBe('Mirror preparation is in progress.'));
       expect(h.ticks.at(-1)).toMatchObject({ at: new Date(NOW).toISOString(),
         holdProduction: 'Mirror preparation is in progress.' });
       expect(h.ticks.at(-1)!.lanes.find(l => l.lane === 'local')?.slots).toBeGreaterThan(0);
@@ -396,6 +397,29 @@ describe('lanes, presence and the router seam', () => {
       await running;
       vi.useRealTimers();
     }
+  });
+
+  it('starts mirror preparation without waiting for the first lane observation', async () => {
+    const prepare = vi.fn(h.deps.prepareMirrors!);
+    h.deps.prepareMirrors = prepare;
+    const probe = h.deps.probeLocalRuntime!;
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    h.deps.probeLocalRuntime = async (...args) => {
+      await blocked;
+      return probe(...args);
+    };
+    const hooks = createLiveTickHooks({ deps: h.deps });
+    hooks.effectiveConfig(CFG);
+    const running = hooks.beforeTick(hookCtx);
+    try {
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+      expect(h.ticks).toHaveLength(0);
+    } finally {
+      release();
+      await running;
+    }
+    expect(h.ticks.map(tick => tick.holdProduction)).toEqual(['Mirror preparation is in progress.', null]);
   });
 
   it('stops lane observations when mirror preparation reaches its deadline', async () => {
@@ -849,6 +873,33 @@ describe('afterDispatch / afterLanding', () => {
     expect(route).toMatchObject({ backend: 'llama-server', hold: null, seatDecision: { seatId: 'local' } });
     await hooks.afterDispatch(outcome({ backend: route.backend, model: route.model ?? null, seatId: route.seatDecision!.seatId, lane: route.lane }));
     expect(h.journal.at(-1)).toMatchObject({ type: 'dispatch', backend: route.backend, repo: REPO, title: 'Fix the parser', source: 'todo', seatId: 'local', proposalId: 'p-1', seatDecision: { seatId: 'local' } });
+  });
+
+  it('routes a concrete auto model before dispatch, rechecks current billing, and journals the receipt', async () => {
+    let onDemandEnabled = false;
+    const model = 'grok-4.7';
+    const offers = () => new Set([model]);
+    const hooks = createLiveTickHooks({ deps: { ...h.deps,
+      standingPolicy: () => policyFixture({ engines: ['grok-cli'] }),
+      capacitySnapshot: () => ({ v: 1, publishedAt: NOW_ISO, seats: [{ ...grokSeat(), onDemandEnabled }] }),
+      laneAutoEvidence: async () => ({ models: new Map([['grok-cli.work', 'auto']]), registry: [], docs: [],
+        score: (_lane, _tier, id) => ({ model: id, samples: 0, heldMergeRate: null, firstPassCiRate: null, usdPerHeldMerge: null }),
+        nativeModels: offers }),
+      laneAutoNativeModels: offers,
+    } });
+    const cfg = hooks.effectiveConfig(CFG);
+    await hooks.beforeTick(hookCtx);
+    const job = item({ tags: ['tier:work'] });
+    const route = hooks.route(job, cfg);
+    expect(route).toMatchObject({ backend: 'grok-cli', model, hold: null, seatDecision: { seatId: 'grok' } });
+    const request = { maxPercent: 90, itemId: job.id, model, seatId: 'grok' };
+    expect(hooks.seatAllows(route.backend, request).allowed).toBe(true);
+    onDemandEnabled = true;
+    expect(hooks.seatAllows(route.backend, request)).toMatchObject({ allowed: false, reason: expect.stringContaining('Lane auto') });
+    await hooks.afterDispatch(outcome({ itemId: job.id, model, seatId: 'grok', dispatched: false, skipReason: 'admission changed' }));
+    expect(h.journal.at(-1)).toMatchObject({ autoModel: {
+      schema: 'route.lane-auto.v1', reason: 'threshold-fallback', via: 'grok-cli.work', model,
+    } });
   });
 
   it('records a held item in the tick state (the parked Gantt)', async () => {

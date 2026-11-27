@@ -44,6 +44,8 @@ import { resolveLeaderPreferences, unavailableLeaderPreferences } from '../src/c
 import { defaultBudgetPolicy } from '../src/core/routing/policy.js';
 import { standingSeatFor } from '../src/core/authority/effective-config.js';
 import { resolveEngineSpec } from '../src/core/run/engine-registry.js';
+import { indexLaneAutoScores } from '../src/core/router/lane-auto-score.js';
+import type { LaneAutoEvidence } from '../src/core/fleet/lane-auto-model.js';
 import type { SeatCapacity } from '../src/core/routing/headroom.js';
 import type { BudgetPolicy } from '../src/core/routing/types.js';
 import type { EffectivePolicy, EffectiveSeatPolicy } from '../src/core/authority/types.js';
@@ -197,6 +199,86 @@ function item(over: Partial<WorkItem> = {}): WorkItem {
 }
 
 const LEGACY_LOCAL: LegacyRoute = { backend: 'builtin' as EngineId, tier: 'local', reason: 'legacy: builtin' };
+
+describe('resident lane auto', () => {
+  const prior = 'gpt-6.2-sol', alternative = 'gpt-6.1-sol';
+  const accountHint = 'a'.repeat(64);
+  const paidSeat = codex(5, IN_3H);
+  const included: SeatCapacity = { ...paidSeat, accountHint, subscriptionOnlyBoundary: {
+    source: 'codex-siwc-app-credit-control', accountHint, creditsEnabled: false,
+    observedAt: NOW_ISO, expiresAt: new Date(NOW + 60_000).toISOString(),
+  } };
+  const task = item({ tags: ['tier:work'] });
+  const row = (model: string) => ({ lane: 'codex-personal', tier: 'work', work_class: 'feature',
+    model, merged: true, reverted: false, ci_first_pass: true, cost_usd: 1 });
+  const evidence = (rows = [row(alternative)], over: Partial<LaneAutoEvidence> = {}): LaneAutoEvidence => ({
+    models: new Map([['codex', 'auto']]), registry: [], docs: [], score: indexLaneAutoScores(rows), workClassFor: () => 'feature',
+    nativeModels: () => new Set([prior, alternative, 'claude-opus-5-5']), ...over,
+  });
+  const pick = (input: LaneAutoEvidence, cap = included) =>
+    executionForSeat(task, LEGACY_LOCAL, cap, ctx([cap], { laneAuto: input }));
+
+  it('falls back to the tier default without enough comparable samples; honors more specific pins', () => {
+    expect(pick(evidence())).toMatchObject({ model: prior, autoModel: { via: 'codex', reason: 'threshold-fallback' } });
+    expect(pick(evidence([], { models: new Map([['codex.work', 'auto'], ['codex-personal', prior]]) }))?.autoModel).toBeUndefined();
+  });
+
+  it('ranks held merges and CI before observed USD and ignores other tiers, providers, and unknown work classes', () => {
+    const rows = [...Array.from({ length: 5 }, () => row(prior)),
+      ...Array.from({ length: 5 }, () => ({ ...row(alternative), cost_usd: 0.5 })),
+      { ...row(alternative), reverted: true, lane: 'claude' },
+      { ...row(alternative), reverted: true, lane: 'codex-cmp' },
+      { ...row(alternative), reverted: true, tier: 'fast' },
+      { ...row(alternative), reverted: true, work_class: 'repair' },
+      { ...row(alternative), reverted: true, work_class: '' }];
+    expect(pick(evidence(rows))).toMatchObject({ model: alternative, autoModel: { reason: 'scored',
+      candidates: [{ model: alternative, samples: 5, heldMergeRate: 1, firstPassCiRate: 1, usdPerHeldMerge: 0.5 },
+        { model: prior, samples: 5 }] } });
+    expect(pick(evidence(rows, { workClassFor: () => null }))).toMatchObject({
+      model: prior, autoModel: { reason: 'threshold-fallback' },
+    });
+    rows.push({ ...row(alternative), reverted: true, ci_first_pass: false, cost_usd: 0 });
+    expect(pick(evidence(rows))).toMatchObject({ model: prior, autoModel: { reason: 'scored' } });
+    rows.pop();
+    rows.push({ ...row(alternative), cost_usd: NaN });
+    expect(pick(evidence(rows))).toMatchObject({ model: prior, autoModel: { candidates: [
+      { model: alternative, usdPerHeldMerge: null }, { model: prior },
+    ] } });
+  });
+
+  it.each([
+    paidSeat, { ...included, costBasis: 'per-token' as const }, { ...included, costBasis: 'credits' as const },
+    { ...included, onDemandEnabled: true },
+  ])('holds an auto lane without a non-metered billing boundary', cap => {
+    expect(pick(evidence(), cap)).toMatchObject({ model: null, autoModel: { reason: 'held', candidates: [] } });
+  });
+
+  it('drops deprecated, retired, and unlisted models, including the tier default', () => {
+    const docs: LaneAutoEvidence['docs'] = [
+      { id: alternative, provider: 'openai', status: 'deprecated', source_url: 'https://developers.openai.com', seen_at: NOW_ISO },
+      { id: prior, provider: 'openai', status: 'retired', source_url: 'https://developers.openai.com', seen_at: NOW_ISO },
+    ];
+    expect(pick(evidence([], { docs }))).toMatchObject({ model: null, autoModel: { reason: 'held', candidates: [] } });
+    expect(pick(evidence([], { nativeModels: () => new Set([alternative]) }))).toMatchObject({
+      model: null, autoModel: { reason: 'held', candidates: [{ model: alternative, samples: 0 }] },
+    });
+    expect(pick(evidence([], { nativeModels: () => null }))).toMatchObject({
+      model: prior, autoModel: { reason: 'threshold-fallback', candidates: [{ model: prior }] },
+    });
+  });
+
+  it('excludes explicit-only Fable even when the account lists it', () => {
+    const cap: SeatCapacity = { ...claude(5, 15), accountHint, subscriptionOnlyBoundary: {
+      source: 'claude-native-extra-usage', accountHint, creditsEnabled: false,
+      observedAt: NOW_ISO, expiresAt: new Date(NOW + 60_000).toISOString(),
+    } };
+    const laneAuto = evidence([], { models: new Map([['claude-cli', 'auto']]),
+      nativeModels: () => new Set(['claude-opus-5-5', 'claude-fable-5-2']) });
+    expect(executionForSeat(task, LEGACY_LOCAL, cap, ctx([cap], { laneAuto }))).toMatchObject({
+      model: 'claude-opus-5-5', autoModel: { candidates: [{ model: 'claude-opus-5-5' }] },
+    });
+  });
+});
 
 describe('exact candidate model identity', () => {
   it('preserves a captured same-engine model unless the operator explicitly changes it', () => {
@@ -812,6 +894,11 @@ describe('shared outcome manager routing', () => {
     const route = routeWorkItem(manager(), LEGACY_LOCAL, context);
     expect(route.hold).toBeNull(); expect(route.backend).toBe('devin-cli'); expect(route.tier).toBe('mid');
     expect(route.seatDecision?.seatId).toBe('devin'); expect(route.model).toEqual(expect.any(String));
+    const auto = routeWorkItem(manager(), LEGACY_LOCAL, { ...context, laneAuto: {
+      models: new Map([['devin-cli', 'auto']]), registry: [], docs: [], score: indexLaneAutoScores([]),
+      nativeModels: () => new Set(['swe-2-1']),
+    } });
+    expect(auto).toMatchObject({ hold: { kind: 'park' }, autoModel: { reason: 'held', model: null } });
     const wrong = routeWorkItem(manager(), LEGACY_LOCAL, { ...context,
       laneEngines: { ...context.laneEngines, 'devin-cli': 'codex' as EngineId } });
     expect(wrong.hold).not.toBeNull(); expect(wrong.seatDecision?.exclusions).toContainEqual(expect.objectContaining({ seatId: 'devin',

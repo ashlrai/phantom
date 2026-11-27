@@ -106,6 +106,8 @@ export interface DispatchJournalRecord {
   proposalId: string | null;
   spentUsd: number;
   seatDecision: SeatDecision | null;
+  /** Model selection evidence for the resident lane auto decision. */
+  autoModel?: import('./lane-auto-model.js').LaneAutoReceipt;
   /** Historical task-admission explanation, never a reusable grant or quota signal. */
   resetSpending?: import('../routing/reset-spending-types.js').ResetSpendingStatus;
   hold: RouteHold | null;
@@ -248,6 +250,12 @@ export function normalizeJournalRecord(record: FleetJournalRecord): FleetJournal
     repo: cleanTitle(record.repo),
     skipReason: record.skipReason ? scrubSecrets(record.skipReason).slice(0, 400) : null,
     seatDecision: scrubDecision(record.seatDecision),
+    ...(record.autoModel ? { autoModel: {
+      ...record.autoModel,
+      via: scrubSecrets(record.autoModel.via),
+      model: record.autoModel.model === null ? null : scrubSecrets(record.autoModel.model),
+      candidates: record.autoModel.candidates.map(candidate => ({ ...candidate, model: scrubSecrets(candidate.model) })),
+    } } : {}),
     hold: scrubHold(record.hold),
     spentUsd: Number.isFinite(record.spentUsd) ? Math.max(0, record.spentUsd) : 0,
   };

@@ -728,6 +728,18 @@ describe('seat reasons as data (3.10.1)', () => {
     expect(stored.seatDecision!.summary).toBe(decision.summary);
     expect(stored.seatDecision!.exclusions[0]!.details).toEqual(decision.exclusions[0]!.details);
   });
+
+  it('scrubs credential-shaped values before persisting a lane auto receipt', () => {
+    const model = 'sk-' + 'not-a-real-credential-fixture';
+    const stored = normalizeJournalRecord({
+      v: 1, type: 'dispatch', at: iso(0), itemId: 'i', taskId: null, runId: null, repo: 'a/b', title: 't', source: 'todo',
+      backend: 'grok-cli', model: null, lane: 'grok-cli', seatId: 'grok', dispatched: false, skipReason: null, proposalId: null,
+      spentUsd: 0, seatDecision: null, hold: null,
+      autoModel: { schema: 'route.lane-auto.v1', lane: 'grok-cli', tier: 'work', via: 'grok-cli.work', model,
+        reason: 'scored', minimumSamples: 5, candidates: [{ model, samples: 5, heldMergeRate: 1, firstPassCiRate: 1, usdPerHeldMerge: null }] },
+    });
+    expect(stored).toMatchObject({ autoModel: { model: '[REDACTED]', candidates: [{ model: '[REDACTED]', samples: 5 }] } });
+  });
 });
 
 

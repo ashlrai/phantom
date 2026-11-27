@@ -3520,6 +3520,8 @@ export async function readRouterOutcomes(opts: {
   runsDir?: string;
   lane?: string;
   ashlarDir?: string;
+  /** Receive the latest recorded work-market class by exact job id, including unlaunched jobs. */
+  onRecordedWorkClasses?: (classes: ReadonlyMap<string, string>) => void;
   /**
    * Authority-ledger evidence rows behind the revert join. Absent reads the
    * live `ledgerSnapshot('cached')` verified index; `null` skips the
@@ -3543,6 +3545,10 @@ export async function readRouterOutcomes(opts: {
   const marketRead = await readLedgerTail(join(runsDir, ROUTER_MARKET_LEDGER_RELATIVE));
   const marketState = marketRead.state;
   const marketTruncated = marketRead.state === 'read' ? marketRead.truncated : false;
+  const marketThrough = reportStartedAt / 1000;
+  const workClasses = marketRead.state === 'read' && (read.state === 'read' || opts.onRecordedWorkClasses)
+    ? foldRouteDecisionWorkClasses(marketRead.text, marketThrough) : new Map<string, string>();
+  opts.onRecordedWorkClasses?.(workClasses);
   const emptyTagRead = await readLedgerTail(join(runsDir, ROUTER_EMPTY_TAGS_LEDGER_RELATIVE));
   const emptyTagState = emptyTagRead.state;
   const emptyTagTruncated = emptyTagRead.state === 'read' ? emptyTagRead.truncated : false;
@@ -3577,10 +3583,6 @@ export async function readRouterOutcomes(opts: {
       launch_cost_state: launchCostState, launch_cost_truncated: launchCostTruncated,
       cross_review_state: crossReviewState, cross_review_truncated: crossReviewTruncated, truncated: false };
   }
-  const marketThrough = reportStartedAt / 1000;
-  const workClasses = marketRead.state === 'read'
-    ? foldRouteDecisionWorkClasses(marketRead.text, marketThrough)
-    : new Map<string, string>();
   const authorityEvidence = opts.authorityEvidence === undefined
     ? await liveAuthorityEvidence()
     : opts.authorityEvidence;

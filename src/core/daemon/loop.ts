@@ -7514,6 +7514,11 @@ export async function tick(
         assignmentReason = routed.reason;
         assignedBy = 'router';
         if (backend !== 'builtin' && !withinLimit(backend, routingCfg)) {
+          if (routed.autoModel) return { item, spentUsd: 0, dispatched: false, dispatch: dispatchTrace(item, {
+            backend, tier: backendTier, model: selectedModel, assignedBy: 'router',
+            reason: 'The selected lane auto model is at its engine quota; no fallback was used.',
+            dispatched: false, runId: attemptId, trajectoryId: `run:${attemptId}`, skipReason: 'throttled',
+          }) };
           assignmentReason = `${assignmentReason}; quota fallback to builtin`;
           assignedBy = 'quota-fallback';
           backend = 'builtin';
@@ -8092,7 +8097,7 @@ export async function tick(
         // threshold from the harness / Leader routing weights). The config's
         // own bestOfN / bestOfNCandidates never apply there: they were not
         // written against the grant's lanes and reserves. No plan ⇒ one attempt.
-        const standingBonPlan = standingTick && !managerCandidate && !isTrustedGeneratedRepairItem(item)
+        const standingBonPlan = standingTick && !standingRoute?.autoModel && !managerCandidate && !isTrustedGeneratedRepairItem(item)
           ? standingBestOfNPlan(hooks, item, resolveSubscriptionMaxPercent(routingCfg))
           : null;
         // Critic/candidate paths are not uniformly provable zero-dollar here.

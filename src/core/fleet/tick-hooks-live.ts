@@ -117,7 +117,7 @@ import {
   recordHarnessOutcome,
 } from '../learn/harness-registry.js';
 import type { AutonomousBestOfNPlan } from '../run/best-of-n-policy.js';
-import type { MirrorTickPreparation } from './mirrors.js';
+import { MIRROR_TICK_ABORT_GRACE_MS, MIRROR_TICK_PREP_DEADLINE_MS, type MirrorTickPreparation } from './mirrors.js';
 import type { CloudIntakeMirror, CloudIntakeResult } from './cloud-intake.js';
 import type { DevinFleetTickResult } from '../devin/fleet-launcher.js';
 import { overnightRunInProgress } from '../daemon/overnight-status.js';
@@ -208,6 +208,7 @@ import { repoIdentityOfPath, resolveRepoLabel } from './repo-identity.js';
 import { noteTickPhase } from '../daemon/tick-progress.js';
 import { runTickPhase } from '../daemon/tick-phases.js';
 import { DEVIN_CLI_LANE, FLEET_ENGINES, grantEngineOfLane, type DispatchOutcome, type FleetEngine, type LandingRecord, type RepoHold, type RepoHoldChange, type SetRepoHoldRequest } from './fleet-types.js';
+import { laneAutoBillingAllows, loadLaneAutoEvidence, readLaneAutoNativeModels, type LaneAutoEvidence } from './lane-auto-model.js';
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -303,6 +304,8 @@ export interface LiveHooksDeps {
   subscriptionAllows(engine: EngineId, opts: { maxPercent: number; autonomous: true; budget?: BudgetPolicy }): SubscriptionAllowResult;
   isSubscriptionEngine(engine: EngineId): boolean;
   legacyRoute(item: WorkItem, cfg: AshlrConfig): RouteDecision;
+  laneAutoEvidence?: (cfg: AshlrConfig) => Promise<LaneAutoEvidence | null>;
+  laneAutoNativeModels?: typeof readLaneAutoNativeModels;
   localFleetEngine(cfg: AshlrConfig): EngineId | null;
   readTasks(): TaskQueueRead;
   /** Optional release-backed company content lane; absence never blocks fleet work. */
@@ -759,6 +762,8 @@ export function defaultLiveHooksDeps(): LiveHooksDeps {
     subscriptionAllows: (engine, opts) => subscriptionAllows(engine, opts),
     isSubscriptionEngine: (engine) => isSubscriptionEngine(engine),
     legacyRoute: (item, cfg) => routeBackend(item, cfg),
+    laneAutoEvidence: (cfg) => loadLaneAutoEvidence(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), cfg),
+    laneAutoNativeModels: readLaneAutoNativeModels,
     localFleetEngine: (cfg) => (localFleetEnabled(cfg) ? LOCAL_FLEET_ENGINE : null),
     readTasks: () => readTaskQueue(),
     syncReleaseArticles: async (signal) => (await import('../release-articles.js')).syncReleaseArticles(undefined, signal),
@@ -1151,7 +1156,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       if (!seat || !task || !Object.hasOwn(hints,seatId) || (seat.accountHint ?? null) !== hints[seatId]) return false;
       try {
         const actual = executionForSeat(task,deps.legacyRoute(task,current.cfg),seat,current.router);
-        return actual?.backend === forecast.cohort.engine && (actual.model ?? null) === forecast.cohort.model;
+        return actual?.autoModel?.reason !== 'held' && actual?.backend === forecast.cohort.engine && (actual.model ?? null) === forecast.cohort.model;
       } catch { return false; }
     }));
     const result = taskResetBudget(current.budget, current.capacity, current.policy, current.nowMs, forecasts, {maxPercent,...(deps.executionAccountMatches ? {executionAccountMatches:deps.executionAccountMatches} : {})});
@@ -1398,11 +1403,10 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       const mirrorPaused: { path: string; repo: string; reason: string }[] = [];
       let readyMirrors: MirrorTickPreparation['ready'] = [];
       if (!hookCtx.dryRun) {
-        const { MIRROR_TICK_PREP_DEADLINE_MS, MIRROR_TICK_ABORT_GRACE_MS } = await import('./mirrors.js');
         const mirrorPhase = await runTickPhase('mirror-prep', async (signal) => {
           noteTickPhase('mirror prep', `${policy.repos.length} repo(s)`);
           // Lane observations belong to the running tick, not its completion.
-          // Re-probe while mirror prep waits; never renew an old usage reading.
+          // Re-probe while mirror prep waits, without gating prep on sensor I/O.
           let observing = false;
           let observationClosed = false;
           const observe = async (): Promise<void> => {
@@ -1412,11 +1416,12 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
               const at = deps.now();
               const currentPolicy = deps.standingPolicy();
               if (!currentPolicy || currentPolicy.grantId !== policy.grantId) return;
+              const directives = clampLeaderDirectives(deps.directives(), currentPolicy);
               const snapshot = deps.capacitySnapshot();
               const reading = await deps.probeLocalRuntime(cfg, snapshot);
               const observed = await planLanes({
                 policy: currentPolicy,
-                directives: clampLeaderDirectives(deps.directives(), currentPolicy),
+                directives,
                 presence: await deps.presence(at),
                 ...(await loadSchedulerPace(at)),
                 localServingSlots: reading.reachable === true ? reading.slots : null,
@@ -1444,15 +1449,17 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
             } catch { /* A failed observation expires naturally; no fabricated capacity. */ }
             finally { observing = false; }
           };
-          await observe();
           if (signal.aborted) throw new Error('Mirror preparation cancelled.');
           const laneTimer = setInterval(() => { void observe(); }, 60_000);
           laneTimer.unref?.();
           const stopObserving = (): void => { observationClosed = true; clearInterval(laneTimer); };
           signal.addEventListener('abort', stopObserving, { once: true });
           if (signal.aborted) stopObserving();
-          try { return await deps.prepareMirrors(policy, signal); }
-          finally { stopObserving(); signal.removeEventListener('abort', stopObserving); }
+          const initialObservation = observe();
+          try {
+            const [prepared] = await Promise.all([deps.prepareMirrors(policy, signal), initialObservation]);
+            return prepared;
+          } finally { stopObserving(); signal.removeEventListener('abort', stopObserving); }
         }, {
           deadlineMs: MIRROR_TICK_PREP_DEADLINE_MS + MIRROR_TICK_ABORT_GRACE_MS + 30_000,
           parentSignal: hookCtx.signal,
@@ -2002,6 +2009,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       if (budget === null) {
         return finish(heldResult(holdProduction ?? 'The budget is unavailable.', enrolled), state);
       }
+      const laneAuto = await deps.laneAutoEvidence?.(cfg).catch(() => null);
       // The loop stopped waiting for this beforeTick (its deadline passed, or
       // the daemon is stopping) and already held production: a context
       // published now would be read by a tick that never asked for it.
@@ -2027,6 +2035,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
           capacity,
           lanes,
           laneEngines: laneEngines.engines,
+          ...(laneAuto ? { laneAuto } : {}),
           demotions,
           // Land-first scheduling reads the same reconciled open-PR counts
           // backpressure computed for this tick (null when they could not be
@@ -2161,7 +2170,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
           // model/context/demotion checks before asking for optional advice.
           const candidateLanes = Object.fromEntries(FLEET_ENGINES.map(lane=>[lane,{...current.lanes[lane],slots:current.routeLaneCaps[lane]}])) as Record<FleetEngine,LanePlan>;
           const execution = executionForSeat(item, legacy, seat, current.router);
-          if (!execution) continue;
+          if (!execution || execution.autoModel?.reason === 'held') continue;
           const forecast = taskForecast(item,execution.backend,execution.model ?? null,history,current.nowMs,seat.seatId,seat.accountHint);
           forecasts[seat.seatId] = forecast; hints[seat.seatId] = seat.accountHint ?? null;
           const taskBudget = budgetForItem(current,item.id,resolveSubscriptionMaxPercent(cfg));
@@ -2352,6 +2361,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
         ...(decision.model ? { model: decision.model } : {}),
         reason: decision.reason,
         seatDecision: decision.seatDecision,
+        ...(decision.autoModel ? { autoModel: decision.autoModel } : {}),
         ...(decision.selectedAccountHint !== undefined ? {selectedAccountHint:decision.selectedAccountHint} : {}),
         hold: decision.hold,
       };
@@ -2409,6 +2419,20 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       if (selectedCodex && routed && (typeof routed.selectedAccountHint !== 'string' ||
           current.capacity.find(seat => seat.engine === 'codex' && seat.seatId === opts.seatId)?.accountHint !== routed.selectedAccountHint)) {
         return {allowed:false,reason:'The selected Codex account identity changed or is unavailable; a fresh route is required.'};
+      }
+      if (routed?.autoModel) {
+        const selected = current.capacity.filter(seat => seat.seatId === routed.seatDecision?.seatId && laneOfSeat(seat) === lane);
+        const seat = selected.length === 1 ? selected[0] : undefined;
+        if (!seat || !routed.model || (opts.seatId !== undefined && seat.seatId !== opts.seatId)
+          || !laneAutoBillingAllows(seat, current.nowMs)) {
+          return { allowed: false, reason: 'Lane auto no longer has an admitted subscription or local seat.' };
+        }
+        const offered = deps.laneAutoNativeModels
+          ? deps.laneAutoNativeModels(current.cfg, seat)
+          : current.router.laneAuto?.nativeModels(seat);
+        if (offered ? !offered.has(routed.model) : current.router.laneAuto?.nativeModels(seat) != null) {
+          return { allowed: false, reason: 'The lane auto model is no longer confirmed on this seat.' };
+        }
       }
       const taskBudget = budgetForItem(current,opts.itemId,opts.maxPercent);
       if (!current.policy.engines.includes(grantEngineOfLane(lane))) {
@@ -2510,6 +2534,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
         proposalId: outcome.proposalId,
         spentUsd: outcome.spentUsd,
         seatDecision: cached?.seatDecision ?? null,
+        ...(cached?.autoModel ? { autoModel: cached.autoModel } : {}),
         ...(resetStatus && chosenReset && chosenSeat ? {resetSpending:{...resetStatus,accounts:{[chosenSeat]:chosenReset}}} : {}),
         hold,
         // Only a tick that knew its harness may attribute the run to one.
