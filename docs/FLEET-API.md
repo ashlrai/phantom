@@ -125,6 +125,10 @@ receipt proves coordination, not job execution.
 The Leader board and Fleet lane console share merge attribution. When a merge
 receipt lacks a lane and attribution falls back to the job's ledger history,
 events with an observation or merge timestamp after report time are excluded.
+The board's conflicting-PR history uses the newest distinct observation times
+at or before report time, in chronological order. A repeated observation at
+the same time replaces the earlier count. With fewer than two distinct
+observations or an unreadable ready queue, the conflict trend stays unknown.
 
 | Method | Path | Query | Response type / source | Handler | Curl example |
 | --- | --- | --- | --- | --- | --- |

@@ -78,6 +78,38 @@ it('keeps a bounded conflict trend, then reports unknown when ready.tsv disappea
   expect(read.board?.conflictingPrs.count).toBeNull();
 });
 
+it('compares distinct conflict samples in time order after a clock rollback and retry', async () => {
+  await seed();
+  const initial = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS + 60_000 });
+  if (!initial.wrote) throw new Error(initial.reason);
+  initial.board.conflictingPrs.history.push(
+    { at: minutesAgo(1), count: 2 },
+    { at: minutesAgo(2), count: 3 },
+    { at: '2026-11-13T06:59:00-05:00', count: 4 },
+  );
+  await writeFile(join(root, 'coordination', 'leader-board.json'), JSON.stringify(initial.board));
+  await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'RQ-REBASE-PHANTOM-1234-abc1234', 'devin', 'work'));
+  const rolledBack = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  expect(rolledBack.wrote && rolledBack.board.conflictingPrs).toMatchObject({
+    count: 1, delta: -3, trend: 'falling',
+    history: [
+      { at: minutesAgo(2), count: 3 },
+      { at: '2026-11-13T06:59:00-05:00', count: 4 },
+      { at: minutesAgo(0), count: 1 },
+    ],
+  });
+  await writeFile(join(queueDir, 'ready.tsv'), '');
+  const retry = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  expect(retry.wrote && retry.board.conflictingPrs).toMatchObject({
+    count: 0, delta: -4, trend: 'falling',
+    history: [
+      { at: minutesAgo(2), count: 3 },
+      { at: '2026-11-13T06:59:00-05:00', count: 4 },
+      { at: minutesAgo(0), count: 0 },
+    ],
+  });
+});
+
 it('counts lane-open work by tier without attributing it to a lane', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), [
     'RQ-OPEN\tphantom\t\tfrontier\tprompts/open.md',
