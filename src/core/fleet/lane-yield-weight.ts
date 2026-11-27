@@ -19,6 +19,7 @@
  */
 import { canonicalJson } from '../authority/canonical-json.js';
 import { parseLedgerTs } from '../metrics/loop.js';
+import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
 import { hasRevertEvidence } from './slot-yield.js';
 
 export const LANE_YIELD_SCHEMA = 'lanes.yield.v1';
@@ -164,10 +165,11 @@ export function computeLaneYield(ledger: string | null): LaneYieldReport {
     let row: Row;
     try { const value: unknown = JSON.parse(line); if (!value || typeof value !== 'object' || Array.isArray(value)) continue; row = value as Row; } catch { continue; }
     const id = firstString(row, JOB_KEYS);
-    if (!id || id.startsWith(BATCH_SESSION_PREFIX)) continue;
+    if (!id || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
     const phase = phaseOf(row);
     const event = ledgerEvent(row, phase);
     if (event === 'launch') {
+      if (row.launched === false) continue;
       const lane = firstString(row, LANE_KEYS);
       if (!lane) continue;
       const at = eventTs(row, phase);
