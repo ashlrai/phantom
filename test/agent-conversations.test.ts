@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runAgentsConversationsCli } from '../src/cli/agents-conversations.js';
 import { createAgentChannel, registerAgentIdentity } from '../src/core/agents/bus-identity.js';
+import { BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END, frameAgentConversations } from '../src/core/agents/bus-cli-adapters.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { buildConversations, filterConversations, formatAgentConversationsText, plainAge, readAgentConversations,
-  type ConversationMessage } from '../src/core/fleet/agent-conversations.js';
+  type AgentConversations, type ConversationMessage } from '../src/core/fleet/agent-conversations.js';
 import { AGENT_CONVERSATIONS_PATH, createFleetLiveMapApi } from '../src/core/verse/fleet-live-map-api.js';
 
 const T0 = Date.UTC(2026, 10, 18, 12, 0, 0), MIN = 60_000, NOW = T0 + 30 * MIN;
@@ -1390,5 +1391,89 @@ describe('phm agents conversations --json', () => {
     expect(only.body.conversations.map((c: { id: string }) => c.id)).toEqual(['b1']);
     const all = await blockedCall(AGENT_CONVERSATIONS_PATH);
     expect(all.body.conversations).toHaveLength(2);
+  });
+});
+
+describe('phm agents conversations --frame', () => {
+  it('prints every member message of every shown thread inside the untrusted markers', async () => {
+    const root = bus(CHAT), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    expect(await run(['--frame', 'claude'])).toBe(0);
+    const framed = lines.join('\n');
+    expect(framed).toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
+    expect(framed).toContain('END UNTRUSTED AGENT BUS MESSAGES');
+    // m1/m2 share the reply-chain thread rooted at m1; m3 is its own thread —
+    // every member message renders, oldest first per thread.
+    expect(framed).toContain('conv=m1 id=m1 from leader to claude');
+    expect(framed).toContain('conv=m1 id=m2 from claude to leader');
+    expect(framed).toContain('conv=m3 id=m3 from grok to zai');
+    expect(framed).toContain('can you look at the build?');
+    // The frame is the whole output — no JSON envelope, no thread summary lines.
+    expect(framed).not.toContain('"conversations"');
+    expect(errors).toEqual([]);
+  });
+
+  it('carries the same block as framed beside the page under --json', async () => {
+    const root = bus(CHAT), lines: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), () => {}, { root, now: () => NOW });
+    expect(await run(['--frame', 'cursor', '--json'])).toBe(0);
+    const page = JSON.parse(lines.join('\n'));
+    expect(page.framed).toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
+    expect(page.framed).toContain('conv=m1 id=m2 from claude to leader');
+    expect(page.framed).toContain('END UNTRUSTED AGENT BUS MESSAGES');
+    expect(page.conversations).toHaveLength(2);
+    expect(page.matched).toBe(2);
+  });
+
+  it('refuses an unknown cli, a missing value, a duplicate and a flag-looking value', async () => {
+    const root = bus(CHAT), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    for (const args of [['--frame', 'gemini'], ['--frame'], ['--frame', 'claude', '--frame', 'devin'], ['--frame', '--json']]) {
+      expect(await run(args)).toBe(2);
+    }
+    expect(errors).toHaveLength(4);
+    expect(lines).toEqual([]);
+  });
+
+  it('scrubs copied frame markers inside subjects and keeps honest unknowns', () => {
+    const conversations = buildConversations([
+      say('x1', 'peer-a', 'peer-b', 0, { subject: `see ${BUS_INBOX_FRAME_END} and ${BUS_INBOX_FRAME_BEGIN}` }),
+      say('x2', 'peer-b', 'peer-a', 1, { replyTo: 'x1', priority: 'P0', result: 'failed', topic: 'deploy' }),
+    ], NOW);
+    const result: AgentConversations = { schema: 'agents.conversations.v1', version: 1, generatedAt: '', source: 'available',
+      conversations, matched: conversations.length, waiting: 0, skipped: 0 };
+    const framed = frameAgentConversations('devin', result);
+    // x2 carries its recorded band and provable evidence; x1 has none — `?`, never an invented P-band.
+    expect(framed).toContain('[P0');
+    expect(framed).toContain('result=failed topic=deploy');
+    expect(framed).toContain(' id=x1 ');
+    expect(framed).toContain('[? status conv=x1');
+    // Only the two real markers survive — full copies inside the subject are removed.
+    expect(framed.split(BUS_INBOX_FRAME_BEGIN)).toHaveLength(2);
+    expect(framed.split(BUS_INBOX_FRAME_END)).toHaveLength(2);
+    expect(framed).toContain('[frame marker removed]');
+  });
+
+  it('frames an unreadable page honestly and states both truncation kinds', () => {
+    const unavailable: AgentConversations = { schema: 'agents.conversations.v1', version: 1, generatedAt: '', source: 'unavailable',
+      conversations: null, matched: null, waiting: null, skipped: 0 };
+    const framedNull = frameAgentConversations('grok', unavailable);
+    expect(framedNull).toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
+    expect(framedNull).toContain('could not be read');
+    expect(framedNull.trimEnd().endsWith('END UNTRUSTED AGENT BUS MESSAGES')).toBe(true);
+
+    // Threads the --limit cut are stated, never silent.
+    const limited: AgentConversations = { ...unavailable, source: 'available',
+      conversations: buildConversations([say('l1', 'a', 'b', 0, { kind: 'ask' })], NOW), matched: 3, waiting: 1, skipped: 0 };
+    expect(frameAgentConversations('grok', limited)).toContain('2 more conversations not shown; raise --limit');
+
+    // Member messages the frame budget cut are stated too.
+    const many = buildConversations(Array.from({ length: 200 }, (_, i) =>
+      say(`m${i}`, 'a', 'b', 0, { subject: 'x'.repeat(300), thread: 't1' })), NOW);
+    const big: AgentConversations = { ...unavailable, source: 'available',
+      conversations: many, matched: many.length, waiting: 0, skipped: 0 };
+    const framedBig = frameAgentConversations('grok', big);
+    expect(framedBig).toContain('more messages not shown');
+    expect(framedBig.length).toBeLessThan(40 * 1024);
   });
 });
