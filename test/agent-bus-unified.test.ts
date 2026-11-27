@@ -2168,6 +2168,18 @@ describe('label posts on the one bus store', () => {
     expect(raw).toMatchObject({ status: 'ok', messages: [] });
   });
 
+  it('refuses the transport dead-letter sink under any casing', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    // bus.dead-letter belongs to the router's letter sink: agent mail there
+    // would list as a dead letter it never was.
+    for (const to of ['bus.dead-letter', 'Bus.Dead-Letter', 'BUS.DEAD-LETTER']) {
+      expect(await postLabelMessage({ from: 'atlas', to, text: 'x' }, options)).toMatchObject({ status: 'invalid' });
+    }
+    const raw = listBusInboxAfter(0, 10, options);
+    expect(raw).toMatchObject({ status: 'ok', messages: [] });
+  });
+
   it('reaches an identity inbox and wake queue when the label is one of its labels', async () => {
     const options = setup();
     register(options, 'atlas');
@@ -2379,6 +2391,13 @@ describe('v2 work announcements and statuses on the one bus store', () => {
     expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-3', to: 'work-queue' }, options))
       .toMatchObject({ status: 'posted', to: 'work-queue' });
     expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-4', to: 'bad address' }, options))
+      .toMatchObject({ status: 'invalid' });
+    // The transport dead-letter sink refuses work mail under any casing too.
+    expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-4b', to: 'bus.dead-letter' }, options))
+      .toMatchObject({ status: 'invalid' });
+    expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-4c', to: 'Bus.Dead-Letter' }, options))
+      .toMatchObject({ status: 'invalid' });
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-W-3', status: 'running', to: 'bus.dead-letter' }, options))
       .toMatchObject({ status: 'invalid' });
     expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-5',
       claimKeys: ['path:ashlrai/phantom:../escape'] }, options)).toMatchObject({ status: 'invalid' });

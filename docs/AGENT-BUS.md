@@ -338,7 +338,7 @@ latest runtime's provider, `origin_bridge` is `agent-bus`).
 | --- | --- | --- | --- |
 | DM | `agent:<handle>` | `bus` | v2 `note`, or `context` with `--kind context` |
 | Channel post | `group:<channel>:<topic>` (topic defaults to `general`) | `bus` | v2 `note`, or `context` with `--kind context` |
-| Label post | any printable routing label outside the reserved `agent:`/`group:`/`dm:`/`handoff:` prefixes | `bus` | v2 `note`, or `context` with `--kind context` |
+| Label post | any printable routing label outside the reserved `agent:`/`group:`/`dm:`/`handoff:` prefixes and the `bus.dead-letter` transport sink | `bus` | v2 `note`, or `context` with `--kind context` |
 | Handoff | `agent:<handle>` | `handoff` | `worker-handoff` (`taskId`, `prompt`), the shape `phm fleet handoff-receive` reads |
 | Wake request | `agent:<handle>` | `bus` | v2 `wake` (`target`, `reason`, optional `jobId`) |
 
@@ -476,7 +476,10 @@ printable routing label the other send verbs cannot address: a sink like
 `leaders`, a shared topic like `fleet.mesh`, or any label a subscriber reads
 through `comms bus read --to`, `bus-follow` or an identity's alias matching.
 The reserved prefixes `agent:`, `group:`, `dm:` and `handoff:` are refused —
-`dm`, `channel post`, `handoff` and `wake` own those addresses — and the
+`dm`, `channel post`, `handoff` and `wake` own those addresses — and so is
+`bus.dead-letter`, the transport sink only the router files delivery-failure
+letters under, so agent mail can never list as a dead letter it is not; the
+work verbs' `--to` refuses the same sink. The
 sender must still be a registered identity, so the mail carries the same
 `agent-bus` sender metadata, scrub gate, priority-wake rules and id dedupe as
 a DM. Delivery follows the label: a `to` that resolves to a registered
@@ -924,7 +927,9 @@ and "where does the cited job stand" without a `show` per message.
 `phm agents bus work status --job <id> --status <queued|running|idle|rescheduled|blocked|done|failed|terminated>
 [--detail <text>] [--to <label>]` sends a v2 `work.status`. Both default to the
 `leaders` sink, priority P2 and a 7-day TTL, fill `from` with `agent:<handle>`
-and run the same scrub, wake and append path as every other send. The provider
+and run the same scrub, wake and append path as every other send. `--to`
+takes any printable routing label except `bus.dead-letter`, the transport
+sink only the router files letters under. The provider
 defaults to the sender identity's newest runtime provider — the feed refuses
 posts it cannot attribute — while an explicit `--provider` wins and is
 schema-checked. Before appending, each verb reads the live work feed: a post

@@ -4930,12 +4930,15 @@ resulting `filter` to `readUnifiedInbox`, echoing the report's applied
 value is a 400, never a silently ignored filter.
 Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
 `announceWork(WorkAnnouncementInput)` posts a schema-checked v2 `work.post` to
-`DEFAULT_WORK_ADDRESS` (`leaders`, overridable per send) at P2 with a 7-day
+`DEFAULT_WORK_ADDRESS` (`leaders`, overridable per send — the `to` label
+refuses `bus.dead-letter`, the transport sink only the router files letters
+under) at P2 with a 7-day
 TTL; its provider is the explicit input or the sender identity's newest
 runtime provider (`runtimeProvider`), and it refuses `conflict` when the live
 feed already shows the job id. `updateWorkStatus(WorkStatusInput)` posts a
 v2 `work.status` only for a job the feed shows, and only from the identity
-that announced it (resolved through any of its labels). Both read
+that announced it (resolved through any of its labels), under the same `to`
+rule. Both read
 `readBusWorkFeed` before appending and propagate a refused, retryable,
 invalid or unavailable feed as a refusal — they never post unchecked and never
 dispatch, claim or execute. A terminal `work.status` (`done`, `failed`,
@@ -4951,8 +4954,9 @@ body's purpose is the hint, so `wake: false` is refused — with `reason` capped
 at 512 characters and an optional `jobId` that only threads the message, never
 a feed lookup. `postLabelMessage(LabelPostInput)` posts a schema-checked v2
 `note` (or `context` with `kind`) to any printable routing label outside
-`RESERVED_PREFIXES` — the sink/topic mail the identity and channel verbs
-cannot carry — under the same registered-sender, scrub, wake and dedupe rules;
+`RESERVED_PREFIXES` and the `bus.dead-letter` transport sink — the
+sink/topic mail the identity and channel verbs cannot carry — under the
+same registered-sender, scrub, wake and dedupe rules;
 a `to` that resolves to a registered identity — any of its labels, exact
 first then lowercase — lands in its inbox as
 legacy mail.
