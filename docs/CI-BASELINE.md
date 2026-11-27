@@ -628,11 +628,13 @@ redaction are omitted from recurrence evidence, and their presence on a run
 withholds per-test attribution of its workflow verdict.
 When multiple probable flakes share a workflow run, one attempt counts
 toward each test's recurrence and consumes one slot in the hourly cap. A test that was
-rerun-attempted on at least three distinct heads within the last seven days is
+rerun-attempted on at least three distinct full commit SHAs within the last seven days is
 a recurring flake: maintenance appends one `RQ-CIFLAKE-*`
 stabilization brief (tier `work`) per (repository, test) to the router queue,
 capped at ten new rows per repository per maintenance pass, under the same
-standing-authority and KILL gates as shared-baseline fixes. Suppressed
+standing-authority and KILL gates as shared-baseline fixes. Recurrence counts
+40-character hexadecimal head SHAs case-insensitively and ignores attempt
+and verdict rows with missing, abbreviated, or malformed heads. Suppressed
 candidates do not consume the cap, so later eligible flakes can enter the
 queue on subsequent passes. Deduplication is generation-aware like the
 master fixes: an open row suppresses queueing, dropped or retired rows stay
