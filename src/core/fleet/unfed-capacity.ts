@@ -352,20 +352,21 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     if (!LANE.test(lane) || !isRecord(value) || !count(value.running)) throw new Error('invalid lane');
     if (!count(value.target)) throw new Error('invalid lane');
     const tickTarget = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
+    const rawEntry = publishedLanes[lane];
+    const entry = isRecord(rawEntry) ? rawEntry : null;
     const slot = ctx?.slots[lane];
-    const configuredTarget = isRecord(slot) && count(slot.target) ? slot.target : null;
-    const target = laneLaunchTarget(tickTarget, configuredTarget);
-    const statusHeld = value.held === true;
+    const targetLimit = count(entry?.target) ? entry.target : isRecord(slot) && count(slot.target) ? slot.target : null;
+    const target = laneLaunchTarget(tickTarget, targetLimit);
+    const statusHeld = value.held === true || entry?.held === true;
     const view = ctx === null ? null : marketLaneView(lane, value.running, target, statusHeld, ctx);
     const held = view?.held ?? (statusHeld || operatorHolds?.has(lane) === true);
     const headroom = Math.max(0, target - value.running);
     const readyHinted = hints === null ? null : hints.byLane.get(lane) ?? 0;
-    const entry = publishedLanes[lane];
     const canBeUnfed = headroom > 0 && !held;
     // The live ready file may already differ from the dispatcher's tick.
     let waitingElsewhere: number | null = canBeUnfed && waiting !== 0 ? null : 0;
     let blocked: Record<string, number> = {};
-    if (isRecord(entry) && count(entry.waiting_elsewhere) &&
+    if (entry && count(entry.waiting_elsewhere) &&
         (waiting === null || entry.waiting_elsewhere <= waiting)) {
       waitingElsewhere = entry.waiting_elsewhere;
       blocked = codes(entry.blocked, waitingElsewhere);

@@ -89,6 +89,30 @@ describe('currentUnfed', () => {
     expect(() => currentUnfed(status, '')).toThrow('invalid lane');
   });
 
+  it('honors stricter lane limits in the published unfed snapshot', () => {
+    const report = currentUnfed(JSON.stringify({
+      lanes: {
+        capped: { running: 1, target: 4, effective_target: 3 },
+        held: { running: 0, target: 4, held: false },
+        configured: { running: 1, target: 2, held: true },
+      },
+      unfed_capacity: {
+        waiting: 4,
+        lanes: {
+          capped: { target: 2, waiting_elsewhere: 4 },
+          held: { held: true, waiting_elsewhere: 4 },
+          configured: { target: 5, held: false, waiting_elsewhere: 4 },
+        },
+      },
+    }), null);
+    expect(report).toMatchObject({ source: 'dispatcher', unfedSlots: 1, unfedLanes: ['capped'] });
+    expect(report.resources).toMatchObject([
+      { lane: 'capped', target: 2, headroom: 1, unfed: true },
+      { lane: 'configured', target: 2, held: true, unfed: false },
+      { lane: 'held', held: true, unfed: false },
+    ]);
+  });
+
   it.each([
     { configured: 1, target: 1, headroom: 0 },
     { configured: 3, target: 3, headroom: 2 },
