@@ -46,6 +46,23 @@ status.
 - `--thread <label>` matches the v2 `thread` field on `note`/`context`
   bodies only; every other body kind never matches. The label is printable
   ASCII, 1 to 128 characters; anything else exits 2.
+- `--body-kind <kind>` matches the body's own kind discriminator through the
+  shared `busBodyKind` own-field rule — the v2 `kind` field, else a
+  `protocol.kind`, else the `type`/`schema` a kindless notice keys on —
+  exact and case-sensitive, the same match `agents bus inbox --body-kind`,
+  `channel read --body-kind`, `wakes --body-kind`, `agents conversations
+  --body-kind`, `fleet bus-follow --body-kind` and `fleet_bus_inbox`'s
+  `bodyKind` apply; a body carrying no discriminator never matches and an
+  unrecognized but printable value is an honest empty page. The value is
+  printable ASCII, 1 to 128 characters; anything else exits 2.
+- `--result <reserved|admitted|complete|failed>` matches only `work.result`
+  bodies whose own `outcome` strictly equals the code — the shared
+  `busBodyResultOutcome` own-field match and `WORK_RESULT_OUTCOMES`
+  vocabulary `fleet_bus_inbox`'s `result`, `phm messages --result`, `agents
+  messages --result`, `fleet messages`, `bus recent`,
+  `fleet_agent_messages`'s `result` and the work feed's `--result` share;
+  every other body kind and a `work.result` carrying no outcome never
+  match. A value outside the vocabulary exits 2.
 - `--to`, `--from` and `--exclude-from` match the literal routing label or
   any other label of the same registered agent identity (handle, `agent:`
   address, stable id or alias), resolved once when the read starts; an
