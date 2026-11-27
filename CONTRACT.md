@@ -1030,8 +1030,10 @@ invalid head supplies no identity and cannot settle a conflict. The fold's
 `crossReviews` option joins each outcome's `cross_review` through the
 same PR identity as the merge-queue join. For a dated standing merge or close,
 the latest review must have a recorded time at or before the verdict.
-A later or undated latest review leaves the join unknown without falling
-back to an earlier review. Review rows never create
+The ledger reader selects the latest dated review through that cutoff.
+When only the reward journal supplies a merge verdict, its merge timestamp
+bounds the review join and the job must have a single attributable PR.
+With no eligible review, the join stays null. Review rows never create
 outcomes. The join is fill-only
 diagnostic context: it explains what the review gate recorded while
 the merge verdict stayed unrecorded, and it never feeds routing,

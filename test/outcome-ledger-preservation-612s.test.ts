@@ -2849,6 +2849,33 @@ describe('router outcome cross-review join', () => {
     expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
   });
 
+  it('bounds reviews by a reward-only merge when the job has one attributable PR', async () => {
+    const jobs = [[42], [43], [44, 45], [46]];
+    const root = runsDir(jobs.flatMap((prs, index) => prs.map(pr => JSON.stringify({
+      job: `J${index + 1}`, event: 'publish',
+      pr_url: `https://github.com/ashlrai/phantom/pull/${pr}`,
+    }))).join('\n'));
+    const mergeTime = '2026-11-01T01:00:00.000Z';
+    const later = '2026-11-01T01:00:00.001Z';
+    const ashlarDir = rewardLedger(jobs.map((_, index) => rewardRow(`J${index + 1}`, true)));
+    mkdirSync(join(ashlarDir, 'fleet'));
+    writeFileSync(crossReviewLedgerPath(ashlarDir), [
+      crossReview(42, 'approve', { at: mergeTime }),
+      crossReview(42, 'reject', { at: later }),
+      crossReview(43, 'approve', { at: later }),
+      crossReview(45, 'approve', { at: mergeTime }),
+      crossReview(46, 'approve', { at: null }),
+    ].map(row => JSON.stringify(row)).join('\n'));
+
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir, authorityEvidence: null });
+    expect(result.outcomes).toMatchObject([
+      { job_id: 'J1', merged: true, cross_review: { outcome: 'approve', at: mergeTime } },
+      { job_id: 'J2', merged: true, cross_review: null },
+      { job_id: 'J3', merged: true, cross_review: null },
+      { job_id: 'J4', merged: true, cross_review: null },
+    ]);
+  });
+
   it('joins only dated cross-review receipts at or before report start', async () => {
     const reportStart = '2026-11-25T12:00:00.000Z';
     const future = '2026-11-25T12:00:00.001Z';

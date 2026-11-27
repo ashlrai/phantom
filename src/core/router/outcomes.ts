@@ -1803,11 +1803,12 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
 function foldRouterOutcomesWithCiCoverage(
   text: string, opts: RouterOutcomeFoldOptions, ambiguousCiJobs: Set<string>,
   mergeEventCoverage?: MergeEventCoverage,
-  rewards?: ReadonlyMap<string, RewardOutcomeEvidence>,
+  rewardJournal?: RewardJournalEvidence,
   throughMs = Infinity,
   spendCosts?: ReadonlyMap<string, number>,
   reviewReceipts?: ReadonlyMap<string, readonly CrossReviewReceipt[]>,
 ): RouterOutcomeFold {
+  const rewards = rewardJournal?.rewards;
   const rows: Row[] = [];
   let malformed = 0;
   for (const line of text.split('\n')) {
@@ -2405,7 +2406,10 @@ function foldRouterOutcomesWithCiCoverage(
           }
         }
       }
-      const resolvedAt = mergedAt.get(o.job_id);
+      // Reward merges carry a timestamp but no PR identity of their own.
+      if (rewardMerge && !solePrClaim) continue;
+      const resolvedAt = mergedAt.get(o.job_id) ??
+        (rewardMerge ? rewardJournal?.mergeTimes.get(o.job_id) : undefined);
       const review = reviewReceipts === undefined ? opts.crossReviews?.get(prKey)
         : latestCrossReview(reviewReceipts.get(prKey) ?? [], resolvedAt);
       if (review !== undefined && (resolvedAt === undefined || !Number.isFinite(resolvedAt) ||
@@ -3066,6 +3070,11 @@ const REWARD_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const rewardPctUsed = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100 ? v : null;
 
+interface RewardJournalEvidence {
+  rewards: Map<string, RewardOutcomeEvidence>;
+  mergeTimes: Map<string, number>;
+}
+
 /**
  * Folds reward-signals.jsonl text into per-job evidence. The first usable
  * retained row wins, matching the writer's first-write-wins contract.
@@ -3080,11 +3089,12 @@ const rewardPctUsed = (v: unknown): number | null =>
  * never recorded raw, never guessed.
  */
 export function foldRewardSignals(text: string): Map<string, RewardOutcomeEvidence> {
-  return foldRewardSignalsThrough(text, Infinity);
+  return foldRewardSignalsThrough(text, Infinity).rewards;
 }
 
-function foldRewardSignalsThrough(text: string, throughMs: number): Map<string, RewardOutcomeEvidence> {
+function foldRewardSignalsThrough(text: string, throughMs: number): RewardJournalEvidence {
   const rewards = new Map<string, RewardOutcomeEvidence>();
+  const mergeTimes = new Map<string, number>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     const r = parseJsonObjectLine(line);
@@ -3113,8 +3123,9 @@ function foldRewardSignalsThrough(text: string, throughMs: number): Map<string, 
       repo: repo !== null && REPO_LABEL.test(repo) ? repo : null,
       pool_pct_used: costRow === null ? null : rewardPctUsed(costRow['pctUsedDelta']),
     });
+    if (r['merged']) mergeTimes.set(jobId, mergedAt);
   }
-  return rewards;
+  return { rewards, mergeTimes };
 }
 
 /**

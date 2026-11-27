@@ -82,6 +82,12 @@ export interface AutopilotReadDeps {
   now?: () => Date;
 }
 
+function hasAdmissionDecision(admit: unknown, decision: unknown): boolean {
+  if (admit === undefined) return decision === 'admit' || decision === 'stop';
+  if (typeof admit !== 'boolean') return false;
+  return decision === undefined || decision === (admit ? 'admit' : 'stop');
+}
+
 /** Assemble every local input; each source degrades independently, never throws. */
 export async function readFleetAutopilotState(
   opts: { runsDir?: string; repos?: string[] } & AutopilotReadDeps = {},
@@ -94,8 +100,9 @@ export async function readFleetAutopilotState(
         const text = await (opts.statusText ?? ((path) => readFile(path, 'utf8')))(join(runsDir, 'queue', 'status.json'));
         const snapshot = JSON.parse(text);
         const tick = typeof snapshot?.last_tick === 'string' ? Date.parse(snapshot.last_tick) : NaN;
-        const admissionTick = snapshot?.admission?.ts;
-        if (admissionTick !== undefined && admissionTick !== snapshot.last_tick) {
+        const admission = snapshot?.admission;
+        if (!hasAdmissionDecision(admission?.admit, admission?.decision) ||
+            (admission.ts !== undefined && admission.ts !== snapshot.last_tick)) {
           return { source: 'degraded', report: null };
         }
         return { source: 'healthy', report: explainFleetAdmission(snapshot), tick };
