@@ -606,6 +606,18 @@
  *     precondition never became satisfiable, pinned files that kept
  *     being hand-edited, and incident classes that kept ending
  *     failed or refused never became work;
+ *   - the launchd run-sample journal's recurring per-label
+ *     instability: the {label, atMs, runs, lastExitCode, pid} rows
+ *     fixLaunchdCrashloop's rememberSample appends to
+ *     <runs>/ledger/launchd-runs.jsonl on every monitored
+ *     `ai.ashlr.`/`com.ashlr.` job's `launchctl print`, folded per
+ *     label — nonzero lastExitCode samples and trailing-hour runs
+ *     surges past the fleet's own CRASH_THRESHOLD — across distinct
+ *     UTC days inside the 7-day window (launchdRunsBacklogItems
+ *     below). Until now the journal's only reader was the autofix
+ *     pass itself — collect.ts's readJournal feeds the
+ *     assessCrashRate samples behind the live disable decision — so
+ *     a job flaking below that bar never became work;
  *   - the bridge source-heal journal's recurring repair failures:
  *     the {schema, at, event, ok, reason} rows bridge-heal.mjs
  *     appends to <source>/.git/bridge-source-repair.jsonl on every
@@ -1733,6 +1745,7 @@ import { gatewayActivityBacklogItems } from './gateway-activity-backlog.js';
 import { frictionFlagBacklogItems } from './friction-flag-backlog.js';
 import { routineBacklogItems } from './routine-backlog.js';
 import { autofixBacklogItems } from './autofix-backlog.js';
+import { launchdRunsBacklogItems } from './launchd-runs-backlog.js';
 import { bridgeHealBacklogItems } from './bridge-heal-backlog.js';
 import { rateLimitBacklogItems } from './rate-limit-backlog.js';
 import { asksLedgerBacklogItems } from './asks-backlog.js';
@@ -2794,6 +2807,20 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the ledgers describe this
   // install's machinery and carry no repository column.
   items.push(...await autofixBacklogItems({ repo }));
+  // The launchd run-sample journal's only reader until now was the
+  // autofix pass itself — collect.ts's readJournal feeds the
+  // assessCrashRate samples that decide the live disable, so a job
+  // whose runs kept churning or whose lastExitCode stayed nonzero
+  // WITHOUT crossing the disable bar left no trace in autofix.jsonl
+  // and never became work. Same bounded no-follow tail read; a label
+  // emits only at the recurring bars of adverse records — nonzero
+  // exits and trailing-hour runs surges past the fleet's own
+  // CRASH_THRESHOLD — across distinct UTC days inside the window,
+  // truncated tails are stated as lower bounds, journal labels are
+  // scrubbed before they reach a prompt, and only the fleet's own
+  // repository inherits the items since the journal describes this
+  // install's launchd machinery and carries no repository column.
+  items.push(...await launchdRunsBacklogItems({ repo }));
   // The bridge source-heal journal's only reader until now was
   // `phm doctor worktree` — the newest five lines for a person — so a
   // fleet source checkout whose self-heal kept failing, skipping or
