@@ -541,8 +541,12 @@ unparsed: `exited` lines fire on ordinary test failures and on the
 stop-others SIGTERM cascade, so they can never be runner identities.
 
 Two unaffected fresh PRs at distinct head commits sharing a failure produce
-`queue-master-fix` and a ready brief. PRs at the same commit remain visible in
-the group but contribute only one head toward that threshold. Test/import
+`queue-master-fix` and a ready brief. One unaffected fresh PR also qualifies
+when a checkout-verified job with a failure conclusion on the current master
+reports the same failure identity. This evidence can queue a fix even when
+other master checks are incomplete. Branch updates still require verified
+master pass evidence and merge provenance. PRs at the same commit remain
+visible in the group but contribute only one head toward the threshold. Test/import
 changes produce `pr-caused`. A singleton unaffected failure with an explicit
 test pass on master's current run produces
 `rerun-failed`. A green Vitest module summary with skipped or todo cases
