@@ -399,27 +399,30 @@ describe('lanes, presence and the router seam', () => {
     }
   });
 
-  it('starts mirror preparation without waiting for the first lane observation', async () => {
+  it('finishes mirror preparation and ignores a late first lane observation', async () => {
     const prepare = vi.fn(h.deps.prepareMirrors!);
     h.deps.prepareMirrors = prepare;
     const probe = h.deps.probeLocalRuntime!;
     let release!: () => void;
     const blocked = new Promise<void>(resolve => { release = resolve; });
-    h.deps.probeLocalRuntime = async (...args) => {
+    const observe = vi.fn(probe).mockImplementationOnce(async (...args) => {
       await blocked;
       return probe(...args);
-    };
+    });
+    h.deps.probeLocalRuntime = observe;
     const hooks = createLiveTickHooks({ deps: h.deps });
     hooks.effectiveConfig(CFG);
     const running = hooks.beforeTick(hookCtx);
     try {
-      await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
-      expect(h.ticks).toHaveLength(0);
+      await vi.waitFor(() => expect(h.ticks.map(tick => tick.holdProduction)).toEqual([null]));
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(observe).toHaveBeenCalledTimes(2);
     } finally {
       release();
       await running;
+      await new Promise<void>(resolve => setImmediate(resolve));
     }
-    expect(h.ticks.map(tick => tick.holdProduction)).toEqual(['Mirror preparation is in progress.', null]);
+    expect(h.ticks.map(tick => tick.holdProduction)).toEqual([null]);
   });
 
   it('stops lane observations when mirror preparation reaches its deadline', async () => {
@@ -1492,6 +1495,11 @@ describe('exhausted positive USD allowance maintenance', () => {
     const leader = vi.fn(async () => undefined);
     const experiment = vi.fn(async () => null);
     const watch = vi.fn(h.deps.advanceWatch!);
+    const prepare = h.deps.prepareMirrors!;
+    h.deps.prepareMirrors = async (...args) => {
+      await vi.waitFor(() => expect(h.ticks.at(-1)?.holdProduction).toBe('Mirror preparation is in progress.'));
+      return prepare(...args);
+    };
     const hooks = createLiveTickHooks({ deps: { ...h.deps, leaderTick: leader, runExperiment: experiment, advanceWatch: watch } });
     hooks.effectiveConfig(CFG);
     hooks.standingBacklog([]);
