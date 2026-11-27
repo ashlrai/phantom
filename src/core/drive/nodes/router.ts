@@ -31,19 +31,22 @@ export function liveNodes(state: NodesState, now: number): NodeRecord[] {
 }
 
 /** True while a running job's claim can still be acted on: the claim is
- * unexpired and an unexpired node record carries the same id and session.
- * A lapsed claim is re-routable, and a claim fenced by a rejoin or departure
- * frees the node's capacity at once even though the job stays fenced until
- * the claim expires. */
+ * unexpired and both the worker session and the issuing leader lease are live.
+ * Losing either frees capacity immediately. Pull still waits for claim expiry
+ * before routing the job again. */
 export function actionableClaim(state: NodesState, job: QueueJobV1, now: number): boolean {
   const claim = job.claim;
-  return job.state === 'running' && claim !== undefined && claim.expiresAt > now &&
-    state.nodes.some(n => n.expiresAt > now && n.nodeId === claim.nodeId && n.session === claim.session);
+  const leader = state.leader;
+  if (job.state !== 'running' || !claim || claim.expiresAt <= now ||
+      !leader || leader.token !== claim.leaderToken || leader.expiresAt <= now) return false;
+  const live = (session: Pick<NodeRecord, 'nodeId' | 'session'>) => state.nodes.some(n =>
+    n.expiresAt > now && n.nodeId === session.nodeId && n.session === session.session);
+  return live(leader) && live(claim);
 }
 
 function activeClaims(state: NodesState, node: NodeRecord, now: number): number {
-  return state.jobs.filter(j => j.state === 'running' && j.claim && j.claim.expiresAt > now &&
-    j.claim.nodeId === node.nodeId && j.claim.session === node.session).length;
+  return state.jobs.filter(j => j.claim?.nodeId === node.nodeId &&
+    j.claim.session === node.session && actionableClaim(state, j, now)).length;
 }
 
 /** Capability fences every assignment path honors: a session that released the

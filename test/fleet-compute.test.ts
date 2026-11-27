@@ -34,6 +34,7 @@ it('projects real numeric observations, offline nodes, per-source failures and e
 it('binds local identity only through explicit pool config; merges freshest registry/mirror and live fenced claims', async () => {
   const f = await fixture();
   const mirror = structuredClone(f.state); mirror.nodes[0]!.heartbeatAt = now; mirror.nodes[0]!.expiresAt = now + 1000;
+  mirror.leader = { nodeId: 'muse', session: 1, token: 1, expiresAt: now + 250 };
   mirror.jobs = [{ id: 'RQ-REMOTE', owner: 'team', state: 'running', claim: { nodeId: 'muse', session: 1, token: 1, leaderToken: 1, jobId: 'RQ-REMOTE', expiresAt: now + 500 } }];
   await writeFile(join(f.root, 'node-pool', 'primary-mirror.json'), JSON.stringify(mirror));
   let view = await readFleetCompute(f.options);
@@ -42,6 +43,8 @@ it('binds local identity only through explicit pool config; merges freshest regi
   view = await readFleetCompute(f.options);
   expect(view.localNodeId).toBe('muse');
   expect(view.nodes).toHaveLength(1);
+  const fenced = await readFleetCompute({ ...f.options, now: now + 250 });
+  expect(fenced.nodes[0]).toMatchObject({ state: 'ready', jobs: [] });
   mirror.observedAt = now + 5; mirror.jobs = [];
   await writeFile(join(f.root, 'node-pool', 'nodes.json'), JSON.stringify(mirror));
   view = await readFleetCompute({ ...f.options, now: now + 10 });
@@ -52,6 +55,7 @@ it('frees claims fenced by an expired node record, matching the router\'s action
   const f = await fixture();
   // The fixture record is already expired; its claim is not. The router frees
   // that claim's capacity at once, so the projection must not show it held.
+  f.state.leader = { nodeId: 'muse', session: 1, token: 1, expiresAt: now + 250 };
   f.state.jobs = [{ id: 'RQ-FENCED', owner: 'team', state: 'running',
     claim: { nodeId: 'muse', session: 1, token: 1, leaderToken: 1, jobId: 'RQ-FENCED', expiresAt: now + 500 } }];
   await writeFile(join(f.root, 'nodes', 'nodes.json'), JSON.stringify(f.state));

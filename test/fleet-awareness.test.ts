@@ -104,6 +104,35 @@ test('a claim fenced by a rejoined session frees its host slots at once', () => 
   expect(report.hosts[0]).toMatchObject({ hostId: 'mac', slots: 2, running: 0, freeSlots: 2 });
 });
 
+test('leader lease expiry frees worker and host slots while pull waits to retry the fenced job', () => {
+  const f = fixture();
+  const leader = f.add('leader', { hostId: 'mac', slots: 1 });
+  const worker = f.add('worker', { hostId: 'mac', slots: 1 });
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  f.enqueue('fenced');
+  const claim = nodes.claim(f.state.leader!, worker, 'fenced')!;
+  f.enqueue('next');
+
+  f.advance(6_000);
+  f.beat(leader.nodeId, { hostId: 'mac', slots: 1 });
+  f.beat(worker.nodeId, { hostId: 'mac', slots: 1 });
+  f.advance(6_000);
+  f.beat(worker.nodeId, { hostId: 'mac', slots: 1 });
+  f.advance(3_999);
+  expect(f.plan()).toEqual([expect.objectContaining({ jobId: 'next', nodeId: null })]);
+
+  f.advance(1);
+  expect(nodes.renewClaim(claim)).toBeNull();
+  expect(nodes.jobOutcome('fenced', 'mason')).toEqual({ state: 'running' });
+  expect(projectFleetAwareness(f.state, f.now()).hosts.find(h => h.hostId === 'mac'))
+    .toMatchObject({ running: 0, freeSlots: 1 });
+  expect(f.plan()).toEqual([expect.objectContaining({ jobId: 'next', nodeId: 'worker' })]);
+
+  f.beat(worker.nodeId, { hostId: 'mac', slots: 1 });
+  expect(nodes.complete(claim, 'late')).toBe(false);
+  expect(nodes.pull(worker)?.claim.jobId).toBe('next');
+});
+
 test.each(['memory-pressure', 'disk-pressure', 'memory-unmeasured', 'disk-unmeasured'] as const)('hold %s blocks siblings and direct claims', held => {
   const f = fixture(); const a = f.add('a', { hostId: 'mac' }); f.add('b', { hostId: 'mac', slots: 0, held }); f.enqueue();
   expect(f.plan()[0]?.nodeId).toBeNull();
