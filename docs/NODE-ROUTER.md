@@ -250,13 +250,16 @@ before the lease lapses.
 Every error ends with a fix. A job with no taker is shown by `phm node plan`
 with the reason: no live node in that owner (join one), no node advertising the
 caps (rejoin with them), or no node with a local `gh` login (`gh auth login`,
-then `phm node beat --probe-auth`). A `session-expired` error — from `beat`,
-`pull` or a claim verb (`renew`, `complete`, `release`) — means the node's
-session lapsed: its `fix` prints the rejoin command,
-carrying the node's last advertised owner scopes, caps and slots while the
-registry still holds the record (placeholders when it does not). For `beat`
-and `pull`, if the node already rejoined under a newer session the fix names
-that session and the exact `leave` command instead, so an operator who lost
+then `phm node beat --probe-auth`). When every candidate node is blocked on
+several fences at once — say one lacks the cap and another lacks `gh` auth —
+the fix names each node's blockers rather than guessing a single cause. A
+`session-expired` error — from `beat`, `pull` or a claim verb (`renew`,
+`complete`, `release`) — means the node's session lapsed: its `fix` prints
+the rejoin command, carrying the node's last advertised owner scopes, caps
+and slots while the registry still holds the record (placeholders when it
+does not). For `beat` and `pull`, if the node already rejoined under a newer
+session the fix names that session and the exact `leave` command instead, so
+an operator who lost
 track of the number can resume without re-joining again; a claim verb's fix
 instead ends at re-pull — the claim's tokens died with the old session — and
 names the live session when one exists. A `node-live` error from a standalone `join`
