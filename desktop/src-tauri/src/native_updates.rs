@@ -711,6 +711,45 @@ pub fn remembered_stage(home: &Path) -> Result<Option<String>, String> {
     Ok(Some(pointer.stage_id))
 }
 
+/// Forget one stage whose install attempt finished unsuccessfully: drop its
+/// pointer and staged bytes so discovery downloads a fresh signed stage. A
+/// pointer naming a different stage is left untouched, and uncertain
+/// ownership refuses rather than guessing. Other stages' history is untouched.
+pub fn forget_stage(home: &Path, id: &str) -> Result<(), String> {
+    need(stage_id(id), "unsafe-stage")?;
+    let staged = private_dirs(home)?;
+    let updates = home.join(".ashlr").join("updates");
+    if remembered_stage(home)?.as_deref() != Some(id) {
+        return Ok(());
+    }
+    let pointer = updates.join("native-stage.json");
+    match fs::symlink_metadata(&pointer) {
+        Ok(_) => {
+            owned_metadata(&pointer, false)?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(held("unsafe-stage")),
+    }
+    fs::remove_file(&pointer).map_err(|_| held("unsafe-stage"))?;
+    fs::File::open(&updates)
+        .and_then(|f| f.sync_all())
+        .map_err(|_| held("unsafe-stage"))?;
+    let dir = staged.join(id);
+    match fs::symlink_metadata(&dir) {
+        Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {
+            owned_metadata(&dir, true)?;
+        }
+        Ok(_) => return Err(held("unsafe-stage")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(held("unsafe-stage")),
+    }
+    fs::remove_dir_all(&dir).map_err(|_| held("unsafe-stage"))?;
+    fs::File::open(&staged)
+        .and_then(|f| f.sync_all())
+        .map_err(|_| held("unsafe-stage"))?;
+    Ok(())
+}
+
 pub fn publish_status(home: &Path, state: &UpdateState) -> Result<(), String> {
     let parent = ensure_private_dirs(home, &[".ashlr", "updates"])?;
     let path = parent.join("native-status.json");
@@ -915,6 +954,48 @@ mod tests {
         ] {
             assert_eq!(stable_version(v), None);
         }
+    }
+    #[test]
+    fn forget_stage_drops_only_the_named_terminal_stage() {
+        let home = std::env::temp_dir().join(format!(
+            "phantom-forget-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::DirBuilder::new().mode(0o700).create(&home).unwrap();
+        let id = "a".repeat(32);
+        let other = "b".repeat(32);
+        let staged = private_dirs(&home).unwrap();
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(staged.join(&id))
+            .unwrap();
+        fs::write(staged.join(&id).join("app.tar.gz"), b"x").unwrap();
+        let updates = home.join(".ashlr").join("updates");
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .mode(0o600)
+            .open(updates.join("native-stage.json"))
+            .unwrap();
+        file.write_all(format!("{{\"stageId\":\"{id}\"}}").as_bytes())
+            .unwrap();
+        drop(file);
+        // A pointer naming a different stage is never touched.
+        forget_stage(&home, &other).unwrap();
+        assert!(updates.join("native-stage.json").exists());
+        assert!(staged.join(&id).exists());
+        // The named terminal stage loses its pointer and its bytes.
+        forget_stage(&home, &id).unwrap();
+        assert!(!updates.join("native-stage.json").exists());
+        assert!(!staged.join(&id).exists());
+        // Repeating is a no-op, and malformed ids refuse.
+        forget_stage(&home, &id).unwrap();
+        assert!(forget_stage(&home, "../escape").is_err());
+        fs::remove_dir_all(&home).unwrap();
     }
     #[test]
     fn state_never_exposes_stage_or_path() {
