@@ -1892,7 +1892,7 @@ describe('Trajectory records', () => {
     expect(summary.skillObservation).not.toHaveProperty('conflicting');
   });
 
-  it('attributes shadow skill selections to per-skill trajectory outcomes', () => {
+  it.each([null, 'a', 'b'])('attributes only undisputed skill revisions (conflicting trajectory: %s)', (conflictingTrajectory) => {
     const outcomeFor = (
       id: string,
       action: 'merged' | 'rejected',
@@ -1979,6 +1979,16 @@ describe('Trajectory records', () => {
           skillUse({ eventId: 'use-c-alpha-sel', skillId: 'skill.alpha', skillRevision: 1, ts: TS2, trajectoryId: 'traj-c', runId: 'run-c', proposalId: 'prop-c' }),
           skillUse({ eventId: 'use-c-alpha-outcome', skillId: 'skill.alpha', skillRevision: 1, ts: TS3, selectedAt: TS2, stage: 'outcome', outcome: 'merged', trajectoryId: 'traj-c', runId: 'run-c', proposalId: 'prop-c' }),
           skillUse({ eventId: 'use-d-beta2', skillId: 'skill.beta', skillRevision: 2, contentHash: 'b'.repeat(64), ts: TS3, trajectoryId: 'traj-d', runId: 'run-d', proposalId: 'prop-d' }),
+          ...(conflictingTrajectory ? [skillUse({
+            eventId: 'use-alpha-conflict',
+            skillId: 'skill.alpha',
+            skillRevision: 1,
+            contentHash: 'c'.repeat(64),
+            stage: 'outcome',
+            trajectoryId: `traj-${conflictingTrajectory}`,
+            runId: `run-${conflictingTrajectory}`,
+            proposalId: `prop-${conflictingTrajectory}`,
+          })] : []),
         ],
       }),
     });
@@ -1987,15 +1997,15 @@ describe('Trajectory records', () => {
     const summary = summarizeTrajectoryLearning(records);
     expect(summary.skillObservation.sampleState).toBe('observed');
     expect(summary.skillOutcomes).toEqual({
-      skills: 2,
-      selections: 5,
+      skills: conflictingTrajectory ? 1 : 2,
+      selections: conflictingTrajectory ? 2 : 5,
       perSkill: [
-        {
+        ...(conflictingTrajectory ? [] : [{
           skillId: 'skill.alpha',
           skillRevision: 1,
           selections: 3,
           outcomes: { merged: 2, rejected: 1 },
-        },
+        }]),
         {
           skillId: 'skill.beta',
           skillRevision: 1,
