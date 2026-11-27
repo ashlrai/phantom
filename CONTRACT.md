@@ -1077,7 +1077,10 @@ claims never mark). `readRouterOutcomes` reads that index lazily through
 `ledgerSnapshot('cached')` — only hash-verified rows contribute, a broken
 chain still marks only its verified prefix, and any read failure degrades
 to no join; `authorityEvidence: null` skips the authority join only and an
-explicit array is used as given. A second, independent revert source joins
+explicit array supplies the index. Before resolving landing IDs, the reader
+filters authority rows with a supplied `at` timestamp to parseable times
+at or before report start. Explicit structural evidence rows may omit
+`at` for compatibility. A second, independent revert source joins
 under the same claim rule: `improve/revert-outcomes.jsonl`, the bounded
 append-only ledger `phm fleet reverts --record` writes from its
 72h-window git-history scan. Its newest record per `owner/repo#n` key

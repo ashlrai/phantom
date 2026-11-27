@@ -1036,7 +1036,8 @@ a URL can use the job's sole PR claim in the retained ledger. This keeps
 reverts of superseded PRs from discounting a replacement merge. The
 index join reads `ledgerSnapshot('cached')` lazily, contributes only
 hash-verified rows — a broken chain still marks only its verified prefix —
-and degrades to no join on any read failure. A second, independent revert
+and degrades to no join on any read failure. Both authority landings must
+have been recorded at or before report start. A second, independent revert
 source joins under the same claim rule:
 `$ASHLR_HOME/improve/revert-outcomes.jsonl`, the bounded append-only
 ledger `phm fleet reverts --record` writes from its 72h-window

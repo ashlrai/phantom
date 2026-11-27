@@ -3669,6 +3669,32 @@ describe('router outcome authority revert join', () => {
     expect(result.outcomes.find(o => o.job_id === 'J1')).toMatchObject({ merged, reverted });
   });
 
+  it('joins authority reverts only once both landings are visible at report start', async () => {
+    const mergeAt = '2026-11-01T10:00:00.000Z';
+    const revertAt = '2026-11-01T10:00:00.001Z';
+    const runs = runsDir(JSON.stringify({
+      job: 'J1', state: 'MERGED', pr: 'https://github.com/ashlrai/phantom/pull/42',
+    }));
+    const home = ashlarDir();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(mergeAt));
+    const merge = { ...ev('merge:landed', MERGE), at: mergeAt };
+    const revert = { ...ev('revert:landed', REVERT, MERGE), at: revertAt };
+    const read = (authorityEvidence: readonly RouterOutcomeEvidenceRow[]) =>
+      readRouterOutcomes({ runsDir: runs, ashlarDir: home, authorityEvidence });
+    try {
+      expect((await read([merge, revert])).outcomes[0]).toMatchObject({ merged: true, reverted: null });
+      expect((await read([{ ...merge, at: revertAt }, { ...revert, at: mergeAt }])).outcomes[0])
+        .toMatchObject({ merged: true, reverted: null });
+      expect((await read([merge, { ...revert, at: 'malformed' }])).outcomes[0])
+        .toMatchObject({ merged: true, reverted: null });
+
+      clock.mockReturnValue(Date.parse(revertAt));
+      expect((await read([merge, revert])).outcomes[0]).toMatchObject({ merged: true, reverted: true });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('resolves a revert:landed row to its merge landing\'s PR key', () => {
     const keys = authorityRevertedPrKeys([
       ev('merge:landed', MERGE),
