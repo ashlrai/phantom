@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { hostname } from 'node:os';
 import { validId } from '../core/drive/nodes/state.js';
 import { readNodeCapacity } from '../core/drive/nodes/capacity.js';
+import { nodeSampleHostId } from '../core/drive/nodes/capacity-sample.js';
 import { ashlrHome } from '../core/cloud/store.js';
 import { callPool, configurePool, readPoolConfig, serveNodeRpc, type NodeRpcRequest, type PoolConfig } from '../core/drive/nodes/pool-host.js';
 import { callNodeSsh, sshApprovalStep, validSshHost } from '../core/drive/nodes/ssh.js';
@@ -79,7 +79,7 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
       const role = verb === 'join' ? 'worker' : f.get('--role') as PoolConfig['role'];
       const existing = verb === 'join' ? readPoolConfig() : null;
       const config = existing ?? configFrom(f, role);
-      if (!existing && verb === 'join' && !f.has('--node')) config.node = hostname().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100);
+      if (!existing && verb === 'join' && !f.has('--node')) config.node = nodeSampleHostId();
       // Each identity refusal names its flag: a first enrollment that forgets
       // --owner or --node, reuses one SSH alias for both pool hosts, or repeats
       // a join with a changed flag must not dead-end on one generic message.

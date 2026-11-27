@@ -16,7 +16,7 @@ import { closeSync, constants, existsSync, readFileSync, readdirSync, renameSync
 import { join, sep } from 'node:path';
 import { NODE_TASK_LIMIT, validNodeTask, nodeTaskArgs, type EmbeddedNodeTask } from './task.js';
 import { type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
-import { NODE_HEARTBEAT_MS, validCap } from './state.js';
+import { NODE_HEARTBEAT_MS, isPlainRecord, validCap } from './state.js';
 import { NODE_OFFLINE_MS, type RouteAssignment } from './router.js';
 import { LOCAL_LANES, MARKET_LANE_ID, readyEnvelopeSpec, remoteLaneCap } from '../../fleet/unfed-market.js';
 import { scrubSecrets } from '../../util/scrub.js';
@@ -125,8 +125,8 @@ export function parseReadyRow(text: string, routerQueue?: string | null): ReadyR
   if (f.length > 5) {
     try {
       const parsed: unknown = f[5]!.length <= 8192 ? JSON.parse(f[5]!) : null;
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed).some(k => !SPEC_KEYS.has(k))) throw new Error('spec');
-      spec = parsed as Record<string, unknown>;
+      if (!isPlainRecord(parsed) || Object.keys(parsed).some(k => !SPEC_KEYS.has(k))) throw new Error('spec');
+      spec = parsed;
     } catch { return { job, lane: f[2]!, line, spec: null, invalid: 'invalid_requirements' }; }
   } else {
     // A matching `- STATUS ... (attrs):` envelope replaces the requirements

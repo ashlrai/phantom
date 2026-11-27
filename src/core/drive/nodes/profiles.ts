@@ -1,12 +1,11 @@
-import { statfsSync } from 'node:fs';
 import { isIP } from 'node:net';
-import { homedir, totalmem } from 'node:os';
+import { totalmem } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { ashlrHome } from '../../cloud/store.js';
 import { readPlatformHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
 import { readPrivateFileCapped } from '../../verse/preferences.js';
-import { assessNodeCapacity, nodeRamSlots, type NodeCapacity } from './capacity.js';
+import { assessNodeCapacity, nodeRamSlots, readHomeFreeDiskBytes, type NodeCapacity } from './capacity.js';
 import { validId } from './state.js';
 
 /**
@@ -86,7 +85,5 @@ export function assessProfileCapacity(profile: NodeProfile, ramBytes: number, me
 
 /** Live read for the worker: no shell beyond the fixed vm_stat/sysctl readers in host-headroom. */
 export function readProfileCapacity(profile: NodeProfile): NodeCapacity {
-  let freeDisk: number | null = null;
-  try { const disk = statfsSync(homedir()); freeDisk = disk.bavail * disk.bsize; } catch { /* unknown holds */ }
-  return assessProfileCapacity(profile, totalmem(), readPlatformHostHeadroom(), freeDisk);
+  return assessProfileCapacity(profile, totalmem(), readPlatformHostHeadroom(), readHomeFreeDiskBytes());
 }

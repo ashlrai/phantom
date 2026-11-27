@@ -26,7 +26,7 @@ export const REFIX_PR_WINDOW_CAP = 3;
 export const REFIX_RETRY_MS = 15 * 60 * 1000;
 export const REFIX_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const FLEET_AUTHOR = 'ashlr-fleet[bot]';
-export const SECURITY_PIN = 'Security pin required';
+const SECURITY_PIN = 'Security pin required';
 
 /** The seven approved GS_REPOS; no discovery or expansion. */
 export const REFIX_REPOS = [
@@ -94,7 +94,11 @@ export interface RefixSummary {
   maxWaitMs: number;
 }
 
-const shortName = (repo: string): string => repo.split('/').pop() ?? repo;
+/** Trailing repository name from `owner/repo` (or the input itself when unqualified). */
+export function repoShortName(repo: string): string {
+  return repo.split('/').pop() ?? repo;
+}
+const shortName = repoShortName;
 
 /** `.github` segment, publish.sh basename, or a segment containing the token. */
 export function securityPinnedPath(path: string): boolean {
@@ -134,18 +138,19 @@ export function normalizeState(value: unknown): RefixState {
   return state;
 }
 
+/** Evict the oldest keys from a durable state map when its size exceeds `cap`. */
+export function pruneOldestKeys<T>(record: Record<string, T>, cap: number, atOf: (entry: T) => number): void {
+  const keys = Object.keys(record);
+  if (keys.length <= cap) return;
+  keys.sort((a, b) => atOf(record[a]!) - atOf(record[b]!))
+    .slice(0, keys.length - cap)
+    .forEach((key) => delete record[key]);
+}
+
 /** Bound durable state; oldest entries are evicted first. */
 function prune(state: RefixState, cap = 8_192): void {
-  const keys = Object.keys(state.appended);
-  if (keys.length > cap) {
-    keys.sort((a, b) => state.appended[a]!.at - state.appended[b]!.at)
-      .slice(0, keys.length - cap).forEach((k) => delete state.appended[k]);
-  }
-  const given = Object.keys(state.giveup);
-  if (given.length > cap) {
-    given.sort((a, b) => state.giveup[a]! - state.giveup[b]!)
-      .slice(0, given.length - cap).forEach((k) => delete state.giveup[k]);
-  }
+  pruneOldestKeys(state.appended, cap, (entry) => entry.at);
+  pruneOldestKeys(state.giveup, cap, (at) => at);
 }
 
 /** Queue id shared by every producer of a fix-forward line for one PR head. */

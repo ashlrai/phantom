@@ -27,7 +27,7 @@ export interface CapacityOptions {
   lease?: HostSlotLease;
 }
 /** API/probe packs retain memory-only admission. Local inference also needs measured CPU headroom. */
-export const PACK_RESOURCE_HINTS: Readonly<Record<string, PackResourceHint>> = {
+const PACK_RESOURCE_HINTS: Readonly<Record<string, PackResourceHint>> = {
   'codex-file': 'memory-bound', 'shell-check': 'memory-bound', 'omlx-ping': 'memory-bound', 'omlx-chat': 'cpu-bound',
 };
 
@@ -39,14 +39,14 @@ const MIB = 1024 ** 2;
  * Unknown packs (including future local-model packs, whose footprint belongs to the
  * model planner in local-runtime/omlx) keep the conservative 4 GiB budget.
  */
-export const PACK_RAM_BYTES: Readonly<Record<string, number>> = {
+const PACK_RAM_BYTES: Readonly<Record<string, number>> = {
   'codex-file': GIB, // `codex exec`: thin CLI around API calls, ~0.5-1 GiB real
   'shell-check': 384 * MIB, // pure local probes
   'omlx-ping': 384 * MIB,
 };
-export const DEFAULT_PACK_RAM_BYTES = 4 * GIB;
+const DEFAULT_PACK_RAM_BYTES = 4 * GIB;
 /** Slots are advertised before a job is pulled, so they use the dominant workload: API-bound CLI jobs. */
-export const ADVERTISED_PACK = 'codex-file';
+const ADVERTISED_PACK = 'codex-file';
 
 export function packRamBytes(pack: string = ADVERTISED_PACK): number {
   return Object.hasOwn(PACK_RAM_BYTES, pack) ? PACK_RAM_BYTES[pack]! : DEFAULT_PACK_RAM_BYTES;
@@ -77,9 +77,19 @@ export function assessNodeCapacity(ramBytes: number, memory: HostHeadroom | null
   return { ramBytes, slots: held ? 0 : light ? Math.min(2, nodeRamSlots(ramBytes) * 2) : nodeRamSlots(ramBytes), held };
 }
 
+/** Free bytes on the home filesystem, or null when unreadable. */
+export function readHomeFreeDiskBytes(dir: string = homedir()): number | null {
+  try {
+    const disk = statfsSync(dir);
+    return disk.bavail * disk.bsize;
+  } catch {
+    return null;
+  }
+}
+
 /** Additive to DISKGUARD: never substitutes for the runner's existing disk checks. */
 export function readNodeCapacity(light = false, options: CapacityOptions = {}): NodeCapacity {
-  const readDisk = options.readDisk ?? (() => { const disk = statfsSync(homedir()); return disk.bavail * disk.bsize; });
+  const readDisk = options.readDisk ?? readHomeFreeDiskBytes;
   let freeDisk: number | null = null;
   try { freeDisk = readDisk(); } catch { /* unknown holds */ }
   const readCpu = () => platform() === 'win32' ? null : { parallelism: availableParallelism(), load: loadavg() };
@@ -101,8 +111,7 @@ export function shareNodeCapacity(capacity: NodeCapacity, options: CapacityOptio
 
 /** No shell, network, provider queries or writes. Deltas are calculated by the viewer. */
 export function sampleHostStats(): HostStats {
-  let diskFree: number | null = null;
-  try { const disk = statfsSync(homedir()); diskFree = disk.bavail * disk.bsize; } catch { /* unknown */ }
+  const diskFree = readHomeFreeDiskBytes();
   const ramTotal = totalmem();
   return { sampledAtMs: Date.now(), uptimeSeconds: uptime(), load: platform() === 'win32' ? [null, null, null] : loadavg(), ramTotal,
     ramUsed: Math.max(0, ramTotal - freemem()), diskFree,

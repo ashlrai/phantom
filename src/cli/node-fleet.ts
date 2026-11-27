@@ -1,7 +1,7 @@
 /** `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave`: thin handlers over DriveNodes. */
-import { hostname } from 'node:os';
 import type { DriveNodes, NodesStore } from '../core/drive/nodes/index.js';
 import { UsageError, joinHintCommand, knownOwnerScopes, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
+import { nodeSampleHostId } from '../core/drive/nodes/capacity-sample.js';
 import { validId, type NodeAuth } from '../core/drive/nodes/state.js';
 import type { SelfUpdatePlan } from '../core/drive/nodes/phm-version.js';
 import type { LocalLaneProbeDeps } from '../core/drive/nodes/local-model-caps.js';
@@ -353,7 +353,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
     const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join },
-      { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }, { probeLocalLanePlan }] = await Promise.all([
+      { isVersionCap, localPhmVersion, versionCap, planNodeSelfUpdate }, { probeLocalLanePlan }] = await Promise.all([
       import('../core/drive/nodes/index.js'), import('../core/drive/nodes/auth-probe.js'),
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path'),
       import('../core/drive/nodes/phm-version.js'), import('../core/drive/nodes/local-model-caps.js')]);
@@ -373,7 +373,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // that cannot form a valid id leaves --node unset so the missing-flag error
       // still asks for one explicitly.
       if (!flags.has('--node')) {
-        const id = (deps.hostname ?? hostname)().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100);
+        const id = nodeSampleHostId(deps.hostname);
         if (validId(id)) flags.set('--node', id);
       }
       // A bare join (no --caps) advertises the lanes this machine's own
@@ -400,7 +400,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       const reported = versionCap((deps.phmVersion ?? localPhmVersion)());
       if (reported !== null) {
         const caps = (flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean)
-          .filter(c => versionFromCaps([c]) === null);
+          .filter(c => !isVersionCap(c));
         caps.push(reported);
         flags.set('--caps', caps.join(','));
       }

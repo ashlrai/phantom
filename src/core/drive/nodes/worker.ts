@@ -4,11 +4,11 @@ import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { checkDriveExecutable } from '../script-bridge.js';
-import type { JobClaim } from './index.js';
+import type { JobClaim, JobView } from './index.js';
 import { probeLocalModelCaps, type LocalLaneProbeDeps } from './local-model-caps.js';
 import { callPool, type PoolConfig } from './pool-host.js';
-import { NODE_HEARTBEAT_MS, isHostStats, validId } from './state.js';
-import { nodeRamSlots, readNodeCapacity, type NodeCapacity } from './capacity.js';
+import { NODE_HEARTBEAT_MS, isHostStats, isPlainRecord, validId } from './state.js';
+import { nodeRamSlots, readNodeCapacity, sampleHostStats, type NodeCapacity } from './capacity.js';
 import { nodeBeatCapacity } from './capacity-sample.js';
 import { hostSlots, type HostSlotLease } from './host-slots.js';
 import { localPhmVersion, versionCap } from './phm-version.js';
@@ -16,8 +16,6 @@ import { lightRecipe, restockLight } from './light.js';
 import { probeLocalAuth } from './auth-probe.js';
 import { NODE_PROVIDERS, isNodeProvider, resolveProviderBinary, type NodeProvider, type ProviderBinaries, type ProviderBinaryDeps } from './provider-binary.js';
 import { probeRunnerPacks } from './runner-packs.js';
-import type { JobView } from './index.js';
-import { sampleHostStats } from './capacity.js';
 
 /** Exit-code-only sign-in check of each provider's one resolved absolute binary. No PATH lookup or auth-file reads. */
 export function probeProviderBinaries(run: typeof spawnSync = spawnSync, binaryDeps: ProviderBinaryDeps = {}): ProviderBinaries {
@@ -50,7 +48,7 @@ export function classifyRunnerReply(code: number | null, fenced: boolean, stdout
   let reply: Record<string, unknown> | null = null;
   try {
     const parsed = JSON.parse(stdout) as unknown;
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) reply = parsed as Record<string, unknown>;
+    if (isPlainRecord(parsed)) reply = parsed;
   } catch { /* unstructured output is not a result */ }
   if (reply && reply['packError'] !== undefined && reply['packError'] !== null && reply['packError'] !== false) return { kind: 'error', reason: 'pack-error' };
   if (reply && reply['codex'] === 'error') return { kind: 'error', reason: 'codex-error' };

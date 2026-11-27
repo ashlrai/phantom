@@ -45,7 +45,7 @@ const MAX_OUTPUT = 4 * 1024 * 1024;
 /** /proc files are small; anything larger is not the telemetry this reads. */
 const MAX_PROC_BYTES = 256 * 1024;
 
-export const defaultMeasureHost: MeasureHost = {
+const defaultMeasureHost: MeasureHost = {
   platform: process.platform, now: Date.now, hostname: os.hostname, cpus: os.cpus, loadavg: os.loadavg,
   totalmem: os.totalmem, freemem: os.freemem,
   run: (file, args, timeoutMs) => new Promise(resolve => {
@@ -99,7 +99,7 @@ export function parsePgrepList(text: string | null): Array<{ pid: number; name: 
   return out;
 }
 
-export function parsePids(text: string | null): number[] {
+function parsePids(text: string | null): number[] {
   return (text ?? '').split('\n').map(s => Number(s.trim())).filter(n => Number.isSafeInteger(n) && n > 0);
 }
 
@@ -117,7 +117,7 @@ export function parseSwapouts(text: string | null): number | null {
 }
 
 /** `/proc/vmstat` `pswpout` cumulative swap-out counter — the Linux counterpart of vm_stat swapouts. */
-export function parseLinuxSwapouts(text: string | null): number | null {
+function parseLinuxSwapouts(text: string | null): number | null {
   const n = Number(text?.match(/^pswpout\s+(\d+)\s*$/m)?.[1]);
   return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }

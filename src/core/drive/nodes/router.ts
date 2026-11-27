@@ -3,7 +3,7 @@ import { isNodeCapacity, NODE_HEARTBEAT_MS, type NodeRecord, type NodesState } f
 import type { QueueJobV1 } from './queue-v1.js';
 
 /** Load added per claim a node already holds or is planned to receive (permille). */
-export const CLAIM_LOAD = 100;
+const CLAIM_LOAD = 100;
 export const NODE_OFFLINE_MS = 300_000;
 
 /** Missing or old heartbeat evidence never admits new work. */
@@ -26,7 +26,7 @@ export function routable(job: QueueJobV1, now: number): boolean {
   return job.state === 'running' && !!job.claim && job.claim.expiresAt <= now;
 }
 
-export function liveNodes(state: NodesState, now: number): NodeRecord[] {
+function liveNodes(state: NodesState, now: number): NodeRecord[] {
   return state.nodes.filter(n => nodeCanAcceptWork(n, now));
 }
 

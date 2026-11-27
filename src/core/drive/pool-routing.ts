@@ -20,6 +20,8 @@
  * PURE: no clock reads (the caller passes `nowMs`), no I/O.
  */
 
+import { isPlainRecord } from './nodes/state.js';
+
 /**
  * A line's kind is the uppercase token at the head of its job id after an
  * optional `RQ-` prefix — the same convention dispatchd's `_kind` uses
@@ -34,7 +36,7 @@ export function driveJobKind(jobId: string): string | null {
   return KIND.exec(jobId)?.[1] ?? null;
 }
 
-export const CODEX_PERSONAL_POOL = 'codex-personal';
+const CODEX_PERSONAL_POOL = 'codex-personal';
 
 /** The only kinds `codex-personal` may serve. */
 export const PERSONAL_ONLY_KINDS: readonly string[] = Object.freeze(['LAND', 'FIXUP', 'DRAIN', 'DAILYFIX']);
@@ -77,11 +79,10 @@ export interface PoolDayShare {
 }
 
 export function isPoolDayShare(value: unknown): value is PoolDayShare {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const day = value as Record<string, unknown>;
-  return [day.share, day.used].every((n) => Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) <= 100_000)
-    && Number.isSafeInteger(day.startMs) && Number.isSafeInteger(day.endMs)
-    && (day.endMs as number) > (day.startMs as number);
+  if (!isPlainRecord(value)) return false;
+  return [value.share, value.used].every((n) => Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) <= 100_000)
+    && Number.isSafeInteger(value.startMs) && Number.isSafeInteger(value.endMs)
+    && (value.endMs as number) > (value.startMs as number);
 }
 
 /**

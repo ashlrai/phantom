@@ -17,7 +17,7 @@
  */
 import { isDeepStrictEqual } from 'node:util';
 import { HARNESS_ADAPTERS } from './harness-adapters.js';
-import { CAPACITY_POLICY, type HarnessFootprint, type NodeCapacityDoc } from './capacity-model.js';
+import { CAPACITY_POLICY, isFiniteNumber as finite, type HarnessFootprint, type NodeCapacityDoc } from './capacity-model.js';
 
 export interface HarnessModelCost {
   provider: string;
@@ -87,9 +87,8 @@ export interface Placement {
   rejected?: Record<string, number>;
 }
 
-export const ROUTER_DEFAULTS = Object.freeze({ maxAgeMs: 120_000, tokenWeight: 0.5 });
+const ROUTER_DEFAULTS = Object.freeze({ maxAgeMs: 120_000, tokenWeight: 0.5 });
 
-const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 const MAX_CLOCK_SKEW_MS = 60_000;
 
 /** Select one observation per node, retaining conflicts at the newest plausible timestamp. */

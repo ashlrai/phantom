@@ -1,9 +1,8 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
 import { validNodeTask, type EmbeddedNodeTask } from './task.js';
 import { actionableClaim, jobBlockers, nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
-import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
+import { isHostStats, isNodeCapacity, validCap, validId, validSecretName, type HostStats, type NodeAuth, type NodeCapacitySample, type NodesState, type NodesStore } from './state.js';
 import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
-import { isNodeCapacity, isHostStats, type NodeCapacitySample, type HostStats } from './state.js';
 export { planRoutes } from './router.js';
 export type { RouteAssignment } from './router.js';
 export { LocalNodesStore } from './local-store.js';

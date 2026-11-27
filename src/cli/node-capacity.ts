@@ -7,6 +7,7 @@ import { computeNodeCapacity, NODE_CAPACITY_SCHEMA, parseNodeCapacityDoc, type N
 import { measureNode } from '../core/drive/nodes/node-measure.js';
 import { planAutoscaleRoutes, type HarnessModelCost, type LaneOutcomes, type RouteJob, type RouteNode } from '../core/drive/nodes/autoscale-router.js';
 import { readRouteLaneOutcomes, type RouteLaneOutcomes } from '../core/drive/nodes/route-outcomes.js';
+import { isPlainRecord } from '../core/drive/nodes/state.js';
 
 export const NODE_CAPACITY_USAGE = `Usage: phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json]
        phm node route --capacity <file> [--capacity <file>...] --costs <file> --jobs <file> [--outcomes <file>] [--outcomes-ledger] [--runs-dir <dir>] [--nodes <file>] [--exhausted <provider[,provider]>] [--json]
@@ -99,7 +100,6 @@ export async function cmdNodeCapacity(args: string[]): Promise<number> {
   return 0;
 }
 
-const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every(s => typeof s === 'string');
 
 export async function cmdNodeRoute(args: string[]): Promise<number> {
@@ -119,16 +119,16 @@ export async function cmdNodeRoute(args: string[]): Promise<number> {
       return doc;
     }));
     const costs = await readJsonFile(costsPath), jobs = await readJsonFile(jobsPath);
-    if (!Array.isArray(costs) || !costs.every(c => record(c) && typeof c.provider === 'string' && typeof c.model === 'string' &&
+    if (!Array.isArray(costs) || !costs.every(c => isPlainRecord(c) && typeof c.provider === 'string' && typeof c.model === 'string' &&
         typeof c.harness === 'string' && typeof c.tokensPerJob === 'number' && typeof c.minutesPerJob === 'number')) {
       throw new Error('--costs must be an array of {provider, model, harness, tokensPerJob, minutesPerJob, local?}');
     }
-    if (!Array.isArray(jobs) || !jobs.every(j => record(j) && typeof j.id === 'string' &&
+    if (!Array.isArray(jobs) || !jobs.every(j => isPlainRecord(j) && typeof j.id === 'string' &&
         (j.providers === undefined || strings(j.providers)) && (j.models === undefined || strings(j.models)))) {
       throw new Error('--jobs must be an array of {id, providers?, models?, tokenWeight?}');
     }
     const outcomesRaw = flagValues(args, '--outcomes')[0] ? await readJsonFile(flagValues(args, '--outcomes')[0]!) : {};
-    if (!record(outcomesRaw)) throw new Error('--outcomes must be an object of {provider: {attempts, merged}}');
+    if (!isPlainRecord(outcomesRaw)) throw new Error('--outcomes must be an object of {provider: {attempts, merged}}');
     let ledger: RouteLaneOutcomes | null = null;
     if (args.includes('--outcomes-ledger')) {
       ledger = await readRouteLaneOutcomes(runsDir === undefined ? {} : { runsDir });
@@ -139,9 +139,9 @@ export async function cmdNodeRoute(args: string[]): Promise<number> {
     // Ledger tallies are the base; explicit --outcomes entries win per provider.
     const outcomes = { ...(ledger?.outcomes ?? {}), ...(outcomesRaw as Record<string, LaneOutcomes>) };
     const meta = flagValues(args, '--nodes')[0] ? await readJsonFile(flagValues(args, '--nodes')[0]!) : {};
-    if (!record(meta)) throw new Error('--nodes must be an object of {node: {providers?, localModels?, overheadMinutes?}}');
+    if (!isPlainRecord(meta)) throw new Error('--nodes must be an object of {node: {providers?, localModels?, overheadMinutes?}}');
     const nodes: RouteNode[] = docs.map(doc => {
-      const m = record(meta[doc.node]) ? meta[doc.node] as Record<string, unknown> : {};
+      const m = isPlainRecord(meta[doc.node]) ? meta[doc.node] as Record<string, unknown> : {};
       return { doc, ...(strings(m.providers) ? { providers: m.providers } : {}), ...(strings(m.localModels) ? { localModels: m.localModels } : {}),
         ...(typeof m.overheadMinutes === 'number' ? { overheadMinutes: m.overheadMinutes } : {}) };
     });
