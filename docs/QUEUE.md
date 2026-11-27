@@ -259,6 +259,11 @@ a price. Cost classes come from host executor metadata.
 
 ## Routing receipts and JSON audit
 
+The weight reported by `phm lanes yield` counts a timestamped launch receipt
+once at its first occurrence. JSON key order and whitespace do not change
+receipt identity. Distinct launches remain separate observations, and receipts
+without a usable timestamp retain their ledger order.
+
 ### Repository shares
 
 The Mac shared queue starts flat: no repository has a fixed rank or guaranteed

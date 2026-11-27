@@ -128,6 +128,18 @@ describe('lane yield weight', () => {
       .toMatchObject({ launches: 10, known: true });
   });
 
+  it('keeps reserialized launches at their original position for yield attribution', () => {
+    const receipts = ledger('claude', 'lg', 10, 7);
+    const launch = JSON.parse(receipts[0]!.split('\n')[0]!);
+    const replay = JSON.stringify(Object.fromEntries(Object.entries(launch).reverse()), null, 2)
+      .replaceAll('\n', ' ');
+    const rows = yields(receipts, [replay]);
+    expect(rows).toHaveLength(2);
+    for (const result of rows) {
+      expect(result).toMatchObject({ launches: 10, merged: 7, yield: 0.7, weight: 1.4 });
+    }
+  });
+
   it('a merge recorded as reverted is not a held merge and sinks the lane weight', () => {
     const reverted = (lane: string, size: string, jobs: number): string[] =>
       Array.from({ length: jobs }, (_, i) => {

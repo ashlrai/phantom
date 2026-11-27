@@ -5,7 +5,7 @@
  * Per lane and size (a launch row's `size`, else "unknown"), plus a per-lane
  * "all" row, the window is the lane's last 50 launches. A job's merge counts
  * once on its latest launch, and outcome evidence must follow that launch.
- * Exact replays of timestamped launch receipts count once.
+ * Timestamped launch receipts with identical JSON content count once.
  * Rows fold through the fleet's jobs-ledger dialect: reconciler
  * outcome rows keyed by `jobId`/`prUrl`/`outcome`/`status`, `type`/`kind`
  * event spellings, the `pool` lane alias and terminal empty phases
@@ -17,6 +17,7 @@
  *
  * weight = yield / 0.5, clamped to 0.1..2, so a yield of 0.5 is exactly neutral.
  */
+import { canonicalJson } from '../authority/canonical-json.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 import { hasRevertEvidence } from './slot-yield.js';
 
@@ -159,7 +160,13 @@ export function computeLaneYield(ledger: string | null): LaneYieldReport {
       if (!lane) continue;
       const at = eventTs(row, phase);
       if (at !== null) {
-        const receipt = line.trim();
+        let receipt: string;
+        try {
+          receipt = canonicalJson(row);
+        } catch {
+          // Retain exact-text deduplication for rows that cannot be canonicalized.
+          receipt = line.trim();
+        }
         if (seenLaunchReceipts.has(receipt)) continue;
         seenLaunchReceipts.add(receipt);
       }
