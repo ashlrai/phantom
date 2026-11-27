@@ -990,6 +990,31 @@ describe('foldJobsLedgerRewards', () => {
       .toMatchObject({ pool: 'claude', merged: false, ciWallMs: 900_000 });
   });
 
+  it.each([
+    ['2026-10-28T15:09:59.000Z', true, false],
+    ['2026-10-28T15:10:00.000Z', true, false],
+    ['2026-10-28T15:10:01.000Z', false, false],
+    ['2026-10-28T15:25:00.000Z', false, false],
+    ['2026-10-28T15:25:01.000Z', true, false],
+    ['invalid', false, false],
+    ['2026-10-28T15:10:01.000Z', true, true],
+  ] as const)('checks launch reservations at %s for CI timing (measured=%s, declined=%s)', (
+    timestamp, measured, declined,
+  ) => {
+    const job = 'RQ-CI-RESERVATION';
+    const rows = [
+      launch(job),
+      ciStart(job, '2026-10-28T15:10:00.000Z'),
+      ciComplete(job, '2026-10-28T15:25:00.000Z'),
+      merged(job),
+      line({ job, event: 'claim', lane: 'devin', launch_dedupe: true, ts: timestamp,
+        ...(declined ? { launched: false } : {}) }),
+    ];
+    const inputs = foldJobsLedgerRewards(rows.join('\n'), NOW_MS);
+    expect(inputs).toMatchObject([{ jobId: job, pool: 'codex-cmp', merged: true, dispatchedAt: DISPATCH_ISO }]);
+    expect(inputs[0]?.ciWallMs).toBe(measured ? 900_000 : undefined);
+  });
+
   it('withholds CI timing when an undated boundary could fall inside the rewarded dispatch', () => {
     const job = 'RQ-UNDATED-CI';
     const text = [

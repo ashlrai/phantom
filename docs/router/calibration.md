@@ -80,6 +80,10 @@ its verdict and leaves the repository null.
 The feed leaves CI wall time unknown when a batch claim falls at or between
 the paired CI timestamps. A batch claim strictly before CI starts can still
 supply dispatch evidence for a reward with measured CI wall time.
+A solo launch reservation (`claim` with `launch_dedupe: true`) leaves the
+reward verdict and dispatch attribution intact. It leaves CI wall time unknown
+when it falls after CI starts and at or before CI completes, or when it has
+no usable timestamp.
 Conflicting repository labels at the effective resolution time also leave
 CI wall time unknown. When the resolution supplies no repository, the same
 rule applies to conflicting labels on the selected dispatch. Missing
