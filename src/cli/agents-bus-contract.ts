@@ -63,6 +63,13 @@ export async function runAgentsCli(
     }
     rest.push(arg);
   }
+  // The read verbs (mesh, edges, bus contract/channels) answer --help with the
+  // contract help. `agents bus` with no deeper verb stays a strict refusal:
+  // it only ever accepts `bus contract [--json]` or the unified verbs.
+  if ((rest.includes('--help') || rest.includes('-h')) && !(rest[0] === 'bus' && rest.length === 2)) {
+    out(HELP);
+    return 0;
+  }
   if (rest.length === 1 && rest[0] === 'edges' && root === undefined) {
     const result = readFleetEdges();
     out(JSON.stringify(sanitizePublicJson(result), null, json ? undefined : 2));

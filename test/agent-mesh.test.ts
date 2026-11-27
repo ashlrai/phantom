@@ -47,6 +47,16 @@ describe('flat agent mesh', () => {
     expect(await runAgentsCli(['mesh', 'status', '--apply'], out, err)).toBe(2);
   });
 
+  it('answers --help for the read verbs and keeps the bare `agents bus` refusal', async () => {
+    const out = vi.fn(), err = vi.fn();
+    for (const args of [['mesh', '--help'], ['mesh', 'status', '--help'], ['edges', '-h'], ['bus', 'contract', '--help']]) {
+      expect(await runAgentsCli(args, out, err), args.join(' ')).toBe(0);
+    }
+    expect(out.mock.calls.flat().join('\n')).toContain('ashlr agents mesh status');
+    expect(await runAgentsCli(['bus', '--help'], out, err)).toBe(2);
+    expect(err).toHaveBeenCalled();
+  });
+
   it('publishes every desktop app, CLI claims and teammate state as existing v2 context bodies', async () => {
     expect(await publishAgentMesh(sources())).toMatchObject({ status: 'ok', published: 8, failed: 0 });
     const mesh = readAgentMesh(options());

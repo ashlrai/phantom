@@ -64,13 +64,22 @@ describe('fleet imessage-acks', () => {
     rmSync(file); mkdirSync(file);
     expect(JSON.parse((await run(dir, ['--json'])).out).sourceState).toBe('unreadable');
   });
+  it('answers --help and -h with usage before reading', async () => {
+    const { dir } = fixture();
+    for (const flag of ['--help', '-h']) {
+      const result = await run(dir, [flag]);
+      expect(result.code).toBe(0);
+      expect(result.out).toBe('Usage: phm fleet imessage-acks [--limit N] [--rowid N] [--json]');
+      expect(result.errors).toBe('');
+    }
+  });
   it('rejects invalid flags before filesystem reads', async () => {
     const { dir } = fixture();
     for (const args of [['--limit', '0'], ['--limit', '101'], ['--limit', '1.5'], ['--limit'], ['--json', '--json'], ['--wat'], ['--limit', '1', '--limit', '2']]) {
       const result = await run(dir, args);
       expect(result.code).toBe(2);
       expect(result.out).toBe('');
-      expect(result.errors).toBe('Usage: phm fleet imessage-acks [--limit N] [--json]');
+      expect(result.errors).toBe('Usage: phm fleet imessage-acks [--limit N] [--rowid N] [--json]');
     }
   });
 });
