@@ -1898,6 +1898,7 @@ function foldRouterOutcomesWithCiCoverage(
   const verdictPrKeys = new Map<string, string | null>();
 
   const outcomes = new Map<string, RouterOutcome>();
+  const unlaunchedLanes = new Map<string, string>();
   const mergedAt = new Map<string, number>();
   const disputedCiFirstPass = new Set<string>();
   let unattached = 0;
@@ -1936,7 +1937,11 @@ function foldRouterOutcomesWithCiCoverage(
       launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
       passk: null,
     };
-    o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
+    const lane = str(r, 'lane', 'pool', 'arm');
+    if (lane !== null) {
+      if (r['launched'] === false) unlaunchedLanes.set(j, lane);
+      else o.lane = lane;
+    }
     o.model = str(r, 'model') ?? o.model;
     o.tier = str(r, 'tier') ?? o.tier;
     o.work_class = str(r, 'work_class') ?? o.work_class;
@@ -2225,6 +2230,9 @@ function foldRouterOutcomesWithCiCoverage(
       }
     }
     outcomes.set(j, o);
+  }
+  for (const o of outcomes.values()) {
+    o.lane ??= unlaunchedLanes.get(o.job_id) ?? null;
   }
   if (opts.passkFor || opts.workClassFor) {
     for (const o of outcomes.values()) {

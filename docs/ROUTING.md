@@ -390,7 +390,9 @@ reports one
 first. Jobs receipts with a recognized ledger timestamp after report start
 are excluded before outcome folding, PR attribution and handoff comparison.
 Receipts at the boundary and legacy receipts without a parseable timestamp
-remain eligible. Each record includes merge and revert state, CI first pass, review findings, cost, wall
+remain eligible. A lane on a receipt marked `launched: false` serves as a
+fallback for queue diagnostics when no other receipt for the job records a lane.
+Each record includes merge and revert state, CI first pass, review findings, cost, wall
 time, recorded merge latency (`ttm_s` — the jobs-ledger `ttm_s`/`ttmS`
 opened-to-merged seconds, taken only from the row that stands as the
 merge verdict and cleared when a later verdict is not a merge), recorded

@@ -166,6 +166,20 @@ const scoreRow = (lane: string, model: string, passPowK: number | null) => ({
 });
 
 describe('router outcome ledger (612S preservation)', () => {
+  it.each([false, true])('keeps the execution lane when a no-launch receipt is present (first: %s)', (first) => {
+    const execution = [
+      '{"job":"J1","event":"launch","pool":"alpha","work_class":"build"}',
+      '{"job":"J1","phase":"MERGED"}',
+    ];
+    const noop = '{"job":"J1","event":"outcome","state":"DONE-NOOP","lane":"beta","reason":"already-merged","launched":false}';
+    const onlyNoop = '{"job":"J2","event":"outcome","state":"DONE-NOOP","lane":"gamma","reason":"already-merged","launched":false}';
+    const rows = first ? [noop, ...execution] : [...execution, noop];
+    const outcomes = foldRouterOutcomes([...rows, onlyNoop].join('\n')).outcomes;
+
+    expect(outcomes.find(o => o.job_id === 'J1')).toMatchObject({ lane: 'alpha', merged: true });
+    expect(outcomes.find(o => o.job_id === 'J2')).toMatchObject({ lane: 'gamma', merged: null, noop: true });
+  });
+
   it('folds mixed valid and malformed rows and tolerates blanks', () => {
     const text = [
       '{"job":"J1","lane":"alpha","model":"m1","tier":"work","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
