@@ -2913,6 +2913,27 @@ describe('router outcome reward-signals join', () => {
   });
 
   it.each([
+    ['distinct starts', ['00:01:00', '00:02:00'], ['00:05:00'], null, null],
+    ['distinct completions', ['00:01:00'], ['00:04:00', '00:05:00'], null, null],
+    ['reversed boundaries', ['00:05:00'], ['00:01:00'], null, null],
+    ['a missing completion', ['00:01:00'], [], null, 600],
+    ['exact replays', ['00:01:00', '00:01:00'], ['00:05:00', '00:05:00'], 240, 240],
+  ] as const)('handles reward CI timing with %s', async (_label, starts, completions, direct, joined) => {
+    const rows = [
+      ...starts.map(time => ({ job: 'J1', event: 'ci_start', ts: `2026-11-01T${time}Z` })),
+      ...completions.map(time => ({ job: 'J1', event: 'ci_complete', ts: `2026-11-01T${time}Z` })),
+    ].map(row => JSON.stringify(row)).join('\n');
+    expect(foldRouterOutcomes(rows).outcomes[0]?.ci_wall_s).toBe(direct);
+
+    const result = await readRouterOutcomes({
+      runsDir: runsDir(rows),
+      ashlarDir: rewardLedger([rewardRow('J1', true)]),
+      authorityEvidence: null,
+    });
+    expect(result.outcomes[0]).toMatchObject({ merged: true, ci_wall_s: joined });
+  });
+
+  it.each([
     ['before both spans', '00:00:00', 120, 300],
     ['at publish start', '00:01:00', null, 300],
     ['inside publish wait', '00:02:00', null, 300],

@@ -1849,15 +1849,15 @@ function foldRouterOutcomesWithCiCoverage(
   }
   const ciWallS = new Map<string, number>();
   for (const [j, marks] of ciMarks) {
-    if (marks.prKeys.size > 1) ambiguousCiJobs.add(j);
+    if (marks.prKeys.size > 1 || marks.starts.size > 1 || marks.completes.size > 1) ambiguousCiJobs.add(j);
     if (ambiguousCiJobs.has(j) || marks.starts.size !== 1 || marks.completes.size !== 1) continue;
     const start = [...marks.starts][0]!;
     const complete = [...marks.completes][0]!;
-    if (crossesAttemptBoundary(j, start, complete)) {
+    if (complete < start || crossesAttemptBoundary(j, start, complete)) {
       ambiguousCiJobs.add(j);
       continue;
     }
-    if (complete >= start) ciWallS.set(j, (complete - start) / 1000);
+    ciWallS.set(j, (complete - start) / 1000);
   }
 
   // Publish-station evidence, derived once per job from the same
