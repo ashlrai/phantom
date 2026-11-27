@@ -78,7 +78,7 @@ it('reads newest personal rollout only, ignores the company home, and writes not
   const queue = join(home, '.ashlr-runs/queue');
   const sessions = join(home, '.codex-2/sessions/2026/10/31');
   await mkdir(queue, { recursive: true }); await mkdir(sessions, { recursive: true });
-  const slots = JSON.stringify({ 'codex-personal': { target: 2, held: true, held_reason: 'fixture-secret' } });
+  const slots = JSON.stringify({ 'codex-personal': { target: 2, running: 0, queued: 4, held: true, held_reason: 'fixture-secret' } });
   const path = join(queue, 'slots.json');
   await writeFile(path, slots); await utimes(path, new Date(now), new Date(now));
   const event = (used: number, timestamp: string) => JSON.stringify({ timestamp, type: 'event_msg', payload: { type: 'token_count', rate_limits: { secondary: { used_percent: used, window_minutes: 10080, resets_at: Date.parse(sample.resetAt!) / 1000 }, credits: { secret: 'fixture-secret' } } } });
@@ -89,11 +89,17 @@ it('reads newest personal rollout only, ignores the company home, and writes not
   await mkdir(join(home, '.codex/sessions'), { recursive: true });
   await writeFile(join(home, '.codex/sessions/rollout-company.jsonl'), event(100, sample.sampledAt));
   const result = await readLaneTruth(defaultLaneTruthReaders(home, now), now);
-  expect(result.lanes[0]!.verdict).toBe('held_with_capacity');
+  expect(result.lanes).toEqual([{ lane: lane.lane, target: 2, running: 0, queued: 4, held: true, verdict: 'held_with_capacity' }]);
   expect(JSON.stringify(result)).not.toContain('fixture-secret');
   expect(await readFile(path, 'utf8')).toBe(slots);
-  await utimes(path, new Date(now - 3600_000), new Date(now - 3600_000));
-  expect((await readLaneTruth(defaultLaneTruthReaders(home, now), now)).lanes[0]!.verdict).toBe('unknown');
+  for (const timestamp of [now - 3600_000, now + 1000]) {
+    const mtime = new Date(timestamp);
+    await utimes(path, mtime, mtime);
+    const readers = defaultLaneTruthReaders(home, now);
+    const expected = { lane: lane.lane, target: 2, running: null, queued: null, held: null, verdict: 'unknown' };
+    expect((await readLaneTruth(readers, now)).lanes).toEqual([expected]);
+    expect(await readLaneTruthReport(readers, now)).toMatchObject([expected]);
+  }
 });
 
 it('preserves the rollout when one reading has an out-of-range reset', async () => {
