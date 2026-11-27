@@ -36,7 +36,7 @@ describe('M522 — production-promotion operator boundary', () => {
     expect(historicalDocs.split(marker)).toHaveLength(2);
     const body = historicalDocs.slice(historicalDocs.indexOf(marker));
     expect(createHash('sha256').update(body).digest('hex'))
-      .toBe('5d3f545a87d9759c2a5b0a7b2e9c6569dde69ccdfa7831d5d4d2203900e62f36');
+      .toBe('21705789d8832b0e191d05759145190a134a8678050476131803cd165d317511');
     expect(historicalDocs).toContain('not current release instructions');
     expect(historicalDocs).toContain('Keep Actions disabled');
     expect(releaseDocs).not.toContain('all successor verification runs locally');

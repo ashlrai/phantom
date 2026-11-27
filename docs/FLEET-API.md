@@ -439,7 +439,7 @@ planners, each lane, each job under it.
 JSON is the default; `phm org --text` prints it for people.
 The map endpoint above carries the tree in its `tree` field.
 
-With a [fleet replica configured](NODE-ROUTER.md#one-fleet-across-enrolled-macs),
+With a [fleet replica configured](https://github.com/ashlrai/phantom/blob/master/docs/NODE-ROUTER.md#one-fleet-across-enrolled-macs),
 the worker reads the leader's tree, live totals, queue and resource ledger.
 `source` identifies the observation: `machine`, `via` (`local` or
 `leader-replica`), `asOf`, `ageSeconds`, `stale` and `reason`. Lanes name
