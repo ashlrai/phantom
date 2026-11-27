@@ -169,6 +169,11 @@ times and keeps the dispatcher reading on a tie. Expired session readings do
 not replace dispatcher data. The ledger preserves the dispatcher hold and
 records both quota readings when it selects the session reading.
 
+The resource ledger reports recovered quota or a corresponding hold conflict
+only when the earlier dispatcher exhaustion reading predates its own reset.
+A dispatcher reading captured at or after that reset stays visible as source
+evidence, and a fresh provider reading can still establish current headroom.
+
 Computed route constants: `VERSE_FLEET_CONTROL_QUEUE_PATH` defines
 `/api/verse/fleet/control/queue`; `VERSE_FLEET_CONTROL_RUNS_PREFIX` defines the
 control run prefix. Ops paths use `VERSE_OPS_BOARD_PATH`,
