@@ -17,7 +17,8 @@ function fixture() {
   const beat = (nodeId: string, sample: Partial<NodeCapacitySample> = {}) => {
     const node = state.nodes.find(n => n.nodeId === nodeId)!;
     run('beat', ['--node', nodeId, '--session', String(node.session), '--capacity', JSON.stringify({
-      ramBytes: 128 * 1024 ** 3, slots: 22, held: null, hostId: nodeId, sampledAtMs: now, ...sample })]);
+      ramBytes: 128 * 1024 ** 3, slots: 22, held: null, hostId: nodeId, sampledAtMs: now, ...sample }),
+    '--slots', String(sample.slots ?? 22)]);
   };
   const add = (nodeId: string, sample: Partial<NodeCapacitySample> = {}) => {
     run('join', ['--node', nodeId, '--caps', 'codex', '--slots', '64']); beat(nodeId, sample);
@@ -56,6 +57,29 @@ test('unknown, stale, future and expired reports never become pool capacity; exa
   const legacy = fixture(); legacy.run('join', ['--node', 'legacy', '--slots', '64']); legacy.enqueue();
   expect(legacy.plan()[0]?.nodeId).toBeNull();
   expect(projectFleetAwareness(legacy.state, legacy.now()).hosts[0]?.freeSlots).toBeNull();
+});
+
+test('delayed pool beats renew liveness without replacing newer holds or recovered slots', () => {
+  const f = fixture();
+  const worker = f.add('worker', { slots: 1 });
+  f.enqueue();
+  const readyAt = f.now();
+  f.advance(1000);
+  f.beat('worker', { slots: 0, held: 'memory-pressure' });
+  const heldAt = f.now();
+  f.advance(1000);
+  f.beat('worker', { slots: 1, sampledAtMs: readyAt });
+  expect(worker).toMatchObject({ heartbeatAt: f.now(), expiresAt: f.now() + 30_000, slots: 0,
+    capacity: { sampledAtMs: heldAt, held: 'memory-pressure' } });
+  expect(f.plan()[0]?.nodeId).toBeNull();
+
+  f.beat('worker', { slots: 1 });
+  const recoveredAt = f.now();
+  f.advance(1000);
+  f.beat('worker', { slots: 0, held: 'memory-pressure', sampledAtMs: heldAt });
+  expect(worker).toMatchObject({ heartbeatAt: f.now(), slots: 1,
+    capacity: { sampledAtMs: recoveredAt, held: null } });
+  expect(f.run('pull', ['--node', worker.nodeId, '--session', String(worker.session)]).pulled).toBe(true);
 });
 
 test.each([
