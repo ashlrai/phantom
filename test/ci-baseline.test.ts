@@ -289,6 +289,24 @@ describe('CI baseline evidence', () => {
     ]);
     expect(report.groups).toEqual([]);
   });
+  it.each([undefined, null, 'unrecognized'])(
+    'treats job conclusion %s as incomplete even with a verified log',
+    async conclusion => {
+      const { gh } = github({ count: 1, pass: true, extraMasterJob: 'success' });
+      const report = await analyzeCiBaseline('owner/repo', async args => {
+        const response = await gh(args);
+        if (!args[1]?.includes('/jobs?')) return response;
+        const page = JSON.parse(response.stdout);
+        for (const job of page.jobs) {
+          if (job.id === 30 || job.id === 20) job.conclusion = conclusion;
+        }
+        return { ...response, stdout: JSON.stringify(page) };
+      });
+      expect(report.master.known).toBe(false);
+      expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'incomplete-check' }]);
+      expect(report.groups).toEqual([]);
+    },
+  );
   it.each(['startup_failure', 'cancelled', 'timed_out', 'action_required', 'stale'])(
     'withholds PR freshness when the workflow concluded %s after a job finished',
     async conclusion => {
