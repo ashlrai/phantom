@@ -369,6 +369,10 @@ the feed uses the single distinct repository observed at the latest dispatch
 timestamp at or before the outcome. Repository names are case-insensitive.
 Missing or conflicting dispatch repository evidence leaves the reward's
 repository null when the verdict supplies none.
+If the latest dispatch receipts identify multiple distinct PRs, the reward
+stays unwritten even when the verdict supplies only a repository or job ID.
+These receipts may disagree across URL fields or across rows at the same
+dispatch timestamp. Equivalent GitHub PR URLs count as one identity.
 For pool attribution, each receipt at that latest dispatch timestamp supplies
 its first valid `lane`, `pool` or `arm`, skipping case-insensitive `unknown`
 placeholders. The reward records a pool when there is exactly one distinct

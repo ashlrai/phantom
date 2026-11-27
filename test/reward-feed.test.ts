@@ -163,6 +163,24 @@ describe('foldJobsLedgerRewards', () => {
     }
   });
 
+  it.each(['MERGED', 'CLOSED', 'REVERTED'])('withholds a URL-free %s reward when the dispatch PR is disputed', (state) => {
+    const job = 'RQ-DISPATCH-PR-URL-FREE';
+    const dispatch = { event: 'launch', job, ts: DISPATCH_ISO, lane: 'codex-cmp' };
+    const url = 'https://github.com/ashlrai/phantom/pull/101';
+    const other = 'https://github.com/ashlrai/phantom/pull/102';
+    const matching = line({ ...dispatch, url, prUrl: 'https://github.com/AshlrAI/Phantom/pull/101/' });
+    const conflicting = line({ ...dispatch, url, prUrl: other });
+    const otherDispatch = line({ ...dispatch, url: other });
+    const verdict = line({ job, state, ts: MERGED_ISO, repo: 'ashlrai/phantom' });
+
+    expect(foldJobsLedgerRewards([matching, verdict].join('\n'), NOW_MS)).toMatchObject([
+      { jobId: job, pool: 'codex-cmp', merged: state === 'MERGED' },
+    ]);
+    for (const rows of [[conflicting], [matching, otherDispatch], [otherDispatch, matching]]) {
+      expect(foldJobsLedgerRewards([...rows, verdict].join('\n'), NOW_MS)).toEqual([]);
+    }
+  });
+
   it('uses the dispatch PR to bind CI timing when the verdict omits its PR', () => {
     const job = 'RQ-DISPATCH-CI-PR';
     const dispatch = line({
@@ -235,8 +253,7 @@ describe('foldJobsLedgerRewards', () => {
     const job = 'RQ-TIED-DISPATCH-REPO';
     const conflict = line({
       job, event: 'claim', ts: DISPATCH_ISO, lane: 'codex-cmp',
-      url: 'https://github.com/ashlrai/phantom/pull/12',
-      pr_url: 'https://github.com/ashlrai/lexicon/pull/12',
+      repo: 'ashlrai/lexicon',
     });
     const verdict = line({ job, state, ts: MERGED_ISO });
     const matching = launch(job);

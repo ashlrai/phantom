@@ -422,7 +422,7 @@ function dispatchBefore(acc: RewardJobAccum, resolution: ResolutionMark) {
     for (const key of dispatch.prKeys) prKeys.add(key);
   }
   const executionPrKeys = [...new Set([...prKeys, ...resolution.prKeys])];
-  if (prKeys.size > 0 && resolution.prKeys.length > 0 && executionPrKeys.length > 1) return null;
+  if (prKeys.size > 0 && executionPrKeys.length > 1) return null;
   // A repository-only verdict still cannot resolve a dispatch tied to a PR
   // in another repository.
   if (resolution.prKeys.length === 0 && typeof resolution.repo === 'string') {
