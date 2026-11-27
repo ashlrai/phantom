@@ -160,6 +160,20 @@ describe('owner scope isolation', () => {
     expect(JSON.stringify(f.mac.view(['B']))).not.toContain('A_API_KEY');
   });
 
+  it('scopes the preview after reserving shared slots in pull order', () => {
+    const f = fixture();
+    const shared = f.box.join('shared', { owners: ['A', 'B'], slots: 1 })!;
+    const other = f.mac.join('z-b-only', { owners: ['B'] })!;
+    f.box.enqueue('job-a', { owner: 'A' });
+    f.box.enqueue('job-b', { owner: 'B' });
+
+    const expected = [{ jobId: 'job-b', owner: 'B', nodeId: 'z-b-only' }];
+    expect(f.box.plan('B')).toEqual(expected);
+    expect(f.box.view(['B']).routes).toEqual(expected);
+    expect(f.box.pull(shared)?.job.id).toBe('job-a');
+    expect(f.mac.pull(other)?.job.id).toBe('job-b');
+  });
+
   it('A cannot pull B\'s job even when B has no live node', () => {
     const f = two();
     f.mac.leave(f.b);
