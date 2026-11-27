@@ -145,6 +145,7 @@ describe('syncEmptyTagsFromJobsLedger', () => {
   it.each(['launch', 'batch_claim'])('waits for the current attempt after a %s', async (event) => {
     const job = 'RQ-RETRY';
     const dispatch = line({ event, job, ts: TS });
+    const replayedDispatch = line({ ts: TS, job, event });
     const previousFinish = finish(job, true, '2026-10-28T18:30:00.000Z');
     // The previous finish arrived late in the ledger. The log already belongs to the retry.
     writeJobs([dispatch, previousFinish].join('\n') + '\n');
@@ -159,10 +160,22 @@ describe('syncEmptyTagsFromJobsLedger', () => {
 
     // A finish at the dispatch timestamp belongs to the retry when appended after it.
     // Replaying that dispatch after the finish does not start another attempt.
-    writeJobs([dispatch, previousFinish, finish(job, true), dispatch].join('\n') + '\n');
+    writeJobs([dispatch, previousFinish, finish(job, true), dispatch, replayedDispatch].join('\n') + '\n');
     const completed = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW });
     expect(completed).toMatchObject({ state: 'read', candidates: 1, classified: 1, recorded: 1, dupcheckOutcomes: 1 });
     expect(readTags(runsDir)).toEqual([expect.objectContaining({ job, tag: 'already_done' })]);
+  });
+
+  it('does not tag a retry from a reserialized finish of its earlier attempt', async () => {
+    const job = 'RQ-RETRY';
+    const dispatch = line({ event: 'launch', job, ts: TS });
+    const replayedFinish = line({ ts: TS, empty: true, lane: 'codex-cmp', job, event: 'finish' });
+    writeJobs([finish(job, true), dispatch, replayedFinish].join('\n') + '\n');
+    writeLog(job, 'This is a duplicate of an earlier job.');
+
+    const result = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW });
+    expect(result).toMatchObject({ state: 'read', candidates: 0, recorded: 0 });
+    expect(existsSync(join(runsDir, TAGS_FILE))).toBe(false);
   });
 
   it('defers fresh classifications past the per-pass cap to a later sync', async () => {
