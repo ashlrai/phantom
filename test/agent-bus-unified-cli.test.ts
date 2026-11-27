@@ -1436,6 +1436,23 @@ describe('phm agents bus (unified)', () => {
     expect(await runAgentsBusUnified(['claim', 'list', '--jobs', '--root', root], t => claimJobsText.push(t), () => {}, {})).toBe(0);
     expect(claimJobsText.join('\n')).toContain('jobs=RQ-FEED(running) "Read me" detail="picked up the feed" post=cli-feed status=cli-feed-s');
     expect(claimJobsText.join('\n')).toContain('feed=ok');
+
+    // --frame prints the same claim table as one bounded untrusted block;
+    // --json carries it as `framed` beside the full projection.
+    const framedClaims = await run(['claim', 'list', '--jobs', '--frame', 'claude']);
+    expect(framedClaims.code).toBe(0);
+    expect(framedClaims.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS CLAIMS');
+    expect(framedClaims.json.framed).toContain('repo:ashlrai/phantom owner=atlas origin=resource');
+    expect(framedClaims.json.framed).toContain('jobs=RQ-FEED(running)');
+    expect(framedClaims.json.framed).toContain('claims=1 source=available');
+    expect(framedClaims.json.framed).toContain('END UNTRUSTED AGENT BUS CLAIMS');
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const claimFrameText: string[] = [];
+    expect(await runAgentsBusUnified(['claim', 'list', '--frame', 'grok', '--root', root],
+      t => claimFrameText.push(t), () => {}, {})).toBe(0);
+    expect(claimFrameText.join('\n')).toContain('BEGIN UNTRUSTED AGENT BUS CLAIMS');
+    expect(claimFrameText.join('\n')).not.toContain('"status"');
+    expect(await run(['claim', 'list', '--frame', 'gemini'])).toMatchObject({ code: 2 });
   });
 
   it('filters claim list to the live claims blocking one feed job', async () => {
