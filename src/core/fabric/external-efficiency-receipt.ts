@@ -4,16 +4,15 @@
  * bytes only: it has no filesystem discovery, provider, or execution seam.
  */
 
-import { timingSafeEqual } from 'node:crypto';
-
 import {
   SEMVER_RE as SEMVER,
   deepFreeze as immutable,
-  exactKeys,
-  isCanonicalIsoTimestamp,
+  isCanonicalIsoTimestamp24 as canonicalIso,
+  isEnumValue,
   isSafeIntegerInRange,
   sha256Hex,
-  strictPlainRecord,
+  strictExactRecord,
+  timingSafeBufferEqual,
   timingSafeUtf8Equal,
 } from './external-contract-codec.js';
 
@@ -147,45 +146,32 @@ export type ExternalEfficiencyReceiptObservation = ObservationBoundary & (
   }
 );
 
-function exactPlainRecord(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
-  const row = strictPlainRecord(value);
-  return row !== null && exactKeys(row, keys);
-}
-
-function canonicalIso(value: unknown): value is string {
-  return isCanonicalIsoTimestamp(value, 24);
-}
+const SOURCE_PRODUCTS = ['ashlr-plugin', '@ashlr/core-efficiency'] as const;
+const ACCOUNTING_METHODS = ['provider-usage-v1', 'chars-div-4-v1', 'mixed-v1'] as const;
 
 function safeCount(value: unknown): value is number {
   return isSafeIntegerInRange(value, 0, Number.MAX_SAFE_INTEGER);
 }
 
-function sourceProduct(value: unknown): value is ExternalEfficiencySourceProduct {
-  return value === 'ashlr-plugin' || value === '@ashlr/core-efficiency';
-}
-
-function accountingMethod(value: unknown): value is ExternalEfficiencyAccountingMethod {
-  return value === 'provider-usage-v1' || value === 'chars-div-4-v1' || value === 'mixed-v1';
-}
-
 function unsignedStructuralShape(value: unknown): value is ExternalEfficiencyReceiptUnsignedV1 {
-  return exactPlainRecord(value, UNSIGNED_KEYS) &&
-    value['schemaVersion'] === 1 && value['protocol'] === EXTERNAL_EFFICIENCY_RECEIPT_PROTOCOL &&
-    sourceProduct(value['sourceProduct']) && typeof value['sourceVersion'] === 'string' &&
-    SEMVER.test(value['sourceVersion']) && typeof value['sourceCommit'] === 'string' &&
-    COMMIT.test(value['sourceCommit']) && canonicalIso(value['intervalStartedAt']) &&
-    canonicalIso(value['intervalEndedAt']) && canonicalIso(value['observedAt']) &&
-    safeCount(value['calls']) && safeCount(value['rawTokens']) && safeCount(value['compactTokens']) &&
-    safeCount(value['savedTokens']) && safeCount(value['measuredSavedTokens']) &&
-    safeCount(value['estimatedSavedTokens']) && safeCount(value['counterfactualSavedTokens']) &&
-    accountingMethod(value['accountingMethod']) && typeof value['pricingVersion'] === 'string' &&
-    VERSION_ID.test(value['pricingVersion']);
+  const row = strictExactRecord(value, UNSIGNED_KEYS);
+  return row !== null &&
+    row['schemaVersion'] === 1 && row['protocol'] === EXTERNAL_EFFICIENCY_RECEIPT_PROTOCOL &&
+    isEnumValue(row['sourceProduct'], SOURCE_PRODUCTS) && typeof row['sourceVersion'] === 'string' &&
+    SEMVER.test(row['sourceVersion']) && typeof row['sourceCommit'] === 'string' &&
+    COMMIT.test(row['sourceCommit']) && canonicalIso(row['intervalStartedAt']) &&
+    canonicalIso(row['intervalEndedAt']) && canonicalIso(row['observedAt']) &&
+    safeCount(row['calls']) && safeCount(row['rawTokens']) && safeCount(row['compactTokens']) &&
+    safeCount(row['savedTokens']) && safeCount(row['measuredSavedTokens']) &&
+    safeCount(row['estimatedSavedTokens']) && safeCount(row['counterfactualSavedTokens']) &&
+    isEnumValue(row['accountingMethod'], ACCOUNTING_METHODS) && typeof row['pricingVersion'] === 'string' &&
+    VERSION_ID.test(row['pricingVersion']);
 }
 
 function receiptStructuralShape(value: unknown): value is ExternalEfficiencyReceiptV1 {
-  if (!exactPlainRecord(value, RECEIPT_KEYS) || typeof value['receiptDigest'] !== 'string' ||
-    !DIGEST.test(value['receiptDigest'])) return false;
-  const { receiptDigest: _receiptDigest, ...unsigned } = value;
+  const row = strictExactRecord(value, RECEIPT_KEYS);
+  if (!row || typeof row['receiptDigest'] !== 'string' || !DIGEST.test(row['receiptDigest'])) return false;
+  const { receiptDigest: _receiptDigest, ...unsigned } = row;
   return unsignedStructuralShape(unsigned);
 }
 
@@ -349,7 +335,7 @@ export function compileExternalEfficiencyReceipt(
     if (!receiptStructuralShape(decoded)) return withheld('receipt-schema-invalid');
 
     const canonical = Buffer.from(JSON.stringify(receiptProjection(decoded)), 'utf8');
-    if (canonical.byteLength !== bytes.byteLength || !timingSafeEqual(canonical, bytes)) {
+    if (!timingSafeBufferEqual(canonical, bytes)) {
       return withheld('receipt-not-canonical');
     }
     if (!sourceVersionSupported(decoded)) return withheld('source-version-unsupported');

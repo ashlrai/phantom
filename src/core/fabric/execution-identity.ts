@@ -196,17 +196,24 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+export function exactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[] | ReadonlySet<string>,
+): boolean {
+  const actual = Object.keys(value);
+  if (keys instanceof Set) {
+    return actual.length === keys.size && actual.every((key) => keys.has(key));
+  }
+  const sortedActual = actual.sort();
+  const expected = [...(keys as readonly string[])].sort();
+  return sortedActual.length === expected.length && sortedActual.every((key, index) => key === expected[index]);
 }
 
-function sha256(domain: string, value: string): `sha256:${string}` {
+export function sha256(domain: string, value: string): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(domain, 'utf8').update('\0').update(value, 'utf8').digest('hex')}`;
 }
 
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   const row = value as Record<string, unknown>;
@@ -240,7 +247,7 @@ function executionIdentityPrivateStorePathV1(): string {
   return join(homedir(), '.ashlr', 'private', 'execution-identities-v1.json');
 }
 
-function canonicalTimestamp(value: unknown): value is string {
+export function canonicalTimestamp(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 40) return false;
   const ms = Date.parse(value);
   return Number.isFinite(ms) && new Date(ms).toISOString() === value;

@@ -13,13 +13,16 @@ import {
   canonicalJsonBytes,
   decodeStrictUtf8JsonBytes,
   deepFreeze as immutable,
+  digestUnsignedRecordV1,
   exactKeys,
   isCanonicalIsoTimestamp as canonicalIso,
   isEnumValue as enumValue,
   isSafeIntegerInRange as integer,
   isUnsupportedStackSourceVersionV1 as unsupportedSourceVersion,
   isValidStackSourceV1 as validSource,
+  pickRecordKeys,
   sha256Prefixed as sha,
+  strictExactRecord,
   strictPlainRecord as record,
   timingSafeUtf8Equal as sameText,
   type StackSourceMetadataV1,
@@ -189,30 +192,30 @@ function canonicalBytes(value: unknown): Buffer | null {
 }
 
 function validEffect(value: unknown): value is StackPlannedEffectManifestV1['effect'] {
-  const effect = record(value);
-  if (!effect || !exactKeys(effect, EFFECT_KEYS) || !enumValue(effect['class'], STACK_EFFECT_CLASSES_V1) ||
+  const effect = strictExactRecord(value, EFFECT_KEYS);
+  if (!effect || !enumValue(effect['class'], STACK_EFFECT_CLASSES_V1) ||
     !enumValue(effect['verb'], STACK_EFFECT_VERBS_V1)) return false;
   return VERBS_BY_CLASS[effect['class']].includes(effect['verb']);
 }
 
 function validCost(value: unknown): value is StackEstimatedCostV1 {
-  const cost = record(value);
-  if (!cost || !exactKeys(cost, COST_KEYS) || typeof cost['known'] !== 'boolean') return false;
+  const cost = strictExactRecord(value, COST_KEYS);
+  if (!cost || typeof cost['known'] !== 'boolean') return false;
   if (!cost['known']) return cost['amountMicroUnits'] === null && cost['currency'] === null;
   return integer(cost['amountMicroUnits'], 0, MAX_ESTIMATED_COST_MICRO_UNITS) && enumValue(cost['currency'], CURRENCIES);
 }
 
 function validRollback(value: unknown): value is StackPlannedEffectManifestV1['rollback'] {
-  const rollback = record(value);
-  if (!rollback || !exactKeys(rollback, ROLLBACK_KEYS) || !enumValue(rollback['class'], ROLLBACK_CLASSES)) return false;
+  const rollback = strictExactRecord(value, ROLLBACK_KEYS);
+  if (!rollback || !enumValue(rollback['class'], ROLLBACK_CLASSES)) return false;
   return rollback['class'] === 'not-applicable'
     ? rollback['planDigest'] === null
     : typeof rollback['planDigest'] === 'string' && DIGEST_RE.test(rollback['planDigest']);
 }
 
 function unsignedManifest(value: unknown): Omit<StackPlannedEffectManifestV1, 'manifestDigest'> | null {
-  const manifest = record(value);
-  if (!manifest || !exactKeys(manifest, MANIFEST_KEYS) || manifest['schemaVersion'] !== 1 ||
+  const manifest = strictExactRecord(value, MANIFEST_KEYS);
+  if (!manifest || manifest['schemaVersion'] !== 1 ||
     manifest['protocol'] !== STACK_PLANNED_EFFECT_MANIFEST_PROTOCOL || manifest['artifactClass'] !== 'effect-proposal' ||
     !validSource(manifest['source']) || !canonicalIso(manifest['generatedAt']) ||
     !canonicalIso(manifest['expiresAt']) || typeof manifest['targetDigest'] !== 'string' ||
@@ -227,7 +230,7 @@ function unsignedManifest(value: unknown): Omit<StackPlannedEffectManifestV1, 'm
     !validRollback(manifest['rollback']) || typeof manifest['acceptancePredicateDigest'] !== 'string' ||
     !DIGEST_RE.test(manifest['acceptancePredicateDigest']) || typeof manifest['manifestDigest'] !== 'string' ||
     !DIGEST_RE.test(manifest['manifestDigest'])) return null;
-  return Object.fromEntries(UNSIGNED_MANIFEST_KEYS.map((key) => [key, manifest[key]])) as
+  return pickRecordKeys(manifest, UNSIGNED_MANIFEST_KEYS) as
     Omit<StackPlannedEffectManifestV1, 'manifestDigest'>;
 }
 
@@ -238,15 +241,13 @@ export function canonicalStackPlannedEffectManifestBytesV1(value: unknown): Buff
 
 /** Domain-separated consistency digest over every manifest field except itself. */
 export function stackPlannedEffectManifestDigestV1(value: unknown): string | null {
-  const manifest = record(value);
-  if (!manifest) return null;
-  const unsigned = exactKeys(manifest, UNSIGNED_MANIFEST_KEYS)
-    ? manifest
-    : exactKeys(manifest, MANIFEST_KEYS)
-      ? Object.fromEntries(UNSIGNED_MANIFEST_KEYS.map((key) => [key, manifest[key]]))
-      : null;
-  const bytes = unsigned ? canonicalBytes(unsigned) : null;
-  return bytes ? sha('ashlr:stack-planned-effect-manifest:v1', bytes) : null;
+  return digestUnsignedRecordV1(
+    value,
+    MANIFEST_KEYS,
+    UNSIGNED_MANIFEST_KEYS,
+    CANONICAL_BOUNDS,
+    'ashlr:stack-planned-effect-manifest:v1',
+  );
 }
 
 function fail(issue: ExternalStackEffectPlanIssueV1): ExternalStackEffectPlanResultV1 {

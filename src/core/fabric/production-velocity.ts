@@ -12,13 +12,11 @@ import type { AshlrConfig } from '../types.js';
 import type { ResourceSnapshot } from './resource-monitor.js';
 import { slotsForBackendState } from './concurrent-dispatch.js';
 import {
+  asRecord,
+  positiveInt,
+  positiveIntOrNull,
   productionVelocityRaw,
   resolveProductionVelocityPendingPolicy,
-} from './production-velocity-pending.js';
-
-export {
-  pendingProposalIsStaleForProductionVelocity,
-  type PendingProposalBlockingOptions,
 } from './production-velocity-pending.js';
 
 export type ProductionVelocityProfileName = 'off' | 'resource-control';
@@ -51,24 +49,6 @@ export interface DaemonQueueSelectionInput {
   fillQueueToSlots: boolean;
   availableSlots?: number | null;
   minPerItemUsd?: number;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
-function positiveInt(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? Math.max(1, Math.floor(value))
-    : fallback;
-}
-
-function positiveIntOrNull(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? Math.max(1, Math.floor(value))
-    : null;
 }
 
 export function resolveProductionVelocityProfile(cfg: AshlrConfig): EffectiveProductionVelocityProfile {
