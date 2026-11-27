@@ -292,6 +292,38 @@ describe('resident CI reruns', () => {
     expect(gh).not.toHaveBeenCalled();
     expect(readFileSync(opts.queueFile!, 'utf8')).toContain('1 passed, 0 failed, 0 inconclusive');
   });
+  it('attributes recurring-flake verdicts only to matching recent attempts', async () => {
+    const { opts, report } = setup();
+    const test = report.groups[0]!.testId;
+    const attempts = ['a', 'b', 'c'].map((letter, index) => ({
+      at: '2026-01-01T11:00:00Z', repo: report.repo, test, outcome: 'attempt',
+      head: letter.repeat(40), runId: 123 + index, pr: index + 1,
+    }));
+    const first = attempts[0]!;
+    const other = 'test/b.test.ts > b';
+    const rows = [
+      ...attempts,
+      { ...first, runId: 126, at: '2025-12-24T11:00:00Z' },
+      { ...first, runId: 127, tests: [test, other] },
+      { ...first, runId: 128 },
+      { ...first, runId: 128, test: other },
+      { ...first, runId: 129, at: '2026-01-01T11:45:00Z' },
+      ...[123, 126, 127, 128, 129, 130].map(runId => ({
+        ...first, runId, at: '2026-01-01T11:30:00Z', outcome: 'verdict',
+        verdict: runId === 123 ? 'pass' : 'fail',
+      })),
+    ];
+    appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.verdicts).toMatchObject({ pass: 1, fail: 5 });
+    expect(read.recurringFlakes.find(flake => flake.test === test)?.verdicts)
+      .toEqual({ pass: 1, fail: 0, inconclusive: 0 });
+
+    await runCiRerunMaintenance(opts);
+    expect(readFileSync(opts.queueFile!, 'utf8')).toContain('1 passed, 0 failed, 0 inconclusive');
+  });
+
   it.each(['pr-caused', 'shared-baseline', 'unknown'])('never reruns %s', async kind => {
     const { opts, gh } = setup(kind);
     await runCiRerunMaintenance(opts);

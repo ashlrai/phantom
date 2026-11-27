@@ -6,7 +6,7 @@ import { ashlrHome } from '../cloud/store.js';
 import { displaySurfaceTarget, evaluateStandingAuthority } from '../authority/effective-config.js';
 import { readKillSwitch } from '../sandbox/policy.js';
 import { analyzeCiBaseline, enqueueBaselineFixes } from './ci-baseline.js';
-import { enqueueFlakeFixes, JOURNAL_TEST_MAX, recurringFlakes } from './ci-flakes.js';
+import { enqueueFlakeFixes, JOURNAL_TEST_MAX, recurringFlakes, RECURRING_FLAKE_WINDOW_MS } from './ci-flakes.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { defaultCiGh } from './ci-failure-groups.js';
 
@@ -78,8 +78,16 @@ export function observedAttempts(entries: readonly Entry[], nowMs: number): Entr
 
 /** Expand each observed attempt once for each triggering test. */
 function summarizeFlakes(attempts: readonly Entry[], nowMs: number, verdicts: readonly Entry[]) {
-  const testsByAttempt = attempts.flatMap(entry => triggeringTests(entry).map(test => ({ ...entry, test })));
-  return recurringFlakes([...testsByAttempt, ...verdicts], { nowMs });
+  const recentAttempts = attempts.filter(entry => Date.parse(entry.at) >= nowMs - RECURRING_FLAKE_WINDOW_MS);
+  const attemptsByRun = new Map(recentAttempts.map(entry => [rerunKey(entry), entry]));
+  const testsByAttempt = recentAttempts.flatMap(entry => triggeringTests(entry).map(test => ({ ...entry, test })));
+  const attributedVerdicts = verdicts.filter(verdict => {
+    const attempt = attemptsByRun.get(rerunKey(verdict));
+    if (!attempt || Date.parse(attempt.at) > Date.parse(verdict.at)) return false;
+    const tests = triggeringTests(attempt);
+    return tests.length === 1 && tests[0] === verdict.test;
+  });
+  return recurringFlakes([...testsByAttempt, ...attributedVerdicts], { nowMs });
 }
 
 /** Reconcile call receipts without treating replays as new calls. */
