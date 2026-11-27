@@ -294,7 +294,7 @@ export async function readSourceEnds(path: string, max: number): Promise<SourceE
 
 export async function readFleetQueue(opts: { runsDir?: string; now?: () => number; limit?: number; depDetail?: boolean; onWaitingJob?: (lane: string, id: string) => void } = {}): Promise<FleetQueueV1> {
   const now = (opts.now ?? Date.now)();
-  const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
+  const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const [readySource, skipsSource] = await Promise.all([
     readSource(join(root, 'queue', 'ready.tsv'), MAX_READY, false),
     readSource(join(root, 'queue', 'precheck-skips.tsv'), MAX_SKIPS, true),
