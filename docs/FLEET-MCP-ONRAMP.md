@@ -70,7 +70,11 @@ Invalid arguments are MCP invalid-params errors.
   label carrying that topic component — the same raw `to`-label matches
   every bus read's channel/topic filters apply, composing into one room AND
   one topic. `matched` counts the filter hits inside the bounded tail
-  observation and `truncated` stays honest about rows beyond it.
+  observation and `truncated` stays honest about rows beyond it. The same
+  read is on the CLI as `phm fleet bus-hops` — the same `limit` bound and
+  `--from`/`--to`/`--exclude-from`/`--id`/`--channel`/`--topic` filters over
+  the same shared core projection, with `--json` printing the identical
+  object.
 
 The standalone server exposes read-only observation tools only — `tools/list`
 returns the full current inventory — without gateway server discovery,
