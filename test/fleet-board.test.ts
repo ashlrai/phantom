@@ -93,6 +93,24 @@ describe('recordLeaderBoard', () => {
     ]);
   });
 
+  it('drops future conflict samples after a clock rollback and replaces samples on same-tick retries', async () => {
+    await seed();
+    expect((await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS })).wrote).toBe(true);
+    await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'RQ-REBASE-PHANTOM-1234-abc1234', 'devin', 'work'));
+    const rolledBack = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS - 60_000 });
+    if (!rolledBack.wrote) throw new Error('board write failed');
+    expect(rolledBack.board.conflictingPrs).toEqual({
+      count: 1, delta: null, trend: 'unknown', history: [{ at: minutesAgo(1), count: 1 }],
+    });
+
+    await writeFile(join(queueDir, 'ready.tsv'), '');
+    const retried = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS - 60_000 });
+    if (!retried.wrote) throw new Error('board write failed');
+    expect(retried.board.conflictingPrs).toEqual({
+      count: 0, delta: null, trend: 'unknown', history: [{ at: minutesAgo(1), count: 0 }],
+    });
+  });
+
   it('reports unknown conflict figures, not a stale trend, when ready.tsv is unreadable', async () => {
     await seed();
     await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS - 3_600_000 });
