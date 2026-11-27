@@ -131,6 +131,31 @@ describe('currentUnfed', () => {
     expect(report.resources[0]).toMatchObject({ readyHinted: 1, waitingElsewhere: 0 });
   });
 
+  it('ignores published blockers on lanes that could not be unfed in the tick', () => {
+    const lanes = {
+      held: { running: 0, target: 2, held: true },
+      full: { running: 2, target: 2 },
+      shed: { running: 1, target: 2, effective_target: 1 },
+      free: { running: 0, target: 2 },
+    };
+    const impossible = { waiting_elsewhere: 2, blocked: { admission_stopped: 2 } };
+    const unfed_capacity = {
+      waiting: 2,
+      lanes: {
+        held: impossible, full: impossible, shed: impossible,
+        free: { waiting_elsewhere: 1, blocked: { provider_backoff: 1 } },
+      },
+    };
+    const report = currentUnfed(JSON.stringify({ lanes, unfed_capacity }), null);
+    expect(report).toMatchObject({ waiting: 2, unfedLanes: ['free'], unfedSlots: 1, fleetStop: null });
+    for (const lane of ['held', 'full', 'shed']) {
+      expect(report.resources.find(resource => resource.lane === lane)).toMatchObject({
+        waitingElsewhere: 0, blocked: {}, unfed: false,
+      });
+    }
+    expect(report.resources.find(resource => resource.lane === 'free')?.blocked).toEqual({ provider_backoff: 1 });
+  });
+
   it.each([
     { slots: JSON.stringify({ 'codex-cmp': { held: true } }) },
     { hold: 'codex-cmp', slots: '{}' },
