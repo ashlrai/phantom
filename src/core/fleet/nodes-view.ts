@@ -242,7 +242,13 @@ export function buildNodesView(
     }).length;
     let slots: number | Unknown;
     if (!(live.length && live.every(record => record.slots !== undefined) && jobs !== UNKNOWN)) slots = UNKNOWN;
-    else if (state?.pool === undefined) {
+    else if (localRegistry) {
+      // The standalone store is single-host authority: every live record is a
+      // session on this computer sharing one physical slot budget, so free
+      // slots are the tightest per-session remainder — the same rule pool
+      // workers on one hostId follow — never the sum of advertised bounds.
+      slots = Math.max(0, Math.min(...live.map(record => Math.max(0, (record.slots ?? 0) - claimsOn(record)))));
+    } else if (state?.pool === undefined) {
       slots = Math.max(0, live.reduce((sum, record) => sum + (record.slots ?? 0), 0) - jobs.length);
     } else {
       // Pool workers on one physical host share a single measured slot budget:

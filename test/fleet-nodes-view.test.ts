@@ -110,6 +110,20 @@ describe('readNodesView', () => {
     expect(standalone.nodes.find(row => row.name === 'node-b')).toMatchObject({ freeSlots: 7 });
   });
 
+  it('standalone registry: sessions on this computer share one slot budget', () => {
+    // The standalone store is single-host authority, so two joined node ids
+    // are sessions on the same computer: their advertised bounds are one
+    // physical budget — the tightest per-session remainder (4-1=3, 4-0=4),
+    // never the sum a non-pool store keeps for hosts it cannot prove shared.
+    const local = (nodes: NodeRecord[], jobs: NodesState['jobs']): NodesRegistry => ({ source: 'local', selfNode: null, pool: null, state: {
+      version: 'drive.nodes.v1', sequence: 3, observedAt: NOW - 1_000, nodes, leader: null, jobs } });
+    const records = [node('w1', { slots: 4 }), node('w2', { session: 2, slots: 4 })];
+    const jobs: NodesState['jobs'] = [{ id: 'job-1', state: 'running', claim: { jobId: 'job-1', nodeId: 'w1', session: 1, token: 2, leaderToken: 1, expiresAt: NOW + 5_000 } }];
+    const view = readNodesView(deps(tailnet([]), local(records, jobs)));
+    expect(view.nodes).toHaveLength(1);
+    expect(view.nodes[0]).toMatchObject({ isSelf: true, jobsRunning: ['job-1'], freeSlots: 3, stateCode: 'ready' });
+  });
+
   it('one offline: says since when, today and on an earlier day', () => {
     const view = readNodesView(deps(tailnet([peer('node-b', false), peer('node-c', false, '2026-11-14T08:05:00Z'), peer('node-d', false, '0001-01-01T00:00:00Z')]),
       registry([node('node-a'), node('node-b', { expiresAt: NOW - 60_000 })])));
