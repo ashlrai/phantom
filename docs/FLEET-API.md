@@ -544,6 +544,12 @@ out of the total (`total.slotsUnknown` counts online Macs whose slots were not
 measured). The offload setting is per Mac; only this Mac's is known, so other
 Macs show `unknown`.
 
+For remote disk readings, the pool and `phm nodes doctor` use the newest host
+sample from a matching live session. The sample must be less than five minutes
+old and dated at or before report time. A pool mirror must also be at most two
+minutes old and dated at or before report time. If the newest usable sample
+has no disk measurement, the reports show `unknown`.
+
 `phm map --lane <lane> --repo <repo> --state <running|waiting|done|failed|unknown>`
 narrows it to the agents (jobs) that match every filter given, with their lane,
 computer and pool; `unknown` finds agents whose lane or repo nobody reported.

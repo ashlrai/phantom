@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdNodes } from '../src/cli/nodes.js';
 import type { HostStats, NodeRecord, NodesState } from '../src/core/drive/nodes/state.js';
 import { NODES_POOL_SCHEMA, poolText, readNodesPool } from '../src/core/fleet/nodes-pool.js';
+import { readNodesDoctor } from '../src/core/fleet/nodes-doctor.js';
 import type { NodesRegistry, NodesViewDeps } from '../src/core/fleet/nodes-view.js';
 import { createFleetNodesPoolApi } from '../src/core/verse/fleet-nodes-pool-api.js';
 
@@ -84,6 +85,33 @@ describe('readNodesPool', () => {
       localRegistry([node('laptop', { hostStats: stats(8, 1, 55) })])), readOffload: () => false });
     expect(pool.nodes.find(n => n.isSelf)).toMatchObject({ freeDiskGb: 214.7 });
     expect(pool.nodes.find(n => n.name === 'laptop')).toMatchObject({ isSelf: false, freeDiskGb: 'unknown' });
+  });
+
+  it.each([
+    ['expired session', { expiresAt: NOW }, null],
+    ['stale sample', { hostStats: { ...stats(8, 1, 5), sampledAtMs: NOW - 300_000 } }, null],
+    ['future sample', { hostStats: { ...stats(8, 1, 5), sampledAtMs: NOW + 1 } }, null],
+    ['stale mirror', {}, NOW - 120_001],
+    ['future mirror', {}, NOW + 1],
+  ] as const)('reports remote disk as unknown with a %s', async (_reason, extra, mirrorAt) => {
+    const read = registry([node('node-b', { hostStats: stats(8, 1, 5), ...extra })]);
+    if (mirrorAt !== null) {
+      read.source = 'pool-mirror';
+      read.state!.observedAt = mirrorAt;
+    }
+    const view = deps([peer('node-b', true)], read);
+    expect(readNodesPool({ view, readOffload: () => false }).nodes[1]?.freeDiskGb).toBe('unknown');
+    const doctor = await readNodesDoctor({ view, probe: async () => null }, 'node-b');
+    expect(doctor.nodes[0]?.diskFreeGb).toBe('unknown');
+  });
+
+  it('uses the latest host sample even when another session sent a newer heartbeat', () => {
+    const read = registry([
+      node('node-b.local', { heartbeatAt: NOW, hostStats: { ...stats(8, 1, 5), sampledAtMs: NOW - 5_000 } }),
+      node('node-b', { hostStats: stats(8, 1, 0) }),
+    ]);
+    const view = deps([peer('node-b', true)], read);
+    expect(readNodesPool({ view, readOffload: () => false }).nodes[1]?.freeDiskGb).toBe(0);
   });
 
   it('a failing reader never throws: no registry and no setting read as unknown', () => {
