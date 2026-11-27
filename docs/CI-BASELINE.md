@@ -65,8 +65,10 @@ chain, so the group keys on the identity the evidence itself printed.
 Because it names a real test, the usual dependency closure and pass
 evidence apply: a green master module resolves a one-off flake on an
 unaffected singleton to `probable-flake`/`rerun-failed`, while a flake
-repeated across distinct unaffected PR heads -- or printed by master itself -- groups
-`shared-baseline` for a stabilization fix. Verdicts naming paths outside
+repeated across distinct unaffected PR heads groups `shared-baseline` for
+a stabilization fix. A matching retry-flake verdict in a checkout-verified
+failed job on current master also corroborates a fresh failure on one
+unaffected PR head. Verdicts naming paths outside
 the suite roots, missing case names and near-miss wording stay unparsed,
 so an unrecognized lane failure still reads unknown rather than guessed.
 TypeScript diagnostics from `tsc`/`tsgo` non-pretty output

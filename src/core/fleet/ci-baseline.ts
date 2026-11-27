@@ -2275,6 +2275,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     else if (fetched.ok && fetched.source !== null) auditExceptions = parseAuditExceptions(fetched.source);
   }
   const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
+  const masterRetryFlakes = new Set(masterLogs
+    .filter(log => log.conclusion === 'failure')
+    .flatMap(log => parseQualificationFlakyFailures(log.text).map(failure => failure.testId)));
+  const masterFailed = (testId: string) => masterRetryFlakes.has(testId) || masterFailures.some(f => f.testId === testId);
   // Parenthesized identities are gate checks, not vitest tests: only
   // '(suite)' resolves through pass evidence, because the file loading is
   // what failed. '(lint)', '(typecheck)' and the other gate names can never
@@ -2285,7 +2289,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   // running at all is what resolves it. The default reporter's green-module
   // line (`✓ file (N tests)`) proves the module loaded. For a named test,
   // require an unqualified summary or an explicit case pass.
-  const passes = (f: Failure) => filePassable(f.names) && masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
+  const passes = (f: Failure) => filePassable(f.names) && masterKnown && !masterFailed(f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
     if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
     const modulePass = FILE_PASS_LINE.exec(line);
@@ -2645,12 +2649,13 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const unaffected = [...new Set(unaffectedRows.map(o => o.pr.number))];
     const unaffectedHeads = new Set(unaffectedRows.map(o => o.pr.headRefOid));
     const prNumbers = [...new Set(rows.map(o => o.pr.number))];
-    const classification = unaffectedHeads.size >= 2 ? 'shared-baseline' : rows.every(o => o.touched === true) ? 'pr-caused' : prNumbers.length === 1 && rows[0]!.touched === false && passes(failure) ? 'probable-flake' : 'unknown';
+    const sharedBaseline = unaffectedHeads.size >= 2 || (unaffectedHeads.size > 0 && masterRetryFlakes.has(testId));
+    const classification = sharedBaseline ? 'shared-baseline' : rows.every(o => o.touched === true) ? 'pr-caused' : prNumbers.length === 1 && rows[0]!.touched === false && passes(failure) ? 'probable-flake' : 'unknown';
     const action = classification === 'shared-baseline' ? 'queue-master-fix' : classification === 'probable-flake' ? 'rerun-failed' : classification === 'pr-caused' ? 'pr-caused' : 'unknown';
     const evidence = { ...failure, runs };
     const jobId = `RQ-CIBASE-${createHash('sha256').update(repo + ':' + testId).digest('hex').slice(0, 16).toUpperCase()}`;
     const brief = `Reproduce ${testId} on latest master in ${repo}; verify the intentional production contract before changing anything. Fix only the stale baseline or report if not reproducible; never weaken tests or edit Security GATES v3 files. Run affected tests. Include ${jobId} in the fix PR body. Blocked PRs: ${unaffected.join(', ')}. After merge, re-analyze and plan update-branch for unchanged heads.`;
-    return { ...evidence, prs: prNumbers, unaffectedPrs: unaffected, classification, action, master: passes(failure) ? 'pass' : masterFailures.some(f => f.testId === testId) ? 'fail' : 'unknown', jobId, ...(action === 'queue-master-fix' ? { brief: clean(brief).replace(/[\r\n]/g, ' ') } : {}) };
+    return { ...evidence, prs: prNumbers, unaffectedPrs: unaffected, classification, action, master: passes(failure) ? 'pass' : masterFailed(testId) ? 'fail' : 'unknown', jobId, ...(action === 'queue-master-fix' ? { brief: clean(brief).replace(/[\r\n]/g, ' ') } : {}) };
   });
   const updates = groups.filter(g => g.classification === 'shared-baseline').flatMap(g => g.unaffectedPrs.map(pr => ({ pr, testId: g.testId, ready: g.master === 'pass', reason: g.master === 'pass' ? 'master-test-passes; merge provenance requires verification' : 'master-fix-not-verified', args: ['api', '-X', 'PUT', `repos/${repo}/pulls/${pr}/update-branch`, '-f', `expected_head_sha=${prs.find(p => p.number === pr)!.headRefOid}`] })));
   return { v: 1, repo, groups, freshness, master: { head: branch?.commit?.sha ?? null, known: masterKnown }, updates, errors };
