@@ -97,6 +97,13 @@ export function ashlrHome(): string {
     : join(homedir(), '.ashlr');
 }
 
+/** `join(ashlrHome(), ...segments)` spelled for operator text: the real home
+ * contracted to `~`, so an `$ASHLR_HOME`-relocated install names its true path
+ * instead of the default `~/.ashlr` spelling. */
+export function ashlrHomePath(...segments: string[]): string {
+  return join(ashlrHome(), ...segments).replace(homedir(), '~');
+}
+
 export function cloudHome(): string {
   return join(ashlrHome(), CLOUD_DIR);
 }

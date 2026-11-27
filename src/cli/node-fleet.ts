@@ -327,6 +327,10 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
   // flag value (values starting with `--` are refused), so argv alone proves
   // the caller asked for JSON even when flag parsing fails first.
   const json = args.includes('--json');
+  // Operator-facing label for the standalone store, resolved once the store
+  // modules load; the catch's fix text names the real $ASHLR_HOME/nodes
+  // (home-contracted) instead of assuming the default ~/.ashlr spelling.
+  let nodesDirLabel = '~/.ashlr/nodes';
   try {
     // `join --watch` is a dispatcher-level keep-alive like `beat --watch`: the
     // watch flags are stripped here so the fleet parser never sees them, and a
@@ -352,11 +356,12 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       }
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
-    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join },
+    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome, ashlrHomePath }, { canonicalPath, privateDirectory }, { join },
       { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }, { probeLocalLanePlan }] = await Promise.all([
       import('../core/drive/nodes/index.js'), import('../core/drive/nodes/auth-probe.js'),
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path'),
       import('../core/drive/nodes/phm-version.js'), import('../core/drive/nodes/local-model-caps.js')]);
+    nodesDirLabel = ashlrHomePath('nodes');
     const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
     const drive = new DriveNodes(store, deps.now ? { now: deps.now } : {});
     // Join's lane probe runs once; a malformed local-lanes.json rides the reply
@@ -501,7 +506,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     const operatorMessage = /^(?:Invalid |Drive |Universe storage|Unsafe drive|Cannot create filesystem root)/;
     const message = error instanceof Error && (known || operatorMessage.test(error.message)) ? error.message : 'Node store unavailable or invalid.';
     const fix = known ? error.fix : /^Invalid drive/.test(message) ? 'Check ids (letters, digits, . _ : / -), caps (lowercase) and secret NAMES (UPPER_SNAKE). Run: phm node --help'
-      : 'Check that ~/.ashlr/nodes is a private (0700) directory you own, and that no other process holds its lock.';
+      : `Check that ${nodesDirLabel} is a private (0700) directory you own, and that no other process holds its lock.`;
     const code = known ? error.code : 'rejected';
     if (json) console.log(JSON.stringify({ schemaVersion: 1, command: verb, error: { code, message, fix } }));
     else console.error(`${message} Fix: ${fix}`);
