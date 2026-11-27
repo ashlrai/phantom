@@ -58,6 +58,30 @@ test('unknown, stale, future and expired reports never become pool capacity; exa
   expect(projectFleetAwareness(legacy.state, legacy.now()).hosts[0]?.freeSlots).toBeNull();
 });
 
+test('out-of-order heartbeats preserve the newest capacity and still renew the session', () => {
+  const f = fixture();
+  const worker = f.add('worker', { slots: 2 });
+  const pull = () => f.run('pull', ['--node', worker.nodeId, '--session', String(worker.session)]);
+  f.enqueue();
+  const openAt = f.now();
+  f.advance(1000);
+  const heldAt = f.now();
+  f.beat('worker', { slots: 0, held: 'memory-pressure' });
+  f.advance(1000);
+  f.beat('worker', { slots: 2, sampledAtMs: openAt });
+  expect(worker.heartbeatAt).toBe(f.now());
+  expect(worker.slots).toBe(0);
+  expect(f.plan()[0]?.nodeId).toBeNull();
+  expect(pull().pulled).toBe(false);
+
+  f.beat('worker', { slots: 1 });
+  f.advance(1000);
+  f.beat('worker', { slots: 0, held: 'memory-pressure', sampledAtMs: heldAt });
+  expect(worker.slots).toBe(1);
+  expect(f.plan()[0]?.nodeId).toBe(worker.nodeId);
+  expect(pull().pulled).toBe(true);
+});
+
 test.each([
   { paused: 'disk guard' },
   { admission: { admit: false } },
