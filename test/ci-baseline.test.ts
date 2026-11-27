@@ -143,8 +143,30 @@ describe('CI baseline evidence', () => {
     const pass = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true }).gh);
     expect(pass.groups[0]?.action).toBe('rerun-failed');
     expect(pass.groups[0]?.runs).toEqual([{ pr: 1, head, runId: 2 }]);
-    const fail = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
-    expect(fail.groups[0]?.action).toBe('unknown');
+  });
+  it('corroborates an unaffected singleton with a failed job on current master', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({
+      count: 1, runConclusion: 'failure', masterRunConclusion: 'timed_out',
+    }).gh);
+    expect(report.master.known).toBe(false);
+    expect(report.groups[0]).toMatchObject({
+      classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', unaffectedPrs: [1],
+    });
+    expect(report.updates).toMatchObject([{ pr: 1, ready: false }]);
+  });
+  it.each(['success', 'timed_out'])('does not corroborate a singleton from matching output in a %s master job', async conclusion => {
+    const report = await analyzeCiBaseline('owner/repo', github({
+      count: 1, masterJobConclusion: conclusion,
+    }).gh);
+    expect(report.groups[0]).toMatchObject({
+      classification: 'unknown', action: 'unknown', master: 'fail', unaffectedPrs: [1],
+    });
+    expect(report.updates).toEqual([]);
+  });
+  it('does not corroborate a PR that touched the failing test even when master failed', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ count: 1, touched: 'test/example.test.ts' }).gh);
+    expect(report.groups[0]).toMatchObject({ classification: 'pr-caused', master: 'fail', unaffectedPrs: [] });
+    expect(report.updates).toEqual([]);
   });
   it('keeps a newer same-SHA run on another branch out of master evidence', async () => {
     const { gh } = github({ count: 1, pass: true });
