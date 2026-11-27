@@ -185,6 +185,12 @@ expired windows stay unknown. High risk means projected unused allowance exceeds
 15% with less than 40% of the window remaining; medium means more than 5% unused.
 Projected usage is capped at included allowance.
 
+`phm fleet waste-risk` requires a fresh quota observation inside its named
+window, from the start up to but excluding the reset. For dispatcher quota it
+uses the recorded quota capture time. A fresh controller tick alone leaves
+quota and waste risk unknown. Session burn requires a second observation
+from the same window.
+
 The target aims at 97% usage by reset. Worker throughput comes from live burn
 per running worker, or an explicit measured job duration. Zero burn without a
 measured duration leaves the target unknown. Held and exhausted lanes target zero.
