@@ -1716,6 +1716,26 @@
  *     lower bounds, and items emit only for the fleet's own
  *     repository since the journal describes this install's host
  *     and fleet;
+ *   - the Engineering Ops growth export series' recurring adverse
+ *     cells: the growth-pulls-hourly.jsonl, growth-cost-hourly.jsonl
+ *     and growth-releases.jsonl files plus the
+ *     growth-exports-status.json freshness clock under <runs>/metrics/
+ *     that `phm world` and GET /api/verse/growth chart the fleet's
+ *     north-star outcome metrics from — a cost series that stays dark
+ *     while jobs.jsonl proves in-window merges, a pulls series that
+ *     stays dark while jobs.jsonl proves in-window PR opens, a
+ *     releases series with history that records none in-window, and a
+ *     cost-per-merged-PR median running at or above the sustained
+ *     elevation bar against the window's earlier readings
+ *     (growthBacklogItems below). Until now the series had exactly one
+ *     reader — loadGrowthFacts' world-model projection, a display
+ *     surface someone had to open — so a dark or hot metric series
+ *     never became work. A dark cell emits only when its file read
+ *     and the jobs-ledger activity cross-check proved there was
+ *     something to measure; the elevated cell needs usable readings
+ *     on both sides of the recent split; items emit only for the
+ *     fleet's own repository since the exports describe this
+ *     install's fleet;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1864,6 +1884,7 @@ import { resetReleaseBacklogItems } from './reset-release-backlog.js';
 import { nodesOffloadBacklogItems } from './nodes-offload-backlog.js';
 import { commsRunBacklogItems } from './comms-run-backlog.js';
 import { cruiseShadowBacklogItems } from './cruise-shadow-backlog.js';
+import { growthBacklogItems } from './growth-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 import { reviewBlocksBacklogItems } from './review-blocks-backlog.js';
 import { capacityHistoryBacklogItems } from './capacity-history-backlog.js';
@@ -3961,6 +3982,22 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the journal describes this
   // install's host and carries no repo column.
   items.push(...await cruiseShadowBacklogItems({ repo }));
+
+  // Engineering Ops growth export series: the growth-pulls-hourly,
+  // growth-cost-hourly and growth-releases files plus the
+  // growth-exports-status.json freshness clock under <runs>/metrics/
+  // that `phm world` and the verse growth chart project the fleet's
+  // north-star outcome metrics from. Until now the series had exactly
+  // one reader — the world-model projection — so a metric series that
+  // stayed dark while the fleet kept merging and publishing, or a
+  // cost-per-merge reading that kept running hot, never became work.
+  // A dark cell emits only when its file read AND the jobs-ledger
+  // activity cross-check proved in-window merges or PR opens; the
+  // releases-quiet cell needs a non-empty history; the elevated cell
+  // needs usable readings on both sides of the recent split; and only
+  // the fleet's own repository inherits the items since the exports
+  // describe this install's fleet.
+  items.push(...await growthBacklogItems({ repo }));
   return { items, errors };
 }
 
