@@ -169,6 +169,20 @@ describe('phm node route --outcomes-ledger', () => {
     expect(out.outcomes_ledger).toMatchObject({ state: 'read', truncated: false, providers: 2 });
   });
 
+  it('shows unknown rates when the ledger has no outcomes', async () => {
+    const { cmdNodeRoute } = await import('../src/cli/node-capacity.js');
+    const { cap, costs, jobs, runsDir } = setup(null);
+    const args = ['--capacity', cap, '--costs', costs, '--jobs', jobs, '--outcomes-ledger', '--runs-dir', runsDir];
+    const json = await capture(() => cmdNodeRoute([...args, '--json']));
+    expect(json.code).toBe(0);
+    expect(JSON.parse(json.lines[0]!).plan[0]).toMatchObject({
+      nodeId: 'mbp', mergeRate: null, mergesPerMTok: null, mergesPerHour: null,
+    });
+    const plain = await capture(() => cmdNodeRoute(args));
+    expect(plain.code).toBe(0);
+    expect(plain.lines[1]).toContain('(merge unknown, unknown/Mtok, unknown/h)');
+  });
+
   it('lets an explicit --outcomes file win per provider over the ledger', async () => {
     const { cmdNodeRoute } = await import('../src/cli/node-capacity.js');
     const rows = [

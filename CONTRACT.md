@@ -2628,7 +2628,11 @@ wraps the bounded `readRouterOutcomes` ledger read: 'read' carries the tallies,
 'missing' is an absent journal with empty tallies, and 'unreadable'/'not-file'
 report unusable evidence. `phm node route --outcomes-ledger [--runs-dir <dir>]`
 merges these tallies under any explicit `--outcomes` file (file wins per
-provider) and reports `outcomes_ledger` state in its JSON plan. See
+provider) and reports `outcomes_ledger` state in its JSON plan.
+For a placed job, the `phantom.node-route.v1` fields `mergeRate`,
+`mergesPerMTok` and `mergesPerHour` require at least one recorded attempt
+with valid outcome counts. Otherwise they are `null`, and the placement
+score uses the neutral prior. See
 [measured capacity and routing](docs/NODE-ROUTER.md#measured-capacity-and-node-provider-model-routing).
 
 ## Router calibration
