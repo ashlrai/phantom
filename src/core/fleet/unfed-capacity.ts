@@ -471,6 +471,8 @@ interface LatestRouteDecision {
   preferred: string | null;
   /** Lane the market chose, or null when the decision routed nowhere. */
   chosen: string | null;
+  /** The fleet cap or per-tick launch limit overrode the market decision. */
+  globallyBlocked: boolean;
   /** Recorded work_class when it is one of the market's closed values. */
   workClass: string | null;
   /** Lanes the market rejected for this job, with their recorded reason codes. */
@@ -539,6 +541,8 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
     const preferred = laneField(row.preferred_lane);
     const chosen = laneField(row.chosen_lane);
     if (chosen === null && row.chosen_lane !== null) continue;
+    const globallyBlocked = chosen === null && Array.isArray(row.reason_codes)
+      && row.reason_codes.includes('global_admission');
     // Requirements validation fails before the dispatcher can decode a lane hint.
     const invalidRequirements = row.chosen_lane === null && row.preferred_lane === undefined
       && Array.isArray(row.reason_codes) && row.reason_codes.includes('invalid_requirements');
@@ -557,8 +561,9 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
       override,
       preferred,
       chosen,
+      globallyBlocked,
       workClass,
-      rejected: rejectedLanes(row.rejected_lanes),
+      rejected: globallyBlocked ? [] : rejectedLanes(row.rejected_lanes),
     });
   }
   return latest;
@@ -764,7 +769,8 @@ const MAX_REJECTION_LANES = 16;
  * recorded reason codes. `lanes` keeps the per-lane detail (a job counts
  * once under each lane that rejected it); `byReason` counts each job once
  * per reason across all its rejected lanes, so a job rejected by three
- * lanes for the same cause is one affected job, not three. Null text means
+ * lanes for the same cause is one affected job, not three. A fleet admission
+ * stop counts at job level because its lane ranking was provisional. Null text means
  * the journal was absent or unreadable; malformed rows and entries are
  * skipped. Counts and lane/reason codes only; no job ids, task text or
  * credentials.
@@ -780,7 +786,7 @@ export function foldRouteRejections(
   for (const [, decision] of latestRouteDecisions(marketJsonl, nowMs, windowHours)) {
     report.decided++;
     if (decision.chosen === null) report.unrouted++;
-    const jobReasons = new Set<string>();
+    const jobReasons = new Set<string>(decision.globallyBlocked ? ['global_admission'] : []);
     for (const rej of decision.rejected) {
       const entry = perLane.get(rej.lane) ?? { jobs: 0, reasons: {} };
       entry.jobs++;
@@ -876,7 +882,7 @@ export function renderUnfed(report: UnfedReport): string[] {
   const j = report.rejections;
   if (j.available && j.decided > 0) {
     const nowhere = j.unrouted > 0 ? `, ${j.unrouted} routed nowhere` : '';
-    if (j.lanes.length === 0) {
+    if (j.lanes.length === 0 && Object.keys(j.byReason).length === 0) {
       lines.push(`Last ${h.windowHours}h: no lane rejections recorded across ${j.decided} decided job(s)${nowhere}.`);
     } else {
       lines.push(`Last ${h.windowHours}h: lane rejections across ${j.decided} decided job(s)${nowhere}: ${topCodes(j.byReason)}`);

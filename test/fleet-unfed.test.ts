@@ -734,6 +734,38 @@ describe('foldRouteRejections', () => {
     ]);
   });
 
+  it('counts fleet admission blocks instead of provisional lane rankings', () => {
+    const journal = [
+      decision('RQ-A', t - 120, { rejected_lanes: [rejected('devin', 'held')] }),
+      decision('RQ-A', t - 60, {
+        chosen_lane: null,
+        reason_codes: ['healthy_capacity', 'global_admission'],
+        rejected_lanes: [rejected('codex-cmp', 'saturated'), rejected('devin', 'lower_rank')],
+      }),
+      decision('RQ-B', t - 60, { chosen_lane: null, reason_codes: ['global_admission'] }),
+      decision('RQ-C', t - 60, { rejected_lanes: [rejected('devin', 'held')] }),
+    ].join('\n');
+    expect(foldRouteRejections(journal, now, 24)).toEqual({
+      available: true,
+      decided: 3,
+      unrouted: 2,
+      byReason: { global_admission: 2, held: 1 },
+      lanes: [{ lane: 'devin', jobs: 1, reasons: { held: 1 } }],
+    });
+    const report = {
+      ...currentUnfed('{"lanes":{}}', ''),
+      marketTruncated: false,
+      history: foldUnfedHistory(journal, now, 24),
+      overrides: foldMarketOverrides(journal, now, 24),
+      claims: foldClaimOverrides(null, now, 24),
+      decisionOutcomes: foldDecisionOutcomes(journal, null, now, 24),
+      rejections: foldRouteRejections(journal.split('\n')[2]!, now, 24),
+    };
+    expect(renderUnfed(report)).toContain(
+      'Last 24h: lane rejections across 1 decided job(s), 1 routed nowhere: global_admission 1',
+    );
+  });
+
   it('skips malformed rejected_lanes entries and reason codes, never guessing', () => {
     const journal = [
       decision('RQ-A', t - 100, {
