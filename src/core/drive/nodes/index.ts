@@ -1,4 +1,4 @@
-import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
+import type { JobClaim, LeaderLease, NodeSession, QueueJobV1, QueueV1 } from './queue-v1.js';
 import { validNodeTask, type EmbeddedNodeTask } from './task.js';
 import { actionableClaim, jobBlockers, nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
@@ -41,6 +41,14 @@ export interface JobSpec {
   requires?: string[];
   pack?: string;
   secrets?: string[];
+}
+
+export interface EnqueueResult {
+  enqueued: boolean;
+  /** Present only when `enqueued` is false: whether the stored job's spec
+   * already equals this request. `false` means the retry carried different
+   * requirements and nothing changed. */
+  specMatches?: boolean;
 }
 
 /** What a node may see of a job it is entitled to: references only, never values.
@@ -110,6 +118,22 @@ function names(values: string[] | undefined, ok: (v: unknown) => boolean, what: 
   const out = [...new Set(values ?? [])].sort();
   if (out.length > 64 || !out.every(ok)) throw new Error(`Invalid drive ${what}`);
   return out;
+}
+
+function sameNames(a: string[] | undefined, b: string[] | undefined): boolean {
+  const x = a ?? [], y = b ?? [];
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
+/** Spec fields are write-once at enqueue, so a duplicate id's stored spec can
+ * be compared exactly. `requires`/`secrets` compare as the sorted sets `names`
+ * stored; the embedded task compares by digest. */
+function sameJobSpec(job: QueueJobV1, want: { owner?: string; requires?: string[]; pack?: string; secrets?: string[]; task?: EmbeddedNodeTask } | undefined): boolean {
+  const spec = want ?? {};
+  const taskMatches = job.task === undefined ? spec.task === undefined
+    : spec.task !== undefined && job.task.sha256 === spec.task.sha256;
+  return job.owner === spec.owner && job.pack === spec.pack && taskMatches &&
+    sameNames(job.requires, spec.requires) && sameNames(job.secrets, spec.secrets);
 }
 
 function validSlots(value: number): boolean { return Number.isSafeInteger(value) && value >= 0 && value <= 64; }
@@ -238,6 +262,14 @@ export class DriveNodes implements QueueV1 {
   }
 
   enqueue(jobId: string, spec?: JobSpec): boolean {
+    return this.enqueueChecked(jobId, spec).enqueued;
+  }
+
+  /** `enqueue` plus, on a duplicate id, whether the stored spec already equals
+   * the request — `specMatches: false` means the retry carried different flags
+   * and nothing changed. The comparison runs inside the same transaction, so
+   * it cannot race another enqueue of the same id. */
+  enqueueChecked(jobId: string, spec?: JobSpec): EnqueueResult {
     if (spec?.task !== undefined && (spec.pack !== 'codex-file' || !validNodeTask(spec.task))) throw new Error('Invalid embedded node task');
     if (!validId(jobId)) throw new Error('Invalid drive job ID');
     if (spec && !validId(spec.owner)) throw new Error('Invalid drive owner scope');
@@ -249,9 +281,10 @@ export class DriveNodes implements QueueV1 {
       ...(spec.task === undefined ? {} : { task: structuredClone(spec.task) }),
     };
     return this.transaction(state => {
-      if (state.jobs.some(j => j.id === jobId)) return false;
+      const existing = state.jobs.find(j => j.id === jobId);
+      if (existing) return { enqueued: false, specMatches: sameJobSpec(existing, extra) };
       state.jobs.push({ id: jobId, state: 'pending', ...extra });
-      return true;
+      return { enqueued: true };
     });
   }
 

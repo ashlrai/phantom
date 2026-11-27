@@ -2762,6 +2762,10 @@ result` serves: a `JobOutcome` (`pending | running | completed | absent`) with
 `claimedBy` for a live running claim and `producerWithdrawn` for a producer
 fence. The owner match is `withdraw`'s, so another scope's job answers
 `absent`; the read never mutates state or exposes fencing tokens.
+`DriveNodes.enqueueChecked(jobId, spec)` is `enqueue` plus, on a duplicate id,
+`specMatches` — whether the stored spec already equals the request, compared
+inside the same transaction. `enqueue` keeps its boolean contract and delegates
+to it; `phm node enqueue --json` surfaces `specMatches` only on a duplicate.
 `src/core/drive/nodes/runner-packs.ts` exports
 `probeRunnerPacks(runner, run?)`, which returns `pack:<name>` caps from
 `<runner> packs`. `runner.ts` exports `NODE_RUNNER_PACKS` and

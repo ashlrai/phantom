@@ -243,9 +243,13 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
   }
   if (verb === 'enqueue') {
     // enqueued:false means the job id is already taken — enqueue is idempotent
-    // on the id, so this is a fact, not a failure.
+    // on the id, so this is a fact, not a failure. specMatches:false means the
+    // retry's flags differed from the stored spec and were ignored.
     const jobId = String(out['jobId']);
-    return out['enqueued'] === true ? `Enqueued ${jobId}.` : `Job ${jobId} already exists; nothing changed.`;
+    if (out['enqueued'] === true) return `Enqueued ${jobId}.`;
+    return out['specMatches'] === false
+      ? `Job ${jobId} already exists with a different spec; nothing changed.`
+      : `Job ${jobId} already exists; nothing changed.`;
   }
   if (verb === 'withdraw') {
     const jobId = String(out['jobId']);

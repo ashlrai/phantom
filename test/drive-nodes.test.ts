@@ -290,6 +290,45 @@ describe('drive node leases', () => {
   });
 });
 
+describe('enqueue duplicate spec reporting', () => {
+  it('tells an identical retry from one whose spec the store ignored', () => {
+    const f = fixture();
+    const spec = { owner: 'o', requires: ['codex', 'gh'], pack: 'pack-1', secrets: ['DEPLOY_KEY'] };
+    expect(f.a.enqueueChecked('job', spec)).toEqual({ enqueued: true });
+    // requires order and duplicates normalize before comparing.
+    expect(f.a.enqueueChecked('job', { owner: 'o', requires: ['gh', 'codex', 'gh'], pack: 'pack-1', secrets: ['DEPLOY_KEY'] }))
+      .toEqual({ enqueued: false, specMatches: true });
+    for (const other of [
+      { ...spec, requires: ['codex'] },
+      { ...spec, owner: 'other' },
+      { ...spec, pack: 'pack-2' },
+      { ...spec, secrets: ['OTHER_KEY'] },
+      { owner: 'o' },
+    ]) {
+      expect(f.a.enqueueChecked('job', other)).toEqual({ enqueued: false, specMatches: false });
+    }
+    // A spec-less enqueue matches only a spec-less stored job, and the boolean
+    // enqueue keeps its contract for existing callers.
+    f.a.enqueue('bare');
+    expect(f.a.enqueueChecked('bare')).toEqual({ enqueued: false, specMatches: true });
+    expect(f.a.enqueueChecked('bare', { owner: 'o' })).toEqual({ enqueued: false, specMatches: false });
+    expect(f.a.enqueue('job', spec)).toBe(false);
+  });
+
+  it('compares an embedded task by digest', () => {
+    const f = fixture();
+    const text = 'run the suite';
+    const task = { text, sha256: createHash('sha256').update(text).digest('hex') };
+    const spec = { owner: 'o', pack: 'codex-file', task };
+    expect(f.a.enqueueChecked('job', spec)).toEqual({ enqueued: true });
+    expect(f.a.enqueueChecked('job', { ...spec, task: { ...task } })).toEqual({ enqueued: false, specMatches: true });
+    const other = 'run something else';
+    expect(f.a.enqueueChecked('job', { ...spec, task: { text: other, sha256: createHash('sha256').update(other).digest('hex') } }))
+      .toEqual({ enqueued: false, specMatches: false });
+    expect(f.a.enqueueChecked('job', { owner: 'o', pack: 'codex-file' })).toEqual({ enqueued: false, specMatches: false });
+  });
+});
+
 describe('release: decline versus retry (CLI + router)', () => {
   const lease = (c: { nodeId: string; session: number; jobId: string; token: number; leaderToken: number }) =>
     ['--job', c.jobId, '--node', c.nodeId, '--session', String(c.session), '--token', String(c.token), '--leader-token', String(c.leaderToken)];
@@ -610,7 +649,7 @@ describe('standalone join version reporting', () => {
       expect(code).toBe(0);
       const node = store.state.nodes.find(n => n.nodeId === 'laptop')!;
       expect(node.caps).toEqual(['build', 'phm-9.9.9']);
-      expect(versionFromCaps(node.caps)).toBe('9.9.9');
+      expect(versionFromCaps(node.caps ?? [])).toBe('9.9.9');
     } finally { vi.restoreAllMocks(); }
   });
   it('leaves --caps untouched when this build version cannot be determined', async () => {
@@ -1050,6 +1089,25 @@ describe('text output names outcomes in plain words', () => {
       expect(last(lines)).toBe('Node box left the registry.');
     } finally { vi.restoreAllMocks(); }
   });
+  it('enqueue names a spec conflict on a duplicate id', async () => {
+    const { deps, nodes, lines } = harness();
+    try {
+      await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'build'], deps);
+      expect(last(lines)).toBe('Enqueued j1.');
+      // An identical retry keeps the plain duplicate line; different flags are named.
+      await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'build'], deps);
+      expect(last(lines)).toBe('Job j1 already exists; nothing changed.');
+      await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'gh'], deps);
+      expect(last(lines)).toBe('Job j1 already exists with a different spec; nothing changed.');
+      // --json carries the same distinction as specMatches.
+      await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'gh', '--json'], deps);
+      expect(JSON.parse(last(lines))).toMatchObject({ command: 'enqueue', jobId: 'j1', enqueued: false, specMatches: false });
+      await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'build', '--json'], deps);
+      expect(JSON.parse(last(lines))).toMatchObject({ enqueued: false, specMatches: true });
+      expect(executeNodeFleet('enqueue', ['--job', 'j2', '--owner', 'acme'], nodes()))
+        .toEqual({ jobId: 'j2', enqueued: true });
+    } finally { vi.restoreAllMocks(); }
+  });
   it('beat confirms the heartbeat in plain words, naming auth only when probed', async () => {
     const { deps, nodes, lines } = harness();
     try {
@@ -1320,8 +1378,8 @@ describe('fleet flag value validation', () => {
     try { fn(); } catch (e) { return e as { code?: string; message?: string; fix?: string; exit?: number }; }
     throw new Error('expected the verb to refuse');
   }
-  const run = (verb: string, args: string[], f = fixture()) =>
-    failure(() => executeNodeFleet(verb, args, f.a));
+  const run = (verb: string, args: readonly string[], f = fixture()) =>
+    failure(() => executeNodeFleet(verb, [...args], f.a));
   it('refuses malformed ids on every verb that takes one, as usage', () => {
     const f = fixture();
     const worker = f.a.join('laptop', { owners: ['acme'] })!;

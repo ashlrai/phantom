@@ -166,7 +166,8 @@ that outlived an upgrade reads as behind) and point at `phm node self-update --o
 when any node drifted, mark producer withdrawals, carry the
 same fix `phm node plan` prints on a job that still has no taker, and an
 empty scope says so with the join command; `enqueue` says when the job id already
-exists;
+exists — and names a spec conflict when the retry's flags differ from the
+stored job (`specMatches` in `--json`);
 `withdraw` names `held` (a live claim still owns it — retry after it lapses),
 `completed` and `absent`; `renew` prints the lease expiry as a time;
 `complete` and `leave` name what happened, a refused `leave` names the
