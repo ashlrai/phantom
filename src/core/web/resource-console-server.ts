@@ -27,7 +27,10 @@ import { createResourceConsoleEngineeringPreparation, validateResourceConsoleEng
 import { createResourceConsoleReader, withholdResourceConsoleWorkers, withholdResourceConsoleQuotaScopeWorkers } from './resource-console-reads.js';
 import { createReadSessionBoundary, headerValue, requestUrl, safeEqual, sendJson } from './read-session.js';
 import { validateUniverseConsoleRoot } from './universe-console-reads.js';
-import { serveStatic } from './static.js';
+import { SCOPED_CONSOLE_ID_RE } from './bounded-read-worker.js';
+import {
+  applyScopedConsoleSecurityHeaders, isLoopbackPortHost, listenLoopbackServer, serveScopedConsoleAsset,
+} from './scoped-console-http.js';
 import { createEngineeringBackground } from '../resources/engineering-background.js';
 import type { EngineeringBackground } from '../resources/engineering-background-types.js';
 import { createResourceEngineeringAutomaticAdmission } from '../resources/engineering-automatic-admission.js';
@@ -75,7 +78,7 @@ class RequestError extends Error {
 }
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const ID = SCOPED_CONSOLE_ID_RE;
 
 function exact(value: unknown, keys: string[]): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) &&
@@ -278,11 +281,8 @@ export async function startResourceConsoleServer(options: ResourceConsoleServerO
   }
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'");
-    res.setHeader('X-Frame-Options', 'DENY'); res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-    if (![`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(headerValue(req, 'host'))) {
+    applyScopedConsoleSecurityHeaders(res);
+    if (!isLoopbackPortHost(headerValue(req, 'host'), port)) {
       throw new RequestError(403, 'Forbidden: invalid Host header');
     }
     if (req.headers.origin !== undefined && headerValue(req, 'origin') !== origin) {
@@ -556,11 +556,7 @@ export async function startResourceConsoleServer(options: ResourceConsoleServerO
     if (url.pathname === '/' || url.pathname === '/resources') {
       res.writeHead(308, { Location: '/resources/' }); res.end(); return;
     }
-    if (url.pathname === '/resources/' || url.pathname.startsWith('/next/assets/')) {
-      const staticRequest = Object.create(req) as IncomingMessage;
-      staticRequest.url = url.pathname === '/resources/' ? '/next/index.html' : url.pathname;
-      if (serveStatic(staticRequest, res, assets)) return;
-    }
+    if (serveScopedConsoleAsset(req, res, url.pathname, '/resources/', assets)) return;
     throw new RequestError(404, 'Not found');
   }
 
@@ -624,14 +620,7 @@ export async function startResourceConsoleServer(options: ResourceConsoleServerO
   };
   const aborted = () => { void close().catch(() => {}); };
   try {
-    await new Promise<void>((resolve, reject) => {
-      const failed = (error: Error) => { server.removeListener('listening', listening); reject(error); };
-      const listening = () => { server.removeListener('error', failed); resolve(); };
-      server.once('error', failed); server.once('listening', listening); server.listen(requestedPort, '127.0.0.1');
-    });
-    const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('Resource console address unavailable');
-    port = address.port; origin = `http://127.0.0.1:${port}`;
+    ({ port, origin } = await listenLoopbackServer(server, requestedPort, 'Resource console address unavailable'));
     if (signal?.aborted || hostStopped()) throw new Error('Resource console startup cancelled');
     if (quotaConfig || connectionsConfig) {
       // Only explicit quota collection creates this private control root. No

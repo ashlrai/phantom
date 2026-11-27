@@ -1,13 +1,13 @@
-import { createRequire } from 'node:module';
-import { isAbsolute, parse, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { types } from 'node:util';
 import { validateResourceObservations, validateResourcePool, type ResourceAssignmentExclusion,
   type ResourceObservation, type ResourcePool } from '../resources/pool-policy.js';
 import { validateResourceBindings, type ResourceBinding } from '../resources/worker.js';
 import { expandResourceQuotaDenials } from '../resources/quota-scope.js';
 import type { ResourceConsoleEvidence } from '../resources/console-types.js';
-import { createBoundedReadWorker, ReadProjectionError, type BoundedReadWorkerOptions } from './bounded-read-worker.js';
+import {
+  createBoundedReadWorker, createSiblingWorkerEntrypoint, ReadProjectionError,
+  SCOPED_CONSOLE_ID_RE, validateScopedConsolePath, type BoundedReadWorkerOptions,
+} from './bounded-read-worker.js';
 import { degradedResourceConsoleEvidence, validateResourceConsoleResponse } from './resource-console-public.js';
 
 export interface ResourceConsoleReadScope { root: string; pool: ResourcePool; bindings: ResourceBinding[]; observationsFile: string;
@@ -15,7 +15,6 @@ export interface ResourceConsoleReadScope { root: string; pool: ResourcePool; bi
 export interface ResourceConsoleManagedRead { observations: ResourceObservation[]; unavailableWorkerIds: string[]; quotaUnavailableWorkerIds?: string[] }
 export interface ResourceConsoleReader { snapshot(managed?: ResourceConsoleManagedRead): Promise<ResourceConsoleEvidence>; close(): Promise<void> }
 
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const MAX_MANAGED_BYTES = 128 * 1024;
 function plain(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !types.isProxy(value) && !Array.isArray(value) &&
@@ -38,7 +37,7 @@ function denseArray(value: unknown, maximum: number): value is unknown[] {
 }
 
 function workerIds(value: unknown, known: string[]): value is string[] {
-  return denseArray(value, known.length) && value.every((id) => typeof id === 'string' && ID.test(id) && known.includes(id)) &&
+  return denseArray(value, known.length) && value.every((id) => typeof id === 'string' && SCOPED_CONSOLE_ID_RE.test(id) && known.includes(id)) &&
     new Set(value).size === value.length;
 }
 
@@ -71,10 +70,7 @@ function boundedPlainData(value: unknown): boolean {
 }
 
 export function validateResourceConsolePath(value: unknown): string {
-  if (typeof value !== 'string' || !isAbsolute(value) || Buffer.byteLength(value) > 4_096 ||
-    [...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) >= 127 && character.charCodeAt(0) <= 159) ||
-    resolve(value) === parse(value).root) throw new Error('Resource console requires explicit absolute non-root paths');
-  return resolve(value);
+  return validateScopedConsolePath(value, 'Resource console requires explicit absolute non-root paths', true);
 }
 
 export function validateResourceConsoleReadScope(value: ResourceConsoleReadScope): ResourceConsoleReadScope {
@@ -180,14 +176,7 @@ function withholdExactWorkers(evidence: ResourceConsoleEvidence, blocked: Set<st
   return { ...evidence, plan: { ...evidence.plan, candidates, exclusions, selectedWorkerId: candidates[0]?.workerId ?? null, nextEligibleAt } };
 }
 
-function workerEntrypoint(): URL {
-  if (import.meta.url.endsWith('/resource-console-reads.ts')) {
-    const loader = pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm/api')).href;
-    const source = new URL('./resource-console-worker.ts', import.meta.url).href;
-    return new URL(`data:text/javascript,${encodeURIComponent(`import { register } from ${JSON.stringify(loader)}; register(); await import(${JSON.stringify(source)});`)}`);
-  }
-  return new URL('./resource-console-worker.js', import.meta.url);
-}
+const workerEntrypoint = createSiblingWorkerEntrypoint(import.meta.url, 'resource-console-worker');
 
 /** Pinned configuration and one private file; browser requests cannot choose paths. */
 export function createResourceConsoleReader(options: ResourceConsoleReadScope,

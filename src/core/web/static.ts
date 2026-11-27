@@ -96,8 +96,8 @@ export function isConsoleShellPath(pathname: string): boolean {
 }
 
 export const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
-export const HTML_CACHE_CONTROL = 'no-store';
-export const REVALIDATE_CACHE_CONTROL = 'no-cache';
+const HTML_CACHE_CONTROL = 'no-store';
+const REVALIDATE_CACHE_CONTROL = 'no-cache';
 
 /** Vite's default chunk/asset naming: `<name>-<8 url-safe base64 chars>.<ext>`. */
 const HASHED_ASSET_RE = /^\/next\/assets\/[^/]+-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+$/;

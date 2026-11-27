@@ -1,7 +1,7 @@
-import { createRequire } from 'node:module';
-import { isAbsolute, parse, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { createBoundedReadWorker, ReadProjectionError, type BoundedReadWorkerOptions } from './bounded-read-worker.js';
+import {
+  createBoundedReadWorker, createSiblingWorkerEntrypoint, ReadProjectionError,
+  validateScopedConsolePath, validateSingleIdPayload, type BoundedReadWorkerOptions,
+} from './bounded-read-worker.js';
 import { validateUniverseConsoleResponse } from './universe-console-public.js';
 
 export interface UniverseConsoleReader {
@@ -13,40 +13,23 @@ export interface UniverseConsoleReader {
 }
 
 export function validateUniverseConsoleRoot(value: unknown): string {
-  if (typeof value !== 'string' || !isAbsolute(value) || value.length > 4096 ||
-    [...value].some((char) => char.charCodeAt(0) < 32 || (char.charCodeAt(0) >= 127 && char.charCodeAt(0) <= 159)) ||
-    resolve(value) === parse(value).root) throw new Error('Universe console requires an explicit absolute non-root path');
-  return resolve(value);
+  return validateScopedConsolePath(value, 'Universe console requires an explicit absolute non-root path');
 }
 
 export function normalizeUniverseConsoleRead(kind: unknown, payload: unknown): undefined | { universeId: string } | { campaignId: string } | { controllerId: string } {
   if (kind === 'overview' && payload === undefined) return undefined;
-  if (kind === 'graph' && payload && typeof payload === 'object' && !Array.isArray(payload)) {
-    const value = payload as Record<string, unknown>;
-    if (Object.keys(value).length === 1 && typeof value.universeId === 'string' &&
-      /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value.universeId)) return { universeId: value.universeId };
-  }
-  if (kind === 'campaign-readiness' && payload && typeof payload === 'object' && !Array.isArray(payload)) {
-    const value = payload as Record<string, unknown>;
-    if (Object.keys(value).length === 1 && Object.hasOwn(value, 'campaignId') && typeof value.campaignId === 'string' &&
-      /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value.campaignId)) return { campaignId: value.campaignId };
-  }
-  if (kind === 'controller-status' && payload && typeof payload === 'object' && !Array.isArray(payload)) {
-    const value = payload as Record<string, unknown>;
-    if (Object.keys(value).length === 1 && Object.hasOwn(value, 'controllerId') && typeof value.controllerId === 'string' &&
-      /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value.controllerId)) return { controllerId: value.controllerId };
+  const key = kind === 'graph' ? 'universeId'
+    : kind === 'campaign-readiness' ? 'campaignId'
+      : kind === 'controller-status' ? 'controllerId'
+        : null;
+  if (key) {
+    const valid = validateSingleIdPayload(payload, key);
+    if (valid) return valid as { universeId: string } | { campaignId: string } | { controllerId: string };
   }
   throw new ReadProjectionError('Invalid Universe console read', 'READ_PROJECTION_INVALID_REQUEST');
 }
 
-function workerEntrypoint(): URL {
-  if (import.meta.url.endsWith('/universe-console-reads.ts')) {
-    const loader = pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm/api')).href;
-    const source = new URL('./universe-console-worker.ts', import.meta.url).href;
-    return new URL(`data:text/javascript,${encodeURIComponent(`import { register } from ${JSON.stringify(loader)}; register(); await import(${JSON.stringify(source)});`)}`);
-  }
-  return new URL('./universe-console-worker.js', import.meta.url);
-}
+const workerEntrypoint = createSiblingWorkerEntrypoint(import.meta.url, 'universe-console-worker');
 
 /** Root is pinned in workerData, never taken from a browser request or default configuration. */
 export function createUniverseConsoleReader(root: string, options: Pick<BoundedReadWorkerOptions,

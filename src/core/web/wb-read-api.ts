@@ -66,12 +66,12 @@ import {
 // Routes
 // ---------------------------------------------------------------------------
 
-export const WB_SNAPSHOT_PATH = '/api/wb/v1/snapshot';
-export const WB_GH_PATH = '/api/wb/v1/gh';
-export const WB_BUDGET_PATH = '/api/wb/v1/budget';
-export const WB_SECRETS_PATH = '/api/wb/v1/secrets';
-export const WB_LOCUS_PATH = '/api/wb/v1/locus';
-export const WB_STEER_PATH = '/api/wb/v1/steer';
+const WB_SNAPSHOT_PATH = '/api/wb/v1/snapshot';
+const WB_GH_PATH = '/api/wb/v1/gh';
+const WB_BUDGET_PATH = '/api/wb/v1/budget';
+const WB_SECRETS_PATH = '/api/wb/v1/secrets';
+const WB_LOCUS_PATH = '/api/wb/v1/locus';
+const WB_STEER_PATH = '/api/wb/v1/steer';
 export { WB_FLEET_PATH };
 
 const WB_ROUTES = new Set([WB_SNAPSHOT_PATH, WB_GH_PATH, WB_BUDGET_PATH, WB_SECRETS_PATH, WB_STEER_PATH, WB_LOCUS_PATH, WB_FLEET_PATH]);
