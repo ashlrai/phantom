@@ -129,11 +129,23 @@ describe('fleet resource plan', () => {
     ] } };
     const grant = { count: 1, kind: 'full', source: 'owner-screenshot', expires_at: iso(now + hr / 2) } as const;
     const bank = { observed_at: iso(now), grants: [grant], queued: 3 };
-    const plan = (evidence: typeof bank) => buildFleetResourcePlan(weekly, [node], status(), ledger, now, [], evidence);
+    const plan = (evidence: typeof bank, demand?: ReadonlyMap<string, readonly string[]>) =>
+      buildFleetResourcePlan(weekly, [node], status(), ledger, now, [], evidence, demand);
     expect(plan(bank).reset_proposal).toMatchObject({
       action: 'use-reset-now', requires_explicit_request: true, grant, window: 'weekly', queued_jobs: 3,
     });
     expect(plan({ ...bank, queued: 0 }).reset_proposal).toBeNull();
+    const omitted = plan(bank, new Map([['agy', ['eligible-job']]]));
+    expect(omitted.lanes.find(row => row.lane === 'codex-personal')).toMatchObject({
+      queued_jobs: null, additional_slots: null, target_concurrency: null,
+    });
+    expect(omitted.reset_proposal).toBeNull();
+    const empty = plan(bank, new Map([['codex-personal', []]]));
+    expect(empty.lanes.find(row => row.lane === 'codex-personal')).toMatchObject({
+      queued_jobs: 0, additional_slots: 0, target_concurrency: 1,
+    });
+    expect(empty.reset_proposal).toBeNull();
+    expect(plan(bank, new Map([['codex-personal', ['eligible-job']]])).reset_proposal?.queued_jobs).toBe(1);
   });
 
   it('reroutes eligible rows once toward the earliest included deadline and shares the plan with readers', async () => {
