@@ -565,6 +565,40 @@ describe('foldClaimOverrides', () => {
     expect(foldClaimOverrides(journal, at - 25 * 3_600_000, 24).claimed).toBe(0);
   });
 
+  it('counts reservation-backed overrides only on the matching launch', () => {
+    const start = now - 24 * 3_600_000;
+    const reserve = (job: string, at: number, hint = 'devin') => claim(job, iso(at), {
+      launch_dedupe: true, lane_hint: hint, lane_override: 'preferred_lane_fallback',
+    });
+    const launch = (job: string, at: number, lane = 'claude') =>
+      JSON.stringify({ event: 'launch', job, ts: iso(at), lane });
+    const journal = [
+      reserve('RQ-A', start - 1),
+      launch('RQ-A', start),
+      launch('RQ-A', start),
+      reserve('RQ-B', start + 1),
+      JSON.stringify({ event: 'launch_terminal', job: 'RQ-B', ts: iso(start + 1), reason: 'spawn-failed' }),
+      launch('RQ-B', start + 2),
+      reserve('RQ-B', start + 3, 'codex-personal'),
+      launch('RQ-B', start + 3),
+      reserve('RQ-C', start + 4),
+      launch('RQ-C', start + 5, 'codex-personal'),
+      reserve('RQ-D', now),
+      launch('RQ-D', now + 1),
+      claim('RQ-E', iso(now), { launched: false, lane_hint: 'devin', lane_override: 'preferred_lane_fallback' }),
+    ].join('\n');
+
+    expect(foldClaimOverrides(journal, now, 24)).toMatchObject({
+      claimed: 2,
+      overridden: 2,
+      byReason: { preferred_lane_fallback: 2 },
+      lanes: [
+        { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback', claims: 1 },
+        { from: 'devin', to: 'claude', reason: 'preferred_lane_fallback', claims: 1 },
+      ],
+    });
+  });
+
   it('marks a tail-truncated ledger as a lower bound', () => {
     const journal = claim('RQ-A', iso(now - 1000));
     expect(foldClaimOverrides(journal, now, 24, true)).toMatchObject({ available: true, truncated: true, claimed: 1 });

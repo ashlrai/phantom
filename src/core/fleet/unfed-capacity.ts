@@ -612,6 +612,7 @@ export function foldMarketOverrides(jsonl: string | null, nowMs: number, windowH
  * decisions; this counts what launched, including `batch_session` moves a
  * combined session makes after each member's own decision. The synthetic
  * RQ-BATCH-* session claim is excluded because members have their own events.
+ * A launch-dedupe reservation counts only after a matching launch receipt.
  * Each re-launched job attempt counts again. Timestamps are
  * the ledger's ISO strings (parseLedgerTs handles dispatchd's %z offset);
  * rows outside the window, malformed fields and non-claim events are skipped.
@@ -630,24 +631,37 @@ export function foldClaimOverrides(
   };
   const since = nowMs - windowHours * 3_600_000;
   const pairs = new Map<string, UnfedClaimLane>();
+  const reservations = new Map<string, { row: Record<string, unknown>; at: number }>();
   for (const line of jsonl.split('\n')) {
-    // Cheap prefilter: claim events are a minority of the ledger.
-    if (!line.includes('claim')) continue;
+    if (!line.includes('claim') && !line.includes('launch')) continue;
     let row: unknown;
     try { row = JSON.parse(line); } catch { continue; }
-    if (!isRecord(row) || (row.event !== 'claim' && row.event !== 'batch_claim')) continue;
+    if (!isRecord(row)) continue;
+    const { event } = row;
+    if (event !== 'claim' && event !== 'batch_claim' && event !== 'launch' && event !== 'launch_terminal') continue;
     const job = row.job;
     if (typeof job !== 'string' || job.length === 0 || job.length > 200 || job.startsWith('RQ-BATCH-')) continue;
+    const at = parseLedgerTs(row.ts);
+    if (at === null || at > nowMs) continue;
+    const pending = reservations.get(job);
+    const supersedes = pending === undefined || at >= pending.at;
+    if (supersedes) reservations.delete(job);
+    if (row.launched === false || event === 'launch_terminal') continue;
     const lane = row.lane;
     if (typeof lane !== 'string' || !LANE.test(lane)) continue;
-    const at = parseLedgerTs(row.ts);
-    if (at === null || at < since || at > nowMs) continue;
+    if (event === 'claim' && row.launch_dedupe === true) {
+      if (supersedes) reservations.set(job, { row, at });
+      continue;
+    }
+    if (at < since || (event === 'launch' && !supersedes)) continue;
+    const claim = event === 'launch' ? pending?.row : row;
+    if (!claim || claim.lane !== lane) continue;
     tally.claimed++;
-    const reason = row.lane_override;
+    const reason = claim.lane_override;
     if (typeof reason !== 'string' || !CODE.test(reason)) continue;
     // lane_override is only meaningful with its recorded origin: absent or
     // malformed lane_hint means the pair cannot be named honestly.
-    const hint = row.lane_hint;
+    const hint = claim.lane_hint;
     if (hint !== null && (typeof hint !== 'string' || !LANE.test(hint))) continue;
     if (hint === lane) continue;
     tally.overridden++;
