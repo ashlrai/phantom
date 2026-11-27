@@ -215,6 +215,8 @@ interface RewardJobAccum {
   close: ResolutionMark | null;
   /** Latest effective revert per PR, with null for receipts lacking PR identity. */
   reverts: Map<string | null, number>;
+  /** Resolution evidence when the job has only a revert verdict. */
+  latestRevert: ResolutionMark | null;
   /** True when the standing revert set proves the held merge's PR was reverted. */
   standingReverted: boolean;
   /** ci_start/ci_complete boundary stamps, deduped like job-latency's boundary lists. */
@@ -227,7 +229,7 @@ function newAccum(): RewardJobAccum {
   return {
     dispatches: [],
     dispatchUndated: false, batchClaims: new Set(),
-    merge: null, close: null, reverts: new Map(), standingReverted: false,
+    merge: null, close: null, reverts: new Map(), latestRevert: null, standingReverted: false,
     ciBoundaryUndated: false, ciStarts: new Map(), ciCompletions: new Map(),
   };
 }
@@ -356,6 +358,9 @@ export function foldJobsLedgerRewards(
       const key = prKeys.length === 1 ? prKeys[0]! : null;
       if (key !== null || firstLedgerString(row, LEDGER_URL_KEYS) === null) {
         acc.reverts.set(key, Math.max(acc.reverts.get(key) ?? 0, revertedAtMs));
+        acc.latestRevert = latestResolution(acc.latestRevert, {
+          resolvedMs: revertedAtMs, repo: repoOf(row, prKeys), prKeys,
+        });
       }
     }
     if (at === null) continue;
@@ -435,23 +440,17 @@ function rewardInput(
   }
   // A revert can resolve a job on its own, but it cannot extend the
   // execution window of an explicitly closed PR.
-  let resolutionMs = acc.close?.resolvedMs ?? 0;
-  const resolutionPrKeys = acc.close?.prKeys.slice() ?? [];
-  if (acc.close === null) {
-    for (const revertedAt of acc.reverts.values()) resolutionMs = Math.max(resolutionMs, revertedAt);
-    for (const [key, revertedAt] of acc.reverts) {
-      if (key !== null && revertedAt === resolutionMs) resolutionPrKeys.push(key);
-    }
-  }
-  if (resolutionMs > 0) {
+  const resolution = acc.close ?? acc.latestRevert;
+  if (resolution !== null && resolution.resolvedMs > 0) {
+    const resolutionMs = resolution.resolvedMs;
     const dispatch = dispatchBefore(acc, resolutionMs);
     if (dispatch === null) return null;
-    const repo = acc.close?.repo === undefined ? dispatch.repo : acc.close.repo;
+    const repo = resolution.repo === undefined ? dispatch.repo : resolution.repo;
     return {
       jobId: id, pool: dispatch.lane, repo,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
       costUsd: cost,
-      ...ciWallEvidence(acc, dispatch.ms, resolutionMs, resolutionPrKeys, repo),
+      ...ciWallEvidence(acc, dispatch.ms, resolutionMs, resolution.prKeys, repo),
     };
   }
   return null;
