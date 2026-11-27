@@ -171,6 +171,27 @@ test('unattributed live claims hold capacity and executor identity binds latency
   expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.freeSlots === null)).toBe(true);
 });
 
+test('pool latency ignores legacy completions without a recorded execution host', () => {
+  const f = fixture();
+  const worker = f.add('worker', { hostId: 'old-mac' });
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  f.enqueue('legacy');
+  const legacy = nodes.pull(worker)!;
+  f.advance(100);
+  expect(nodes.complete(legacy.claim, 'done')).toBe(true);
+  delete f.state.jobs[0]!.executionHostId;
+
+  f.beat('worker', { hostId: 'new-mac' });
+  f.enqueue('current');
+  const current = nodes.pull(worker)!;
+  f.advance(2000);
+  expect(nodes.complete(current.claim, 'done')).toBe(true);
+
+  expect(projectFleetAwareness(f.state, f.now()).hosts).toEqual([
+    expect.objectContaining({ hostId: 'new-mac', latency: { samples: 1, medianMs: 2000, windowMs: 86_400_000 } }),
+  ]);
+});
+
 test('bounded projection reads actual fixture mirrors and rejects symlinks, oversized files and stale lanes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'fleet-aware-')); const f = fixture(); f.add('mac');
   try {
