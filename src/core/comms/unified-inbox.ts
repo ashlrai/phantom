@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirty-two local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates thirty-four local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -551,6 +551,40 @@
  *               The job id is the item's own citation, so `--job` matches.
  *               Act: `phm queue stuck`, `phm fleet unfed --json`,
  *               `phm queue`.
+ *   channel-health  owner-channel transport health — the slack and
+ *               iMessage bridges through `readChannelHealth` (the same
+ *               projection `phm fleet channel-health` and `phm channels`
+ *               serve) and the Telegram poller through `telegramEnabled` +
+ *               `readTelegramHealth` (the same read `phm comms health
+ *               --json` serves). Until now a dead bridge or a stale poller
+ *               was invisible here: `phm channels` could show a channel
+ *               ready while its process was gone, and an agent had to
+ *               already know which diagnostic to run to learn owner traffic
+ *               was not flowing. A configured bridge that is BLOCKED lists
+ *               as `channel-blocked` (high — the transport is provably
+ *               down), DEGRADED as `channel-degraded` and UNKNOWN as
+ *               `channel-unknown` (warn — evidence incomplete or a receipt
+ *               overdue, never called a decision); a channel nobody
+ *               configured (`BLOCKED` with `configured:false`, the
+ *               overview's 'not-set-up' row) and a LIVE one never list —
+ *               setup state is not pending work. The telegram leg lists
+ *               only when `telegramEnabled` — the same gate the comms
+ *               cycle's poll applies — as one `channel-degraded` item
+ *               naming each failed check (a recorded poll error, no poll
+ *               inside the 7-minute liveness window, no successful poll
+ *               yet); an unreadable main config or a throwing poll read
+ *               lists `channel-unknown` instead. `since`/`expiresAt` stay
+ *               null throughout: health keeps no condition-start time and
+ *               a degraded channel waits for repair, never a guessed
+ *               deadline; no item names a job. Either leg's own failure
+ *               degrades the source — a throwing bridge read proves
+ *               nothing about slack/imessage while the telegram verdicts
+ *               still list, and a throwing config or poll read is itself
+ *               the `channel-unknown` evidence — so 'unavailable' and
+ *               'missing' never apply: this is a live probe of running
+ *               transports, not a store that can be absent. Act: `phm fleet channel-health`, `phm channels
+ *               slack status`, `phm imessage doctor`, `phm comms health
+ *               --json`, `phm comms cycle`, `phm channels`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -586,7 +620,8 @@ import { readAgentRegistry, resolveAgent } from '../agents/bus-identity.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { readNeedsMasonReplyDeliveries, type NeedsMasonReplyDeliveryReport } from '../fleet/needs-mason-relay.js';
-import { loadConfigReadOnly } from '../config.js';
+import { loadConfigReadOnly, loadConfigReadOnlyStrict } from '../config.js';
+import type { AshlrConfig } from '../types.js';
 import { assertMetadata } from '../connectors/profile.js';
 import { readEmailDropConfig, readEmailDropInbox } from './email-drop-config.js';
 import { probeOutboxDir, readEmailOutbox, type EmailOutboxEntry, type EmailOutboxListing } from './email-outbox.js';
@@ -625,6 +660,8 @@ import { listWorkBoard, WORK_BOARD_MAX_LIMIT, type WorkBoardResult } from './wor
 import type { WorkItemState } from './work-item-state.js';
 import { readKillSwitch, type KillSwitchReadResult } from '../sandbox/policy.js';
 import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
+import { readChannelHealth } from '../fleet/channel-health.js';
+import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
@@ -639,7 +676,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
-  'send-gate', 'router-queue',
+  'send-gate', 'router-queue', 'channel-health',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -668,6 +705,7 @@ export const UNIFIED_INBOX_KINDS = [
   'coordination-message', 'coordination-assignment', 'coordination-return-unposted',
   'claim-drift-bus', 'claim-drift-coordination', 'claim-drift-owner',
   'send-gate-kill', 'send-gate-pause', 'router-queue-job',
+  'channel-blocked', 'channel-degraded', 'channel-unknown',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -923,6 +961,17 @@ export interface UnifiedInboxOptions {
    * `dispatch-events.log` through `readStuckQueue` — the same bounded read
    * `phm queue stuck` and the desktop Queue view serve. */
   readRouterQueue?: (options: { runsDir?: string; now?: () => number }) => Promise<RouterQueueStuckRead>;
+  /** Channel-health seam; default reads `readChannelHealth` — the same
+   * slack/imessage bridge projection `phm fleet channel-health` and
+   * `phm channels` serve. */
+  readChannelHealth?: typeof readChannelHealth;
+  /** Config seam for the telegram leg; default `loadConfigReadOnlyStrict` —
+   * a malformed config reports the telegram channel unknown, never a
+   * guessed default. */
+  readChannelConfig?: () => AshlrConfig;
+  /** Telegram poll-health seam; default `readTelegramHealth` — the same
+   * read `phm comms health --json` serves. */
+  readTelegramPoll?: typeof readTelegramHealth;
   /** Optional narrowing of the returned item list by stored source, severity,
    * blocking, job citation, appearance time or display text. `total`/`omitted`/`items` then
    * describe the matched view and the applied filter echoes on the report;
@@ -3462,6 +3511,152 @@ async function readRouterQueueSource(options: { runsDir?: string; now?: () => nu
   }
 }
 
+/** Display label and deep links per channel-health leg; telegram's acts differ because its diagnostic is `phm comms health`, not `phm fleet channel-health`. */
+const channelHealthPresentation = (channel: string): { label: string; acts: readonly string[] } =>
+  channel === 'slack'
+    ? { label: 'Slack', acts: ['phm fleet channel-health', 'phm channels slack status', 'phm channels'] }
+    : channel === 'imessage'
+      ? { label: 'iMessage', acts: ['phm fleet channel-health', 'phm imessage doctor', 'phm channels'] }
+      : { label: 'Telegram', acts: ['phm comms health --json', 'phm comms cycle', 'phm channels'] };
+
+/**
+ * Owner-channel transport health — the slack and iMessage bridges through
+ * `readChannelHealth` (the same projection `phm fleet channel-health` and
+ * `phm channels` serve) and the Telegram poller through `telegramEnabled` +
+ * `readTelegramHealth` (the same read `phm comms health --json` serves), so
+ * this source and those surfaces can never disagree. Until now a dead
+ * bridge or a stale poller was invisible here: `phm channels` could show a
+ * channel ready while its process was gone, and an agent had to already
+ * know which diagnostic to run to learn owner traffic was not flowing. A
+ * configured bridge that is BLOCKED lists as `channel-blocked` (high — the
+ * transport is provably down), DEGRADED as `channel-degraded` and UNKNOWN as
+ * `channel-unknown` (warn — evidence incomplete or a receipt overdue,
+ * never called a decision); a channel nobody configured (`BLOCKED` with
+ * `configured:false`, the overview's 'not-set-up' row) and a LIVE one never
+ * list — setup state is not pending work. The telegram leg lists only when
+ * `telegramEnabled` — the same gate the comms cycle's poll applies — as one
+ * `channel-degraded` item naming each failed check (a recorded poll error,
+ * no poll inside the 7-minute liveness window, no successful poll yet); an
+ * unreadable main config or a throwing poll read lists `channel-unknown`
+ * instead. `since`/`expiresAt` stay null throughout: health keeps no
+ * condition-start time and a degraded channel waits for repair, never a
+ * guessed deadline; no item names a job. Either leg's own failure degrades
+ * the source — a throwing bridge read proves nothing about
+ * slack/imessage while the telegram verdicts still list, and a throwing
+ * config or poll read is itself the `channel-unknown` evidence — so
+ * 'unavailable' and 'missing' never apply: this is a live probe of running
+ * transports, not a store that can be absent.
+ */
+async function channelHealthItems(options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const nowMs = (options.now ?? Date.now)();
+  const runsDir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  let bridgesFailed = false;
+  try {
+    const report = await (options.readChannelHealth ?? readChannelHealth)({ now: () => new Date(nowMs), runsDir });
+    for (const health of report.channels) {
+      // LIVE is verified flow; BLOCKED with configured:false is the
+      // overview's 'not-set-up' row — a channel nobody enabled is not
+      // pending work. Every other verdict lists, including UNKNOWN with
+      // configured:false (the config itself could not be read).
+      if (health.state === 'LIVE' || (health.state === 'BLOCKED' && !health.configured)) continue;
+      const { label, acts } = channelHealthPresentation(health.channel);
+      const kind: UnifiedInboxKind = health.state === 'BLOCKED' ? 'channel-blocked'
+        : health.state === 'DEGRADED' ? 'channel-degraded' : 'channel-unknown';
+      const reasons = health.missing.map((m) => m.trim()).filter((m) => m !== '');
+      // A DEGRADED verdict can arrive with an empty reason list when the
+      // only trigger is an inbound unanswered past the reply grace — say
+      // so rather than reporting an empty detail.
+      if (health.state === 'DEGRADED' && reasons.length === 0) {
+        reasons.push(health.unansweredCount > 0
+          ? `${health.unansweredCount} inbound request${health.unansweredCount === 1 ? '' : 's'} unanswered past the reply grace`
+          : 'a receipt is overdue or a send failed');
+      }
+      if (health.unansweredCount > 0 && !reasons.some((r) => r.includes('unanswered'))) {
+        reasons.push(`${health.unansweredCount} inbound request${health.unansweredCount === 1 ? '' : 's'} unanswered`);
+      }
+      items.push({
+        id: `channel-health:${health.channel}`,
+        source: 'channel-health',
+        kind,
+        severity: health.state === 'BLOCKED' ? 'high' : 'warn',
+        blocking: false,
+        title: oneLine(`${label} channel ${health.state === 'UNKNOWN' ? 'state unknown' : health.state.toLowerCase()}`, TITLE_MAX),
+        detail: oneLine(reasons.join('; ') || 'channel state could not be verified', DETAIL_MAX) || null,
+        since: null,
+        expiresAt: null,
+        act: acts,
+      });
+    }
+  } catch { bridgesFailed = true; }
+
+  let telegramUnknown: string | null = null;
+  let cfg: AshlrConfig | null = null;
+  try { cfg = (options.readChannelConfig ?? loadConfigReadOnlyStrict)(); }
+  catch { telegramUnknown = 'the main config could not be read — the poller health cannot be verified'; }
+  // telegramEnabled gates on the same predicate the comms cycle's poll
+  // applies; it stays inside its own try so a malformed config shape or a
+  // credential-read failure degrades this leg instead of throwing.
+  let telegramActive = false;
+  if (cfg !== null && telegramUnknown === null) {
+    try { telegramActive = telegramEnabled(cfg); }
+    catch { telegramUnknown = 'the telegram configuration could not be verified'; }
+  }
+  if (telegramActive) {
+    let poll: ReturnType<typeof readTelegramHealth> | null = null;
+    try { poll = (options.readTelegramPoll ?? readTelegramHealth)(cfg!); }
+    catch { telegramUnknown = 'the poller health read failed — its state is unknown'; }
+    if (poll !== null) {
+      const issues: string[] = [];
+      const pollError = typeof poll.error === 'string' && poll.error !== '' ? poll.error : null;
+      if (pollError !== null) issues.push(`last recorded poll failed (${pollError})`);
+      const lastPoll = typeof poll.lastPoll === 'string' ? poll.lastPoll : null;
+      if (poll.pollerAlive !== true) {
+        issues.push(lastPoll === null
+          ? 'no poll recorded — the comms cycle has never run'
+          : `no poll within the last 7 minutes (last poll ${lastPoll})`);
+      }
+      if (typeof poll.lastSuccess !== 'string') issues.push('no successful poll recorded');
+      if (issues.length > 0) {
+        const { acts } = channelHealthPresentation('telegram');
+        items.push({
+          id: 'channel-health:telegram',
+          source: 'channel-health',
+          kind: 'channel-degraded',
+          severity: 'warn',
+          blocking: false,
+          title: 'Telegram channel degraded',
+          detail: oneLine(issues.join('; '), DETAIL_MAX) || null,
+          since: null,
+          expiresAt: null,
+          act: acts,
+        });
+      }
+    }
+  }
+  if (telegramUnknown !== null) {
+    const { acts } = channelHealthPresentation('telegram');
+    items.push({
+      id: 'channel-health:telegram',
+      source: 'channel-health',
+      kind: 'channel-unknown',
+      severity: 'warn',
+      blocking: false,
+      title: 'Telegram channel state unknown',
+      detail: oneLine(telegramUnknown, DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      act: acts,
+    });
+  }
+
+  // 'unavailable'/'missing' never apply: every leg resolves to a verdict —
+  // a throwing read is itself the degraded/unknown evidence — so a partial
+  // failure reports 'degraded' and the surviving verdicts still count.
+  const state: UnifiedInboxSourceState = bridgesFailed || telegramUnknown !== null ? 'degraded' : 'healthy';
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
+}
+
 /**
  * The same drop inbox `runEmailDropOnce` scans, resolved at the shared runs
  * dir: saved email-drop config → `inboxDir` → `readEmailDropInbox`. A missing
@@ -3635,6 +3830,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const claimDrift = claimDriftItems(options.readClaimDrift ?? readClaimStoreDrift, options);
   const sendGate = sendGateItems(options.readKillSwitch ?? readKillSwitch, options.probePause ?? probePauseState);
   const routerQueue = await routerQueueItems(options.readRouterQueue ?? readRouterQueueSource, options);
+  const channelHealth = await channelHealthItems(options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -3670,8 +3866,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'claim-drift': claimDrift.report,
     'send-gate': sendGate.report,
     'router-queue': routerQueue.report,
+    'channel-health': channelHealth.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

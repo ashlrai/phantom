@@ -44,6 +44,7 @@ import type { ClaimDriftRow, ClaimStoreDrift } from '../src/core/fleet/claim-sto
 import type { SessionHandoffList, SessionHandoffListEntry } from '../src/core/agents/session-handoff.js';
 import type { WorkBoardItem, WorkBoardResult } from '../src/core/comms/work-board.js';
 import type { WorkItemState } from '../src/core/comms/work-item-state.js';
+import type { ChannelHealth, ChannelHealthReport } from '../src/core/fleet/channel-health.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import type { AgentWakeRow, AllWakesPage } from '../src/core/agents/bus-unified.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
@@ -4808,5 +4809,208 @@ describe('readUnifiedInbox router queue', () => {
     // The READY id is the item's own citation — --job names it directly.
     const byJob = await readQueue(pending, { filter: { job: 'RQ-ALPHA' } });
     expect(byJob.items.filter(i => i.source === 'router-queue').map(i => i.id)).toEqual(['router-queue:RQ-ALPHA']);
+  });
+});
+
+describe('readUnifiedInbox channel health', () => {
+  const bridge = (channel: 'slack' | 'imessage', over: Partial<ChannelHealth> = {}): ChannelHealth => ({
+    channel, configured: true, processAlive: true, runtimeHost: 'test-host',
+    lastInboundAt: null, lastReplyAt: null, unansweredCount: 0,
+    proof: { requestCoverage: 'idle', futureDatedCount: 0 },
+    state: 'LIVE', missing: [], asOf: new Date(now).toISOString(),
+    ...over,
+  });
+  const bridges = (slack: ChannelHealth, imessage: ChannelHealth = bridge('imessage')): ChannelHealthReport => ({
+    schemaVersion: 1, asOf: new Date(now).toISOString(), channels: [slack, imessage],
+  });
+  const liveBridges = () => bridges(bridge('slack'), bridge('imessage'));
+  const telegramCfg = { comms: { channel: 'telegram', enabled: true, telegram: { botToken: 'x', chatId: '12345' } } } as AshlrConfig;
+  // `now` is only assigned in beforeEach — build poll fixtures lazily.
+  const pollOk = () => ({
+    lastPoll: new Date(now - 60_000).toISOString(), lastSuccess: new Date(now - 120_000).toISOString(),
+    error: null, pollerAlive: true, lastUpdateId: 41, tokenPresent: true, leaderTick: 'completed' as const,
+  });
+  const readHealth = (report: ChannelHealthReport | (() => Promise<ChannelHealthReport>), extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({
+      readChannelHealth: typeof report === 'function' ? report : async () => report,
+      readChannelConfig: () => ({}) as AshlrConfig,
+      ...extra,
+    });
+
+  it('reports healthy with a real zero under the default reads — unconfigured channels are setup state, not pending work', async () => {
+    const inbox = await read();
+    expect(inbox.sources['channel-health']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'channel-health')).toHaveLength(0);
+  });
+
+  it('never lists LIVE bridges or BLOCKED-unconfigured (not-set-up) channels', async () => {
+    const inbox = await readHealth(bridges(
+      bridge('slack', { state: 'BLOCKED', configured: false, processAlive: false, missing: ['slack agent-network config not configured'] }),
+      bridge('imessage', { state: 'BLOCKED', configured: false, processAlive: 'unknown', missing: ['imessage comms configuration not configured'] }),
+    ));
+    expect(inbox.sources['channel-health']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'channel-health')).toHaveLength(0);
+  });
+
+  it('lists a configured bridge whose process is gone as a high channel-blocked item', async () => {
+    const inbox = await readHealth(bridges(
+      bridge('slack', { state: 'BLOCKED', processAlive: false, missing: ['slack bridge process not running'] }),
+    ));
+    expect(inbox.sources['channel-health']).toEqual({ state: 'healthy', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'channel-health:slack')!;
+    expect(item).toMatchObject({
+      source: 'channel-health', kind: 'channel-blocked', severity: 'high', blocking: false,
+      title: 'Slack channel blocked', since: null, expiresAt: null,
+      act: ['phm fleet channel-health', 'phm channels slack status', 'phm channels'],
+    });
+    expect(item.detail).toContain('slack bridge process not running');
+    expect(item.jobIds).toBeUndefined();
+  });
+
+  it('lists a degraded bridge as warn, carrying its reasons and the unanswered count', async () => {
+    const inbox = await readHealth(bridges(
+      bridge('imessage', {
+        state: 'DEGRADED', unansweredCount: 2,
+        missing: ['imessage reply correlation unavailable', 'imessage outbound send failed'],
+      }),
+    ));
+    const item = inbox.items.find(i => i.id === 'channel-health:imessage')!;
+    expect(item).toMatchObject({
+      kind: 'channel-degraded', severity: 'warn', title: 'iMessage channel degraded',
+      act: ['phm fleet channel-health', 'phm imessage doctor', 'phm channels'],
+    });
+    expect(item.detail).toContain('imessage reply correlation unavailable');
+    expect(item.detail).toContain('imessage outbound send failed');
+    expect(item.detail).toContain('2 inbound requests unanswered');
+  });
+
+  it('says why a degraded bridge degraded when the reason list is empty', async () => {
+    const inbox = await readHealth(bridges(
+      bridge('slack', { state: 'DEGRADED', unansweredCount: 1, missing: [] }),
+    ));
+    const item = inbox.items.find(i => i.id === 'channel-health:slack')!;
+    expect(item.detail).toBe('1 inbound request unanswered past the reply grace');
+  });
+
+  it('lists an UNKNOWN bridge — including unreadable config — as warn, never as verified-empty', async () => {
+    const inbox = await readHealth(bridges(
+      bridge('slack', { state: 'UNKNOWN', configured: false, processAlive: 'unknown', missing: ['slack configuration unreadable'] }),
+      bridge('imessage', { state: 'UNKNOWN', missing: ['imessage receipt source unreadable'] }),
+    ));
+    expect(inbox.sources['channel-health']).toEqual({ state: 'healthy', pending: 2 });
+    const slack = inbox.items.find(i => i.id === 'channel-health:slack')!;
+    expect(slack).toMatchObject({ kind: 'channel-unknown', severity: 'warn', title: 'Slack channel state unknown' });
+    expect(slack.detail).toContain('slack configuration unreadable');
+    expect(inbox.items.find(i => i.id === 'channel-health:imessage')).toMatchObject({ kind: 'channel-unknown', severity: 'warn' });
+  });
+
+  it('lists a stale telegram poller as one degraded item naming each failed check', async () => {
+    const inbox = await read({
+      readChannelHealth: async () => liveBridges(),
+      readChannelConfig: () => telegramCfg,
+      readTelegramPoll: () => ({
+        ...pollOk(), pollerAlive: false, error: 'poll failed; inspect value-free poll log',
+        lastPoll: new Date(now - 30 * 60_000).toISOString(),
+      }),
+    });
+    expect(inbox.sources['channel-health']).toEqual({ state: 'healthy', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'channel-health:telegram')!;
+    expect(item).toMatchObject({
+      kind: 'channel-degraded', severity: 'warn', title: 'Telegram channel degraded',
+      since: null, expiresAt: null,
+      act: ['phm comms health --json', 'phm comms cycle', 'phm channels'],
+    });
+    expect(item.detail).toContain('last recorded poll failed');
+    expect(item.detail).toContain('no poll within the last 7 minutes');
+    expect(item.detail).toContain(new Date(now - 30 * 60_000).toISOString());
+  });
+
+  it('keeps a never-polled telegram honest: no recorded start, no invented since', async () => {
+    const inbox = await read({
+      readChannelHealth: async () => liveBridges(),
+      readChannelConfig: () => telegramCfg,
+      readTelegramPoll: () => ({ ...pollOk(), lastPoll: null, lastSuccess: null, pollerAlive: false }),
+    });
+    const item = inbox.items.find(i => i.id === 'channel-health:telegram')!;
+    expect(item.since).toBeNull();
+    expect(item.detail).toContain('no poll recorded — the comms cycle has never run');
+    expect(item.detail).toContain('no successful poll recorded');
+    expect(item.detail).not.toContain('last recorded poll failed');
+  });
+
+  it('lists nothing for telegram when the channel is not enabled, and never consults the poll read', async () => {
+    const poll = vi.fn(() => pollOk());
+    const inbox = await read({
+      readChannelHealth: async () => liveBridges(),
+      readChannelConfig: () => ({}) as AshlrConfig,
+      readTelegramPoll: poll,
+    });
+    expect(inbox.sources['channel-health']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'channel-health')).toHaveLength(0);
+    expect(poll).not.toHaveBeenCalled();
+  });
+
+  it('reports an unreadable main config as a degraded source with a telegram channel-unknown item', async () => {
+    const inbox = await read({
+      readChannelHealth: async () => liveBridges(),
+      readChannelConfig: () => { throw new Error('config boom'); },
+    });
+    expect(inbox.sources['channel-health']).toEqual({ state: 'degraded', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'channel-health:telegram')!;
+    expect(item).toMatchObject({ kind: 'channel-unknown', severity: 'warn', title: 'Telegram channel state unknown' });
+    expect(item.detail).toContain('config could not be read');
+  });
+
+  it('reports a throwing poll read as channel-unknown and a throwing bridge read as degraded-or-unavailable', async () => {
+    const pollThrow = await read({
+      readChannelHealth: async () => liveBridges(),
+      readChannelConfig: () => telegramCfg,
+      readTelegramPoll: () => { throw new Error('poll boom'); },
+    });
+    expect(pollThrow.sources['channel-health']).toEqual({ state: 'degraded', pending: 1 });
+    expect(pollThrow.items.find(i => i.id === 'channel-health:telegram')).toMatchObject({ kind: 'channel-unknown', severity: 'warn' });
+
+    const bridgesOnly = await read({
+      readChannelHealth: async () => { throw new Error('health boom'); },
+      readChannelConfig: () => telegramCfg,
+      readTelegramPoll: () => ({ ...pollOk(), pollerAlive: false, lastPoll: null, lastSuccess: null }),
+    });
+    // The bridge leg is unreadable but the telegram verdict still lists —
+    // degraded, never unavailable, because one leg proved pending work.
+    expect(bridgesOnly.sources['channel-health']).toEqual({ state: 'degraded', pending: 1 });
+    expect(bridgesOnly.items.filter(i => i.source === 'channel-health').map(i => i.id)).toEqual(['channel-health:telegram']);
+
+    const both = await read({
+      readChannelHealth: async () => { throw new Error('health boom'); },
+      readChannelConfig: () => { throw new Error('config boom'); },
+    });
+    // Both legs failed: degraded with the telegram-unknown verdict still
+    // listed — a throwing config read IS the unknown evidence, and
+    // 'unavailable' never applies to a live probe that always resolves.
+    expect(both.sources['channel-health']).toEqual({ state: 'degraded', pending: 1 });
+    expect(both.items.filter(i => i.source === 'channel-health').map(i => i.id)).toEqual(['channel-health:telegram']);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const degraded = async () => bridges(
+      bridge('slack', { state: 'BLOCKED', processAlive: false, missing: ['slack bridge process not running'] }),
+      bridge('imessage', { state: 'DEGRADED', unansweredCount: 1, missing: [] }));
+    const bySource = await readHealth(degraded, { filter: { source: 'channel-health' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'channel-health')).toBe(true);
+    expect(bySource.sources['channel-health']).toEqual({ state: 'healthy', pending: 2 });
+    const byKind = await read({
+      readChannelHealth: async () => degraded(),
+      readChannelConfig: () => ({}) as AshlrConfig,
+      filter: { kind: 'channel-blocked' },
+    });
+    expect(byKind.items.filter(i => i.source === 'channel-health').map(i => i.id)).toEqual(['channel-health:slack']);
+    // A channel verdict names no job — --job never matches it.
+    const byJob = await read({
+      readChannelHealth: async () => degraded(),
+      readChannelConfig: () => ({}) as AshlrConfig,
+      filter: { job: 'job-1' },
+    });
+    expect(byJob.items.filter(i => i.source === 'channel-health')).toHaveLength(0);
   });
 });
