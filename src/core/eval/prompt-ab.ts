@@ -17,6 +17,11 @@
 
 import {
   evaluateRouterPolicy,
+  formatEvalMinutes as minutes,
+  formatEvalPercent as pct,
+  formatEvalUsd as usd,
+  formatMetricWithCi as metric,
+  policyJobView,
   type MetricReport,
   type PolicyJobView,
   type RouterEvalDataset,
@@ -160,7 +165,7 @@ export function evaluatePromptExperiment(
   const promotions: PromptPromotionRecord[] = [];
 
   for (const cls of spec.classes) {
-    const cohort = dataset.jobs.filter((j) => classifyPromptJob(viewForClassify(j), spec) === cls.id);
+    const cohort = dataset.jobs.filter((j) => classifyPromptJob(policyJobView(j), spec) === cls.id);
     const control = armEval(dataset, cohort, cls.control);
     const challengers: PromptChallengerResult[] = cls.challengers.map((arm) => {
       const evaluation = armEval(dataset, cohort, arm);
@@ -208,11 +213,6 @@ export function evaluatePromptExperiment(
   };
 }
 
-function viewForClassify(job: RouterEvalDataset['jobs'][number]): PolicyJobView {
-  const { id, at, repo, pool, tier, priority, task, candidates } = job;
-  return { id, at, repo, pool, tier, priority, task, candidates };
-}
-
 /** Fold a report into the registry shape the store and dashboard consume. */
 export function promotionsRegistry(report: PromptAbReport): PromptPromotionsRegistry {
   const held: PromptPromotionsRegistry['held'] = [];
@@ -237,15 +237,7 @@ export function promotionsRegistry(report: PromptAbReport): PromptPromotionsRegi
 // Dashboard rendering
 // ---------------------------------------------------------------------------
 
-const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
-const usd = (n: number) => `$${n.toFixed(2)}`;
-const minutes = (ms: number) => `${Math.round(ms / 60_000)}m`;
 const pts = (n: number) => `${n >= 0 ? '+' : ''}${(n * 100).toFixed(1)} pts`;
-
-function metric(m: MetricReport, fmt: (n: number) => string): string {
-  if (m.value === null) return 'unknown';
-  return m.ci95 ? `${fmt(m.value)} [${fmt(m.ci95[0])} – ${fmt(m.ci95[1])}]` : `${fmt(m.value)} [no CI]`;
-}
 
 const VERDICT_LABEL: Record<PromotionVerdict, string> = {
   promoted: 'PROMOTED',

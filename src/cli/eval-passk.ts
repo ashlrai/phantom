@@ -41,12 +41,15 @@ import {
   PASSK_DEFAULT_TRIALS,
   PASSK_MAX_TRIALS,
   type LaneScores,
+  type PassKAlert,
   type PassKDataset,
   type PassKReport,
 } from '../core/eval/passk.js';
+import { formatEvalPercent } from '../core/eval/router-eval.js';
 import { buildDefaultRunner, type EngineRunner } from '../core/eval/swe-bench.js';
 import { evalPassKSchedule } from '../core/eval/passk-schedule.js';
 import type { ScheduleUnit } from '../core/steward/schedule.js';
+import { isEvalHelpRequest, isLocalProviderReachable } from './eval-shared.js';
 import { installScheduleUnits } from './steward.js';
 import { makeColors, isTty, pad } from './ui.js';
 
@@ -163,7 +166,13 @@ function parseRunArgs(args: string[]): ParsedRunArgs {
 // ---------------------------------------------------------------------------
 
 function pct(v: number | null): string {
-  return v === null ? 'n/a' : `${(v * 100).toFixed(1)}%`;
+  return v === null ? 'n/a' : formatEvalPercent(v);
+}
+
+function formatPassKAlert(alert: PassKAlert): string {
+  const where = alert.taskId ? ` ${alert.taskId}` : '';
+  const dimension = alert.dimension ? ` ${alert.dimension}` : '';
+  return `${alert.lane}/${alert.model}:${where}${dimension} ${alert.kind} ${pct(alert.before)} → ${pct(alert.after)}`;
 }
 
 function renderReport(report: PassKReport): void {
@@ -188,9 +197,7 @@ function renderReport(report: PassKReport): void {
   if (report.alerts.length > 0) {
     console.log(`  ${red('alerts:')} ${report.alerts.length} regression(s)`);
     for (const alert of report.alerts.slice(0, 10)) {
-      const where = alert.taskId ? ` ${alert.taskId}` : '';
-      const dimension = alert.dimension ? ` ${alert.dimension}` : '';
-      console.log(`    ${red('⚠')} ${alert.lane}/${alert.model}:${where}${dimension} ${alert.kind} ${pct(alert.before)} → ${pct(alert.after)}`);
+      console.log(`    ${red('⚠')} ${formatPassKAlert(alert)}`);
     }
     if (report.alerts.length > 10) console.log(`    ${dim(`… ${report.alerts.length - 10} more`)}`);
     console.log('');
@@ -255,17 +262,6 @@ function schedule(argv: string[], deps: SchedDeps): number {
   }
 }
 
-async function defaultLocalProviderUp(): Promise<boolean> {
-  try {
-    const { loadConfig } = await import('../core/config.js');
-    const { getActiveClient } = await import('../core/run/provider-client.js');
-    await getActiveClient(loadConfig(), { allowCloud: false });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
@@ -275,7 +271,7 @@ export async function cmdEvalPassK(args: string[], overrides: EvalPassKCliDeps =
   const err = overrides.err ?? ((t: string) => console.error(t));
   const readFile = overrides.readFile ?? ((p: string) => readFileSync(p, 'utf8'));
 
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
+  if (isEvalHelpRequest(args)) {
     out(USAGE);
     return 0;
   }
@@ -318,9 +314,7 @@ export async function cmdEvalPassK(args: string[], overrides: EvalPassKCliDeps =
       return 0;
     }
     for (const line of journal.alerts) {
-      const where = line.alert.taskId ? ` ${line.alert.taskId}` : '';
-      const dimension = line.alert.dimension ? ` ${line.alert.dimension}` : '';
-      out(`${line.ts} ${line.alert.lane}/${line.alert.model}:${where}${dimension} ${line.alert.kind} ${pct(line.alert.before)} → ${pct(line.alert.after)}`);
+      out(`${line.ts} ${formatPassKAlert(line.alert)}`);
     }
     return 0;
   }
@@ -367,7 +361,7 @@ export async function cmdEvalPassK(args: string[], overrides: EvalPassKCliDeps =
   // When every lane is the local family, probe once — an all-error run
   // against a dead local provider would publish a false regression baseline.
   if (laneSpecs.every((l) => l.model === 'local-coder')) {
-    const probe = overrides.localProviderUp ?? defaultLocalProviderUp;
+    const probe = overrides.localProviderUp ?? isLocalProviderReachable;
     if (!(await probe())) {
       const msg = 'eval passk needs a local model — start Ollama or LM Studio, then re-run `phm eval passk`.';
       if (parsed.json) out(JSON.stringify({ skipped: true, reason: msg }));

@@ -19,6 +19,7 @@ import {
   type RouterEvalDataset,
   type RouterEvalReport,
 } from '../core/eval/router-eval.js';
+import { isEvalHelpRequest } from './eval-shared.js';
 
 const USAGE = `Usage: phm eval router --dataset <jobs.jsonl> [--policy <name>] [--decisions] [--json] [--write <report.json>] [--check <baseline.json>]
 
@@ -99,7 +100,7 @@ export async function cmdEvalRouter(args: string[], overrides: EvalRouterCliDeps
     err: console.error,
     ...overrides,
   };
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { deps.out(USAGE); return 0; }
+  if (isEvalHelpRequest(args)) { deps.out(USAGE); return 0; }
   const parsed = parseArgs(args);
   if (parsed.usageError) { deps.err(`error: ${parsed.usageError}\n${USAGE}`); return 2; }
   if (parsed.listPolicies) { deps.out(BUILTIN_ROUTER_POLICIES.join('\n')); return 0; }

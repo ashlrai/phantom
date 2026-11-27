@@ -253,9 +253,7 @@ function renderHelp(): string {
 
 function repoLine(report: AttentionEvalReport): string {
   const top = report.repoAttention.topRepos[0];
-  const share = report.repoAttention.topRepoShare === null
-    ? 'n/a'
-    : `${Math.round(report.repoAttention.topRepoShare * 100)}%`;
+  const share = pct(report.repoAttention.topRepoShare);
   const verdict = report.repoAttention.verdict === 'concentrated'
     ? yellow(report.repoAttention.verdict)
     : green(report.repoAttention.verdict);

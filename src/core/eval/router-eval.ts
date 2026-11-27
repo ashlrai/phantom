@@ -181,7 +181,7 @@ export function parseRouterEvalDataset(text: string, file = 'jobs.jsonl'): Route
       candidates = rec!.candidates as string[];
       if (new Set(candidates).size !== candidates.length) fail(file, i + 1, 'duplicate candidate');
     }
-    const chosen = rec!.chosen === undefined ? undefined : rec!.chosen;
+    const chosen = rec!.chosen;
     if (chosen !== null && typeof chosen !== 'string') fail(file, i + 1, 'bad chosen');
     const outcome = rec!.outcome;
     if (!OUTCOMES.includes(outcome as RouterOutcome)) fail(file, i + 1, `bad outcome ${JSON.stringify(outcome)}`);
@@ -213,7 +213,7 @@ export function parseRouterEvalDataset(text: string, file = 'jobs.jsonl'): Route
       priority: optString(file, i + 1, rec!, 'priority'),
       task: optString(file, i + 1, rec!, 'task'),
       candidates: candidates ?? [],
-      chosen: (chosen ?? null) as string | null,
+      chosen,
       outcome: outcome as RouterOutcome,
       costUsd: optNumber(file, i + 1, rec!, 'costUsd'),
       tokens: optNumber(file, i + 1, rec!, 'tokens', true),
@@ -328,7 +328,7 @@ export interface DecisionRow {
   reason?: string;
 }
 
-export interface ResolvedJob {
+interface ResolvedJob {
   decision: DecisionRow;
   /** Set on recorded/counterfactual rows. */
   outcome?: TerminalOutcome;
@@ -337,13 +337,14 @@ export interface ResolvedJob {
   wallTimeMs?: number;
 }
 
-function viewOf(job: RouterEvalJob): PolicyJobView {
+/** Project a frozen dataset job onto the decision-time fields a policy may read. */
+export function policyJobView(job: RouterEvalJob): PolicyJobView {
   const { id, at, repo, pool, tier, priority, task, candidates } = job;
   return { id, at, repo, pool, tier, priority, task, candidates };
 }
 
 function decide(policy: RouterPolicy, job: RouterEvalJob, catalog: Readonly<Record<string, ArmMeta>>): PolicyDecision {
-  const d = policy.decide(viewOf(job), catalog);
+  const d = policy.decide(policyJobView(job), catalog);
   if (d === null || typeof d !== 'object' || (d.arm !== null && typeof d.arm !== 'string')) {
     throw new Error(`Policy ${policy.name} returned an invalid decision for ${job.id}`);
   }
@@ -572,15 +573,28 @@ export function evaluateRouterPolicy(dataset: RouterEvalDataset, policy: RouterP
 // Reporting
 // ---------------------------------------------------------------------------
 
-const usd = (n: number) => `$${n.toFixed(2)}`;
-const tok = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n));
-const minutes = (ms: number) => `${Math.round(ms / 60_000)}m`;
-const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+export const formatEvalUsd = (n: number): string => `$${n.toFixed(2)}`;
+export const formatEvalMinutes = (ms: number): string => `${Math.round(ms / 60_000)}m`;
+export const formatEvalPercent = (n: number): string => `${(n * 100).toFixed(1)}%`;
 
-function metricText(m: MetricReport, fmt: (n: number) => string): string {
+const usd = formatEvalUsd;
+const tok = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n));
+const minutes = formatEvalMinutes;
+const pct = formatEvalPercent;
+
+export function formatMetricWithCi(
+  m: MetricReport,
+  fmt: (n: number) => string,
+  opts: { includeSampleSize?: boolean } = {},
+): string {
   if (m.value === null) return 'unknown';
   const ci = m.ci95 ? ` [${fmt(m.ci95[0])} – ${fmt(m.ci95[1])}]` : ' [no CI]';
+  if (!opts.includeSampleSize) return `${fmt(m.value)}${ci}`;
   return `${fmt(m.value)}${ci} (n=${m.n}${m.degenerate ? `, ${m.degenerate} degenerate` : ''})`;
+}
+
+function metricText(m: MetricReport, fmt: (n: number) => string): string {
+  return formatMetricWithCi(m, fmt, { includeSampleSize: true });
 }
 
 /** Compact markdown report — the committed baseline's human-readable form. */
