@@ -1534,8 +1534,6 @@ describe('router outcome spend join', () => {
       '{"ts":"2026-11-02T13:00:00Z","model":"m","cost_usd":9}',
       '{"ts":"2026-11-02T14:00:00Z","job":"J5"}',
       '{"ts":"2026-11-02T15:00:00Z","job":"J6","cost_usd":-1}',
-      'not json',
-      '[1,2]',
       '',
     ].join('\n'));
     expect(costs.get('J1')).toBeCloseTo(1.75);
@@ -1547,6 +1545,20 @@ describe('router outcome spend join', () => {
     expect(costs.has('J5')).toBe(false);
     expect(costs.has('J6')).toBe(false);
     expect(costs.size).toBe(4);
+  });
+
+  it.each(['{"job":"J1"', '[1,2]'])('withholds spend totals when a receipt is not an object: %s', async (receipt) => {
+    const root = runsDir('{"job":"J1","phase":"MERGED"}\n{"job":"J2","phase":"CLOSED","cost_usd":2}\n');
+    const spend = ['{"job":"J1","cost_usd":1}', receipt, '{"job":"J2","cost_usd":9}'].join('\n');
+    expect(foldSpendCosts(spend).size).toBe(0);
+    writeSpend(root, spend);
+
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null });
+    expect(result).toMatchObject({ state: 'read', spend_state: 'read', spend_truncated: false });
+    expect(result.outcomes).toMatchObject([
+      { job_id: 'J1', merged: true, cost_usd: null },
+      { job_id: 'J2', merged: false, cost_usd: 2 },
+    ]);
   });
 
   it('populates cost_usd from spend rows only where the jobs fold left it null', async () => {

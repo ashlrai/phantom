@@ -775,6 +775,8 @@ decisions only) and `fallback_used` (job receipts). See [gates and inert status]
 producing `router.outcome.v1` records folded from `metrics/jobs.jsonl`.
 `foldSpendCosts` defaults to an open time bound. A supplied epoch-millisecond
 bound includes receipts at that instant and retains undated receipts.
+If a nonblank line fails to decode as a JSON object, `foldSpendCosts` returns
+an empty map because no per-job total has complete spend coverage.
 `verdictSinceMsFor(job)` sets an inclusive lower timestamp bound for that job's
 merge, close and revert ledger verdicts. An undefined return leaves the lower
 bound open. `verdictAsOfMs` supplies an inclusive upper bound. If either bound
