@@ -471,6 +471,10 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
       depPromptByJob.set(row.id, { lane, promptPath: rawDepPromptByJob.get(row.id) ?? null });
     }
   }
+  // A runnable copy makes dependency recovery unnecessary, regardless of row order.
+  for (const job of depPromptByJob.keys()) {
+    if (seenReady.has(job)) depPromptByJob.delete(job);
+  }
   if (malformed) readySource.state = 'degraded';
   const readyTotal = ready + unhinted;
   const skips = parseSkips(skipsSource.text, now, opts.limit);

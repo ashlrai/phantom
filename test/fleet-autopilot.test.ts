@@ -575,6 +575,32 @@ describe('readFleetQueue depDetail metDeps', () => {
     return dir;
   };
 
+  it.each([
+    { hint: 'devin', readyFirst: false },
+    { hint: 'devin', readyFirst: true },
+    { hint: '', readyFirst: false },
+    { hint: '', readyFirst: true },
+  ])('skips dependency recovery for a READY copy ($hint, first=$readyFirst)', async ({ hint, readyFirst }) => {
+    const dir = await seed();
+    const metPrompt = join(dir, 'queue', 'prompts', 'met.md');
+    const unmetPrompt = join(dir, 'queue', 'prompts', 'unmet.md');
+    await writeFile(metPrompt, 'DEPENDENCY GATE: RQ-DONE\n');
+    await writeFile(unmetPrompt, 'DEPENDENCY GATE: RQ-OPEN\n');
+    const ready = `RQ-MET\tphantom\t${hint}\twork\t${metPrompt}`;
+    const parked = `RQ-MET\tphantom\tPARKED-DEP.devin\twork\t${metPrompt}`;
+    await writeFile(join(dir, 'queue', 'ready.tsv'), [
+      ...(readyFirst ? [ready, parked] : [parked, ready]),
+      `RQ-UNMET\tphantom\tPARKED-DEP.devin\twork\t${unmetPrompt}`,
+    ].join('\n'));
+    await writeFile(join(dir, 'metrics', 'jobs.jsonl'), '{"event":"outcome","state":"MERGED","job":"RQ-DONE"}\n');
+
+    const queue = await readFleetQueue({ runsDir: dir, depDetail: true });
+    expect(queue).toMatchObject({ ready: 1, parked: 2, malformed: 0, unhinted: hint === '' ? 1 : 0, metDeps: [] });
+    expect(queue.unmetDeps).toEqual([{ job: 'RQ-UNMET', lane: 'devin', unmet: ['RQ-OPEN'] }]);
+    const report = planFleetAutopilot(state({ queue }));
+    expect(report.gaps.some((gap) => gap.kind === 'stale-parked-deps')).toBe(false);
+  });
+
   it('caps met and unmet dependency projections independently at 50 rows', async () => {
     const dir = await seed();
     const metPrompt = join(dir, 'queue', 'prompts', 'met.md');
