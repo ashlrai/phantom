@@ -3113,7 +3113,9 @@ label a `note`/`context` body carries (null for every other kind and shape),
 `busBodyResultOutcome(body)`, the read-side predicate that returns the
 `outcome` a `work.result` body reports (null for every other kind and
 shape — a `work.release` body's own `released`/`completed` vocabulary stays
-out), and the exported `repoSlugSchema` — the `owner/name` slug `work.post` and
+out), the exported `pathGlobsOverlap(a, b)` raw-glob intersection primitive
+`claimKeysOverlap` and the coordination table's team-prefix check share, and
+the exported `repoSlugSchema` — the `owner/name` slug `work.post` and
 `workJob` enforce and `busWorkFeedRepoKey` validates `--repo` feed filters
 against. `note`/`context` bodies may also carry `inReplyTo`, the printable
 envelope-id citation naming the message they answer — the same field

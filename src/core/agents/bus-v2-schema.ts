@@ -181,7 +181,14 @@ function globLanguagesIntersect(a: string, b: string): boolean {
   return false;
 }
 
-function pathGlobsOverlap(a: string, b: string): boolean {
+/**
+ * Exact intersection of two raw path globs under `globMatches` semantics —
+ * exported for callers weighing globs that can never form a claim key
+ * (a team lease's `..`-carrying path, for instance): the coordination
+ * table's team-prefix check uses it directly so an unrepresentable path is
+ * weighed exactly instead of silently missing an overlap.
+ */
+export function pathGlobsOverlap(a: string, b: string): boolean {
   if (a === b) return true;
   // A wildcard-free side is one concrete subject: a single globMatches decides.
   if (!/[*?]/.test(a)) return globMatches(b, a);
