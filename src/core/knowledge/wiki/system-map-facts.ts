@@ -5,7 +5,8 @@ import { checkedCitation } from './citations.js';
 import { extractImportReferences } from './facts.js';
 import { isWikiReadable } from './scan.js';
 
-export const sourcePattern = /\.[cm]?[jt]sx?$/i;
+export const WIKI_STEERING_PATH = '.ashlr/wiki.json';
+const sourcePattern = /\.[cm]?[jt]sx?$/i;
 const namePattern = '[A-Za-z_$][\\w$]*';
 const declaration = new RegExp(`^(?:export +)?(?:default +)?(?:declare +)?(?:abstract +)?(?:async +)?(?:function\\*?|class|const|let|interface|type|enum) +(${namePattern})`);
 const routePattern = /\b(?:app|router|server|fastify|hono)\.(get|post|put|patch|delete|all|use)\(\s*['"](\/[\w/:{}.-]*)['"]/gi;
@@ -21,11 +22,15 @@ export const mapFactsSchema = z.object({
 type Facts = z.infer<typeof mapFactsSchema>;
 const LIMIT = 512;
 
-export function safeMapPath(file: string): boolean {
+function safeMapPath(file: string): boolean {
   // eslint-disable-next-line no-control-regex
   return file.length <= 500 && !/[\\\u0000-\u001f\u007f\ufffd]/u.test(file) &&
     !/(?:^|\/)[a-f0-9]{32,}(?:[./]|$)/i.test(file) &&
     scrubSecrets(file) === file && isWikiReadable(file);
+}
+
+export function isEligibleMapFile(file: string): boolean {
+  return sourcePattern.test(file) && safeMapPath(file);
 }
 
 function safeLabel(label: string): boolean {

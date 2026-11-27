@@ -1,4 +1,3 @@
-import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { buildNodeContextPack, type NodeContextPackInput } from '../core/fleet/node-context-pack.js';
 import { countMalformedNodeContextPackLines, readNodeContextCitations } from '../core/fleet/node-context-citations.js';
@@ -6,9 +5,9 @@ import { summarizeNodeContextCoverage } from '../core/fleet/node-context-coverag
 import { readNodeContextLiveOutputs, markLiveOutputTruncation, type LiveOutputSource } from '../core/fleet/node-context-live-outputs.js';
 import { MAX_BUS_ADDRESS_LENGTH } from '../core/fleet/bus-envelope.js';
 import { listNodeBusNotices, type NodeBusNoticesDependencies } from '../core/fleet/node-bus-notices.js';
-import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 import { explainContextPack } from './context-pack-explain.js';
+import { isPlainObject, readKnowledgeInputFile } from './knowledge-input.js';
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 const MAX_PACK_BYTES = 65536;
@@ -84,24 +83,20 @@ a Citations section follows the records. Malformed pack lines are counted,
 never thrown.
 `;
 
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
 function keys(value: Record<string, unknown>, required: string[], optional: string[] = []): boolean {
   return required.every(key => Object.hasOwn(value, key)) &&
     Object.keys(value).every(key => required.includes(key) || optional.includes(key));
 }
 
 function snapshot(value: unknown): value is NodeContextPackInput {
-  if (!object(value) || !keys(value, ['node', 'tasks', 'outputs', 'byteBudget'])) return false;
+  if (!isPlainObject(value) || !keys(value, ['node', 'tasks', 'outputs', 'byteBudget'])) return false;
   const node = value.node;
-  if (!object(node) || !keys(node, ['jobId', 'upstreamJobIds'], ['query']) ||
+  if (!isPlainObject(node) || !keys(node, ['jobId', 'upstreamJobIds'], ['query']) ||
       typeof node.jobId !== 'string' || !Array.isArray(node.upstreamJobIds) ||
       !node.upstreamJobIds.every(id => typeof id === 'string') ||
       (Object.hasOwn(node, 'query') && typeof node.query !== 'string')) return false;
   const records = (rows: unknown): boolean => Array.isArray(rows) && rows.every(row =>
-    object(row) && keys(row, ['jobId', 'text']) && typeof row.jobId === 'string' && typeof row.text === 'string');
+    isPlainObject(row) && keys(row, ['jobId', 'text']) && typeof row.jobId === 'string' && typeof row.text === 'string');
   return records(value.tasks) && records(value.outputs) &&
     typeof value.byteBudget === 'number' && Number.isSafeInteger(value.byteBudget) &&
     value.byteBudget > 0 && value.byteBudget <= MAX_PACK_BYTES;
@@ -218,10 +213,7 @@ export async function runKnowledgeContextPack(
     }
     text = Buffer.concat(chunks, bytes).toString('utf8');
   } else {
-    const absolute = resolve(file!);
-    const read = readStableRegularFile(absolute, {
-      anchorPath: dirname(absolute), maxFileBytes: MAX_SNAPSHOT_BYTES, remainingBytes: MAX_SNAPSHOT_BYTES,
-    });
+    const read = readKnowledgeInputFile(file!, MAX_SNAPSHOT_BYTES);
     if (!read.ok) {
       io.stderr(`error: snapshot unavailable (${read.reason})\n`);
       return read.reason === 'per-file-byte-limit' || read.reason === 'byte-limit' ||

@@ -24,6 +24,12 @@ export function mapGit(repo: string, args: readonly string[], input?: string): P
   });
 }
 
+export async function resolveMapCommit(repo: string, revision = 'HEAD'): Promise<string | null> {
+  const output = await mapGit(repo, ['rev-parse', '--show-prefix', '--verify', `${revision}^{commit}`]).catch(() => null);
+  const [prefix, commit] = output?.toString('utf8').split('\n') ?? [];
+  return prefix === '' && commit && objectId.test(commit) ? commit : null;
+}
+
 export async function mapFreshness(repo: string, commit: string): Promise<MapFreshness> {
   const result: MapFreshness = { commit, defaultCommit: null, ahead: null, behind: null };
   const read = (args: readonly string[]) => mapGit(repo, args).then(value => value.toString().trim()).catch(() => '');
