@@ -477,6 +477,19 @@
  *     intake hook that kept throwing or silently stopped being
  *     recorded, and an empty producer family that kept re-earning its
  *     12-hour auto-stop each expiry never became work;
+ *   - the self-heal cycle journal's recurring adverse evidence: the
+ *     per-rotation `fleet.self-heal-cycle.v1` lines
+ *     appendSelfHealCycleRow appends to
+ *     metrics/self-heal-cycles.jsonl under the fleet runs directory on
+ *     every `runSelfHealCycle` enrollment pass — carrying enrolled and
+ *     checked counts, the broken checkout paths, healProposed, deferred
+ *     and budgetExhausted (selfHealCycleBacklogItems below). Until now
+ *     the cycle result evaporated after each tick — only checkedRepos
+ *     fed the backlog refresh and `selfHeal: true` reached the tick
+ *     summary — while self-heal-queue.json keeps one deduped entry per
+ *     broken repo, so a repo detection kept failing and an enrollment
+ *     tail the budget never reached left no durable trace and never
+ *     became work;
  *   - the autonomous-action audit journal's recurring adverse outcomes:
  *     the per-action {ts, action, repo, sandboxId, summary, result}
  *     rows audit() in src/core/sandbox/audit.ts appends to
@@ -1701,6 +1714,7 @@ import { autolandBacklogItems } from './autoland-backlog.js';
 import { loadBacklogItems } from './load-backlog.js';
 import { autopilotBacklogItems } from './autopilot-backlog.js';
 import { selfTickBacklogItems } from './self-tick-backlog.js';
+import { selfHealCycleBacklogItems } from './self-heal-cycle-backlog.js';
 import { auditBacklogItems } from './audit-backlog.js';
 import { desktopErrorBacklogItems } from './desktop-error-backlog.js';
 import { repairHandoffBacklogItems } from './repair-handoff-backlog.js';
@@ -3770,6 +3784,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // describes this install's lane configuration and carries no repo
   // column.
   items.push(...await laneTargetChangesBacklogItems({ repo }));
+
+  // Self-heal cycle journal recurring adverse evidence — the
+  // fleet.self-heal-cycle.v1 rows appendSelfHealCycleRow writes to
+  // metrics/self-heal-cycles.jsonl on every runSelfHealCycle enrollment
+  // rotation, carrying enrolled/checked counts, broken checkout paths,
+  // healProposed, deferred and budgetExhausted. Until now the cycle
+  // result evaporated after each tick: only checkedRepos fed the
+  // backlog refresh, so persistent per-repo breakage (the queue file
+  // dedupes to one entry per repo) and enrollment tails the budget
+  // never reached never became work. A cell emits only at the
+  // recurring bars of cycles across distinct UTC days inside the
+  // window, clean rotations never emit, an unreadable read yields
+  // nothing while a truncated tail folds lower-bound flagged, and only
+  // the fleet's own repository inherits the items since the journal
+  // describes this install's machinery and carries no owner/name
+  // column.
+  items.push(...await selfHealCycleBacklogItems({ repo }));
   return { items, errors };
 }
 
