@@ -52,7 +52,7 @@ import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 import { desktopOperatorTools } from './desktop/operator-mcp.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, type OwnerThreadSettings } from './comms/owner-channel.js';
 import type { OwnerThreadReadFilter } from './comms/owner-thread.js';
-import type { CommsDraftsFilter, CommsDraftStatusFilter } from './comms-agent/run.js';
+import type { CommsDraftsFilter, CommsDraftStatusFilter, CommsInboxFilter } from './comms-agent/run.js';
 
 // Handler-only dependencies are imported lazily inside each handler so
 // `tools/list` pays for schemas and the safety gate only — not the ~300-file
@@ -1693,6 +1693,26 @@ const TOOLS: NativeToolImpl[] = [
       if (args.status !== undefined) filter.status = args.status as CommsDraftStatusFilter;
       if (transport !== undefined) filter.transport = transport;
       return commsDrafts(commsRunsRoot(), filter);
+    },
+  },
+  {
+    name: 'ashlr_comms_agent_inbox',
+    description: 'List the Comms pending inbox: messages a pass kept and no delivered reply has resolved, verbatim from the private store (id, transport, sender, subject, body, labels). transport narrows to one channel. Read-only; a missing inbox is verified-empty, an unreadable one an error. No send.',
+    inputSchema: { type: 'object', properties: {
+      transport: { type: 'string' },
+    }, additionalProperties: false },
+    safety: 'read',
+    handler: async args => {
+      const { commsInbox } = await import('./comms-agent/run.js');
+      const { commsRunsRoot } = await import('./comms-agent/store.js');
+      const { COMMS_TRANSPORTS, isCommsTransport } = await import('./comms-agent/policy.js');
+      const transport = args.transport;
+      if (transport !== undefined && (typeof transport !== 'string' || !isCommsTransport(transport))) {
+        throw new Error(`transport must be one of: ${COMMS_TRANSPORTS.join(', ')}.`);
+      }
+      const filter: CommsInboxFilter = {};
+      if (transport !== undefined) filter.transport = transport;
+      return commsInbox(commsRunsRoot(), filter);
     },
   },
   {
