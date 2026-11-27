@@ -309,6 +309,12 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
       `Claimed ${claim.jobId}${facts.length ? ` (${facts.join('; ')})` : ''}.`,
       `Lease token ${claim.token}, leader-token ${claim.leaderToken}; expires ${new Date(claim.expiresAt).toISOString()}. Renew before expiry; pass the token to every effect.`,
     ];
+    // A pack is the format an automated runner executes; the standalone pull is
+    // the manual path, so the operator does the work and completes with its own
+    // result text — the same reading NODE-ROUTER.md gives the pack field.
+    if (typeof job?.pack === 'string' && job.pack.length) {
+      lines.push(`Pack ${job.pack} is what an automated runner executes; this node works the job itself — complete --result takes your own text.`);
+    }
     if (typeof job?.task?.text === 'string' && job.task.text.length) lines.push('', 'Task:', job.task.text);
     // The third lifecycle verb matters as much as renew/complete here: a manual
     // runner that cannot do the job (missing secret, wrong pack, out of its

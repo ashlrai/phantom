@@ -108,6 +108,13 @@ advertised. A manual runner can also read the printed task, do the work and
 `complete --result` with its own result text — the pack is what an automated
 runner executes, not a requirement on the result.
 
+`pack:*` entries in `--requires` are runner advertisements: a pool worker
+earns `pack:<name>` from its runner's `packs` probe, and a standalone node
+earns one only by passing `--caps pack:<name>` at join. On the standalone
+registry the node works the printed task by hand, so `--requires` can name
+just the lane caps the job needs — `pack:codex-file` remains the job's pack
+label either way.
+
 `phm node result --job <id> --owner <scope>` is the read-only way back to a
 job's outcome: `pending`, `running` (naming the node whose live claim can act,
 or `no live claim` once the claim lapsed or was fenced — the same words
