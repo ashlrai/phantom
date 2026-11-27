@@ -1883,7 +1883,10 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   quoting recorded lanes, host and day counts without hostnames, with
   the same owner-side no-change escape, and emit only for the fleet's
   own repository since the rows describe this install's hosts and
-  lanes. Job-latency items name the jobs-ledger lifecycle boundary
+  lanes. The contention report counts a dated Git operation receipt once
+  when its full JSON payload is replayed with different key order or
+  whitespace. Distinct receipts at the same timestamp count independently.
+  Job-latency items name the jobs-ledger lifecycle boundary
   rows, `phm fleet job-latency`'s phases/top_wastes fold and the
   per-phase ownership map in src/core/improve/job-latency-backlog.ts,
   keep the find-where-this-stage's-wall-time-concentrates framing per
