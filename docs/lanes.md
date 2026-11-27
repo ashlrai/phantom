@@ -60,7 +60,11 @@ follow the job's latest launch by timestamp. A reconciled merge uses its
 recorded merge time when available. When timestamps tie or either receipt
 lacks one, ledger order determines whether the outcome follows the launch.
 A retry with only earlier outcome evidence contributes a launch to the yield
-window and no finished job to the lane verdict.
+window and no finished job to the lane verdict. The synthetic `RQ-BATCH-*`
+session's own launch/finish rows are batch infrastructure, not job attempts —
+members arrive through `batch_claim`/`task_outcome` — so they never count as a
+launch or a finished job, the same exclusion the outcome, reward and claims
+readers already apply.
 `phm lanes yield` also gives every lane a verdict over `--since`
 (default 24h): "low-yield" when 80% or more of at least 20 finished jobs ended empty,
 "unknown" under 10 finished jobs, else "productive". The router skips a low-yield lane
