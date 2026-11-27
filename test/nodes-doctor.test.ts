@@ -192,4 +192,13 @@ describe('phm nodes doctor', () => {
       fake({ 'home-mac': healthy(), 'studio-mac': healthy({ codex: { installed: true, signedIn: false } }) }));
     expect(String(out.mock.calls[0]![0])).toContain('fix: studio-mac: codex is not signed in. Run `codex login` on that Mac.');
   });
+
+  it('human output prints the view reasons the JSON carries', async () => {
+    // NO_POOL leaves this computer with no node pool, so a reachable remote
+    // computer gets no join command; the reason that explains why must reach
+    // the text output the same way `phm nodes` prints it, not stay JSON-only.
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await cmdNodes(['doctor'], deps([['studio-mac', true]]), undefined, fake({ 'home-mac': healthy(), 'studio-mac': healthy() }));
+    expect(String(out.mock.calls[0]![0])).toContain('note: no node pool on this computer');
+  });
 });
