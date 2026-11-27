@@ -171,6 +171,32 @@ test('unattributed live claims hold capacity and executor identity binds latency
   expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.freeSlots === null)).toBe(true);
 });
 
+test('legacy completion without an execution host cannot skew placement after a worker moves', () => {
+  const f = fixture();
+  const worker = f.add('a-worker', { hostId: 'old-mac', slots: 1 });
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  f.enqueue('legacy');
+  const legacy = nodes.pull(worker)!;
+  f.advance(1000);
+  expect(nodes.complete(legacy.claim, 'done')).toBe(true);
+  delete f.state.jobs[0]!.executionHostId;
+
+  f.beat('a-worker', { hostId: 'new-mac', slots: 0, held: 'disk-pressure' });
+  const peer = f.add('b-worker', { slots: 2 });
+  f.enqueue('measured');
+  const measured = nodes.pull(peer)!;
+  f.advance(4000);
+  expect(nodes.complete(measured.claim, 'done')).toBe(true);
+  f.beat('a-worker', { hostId: 'new-mac', slots: 1 });
+  f.beat('b-worker', { slots: 2 });
+  f.enqueue('next');
+
+  const hosts = projectFleetAwareness(f.state, f.now()).hosts;
+  expect(hosts.find(h => h.hostId === 'new-mac')?.latency).toMatchObject({ samples: 0, medianMs: null });
+  expect(hosts.find(h => h.hostId === 'b-worker')?.latency).toMatchObject({ samples: 1, medianMs: 4000 });
+  expect(f.plan()[0]?.nodeId).toBe('b-worker');
+});
+
 test('bounded projection reads actual fixture mirrors and rejects symlinks, oversized files and stale lanes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'fleet-aware-')); const f = fixture(); f.add('mac');
   try {
