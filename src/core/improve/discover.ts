@@ -1460,6 +1460,18 @@
  *     without owner or reason stay out, and only the fleet's own
  *     repository inherits the items since the churn is this
  *     install's claim machinery, not any one target repo's;
+ *   - the fleet disk-sweep journal's recurring adverse outcomes: the
+ *     {generatedAt, apply, freeGb, swept, freedGb, steps} rows
+ *     `phm fleet disk-sweep --log` appends to
+ *     queue/disk-sweep.jsonl on every host-timer run — swept rows
+ *     whose wt-cache or worktree-stale step exited non-zero and
+ *     applied pressured sweeps recording zero freed GB, each folded
+ *     across distinct UTC days inside the 7-day window against the
+ *     live freeze line (diskSweepBacklogItems below). Until now the
+ *     journal's only reader was the command's own --history flag —
+ *     a report someone had to run — so a mitigation step that kept
+ *     failing or sweeps that kept reclaiming nothing under pressure
+ *     never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1596,6 +1608,7 @@ import { evalGateBacklogItems } from './eval-gate-backlog.js';
 import { teammateInboxBacklogItems } from './teammate-inbox-backlog.js';
 import { telemetrySpanBacklogItems } from './telemetry-span-backlog.js';
 import { coordinationBacklogItems } from './coordination-backlog.js';
+import { diskSweepBacklogItems } from './disk-sweep-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -3401,6 +3414,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the churn is this install's
   // claim machinery, not any one target repo's.
   items.push(...await coordinationBacklogItems({ repo }));
+
+  // Fleet disk-sweep journal: every `phm fleet disk-sweep --log` run a
+  // host timer makes appends one {generatedAt, apply, freeGb, swept,
+  // freedGb, steps} row to queue/disk-sweep.jsonl — until now the only
+  // reader was the command's own --history flag, a report someone had
+  // to run and read, so sweep steps that kept exiting non-zero and
+  // applied sweeps that kept recording zero freed GB under the freeze
+  // line sat in an append-only file nobody folded, never work. Rows
+  // count only under the writer's logged contract (parseable
+  // generatedAt, boolean apply/swept, non-negative GB figures, the
+  // closed wt-cache/worktree-stale step vocabulary and its ran/code
+  // pairing); an axis emits only at the recurring bars of adverse rows
+  // across distinct UTC days inside the window, the yield axis judges
+  // each row's freeGb against the live freeze line and requires an
+  // applied swept row with every step ran — dry runs and blind
+  // (null freeGb) rows never prove yield — truncated tails are stated
+  // as lower bounds, and only the fleet's own repository inherits the
+  // items since the journal describes this install's machinery and
+  // carries no repository column.
+  items.push(...await diskSweepBacklogItems({ repo }));
   return { items, errors };
 }
 
