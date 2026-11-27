@@ -173,6 +173,11 @@ outcome tallies — for example how many selections ended `merged`, `rejected`
 or `failed`, and how many merged selections were later `reverted` or
 `regressed`. Lifecycle stages of one use collapse into a single selection,
 and unjoined or conflicting skill rows never enter the tally.
+When joined production receipts carry distinct content hashes for the same skill
+ID and revision, the report omits that revision from per-skill results and
+aggregate skill outcome counts. Other revisions retain their tallies. This
+also prevents improvement discovery from using outcomes pooled across
+different card contents.
 
 `phm skills list --outcomes` joins the same projection onto the learned-skill
 list: each entry gains an `outcomes` object when its exact revision was

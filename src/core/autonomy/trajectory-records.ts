@@ -439,10 +439,14 @@ interface SkillObservationCounts {
   stageCounts: Record<SkillUseStage, number>;
 }
 
-/** A skill revision observed in use on one trajectory, with its resolved outcome. */
-interface TrajectorySkillSelectionOutcome {
+interface TrajectorySkillSelection {
   skillId: string;
   skillRevision: number;
+  contentHash?: string;
+}
+
+/** A skill revision observed in use on one trajectory, with its resolved outcome. */
+interface TrajectorySkillSelectionOutcome extends TrajectorySkillSelection {
   terminalOutcome: TrajectoryTerminalOutcome;
   realizedOutcome?: TrajectoryRealizedOutcome;
 }
@@ -1664,7 +1668,7 @@ function listTrajectoryRecordsAt(
   const skillObservation = emptySkillObservationCounts();
   const selectionKeysByRecord = new Map<string, Set<string>>();
   const skillObservationByRecordId = new Map<string, SkillObservationCounts>();
-  const skillSelectionsByRecordId = new Map<string, Map<string, { skillId: string; skillRevision: number }>>();
+  const skillSelectionsByRecordId = new Map<string, Map<string, TrajectorySkillSelection>>();
   for (const event of skillUses) {
     const observedMs = Date.parse(event.ts);
     if (!Number.isFinite(observedMs) || observedMs < sinceMs || observedMs > asOfMs) continue;
@@ -1706,12 +1710,13 @@ function listTrajectoryRecordsAt(
     recordObservation.modeCounts[event.mode]++;
     recordObservation.stageCounts[event.stage]++;
     skillObservationByRecordId.set(record.id, recordObservation);
-    // One selection observation per trajectory per skill revision: lifecycle
-    // stages (selected/injected/applied/outcome) of the same use collapse.
-    const selectionKey = JSON.stringify([event.skillId, event.skillRevision]);
-    const selections = skillSelectionsByRecordId.get(record.id) ?? new Map<string, { skillId: string; skillRevision: number }>();
+    // Collapse lifecycle stages, but retain distinct hashes so the outcome
+    // summary can detect a revision linked to different card contents.
+    const { skillId, skillRevision, contentHash } = event;
+    const selectionKey = JSON.stringify([skillId, skillRevision, contentHash]);
+    const selections = skillSelectionsByRecordId.get(record.id) ?? new Map<string, TrajectorySkillSelection>();
     if (!selections.has(selectionKey)) {
-      selections.set(selectionKey, { skillId: event.skillId, skillRevision: event.skillRevision });
+      selections.set(selectionKey, { skillId, skillRevision, contentHash });
       skillSelectionsByRecordId.set(record.id, selections);
     }
   }
@@ -2274,9 +2279,23 @@ export function summarizeTrajectoryLearning(
   const skillOutcomeSkillIds = new Set<string>();
   let skillOutcomeSelections = 0;
   if (publishSkillMetrics) {
+    const hashesByRevision = new Map<string, string>();
+    const disputedRevisions = new Set<string>();
+    for (const record of observedProductionRecords) {
+      for (const selection of skillSelectionOutcomesByRecord.get(record) ?? []) {
+        if (!selection.contentHash) continue;
+        const key = JSON.stringify([selection.skillId, selection.skillRevision]);
+        const previousHash = hashesByRevision.get(key);
+        if (previousHash && previousHash !== selection.contentHash) disputedRevisions.add(key);
+        hashesByRevision.set(key, selection.contentHash);
+      }
+    }
     for (const record of productionRecords) {
+      const countedRevisions = new Set<string>();
       for (const selection of skillSelectionOutcomesByRecord.get(record) ?? []) {
         const key = JSON.stringify([selection.skillId, selection.skillRevision]);
+        if (disputedRevisions.has(key) || countedRevisions.has(key)) continue;
+        countedRevisions.add(key);
         let row = skillOutcomeRows.get(key);
         if (!row) {
           row = {
