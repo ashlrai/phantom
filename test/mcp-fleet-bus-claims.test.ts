@@ -59,10 +59,12 @@ describe('fleet_bus_claims argument parsing', () => {
   it('maps every shared claim filter onto the list options', () => {
     expect(parseFleetBusClaimsArgs({
       key: 'path:ashlrai/phantom:docs/**', owner: 'agent:worker', excludeOwner: 'agent:other',
-      contains: 'phantom', origin: 'resource', since: '1800000000000', before: '2026-01-02T00:00:00.000Z', jobs: true,
+      contains: 'phantom', origin: 'resource', since: '1800000000000', before: '2026-01-02T00:00:00.000Z',
+      job: 'RQ-9', jobs: true,
     })).toEqual({
       key: 'path:ashlrai/phantom:docs/**', owner: 'agent:worker', excludeOwner: 'agent:other',
-      contains: 'phantom', origin: 'resource', since: 1_800_000_000_000, before: Date.parse('2026-01-02T00:00:00.000Z'), jobs: true,
+      contains: 'phantom', origin: 'resource', since: 1_800_000_000_000, before: Date.parse('2026-01-02T00:00:00.000Z'),
+      job: 'RQ-9', jobs: true,
     });
     expect(parseFleetBusClaimsArgs({ key: 'queue:RQ-1', owner: 'lane:executor', origin: 'message', jobs: false }))
       .toEqual({ key: 'queue:RQ-1', owner: 'lane:executor', origin: 'message', jobs: false });
@@ -83,6 +85,7 @@ describe('fleet_bus_claims argument parsing', () => {
       { origin: 'bogus' }, { origin: 'RESOURCE' }, { origin: 1 }, { origin: null },
       { since: 5 }, { since: 'bogus' }, { since: null }, { since: '' },
       { before: 5 }, { before: 'bogus' }, { before: null }, { before: '' },
+      { job: 'has space' }, { job: '' }, { job: 'x'.repeat(129) }, { job: 5 }, { job: null },
       { jobs: 'yes' }, { jobs: 1 }, { jobs: null },
     ]) expect(parseFleetBusClaimsArgs(bad)).toBeNull();
   });
@@ -105,12 +108,14 @@ describe('fleet_bus_claims reader', () => {
     };
     const result = await readFleetBusClaims(
       { key: 'path:ashlrai/phantom:docs/**', owner: 'agent:worker', excludeOwner: 'agent:other',
-        contains: 'phantom', origin: 'resource', since: 1_700_000_000_000, before: 1_900_000_000_000, jobs: true },
+        contains: 'phantom', origin: 'resource', since: 1_700_000_000_000, before: 1_900_000_000_000,
+        job: 'RQ-9', jobs: true },
       { list },
     );
     expect(seen).toEqual([{
       key: 'path:ashlrai/phantom:docs/**', owner: 'agent:worker', excludeOwner: 'agent:other',
-      contains: 'phantom', origin: 'resource', since: 1_700_000_000_000, before: 1_900_000_000_000, jobs: true,
+      contains: 'phantom', origin: 'resource', since: 1_700_000_000_000, before: 1_900_000_000_000,
+      job: 'RQ-9', jobs: true,
     }]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
@@ -156,6 +161,7 @@ describe('fleet_bus_claims MCP tool', () => {
         origin: { type: 'string', enum: ['resource', 'message', 'team', 'board'] },
         since: { type: 'string' },
         before: { type: 'string' },
+        job: { type: 'string' },
         jobs: { type: 'boolean' },
       },
       additionalProperties: false,
@@ -166,7 +172,7 @@ describe('fleet_bus_claims MCP tool', () => {
     [{ root: '/tmp/fake-root' }], [{ path: '/tmp/x' }], [{ cwd: '/tmp' }],
     [{ key: 'bogus' }], [{ owner: 'has space' }], [{ origin: 'bogus' }],
     [{ excludeOwner: 'has space' }], [{ contains: '' }], [{ contains: 'x'.repeat(513) }],
-    [{ since: 'bogus' }], [{ before: 5 }],
+    [{ since: 'bogus' }], [{ before: 5 }], [{ job: 'has space' }], [{ job: 5 }],
     [{ jobs: 'yes' }], [{ extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const busClaims = vi.fn();
@@ -186,12 +192,13 @@ describe('fleet_bus_claims MCP tool', () => {
     const client = await connect({ status: async () => ({}), loop: async () => ({}), busClaims });
     const { parsed } = await callClaims(client, {
       key: 'queue:RQ-9', owner: 'agent:worker', excludeOwner: 'agent:other',
-      contains: 'phantom', origin: 'team', since: '1800000000000', before: '2026-06-01T00:00:00.000Z', jobs: true,
+      contains: 'phantom', origin: 'team', since: '1800000000000', before: '2026-06-01T00:00:00.000Z',
+      job: 'RQ-9', jobs: true,
     });
     expect(busClaims).toHaveBeenCalledWith({
       key: 'queue:RQ-9', owner: 'agent:worker', excludeOwner: 'agent:other',
       contains: 'phantom', origin: 'team', since: 1_800_000_000_000,
-      before: Date.parse('2026-06-01T00:00:00.000Z'), jobs: true,
+      before: Date.parse('2026-06-01T00:00:00.000Z'), job: 'RQ-9', jobs: true,
     });
     expect(parsed).toEqual(payload);
     expect((parsed.claims as unknown[]).length).toBe(1);

@@ -3343,12 +3343,12 @@ undefined for non-claim bodies so opaque mail still appends),
 `BusClaimJobRef` claim views share — id, announcer, status, title, newest
 detail and the `postId`/`statusId` receipt citations.
 `listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`, `owner?`,
-`excludeOwner?`, `contains?`, `since?`, `before?`, `origin?`, `jobs?`) is the
+`excludeOwner?`, `contains?`, `since?`, `before?`, `origin?`, `job?`, `jobs?`) is the
 read-side companion: it returns the live coordination claims as
 `CoordinationView` rows (fencing tokens never leave the store) with `source`
 of `missing` (verified empty), `available` or `unavailable` (holds unknown,
 not free), plus `asOf`. A malformed `key`, `owner`, `excludeOwner`,
-`contains`, `origin`, `since` or `before` answers
+`contains`, `origin`, `job`, `since` or `before` answers
 `invalid`; a set
 `key` narrows the list through the same `coordinationRowBlocks` overlap rule
 an acquire applies, previewing the claims that would block it. A set `owner`
@@ -3381,8 +3381,19 @@ status, title, detail?, postId, statusId}` per job — `postId`/`statusId`
 the retained `work.post`/`work.status` receipt wire ids `agents bus show`
 reads, the reverse of the feed's `--claims` hold join) and the
 result's `feed` field reports the feed read state; a non-`ok` feed leaves
-`jobs` absent so blocked work stays unknown, never an empty list.
-`phm agents bus claim list [--key] [--owner] [--exclude-owner] [--origin] [--contains] [--since] [--before] [--jobs]`
+`jobs` absent so blocked work stays unknown, never an empty list. With
+`job` set the list narrows to the live claims that block the one named
+feed job — the same `coordinationRowBlocks` overlap the feed's holds join
+and `key` apply, decided over every claim key the job's `work.post`
+announcement declared — and the result's `job` field (`{id, announced,
+claimKeys}`) reports how the id resolved once the feed read completes. The
+same work-feed read serves `job` and `jobs`, so `feed` reports its state
+whenever either is given; a feed that reads ok but names no such job leaves
+the list provably empty, a feed that cannot complete while claims remain
+listed answers `unavailable` with `feed` carrying the feed's own state
+(never an unfiltered or invented-empty list), and a claim table already
+empty keeps its proven-empty list under the reported `feed` state.
+`phm agents bus claim list [--key] [--owner] [--exclude-owner] [--origin] [--contains] [--since] [--before] [--job] [--jobs]`
 prints it.
 `claimBusWorkJob(BusWorkJobClaimOptions)` (`job`, `owner`, `leaseMs`, the
 `BusClaimOptions` `root?`/`now?`, and optional `key?`/`id?`) is the job-level

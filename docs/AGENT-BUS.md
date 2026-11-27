@@ -2379,7 +2379,7 @@ from now and may not exceed the acquired length. `phm agents bus claim
 acquire|renew|release` runs the same core path locally with `--key`,
 `--lease-ms`, `--owner` (defaults to `PHM_AGENT_ID`), `--token`, `--outcome`
 and optional `--id`; exit 0 on success, 2 on invalid arguments, 1 otherwise.
-`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--jobs]` is
+`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--jobs]` is
 the read
 side: it prints the live coordination claims (owner, origin, lease end, source
 id — never tokens) across every origin, narrowed by `--key` to those that
@@ -2406,7 +2406,21 @@ keep `started` null) is unknown and never matches, the same "unknown stays
 out" rule every other section's missing timestamp follows — or by `--origin`
 to one claim class (`resource` work leases, `message` message-id claims,
 `team` leases, `board` claims; queue path observations are never live and
-never list). A missing table
+never list) — or by `--job` to the live claims that block one announced
+feed job: the same `coordinationRowBlocks` overlap the feed's holds join
+and `--key` apply, decided over every claim key the job's `work.post`
+announcement declared, so "which claims hold job X's scope" is one read of
+the claim table itself — the claims-side answer to `work feed --job <id>
+--claims`, which names the blocked declared keys but not the claims' own
+keys. The job's declared scope resolves through the same work-feed read
+`--jobs` performs, so the JSON `feed` field reports its state whenever
+`--job` or `--jobs` is given, and the `job` field reports how the id
+resolved (`announced` plus the declared-key count). A feed that reads ok
+but names no such job leaves the list provably empty; a feed that cannot
+complete while claims remain listed answers `unavailable` with `feed`
+carrying the feed's own state — never an unfiltered list or an invented
+empty one — while a claim table already empty keeps its proven-empty list
+under the reported `feed` state. A missing table
 reads as a verified-empty list; an unreadable one stays `unavailable`, never
 zero. With `--jobs` each claim also names the announced work-feed jobs its
 keys block (`{id, owner, status, title, detail?, postId, statusId}` — the
@@ -2416,11 +2430,12 @@ and the JSON `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
 `fleet_bus_claims` (the isolated fleet MCP tool) serves the same
 `listBusClaims` read with `key`, `owner`, `excludeOwner`, `contains`,
-`origin`, `since`, `before` and `jobs` as its only
+`origin`, `since`, `before`, `job` and `jobs` as its only
 arguments — the same `parseClaimKey` grammar, printable-label owner bound,
-shared `--contains` bound, `COORDINATION_ORIGINS` class filter, shared
+shared `--contains` bound, `COORDINATION_ORIGINS` class filter, feed
+`--job` printable-label grammar, shared
 `--since`/`--before` grammar resolved through `parseSince` onto the claim's
-recorded `started` and feed join
+recorded `started`, the job feed-scope filter and feed join
 the CLI flags share, under
 the identical validation — so an MCP-connected agent reads the claim table's
 own projection without shelling out. Every coordination and feed root stays
