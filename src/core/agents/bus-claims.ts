@@ -383,6 +383,16 @@ export interface BusWorkJobClaimRef {
   postId: string;
   /** Wire id of the newest accepted `work.status` receipt; null while no status has moved the job. */
   statusId: string | null;
+  /** Routing label the `work.post` announcement addressed — the sink, topic or agent label the job was announced for. */
+  to: string;
+  /** Provider the feed resolved for the job — the post's own value or the announcer's newest runtime. */
+  provider: Participant['provider'];
+  /** Every claim key the announcement declared, in declared order — the full scope set, not only the key this claim took. */
+  claimKeys: readonly string[];
+  /** The dispatch spec the announcement declared (tier, scope, acceptance); absent when the post carried none. */
+  dispatch?: WorkDispatch;
+  /** Receipt time of the job's newest accepted status, or of the `work.post` while no status has moved it. */
+  updatedAt: number;
 }
 
 export interface BusWorkJobClaimOptions extends BusClaimOptions {
@@ -440,7 +450,9 @@ export type BusWorkJobClaimResult =
 const JOB_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 function jobClaimRef(job: BusWorkFeedJob): BusWorkJobClaimRef {
-  return { ...busClaimJobRef(job), repo: job.repo };
+  return { ...busClaimJobRef(job), repo: job.repo, to: job.to, provider: job.provider,
+    claimKeys: [...job.claimKeys],
+    ...(job.dispatch === undefined ? {} : { dispatch: job.dispatch }), updatedAt: job.updatedAt };
 }
 
 /**

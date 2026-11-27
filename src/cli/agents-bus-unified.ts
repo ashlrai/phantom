@@ -10,7 +10,7 @@ import {
   updateWorkStatus, INBOX_KINDS, type AllWakesPage, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WakePage, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
-import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
+import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, busWorkJobDispatch, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, claimNextBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   waitClaimNextBusWorkJob,
@@ -757,10 +757,11 @@ function integer(raw: string | undefined, name: string): number | undefined {
   return Number(raw);
 }
 
-/** `RQ-1(running) "Fix the feed" detail="why" post=<id> [status=<id>]` — the
- * blocked job named by its announcement title, newest status detail and the
- * retained receipts behind it, display-clipped. */
-function claimJobLabel(job: BusClaimJobRef): string {
+/** `RQ-1(running) "Fix the feed" detail="why" [tier=.. scope=.. acceptance=..] post=<id> [status=<id>]` — the
+ * blocked job named by its announcement title, newest status detail, declared
+ * dispatch spec when it carries one and the retained receipts behind it,
+ * display-clipped. */
+function claimJobLabel(job: BusClaimJobRef & { dispatch?: WorkDispatch }): string {
   // eslint-disable-next-line no-control-regex
   const flat = (value: string): string => scrubSecrets(value).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
   const clip = (value: string, max: number): string => {
@@ -771,6 +772,7 @@ function claimJobLabel(job: BusClaimJobRef): string {
   const detail = job.detail === undefined ? '' : clip(job.detail, 80);
   return `${job.id}(${job.status})${title === '' ? '' : ` "${title}"`}` +
     `${detail === '' ? '' : ` detail="${detail}"`}` +
+    `${busWorkJobDispatch(job.dispatch)}` +
     ` post=${job.postId}${job.statusId === null ? '' : ` status=${job.statusId}`}`;
 }
 

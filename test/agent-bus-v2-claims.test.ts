@@ -556,6 +556,33 @@ describe('claimBusWorkJob', () => {
       owner: 'worker-1', live: true })]);
   });
 
+  it('echoes the announcement\'s full work order on the claim result', () => {
+    const root = tempDir('v2jobclaim-');
+    // A dispatch-carrying post addressed to a seat, not the leaders sink, so the
+    // echo proves it reports the announcement's own routing label and spec.
+    const body = { kind: 'work.post', jobId: 'RQ-FULL', title: 'Full order', repo: 'a/b',
+      provider: 'devin', claimKeys: ['queue:RQ-FULL', 'repo:a/b'],
+      dispatch: { tier: 'work', scope: 'src/core/**', acceptance: 'tests green' } };
+    const posted = appendBusInbox({ id: 'w-post-RQ-FULL', from: 'agent-1', to: 'agent:worker-9',
+      priority: 'P2', ttl: 86_400_000, body }, { root, now: () => NOW });
+    expect(posted.status).toBe('posted');
+    const result = claimBusWorkJob({ root, now: NOW, job: 'RQ-FULL', owner: 'worker-9',
+      leaseMs: 600_000, id: 'op-full' });
+    expect(result).toMatchObject({ status: 'acquired',
+      job: { id: 'RQ-FULL', owner: 'agent-1', repo: 'a/b', title: 'Full order', status: 'queued',
+        postId: 'w-post-RQ-FULL', statusId: null, to: 'agent:worker-9', provider: 'devin',
+        claimKeys: ['queue:RQ-FULL', 'repo:a/b'], updatedAt: NOW,
+        dispatch: { tier: 'work', scope: 'src/core/**', acceptance: 'tests green' } } });
+    // A job announced without a dispatch spec omits the field rather than
+    // reporting an empty one.
+    postWork(root, 'RQ-NODISP', ['queue:RQ-NODISP']);
+    const plain = claimBusWorkJob({ root, now: NOW, job: 'RQ-NODISP', owner: 'w', leaseMs: 1_000, id: 'op-nd' });
+    expect(plain).toMatchObject({ status: 'acquired' });
+    if (plain.status !== 'acquired') throw new Error('expected acquired');
+    expect(plain.job).not.toHaveProperty('dispatch');
+    expect(plain.job.claimKeys).toEqual(['queue:RQ-NODISP']);
+  });
+
   it('falls back to the first declared key and honors an explicit declared key', () => {
     const root = tempDir('v2jobclaim-');
     postWork(root, 'RQ-NQ', ['repo:a/b', 'path:a/b:src/**']);
@@ -599,7 +626,8 @@ describe('claimBusWorkJob', () => {
     const second = claimBusWorkJob({ root, now: NOW, job: 'RQ-C', owner: 'worker-2', leaseMs: 600_000, id: 'op-c2' });
     expect(second).toEqual({ status: 'conflict',
       job: { id: 'RQ-C', owner: 'agent-1', repo: 'a/b', title: 'Job RQ-C', status: 'queued',
-        postId: 'w-post-RQ-C', statusId: null },
+        postId: 'w-post-RQ-C', statusId: null, to: 'leaders', provider: 'devin',
+        claimKeys: ['queue:RQ-C'], updatedAt: NOW },
       scope: { source: 'available', holds: [] },
       holder: { owner: 'worker-1', claimKey: 'queue:RQ-C', leaseUntil: NOW + 600_000 } });
     expect(JSON.stringify(second)).not.toContain(first.claim.token);

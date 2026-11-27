@@ -28,8 +28,17 @@ describe('PR #7065 contributor introduction preservation', () => {
     expect(targets).toEqual([
       'docs/README.md', 'README.md#mission', 'README.md#the-phantom-ecosystem',
       'AGENTS.md', '#definition-of-green', 'docs/CONTRIBUTE-WITH-AN-AGENT.md', 'AGENTS.md',
+      'CODE_OF_CONDUCT.md',
+      'https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22',
+      'https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22',
+      'https://discord.gg/jBQrSU6XeD',
     ]);
     for (const target of targets) {
+      if (target.startsWith('https://')) {
+        const url = new URL(target);
+        expect(['github.com', 'discord.gg']).toContain(url.hostname);
+        continue;
+      }
       const [path, anchor] = target.split('#');
       const documentPath = path || 'CONTRIBUTING.md';
       expect(existsSync(resolve(root, documentPath)), target).toBe(true);
