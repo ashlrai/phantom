@@ -1,10 +1,9 @@
 import { resolve } from 'node:path';
 import { readHarnessDigest } from '../core/learn/harness-digest-reader.js';
 import { planHarnessRefresh } from '../core/learn/harness-refresh-plan.js';
-import { sanitizeCommandLine } from '../core/verse/shell-integration.js';
+import { formatHarnessDisplayField } from './reflect-harness-digest.js';
 
 const usage = 'Usage: ashlr fleet harness-refresh [--limit N] [--file <digest.md>] [--json]';
-const display = (value: string): string => sanitizeCommandLine(value).replace(/\n+/g, ' ');
 
 /** Expose local research candidates without fetching sources or launching jobs. */
 export async function cmdFleetHarnessRefresh(args: string[], opts: { now?: () => Date; digestFile?: string } = {}): Promise<number> {
@@ -24,7 +23,7 @@ export async function cmdFleetHarnessRefresh(args: string[], opts: { now?: () =>
   const now = (opts.now ?? (() => new Date()))();
   const digest = readHarnessDigest(path, now);
   if (!digest) {
-    console.log(json ? JSON.stringify({ state: 'missing', queue: [] }) : `No harness digest at ${display(path)}.`);
+    console.log(json ? JSON.stringify({ state: 'missing', queue: [] }) : `No harness digest at ${formatHarnessDisplayField(path)}.`);
     return 0;
   }
   const queue = planHarnessRefresh(digest, limit ?? 5, now);
@@ -32,7 +31,7 @@ export async function cmdFleetHarnessRefresh(args: string[], opts: { now?: () =>
   else if (queue.length === 0) console.log('Harness refresh: nothing due');
   else {
     console.log(`Harness refresh: ${queue.length} of ${digest.sources.length} sources due`);
-    for (const entry of queue) console.log(`${entry.reason} ${display(entry.id)} — ${display(entry.title)} (checked ${entry.checkedAt ?? 'never'}) ${display(entry.urls[0] ?? '')}`);
+    for (const entry of queue) console.log(`${entry.reason} ${formatHarnessDisplayField(entry.id)} — ${formatHarnessDisplayField(entry.title)} (checked ${entry.checkedAt ?? 'never'}) ${formatHarnessDisplayField(entry.urls[0] ?? '')}`);
   }
   return 0;
 }

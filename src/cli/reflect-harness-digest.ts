@@ -59,7 +59,7 @@ Options: --file <markdown>  Input file; --json | --text  Required output mode;
 const TEXT_LINE_CAP = 200;
 
 /** Untrusted value for one terminal line: no control or bidi characters, no newlines. */
-const displayField = (value: string): string => sanitizeCommandLine(value).replace(/\n+/g, ' ');
+export const formatHarnessDisplayField = (value: string): string => sanitizeCommandLine(value).replace(/\n+/g, ' ');
 
 type RefreshReason = 'stale' | 'undated' | 'invalid_or_duplicate_metadata';
 interface RefreshRequest { sourceId: string; url: string | null; reasons: RefreshReason[] }
@@ -106,9 +106,9 @@ function formatHarnessDigestText(digest: HarnessDigest, color: Colors): string {
   for (const source of digest.sources) {
     const date = source.checkedAt ?? 'undated';
     const dateField = source.stale === true ? color.red(date) : source.stale === null ? color.yellow(date) : color.dim(date);
-    const stamp = `${color.dim(displayField(source.id))} ${dateField}`;
+    const stamp = `${color.dim(formatHarnessDisplayField(source.id))} ${dateField}`;
     for (const takeaway of source.takeaways ?? []) {
-      const text = displayField(takeaway);
+      const text = formatHarnessDisplayField(takeaway);
       if (text) lines.push(`${stamp} ${text}`);
     }
   }
