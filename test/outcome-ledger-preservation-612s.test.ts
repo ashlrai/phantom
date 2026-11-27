@@ -649,6 +649,37 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(o!.review_findings).toBeNull();
   });
 
+  it.each([
+    ['winning verdict PR', 1, false, false, 2],
+    ['replacement PR without findings', 2, false, false, null],
+    ['replacement PR with findings', 2, true, false, 3],
+    ['URL-less verdict with multiple claims', null, true, false, null],
+    ['contested verdict PR', 2, true, true, null],
+  ] as const)('scopes recorded review findings to the %s', (_label, verdictPr, replacementFindings, contested, fixed) => {
+    const url = (pr: number) => `https://github.com/o/r/pull/${pr}`;
+    const findings = (fixed: number) => ({ review_findings: { fixed, rejected: 0, ignored: 0 } });
+    const rows = [
+      { job: 'R1', pr_url: url(1), ...findings(1) },
+      { job: 'R1', pr_url: url(2), phase: 'PUBLISHED' },
+      { job: 'R1', phase: 'MERGED', ...(verdictPr === null ? {} : { pr_url: url(verdictPr) }) },
+      { pr_url: 'https://github.com/O/R/pull/1/', ...findings(2) },
+      ...(replacementFindings ? [{ job: 'R1', pr_url: url(2), ...findings(3) }] : []),
+      { job: 'R1', ...findings(4) },
+      ...(contested ? [{ job: 'R2', pr_url: url(2) }] : []),
+    ];
+    const { outcomes } = foldRouterOutcomes(rows.map(row => JSON.stringify(row)).join('\n'));
+    expect(outcomes.find(row => row.job_id === 'R1')?.review_findings)
+      .toEqual(fixed === null ? null : findings(fixed).review_findings);
+  });
+
+  it('keeps legacy review counts for a sole canonical PR claim', () => {
+    const [outcome] = foldRouterOutcomes([
+      '{"job":"R1","pr_url":"https://github.com/o/r/pull/1"}',
+      '{"job":"R1","phase":"MERGED","review_findings":{"fixed":1,"rejected":0,"ignored":0}}',
+    ].join('\n')).outcomes;
+    expect(outcome?.review_findings).toEqual({ fixed: 1, rejected: 0, ignored: 0 });
+  });
+
   it('folds finish-row productivity verdicts, newest explicit value wins', () => {
     const fold = foldRouterOutcomes([
       '{"job":"F1","event":"finish","empty":true,"exit_code":1,"failure_class":"quota","wall_s":10,"tokens_total":1000}',
