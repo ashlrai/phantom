@@ -198,7 +198,7 @@ export async function startOwnerPair(deps: PairDeps, input: { handle?: string; a
   const targets = explicit !== undefined ? [explicit] : [...new Map((await deps.bridge.ownHandles()).map(h => [h.toLowerCase(), h])).values()].slice(0, PAIR_MAX_HANDLES);
   if (targets.length === 0) return { status: 'none-found' };
   const afterRowId = await deps.bridge.baseline();
-  if (afterRowId === null) return { status: 'messages-unreadable' };
+  if (afterRowId === null || !Number.isSafeInteger(afterRowId) || afterRowId < 0) return { status: 'messages-unreadable' };
   const sent: string[] = [];
   for (const handle of targets) if (await deps.bridge.send(handle, PAIR_TEXT)) sent.push(handle);
   if (sent.length === 0) return { status: 'send-failed' };
