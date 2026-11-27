@@ -182,8 +182,8 @@ export function planNodeBridge(input: BridgeRouterView & {
     }
     const budgets = members.map((member, index) => {
       const sample = samples[index];
-      if (member.slots === undefined || (member.capacity && !sample)) return null;
-      return Math.min(member.slots, sample?.slots ?? member.slots);
+      if (member.capacity) return sample?.slots ?? null;
+      return member.slots ?? null;
     });
     hostFree.set(host, budgets.every((budget): budget is number => budget !== null)
       ? Math.max(0, Math.min(...budgets) - members.reduce((sum, m) => sum + running(m.nodeId), 0))
