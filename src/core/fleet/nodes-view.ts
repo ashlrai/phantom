@@ -18,7 +18,7 @@ import { sampleHostStats } from '../drive/nodes/capacity.js';
 import { joinHintCommand } from '../drive/nodes/commands.js';
 import { readPoolConfig } from '../drive/nodes/pool-host.js';
 import { NODE_OFFLINE_MS, nodeCanAcceptWork } from '../drive/nodes/router.js';
-import { isHostStats, parseState, type HostStats, type NodeRecord, type NodesState } from '../drive/nodes/state.js';
+import { isHostStats, isNodeCapacity, parseState, type HostStats, type NodeRecord, type NodesState } from '../drive/nodes/state.js';
 import { isVersionCap } from '../drive/nodes/phm-version.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { aliasMatches } from './pool-reach.js';
@@ -227,8 +227,33 @@ export function buildNodesView(
       return job.state === 'running' && claim !== undefined && claim.expiresAt > nowMs &&
         live.some(record => record.nodeId === claim.nodeId && record.session === claim.session);
     }).map(job => job.id).sort();
-    const slots = live.length && live.every(record => record.slots !== undefined) && jobs !== UNKNOWN
-      ? Math.max(0, live.reduce((sum, record) => sum + (record.slots ?? 0), 0) - jobs.length) : UNKNOWN;
+    // Per-session running claims under the same liveness rule `jobs` applies.
+    const claimsOn = (record: NodeRecord): number => state === null || mirrorStale ? 0 : state.jobs.filter(job => {
+      const claim = job.claim;
+      return job.state === 'running' && claim !== undefined && claim.expiresAt > nowMs &&
+        claim.nodeId === record.nodeId && claim.session === record.session;
+    }).length;
+    let slots: number | Unknown;
+    if (!(live.length && live.every(record => record.slots !== undefined) && jobs !== UNKNOWN)) slots = UNKNOWN;
+    else if (state?.pool === undefined) {
+      slots = Math.max(0, live.reduce((sum, record) => sum + (record.slots ?? 0), 0) - jobs.length);
+    } else {
+      // Pool workers on one physical host share a single measured slot budget:
+      // each session's advertised bound already includes that shared free
+      // space, so summing bounds counts the host's free slots once per session.
+      // Collapse records sharing a measured capacity hostId to the tightest
+      // remaining bound (slots minus that session's own claims); records with
+      // no sample keep their own advertised bound.
+      const byHost = new Map<string, number>();
+      let total = 0;
+      for (const record of live) {
+        const remaining = Math.max(0, (record.slots ?? 0) - claimsOn(record));
+        const hostId = isNodeCapacity(record.capacity) ? record.capacity.hostId : null;
+        if (hostId === null) total += remaining;
+        else byHost.set(hostId, Math.min(byHost.get(hostId) ?? remaining, remaining));
+      }
+      slots = Math.max(0, total + [...byHost.values()].reduce((sum, free) => sum + free, 0));
+    }
     const held = live.map(record => record.capacity?.held).find(Boolean);
     const newest = [...live].sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
     const joined = machine.isSelf || machine.records.length > 0;
