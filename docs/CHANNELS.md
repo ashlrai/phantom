@@ -251,6 +251,17 @@ a replied task's RESULT text stays under this source rather than listing
 twice, `expiresAt` is the task's real deadline while it is still the peer's
 obligation and null once replied or expired, and each item deep-links
 `phm fleet imessage-tasks dispatch --apply` and `list --job`),
+unsettled teammate-responder receipts (the same `teammate-replies.json`
+store `runTeammateResponder` validates and rewrites each pass: reply rows
+still claimed, drafted or sending list their attempt state beside the
+unanswered text — `sending` warns since the send outcome stays unconfirmed
+until chat.db reconcile proves it — and work receipts still `prepared` or
+`appending` list an RQ-DOT request whose queue append never confirmed,
+`appending` warning because the responder's own recovery can wedge every
+later pass on an absent line while `prepared` lists info; job items cite
+the RQ-DOT id for `--job` and deep-link `phm queue list`/`dupcheck`, and
+sent, suppressed and queued rows never list — a queued row is ready.tsv's
+own pending work),
 live owner-thread inbound messages no recorded outbound reply cites (the same
 awaiting-reply mark `phm comms status` counts, each item deep-linking
 `phm comms thread` and `phm comms send-owner --reply-to`), recorded owner

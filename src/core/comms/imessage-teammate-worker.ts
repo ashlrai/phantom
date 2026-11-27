@@ -17,11 +17,12 @@ import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent as classifyInboxIntent, markTeammateTextsAnswered, readTeammateTexts } from './imessage-teammate-inbox.js';
 import { isTeammateTaskPeer, runTeammateTasks } from './imessage-teammate-tasks.js';
-import { approvedTeammateHandle, reconcileTeammateMessage, sendApprovedTeammateMessage, type TeamMessageReceipt, type TeamTransportOptions } from './imessage-teammate-transport.js';
+import { approvedTeammateHandle, reconcileTeammateMessage, sendApprovedTeammateMessage, type TeamTransportOptions } from './imessage-teammate-transport.js';
+import { isTeammateResponderStore, TEAMMATE_WORK_LANES, TEAMMATE_WORK_REPOS } from './imessage-teammate-receipts.js';
+import type { TeammateResponderStore, TeammateWorkReceipt } from './imessage-teammate-receipts.js';
 
-interface Reply { rowid: number; senderId: string; state: 'claimed' | 'drafted' | 'sending' | 'sent' | 'suppressed'; at: number; claimUntil: number; text?: string; attemptedAt?: number; sendAttempts?: number; receipt?: TeamMessageReceipt; tries?: number; ack?: boolean }
-interface QueuedWork { hash: string; id: string; repo: string; lane: string; at: number; state: 'prepared' | 'appending' | 'queued' }
-interface Store { v: 1; replies: Reply[]; jobs?: QueuedWork[]; scanAfter?: number; scanCeiling?: number }
+type Store = TeammateResponderStore;
+type QueuedWork = TeammateWorkReceipt;
 export interface TeammateWorkerOptions extends TeamTransportOptions {
   runsDir?: string;
   now?: () => number;
@@ -34,8 +35,6 @@ export interface TeammateWorkerOptions extends TeamTransportOptions {
 const MAX_BYTES = 1024 * 1024;
 const CLAIM_MS = 120000;
 const DAY_MS = 86400000;
-const REPOS = ['phantom', 'phantom-secrets', 'locus', 'lexicon', 'ashlr-md', 'ashlr-stack', 'ashlr-plugin'];
-const LANES = ['codex-personal', 'claude', 'devin', 'claude-api', 'codex-local', 'omlx'];
 
 // Node has no built-in flock. This fixed program shares dispatchd's POSIX lock;
 // all paths, state and message-derived bytes arrive as data, never shell code.
@@ -98,13 +97,13 @@ function queueTeammateWork(text: string, runs: string, store: Store, save: () =>
   ensurePrivateDirectory(queue); ensurePrivateDirectory(prompts);
   if (!job) {
     if (store.jobs.length >= 512) throw new Error('Teammate work receipts full');
-    const repo = new RegExp(`\\b(${[...REPOS].sort((a, b) => b.length - a.length).join('|')})\\b`, 'i').exec(request)?.[1]?.toLowerCase() ?? 'phantom';
+    const repo = new RegExp(`\\b(${[...TEAMMATE_WORK_REPOS].sort((a, b) => b.length - a.length).join('|')})\\b`, 'i').exec(request)?.[1]?.toLowerCase() ?? 'phantom';
     const lane = [...request.matchAll(/\b(?:lane(?:\s*[:=]\s*|\s+)|on\s+)([a-z][a-z0-9-]*)\b/gi)]
-      .map(match => match[1].toLowerCase()).find(value => LANES.includes(value));
+      .map(match => match[1].toLowerCase()).find(value => (TEAMMATE_WORK_LANES as readonly string[]).includes(value));
     // Only an explicit lane selector can change routing; ordinary prose such
     // as "analysis on Z" does not name a lane.
     const explicitLane = /\blane(?:\s*[:=]\s*|\s+)([a-z][a-z0-9-]*)\b/i.exec(request)?.[1]?.toLowerCase();
-    if (explicitLane && !LANES.includes(explicitLane)) throw new Error('Unknown teammate lane');
+    if (explicitLane && !(TEAMMATE_WORK_LANES as readonly string[]).includes(explicitLane)) throw new Error('Unknown teammate lane');
     const slug = request.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48).replace(/-$/, '') || 'work';
     const suffix = Math.max(Math.floor(now), ...store.jobs.map(value => Number(value.id.split('-').at(-1)) + 1));
     job = { hash, id: `RQ-DOT-${slug}-${suffix}`, repo, lane: lane ?? 'codex-personal', at: now, state: 'prepared' };
@@ -184,12 +183,9 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
     if (held.state !== 'acquired') return { ...report, state: 'busy' };
     const path = join(dir, 'teammate-replies.json');
     const raw = read(path, dir, MAX_BYTES);
-    const store: Store = raw === null ? { v: 1, replies: [] } : JSON.parse(raw) as Store;
-    if (store.v !== 1 || !Array.isArray(store.replies) || store.replies.length > 256 || store.replies.some(row => !Number.isSafeInteger(row.rowid) || row.rowid < 1 || !/^imessage:[a-f0-9]{16}$/.test(row.senderId) || !['claimed', 'drafted', 'sending', 'sent', 'suppressed'].includes(row.state) || !Number.isFinite(row.at) || !Number.isFinite(row.claimUntil) || row.text !== undefined && (typeof row.text !== 'string' || row.text.length > 4000) || row.attemptedAt !== undefined && !Number.isFinite(row.attemptedAt) || row.sendAttempts !== undefined && (!Number.isSafeInteger(row.sendAttempts) || row.sendAttempts < 0) || row.tries !== undefined && !Number.isSafeInteger(row.tries)) || store.scanAfter !== undefined && (!Number.isSafeInteger(store.scanAfter) || store.scanAfter < 0) || store.scanCeiling !== undefined && (!Number.isSafeInteger(store.scanCeiling) || store.scanCeiling < 1)) return report;
-    if (store.jobs !== undefined && (!Array.isArray(store.jobs) || store.jobs.length > 512 || store.jobs.some(job =>
-      !job || !/^[a-f0-9]{64}$/.test(job.hash) || !/^RQ-DOT-[a-z0-9-]+-\d+$/.test(job.id)
-      || !REPOS.includes(job.repo) || !LANES.includes(job.lane) || !Number.isSafeInteger(job.at) || job.at < 0
-      || !['prepared', 'appending', 'queued'].includes(job.state)))) return report;
+    const parsed: unknown = raw === null ? { v: 1, replies: [] } : JSON.parse(raw);
+    if (!isTeammateResponderStore(parsed)) return report;
+    const store = parsed;
     const save = (): void => {
       const value = JSON.stringify(store);
       if (Buffer.byteLength(value) > MAX_BYTES || store.replies.length > 256) throw new Error('Teammate receipts full');
