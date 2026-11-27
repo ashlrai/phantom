@@ -42,8 +42,8 @@
  *  - Healthy-only evidence. A missing ledger yields no items (a fresh
  *    install or autofill never applied is normal, not a finding); an
  *    unreadable source yields no items. A clipped tail can prove recurrence,
- *    but cannot establish the full-window refusal share. Malformed lines and rows missing
- *    the fields the fold needs are skipped, never counted.
+ *    but cannot establish the full-window refusal share. Malformed decision
+ *    evidence also withholds the share while preserving observed recurrence.
  *  - Windowed on recorded evidence. A rejection counts only when its
  *    recorded timestamp lands inside the window; a row with no
  *    parseable timestamp cannot anchor a cell, so a ledger that stopped
@@ -204,20 +204,10 @@ export interface GenerationRejectionFold {
   tracked: number;
 }
 
-/**
- * Pure: fold one generation.jsonl text into recurring refusal cells.
- * Each line must parse to an object carrying a job id, a drafted or
- * rejected event and a parseable timestamp inside the window; anything
- * else is skipped like the sibling readers' own parse. Replayed decisions
- * with identical evidence count once. Rejections group
- * by (src, reason); drafts tally per src so prompts can quote the
- * refusal share. The 'unknown' src bucket never emits — it is the
- * catch-all for rows that lost their channel, not a channel.
- */
-export function foldGenerationRejections(
+function readGenerationRejections(
   text: string,
   opts: { nowMs: number; windowMs?: number },
-): GenerationRejectionFold {
+): { fold: GenerationRejectionFold; incomplete: boolean } {
   const windowMs = opts.windowMs !== undefined && Number.isFinite(opts.windowMs) && opts.windowMs > 0
     ? opts.windowMs
     : GENERATION_WINDOW_MS;
@@ -229,20 +219,33 @@ export function foldGenerationRejections(
   let rejections = 0;
   let drafts = 0;
   let tracked = 0;
+  let incomplete = false;
 
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
     let row: unknown;
-    try { row = JSON.parse(line); } catch { continue; }
-    if (!isRecord(row) || row['schema'] !== GENERATION_EVENT_SCHEMA) continue;
-    const event = firstString(row, EVENT_KEYS)?.toLowerCase();
-    if (event !== 'drafted' && event !== 'rejected') continue;
+    try { row = JSON.parse(line); } catch {
+      incomplete = true;
+      continue;
+    }
+    if (!isRecord(row)) {
+      incomplete = true;
+      continue;
+    }
+    if (row['schema'] !== GENERATION_EVENT_SCHEMA) continue;
     const atMs = parseAt(row);
-    if (atMs === null || atMs < windowStart || atMs > opts.nowMs) continue;
+    if (atMs !== null && (atMs < windowStart || atMs > opts.nowMs)) continue;
+    const event = firstString(row, EVENT_KEYS)?.toLowerCase();
     const job = firstString(row, JOB_KEYS);
-    if (job === null) continue;
+    if (atMs === null || job === null || (event !== 'drafted' && event !== 'rejected')) {
+      incomplete = true;
+      continue;
+    }
     const src = firstString(row, SRC_KEYS) ?? UNKNOWN_SRC;
-    const reason = event === 'rejected' ? firstString(row, REASON_KEYS) ?? 'unknown' : null;
+    if (src === UNKNOWN_SRC) incomplete = true;
+    const recordedReason = firstString(row, REASON_KEYS);
+    if (event === 'rejected' && recordedReason === null) incomplete = true;
+    const reason = event === 'rejected' ? recordedReason ?? 'unknown' : null;
     const decisionKey = JSON.stringify([job, src, event, reason, atMs]);
     if (seenDecisions.has(decisionKey)) continue;
     seenDecisions.add(decisionKey);
@@ -276,7 +279,24 @@ export function foldGenerationRejections(
     cell.srcDecisions = srcDecisions.get(cell.src) ?? 0;
   }
 
-  return { cells: firing, rejections, drafts, tracked };
+  return { fold: { cells: firing, rejections, drafts, tracked }, incomplete };
+}
+
+/**
+ * Pure: fold one generation.jsonl text into recurring refusal cells.
+ * Each line must parse to an object carrying a job id, a drafted or
+ * rejected event and a parseable timestamp inside the window; anything
+ * else is skipped like the sibling readers' own parse. Replayed decisions
+ * with identical evidence count once. Rejections group
+ * by (src, reason); drafts tally per src so prompts can quote the
+ * refusal share. The 'unknown' src bucket never emits — it is the
+ * catch-all for rows that lost their channel, not a channel.
+ */
+export function foldGenerationRejections(
+  text: string,
+  opts: { nowMs: number; windowMs?: number },
+): GenerationRejectionFold {
+  return readGenerationRejections(text, opts).fold;
 }
 
 /** What each recorded refusal reason means at the intake boundary — kept to one clause so prompts stay short. */
@@ -299,18 +319,19 @@ const NO_CHANGE = 'If the window has rolled forward, the refusals were correct f
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
-function cellPrompt(cell: GenerationCell, windowDays: number, truncated: boolean): string {
+function cellPrompt(cell: GenerationCell, windowDays: number, truncated: boolean, incomplete: boolean): string {
   const src = safeToken(cell.src, 80);
   const reason = safeToken(cell.reason, 80);
   const jobs = cell.jobs.size;
   const days = cell.days.size;
-  const share = !truncated && cell.srcDecisions > 0 ? ` — ${cell.events} of ${cell.srcDecisions} recorded ${src} decisions inside the window` : '';
+  const share = !truncated && !incomplete && cell.srcDecisions > 0 ? ` — ${cell.events} of ${cell.srcDecisions} recorded ${src} decisions inside the window` : '';
   const lines: string[] = [
     `Phantom's queue intake keeps refusing candidates — ${plural(cell.events, 'rejection')} for reason '${reason}' from '${src}' across ${plural(days, 'distinct UTC day')} and ${plural(jobs, 'distinct job')} inside the ${windowDays}-day window${share}, the self-improvement work this backlog exists for.`,
     '',
     `Every applied autofill or supply-floor pass records each candidate it drafts or refuses in the generation journal. '${reason}' means ${reasonNote(cell.reason)}. Refusals are the intake's own filter working — the question is whether the candidate sources keep minting work the fleet already refuses, or the refusal checks in src/core/fleet/queue-autofill.ts (candidateRank, stoppedFamilies, laneLacks) mis-fire or their vocabulary drifted from what the sources produce.`,
   ];
   if (truncated) lines.push('', 'The generation journal was clipped. These counts cover only the retained decisions in the window.');
+  if (incomplete) lines.push('', 'The generation journal contains malformed or unattributed decisions. The full-window refusal share is unknown.');
   lines.push('', EVIDENCE);
   if (cell.examples.length > 0) {
     lines.push('', `Example job ids: ${cell.examples.map((id) => safeToken(id, 80)).join(', ')}.`);
@@ -322,7 +343,7 @@ function cellPrompt(cell: GenerationCell, windowDays: number, truncated: boolean
   return lines.join('\n');
 }
 
-function cellItem(cell: GenerationCell, repo: string, windowDays: number, truncated: boolean): CloudBacklogItem {
+function cellItem(cell: GenerationCell, repo: string, windowDays: number, truncated: boolean, incomplete: boolean): CloudBacklogItem {
   const src = safeToken(cell.src, 80);
   const reason = safeToken(cell.reason, 80);
   const id = `fleet-generation-${createHash('sha256').update(`generation-yield:${cell.src}:${cell.reason}`).digest('hex').slice(0, 16)}`;
@@ -330,7 +351,7 @@ function cellItem(cell: GenerationCell, repo: string, windowDays: number, trunca
   return {
     id,
     title: title.slice(0, MAX_TITLE_CHARS),
-    prompt: cellPrompt(cell, windowDays, truncated),
+    prompt: cellPrompt(cell, windowDays, truncated, incomplete),
     area: 'fleet-generation',
     priority: 3,
     ...(CLOUD_REPO_PATTERN.test(repo) ? { repo } : {}),
@@ -364,11 +385,11 @@ export async function generatorYieldBacklogItems(opts: GeneratorYieldItemsOption
     const windowMs = opts.windowMs !== undefined && Number.isFinite(opts.windowMs) && opts.windowMs > 0
       ? opts.windowMs
       : GENERATION_WINDOW_MS;
-    const fold = foldGenerationRejections(text, { nowMs: now, windowMs });
+    const { fold, incomplete } = readGenerationRejections(text, { nowMs: now, windowMs });
     if (fold.cells.length === 0) return [];
     const windowDays = Math.max(1, Math.round(windowMs / 86_400_000));
     const limit = Math.max(1, Math.min(opts.limit ?? GENERATOR_YIELD_MAX_ITEMS, GENERATOR_YIELD_ITEM_HARD_MAX));
-    return fold.cells.slice(0, limit).map((cell) => cellItem(cell, repo, windowDays, truncated));
+    return fold.cells.slice(0, limit).map((cell) => cellItem(cell, repo, windowDays, truncated, incomplete));
   } catch {
     return [];
   }
