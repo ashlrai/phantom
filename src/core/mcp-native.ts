@@ -1664,7 +1664,7 @@ const TOOLS: NativeToolImpl[] = [
   },
   {
     name: 'ashlr_comms_agent_status',
-    description: 'Comms role status: parent Leader role, unset lane, KILL, pause, pending inbox depth, draft count, registered channel adapters and the standing-approvals file verdict (accepted/reason plus entry counts, never the approval or owner lists). Read-only. No send.',
+    description: 'Comms role status: parent Leader role, unset lane, KILL, pause, pending inbox depth, draft count, registered channel adapters, the standing-approvals file verdict (accepted/reason plus entry counts, never the approval or owner lists) and the last completed pass — its lane, triage depth, send outcome counts and per-message triage decisions (summaries is null on passes recorded before the field existed). Read-only. No send.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     safety: 'read',
     handler: async () => {
@@ -1697,7 +1697,7 @@ const TOOLS: NativeToolImpl[] = [
   },
   {
     name: 'ashlr_comms_agent_run',
-    description: 'Triage the Comms inbox and draft replies. The router picks a lane only from the lanes argument. Sends follow the Comms send policy.',
+    description: 'Triage the Comms inbox and draft replies. The router picks a lane only from the lanes argument. Sends follow the Comms send policy. The report lists each inbox message\'s class and scrubbed summary alongside the triage counts and send outcomes.',
     inputSchema: {
       type: 'object',
       properties: { lanes: { type: 'string' } },

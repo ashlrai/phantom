@@ -57,7 +57,10 @@ phm comms-agent drafts --status sent --transport email --json
 ```
 
 `--lanes` is the candidate set. Omit it and the run reports no lane rather
-than picking one. `--dir` selects an isolated runs directory. `drafts`
+than picking one. The run report lists each inbox message's mail class and
+scrubbed one-line summary under `summaries`, and the same per-message
+decisions are appended to the run journal `status` reads. `--dir` selects
+an isolated runs directory. `drafts`
 takes `--status pending|sent|all` (default `pending`) and `--transport`
 (one of the Comms transports) to narrow the read; the filters apply to the
 `drafts` verb only.
@@ -78,7 +81,12 @@ the verdict is unknown, never guessed. `lastRun` reports the last pass that
 completed, read from the run journal `run` appends to `runs.jsonl`: `source`
 is `missing` when no pass ever completed (a verified-empty journal),
 `available` when a record was read — `run` then carries the completion
-time, lane, triage depth and per-status send outcome counts — and
+time, lane, triage depth, per-status send outcome counts and the pass's
+per-message triage decisions (`summaries`: each inbox message's id, mail
+class and scrubbed one-line summary, so the journal says which mail was
+kept, archived or drafted — `null` on records written before the field
+existed, since those passes recorded counts only and the decisions are
+unknown, never reported as none) — and
 `unavailable` when the journal cannot be read or holds no readable record,
 so a pass may have run and the answer stays unknown rather than reported as
 never-ran. A pass that fails mid-flight appends nothing, so a stale `at` is

@@ -21,7 +21,7 @@ import {
   appendArchive, appendDraft, appendOwnerNotice, appendRunRecord, appendSendLog, listDrafts, readInbox, readOwnerApprovals, readRunJournal, readSendLog, writeInbox,
   type ApprovalsReason, type CommsDraft, type CommsRunRecord, type OwnerApprovals,
 } from './store.js';
-import { triageInbox, type InboxMessage } from './triage.js';
+import { triageInbox, type InboxMessage, type TriageSummary } from './triage.js';
 
 export interface LinkedInConnector {
   mode: 'official-api' | 'sanctioned-connector';
@@ -59,6 +59,10 @@ export interface CommsRunReport {
   laneReason: string;
   grokRequired: false;
   triage: { kept: number; archived: number; drafted: number; deleted: 0 };
+  /** One entry per inbox message the pass classified — id, mail class and
+   * the scrubbed one-line summary — so the report says which mail was kept,
+   * archived or drafted, not only how many. */
+  summaries: TriageSummary[];
   sends: Array<{ transport: CommsTransport; recipient: string; status: DeliverResult['status']; reason: string }>;
 }
 
@@ -331,6 +335,7 @@ export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunR
       drafted: sends.filter(send => send.status === 'drafted').length,
       deleted: 0,
     },
+    summaries: triage.summaries,
     sends,
   };
   // The run journal is the pass's own audit record: `status` reads it to say
@@ -344,6 +349,7 @@ export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunR
     laneReason: report.laneReason,
     triage: report.triage,
     sends: report.sends,
+    summaries: report.summaries,
   };
   try { await appendRunRecord(options.runsDir, record); }
   catch { /* See above: bookkeeping never rewrites a completed pass. */ }
@@ -384,7 +390,10 @@ export async function commsStatus(runsDir: string, deps: {
    * journal cannot be read or holds no readable record — a pass may have run,
    * the answer is unknown, never reported as never-ran. `run` is null unless
    * source is 'available'. A pass that failed mid-flight appends nothing, so
-   * a stale `at` is itself the signal that passes are not completing. */
+   * a stale `at` is itself the signal that passes are not completing.
+   * `summaries` carries the pass's per-message triage decisions; it is null
+   * on records written before the field existed — those passes recorded
+   * counts only, so the decisions are unknown, never reported as none. */
   lastRun: {
     source: 'missing' | 'available' | 'unavailable';
     run: {
@@ -395,6 +404,7 @@ export async function commsStatus(runsDir: string, deps: {
       archived: number;
       drafted: number;
       sendOutcomes: { sent: number; drafted: number; refused: number };
+      summaries: TriageSummary[] | null;
     } | null;
   };
 }> {
@@ -422,6 +432,7 @@ export async function commsStatus(runsDir: string, deps: {
         archived: record.triage.archived,
         drafted: record.triage.drafted,
         sendOutcomes,
+        summaries: record.summaries ?? null,
       } };
     }).catch(() => ({ source: 'unavailable' as const, run: null })),
   ]);
