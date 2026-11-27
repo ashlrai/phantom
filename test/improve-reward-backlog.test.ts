@@ -321,6 +321,21 @@ describe('rewardBacklogItems', () => {
     expect(await rewardBacklogItems({ repo: 'ashlrai/phantom', ledgerPath: path, now: NOW_MS })).toEqual([]);
   });
 
+  it.each(['{"v":', '{"v":1}'])('withholds collapse items with an invalid row (%s)', async (invalidRow) => {
+    const rows = [
+      ...poolSeries('claude', 2, 2, (d, i) => notHeld(`n${d}-${i}`, NOW_MS - d * DAY)),
+      held('h1', NOW_MS),
+      held('h2', NOW_MS - DAY),
+      held('h3', NOW_MS - DAY),
+    ];
+    const ledgerPath = await ledger('led-invalid', [...rows, invalidRow]);
+    const opts = { repo: 'ashlrai/phantom', ledgerPath, now: NOW_MS };
+    expect(await rewardBacklogItems(opts)).toEqual([]);
+
+    await writeFile(ledgerPath, rows.join('\n') + '\n');
+    expect(await rewardBacklogItems(opts)).toHaveLength(1);
+  });
+
   it('waits until a future receipt enters the evidence window before emitting a brief', async () => {
     const path = await ledger('led-future', [
       notHeld('n1', NOW_MS - DAY),

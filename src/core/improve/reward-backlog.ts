@@ -51,8 +51,8 @@
  *    'phantom'. Row-level repo names are quoted as evidence, never
  *    used to filter — a pool's arm quality is fleet-level in
  *    calibration.
- *  - A truncated ledger yields no items. The omitted rows can change
- *    the majority verdict and which row was recorded first for a job.
+ *  - A truncated ledger or one with invalid rows yields no items. Missing
+ *    evidence can change the majority verdict and which row came first.
  *  - Dedup is downstream: item ids hash the pool identity — never the
  *    counts or timestamps — so a refresh re-derives the same ids and
  *    appendUserBacklogItems adds only what is new; a pool that recovers
@@ -317,7 +317,7 @@ export async function rewardBacklogItems(opts: RewardBacklogItemsOptions): Promi
     const tail = await readLedgerTail(path, REWARD_SIGNAL_MAX_BYTES);
     if (tail.state !== 'read' || tail.truncated) return [];
     const fold = foldRewardJournal(tail.text, nowMs, windowMs);
-    if (fold.records === 0) return [];
+    if (fold.invalidRows > 0 || fold.records === 0) return [];
     const cells = rewardCells(fold);
     const limit = Math.max(1, Math.min(opts.limit ?? REWARD_BACKLOG_MAX_ITEMS, REWARD_BACKLOG_ITEM_HARD_MAX));
     return cells.slice(0, limit).map((cell) => rewardItem(cell, repo));
