@@ -97,9 +97,9 @@ const DETACHED_SCRIPT_FILE = /\.(?:[cm]?[jt]sx?)$/;
  * The program's only reach outside contrib/ is
  * src/core/authority/protected-paths.ts, and a dependency bump can break
  * it through the shared manifests, so the trigger names those inputs; a
- * new cross-boundary import must extend it. examples/, test/ and the
- * root configs stay outside every project on their own boundaries —
- * each needs its own verified program before a check can claim it.
+ * new cross-boundary import must extend it. examples/ and test/ stay
+ * outside every project on their own boundaries — each needs its own
+ * verified program before a check can claim it.
  */
 const CONTRIB_DIR = 'contrib';
 const CONTRIB_ROUTER_DIR = 'contrib/router';
@@ -129,13 +129,50 @@ const SHARED_MANIFEST_FILE = /^package(?:-lock)?\.json$/;
  * project selects on) rather than a file list that would silently rot;
  * a new cross-boundary import needs no trigger edit. A dependency bump
  * can also break the program through @types, so the shared manifests
- * join the trigger. test/, docs/, examples/ and the root configs stay
- * outside: scripts import no test/ module (the shipped fixture bundle
- * rejects test/ inputs outright), and each remaining tree needs its own
- * verified program before a check can claim it.
+ * join the trigger. test/, docs/ and examples/ stay outside: scripts
+ * import no test/ module (the shipped fixture bundle rejects test/
+ * inputs outright), and each remaining tree needs its own verified
+ * program before a check can claim it.
  */
 const SCRIPTS_DIR = 'scripts';
 const BACKEND_SRC_FILE = /^src\/(?!web-ui\/|raycast\/)/;
+
+/**
+ * The root config TypeScript surface — vitest.config.ts and its lane
+ * variants, vite.config.web.ts, and any future root-level *.ts — is the
+ * test and build tooling entrypoint: vitest and vite load these files
+ * through esbuild, which transpiles without checking types, while
+ * ESLint's flat config lints them but cannot type-check. The backend
+ * tsconfig includes only src/, the web and desktop projects their own
+ * trees, and the contrib/scripts file-list programs never see the root,
+ * so a type error in a shipped config passed every gate silently — the
+ * same hole the contrib and scripts checks closed for their trees.
+ * verify-changed closes it the same way: one tsc file-list run over the
+ * whole root config program.
+ *
+ * The program has two root sets:
+ *  - Every .ts-family file directly at the repository root, at any
+ *    future addition — today the five vitest/vite configs. The boundary
+ *    is non-recursive like contrib/router's: nested trees own their own
+ *    programs or stay outside.
+ *  - Every .ts-family file under test/config/, the declaration surface
+ *    the root configs consume: vitest.config.ts imports the lane
+ *    membership .mjs helpers through their .d.mts siblings (the same
+ *    authoring-declaration convention scripts/*.d.mts follows), and tsc
+ *    resolves those imports on its own. The .mjs files themselves stay
+ *    out — the .d.mts is the contract the compiler reads.
+ *
+ * The program's reach outside those roots is node_modules only —
+ * vitest, vite, @vitejs/plugin-react and node: builtins — so the
+ * trigger names the program roots plus the shared manifests, which a
+ * dependency bump can break through @types. A root config gaining a new
+ * cross-boundary import must extend the trigger, exactly as the
+ * contrib check documents. test/ beyond test/config/, docs/,
+ * examples/ and the .mjs/.js root configs (eslint.config.js,
+ * vitest.config.coverage.mjs — linted but never type-checked, like
+ * every other JS surface) stay outside.
+ */
+const TEST_CONFIG_DIR = 'test/config';
 
 /**
  * Shipped .html pages embed three grammars no other check reads: classic and
@@ -218,6 +255,10 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     scriptsTypecheck: changed.some((path) =>
       (path.startsWith(`${SCRIPTS_DIR}/`) && TS_FAMILY_FILE.test(path)) ||
       SHARED_MANIFEST_FILE.test(path) || BACKEND_SRC_FILE.test(path)),
+    rootConfigTypecheck: changed.some((path) =>
+      (!path.includes('/') && TS_FAMILY_FILE.test(path)) ||
+      (path.startsWith(`${TEST_CONFIG_DIR}/`) && TS_FAMILY_FILE.test(path)) ||
+      SHARED_MANIFEST_FILE.test(path)),
     realioLaneCheck: changed.some((path) => REALIO_LANE_TEST_FILE.test(path) || REALIO_LANE_INPUTS.has(path)),
     verseSyncIoCheck: changed.some((path) => VERSE_ROUTE_FILE.test(path) || path === VERSE_SYNC_IO_CHECKER),
   };
@@ -1893,6 +1934,60 @@ export function runScriptsTypecheck(root, files, spawn = spawnSync) {
   return runFileListTypecheck(root, files, spawn, 'scripts');
 }
 
+/**
+ * The whole root config program, sorted for a deterministic command
+ * line: every .ts-family file directly at the repository root (the
+ * vitest/vite config entrypoints, non-recursive like contrib/router's
+ * boundary) plus every .ts-family file under test/config/ at any depth
+ * (the .d.mts declaration surface vitest.config.ts's .mjs imports
+ * resolve to, and any future .ts helper the configs consume). The
+ * root listing comes from a single non-recursive readdir; the
+ * test/config walk prunes node_modules — vendored trees are never
+ * program roots. An absent or unreadable directory yields no entries
+ * for that branch — the caller skips rather than fails.
+ */
+export function rootConfigProgramFiles(root, readdir = readdirSync) {
+  const files = [];
+  try {
+    for (const entry of readdir(resolve(root), { withFileTypes: true })) {
+      if (entry.isFile() && TS_FAMILY_FILE.test(entry.name)) files.push(entry.name);
+    }
+  } catch { /* the repository root is always readable; no roots means skip */ }
+  const walk = (rel) => {
+    let entries;
+    try {
+      entries = readdir(resolve(root, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const child = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules') continue;
+        walk(child);
+      } else if (entry.isFile() && TS_FAMILY_FILE.test(entry.name)) {
+        files.push(child);
+      }
+    }
+  };
+  walk(TEST_CONFIG_DIR);
+  return [...new Set(files)].sort();
+}
+
+/**
+ * Type-check the whole root config program in one tsc run — the same
+ * file-list invocation runContribTypecheck and runScriptsTypecheck
+ * share, because the configs execute under vitest/vite, which
+ * transpile without checking types, and no tsconfig project covers the
+ * root. tsc follows the configs' vitest/vite imports and the
+ * test/config .d.mts declarations on its own; the closure stays small
+ * (five configs plus three declarations today), so the shared 4 GB heap
+ * ceiling is generous headroom rather than a requirement.
+ */
+export function runRootConfigTypecheck(root, files, spawn = spawnSync) {
+  return runFileListTypecheck(root, files, spawn, 'root config');
+}
+
 /** Shared root for the typecheck cache and slots; worktrees resolve to the git common dir. */
 export function tscSharedRoot(root, env = process.env, exec = execFileSync) {
   return env.PHANTOM_TSC_CACHE_DIR
@@ -2316,7 +2411,7 @@ function main() {
     const projectScope = projectNames.length > 1
       ? `${projectNames.slice(0, -1).join(', ')} and ${projectNames.at(-1)}`
       : projectNames[0] ?? null;
-    const scope = [projectScope, selection.contribTypecheck && 'contrib', selection.scriptsTypecheck && 'scripts'].filter(Boolean).join(' and ') || 'typecheck skipped';
+    const scope = [projectScope, selection.contribTypecheck && 'contrib', selection.scriptsTypecheck && 'scripts', selection.rootConfigTypecheck && 'root config'].filter(Boolean).join(' and ') || 'typecheck skipped';
     console.log(`verify: ${new Set(changed).size} changed files (${comparison?.mode ?? 'merge-base'}), ${scope}${projects.backend || projects.web || projects.desktop ? ', incremental' : changed.length ? ': no project change' : ': no changes'}`);
     const shebangScripts = selectShebangScripts(changed, existing, (path) => readFirstLine(root, path));
     pythonFiles = [...new Set([...selection.pythonFiles, ...shebangScripts.python])];
@@ -2590,7 +2685,7 @@ function main() {
   } else {
     run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
   }
-  if (projects.backend || projects.web || projects.desktop || selection.contribTypecheck || selection.scriptsTypecheck) try {
+  if (projects.backend || projects.web || projects.desktop || selection.contribTypecheck || selection.scriptsTypecheck || selection.rootConfigTypecheck) try {
     const timeout = Number(process.env.PHANTOM_TSC_TIMEOUT_SECONDS ?? 900);
     if (!Number.isFinite(timeout) || !Number.isInteger(timeout * 1000) || timeout * 1000 < 1 || timeout * 1000 > 2_147_483_647) {
       throw new Error('PHANTOM_TSC_TIMEOUT_SECONDS must be a positive number of seconds within the supported timeout range');
@@ -2623,6 +2718,21 @@ function main() {
           if (scriptsFiles.length === 0) {
             console.log('PASS scripts typecheck skipped: no program files under scripts/');
           } else if (!runScriptsTypecheck(root, scriptsFiles)) {
+            process.exitCode = 1;
+          }
+        }
+      }
+      if (!selection.rootConfigTypecheck) {
+        console.log('PASS root config typecheck skipped: no root config program input changed');
+      } else {
+        const rootConfigs = parserPackagePreflight(root, 'typescript');
+        if (!rootConfigs.ok) {
+          console.log(`SKIP root config typecheck: ${rootConfigs.reason}`);
+        } else {
+          const rootConfigFiles = rootConfigProgramFiles(root);
+          if (rootConfigFiles.length === 0) {
+            console.log('PASS root config typecheck skipped: no program files at the repository root or under test/config/');
+          } else if (!runRootConfigTypecheck(root, rootConfigFiles)) {
             process.exitCode = 1;
           }
         }
