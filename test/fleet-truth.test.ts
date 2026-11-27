@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { composeBrief, gatherBriefFacts } from '../src/core/comms/leader-brief.js';
 import { getFleetTruth, getFleetTruthToday, resetFleetTruthCache, startOfDayInZone } from '../src/core/fleet/fleet-truth.js';
 import { buildFleetPulseMessage } from '../src/core/comms/fleet-pulse.js';
@@ -23,6 +23,15 @@ function ghRows(n: number, firstAtMs = ET_MIDNIGHT + 60_000): string {
 
 const emptyDigest = { ledger: async () => [] };
 const noRunsDir = join(mkdtempSync(join(tmpdir(), 'fleet-truth-')), 'none');
+
+// Initialize the brief's lazy source modules as suite setup. Individual
+// assertions keep their normal timeout; no test pays for the cold import graph.
+beforeAll(async () => {
+  await gatherBriefFacts(ET_MIDNIGHT, NOW, { digest: { ...emptyDigest,
+    fleetTruth: (since) => getFleetTruth(since, { nowMs: NOW, gh: async () => response([]),
+      ledgerMerges: () => [], runsDir: noRunsDir, liveWorkers: async () => null }),
+  } });
+}, 60_000);
 
 beforeEach(() => resetFleetTruthCache());
 
@@ -188,6 +197,77 @@ describe('getFleetTruth', () => {
     expect(truth.queued).toBe(2);
   });
 
+  it('counts lane-open ready rows as queued supply', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    writeFileSync(join(root, 'queue', 'ready.tsv'), [
+      // requirements preferred_lane:null — open market supply on any lane.
+      'RQ-TEST-OPEN\trepo\tclaude\twork\tqueue/prompts/open.md\t{"preferred_lane":null}',
+      'RQ-TEST-HINT\trepo\tclaude\twork\tqueue/prompts/hint.md',
+      // Held work is blocked, never ready.
+      'PARKED-BUDGET\tRQ-TEST-PARK\tclaude\twork\trepo\tqueue/prompts/park.md',
+      '',
+    ].join('\n'));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root });
+    expect(truth.queued).toBe(2);
+    expect(truth.blocked).toBe(1);
+  });
+
+  it('counts each ready job once across repeated rows', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    writeFileSync(join(root, 'queue', 'ready.tsv'), [
+      // Two rows for one job on different lane hints: the market launches once.
+      'RQ-TEST-DUP\trepo\tclaude\twork\tqueue/prompts/dup-a.md',
+      'RQ-TEST-DUP\trepo\tdevin\twork\tqueue/prompts/dup-b.md',
+      'RQ-TEST-SOLO\trepo\tclaude\twork\tqueue/prompts/solo.md',
+      '',
+    ].join('\n'));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root });
+    expect(truth.queued).toBe(2);
+  });
+
+  it.each([true, false])('counts mixed hinted and lane-open duplicates once (open first: %s)', async (openFirst) => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    const hinted = 'RQ-TEST-MIXED\trepo\tclaude\twork\tqueue/prompts/mixed.md';
+    const open = hinted + '\t{"preferred_lane":null}';
+    writeFileSync(join(root, 'queue', 'ready.tsv'), [
+      ...(openFirst ? [open, hinted] : [hinted, open]),
+      hinted,
+      'RQ-TEST-OTHER\trepo\tdevin\twork\tqueue/prompts/other.md',
+      'PARKED-BUDGET\tRQ-TEST-PARK\tclaude\twork\trepo\tqueue/prompts/park.md',
+    ].join('\n'));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root });
+    expect(truth.queued).toBe(2);
+    expect(truth.blocked).toBe(1);
+  });
+
+  it('resolves spec-less ready rows through router-queue envelopes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    writeFileSync(join(root, 'queue', 'ready.tsv'), [
+      // Empty lane cell; the envelope's preferred_lane supplies the hint.
+      'RQ-TEST-ENV\trepo\t\twork\tqueue/prompts/env.md',
+      'RQ-TEST-ENV2\trepo\t\twork\tqueue/prompts/env2.md',
+      // The envelope is market-invalid (malformed exclusive): dead work.
+      'RQ-TEST-DEAD\trepo\tclaude\twork\tqueue/prompts/dead.md',
+      // Envelope names no lane: explicit open supply.
+      'RQ-TEST-FREE\trepo\tclaude\twork\tqueue/prompts/free.md',
+      '',
+    ].join('\n'));
+    writeFileSync(join(root, 'queue', 'router-queue.md'), [
+      '- READY RQ-TEST-ENV (P2, repo=repo, preferred_lane=devin): ship the env row',
+      '- READY RQ-TEST-ENV2 (P2, repo=repo, preferred_lane=codex): ship the env2 row',
+      '- READY RQ-TEST-DEAD (P2, repo=repo, exclusive=bogus): ship the dead row',
+      '- READY RQ-TEST-FREE (P2, repo=repo): ship the free row',
+      '',
+    ].join('\n'));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root });
+    // ENV + ENV2 resolve to hinted rows, FREE to lane-open supply, DEAD drops.
+    expect(truth.queued).toBe(3);
+  });
+
   it('falls back to live job pids when admission.json is stale', async () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
     mkdirSync(join(root, 'queue'));
@@ -198,7 +278,6 @@ describe('getFleetTruth', () => {
   });
 });
 
-// gatherBriefFacts cold-imports the leader/cloud modules; give the first call room.
 describe('evening brief', { timeout: 60_000 }, () => {
   const sources = (gh: () => Promise<string>) => ({
     digest: {

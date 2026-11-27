@@ -22,6 +22,11 @@ and the dates quoted in discovery briefs.
 
 ## Fleet lane ledger
 
+`parseUsageJournals(texts, asOfMs?)` (`src/core/fleet/lane-console.ts`) selects
+the latest journal row per pool. The optional cutoff is inclusive and uses
+epoch milliseconds. Rows after the cutoff are omitted without counting as
+malformed. With no cutoff, all observation times are eligible.
+
 `laneSupplyLane(view, nowMs, openRows?, launchHeadroom?)`
 (`src/core/fleet/lane-supply.ts`) accepts an optional projected launch headroom.
 Zero suppresses idle alarms and null preserves unknown headroom. When the
@@ -465,7 +470,7 @@ head SHA, a nonempty conclusion, or a parseable update time within the
 rerun's freshness guard.
 The same module exports `observedAttempts(entries, nowMs)` for journal
 consumers. It returns the earliest visible attempt per case-insensitive
-repository, head SHA and workflow run ID. Conflicting sets of triggering
+repository and workflow run ID. Conflicting head SHAs or sets of triggering
 test IDs clear both per-test fields while preserving the attempt count.
 `src/core/fleet/ci-flakes.ts` exports `recurringFlakes(rows, opts?)`,
 `flakeJobId(repo, test)` and `enqueueFlakeFixes(flakes, absoluteQueuePath)`:

@@ -121,7 +121,10 @@ describe('resident CI reruns', () => {
     expect(status.repos[report.repo]).toMatchObject({ attempted: 1, skippedDuplicate: 1, skippedCap: 0 });
     expect(gh.mock.calls).toEqual([[['run', 'rerun', '126', '--failed', '--repo', report.repo]]]);
   });
-  it('withholds disputed triggering tests from stabilization once the conflict is visible', async () => {
+  it.each([
+    ['triggering tests', { tests: ['test/b.test.ts > b'] }],
+    ['head SHA', { head: 'd'.repeat(40) }],
+  ])('withholds stabilization evidence when attempt receipts disagree on %s', async (_field, conflict) => {
     const { opts, report } = setup();
     const test = report.groups[0]!.testId;
     const other = 'test/b.test.ts > b';
@@ -132,7 +135,7 @@ describe('resident CI reruns', () => {
     const rows = [
       ...attempts,
       { ...attempts[0]!, tests: [other, test, test] },
-      { ...attempts[0]!, at: '2026-01-01T12:01:00Z', tests: [other] },
+      { ...attempts[0]!, ...conflict, at: '2026-01-01T12:01:00Z' },
     ];
     appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
     expect(readCiReruns(opts.journalPath!, opts.now!()).recurringFlakes).toHaveLength(2);
@@ -145,6 +148,28 @@ describe('resident CI reruns', () => {
     report.groups[0]!.runs = [];
     const status = await runCiRerunMaintenance(opts);
     expect(status.repos[report.repo]).toMatchObject({ recurringFlakes: 0, flakeFixesQueued: 0 });
+  });
+
+  it('records a workflow-only verdict when the attempt belongs to a different head', async () => {
+    const { opts, gh } = setup();
+    await runCiRerunMaintenance(opts);
+    const [attempt, call] = readCiReruns(opts.journalPath, opts.now!()).entries;
+    writeFileSync(opts.journalPath!, [
+      JSON.stringify({ ...attempt, head: 'b'.repeat(40) }),
+      JSON.stringify(call),
+    ].join('\n') + '\n');
+    opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    gh.mockResolvedValue({ ok: true, stdout: JSON.stringify({
+      id: 123, head_sha: 'a'.repeat(40), status: 'completed', conclusion: 'success',
+      run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z', updated_at: '2026-01-01T12:08:00Z',
+    }), stderr: '' });
+
+    await runCiRerunMaintenance(opts);
+
+    const read = readCiReruns(opts.journalPath, opts.now());
+    expect(read.verdicts).toMatchObject({ pass: 1, pending: 0 });
+    expect(read.entries.at(-1)).toMatchObject({ outcome: 'verdict', verdict: 'pass' });
+    expect(read.entries.at(-1)).not.toHaveProperty('test');
   });
 
   it('excludes future attempts from the hourly cap while preserving deduplication', async () => {
