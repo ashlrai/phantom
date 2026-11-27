@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { syncEmptyTagsFromJobsLedger } from '../src/core/fleet/empty-tag-sync.js';
-import { ROUTER_OUTCOME_LEDGER_LIMIT } from '../src/core/router/outcomes.js';
+import { foldEmptyTags, ROUTER_OUTCOME_LEDGER_LIMIT } from '../src/core/router/outcomes.js';
 
 const NOW_MS = Date.parse('2026-10-28T20:00:00.000Z');
 const NOW = () => new Date(NOW_MS);
@@ -101,6 +101,39 @@ describe('syncEmptyTagsFromJobsLedger', () => {
     expect(out).toMatchObject({ candidates: 1, alreadyTagged: 1, classified: 0, recorded: 0, dupcheckOutcomes: 0 });
     expect(readTags(runsDir)).toHaveLength(1);
     expect(readDupcheck(runsDir).filter(r => r['action'] === 'outcome')).toHaveLength(0);
+  });
+
+  it('recovers a usable tag after invalid receipts and a torn final line', async () => {
+    const job = 'RQ-RECOVER';
+    const orphan = 'RQ-INVALID-TIME';
+    writeJobs([finish(job, true), finish(orphan, true)].join('\n') + '\n');
+    writeLog(job, 'This is a duplicate of an earlier job.');
+    writeLog(orphan, 'No changes needed.');
+    const path = join(runsDir, TAGS_FILE);
+    const original = [
+      line({ schema: 'other.event.v1', job, tag: 'blocked' }),
+      line({ schema: 'job.empty-tag.v1', job, tag: 'retired' }),
+      line({ schema: 'job.empty-tag.v1', job: orphan, tag: 'already_done', ts: 'invalid' }),
+      '{"schema":"job.empty-tag.v1"',
+    ].join('\n');
+    writeFileSync(path, original);
+    writeFileSync(join(runsDir, DUPCHECK_FILE), [job, orphan].map(id => line({
+      schema: 'queue.dupcheck-event.v1', at: TS, job: id, action: 'launch',
+    })).join('\n') + '\n');
+
+    expect(await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW })).toMatchObject({
+      candidates: 2, alreadyTagged: 0, classified: 2, recorded: 2, dupcheckOutcomes: 1,
+    });
+    const recovered = readFileSync(path, 'utf8');
+    expect(recovered.startsWith(original + '\n')).toBe(true);
+    expect(foldEmptyTags(recovered)).toEqual(new Map([[job, 'already_done'], [orphan, 'no_change_needed']]));
+    expect(readDupcheck(runsDir).filter(row => row['action'] === 'outcome')).toEqual([
+      expect.objectContaining({ job, tag: 'already_done' }),
+    ]);
+    expect(await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW })).toMatchObject({
+      alreadyTagged: 2, classified: 0, recorded: 0, dupcheckOutcomes: 0,
+    });
+    expect(readFileSync(path, 'utf8')).toBe(recovered);
   });
 
   it('keeps tags outside the tail authoritative without starving fresh candidates', async () => {
