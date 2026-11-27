@@ -23,6 +23,7 @@ import { seatTier } from '../routing/tiers.js';
 import { isLoopbackHost } from '../local-runtime/llama/config.js';
 import { loadVerifiedRegistry, readDocsRecords, selectVerifiedModel, type DocsModelRecord, type VerifiedModelRegistryEntry } from '../fleet/model-verify.js';
 import {
+  estimateRouterTokens,
   parseRouterModelSpec,
   ROUTER_GATEWAY_ENGINES,
   type RouterGatewayConfig,
@@ -30,10 +31,10 @@ import {
   type RouterModelSpec,
 } from './config.js';
 
-export const ROUTER_COMPLETION_SCHEMA = 'router.completion.v1';
-export const ROUTER_PLAN_SCHEMA = 'router.plan.v1';
+const ROUTER_COMPLETION_SCHEMA = 'router.completion.v1' as const;
+const ROUTER_PLAN_SCHEMA = 'router.plan.v1' as const;
 /** Prompt plus system text accepted per call (characters). */
-export const ROUTER_MAX_PROMPT_CHARS = 400_000;
+const ROUTER_MAX_PROMPT_CHARS = 400_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
 
 /** The grant's engine name for each native engine (role-completion's own map). */
@@ -109,7 +110,7 @@ export interface RouterDecisionView {
 export type RouterFailureStatus = 'bad-request' | 'no-route' | 'failed' | 'cancelled';
 
 export interface RouterPlan {
-  schema: typeof ROUTER_PLAN_SCHEMA;
+  schema: 'router.plan.v1';
   ok: boolean;
   requested: string;
   /** What `requested` resolved to after aliases. */
@@ -126,12 +127,12 @@ export interface RouterPlan {
 
 export type RoutedCompletionResult =
   | {
-    schema: typeof ROUTER_COMPLETION_SCHEMA; ok: true; text: string; requested: string; route: string;
+    schema: 'router.completion.v1'; ok: true; text: string; requested: string; route: string;
     seatId: string; engine: RouterGatewayEngine; model: string;
     decision: RouterDecisionView | null; attempts: RouterAttempt[]; elapsedMs: number;
   }
   | {
-    schema: typeof ROUTER_COMPLETION_SCHEMA; ok: false; status: RouterFailureStatus; reason: string;
+    schema: 'router.completion.v1'; ok: false; status: RouterFailureStatus; reason: string;
     requested: string; route: string | null; decision: RouterDecisionView | null; attempts: RouterAttempt[]; elapsedMs: number;
   };
 
@@ -143,7 +144,7 @@ interface Resolved {
 }
 
 /** Resolve aliases and defaults. Returns a sentence on refusal. */
-export function resolveRouterModel(gateway: RouterGatewayConfig, model: string,
+function resolveRouterModel(gateway: RouterGatewayConfig, model: string,
   overrides: { task?: RoutingTask; difficulty?: RoutingDifficulty } = {}): Resolved | string {
   const alias = Object.hasOwn(gateway.models, model) ? gateway.models[model] : undefined;
   const route = alias?.route ?? model;
@@ -232,7 +233,7 @@ async function routeRequest(deps: RouterGatewayDeps, req: Omit<RoutedCompletionR
   // Gateway callers are agents, so the owner's reserves always apply.
   plan.request = {
     task: resolved.task, difficulty: resolved.difficulty, autonomous: true,
-    contextTokens: Math.ceil(promptChars / 4) + maxOutputTokens,
+    contextTokens: estimateRouterTokens(promptChars) + maxOutputTokens,
   };
   const { spec } = resolved;
 

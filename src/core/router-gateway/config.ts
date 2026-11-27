@@ -9,14 +9,14 @@ import { dirname, join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import type { RoutingDifficulty, RoutingTask } from '../routing/types.js';
 
-export const ROUTER_GATEWAY_CONFIG_VERSION = 1;
-export const ROUTER_GATEWAY_DEFAULT_PORT = 18741;
+const ROUTER_GATEWAY_CONFIG_VERSION = 1;
+const ROUTER_GATEWAY_DEFAULT_PORT = 18741;
 /** Engines the gateway has a completion adapter for. Devin cloud sessions are their own lane. */
 export const ROUTER_GATEWAY_ENGINES = ['claude', 'codex', 'grok', 'local'] as const;
 export type RouterGatewayEngine = typeof ROUTER_GATEWAY_ENGINES[number];
 
-const TASKS: readonly RoutingTask[] = ['code', 'review', 'plan', 'bulk', 'leader'];
-const DIFFICULTIES: readonly RoutingDifficulty[] = ['low', 'medium', 'high'];
+export const ROUTER_GATEWAY_TASKS: readonly RoutingTask[] = ['code', 'review', 'plan', 'bulk', 'leader'];
+export const ROUTER_GATEWAY_DIFFICULTIES: readonly RoutingDifficulty[] = ['low', 'medium', 'high'];
 const MAX_FILE_BYTES = 64 * 1024;
 const MAX_ALIASES = 64;
 /** A lane is a seat id (`codex-personal`) or an engine name (`claude`); local seats are `local:<tag>`. */
@@ -47,7 +47,7 @@ export interface RouterGatewayConfig {
   maxConcurrent: number;
 }
 
-export class RouterGatewayConfigError extends Error {
+class RouterGatewayConfigError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'RouterGatewayConfigError';
@@ -58,13 +58,28 @@ function fail(message: string): never {
   throw new RouterGatewayConfigError(message);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRouterGatewayRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+
+/** 4-chars-per-token estimate shared by routing context checks and gateway usage reporting. */
+export const estimateRouterTokens = (chars: number): number => Math.ceil(chars / 4);
 
 function onlyKeys(value: Record<string, unknown>, keys: readonly string[], where: string): void {
   const extra = Object.keys(value).filter((key) => !keys.includes(key));
   if (extra.length > 0) fail(`${where} has unknown key "${extra[0]}"`);
+}
+
+function parseTask(raw: unknown, where: string): RoutingTask {
+  if (!ROUTER_GATEWAY_TASKS.includes(raw as RoutingTask)) fail(`${where} must be one of ${ROUTER_GATEWAY_TASKS.join(', ')}`);
+  return raw as RoutingTask;
+}
+
+function parseDifficulty(raw: unknown, where: string): RoutingDifficulty {
+  if (!ROUTER_GATEWAY_DIFFICULTIES.includes(raw as RoutingDifficulty)) {
+    fail(`${where} must be one of ${ROUTER_GATEWAY_DIFFICULTIES.join(', ')}`);
+  }
+  return raw as RoutingDifficulty;
 }
 
 function intIn(value: unknown, min: number, max: number, where: string): number {
@@ -109,19 +124,13 @@ export function isRouterModelFlag(value: string): boolean {
 }
 
 function aliasOf(raw: unknown, where: string): RouterGatewayAlias {
-  if (!isRecord(raw)) fail(`${where} must be an object`);
+  if (!isRouterGatewayRecord(raw)) fail(`${where} must be an object`);
   onlyKeys(raw, ['route', 'task', 'difficulty'], where);
   const route = raw['route'];
   if (typeof route !== 'string' || parseRouterModelSpec(route) === null) fail(`${where}.route must be "auto" or "<lane>:<model>"`);
   const alias: RouterGatewayAlias = { route };
-  if (raw['task'] !== undefined) {
-    if (!TASKS.includes(raw['task'] as RoutingTask)) fail(`${where}.task must be one of ${TASKS.join(', ')}`);
-    alias.task = raw['task'] as RoutingTask;
-  }
-  if (raw['difficulty'] !== undefined) {
-    if (!DIFFICULTIES.includes(raw['difficulty'] as RoutingDifficulty)) fail(`${where}.difficulty must be one of ${DIFFICULTIES.join(', ')}`);
-    alias.difficulty = raw['difficulty'] as RoutingDifficulty;
-  }
+  if (raw['task'] !== undefined) alias.task = parseTask(raw['task'], `${where}.task`);
+  if (raw['difficulty'] !== undefined) alias.difficulty = parseDifficulty(raw['difficulty'], `${where}.difficulty`);
   return alias;
 }
 
@@ -133,23 +142,17 @@ export function parseRouterGatewayConfig(text: string): RouterGatewayConfig {
   } catch {
     fail('router config is not valid JSON');
   }
-  if (!isRecord(parsed)) fail('router config must be an object');
+  if (!isRouterGatewayRecord(parsed)) fail('router config must be an object');
   onlyKeys(parsed, ['version', 'port', 'defaults', 'lanes', 'models', 'maxAttempts', 'timeoutMs', 'maxConcurrent'], 'router config');
   if (parsed['version'] !== ROUTER_GATEWAY_CONFIG_VERSION) fail(`router config needs "version": ${ROUTER_GATEWAY_CONFIG_VERSION}`);
   const config = defaultRouterGatewayConfig();
   if (parsed['port'] !== undefined) config.port = intIn(parsed['port'], 1024, 65535, 'port');
   if (parsed['defaults'] !== undefined) {
     const defaults = parsed['defaults'];
-    if (!isRecord(defaults)) fail('defaults must be an object');
+    if (!isRouterGatewayRecord(defaults)) fail('defaults must be an object');
     onlyKeys(defaults, ['task', 'difficulty'], 'defaults');
-    if (defaults['task'] !== undefined) {
-      if (!TASKS.includes(defaults['task'] as RoutingTask)) fail(`defaults.task must be one of ${TASKS.join(', ')}`);
-      config.defaults.task = defaults['task'] as RoutingTask;
-    }
-    if (defaults['difficulty'] !== undefined) {
-      if (!DIFFICULTIES.includes(defaults['difficulty'] as RoutingDifficulty)) fail(`defaults.difficulty must be one of ${DIFFICULTIES.join(', ')}`);
-      config.defaults.difficulty = defaults['difficulty'] as RoutingDifficulty;
-    }
+    if (defaults['task'] !== undefined) config.defaults.task = parseTask(defaults['task'], 'defaults.task');
+    if (defaults['difficulty'] !== undefined) config.defaults.difficulty = parseDifficulty(defaults['difficulty'], 'defaults.difficulty');
   }
   if (parsed['lanes'] !== undefined) {
     const lanes = parsed['lanes'];
@@ -160,7 +163,7 @@ export function parseRouterGatewayConfig(text: string): RouterGatewayConfig {
   }
   if (parsed['models'] !== undefined) {
     const models = parsed['models'];
-    if (!isRecord(models)) fail('models must be an object of alias → { route }');
+    if (!isRouterGatewayRecord(models)) fail('models must be an object of alias → { route }');
     const names = Object.keys(models);
     if (names.length > MAX_ALIASES) fail(`models lists more than ${MAX_ALIASES} aliases`);
     for (const name of names) {

@@ -1,8 +1,7 @@
-import { constants } from 'node:fs';
-import { mkdir, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { enumerateRouteCandidates, rankRouteCandidates, routeCandidateRejections, type RouteSources } from '../routing/decision-candidates.js';
 import { routeFailureKindSchema, routeIdSchema, type RouteCandidate, type RouteRequest } from '../routing/decision-schema.js';
+import { appendLedgerLine, parseJsonObjectLine, readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE } from './outcomes.js';
 
 type Failure = (typeof routeFailureKindSchema.options)[number];
 type Entry = Pick<RouteCandidate, 'lane' | 'model' | 'effort' | 'mode_tier' | 'speed_tier'> & { on: Failure[]; source: 'pinned' | 'ranked' };
@@ -45,38 +44,26 @@ export async function recordFailover(root: string, row: { job: string; failed_la
   const event = { event: row.lane === null ? 'failover_refused' : 'failover', ts: nowMs / 1000, job: row.job,
     lane: row.lane, lane_hint: row.failed_lane, failure: row.failure,
     ...(row.lane === null ? { reason_code: 'fallback_chain_exhausted' } : { lane_override: `failover_${row.failure}` }) };
-  await mkdir(join(root, 'metrics'), { recursive: true });
-  const fd = await open(join(root, 'metrics/jobs.jsonl'), constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
-  try {
-    if (!(await fd.stat()).isFile()) throw new Error('Invalid job ledger');
-    await fd.writeFile(JSON.stringify(event, Object.keys(event).sort()) + '\n');
-  } finally { await fd.close(); }
+  await appendLedgerLine(
+    join(root, ROUTER_OUTCOME_LEDGER_RELATIVE),
+    JSON.stringify(event, Object.keys(event).sort()),
+    'Invalid job ledger',
+  );
 }
 
 export async function readFallbackUsed(root: string, job: string): Promise<Record<string, unknown>[] | null> {
   if (!routeIdSchema.safeParse(job).success) return null;
-  try {
-    const fd = await open(join(root, 'metrics/jobs.jsonl'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    let tail: string;
-    try {
-      const stat = await fd.stat();
-      if (!stat.isFile()) return null;
-      const start = Math.max(0, stat.size - 256 * 1024), bytes = Buffer.alloc(Math.min(stat.size, 256 * 1024));
-      const { bytesRead } = await fd.read(bytes, 0, bytes.length, start);
-      tail = bytes.subarray(0, bytesRead).toString('utf8');
-      if (start) tail = tail.slice(tail.indexOf('\n') + 1);
-    } finally { await fd.close(); }
-    const rows: Record<string, unknown>[] = [];
-    for (const line of tail.split('\n')) {
-      try {
-        const row = JSON.parse(line) as Record<string, unknown>;
-        if (row && row.job === job && ['failover', 'failover_refused'].includes(String(row.event))) {
-          rows.push(row); if (rows.length > 3) rows.shift();
-        }
-      } catch { /* Partial rows are not evidence. */ }
+  const read = await readLedgerTail(join(root, ROUTER_OUTCOME_LEDGER_RELATIVE), 256 * 1024);
+  if (read.state !== 'read') return null;
+  const rows: Record<string, unknown>[] = [];
+  for (const line of read.text.split('\n')) {
+    const row = parseJsonObjectLine(line);
+    if (row !== null && row['job'] === job && (row['event'] === 'failover' || row['event'] === 'failover_refused')) {
+      rows.push(row);
+      if (rows.length > 3) rows.shift();
     }
-    return rows.length ? rows : null;
-  } catch { return null; }
+  }
+  return rows.length ? rows : null;
 }
 
 export async function runFailover(request: RouteRequest, sources: RouteSources,

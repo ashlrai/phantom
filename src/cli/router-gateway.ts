@@ -1,6 +1,7 @@
 /** `phm router serve|models|pick|config` and `phm run --model auto|<lane:model>`:
  * thin argv handlers over src/core/router-gateway. */
 import type { RoutingDifficulty, RoutingTask } from '../core/routing/types.js';
+import { ROUTER_GATEWAY_DIFFICULTIES, ROUTER_GATEWAY_TASKS } from '../core/router-gateway/config.js';
 import * as core from '../core/router-gateway/index.js';
 
 export const ROUTER_GATEWAY_VERBS = ['serve', 'models', 'pick', 'config'] as const;
@@ -17,9 +18,6 @@ export const ROUTER_GATEWAY_USAGE = [
   'M is "auto", "<lane>:<model>" (e.g. codex-personal:gpt-5.5, local:qwen3:8b) or an alias from the config.',
   'Config: ~/.ashlr/router/gateway.json. Token: ~/.ashlr/router/token (bearer; never printed). Docs: docs/ROUTER-GATEWAY.md',
 ].join('\n');
-
-const TASKS = ['code', 'review', 'plan', 'bulk', 'leader'];
-const DIFFICULTIES = ['low', 'medium', 'high'];
 
 interface Flags {
   json: boolean;
@@ -62,11 +60,11 @@ function parseFlags(args: readonly string[], allowed: readonly string[]): Flags 
       flags.model = v;
     } else if (arg === '--task') {
       const v = value();
-      if (!v || !TASKS.includes(v)) return `--task must be one of ${TASKS.join(', ')}.`;
+      if (!v || !(ROUTER_GATEWAY_TASKS as readonly string[]).includes(v)) return `--task must be one of ${ROUTER_GATEWAY_TASKS.join(', ')}.`;
       flags.task = v as RoutingTask;
     } else if (arg === '--difficulty') {
       const v = value();
-      if (!v || !DIFFICULTIES.includes(v)) return `--difficulty must be one of ${DIFFICULTIES.join(', ')}.`;
+      if (!v || !(ROUTER_GATEWAY_DIFFICULTIES as readonly string[]).includes(v)) return `--difficulty must be one of ${ROUTER_GATEWAY_DIFFICULTIES.join(', ')}.`;
       flags.difficulty = v as RoutingDifficulty;
     } else if (arg === '--system') {
       const v = value();

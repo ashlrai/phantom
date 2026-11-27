@@ -1,10 +1,19 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   effortSchema, routeReasonSchema, speedTierSchema,
 } from '../routing/decision-schema.js';
-import { readLedgerTail } from './outcomes.js';
+import {
+  defaultRouterRunsDir,
+  firstTrimmedString,
+  incrementTally,
+  isLedgerRecord,
+  nonNegativeSafeInt,
+  parseJsonObjectLine,
+  rankTallyEntries,
+  readLedgerTail,
+  type LedgerTailState,
+} from './outcomes.js';
 
 // Bounded read of the dispatcher's typed-routing decision journal,
 // <runsDir>/metrics/route.explain.jsonl — the `route.explain.v1` rows
@@ -20,7 +29,7 @@ import { readLedgerTail } from './outcomes.js';
 /** `<runsDir>/metrics/route.explain.jsonl` — dispatchd's append-only audit file. */
 export const TYPED_DECISIONS_LEDGER_RELATIVE = join('metrics', 'route.explain.jsonl');
 export const TYPED_DECISIONS_ROW_SCHEMA = 'route.explain.v1';
-export const TYPED_DECISIONS_DIGEST_SCHEMA = 'route.typed-decisions.v1';
+const TYPED_DECISIONS_DIGEST_SCHEMA = 'route.typed-decisions.v1' as const;
 /**
  * Newest-bytes bound retained from the append-only journal. One sampled
  * row per dispatcher tick runs to a few hundred bytes, so the bound keeps
@@ -39,21 +48,10 @@ const STATUSES: ReadonlySet<string> = new Set(['observed', 'unavailable']);
 /** Producer bounds for the optional service metrics (dispatchd caps each at 1e6). */
 const MAX_METRIC = 1_000_000;
 
-type Row = Record<string, unknown>;
-
-const isRow = (value: unknown): value is Row =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
-const str = (r: Row, ...keys: string[]): string | null => {
-  for (const k of keys) {
-    const v = r[k];
-    if (typeof v === 'string' && v.trim()) return v.trim();
-  }
-  return null;
+const boundedCount = (v: unknown): number | null => {
+  const n = nonNegativeSafeInt(v);
+  return n !== null && n <= MAX_METRIC ? n : null;
 };
-
-const boundedCount = (v: unknown): number | null =>
-  typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= MAX_METRIC ? v : null;
 
 interface JournalDecision {
   lane: string;
@@ -71,7 +69,7 @@ interface JournalDecision {
  * producer could not have written is corrupt evidence, never a decision.
  */
 function decisionFrom(raw: unknown): JournalDecision | null {
-  if (!isRow(raw)) return null;
+  if (!isLedgerRecord(raw)) return null;
   const lane = raw['lane'];
   const model = raw['model'];
   const effort = raw['effort'];
@@ -100,9 +98,9 @@ export interface TypedMetricSummary {
 }
 
 export interface TypedDecisionsDigest {
-  schema: typeof TYPED_DECISIONS_DIGEST_SCHEMA;
+  schema: 'route.typed-decisions.v1';
   /** Ledger read state; anything but 'read' leaves every tally empty — unknown, never zeroed. */
-  state: 'read' | 'missing' | 'unreadable' | 'not-file';
+  state: LedgerTailState;
   /** True when older bytes were not read; tallies cover the retained window only. */
   truncated: boolean;
   path: string;
@@ -131,26 +129,29 @@ export interface TypedDecisionsDigest {
   newest_ts: number | null;
 }
 
-const tallySort = (a: TypedTally, b: TypedTally) =>
-  b.decisions - a.decisions || a.key.localeCompare(b.key);
-
-function tallyAdd(map: Map<string, number>, key: string): void {
-  map.set(key, (map.get(key) ?? 0) + 1);
-}
-
 const tallyOut = (map: ReadonlyMap<string, number>): TypedTally[] =>
-  [...map.entries()]
-    .map(([key, decisions]) => ({ key, decisions }))
-    .sort(tallySort)
-    .slice(0, MAX_TALLY_ENTRIES);
+  rankTallyEntries(map, MAX_TALLY_ENTRIES, (key, decisions) => ({ key, decisions }));
 
 const round1 = (v: number): number => Math.round(v * 10) / 10;
 
+interface MetricAccumulator { known: number; sum: number; max: number }
+const freshMetric = (): MetricAccumulator => ({ known: 0, sum: 0, max: 0 });
+function recordMetric(acc: MetricAccumulator, raw: unknown): void {
+  const value = boundedCount(raw);
+  if (value === null) return;
+  acc.known += 1;
+  acc.sum += value;
+  acc.max = Math.max(acc.max, value);
+}
+const finishMetric = (acc: MetricAccumulator): TypedMetricSummary => (
+  acc.known > 0 ? { known: acc.known, mean: round1(acc.sum / acc.known), max: acc.max } : { known: 0, mean: null, max: null }
+);
+
 /** The empty digest every degraded read shares — tallies and means stay empty/null, never zeroed. */
-const emptyDigest = (state: TypedDecisionsDigest['state'], path: string): TypedDecisionsDigest => ({
+const emptyDigest = (state: LedgerTailState, path: string, truncated = false): TypedDecisionsDigest => ({
   schema: TYPED_DECISIONS_DIGEST_SCHEMA,
   state,
-  truncated: false,
+  truncated,
   path,
   records: 0,
   invalid_rows: 0,
@@ -178,45 +179,19 @@ const emptyDigest = (state: TypedDecisionsDigest['state'], path: string): TypedD
  * malformed value drops to unrecorded without discarding the decision.
  */
 export function foldTypedDecisions(text: string, path: string, truncated: boolean): TypedDecisionsDigest {
-  const digest: TypedDecisionsDigest = {
-    schema: TYPED_DECISIONS_DIGEST_SCHEMA,
-    state: 'read',
-    truncated,
-    path,
-    records: 0,
-    invalid_rows: 0,
-    observed: 0,
-    unavailable: 0,
-    lanes: [],
-    models: [],
-    reason_codes: [],
-    duration_ms: { known: 0, mean: null, max: null },
-    attempts: { known: 0, mean: null, max: null },
-    candidate_count: { known: 0, mean: null, max: null },
-    oldest_ts: null,
-    newest_ts: null,
-  };
+  const digest = emptyDigest('read', path, truncated);
   const lanes = new Map<string, number>();
   const models = new Map<string, number>();
   const reasons = new Map<string, number>();
-  let durationSum = 0;
-  let durationMax = 0;
-  let attemptsSum = 0;
-  let attemptsMax = 0;
-  let candidateSum = 0;
-  let candidateMax = 0;
+  const duration = freshMetric();
+  const attempts = freshMetric();
+  const candidates = freshMetric();
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
     if (trimmed === '') continue;
-    let row: unknown;
-    try {
-      row = JSON.parse(trimmed);
-    } catch {
-      digest.invalid_rows += 1;
-      continue;
-    }
-    if (!isRow(row) || row['schema'] !== TYPED_DECISIONS_ROW_SCHEMA ||
-        str(row, 'event', 'type', 'kind') !== 'route.explain' ||
+    const row = parseJsonObjectLine(trimmed);
+    if (row === null || row['schema'] !== TYPED_DECISIONS_ROW_SCHEMA ||
+        firstTrimmedString(row, 'event', 'type', 'kind') !== 'route.explain' ||
         row['advisory'] !== true) {
       digest.invalid_rows += 1;
       continue;
@@ -244,43 +219,19 @@ export function foldTypedDecisions(text: string, path: string, truncated: boolea
       continue;
     }
     digest.observed += 1;
-    tallyAdd(lanes, decision!.lane);
-    tallyAdd(models, decision!.model);
-    for (const code of new Set(decision!.reason_codes)) tallyAdd(reasons, code);
-    const duration = boundedCount(row['duration_ms']);
-    if (duration !== null) {
-      digest.duration_ms.known += 1;
-      durationSum += duration;
-      durationMax = Math.max(durationMax, duration);
-    }
-    const attempts = boundedCount(row['attempts']);
-    if (attempts !== null) {
-      digest.attempts.known += 1;
-      attemptsSum += attempts;
-      attemptsMax = Math.max(attemptsMax, attempts);
-    }
-    const candidates = boundedCount(row['candidate_count']);
-    if (candidates !== null) {
-      digest.candidate_count.known += 1;
-      candidateSum += candidates;
-      candidateMax = Math.max(candidateMax, candidates);
-    }
+    incrementTally(lanes, decision!.lane);
+    incrementTally(models, decision!.model);
+    for (const code of new Set(decision!.reason_codes)) incrementTally(reasons, code);
+    recordMetric(duration, row['duration_ms']);
+    recordMetric(attempts, row['attempts']);
+    recordMetric(candidates, row['candidate_count']);
   }
   digest.lanes = tallyOut(lanes);
   digest.models = tallyOut(models);
   digest.reason_codes = tallyOut(reasons);
-  if (digest.duration_ms.known > 0) {
-    digest.duration_ms.mean = round1(durationSum / digest.duration_ms.known);
-    digest.duration_ms.max = durationMax;
-  }
-  if (digest.attempts.known > 0) {
-    digest.attempts.mean = round1(attemptsSum / digest.attempts.known);
-    digest.attempts.max = attemptsMax;
-  }
-  if (digest.candidate_count.known > 0) {
-    digest.candidate_count.mean = round1(candidateSum / digest.candidate_count.known);
-    digest.candidate_count.max = candidateMax;
-  }
+  digest.duration_ms = finishMetric(duration);
+  digest.attempts = finishMetric(attempts);
+  digest.candidate_count = finishMetric(candidates);
   return digest;
 }
 
@@ -295,7 +246,7 @@ export function foldTypedDecisions(text: string, path: string, truncated: boolea
  * file content — degraded input is a state, not an exception.
  */
 export async function readTypedDecisions(opts: { runsDir?: string; limit?: number } = {}): Promise<TypedDecisionsDigest> {
-  const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const runsDir = defaultRouterRunsDir(opts.runsDir);
   const path = join(runsDir, TYPED_DECISIONS_LEDGER_RELATIVE);
   const read = await readLedgerTail(path, opts.limit ?? TYPED_DECISIONS_LEDGER_LIMIT);
   if (read.state !== 'read') return emptyDigest(read.state, path);

@@ -7,20 +7,20 @@ import type {
   OutsidePrCommunitySeatsRead,
 } from './community-seats.js';
 import type { ControllerQualityRead, ControllerQualityReceipt, ControllerQualityState } from './controller-quality.js';
-import type { RouterOutcome, RouterOutcomeRead } from './outcomes.js';
+import { rankTallyEntries, type RouterOutcome, type RouterOutcomeRead } from './outcomes.js';
 
 // Advisory router-weight proposals from recorded outcomes. Recovered from the pure proposal slice of
 // PR #6794 (head f9e484e87ec2d01f155cc280e818d2e98519dbe7, src/core/router/tune.ts). Math only: no I/O,
 // no weights.json, no applyRouterWeights. Nothing here changes live routing, rank or admission.
 
-export const ROUTER_WEIGHT_PROPOSAL_SOURCE = {
+const ROUTER_WEIGHT_PROPOSAL_SOURCE = {
   pr: 6794,
   head_sha: 'f9e484e87ec2d01f155cc280e818d2e98519dbe7',
   recovered_from: 'src/core/router/tune.ts#proposeRouterWeights',
 } as const;
-export const ROUTER_WEIGHT_BASELINE = 0.5;
-export const ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES = 20;
-export const ROUTER_WEIGHT_DEFAULT_MAX_SHIFT = 0.1;
+const ROUTER_WEIGHT_BASELINE = 0.5;
+const ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES = 20;
+const ROUTER_WEIGHT_DEFAULT_MAX_SHIFT = 0.1;
 
 // Mirrors the documented route-ID shape. Not imported from src/core/routing/** (Tier-1 protected).
 const ROUTE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
@@ -28,6 +28,12 @@ const isRouteId = (v: unknown): v is string =>
   typeof v === 'string' && ROUTE_ID.test(v) && v.toLowerCase() !== 'unknown';
 const round6 = (v: number): number => Math.round(v * 1e6) / 1e6;
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
+const topJobs = <K extends string>(
+  map: ReadonlyMap<string, number>,
+  field: K,
+  limit = 10,
+): Array<Record<K, string> & { jobs: number }> =>
+  rankTallyEntries(map, limit, (key, jobs) => ({ [field]: key, jobs }) as Record<K, string> & { jobs: number });
 
 export interface RouterWeightBaseline { work_class: string; lane: string; weight: number }
 
@@ -732,11 +738,7 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   publish_wait_known: t.publishWaitKnown,
   publish_wait_s_mean: t.publishWaitKnown === 0 ? null : round6(t.publishWaitSum / t.publishWaitKnown),
   lane_blocked_known: t.laneBlocked,
-  lane_blocked_reasons: t.laneBlocked === 0 ? null
-    : [...t.blockedReasons.entries()]
-        .map(([reason, jobs]) => ({ reason, jobs }))
-        .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
-        .slice(0, MAX_BLOCKED_REASONS),
+  lane_blocked_reasons: t.laneBlocked === 0 ? null : topJobs(t.blockedReasons, 'reason', MAX_BLOCKED_REASONS),
   tokens_known: t.tokensKnown,
   tokens_total_mean: t.tokensKnown === 0 ? null : round6(t.tokensSum / t.tokensKnown),
   passk_known: t.passkKnown,
@@ -756,58 +758,26 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   diff_lines_mean: t.diffLinesKnown === 0 ? null : round6(t.diffLinesSum / t.diffLinesKnown),
   usage_missing_known: t.usageMissingKnown,
   lane_overrides_known: t.laneOverrides,
-  lane_override_reasons: t.laneOverrides === 0 ? null
-    : [...t.overrideReasons.entries()]
-        .map(([reason, jobs]) => ({ reason, jobs }))
-        .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
-        .slice(0, MAX_OVERRIDE_REASONS),
+  lane_override_reasons: t.laneOverrides === 0 ? null : topJobs(t.overrideReasons, 'reason', MAX_OVERRIDE_REASONS),
   market_rejected_known: t.marketRejected,
-  market_rejected_reasons: t.marketRejected === 0 ? null
-    : [...t.rejectedReasons.entries()]
-        .map(([reason, jobs]) => ({ reason, jobs }))
-        .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
-        .slice(0, MAX_REJECTED_REASONS),
+  market_rejected_reasons: t.marketRejected === 0 ? null : topJobs(t.rejectedReasons, 'reason', MAX_REJECTED_REASONS),
   handoff_known: t.handoff,
-  handoff_triggers: t.handoff === 0 ? null
-    : [...t.handoffTriggers.entries()]
-        .map(([trigger, jobs]) => ({ trigger, jobs }))
-        .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
-        .slice(0, MAX_HANDOFF_TRIGGERS),
+  handoff_triggers: t.handoff === 0 ? null : topJobs(t.handoffTriggers, 'trigger', MAX_HANDOFF_TRIGGERS),
   provider_wall_known: t.providerWall,
-  provider_wall_triggers: t.providerWall === 0 ? null
-    : [...t.providerWallTriggers.entries()]
-        .map(([trigger, jobs]) => ({ trigger, jobs }))
-        .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
-        .slice(0, MAX_PROVIDER_WALL_TRIGGERS),
+  provider_wall_triggers: t.providerWall === 0 ? null : topJobs(t.providerWallTriggers, 'trigger', MAX_PROVIDER_WALL_TRIGGERS),
   pool_known: t.pool,
-  pool_kinds: t.pool === 0 ? null
-    : [...t.poolKinds.entries()]
-        .map(([kind, jobs]) => ({ kind, jobs }))
-        .sort((a, b) => b.jobs - a.jobs || a.kind.localeCompare(b.kind))
-        .slice(0, MAX_POOL_KINDS),
+  pool_kinds: t.pool === 0 ? null : topJobs(t.poolKinds, 'kind', MAX_POOL_KINDS),
   merge_queue_known: t.mergeQueue,
   merge_queue_blocked_known: t.mergeQueueBlocked,
-  merge_queue_blocked_reasons: t.mergeQueueBlocked === 0 ? null
-    : [...t.mergeQueueBlockedReasons.entries()]
-        .map(([reason, jobs]) => ({ reason, jobs }))
-        .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
-        .slice(0, MAX_MERGE_QUEUE_REASONS),
+  merge_queue_blocked_reasons: t.mergeQueueBlocked === 0 ? null : topJobs(t.mergeQueueBlockedReasons, 'reason', MAX_MERGE_QUEUE_REASONS),
   merge_queue_check_failures_known: t.mergeQueueCheckFailures,
   merge_queue_conflicts_known: t.mergeQueueConflicts,
   merge_queue_retries_known: t.mergeQueueRetries,
   merge_queue_recuts_known: t.mergeQueueRecuts,
   repos_known: t.repos,
-  repos: t.repos === 0 ? null
-    : [...t.repoLabels.entries()]
-        .map(([repo, jobs]) => ({ repo, jobs }))
-        .sort((a, b) => b.jobs - a.jobs || a.repo.localeCompare(b.repo))
-        .slice(0, MAX_REPOS),
+  repos: t.repos === 0 ? null : topJobs(t.repoLabels, 'repo', MAX_REPOS),
   node_outcomes_known: t.nodeOutcomes,
-  node_verdicts: t.nodeOutcomes === 0 ? null
-    : [...t.nodeVerdicts.entries()]
-        .map(([verdict, jobs]) => ({ verdict, jobs }))
-        .sort((a, b) => b.jobs - a.jobs || a.verdict.localeCompare(b.verdict))
-        .slice(0, MAX_NODE_VERDICTS),
+  node_verdicts: t.nodeOutcomes === 0 ? null : topJobs(t.nodeVerdicts, 'verdict', MAX_NODE_VERDICTS),
 });
 
 /**
@@ -1176,78 +1146,24 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     const proposed = clamp(baseline + clamp(g.merged / g.known - baseline, -maxShift, maxShift), 0, 1);
     return { ...base, status: 'proposed', reason: null, proposed_weight: round6(proposed), shift: round6(proposed - baseline) };
   });
-  const topFailureClasses = [...failureClasses.entries()]
-    .map(([failure_class, jobs]) => ({ failure_class, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.failure_class.localeCompare(b.failure_class))
-    .slice(0, 10);
-  const topEmptyClasses = [...emptyClasses.entries()]
-    .map(([empty_class, jobs]) => ({ empty_class, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.empty_class.localeCompare(b.empty_class))
-    .slice(0, 10);
-  const topTaskOutcomes = [...taskOutcomes.entries()]
-    .map(([task_outcome, jobs]) => ({ task_outcome, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.task_outcome.localeCompare(b.task_outcome))
-    .slice(0, 10);
-  const topSkipReasons = [...skipReasons.entries()]
-    .map(([reason, jobs]) => ({ reason, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
-    .slice(0, 10);
-  const topEmptyTags = [...emptyTags.entries()]
-    .map(([tag, jobs]) => ({ tag, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.tag.localeCompare(b.tag))
-    .slice(0, 10);
-  const topDeferReasons = [...deferReasons.entries()]
-    .map(([reason, jobs]) => ({ reason, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
-    .slice(0, 10);
-  const topNoopReasons = [...noopReasons.entries()]
-    .map(([reason, jobs]) => ({ reason, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
-    .slice(0, 10);
-  const topMarketReasons = [...marketReasons.entries()]
-    .map(([reason, jobs]) => ({ reason, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
-    .slice(0, 10);
-  const topMarketRejectedReasons = [...marketRejectedReasons.entries()]
-    .map(([reason, jobs]) => ({ reason, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
-    .slice(0, 10);
-  const topHandoffTriggers = [...handoffTriggersUnknown.entries()]
-    .map(([trigger, jobs]) => ({ trigger, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
-    .slice(0, MAX_HANDOFF_TRIGGERS);
-  const topProviderWallTriggers = [...providerWallTriggersUnknown.entries()]
-    .map(([trigger, jobs]) => ({ trigger, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
-    .slice(0, MAX_PROVIDER_WALL_TRIGGERS);
-  const topPoolKinds = [...poolKindsUnknown.entries()]
-    .map(([kind, jobs]) => ({ kind, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.kind.localeCompare(b.kind))
-    .slice(0, MAX_POOL_KINDS);
-  const topNodeVerdicts = [...nodeVerdictsUnknown.entries()]
-    .map(([verdict, jobs]) => ({ verdict, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.verdict.localeCompare(b.verdict))
-    .slice(0, MAX_NODE_VERDICTS);
-  const topCrossReviewVerdicts = [...crossReviewVerdictsUnknown.entries()]
-    .map(([verdict, jobs]) => ({ verdict, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.verdict.localeCompare(b.verdict))
-    .slice(0, MAX_CROSS_REVIEW_VERDICTS);
-  const topMergeQueueBlockedReasons = [...mergeQueueBlockedReasonsUnknown.entries()]
-    .map(([reason, jobs]) => ({ reason, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
-    .slice(0, 10);
-  const topUsageMissing = [...usageMissing.entries()]
-    .map(([usage_missing, jobs]) => ({ usage_missing, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.usage_missing.localeCompare(b.usage_missing))
-    .slice(0, 10);
-  const topUsageSources = [...usageSources.entries()]
-    .map(([usage_source, jobs]) => ({ usage_source, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.usage_source.localeCompare(b.usage_source))
-    .slice(0, 10);
-  const topRepos = [...repos.entries()]
-    .map(([repo, jobs]) => ({ repo, jobs }))
-    .sort((a, b) => b.jobs - a.jobs || a.repo.localeCompare(b.repo))
-    .slice(0, MAX_REPOS);
+  const topFailureClasses = topJobs(failureClasses, 'failure_class');
+  const topEmptyClasses = topJobs(emptyClasses, 'empty_class');
+  const topTaskOutcomes = topJobs(taskOutcomes, 'task_outcome');
+  const topSkipReasons = topJobs(skipReasons, 'reason');
+  const topEmptyTags = topJobs(emptyTags, 'tag');
+  const topDeferReasons = topJobs(deferReasons, 'reason');
+  const topNoopReasons = topJobs(noopReasons, 'reason');
+  const topMarketReasons = topJobs(marketReasons, 'reason');
+  const topMarketRejectedReasons = topJobs(marketRejectedReasons, 'reason');
+  const topHandoffTriggers = topJobs(handoffTriggersUnknown, 'trigger', MAX_HANDOFF_TRIGGERS);
+  const topProviderWallTriggers = topJobs(providerWallTriggersUnknown, 'trigger', MAX_PROVIDER_WALL_TRIGGERS);
+  const topPoolKinds = topJobs(poolKindsUnknown, 'kind', MAX_POOL_KINDS);
+  const topNodeVerdicts = topJobs(nodeVerdictsUnknown, 'verdict', MAX_NODE_VERDICTS);
+  const topCrossReviewVerdicts = topJobs(crossReviewVerdictsUnknown, 'verdict', MAX_CROSS_REVIEW_VERDICTS);
+  const topMergeQueueBlockedReasons = topJobs(mergeQueueBlockedReasonsUnknown, 'reason');
+  const topUsageMissing = topJobs(usageMissing, 'usage_missing');
+  const topUsageSources = topJobs(usageSources, 'usage_source');
+  const topRepos = topJobs(repos, 'repo', MAX_REPOS);
   return { proposals, known_outcomes: known, unknown_outcomes: unknown, unclassified_outcomes: unclassified,
     unknown_empty: unknownEmpty, unknown_nonzero_exit: unknownNonzeroExit,
     unknown_failure_classes: topFailureClasses, unknown_empty_classes: topEmptyClasses,
@@ -1285,7 +1201,11 @@ export interface RouterWeightProposalReport {
   /** Always true: proposals are never applied to routing, rank, admission or weights.json. */
   advisory_only: true;
   as_of: string;
-  source: typeof ROUTER_WEIGHT_PROPOSAL_SOURCE;
+  source: {
+    readonly pr: 6794;
+    readonly head_sha: 'f9e484e87ec2d01f155cc280e818d2e98519dbe7';
+    readonly recovered_from: 'src/core/router/tune.ts#proposeRouterWeights';
+  };
   ledger: { state: RouterOutcomeRead['state']; path: string };
   /** True when the ledger exceeded the retained tail; outcome counts cover only the newest bytes. */
   truncated: boolean;
