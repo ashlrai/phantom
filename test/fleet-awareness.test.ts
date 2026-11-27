@@ -58,6 +58,28 @@ test('unknown, stale, future and expired reports never become pool capacity; exa
   expect(projectFleetAwareness(legacy.state, legacy.now()).hosts[0]?.freeSlots).toBeNull();
 });
 
+test('late capacity reports cannot undo a host hold or hide its recovery', () => {
+  const f = fixture();
+  const worker = f.add('worker', { slots: 2 });
+  f.enqueue();
+  f.advance(1000);
+  f.beat('worker', { slots: 0, held: 'memory-pressure' });
+  f.advance(1000);
+  f.run('beat', ['--node', worker.nodeId, '--session', String(worker.session), '--slots', '2',
+    '--capacity', JSON.stringify({ ...worker.capacity, sampledAtMs: f.now() - 2000, held: null, slots: 2 })]);
+  expect(worker.heartbeatAt).toBe(f.now());
+  expect(worker.slots).toBe(0);
+  expect(f.plan()[0]?.nodeId).toBeNull();
+  const pull = () => f.run('pull', ['--node', worker.nodeId, '--session', String(worker.session)]);
+  expect(pull().pulled).toBe(false);
+
+  f.beat('worker', { slots: 2 });
+  f.beat('worker', { sampledAtMs: f.now() - 1000, slots: 0, held: 'memory-pressure' });
+  f.beat('worker', { sampledAtMs: f.now() + 1, slots: 0, held: 'disk-pressure' });
+  expect(projectFleetAwareness(f.state, f.now()).hosts[0]).toMatchObject({ freeSlots: 2, held: null });
+  expect(pull().pulled).toBe(true);
+});
+
 test.each([
   { paused: 'disk guard' },
   { admission: { admit: false } },
