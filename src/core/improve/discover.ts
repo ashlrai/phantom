@@ -1518,6 +1518,7 @@ import { gatewayShadowBacklogItems } from './gateway-shadow-backlog.js';
 import { seatShadowBacklogItems } from './seat-shadow-backlog.js';
 import { stuckJobBacklogItems } from './stuck-job-backlog.js';
 import { strayStopBacklogItems } from './stray-stop-backlog.js';
+import { anomaliesBacklogItems } from './anomalies-backlog.js';
 import { lessonTrialBacklogItems } from './lesson-trial-backlog.js';
 import { unfedBacklogItems } from './unfed-backlog.js';
 import { dupcheckGateBacklogItems } from './dupcheck-gate-backlog.js';
@@ -1963,6 +1964,30 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // as enrichment, truncated tails are stated as lower bounds, and only
   // the fleet's own repository inherits the items.
   items.push(...await strayStopBacklogItems({ repo }));
+
+  // Dispatchd guard anomaly ledger: the live dispatcher's own alert
+  // trail — one {ts, job, kind, detail} row per guard alert appended
+  // to metrics/anomalies.jsonl by dispatchd_guard.py's alert()
+  // (ops-side, imported by ~/.ashlr-runs/bin/dispatchd.py; the
+  // contrib/mac dispatcher carries no guard module), at most once per
+  // job+kind per hour, alongside point-in-time bus/eo/ANOMALY-*.md
+  // snapshots. Kinds: 'no_progress' (a job in the dispatcher's alive
+  // set whose <job>.log went untouched for over an hour), 'reap_rate'
+  // and 'launch_rate' (the job's trailing-hour counts in
+  // queue/breaker.json's _rate ledger past the per-hour bars). Until
+  // now the ledger was write-only audit with no reader at all — the
+  // bus snapshots are per-alert state, not a trend — while the
+  // sibling stuck-job feed reads the phantom-side reaper's ledgers,
+  // a different evidence class covering only jobs that reaper can
+  // see. A (kind, job) cell emits only at the recurring bar of rows
+  // across distinct UTC days inside the 7-day window; each kind's
+  // fleet-wide cell emits at the recurring bar of distinct jobs;
+  // lane/repo attribution joins metrics/jobs.jsonl as enrichment that
+  // degrades to 'unknown' rather than suppressing the guard evidence,
+  // truncated tails are stated as lower bounds, and only the fleet's
+  // own repository inherits the items since the journal describes
+  // this install's dispatcher.
+  items.push(...await anomaliesBacklogItems({ repo }));
 
   // Cloud lesson holdout trial: the randomized served-vs-holdout landing
   // comparison lessonTrial computes over the cloud task files and revert

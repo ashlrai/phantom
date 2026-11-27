@@ -493,6 +493,35 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   truncated tails are stated as lower bounds, and rows emit only for
   the fleet's own repository since the reaper is this install's
   machinery —
+  and the dispatchd guard's anomaly ledger, the
+  `{ts, job, kind, detail}` rows `dispatchd_guard.py`'s `alert()`
+  appends to `metrics/anomalies.jsonl` under the fleet runs
+  directory — at most one per job+kind per hour while a condition
+  holds, alongside point-in-time `bus/eo/ANOMALY-<job>-<kind>.md`
+  snapshots the next alert overwrites (the ops-side guard the live
+  `~/.ashlr-runs/bin/dispatchd.py` imports; `contrib/mac/dispatchd.py`
+  carries no guard module). Kinds are `no_progress` (a job in the
+  dispatcher's own alive set whose `<job>.log` went untouched for
+  over an hour), `reap_rate` and `launch_rate` (the job's
+  trailing-hour counts in `queue/breaker.json`'s `_rate` ledger past
+  the per-hour bars). Until now the ledger was write-only audit
+  with no reader at all — the bus snapshots are per-alert state,
+  not a trend — while the sibling stuck-job feed reads the
+  phantom-side reaper's ledgers, a different evidence class
+  covering only jobs that reaper can see. A (kind, job) cell
+  becomes an item while its rows reach the recurring bar of three
+  across at least two distinct UTC days inside the 7-day window —
+  the guard alerts at most hourly, so the prompt quotes the
+  recorded detail (the growing 'log idle' minutes show whether the
+  silence kept deepening) rather than claiming independent
+  recurrences — and each kind's fleet-wide cell becomes an item
+  while it spans at least three distinct jobs across the same
+  days; lane and repo attribution joins `metrics/jobs.jsonl` as
+  enrichment that degrades to 'unknown' rather than suppressing
+  the guard evidence, each kind folds only its own rows, truncated
+  tails are stated as lower bounds, and rows emit only for the
+  fleet's own repository since the journal describes this
+  install's dispatcher —
   and the cloud lesson holdout trial's adverse verdicts, the
   randomized served-vs-holdout landing comparison `lessonTrial`
   (src/core/improve/lesson-trial.ts) folds from the cloud task files
