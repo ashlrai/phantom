@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirty-five local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates thirty-six local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -601,6 +601,36 @@
  *               transports, not a store that can be absent. Act: `phm fleet channel-health`, `phm channels
  *               slack status`, `phm imessage doctor`, `phm comms health
  *               --json`, `phm comms cycle`, `phm channels`.
+ *   leader-office  open assignments in the Leader office store
+ *               (`~/.ashlr/vision/leader/office.json`) — the RQ work
+ *               `phm leader ask|assign` recorded that `phm leader status`
+ *               reports as `priorities` and only the Leader pane and
+ *               `phm leader org` showed until now: an agent checking the
+ *               one pending view could not see work the office had
+ *               assigned, proposed, blocked on a claim conflict or
+ *               escalated to the owner (`readLeaderOfficePending`, the
+ *               same `openAssignments` filter `leaderStatus` applies —
+ *               every status but 'done' — so the surfaces can never
+ *               disagree about what is still open). An `escalated` row is
+ *               the office's hard-limit verdict — secrets, money, an
+ *               outside send, owner-data destruction or wording it could
+ *               not clear — so it lists as warn `leader-office-escalated`
+ *               blocking on the owner, the same class the needs-you
+ *               hard-limit items carry; `blocked` (the RQ's claim is held
+ *               by another lane) and `proposed` (recorded but never put on
+ *               the bus without a standing grant) list as warn
+ *               `leader-office-open`, and `assigned`/`in_progress` as info —
+ *               tracked work the router already admitted. `since` is the
+ *               assignment's recorded `updatedAt` — null when it does not
+ *               parse, never invented; `expiresAt` stays null: an
+ *               assignment carries a `due` target date, not a deadline it
+ *               expires on; `jobIds` cites the row's own `rq` — the work
+ *               item id `--job` already matches. A verified-absent office
+ *               file is 'missing' (no assignment can exist) and an
+ *               unreadable or invalid one 'unavailable' — an open
+ *               assignment it may hide stays unknown, never an empty
+ *               office passed off as fact. Act: `phm leader status`,
+ *               `phm leader assign`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -680,6 +710,7 @@ import { readKillSwitch, type KillSwitchReadResult } from '../sandbox/policy.js'
 import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
 import { readChannelHealth } from '../fleet/channel-health.js';
 import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
+import { readLeaderOfficePending, type LeaderOfficePendingRead } from '../agents/leader-office.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
@@ -694,7 +725,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'owner-delivery', 'owner-pair', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
-  'send-gate', 'router-queue', 'channel-health',
+  'send-gate', 'router-queue', 'channel-health', 'leader-office',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -724,6 +755,7 @@ export const UNIFIED_INBOX_KINDS = [
   'claim-drift-bus', 'claim-drift-coordination', 'claim-drift-owner',
   'send-gate-kill', 'send-gate-pause', 'router-queue-job',
   'channel-blocked', 'channel-degraded', 'channel-unknown',
+  'leader-office-escalated', 'leader-office-open',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -751,7 +783,8 @@ export interface UnifiedInboxItem extends AttentionItem {
    * the job-carrying-thread rule `BusBoard.pendingFor` applies), a
    * conversation thread's `jobs`, a teammate task's `jobId`, a seat handoff's
    * node-job refs, a peer-dispatch receipt's peer-announced `jobId`, a
-   * session-handoff journal's job id, or a router-queue row's own READY id.
+   * session-handoff journal's job id, a router-queue row's own READY id, or
+   * a leader-office assignment's `rq`.
    * Absent when the item names no job — unknown stays out of a
    * `--job` match rather than being guessed in.
    */
@@ -995,6 +1028,11 @@ export interface UnifiedInboxOptions {
   /** Telegram poll-health seam; default `readTelegramHealth` — the same
    * read `phm comms health --json` serves. */
   readTelegramPoll?: typeof readTelegramHealth;
+  /** Leader-office seam; default reads `<homedir()>/.ashlr/vision/leader/office.json`
+   * through `readLeaderOfficePending` — the same open-assignment set
+   * `phm leader status` reports as `priorities`, so the surfaces can never
+   * disagree about what is still open. */
+  readLeaderOffice?: () => LeaderOfficePendingRead;
   /** Optional narrowing of the returned item list by stored source, severity,
    * blocking, job citation, appearance time or display text. `total`/`omitted`/`items` then
    * describe the matched view and the applied filter echoes on the report;
@@ -3859,6 +3897,74 @@ async function emailOutboxItems(read: NonNullable<UnifiedInboxOptions['readEmail
 }
 
 /**
+ * Open Leader-office assignments — the RQ work the digital co-founder recorded
+ * in `~/.ashlr/vision/leader/office.json` that `phm leader status` reports as
+ * `priorities` and only the Leader pane and `phm leader org` showed until
+ * now: an agent checking the one pending view could not see work the office
+ * had assigned, proposed, blocked on a claim conflict or escalated to the
+ * owner. The read is `readLeaderOfficePending` — the same `openAssignments`
+ * filter `leaderStatus` applies (every status but 'done'), so the surfaces
+ * can never disagree about what is still open. An `escalated` row is the
+ * office's hard-limit verdict — secrets, money, an outside send, owner-data
+ * destruction or wording it could not clear — so it lists as warn
+ * `leader-office-escalated` blocking on the owner, the same class the
+ * needs-you hard-limit items carry; `blocked` (the RQ's claim is held by
+ * another lane) and `proposed` (recorded but never put on the bus without a
+ * standing grant) list as warn `leader-office-open`, and `assigned`/
+ * `in_progress` as info — tracked work the router already admitted. `since`
+ * is the assignment's recorded `updatedAt` — null when it does not parse,
+ * never invented; `expiresAt` stays null: an assignment carries a `due`
+ * target date, not a deadline it expires on; `jobIds` cites the row's own
+ * `rq` — the work item id `--job` already matches. A verified-absent office
+ * file is 'missing' (no assignment can exist) and an unreadable or invalid
+ * one 'unavailable' — an open assignment it may hide stays unknown, never an
+ * empty office passed off as fact. The store rows are the office's own
+ * scrubbed writes; title and detail still pass through `oneLine` like every
+ * other untrusted body. Deep links: `phm leader status`, `phm leader assign`.
+ */
+function leaderOfficeItems(read: NonNullable<UnifiedInboxOptions['readLeaderOffice']>): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: LeaderOfficePendingRead;
+  try { result = read(); } catch { result = { status: 'unavailable' }; }
+  if (result.status !== 'ok') {
+    return { report: { state: result.status, pending: result.status === 'missing' ? 0 : null }, items: [] };
+  }
+  const items = result.assignments.map((assignment, index): Omit<UnifiedInboxItem, 'priority'> => {
+    const escalated = assignment.status === 'escalated';
+    const rq = typeof assignment.rq === 'string' && assignment.rq !== '' ? assignment.rq : null;
+    const label = rq ?? `row-${index + 1}`;
+    const owner = typeof assignment.owner === 'string' && assignment.owner !== '' ? assignment.owner : null;
+    const lane = typeof assignment.lane === 'string' && assignment.lane.length > 0 ? assignment.lane : null;
+    const dueText = typeof assignment.due === 'string' && assignment.due !== '' ? `due ${assignment.due}` : null;
+    const summary = typeof assignment.summary === 'string' ? assignment.summary : '';
+    const since = typeof assignment.updatedAt === 'string' && Number.isFinite(Date.parse(assignment.updatedAt)) ? assignment.updatedAt : null;
+    const meta = [owner === null ? null : `owner ${owner}`, lane === null ? null : `lane ${lane}`, dueText]
+      .filter((part): part is string => part !== null).join(' · ');
+    const detail = escalated
+      ? oneLine(`needs the owner — ${summary === '' ? 'a hard-limit escalation' : summary}${dueText === null ? '' : ` · ${dueText}`}`, DETAIL_MAX)
+      : oneLine(`${meta === '' ? '' : `${meta} — `}${summary}`, DETAIL_MAX);
+    return {
+      id: `leader-office:${label}`,
+      source: 'leader-office',
+      kind: escalated ? 'leader-office-escalated' : 'leader-office-open',
+      severity: escalated || assignment.status === 'blocked' || assignment.status === 'proposed' ? 'warn' : 'info',
+      // An escalation is the office's needs-you verdict — only the owner
+      // decides it; every other open row is tracked work that blocks nothing.
+      blocking: escalated,
+      title: oneLine(escalated ? `Leader escalation ${label}` : `Leader assignment ${label} (${assignment.status})`, TITLE_MAX),
+      detail: detail === '' ? null : detail,
+      since,
+      expiresAt: null,
+      ...jobIdsField(rq === null ? [] : [rq]),
+      act: escalated
+        ? ['phm leader status --json']
+        : ['phm leader status --json',
+          ...(rq === null || owner === null ? [] : [`phm leader assign --rq ${rq} --owner ${owner} --summary "<work summary>" --status <status> --json`])],
+    };
+  });
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
+/**
  * One read-only pass over every pending comms source. Never throws; a failed
  * source reports its state and the rest still list.
  */
@@ -3905,6 +4011,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const sendGate = sendGateItems(options.readKillSwitch ?? readKillSwitch, options.probePause ?? probePauseState);
   const routerQueue = await routerQueueItems(options.readRouterQueue ?? readRouterQueueSource, options);
   const channelHealth = await channelHealthItems(options);
+  const leaderOffice = leaderOfficeItems(options.readLeaderOffice ?? readLeaderOfficePending);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -3942,8 +4049,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'send-gate': sendGate.report,
     'router-queue': routerQueue.report,
     'channel-health': channelHealth.report,
+    'leader-office': leaderOffice.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items, ...leaderOffice.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

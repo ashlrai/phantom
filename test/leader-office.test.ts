@@ -15,6 +15,7 @@ import {
   leaderOrg,
   leaderStatus,
   loadLeaderOrg,
+  readLeaderOfficePending,
   readLeaderOutbox,
   type LeaderOfficeDeps,
 } from '../src/core/agents/leader-office.js';
@@ -252,5 +253,32 @@ describe('leader office decisions', () => {
     expect(loaded.org.coordinatesWith.map((peer) => peer.rq)).toEqual(['RQ-SHARED-VISIBILITY-1', 'RQ-COMMS-UNIFIED-1']);
     const status = leaderOrg({});
     expect(status).toMatchObject({ source: 'bundled' });
+  });
+});
+
+describe('leader office pending read', () => {
+  it('reports missing without an office file and ok with only the open rows', async () => {
+    root = mkdtempSync(join(tmpdir(), 'leader-office-'));
+    expect(readLeaderOfficePending({ root })).toEqual({ status: 'missing' });
+    await leaderAssign({ rq: 'RQ-PEND-1', owner: 'engineering', summary: 'fix the test' }, deps());
+    await leaderAssign({ rq: 'RQ-PEND-2', owner: 'engineering', summary: 'fix the build', status: 'done' }, deps());
+    await acceptOwnerMessage({ text: 'rotate the API key for RQ-PEND-3' }, deps());
+    const read = readLeaderOfficePending({ root });
+    expect(read.status).toBe('ok');
+    if (read.status !== 'ok') return;
+    // 'done' is settled history; the escalated row stays open like every
+    // other non-done status — the same set leaderStatus reports.
+    expect(read.assignments.map((row) => `${row.rq}:${row.status}`).sort()).toEqual(['RQ-PEND-1:assigned', 'RQ-PEND-3:escalated']);
+    const status = await leaderStatus(deps());
+    const priorities = 'priorities' in status ? status.priorities.map((row) => row.rq) : [];
+    expect(priorities.sort()).toEqual(read.assignments.map((row) => row.rq).sort());
+  });
+
+  it('reports unavailable on an office file that cannot be parsed', async () => {
+    root = mkdtempSync(join(tmpdir(), 'leader-office-'));
+    writeFileSync(join(root, 'office.json'), '{not json', { mode: 0o600 });
+    expect(readLeaderOfficePending({ root })).toEqual({ status: 'unavailable' });
+    writeFileSync(join(root, 'office.json'), JSON.stringify({ schema: 'other/v9', assignments: [], messages: [] }), { mode: 0o600 });
+    expect(readLeaderOfficePending({ root })).toEqual({ status: 'unavailable' });
   });
 });
