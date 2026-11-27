@@ -14,6 +14,7 @@ export async function readResourceQueue(runsDir: string, now: number, status: un
   const tick = Date.parse(String(snapshot.last_tick ?? ''));
   if (snapshot.schema !== 'dispatchd.status.v1' || !(tick <= now && now - tick <= FRESH_MS) ||
       (snapshot.paused !== null && snapshot.paused !== false) || admission.admit !== true ||
+      (admission.ts !== undefined && admission.ts !== snapshot.last_tick) ||
       admission.decision === 'stop' || admission.gate_reason) return null;
   const read = (name: string, max = MAX_BYTES) => readSource(join(runsDir, name), max, false);
   const [ready, slots, models, budget, adaptive, hold, retired, router, pause, orchOff] = await Promise.all([

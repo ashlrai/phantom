@@ -1515,6 +1515,10 @@ observed quota per token times measured tokens per job, or observed quota per
 finish when token coverage is incomplete. It is a projection, not billing
 attribution: shared accounts can have usage outside Phantom. Missing data stays
 `null`. A fresh snapshot does not guarantee the same resource headroom later.
+An embedded admission record with a `ts` must match the status snapshot's
+`last_tick` for the planner to count reroutable ready rows or redirect them
+toward expiring quota. When the timestamps differ, the plan uses the
+dispatcher-reported lane queue counts and leaves ready rows in place.
 
 `phm resources plan --json --write-advice` explicitly publishes a private
 queue sidecar. The dispatcher uses it for five minutes as a tie-break among
