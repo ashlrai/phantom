@@ -81,8 +81,7 @@ function assign<K extends keyof Job>(job: Job, key: K, value: Job[K] | undefined
   if (job[key] !== undefined && job[key] !== value) throw new Error(`Conflicting ${key} for a job`);
   job[key] = value;
 }
-function outcome(row: Row): boolean | undefined {
-  const value = field(row, 'merged', 'outcome', 'result', 'status');
+function outcome(value: unknown): boolean | undefined {
   if (typeof value === 'boolean') return value;
   if (typeof value !== 'string') return undefined;
   const verdict = value.trim().toLowerCase();
@@ -185,14 +184,16 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
         assign(job, 'wallTimeMs', seconds * 1000);
       }
     }
-    const verdict = isOutcomeEvent ? outcome(row) : undefined;
     const terminalVerdict = state === 'MERGED' ? true : state === 'CLOSED' ? false : undefined;
-    const explicitVerdict = typeof row['merged'] === 'boolean' ? row['merged'] : verdict;
-    if ((terminalVerdict !== undefined && explicitVerdict !== undefined && terminalVerdict !== explicitVerdict)
-      || (row['merged'] === true && terminalPhases.has('CLOSED'))) {
+    const reportedVerdicts = isOutcomeEvent
+      ? [row['merged'], row['outcome'], row['result'], row['status']].map(outcome)
+      : [terminalVerdict !== undefined && typeof row['merged'] === 'boolean' ? row['merged'] : undefined];
+    const verdicts = new Set([terminalVerdict, ...reportedVerdicts]);
+    verdicts.delete(undefined);
+    if (verdicts.size > 1 || (row['merged'] === true && terminalPhases.has('CLOSED'))) {
       throw new Error('Conflicting merged verdicts on a job receipt');
     }
-    assign(job, 'merged', verdict ?? terminalVerdict);
+    assign(job, 'merged', verdicts.values().next().value);
     metrics(job, row);
   }
   if (rows.length && !recognized) throw new Error('No recognized dispatch events');

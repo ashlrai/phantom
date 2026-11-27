@@ -92,6 +92,9 @@ describe('router calibration', () => {
     { event: 'merged', merged: false },
     { event: 'publish', source: 'metrics-outcomes-reconciler', merged: false, outcome: 'MERGED' },
     { event: 'outcome', outcome: 'rejected', phase: 'MERGED' },
+    { event: 'outcome', merged: true, outcome: 'rejected', phase: 'MERGED' },
+    { event: 'result', merged: true, status: 'failed' },
+    { type: 'resolved', outcome: 'pending', result: 'rejected', status: 'merged' },
   ])('rejects a receipt with contradictory merge verdicts (%j)', (receipt) => {
     const launch = row({ event: 'launch', job: 'RQ-CONFLICT', lane: 'codex', predicted_merge_rate: 0.8 });
     expect(() => calibrateRouting(launch + row({ job: 'RQ-CONFLICT', ...receipt })))
@@ -101,6 +104,8 @@ describe('router calibration', () => {
     { event: 'result', merged: false },
     { type: 'resolved', result: 'FAILED' },
     { kind: 'resolution', status: 'not_merged' },
+    { event: 'outcome', outcome: 'pending', result: 'failed' },
+    { event: 'outcome', merged: false, outcome: 'rejected', status: 'failed' },
   ])('scores explicit negative verdicts in outcome event aliases (%j)', (receipt) => {
     const launch = row({ event: 'launch', job: 'RQ-VERDICT', lane: 'codex', predicted_merge_rate: 0.5 });
     const report = calibrateRouting(launch + row({ job: 'RQ-VERDICT', ...receipt }));
