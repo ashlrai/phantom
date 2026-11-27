@@ -1653,7 +1653,7 @@ source needs 5 launches before it is judged. The hourly digest adds a `yield_low
 
 ## Waiting to launch
 
-Run `phm queue stuck --json` to list READY router jobs without a recorded launch. `age_s` uses the enqueue epoch, or the first timestamped dispatch event for the job; `age: "unknown"` means neither is available. If dispatch events are unavailable, `eventsAvailable` is false and the list may include jobs that have launched. The desktop Queue view shows the same reading. The dispatch-events log is append-only and unbounded, so it is folded line by line: memory stays flat however large the log grows, and every event still counts.
+Run `phm queue stuck --json` to list READY router jobs without a recorded launch. It reads `queue/router-queue.md` and `dispatch-events.log` under the runs directory (`ASHLR_RUNS_DIR`, else `~/.ashlr-runs`), the same resolution the other fleet readers use. `age_s` uses the enqueue epoch, or the first timestamped dispatch event for the job; `age: "unknown"` means neither is available. If dispatch events are unavailable, `eventsAvailable` is false and the list may include jobs that have launched. The desktop Queue view shows the same reading. The dispatch-events log is append-only and unbounded, so it is folded line by line: memory stays flat however large the log grows, and every event still counts.
 
 ### Retry empty jobs
 
