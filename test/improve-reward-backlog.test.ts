@@ -33,11 +33,12 @@ function rewardRow(spec: {
   merged?: boolean;
   recordedAtMs: number;
   dispatchedAtMs?: number;
+  mergedAtMs?: number;
   ciWallMs?: number | null;
 }): string {
   const merged = spec.merged ?? false;
   const dispatchedAtMs = spec.dispatchedAtMs ?? spec.recordedAtMs - 2 * HOUR;
-  const mergedAtMs = merged ? spec.recordedAtMs - HOUR : null;
+  const mergedAtMs = merged ? spec.mergedAtMs ?? spec.recordedAtMs - HOUR : null;
   return J({
     v: 1,
     jobId: spec.jobId,
@@ -121,7 +122,7 @@ describe('foldRewardJournal', () => {
     expect(rewardCells(fold)).toEqual([]);
   });
 
-  it('uses the first valid retained row before applying the time window', () => {
+  it('deduplicates before applying the lower window bound', () => {
     const rows = [
       held('old', NOW_MS - REWARD_BACKLOG_WINDOW_MS - DAY),
       notHeld('old', NOW_MS),
@@ -132,6 +133,28 @@ describe('foldRewardJournal', () => {
     expect(fold.records).toBe(1);
     expect(fold.invalidRows).toBe(1);
     expect(fold.pools.get('claude')).toMatchObject({ rows: 1, held: 1, notHeld: 0 });
+  });
+
+  it('excludes future reward timestamps before deduplicating jobs', () => {
+    const rows = [
+      held('recorded-later', NOW_MS + 1),
+      notHeld('recorded-later', NOW_MS, 'codex'),
+      rewardRow({ jobId: 'dispatch-later', recordedAtMs: NOW_MS, dispatchedAtMs: NOW_MS + 1 }),
+      rewardRow({ jobId: 'merge-later', recordedAtMs: NOW_MS, mergedAtMs: NOW_MS + 1, merged: true }),
+      rewardRow({
+        jobId: 'boundary', recordedAtMs: NOW_MS, dispatchedAtMs: NOW_MS, mergedAtMs: NOW_MS, merged: true,
+      }),
+    ].join('\n');
+    const before = foldRewardJournal(rows, NOW_MS, REWARD_BACKLOG_WINDOW_MS);
+    expect(before.invalidRows).toBe(0);
+    expect(before.records).toBe(2);
+    expect(before.pools.get('codex')).toMatchObject({ rows: 1, notHeld: 1 });
+    expect(before.pools.get('claude')).toMatchObject({ rows: 1, held: 1 });
+
+    const after = foldRewardJournal(rows, NOW_MS + 1, REWARD_BACKLOG_WINDOW_MS);
+    expect(after.records).toBe(4);
+    expect(after.pools.get('codex')).toBeUndefined();
+    expect(after.pools.get('claude')).toMatchObject({ rows: 4, held: 3, notHeld: 1 });
   });
 
   it('groups rows per pool and tallies unattributed rows separately', () => {

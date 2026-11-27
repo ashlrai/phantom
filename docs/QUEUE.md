@@ -1566,8 +1566,10 @@ within the evidence window. At least four must have not-held outcomes,
 those outcomes must form a strict majority, and they must have been
 recorded on at least two distinct UTC dates. The brief lists dates with
 not-held outcomes. Held merges count toward the denominator.
-The window ends at the evaluation time, inclusive. Future-dated reward
-receipts contribute once the evaluation time reaches their `recordedAt`.
+The window ends at the evaluation time, inclusive. A reward receipt becomes
+eligible once that time reaches its recording, dispatch and any merge timestamp.
+Discovery takes the first eligible receipt per job in ledger order, then applies
+the lower window bound to its recording timestamp.
 
 ## Fleet resource capacity advice
 
