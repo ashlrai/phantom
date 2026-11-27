@@ -470,15 +470,44 @@ describe('worktree classes', () => {
       readJobs: HEALTHY(jobsText([
         { job: names[0], event: 'publish', url: 'https://github.com/ashlrai/phantom/pull/1', ts, headSha },
         { job: names[1], event: 'outcome', state: 'CLOSED', ts },
-        { job: names[1], event: 'claim' },
+        { job: names[1], event: 'claim', ts },
         { job: names[2], event: 'outcome', state: 'CLOSED', ts },
       ])),
       lookupWorktreePulls: async urls => ({ pulls: urls.map(url => ({ url, state: 'CLOSED', at: NOW - DAY, prHead: headSha })) }),
       worktreeHasUnpushed: async (path, head) => { checked.push([path, head]); return head !== headSha; },
     });
-    expect(checked).toEqual([[join(roots.wtDir, names[0]!), headSha]]);
+    expect(checked).toEqual([[join(roots.wtDir, names[0]!), headSha], [join(roots.wtDir, names[1]!), undefined]]);
     expect(cls.reapReasons).toEqual({ closed: 1 });
-    expect(cls.protectReasons).toEqual({ 'state-unknown': 1, queued: 1 });
+    // The retried job lost its verdict to the claim; the unpushed check is the
+    // gate that keeps it, not the state-unknown hold.
+    expect(cls.protectReasons).toEqual({ 'unpushed-commits': 1, queued: 1 });
+  });
+
+  it('reaps state-unknown worktrees only after the unpushed and payload gates pass', async () => {
+    const ts = '2026-10-01T00:05:00Z';
+    const names = ['RQ-UNKNOWN-CLEAN', 'RQ-UNKNOWN-DIRTY', 'RQ-UNKNOWN-RECENT', 'RQ-UNKNOWN-NO-TIME'];
+    for (const name of names) dir(`Projects/ashlrai/wt/${name}`, 10);
+    const unpushedCalls: string[] = [];
+    const { cls } = await classPlan('worktrees-jobs', {
+      readJobs: HEALTHY(jobsText([
+        // Clean finish, publish produced no PR and no outcome ever arrived.
+        { job: names[0], event: 'launch', ts },
+        { job: names[0], event: 'finish', ts, exit_code: 0, empty: false },
+        { job: names[0], event: 'publish', ts, url: null },
+        { job: names[1], event: 'finish', ts, exit_code: 0, empty: false },
+        { job: names[1], event: 'publish', ts, url: null },
+        // Verdict-less but finished minutes ago: too new to touch.
+        { job: names[2], event: 'finish', ts: new Date(NOW - 60_000).toISOString(), exit_code: 0, empty: false },
+        // No timestamp at all: never eligible.
+        { job: names[3], event: 'finish', exit_code: 0, empty: false },
+      ])),
+      worktreeHasUnpushed: async path => { unpushedCalls.push(path); return path.endsWith(names[1]!); },
+    });
+    expect(unpushedCalls.sort()).toEqual([join(roots.wtDir, names[0]!), join(roots.wtDir, names[1]!)].sort());
+    expect(cls.reapReasons).toEqual({ 'state-unknown': 1 });
+    expect(cls.protectReasons).toEqual({ 'unpushed-commits': 1, 'too-new': 1, 'state-unknown': 1 });
+    const candidate = cls.candidates.find(c => c.path.endsWith(names[0]!));
+    expect(candidate?.reason).toContain('no unpushed commits');
   });
 });
 
