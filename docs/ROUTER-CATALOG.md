@@ -49,8 +49,11 @@ never change during refresh.
 When all owning sources succeed but omit a catalog model, its first missed
 timestamp is retained as unseen-since. Unknown owning sources (or no owning
 pattern) do not create unseen marks. Reappearing models clear their marks.
-After 30 days a missing entry is reported as deprecated; after 90 days its
-removal is proposed. Refresh never removes models, including with --apply.
+A refresh reports deprecation after 30 days and proposes removal after 90 days
+only when all owning sources succeed and still omit the model in that refresh.
+When ownership or source availability is unknown, the historical unseen mark
+is preserved and both recommendations are withheld. Refresh never removes
+models, including with `--apply`.
 
 `phm router catalog schedule --hour 3` prints weekly Monday launchd or systemd
 user units. Add `--install` to install them as a regular user with a built CLI.
