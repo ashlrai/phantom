@@ -216,6 +216,8 @@ export interface TrajectorySkillOutcomeRow {
   /** Bounded opaque skill identifier; never card content. */
   skillId: string;
   skillRevision: number;
+  /** Recorded digest when all contributing observations identify the same content. */
+  skillContentHash?: string;
   /** Distinct trajectories where this skill revision was observed in use. */
   selections: number;
   /** Terminal outcomes of those trajectories (sparse: observed keys only). */
@@ -2269,22 +2271,22 @@ export function summarizeTrajectoryLearning(
     routeReasonCounts[generatedRepairRouteReason(record.routeSnapshot?.reason)]++;
   }
 
-  const skillOutcomeRows = new Map<string, {
-    skillId: string;
-    skillRevision: number;
-    selections: number;
-    outcomes: Partial<Record<TrajectoryTerminalOutcome, number>>;
+  const skillOutcomeRows = new Map<string, Omit<TrajectorySkillOutcomeRow, 'realized'> & {
     realized: Partial<Record<TrajectoryRealizedOutcome, number>>;
   }>();
   const skillOutcomeSkillIds = new Set<string>();
   let skillOutcomeSelections = 0;
   if (publishSkillMetrics) {
     const hashesByRevision = new Map<string, string>();
+    const unidentifiedRevisions = new Set<string>();
     const disputedRevisions = new Set<string>();
     for (const record of observedProductionRecords) {
       for (const selection of skillSelectionOutcomesByRecord.get(record) ?? []) {
-        if (!selection.contentHash) continue;
         const key = JSON.stringify([selection.skillId, selection.skillRevision]);
+        if (!selection.contentHash) {
+          unidentifiedRevisions.add(key);
+          continue;
+        }
         const previousHash = hashesByRevision.get(key);
         if (previousHash && previousHash !== selection.contentHash) disputedRevisions.add(key);
         hashesByRevision.set(key, selection.contentHash);
@@ -2298,9 +2300,11 @@ export function summarizeTrajectoryLearning(
         countedRevisions.add(key);
         let row = skillOutcomeRows.get(key);
         if (!row) {
+          const skillContentHash = hashesByRevision.get(key);
           row = {
             skillId: selection.skillId,
             skillRevision: selection.skillRevision,
+            ...(skillContentHash && !unidentifiedRevisions.has(key) ? { skillContentHash } : {}),
             selections: 0,
             outcomes: {},
             realized: {},
@@ -2358,12 +2362,9 @@ export function summarizeTrajectoryLearning(
         perSkill: [...skillOutcomeRows.values()]
           .sort((a, b) => b.selections - a.selections || a.skillId.localeCompare(b.skillId) || a.skillRevision - b.skillRevision)
           .slice(0, MAX_SKILL_OUTCOME_ROWS)
-          .map((row) => ({
-            skillId: row.skillId,
-            skillRevision: row.skillRevision,
-            selections: row.selections,
-            outcomes: { ...row.outcomes },
-            ...(Object.keys(row.realized).length > 0 ? { realized: { ...row.realized } } : {}),
+          .map(({ realized, ...row }) => ({
+            ...row,
+            ...(Object.keys(realized).length > 0 ? { realized } : {}),
           })),
       },
     } : {}),

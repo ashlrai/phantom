@@ -3,6 +3,15 @@
 Status: source-complete. The dispatch log is the memory. There is no operator
 setting for the weights, the exploration rate, or the failure threshold.
 
+## Skill outcome content identity
+
+An optional `skillContentHash` in each `TrajectorySkillOutcomeRow` carries
+the recorded content digest when every joined observation for the revision
+identifies the same content. Conflicting digests withhold the revision's
+tallies. A missing digest leaves the historical tallies available without
+the field. Improvement discovery requires this digest to match the current
+card and requires agreement across all records of that current revision.
+
 ## What it records
 
 `learnOutcomes` reads a dispatch event log. A finished job is an `ASSIGN` or
