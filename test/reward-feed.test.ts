@@ -852,6 +852,33 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs[0]?.ciWallMs).toBe(ciWallMs);
   });
 
+  it('attributes a standalone revert and its CI timing to the latest effective revert repository', () => {
+    const job = 'RQ-REVERT-REPO';
+    const url = 'https://github.com/ashlrai/companion/pull/101';
+    const rows = [
+      launch(job),
+      line({ event: 'ci_start', job, ts: '2026-10-28T15:10:00.000Z', url }),
+      line({ event: 'ci_complete', job, ts: '2026-10-28T15:25:00.000Z', url }),
+      line({ event: 'reverted', job, revertedAt: MERGED_ISO, url, repo: 'ashlrai/phantom' }),
+      line({
+        event: 'reverted', job, ts: '2026-10-28T19:00:00.000Z',
+        revertedAt: '2026-10-28T15:00:00.000Z', url: 'https://github.com/ashlrai/phantom/pull/102',
+      }),
+    ];
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toEqual([
+      expect.objectContaining({ jobId: job, repo: 'ashlrai/companion', merged: false, ciWallMs: 900_000 }),
+    ]);
+
+    rows.push(line({
+      event: 'reverted', job, revertedAt: MERGED_ISO, url: 'https://github.com/ashlrai/phantom/pull/102',
+    }));
+    const tied = foldJobsLedgerRewards(rows.join('\n'), NOW_MS);
+    expect(tied).toEqual([
+      expect.objectContaining({ jobId: job, repo: null, merged: false }),
+    ]);
+    expect(tied[0]).not.toHaveProperty('ciWallMs');
+  });
+
   it('keeps the reward verdict but withholds CI timing when a batch claim coincides with CI start', () => {
     const start = '2026-10-28T15:10:00.000Z';
     const complete = '2026-10-28T15:25:00.000Z';
