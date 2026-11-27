@@ -868,10 +868,13 @@ reverted resolutions alike (the v1 schema has no revert dimension —
 `reverted` still joins independently). When the reward row fills a missing
 merge verdict, recorded PR-level revert evidence applies only if the
 retained jobs ledger links the job to a single, uncontested PR.
-When both ledgers record a fully qualified `owner/repo` and those identities
-disagree case-insensitively, the reward row contributes no verdict or
-measurements. Bare fleet labels and missing repository fields leave the
-job-ID join in effect.
+A fully qualified reward repository must agree case-insensitively with
+any fully qualified jobs-ledger repository label and with the repository
+of the attributed PR. The terminal verdict's attributable PR takes
+precedence. Without a terminal PR field, a sole uncontested PR claim can
+supply the repository. A mismatch withholds the reward verdict and all
+reward measurements. If neither source identifies a fully qualified
+repository for comparison, the job-ID join still applies.
 `pool_pct_used` is the row's
 recorded subscription-pool percentage points consumed
 (`cost.pctUsedDelta`) — the only per-job subscription-quota cost
