@@ -4948,6 +4948,23 @@ the work feed's `--channel`; the addressed `agents bus inbox --channel`
 resolves the same prefix only across the agent's member channels), strict
 channel-name grammar with no registry dependence — each
 skipping non-matching rows while checkpoints still advance past them.
+`bus-page-filters.ts` (`src/core/fleet/`) owns the one page-filter
+contract the durable-store reads share: `BusPageFilters` (the scalar and
+body dimensions — `id`, `inReplyTo`, `priority`, `kind`, `topic`,
+`thread`, `job`, `channel`, `bodyKind`, `result`, `since`, `before`,
+`contains`), `BusPageAddressRefs`/`BusPageMatchers` (the `to`/`from`/
+`excludeFrom` labels resolved through `busPageAddressMatchers`, the same
+registry read with exact-label fallback), `busPageRowMatch`/
+`filterBusInboxPage` (the single row predicate and page narrow that keep
+the scanned page's own `nextCursor`, so a filtered page that matches
+nothing still advances without replay) and `parseBusPageQuery`/
+`BUS_PAGE_QUERY_PARAMS` — the string validation `GET
+/api/verse/agent-bus` (`src/core/verse/agent-bus-api.ts`) applies, so the
+raw HTTP page takes the identical filter set `comms bus read|watch`,
+`fleet bus-follow` and `fleet_bus_inbox` (`src/mcp/fleet-inbox.ts`, which
+resolves its args into the same `BusPageFilters`/`busPageAddressMatchers`
+pair) do; an unknown, repeated or malformed parameter or value is a 400,
+never a silently ignored filter.
 Claim tokens and `work.result`
 queueId/receiptId never appear in a summary.
 `parseUnifiedInboxQuery` (`src/core/comms/unified-inbox-query.ts`) is the

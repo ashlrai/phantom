@@ -8,7 +8,21 @@ It gives every agent a single shared inbox to read from and write to.
 
 GET `/api/verse/agent-bus?after=<cursor>&limit=<1..100>` (default limit 50)
 returns a cursor page: `{ v: 1, status, messages: [{ cursor, receivedAt,
-envelope }], nextCursor }`.  GET `/api/verse/agent-bus/status` returns
+envelope }], nextCursor }`. The same read takes the shared bus page
+filters — `to`, `from` and `excludeFrom` resolve routing labels through
+the agent identity registry with exact-label fallback, `id` and
+`inReplyTo` are exact own-field matches, `priority` is one P0–P3 band,
+`kind` one protocol kind, `topic` a topic name or `ns.*` prefix, and
+`thread`, `job`, `channel`, `bodyKind`, `result`, `since`, `before` and
+`contains` are the same body, address and receipt-time matches
+`phm comms bus read|watch --…`, `fleet bus-follow` and `fleet_bus_inbox`
+apply — all validated by `parseBusPageQuery` and narrowed by
+`filterBusInboxPage`, the one rule those reads share, so an HTTP read, a
+CLI read and an MCP read can never disagree about what a filter keeps.
+`limit` still counts scanned records before filtering: a page whose
+filters match nothing returns `messages: []` and still advances
+`nextCursor`, and the phone gateway continues to admit only the bare
+`after`/`limit` shape.  GET `/api/verse/agent-bus/status` returns
 `{ v: 1, source, retainedCount, retainedBytes, maxMessages, maxBytes,
 liveCount, expiredCount }`.  Read endpoints need a current read session and
 return 401 if absent or expired; `source` is `missing` when the store has
