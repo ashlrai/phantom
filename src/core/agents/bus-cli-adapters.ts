@@ -19,6 +19,7 @@ import {
 } from './bus-identity.js';
 import { busBodyFallbackSummary, busBodySummary, busInboxJobMarker,
   type AgentWakeRow, type BusEnvelopeLookupJob, type ChannelReadMessage, type InboxMessage } from './bus-unified.js';
+import type { AgentConversations, Conversation, ConversationItem } from '../fleet/agent-conversation-model.js';
 
 export interface BusCliAdapter {
   readonly cli: BusCli;
@@ -327,6 +328,71 @@ export function frameBusWakes(cli: BusCli, wakes: readonly AgentWakeRow[]): stri
     shown += 1;
   }
   if (shown < wakes.length) lines.push(`(${wakes.length - shown} more wake hints not shown; read the wakes again)`);
+  lines.push(BUS_INBOX_FRAME_END);
+  return lines.join('\n');
+}
+
+/**
+ * One framed member-message line of an `agents conversations` thread:
+ * `[<band> <kind> conv=<thread> id=<id> from <from> to <to><evidence>]
+ * <subject>`. `conv` is the thread key the conversations read groups
+ * under — a declared thread label, `job:<id>` or the reply-chain root —
+ * so a host can tell which conversation a line belongs to without a
+ * second read; `kind` is the classified ask/reply/handoff/status/blocker
+ * the flat timeline reports, `from`/`to` the member message's endpoint
+ * names (routing labels, never authenticated identity), and `subject` the
+ * same scrubbed one-line summary `phm messages` prints — untrusted bus
+ * content like every other frame payload. A member message carrying no
+ * recorded priority band shows `?`, never an invented P-band; `result`
+ * and `topic` ride inside the bracket only when the body provably carries
+ * them — the same own-field reads every bus filter applies.
+ */
+function conversationFrameLine(conversation: Conversation, message: ConversationItem): string {
+  const evidence = `${message.result === undefined ? '' : ` result=${message.result}`}` +
+    `${message.topic === undefined ? '' : ` topic=${message.topic}`}`;
+  return `[${message.priority ?? '?'} ${message.kind} conv=${conversation.id} id=${message.id} ` +
+    `from ${message.from} to ${message.to}${evidence}] ${message.subject}`;
+}
+
+/**
+ * The same bounded untrusted-data block `frameBusInbox` produces, rendered
+ * for one `agents.conversations.v1` page (`agents conversations --frame
+ * <cli>`). The thread read is the fleet's "who is talking to whom" surface —
+ * its member subjects are the same untrusted bus text the inbox frame
+ * guards — so every member message of every shown thread renders inside
+ * the shared markers, oldest first per thread, threads in the read's own
+ * waiting-first order. A page the bus could not produce (`conversations`
+ * null) frames the unreadable state honestly rather than inventing
+ * content; budget-cut member messages and `--limit`-cut threads are each
+ * stated before the end marker, never silent. Identical for every CLI.
+ */
+export function frameAgentConversations(cli: BusCli, result: AgentConversations): string {
+  if (!getBusCliAdapter(cli)) throw new Error('Unknown CLI.');
+  const lines = [BUS_INBOX_FRAME_BEGIN];
+  let used = BUS_INBOX_FRAME_BEGIN.length + BUS_INBOX_FRAME_END.length + 64;
+  const conversations = result.conversations;
+  if (conversations === null) {
+    lines.push('agent conversations unavailable: the agent bus could not be read');
+  } else {
+    const total = conversations.reduce((count, conversation) => count + conversation.messages.length, 0);
+    let shown = 0, full = false;
+    for (const conversation of conversations) {
+      for (const message of conversation.messages) {
+        if (full) break;
+        const line = clean(conversationFrameLine(conversation, message));
+        if (used + line.length + 1 > BUS_INBOX_FRAME_MAX) { full = true; break; }
+        lines.push(line);
+        used += line.length + 1;
+        shown += 1;
+      }
+      if (full) break;
+    }
+    if (shown < total) lines.push(`(${total - shown} more messages not shown; read the conversations again)`);
+    const unshownThreads = typeof result.matched === 'number' ? Math.max(0, result.matched - conversations.length) : 0;
+    if (unshownThreads > 0) {
+      lines.push(`(${unshownThreads} more conversation${unshownThreads === 1 ? '' : 's'} not shown; raise --limit)`);
+    }
+  }
   lines.push(BUS_INBOX_FRAME_END);
   return lines.join('\n');
 }

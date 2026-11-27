@@ -5070,7 +5070,16 @@ same held/holder/job bracket evidence, and carries the resolved summary or
 the claim-holder detail as payload; a hint whose referent is `unresolved`
 or `unknown` shows that state with no invented band or payload, so the
 claim-holder hints an inbox frame can never carry still reach a CLI's next
-turn as untrusted data. Identities
+turn as untrusted data. `frameAgentConversations(cli, result)` renders an
+`agents.conversations.v1` page (`agents conversations --frame <cli>`) through
+the same markers, scrub and bound: one line per member message of every shown
+thread — oldest first per thread, threads in the read's own order — its
+bracket naming the thread key (`conv=`), the message's wire id, classified
+kind, endpoint names and any provable `result`/`topic` evidence, the scrubbed
+subject as payload; a member message with no recorded priority band shows `?`,
+never an invented P-band, a null page frames the bus as unreadable rather than
+inventing content, and budget-cut messages plus `--limit`-cut threads are each
+stated before the end marker, never silent. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one

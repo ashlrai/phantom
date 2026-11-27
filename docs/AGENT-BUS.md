@@ -209,7 +209,17 @@ done" fleet-wide without reconstructing reply chains from the raw
 timeline; `matched`/`waiting`/`skipped`/`source` pass through untouched,
 an unreadable bus or registry stays null rather than an invented empty
 thread list, and the tool accepts no caller root or path and never posts,
-claims, acks, replies or renews TTL.
+claims, acks, replies or renews TTL. `phm agents conversations --frame
+<cli>` prints the same threads as the bounded untrusted-data block every
+bus `--frame` read produces — identical markers, scrub and clip bound —
+with one line per member message of every shown thread: the bracket names
+the thread key, the message's wire id, its classified kind, endpoint
+names and any provable `result`/`topic` evidence, the scrubbed subject is
+the payload, a member message with no recorded priority band shows `?`
+rather than an invented one, and budget- or `--limit`-cut content is
+stated before the end marker; with `--json` the block rides alongside the
+page as `framed`. It is a CLI-only rendering, so
+`fleet_agent_conversations` takes no `frame` argument.
 
 ## Write
 
