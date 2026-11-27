@@ -142,10 +142,14 @@ describe('syncEmptyTagsFromJobsLedger', () => {
     expect(readDupcheck(runsDir).map(row => row['action'])).toEqual(['launch']);
   });
 
-  it.each(['launch', 'batch_claim'])('waits for the current attempt after a %s', async (event) => {
+  it.each([
+    ['launch', {}],
+    ['batch_claim', {}],
+    ['claim', { launch_dedupe: true }],
+  ] as const)('waits for the current attempt after a %s', async (event, fields) => {
     const job = 'RQ-RETRY';
-    const dispatch = line({ event, job, ts: TS });
-    const replayedDispatch = line({ ts: TS, job, event });
+    const dispatch = line({ event, job, ts: TS, ...fields });
+    const replayedDispatch = line({ ts: TS, job, event, ...fields });
     const previousFinish = finish(job, true, '2026-10-28T18:30:00.000Z');
     // The previous finish arrived late in the ledger. The log already belongs to the retry.
     writeJobs([dispatch, previousFinish].join('\n') + '\n');
@@ -184,6 +188,8 @@ describe('syncEmptyTagsFromJobsLedger', () => {
     writeJobs([
       finish(job, true),
       line({ event: 'batch_claim', job, ts: declinedAt, launched: false }),
+      line({ event: 'claim', job, ts: declinedAt, launch_dedupe: true, launched: false }),
+      line({ event: 'claim', job, ts: declinedAt }),
       line({ event: 'outcome', job, ts: declinedAt, empty: false, launched: false }),
       line({ event: 'outcome', job: 'RQ-DECLINED', ts: declinedAt, empty: true, launched: false }),
     ].join('\n') + '\n');

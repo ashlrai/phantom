@@ -22,7 +22,7 @@
  *     ROUTER_OUTCOME_LEDGER_LIMIT bytes of jobs.jsonl like the sibling
  *     syncs. A job whose finish rows fell out of the tail is simply not a
  *     candidate this pass; its earlier recorded tag still stands. A new
- *     launch or batch claim supersedes finishes from an earlier attempt
+ *     launch, batch claim or launch reservation supersedes earlier finishes
  *     because the job's log can already belong to the newer attempt.
  *   - LOG TAIL IS THE ONLY INPUT. The tag comes from `tagEmpty` over the
  *     job's `<runs>/<id>.log` tail — the same 64 KiB bounded read

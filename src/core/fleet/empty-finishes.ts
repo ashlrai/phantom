@@ -87,7 +87,8 @@ export function currentAttemptFinishes(text: string, nowMs: number, hours: numbe
   const latestDispatch = new Map<string, number>();
   for (const [index, { id, row }] of rows.entries()) {
     const event = ledgerEventName(row);
-    if (event === 'launch' || event === 'batch_claim') latestDispatch.set(id, index);
+    const reserved = event === 'claim' && row.launch_dedupe === true;
+    if (event === 'launch' || event === 'batch_claim' || reserved) latestDispatch.set(id, index);
   }
   return finishesIn(rows.filter(({ id }, index) => index >= (latestDispatch.get(id) ?? 0)));
 }

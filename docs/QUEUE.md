@@ -1477,9 +1477,11 @@ Empty-tag backlog discovery and the daemon's empty-tag sync both use
 finishes from each job's latest observed dispatch attempt in their ledger
 windows. Discovery generates empty-tag briefs only for `ashlrai/phantom`
 or its bare `phantom` shorthand, matching case-insensitively.
-A launch or batch claim supersedes earlier finishes, so a retry
-awaiting its own finish is excluded from the backlog's empty and untagged
-counts. Receipts marked `launched: false` supply neither dispatch nor
+A launch, batch claim or launch reservation (`claim` with
+`launch_dedupe: true`) supersedes earlier finishes. A retry awaiting its own
+finish stays out of the backlog's empty and untagged counts and cannot produce
+an empty-tag or dupcheck outcome receipt from the previous attempt.
+Other `claim` receipts leave earlier finishes eligible. Receipts marked `launched: false` supply neither dispatch nor
 finish evidence. Explicit precheck skips still count toward the separate
 gate-skip tally. Receipt timestamps determine the order, with ledger
 order breaking ties.
