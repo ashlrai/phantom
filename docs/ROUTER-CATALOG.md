@@ -85,8 +85,10 @@ the lane is held rather than switching providers or using metered capacity.
 Ranking requires five resolved jobs per model in the same lane, tier and
 recorded work class. Without a class recorded for the exact job, the
 daemon uses the default instead of guessing a class. Ranking uses held
-merges (reverts do not count), first-pass CI,
-then lower observed USD per held merge when all tied costs are known.
+merges (reverts do not count). It compares first-pass CI only when every
+held-merge leader has an observed rate. It then compares USD per held merge
+when every remaining candidate has a measured cost. If a tie remains,
+the tier default wins when eligible, followed by model ID order.
 Unknown evidence stays unknown. The resident dispatch journal
 (`~/.ashlr/fleet/runtime/runs.jsonl`) records an `autoModel` receipt with
 the candidates, scores, sample counts, and `scored`, `threshold-fallback`,

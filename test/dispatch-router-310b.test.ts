@@ -209,7 +209,7 @@ describe('resident lane auto', () => {
     observedAt: NOW_ISO, expiresAt: new Date(NOW + 60_000).toISOString(),
   } };
   const task = item({ tags: ['tier:work'] });
-  const row = (model: string) => ({ lane: 'codex-personal', tier: 'work', work_class: 'feature',
+  const row = (model: string): Parameters<typeof indexLaneAutoScores>[0][number] => ({ lane: 'codex-personal', tier: 'work', work_class: 'feature',
     model, merged: true, reverted: false, ci_first_pass: true, cost_usd: 1 });
   const evidence = (rows = [row(alternative)], over: Partial<LaneAutoEvidence> = {}): LaneAutoEvidence => ({
     models: new Map([['codex', 'auto']]), registry: [], docs: [], score: indexLaneAutoScores(rows), workClassFor: () => 'feature',
@@ -244,6 +244,22 @@ describe('resident lane auto', () => {
     expect(pick(evidence(rows))).toMatchObject({ model: prior, autoModel: { candidates: [
       { model: alternative, usdPerHeldMerge: null }, { model: prior },
     ] } });
+  });
+
+  it.each([
+    { priorCi: null, alternativeCi: false, alternativeCost: 1, expected: prior },
+    { priorCi: null, alternativeCi: false, alternativeCost: 0.5, expected: alternative },
+    { priorCi: true, alternativeCi: false, alternativeCost: 0.5, expected: prior },
+  ])('compares CI only when all held-merge leaders have a measured rate (case %#)', ({
+    priorCi, alternativeCi, alternativeCost, expected,
+  }) => {
+    const rows = [
+      ...Array.from({ length: 5 }, () => ({ ...row(prior), ci_first_pass: priorCi })),
+      ...Array.from({ length: 5 }, () => ({ ...row(alternative), ci_first_pass: alternativeCi, cost_usd: alternativeCost })),
+    ];
+    expect(pick(evidence(rows))).toMatchObject({ model: expected, autoModel: { reason: 'scored',
+      candidates: [{ model: alternative, firstPassCiRate: 0 },
+        { model: prior, firstPassCiRate: priorCi === null ? null : 1 }] } });
   });
 
   it.each([
