@@ -104,6 +104,26 @@ test('a claim fenced by a rejoined session frees its host slots at once', () => 
   expect(report.hosts[0]).toMatchObject({ hostId: 'mac', slots: 2, running: 0, freeSlots: 2 });
 });
 
+test('a former leader epoch no longer consumes worker or shared host slots', () => {
+  const f = fixture();
+  f.add('leader', { slots: 0 });
+  const worker = f.add('worker', { hostId: 'mac', slots: 1 });
+  f.enqueue('old-job');
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  const old = nodes.pull(worker)!;
+  f.enqueue('new-job');
+  expect(projectFleetAwareness(f.state, f.now()).hosts.find(h => h.hostId === 'mac'))
+    .toMatchObject({ running: 1, freeSlots: 0 });
+
+  expect(nodes.leave(f.state.nodes[0]!)).toBe(true);
+  f.beat('worker', { hostId: 'mac', slots: 1 });
+  expect(projectFleetAwareness(f.state, f.now()).hosts.find(h => h.hostId === 'mac'))
+    .toMatchObject({ running: 0, freeSlots: 1 });
+  expect(f.plan()).toMatchObject([{ jobId: 'new-job', nodeId: 'worker' }]);
+  expect(nodes.claim(f.state.leader!, worker, 'new-job')?.leaderToken).toBeGreaterThan(old.claim.leaderToken);
+  expect(nodes.complete(old.claim, 'late')).toBe(false);
+});
+
 test.each(['memory-pressure', 'disk-pressure', 'memory-unmeasured', 'disk-unmeasured'] as const)('hold %s blocks siblings and direct claims', held => {
   const f = fixture(); const a = f.add('a', { hostId: 'mac' }); f.add('b', { hostId: 'mac', slots: 0, held }); f.enqueue();
   expect(f.plan()[0]?.nodeId).toBeNull();

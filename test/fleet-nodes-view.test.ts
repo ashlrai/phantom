@@ -23,8 +23,9 @@ const node = (nodeId: string, extra: Partial<NodeRecord> = {}): NodeRecord => ({
 });
 const POOL = { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' };
 const JOIN = 'phm node join --owner acme --primary primary-mac --backup backup-mac';
+const leader = { nodeId: 'node-a', session: 1, token: 5, expiresAt: NOW + 30_000 };
 const registry = (nodes: NodeRecord[], jobs: NodesState['jobs'] = [], extra: Partial<NodesRegistry> = {}): NodesRegistry => ({
-  source: 'pool-witness', selfNode: 'node-a', pool: POOL, state: { version: 'drive.nodes.v1', sequence: 9, observedAt: NOW - 1_000, nodes, leader: null, jobs }, ...extra,
+  source: 'pool-witness', selfNode: 'node-a', pool: POOL, state: { version: 'drive.nodes.v1', sequence: 9, observedAt: NOW - 1_000, nodes, leader: jobs.length ? leader : null, jobs }, ...extra,
 });
 const tailnet = (peers: Record<string, unknown>[], backend = 'Running') => JSON.stringify({
   BackendState: backend, Self: { HostName: 'node-a' }, Peer: Object.fromEntries(peers.map((peer, i) => [`key-${i}`, peer])),
@@ -59,7 +60,7 @@ describe('readNodesView', () => {
   it('two reachable nodes: ready and busy, with reported memory, CPU, lanes and jobs', () => {
     const view = readNodesView(deps(tailnet([peer('node-b', true), peer('node-c', true), { HostName: 'fake-phone', OS: 'iOS', Online: true }]), registry(
       [node('node-a'), node('node-b', { hostStats: stats(8, 4), slots: 1 }), node('worker-3', { capacity: { hostId: 'node-c', sampledAtMs: NOW, ramBytes: 32 * GIB, slots: 0, held: 'memory-pressure' }, slots: 0 })],
-      [{ id: 'job-1', state: 'running', claim: { jobId: 'job-1', nodeId: 'node-b', session: 1, token: 2, leaderToken: 1, expiresAt: NOW + 5_000 } }, { id: 'job-2', state: 'pending' }],
+      [{ id: 'job-1', state: 'running', claim: { jobId: 'job-1', nodeId: 'node-b', session: 1, token: 6, leaderToken: 5, expiresAt: NOW + 5_000 } }, { id: 'job-2', state: 'pending' }],
     )));
     expect(view.reasons).toEqual([]);
     expect(view.nodes.map(row => [row.name, row.stateCode, row.state])).toEqual([
@@ -80,9 +81,10 @@ describe('readNodesView', () => {
     const view = readNodesView(deps(tailnet([peer('node-b', true)]), registry(
       [node('node-a', { slots: 1 }), node('node-b', { session: 2, slots: 1 })],
       [
-        { id: 'held', state: 'running', claim: { jobId: 'held', nodeId: 'node-a', session: 1, token: 2, leaderToken: 1, expiresAt: NOW + 5_000 } },
-        { id: 'lapsed', state: 'running', claim: { jobId: 'lapsed', nodeId: 'node-b', session: 2, token: 3, leaderToken: 1, expiresAt: NOW - 1 } },
-        { id: 'fenced', state: 'running', claim: { jobId: 'fenced', nodeId: 'node-b', session: 1, token: 4, leaderToken: 1, expiresAt: NOW + 5_000 } },
+        { id: 'held', state: 'running', claim: { jobId: 'held', nodeId: 'node-a', session: 1, token: 6, leaderToken: 5, expiresAt: NOW + 5_000 } },
+        { id: 'lapsed', state: 'running', claim: { jobId: 'lapsed', nodeId: 'node-b', session: 2, token: 7, leaderToken: 5, expiresAt: NOW - 1 } },
+        { id: 'fenced', state: 'running', claim: { jobId: 'fenced', nodeId: 'node-b', session: 1, token: 8, leaderToken: 5, expiresAt: NOW + 5_000 } },
+        { id: 'former-epoch', state: 'running', claim: { jobId: 'former-epoch', nodeId: 'node-b', session: 2, token: 4, leaderToken: 3, expiresAt: NOW + 5_000 } },
         { id: 'queued', state: 'pending' },
       ],
     )));
