@@ -351,7 +351,9 @@ the launch target — the configured target tightened by the controller's
 — and is bounded by the shared remaining fleet slots when the same tick
 reports valid admission `cap` and `running` counts. Each lane shares this
 ceiling, so adding lane availability can overstate fleet capacity. Without
-usable fleet counts, availability describes lane-local headroom. A fresh dispatcher pause,
+usable fleet counts, availability describes lane-local headroom. An embedded
+admission record with a malformed verdict or conflicting `admit` and `decision`
+fields supplies neither a shared cap nor a stop verdict. A fresh dispatcher pause,
 explicit admission stop, or full fleet cap sets every lane's `available` to zero in
 both the top-level status and its embedded Fleet awareness view. A stale or
 future tick leaves availability unknown even when it records a pause. Four local reads run concurrently,
