@@ -368,6 +368,10 @@ The Leader's compact brief follows the same first-valid-row rule when
 counting hinted and lane-open supply for its starvation headline.
 The Fleet lane console uses the same rule for its ready-file queue depth
 fallback and lane-open supply.
+The Leader board's tier totals validate five-column dispatcher rows against
+their matching requirements envelopes when `router-queue.md` is readable.
+An invalid envelope excludes the row. When the envelope file is unavailable,
+the tier tally falls back to the row's own fields.
 `phm fleet ready-supply` uses the same rule for hinted and lane-open jobs.
 The planner uses those counts for its supply floor, so repeated READY rows
 cannot inflate the backlog. Parked rows are counted separately.

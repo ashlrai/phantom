@@ -59,7 +59,7 @@ const MAX_READY = 2 * 1024 * 1024;
 const MAX_SKIPS = 256 * 1024;
 // router-queue.md envelopes resolve spec-less ready rows' requirements; the
 // same 32 MiB bound the unfed report and queue supply read it under.
-const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
+export const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_PROMPT = 64 * 1024;
 const MAX_JOBS_JSONL = 2 * 1024 * 1024;
 // eslint-disable-next-line no-control-regex -- public fields must not carry control bytes.

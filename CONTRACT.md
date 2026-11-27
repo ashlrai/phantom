@@ -68,7 +68,8 @@ hinted and lane-open rows in file order. Rows without an ID and rows with
 other statuses retain their usual handling. `readyRowsForDepth`
 (`src/core/fleet/leader-board.ts`) returns rows with a `status` and optional
 `tier` for the tier tally, including lane-open jobs as `READY`, with READY
-job IDs deduplicated by the parser.
+job IDs deduplicated by the parser. Its optional second argument is the
+`router-queue.md` text used for the same five-column envelope validation.
 `readyTsvHeader(cells)` returns the canonical column map for a recognized
 queue TSV header, or `null` for a data row. `conflictingPrIds(readyTsvText)`
 reads rebase identifiers from the job ID field, including parked rows.
