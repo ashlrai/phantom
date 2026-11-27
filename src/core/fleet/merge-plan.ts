@@ -324,6 +324,8 @@ export interface SupersededProposal {
 const shortName = (repo: string): string => repo.split('/').pop() ?? repo;
 const escapeRe = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const BRIDGE = /^bridge:\s*/i;
+/** queuegen retries a failed dirty rebase as `<base id>-retry<N>`; publish.sh titles the PR `bridge: <job id>`. */
+const RETRY_SUFFIX_RE = /-retry\d+$/i;
 
 /**
  * Title grammars naming the PR an open rework PR replaces. `repo` anchors the
@@ -331,7 +333,7 @@ const BRIDGE = /^bridge:\s*/i;
  * every short name — rows already share the snapshot's repo.
  */
 function titleOrigins(title: string, repo: string | null): { origin: number; evidence: ReworkEvidence }[] {
-  const id = title.replace(BRIDGE, '').trim();
+  const id = title.replace(BRIDGE, '').trim().replace(RETRY_SUFFIX_RE, '');
   const anchor = repo === null ? '[A-Za-z0-9._-]+' : escapeRe(shortName(repo));
   const out: { origin: number; evidence: ReworkEvidence }[] = [];
   const fix = new RegExp(`^RQ-FIX-${anchor}-(\\d{1,7})$`, 'i').exec(id);
