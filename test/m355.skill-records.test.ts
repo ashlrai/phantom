@@ -806,6 +806,29 @@ describe('M355 skill records', () => {
     expect(readSkillUseEvents()).toEqual([]);
   });
 
+  it.each([0, -1, 1.9, Number.MAX_SAFE_INTEGER + 1])(
+    'refuses to write or attribute a use event with revision %s',
+    (skillRevision) => {
+      const invalid = useEvent({ eventId: 'invalid-revision', skillRevision });
+      const valid = useEvent({ eventId: 'valid-revision', skillRevision: 2 });
+      recordSkillUseEvent([invalid, valid]);
+      expect(readSkillUseEventsWithDiagnostics()).toMatchObject({
+        eventState: 'present',
+        events: [expect.objectContaining({ eventId: valid.eventId, skillRevision: 2 })],
+      });
+
+      appendFileSync(
+        join(skillUseEventsDir(), '2026-07-10.jsonl'),
+        `${JSON.stringify(invalid)}\n`,
+        'utf8',
+      );
+      expect(readSkillUseEventsWithDiagnostics()).toMatchObject({
+        eventState: 'degraded',
+        events: [expect.objectContaining({ eventId: valid.eventId, skillRevision: 2 })],
+      });
+    },
+  );
+
   it('recovers after a crash-truncated tail without hiding later events', () => {
     recordSkillUseEvent(useEvent({ eventId: 'before-partial' }));
     const file = join(skillUseEventsDir(), '2026-07-10.jsonl');

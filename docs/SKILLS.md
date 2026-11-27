@@ -202,7 +202,10 @@ Per-skill outcome counts require at least `MIN_SKILL_OBSERVED_TRAJECTORIES` (3)
 learning-eligible production trajectories with skill-use coverage.
 `skillObservation` measures receipt coverage across observed production
 trajectories, including incomplete trajectories. The outcome section is
-withheld when the skill-use ledger is degraded. A bounded read also marks
+withheld when the skill-use ledger is degraded. Skill-use receipts require a
+positive safe integer revision. The writer drops invalid revisions, and an
+invalid revision already in the scanned ledger degrades the sample.
+A bounded read also marks
 the sample degraded if the file cap omits a daily partition that can contain
 events in the requested window, a partition exceeds the 4 MiB tail read cap,
 its row scan runs out of room, or the number of distinct events exceeds
