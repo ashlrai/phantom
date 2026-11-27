@@ -116,6 +116,11 @@ receipt proves coordination, not job execution.
 
 ## Leader
 
+The Leader board computes conflict deltas and trends from distinct
+observations ordered by timestamp. A recorded observation must precede the
+current tick to contribute, so clock rollbacks and same-tick retries cannot
+skew the trend. With fewer than two observations the trend is unknown.
+
 | Method | Path | Query | Response type / source | Handler | Curl example |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/verse/leader` | none | [LeaderStateV1](../src/core/vision/leader-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader'` |
