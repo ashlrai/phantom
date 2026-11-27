@@ -7,6 +7,7 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { canonicalJson } from '../authority/canonical-json.js';
 import type { SkillCard } from '../types.js';
 import type { MetricsJob } from './metrics-ingest.js';
 import { ledgerEventName, ledgerPhase } from './empty-cause.js';
@@ -310,7 +311,12 @@ export function skillNudgeJobsFromLedger(
     const datedRecovery = rowAt !== null && (dispatched || event === 'recut_admission'
       || event === 'launch_failed' || event === 'launch_terminal' || event === 'finish');
     if (datedVerdict || datedRecovery) {
-      const receipt = line.trim();
+      let receipt = line.trim();
+      try {
+        receipt = canonicalJson(row);
+      } catch {
+        // Preserve exact-text deduplication for rows that cannot be canonicalized.
+      }
       if (recoveryReceipts.has(receipt)) continue;
       recoveryReceipts.add(receipt);
     }

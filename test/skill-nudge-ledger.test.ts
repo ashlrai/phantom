@@ -450,6 +450,20 @@ describe('syncSkillNudgesFromJobsLedger', () => {
     expect(cards).toHaveLength(0);
   });
 
+  it('does not learn a retry from a dispatch receipt reserialized with reordered fields', async () => {
+    const job = 'RQ-RESERIALIZED';
+    const ts = '2026-10-28T14:00:00Z';
+    const text = [
+      line({ event: 'launch', job, lane: 'codex', ts }),
+      JSON.stringify({ ts, lane: 'codex', job, event: 'launch' }, null, ' ').replaceAll('\n', ''),
+      outcome(job, 'MERGED'),
+    ].join('\n');
+
+    expect(skillNudgeJobsFromLedger(text)).toEqual([{ id: job, lane: 'codex', outcome: 'merged' }]);
+    const result = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+    expect(result.candidates).toBe(0);
+  });
+
   it.each(['ts', 'mergedAt'])('waits for a merge with a future %s', async field => {
     const job = 'RQ-REC';
     const future = '2026-10-28T21:00:00.000Z';
@@ -488,11 +502,12 @@ describe('syncSkillNudgesFromJobsLedger', () => {
     const thirdFailure = outcome('RQ-F3', 'CLOSED');
     const merge = outcome('RQ-REC', 'MERGED', { ts: undefined, mergedAt: '2026-10-28T15:00:00Z' });
     const [first, second] = beforeMerge ? [thirdFailure, merge] : [merge, thirdFailure];
+    const reserialized = line(Object.fromEntries(Object.entries(JSON.parse(first)).reverse()));
     const text = [
       ...failures,
       launch('RQ-F3'), finish('RQ-F3', { failure_class: 'quota' }),
       launch('RQ-REC'), finish('RQ-REC', { failure_class: 'quota', exit_code: 0 }),
-      first, second, first,
+      first, second, first, reserialized,
     ].join('\n');
 
     await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
