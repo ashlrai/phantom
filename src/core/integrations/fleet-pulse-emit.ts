@@ -26,11 +26,11 @@
  * All four hooks are single fire-and-forget lines: void emitXxx(…).catch(() => {})
  */
 
-import { readEnvironmentCredential } from './secrets.js';
-
 import type { AshlrConfig } from '../types.js';
 import {
+  buildPulseExporterConfig,
   exportFleetEvents,
+  resolveFleetPulsePat,
   type FleetSpanInput,
   type ExportResult,
 } from './pulse-exporter.js';
@@ -63,27 +63,6 @@ function resolveOtlpEndpoint(cfg: AshlrConfig): string {
   return 'http://localhost:3000';
 }
 
-/** Build the PulseExporterConfig the M89 exporter expects. */
-function exporterCfg(cfg: AshlrConfig): import('./pulse-exporter.js').PulseExporterConfig {
-  return {
-    pulse: { enabled: true, endpoint: resolveOtlpEndpoint(cfg) },
-    ...(cfg.user ? { user: { id: cfg.user.id, name: cfg.user.name } } : {}),
-  };
-}
-
-/** Resolve PAT for the emit (same env chain as pulse-sync). */
-function resolveEmitPat(): string | undefined {
-  const pat =
-    readEnvironmentCredential('PULSE_FLEET_PAT') ??
-    readEnvironmentCredential('ASHLR_PULSE_READ_PAT') ??
-    readEnvironmentCredential('ASHLR_PULSE_PAT');
-  return pat && pat.length > 0 ? pat : undefined;
-}
-
-// ---------------------------------------------------------------------------
-// Core fire-and-forget emitter (internal)
-// ---------------------------------------------------------------------------
-
 /**
  * Emit a single fleet event span. Returns ExportResult (never throws).
  * Callers should call this fire-and-forget: void emitFleetPulseSpan(…).catch(() => {})
@@ -97,8 +76,8 @@ async function emitFleetPulseSpan(
     return { ok: false, skipped: true, status: null, spanCount: 0, detail: 'fleet-pulse emit disabled (cfg.foundry.pulseEmit is falsy)' };
   }
   try {
-    const pat = resolveEmitPat();
-    return await exportFleetEvents(exporterCfg(cfg), [event], {
+    const pat = resolveFleetPulsePat();
+    return await exportFleetEvents(buildPulseExporterConfig(cfg, resolveOtlpEndpoint(cfg)), [event], {
       ...(pat ? { pat } : {}),
       ...(authority ? { authority } : {}),
     });

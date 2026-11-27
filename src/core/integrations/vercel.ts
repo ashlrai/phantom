@@ -16,6 +16,7 @@ import { credentialSpawnSync as spawnSync } from './secrets.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { VercelStatus } from '../types.js';
+import { asIntegrationRecord, unwrapJsonArray } from './dep-parser.js';
 
 // ---------------------------------------------------------------------------
 // Internal constants
@@ -104,25 +105,13 @@ function parseDeployList(raw: string): DeploySummary[] {
   }
 
   // Accept a bare array OR { deployments: [...] } / { data: [...] } wrappers.
-  let items: unknown[] | null = null;
-  if (Array.isArray(parsed)) {
-    items = parsed;
-  } else if (parsed !== null && typeof parsed === 'object') {
-    const obj = parsed as Record<string, unknown>;
-    for (const key of ['deployments', 'data', 'items']) {
-      if (Array.isArray(obj[key])) {
-        items = obj[key] as unknown[];
-        break;
-      }
-    }
-  }
-
+  const items = unwrapJsonArray(parsed, ['deployments', 'data', 'items']);
   if (items === null) return [];
 
   const results: DeploySummary[] = [];
   for (const item of items) {
-    if (item === null || typeof item !== 'object') continue;
-    const d = item as Record<string, unknown>;
+    const d = asIntegrationRecord(item);
+    if (!d) continue;
 
     // URL — vercel uses "url" or "alias" (first element).
     let url = '';
