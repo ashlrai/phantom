@@ -654,6 +654,7 @@
 /test/improve-harness-backlog.test.ts @masonwyatt23
 /test/improve-hot-patch.test.ts @masonwyatt23
 /test/improve-incident-gate-backlog.test.ts @masonwyatt23
+/test/improve-installs-backlog.test.ts @masonwyatt23
 /test/improve-jev-backlog.test.ts @masonwyatt23
 /test/improve-job-control-backlog.test.ts @masonwyatt23
 /test/improve-job-latency-backlog.test.ts @masonwyatt23

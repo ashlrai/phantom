@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Eighty-five sources, all of which Phantom
+ * evidence instead of a hand-kept list. One hundred thirty-one sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -1784,6 +1784,24 @@
  *     retained tail, truncated tails are stated as lower bounds, and
  *     items emit only for the fleet's own repository since the
  *     journal describes this install's bot seats;
+ *   - the self-update install journal's recurring error classes and
+ *     post-swap rollbacks: the `Phantom <from> to <to>: <outcome>;
+ *     integrity: …; attestation: …; rolled back: …` lines
+ *     updateReleaseDirectory (src/core/update/release-directory.ts)
+ *     appends to ~/.ashlr-runs/installs.log on every completed
+ *     non-check `phm update` and ai.ashlr.updater launchd tick —
+ *     until now read by nothing at all (docs/SELF-HOSTING.md was the
+ *     only mention), so a host whose self-updates kept failing or
+ *     kept undoing live link swaps never became work
+ *     (installsBacklogItems below). The journal records no timestamps,
+ *     so recurrence is proven without a day window: a cell emits only
+ *     at six adverse rows with either a healthy update cycle recorded
+ *     between its first and last (non-contiguous failures) or a dozen
+ *     outright (a sustained streak — due ticks are spaced ≥60 s apart
+ *     and back off toward 30 min), 'updated'/'up to date' rows count
+ *     only as healthy context, truncated tails are stated as lower
+ *     bounds, and items emit only for the fleet's own repository
+ *     since the journal describes this install's updater;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1943,6 +1961,7 @@ import { laneTargetChangesBacklogItems } from './lane-target-changes-backlog.js'
 import { amplifyBacklogItems } from './amplify-backlog.js';
 import { fleetHopSpoolBacklogItems } from './fleet-hop-spool-backlog.js';
 import { botHandoffBacklogItems } from './bot-handoff-backlog.js';
+import { installsBacklogItems } from './installs-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4145,6 +4164,18 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the journal describes this install's bot
   // seats and carries no repo column.
   items.push(...await botHandoffBacklogItems({ repo }));
+
+  // Self-update install journal (~/.ashlr-runs/installs.log): the
+  // release-directory updater's per-attempt audit lines, appended by
+  // `phm update` and the ai.ashlr.updater launchd tick — a journal that
+  // until now had no reader at all, so recurring self-update failures
+  // and post-swap rollbacks never became work
+  // (installsBacklogItems below). The journal is undated, so recurrence
+  // is proven by healthy-row interleaving or a sustained streak rather
+  // than distinct UTC days; truncated tails are stated as lower bounds
+  // and only the fleet's own repository inherits the items since the
+  // journal describes this install's updater.
+  items.push(...await installsBacklogItems({ repo }));
   return { items, errors };
 }
 
