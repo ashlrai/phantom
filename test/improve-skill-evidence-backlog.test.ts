@@ -242,6 +242,10 @@ describe('skillEvidenceBacklogItems', () => {
   it('emits only for the fleet repository', async () => {
     const degraded = corpus({ sourceState: 'degraded', unreadableFiles: 1 });
     expect(await skillEvidenceBacklogItems({ repo: 'someone/else', corpus: degraded, useEvents: useEvents() })).toEqual([]);
+    expect(await skillEvidenceBacklogItems({ repo: 'someone/phantom', corpus: degraded, useEvents: useEvents() })).toEqual([]);
+    for (const alias of [' Phantom ', 'ASHLRAI/PHANTOM']) {
+      expect(await skillEvidenceBacklogItems({ repo: alias, corpus: degraded, useEvents: useEvents() })).toHaveLength(1);
+    }
     expect(await skillEvidenceBacklogItems({ repo: '', corpus: degraded, useEvents: useEvents() })).toEqual([]);
     expect(await skillEvidenceBacklogItems({ repo: 'ashlrai/phantom-fork', corpus: degraded, useEvents: useEvents() })).toEqual([]);
   });

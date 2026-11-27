@@ -161,7 +161,12 @@ describe('trajectoryGapBacklogItems', () => {
       },
     });
     expect(await trajectoryGapBacklogItems({ repo: 'someone/else', summary: populated })).toEqual([]);
+    expect(await trajectoryGapBacklogItems({ repo: 'someone/phantom', summary: populated })).toEqual([]);
     const items = await trajectoryGapBacklogItems({ repo: REPO, summary: populated });
+    for (const alias of [' Phantom ', 'ASHLRAI/PHANTOM']) {
+      expect((await trajectoryGapBacklogItems({ repo: alias, summary: populated })).map((item) => item.id))
+        .toEqual(items.map((item) => item.id));
+    }
     // degraded + 3 gaps + skill-join = 5 cells, all under the default cap.
     expect(items).toHaveLength(5);
     expect(new Set(items.map((i) => i.id)).size).toBe(5);

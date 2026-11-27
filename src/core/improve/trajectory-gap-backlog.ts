@@ -62,8 +62,7 @@
  *    breakage.
  *  - Fleet machinery only. The trajectory projection describes this
  *    fleet's own ledgers, so items emit only for the fleet's own
- *    repository ('phantom' last-segment match, the same rule the
- *    skill-outcome and post-merge feeds apply).
+ *    repository (ashlrai/phantom or its bare phantom shorthand).
  *  - Dedup is downstream. The item id hashes only the cell identity
  *    (degraded population, one evidence kind, or the skill-join cell —
  *    never the counts or timestamps), so a refresh re-derives the same
@@ -111,8 +110,6 @@ export const TRAJECTORY_GAP_KIND_RATE = 0.5;
 export const TRAJECTORY_GAP_SKILL_MIN_EVENTS = 12;
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
 const MAX_TITLE_CHARS = 200;
-/** The fleet's own repository label: trajectory evidence is this repo's machinery. */
-const FLEET_REPO_NAME = 'phantom';
 
 export interface TrajectoryGapItemsOptions {
   /** Backlog target in owner/name form; items emit only for the fleet's own repository. */
@@ -129,11 +126,6 @@ export interface TrajectoryGapItemsOptions {
    * means the evidence is withheld, never zero-filled tallies.
    */
   summary?: TrajectoryLearningStatus | null;
-}
-
-/** The repository name both vocabularies record: the last path segment, lowercased. */
-function fleetRepoName(repo: string): string {
-  return (repo.split('/').pop() ?? repo).trim().toLowerCase();
 }
 
 /** Ledger-recorded names are unbounded text; flatten, scrub and cap before use. */
@@ -244,7 +236,8 @@ function cellItem(cell: Cell, repo: string): CloudBacklogItem {
 export async function trajectoryGapBacklogItems(opts: TrajectoryGapItemsOptions): Promise<CloudBacklogItem[]> {
   try {
     const repo = opts.repo.trim();
-    if (repo === '' || fleetRepoName(repo) !== FLEET_REPO_NAME) return [];
+    const target = repo.toLowerCase();
+    if (target !== 'ashlrai/phantom' && target !== 'phantom') return [];
     const windowHours = opts.windowHours ?? TRAJECTORY_GAP_WINDOW_HOURS;
     const summary = opts.summary !== undefined
       ? opts.summary

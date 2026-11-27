@@ -74,8 +74,7 @@
  *    not evidence.
  *  - Fleet machinery only. The skill ledgers describe this install's
  *    learned memory, so items emit only for the fleet's own
- *    repository ('phantom' last-segment match, the same rule the
- *    skill-outcome and trajectory-gap feeds apply).
+ *    repository (ashlrai/phantom or its bare phantom shorthand).
  *  - Dedup is downstream. The item id hashes only the cell identity
  *    (cards / cards-conflict / uses — never the counters or
  *    timestamps), so a refresh re-derives the same id and
@@ -116,8 +115,6 @@ export const SKILL_EVIDENCE_WINDOW_HOURS = 24 * 7;
 export const SKILL_EVIDENCE_RECORD_LIMIT = 500;
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
 const MAX_TITLE_CHARS = 200;
-/** The fleet's own repository label: skill evidence is this repo's machinery. */
-const FLEET_REPO_NAME = 'phantom';
 
 export interface SkillEvidenceItemsOptions {
   /** Backlog target in owner/name form; items emit only for the fleet's own repository. */
@@ -140,11 +137,6 @@ export interface SkillEvidenceItemsOptions {
    * Same contract as readSkillUseEventsWithDiagnostics.
    */
   useEvents?: SkillUseEventReadResult;
-}
-
-/** The repository name both vocabularies record: the last path segment, lowercased. */
-function fleetRepoName(repo: string): string {
-  return (repo.split('/').pop() ?? repo).trim().toLowerCase();
 }
 
 const NO_CHANGE = 'If the window has rolled forward, the ledger read has since returned healthy (a transient mid-write or a since-repaired partition), the degraded verdict traces to deliberate operator state or an owner-only cause (host-signed ledger repair, host permissions on ~/.ashlr), or this checkout is not the fleet repository the ledgers describe — report no-change and name the evidence.';
@@ -234,7 +226,8 @@ function cellItem(cell: Cell, repo: string): CloudBacklogItem {
 export async function skillEvidenceBacklogItems(opts: SkillEvidenceItemsOptions): Promise<CloudBacklogItem[]> {
   try {
     const repo = opts.repo.trim();
-    if (repo === '' || fleetRepoName(repo) !== FLEET_REPO_NAME) return [];
+    const target = repo.toLowerCase();
+    if (target !== 'ashlrai/phantom' && target !== 'phantom') return [];
     const windowHours = opts.windowHours ?? SKILL_EVIDENCE_WINDOW_HOURS;
     const asOfMs = (opts.now ?? new Date()).getTime();
     const corpus = opts.corpus ?? readSkillCardCorpus();
