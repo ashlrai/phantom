@@ -350,8 +350,14 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'schemaVersion 1; dryRun=true, executable=false, registry.status=stub, steps',
   },
   {
-    usage: 'phm node join|beat|enqueue|plan|pull|renew|complete|release|list|status|leave|pool|watch|worker|rpc|light [flags] [--json]',
-    description: 'Node router: nodes advertise caps and live usage, jobs carry an owner scope and a fenced lease so no job runs twice. A node only sees and pulls jobs of its own owner scopes; auth stays local to each node. Exit 0 ok, 1 lease/session lost or store unavailable, 2 bad usage; errors include a Fix.',
+    usage: 'phm node join|beat|enqueue|plan|pull|renew|complete|release|withdraw|result|list|status|leave [flags] [--json]',
+    description: 'Node router: nodes advertise caps and live usage, jobs carry an owner scope and a fenced lease so no job runs twice. A node only sees and pulls jobs of its own owner scopes; auth stays local to each node. withdraw retires a job so it can never run (a live claim answers held until it lapses or completes); result reads one job\'s outcome back inside its owner scope. Exit 0 ok, 1 lease/session lost or store unavailable, 2 bad usage; errors include a Fix.',
+    safety: 'append',
+    jsonShape: '{schemaVersion:1, command, ...result} | {schemaVersion:1, command, error:{code,message,fix}}',
+  },
+  {
+    usage: 'phm node measure|lanes|capacity|route|self-update|pool|watch|worker|run-once|rpc|light|bridge [flags] [--json]',
+    description: 'Node operations and the multi-Mac pool: measure prints the --capacity sample a beat accepts (exit 1 means the node is held, so omit --capacity on that beat); lanes plans local oMLX caps; capacity and route score (node, provider, model) placements from measured node docs; self-update prints a per-node version-drift plan and never installs; bridge previews which ready rows would offload to nodes (dry run unless --apply). pool, watch, worker, run-once, rpc and light are the pool enrollment and runner machinery — see docs/NODES.md and docs/AGENT-NETWORK.md. Exit 0 ok, 1 held/refused/unavailable, 2 bad usage; errors include a Fix.',
     safety: 'append',
     jsonShape: '{schemaVersion:1, command, ...result} | {schemaVersion:1, command, error:{code,message,fix}}',
   },
@@ -896,6 +902,9 @@ export function agentDocsText(): string {
   lines.push('phantom_leader_status, phantom_leader_org, phantom_leader_inbox, phantom_leader_ask,');
   lines.push('phantom_leader_assign, ashlr_comms_agent_status, ashlr_comms_agent_drafts,');
   lines.push('ashlr_comms_agent_run. Unknown evidence stays unknown and grants no send or spend.');
+  lines.push('Wiki tools: phm_wiki_map, phm_wiki_brain and phm_wiki_ecosystem read');
+  lines.push('commit-pinned source maps, evidence links and cross-repository relationships');
+  lines.push('for enrolled repos; reads only, no model calls.');
   lines.push('Desktop operator tools: desktop_list_apps, desktop_windows, desktop_read,');
   lines.push('desktop_screenshot, desktop_doctor, desktop_focus, desktop_scroll, desktop_type,');
   lines.push('desktop_click. Reads do not post to the bus. Focus, scroll, type and click post');
