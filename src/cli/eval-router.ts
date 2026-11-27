@@ -19,6 +19,7 @@ import {
   type RouterEvalDataset,
   type RouterEvalReport,
 } from '../core/eval/router-eval.js';
+import { isEvalHelpRequest, parseEvalCliFlags } from './eval-args.js';
 
 const USAGE = `Usage: phm eval router --dataset <jobs.jsonl> [--policy <name>] [--decisions] [--json] [--write <report.json>] [--check <baseline.json>]
 
@@ -32,43 +33,6 @@ export interface EvalRouterCliDeps {
   writeFile?: (path: string, text: string) => void;
   out?: (text: string) => void;
   err?: (text: string) => void;
-}
-
-interface ParsedArgs {
-  dataset?: string;
-  policy: string;
-  listPolicies: boolean;
-  json: boolean;
-  decisions: boolean;
-  write?: string;
-  check?: string;
-  usageError?: string;
-}
-
-function parseArgs(args: string[]): ParsedArgs {
-  const parsed: ParsedArgs = { policy: 'logged', listPolicies: false, json: false, decisions: false };
-  const valueFlags = new Set(['--dataset', '--policy', '--write', '--check']);
-  const seen = new Set<string>();
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (seen.has(arg)) { parsed.usageError = `repeated argument: ${arg}`; return parsed; }
-    if (arg === '--json') { parsed.json = true; seen.add(arg); continue; }
-    if (arg === '--decisions') { parsed.decisions = true; seen.add(arg); continue; }
-    if (arg === '--policy' && args[i + 1] === 'list') { parsed.listPolicies = true; i++; continue; }
-    if (valueFlags.has(arg)) {
-      const value = args[++i];
-      if (value === undefined || value.startsWith('-')) {
-        parsed.usageError = `${arg} requires a value`;
-        return parsed;
-      }
-      parsed[arg.slice(2) as 'dataset' | 'policy' | 'write' | 'check'] = value;
-      seen.add(arg);
-      continue;
-    }
-    parsed.usageError = `unknown argument: ${arg}`;
-    return parsed;
-  }
-  return parsed;
 }
 
 /** Structural equality on everything but the optional decision table; the
@@ -99,40 +63,44 @@ export async function cmdEvalRouter(args: string[], overrides: EvalRouterCliDeps
     err: console.error,
     ...overrides,
   };
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { deps.out(USAGE); return 0; }
-  const parsed = parseArgs(args);
-  if (parsed.usageError) { deps.err(`error: ${parsed.usageError}\n${USAGE}`); return 2; }
-  if (parsed.listPolicies) { deps.out(BUILTIN_ROUTER_POLICIES.join('\n')); return 0; }
-  if (!parsed.dataset) { deps.err(`error: --dataset is required\n${USAGE}`); return 2; }
+  if (isEvalHelpRequest(args)) { deps.out(USAGE); return 0; }
+  const { booleans, values, usageError } = parseEvalCliFlags(args, {
+    booleans: { '--json': 'json', '--decisions': 'decisions' },
+    values: { '--dataset': 'dataset', '--policy': 'policy', '--write': 'write', '--check': 'check' },
+  });
+  if (usageError) { deps.err(`error: ${usageError}\n${USAGE}`); return 2; }
+  if (values.policy === 'list') { deps.out(BUILTIN_ROUTER_POLICIES.join('\n')); return 0; }
+  if (!values.dataset) { deps.err(`error: --dataset is required\n${USAGE}`); return 2; }
 
   let dataset: RouterEvalDataset;
   try {
-    dataset = parseRouterEvalDataset(deps.readFile(parsed.dataset));
+    dataset = parseRouterEvalDataset(deps.readFile(values.dataset));
   } catch {
     // Dataset contents and paths may be private; do not echo them.
     deps.err('error: could not read or parse the router-eval dataset');
     return 1;
   }
-  const policy = builtinRouterPolicy(parsed.policy, dataset.jobs);
+  const policyName = values.policy ?? 'logged';
+  const policy = builtinRouterPolicy(policyName, dataset.jobs);
   if (!policy) {
-    deps.err(`error: unknown policy '${parsed.policy}' — builtin policies: ${BUILTIN_ROUTER_POLICIES.join(', ')}`);
+    deps.err(`error: unknown policy '${policyName}' — builtin policies: ${BUILTIN_ROUTER_POLICIES.join(', ')}`);
     return 2;
   }
-  const report = evaluateRouterPolicy(dataset, policy, { includeDecisions: parsed.decisions });
+  const report = evaluateRouterPolicy(dataset, policy, { includeDecisions: booleans.decisions });
 
-  if (parsed.write !== undefined) {
+  if (values.write !== undefined) {
     try {
-      deps.writeFile(parsed.write, `${JSON.stringify(report, null, 2)}\n`);
+      deps.writeFile(values.write, `${JSON.stringify(report, null, 2)}\n`);
     } catch {
       deps.err('error: could not write the report file');
       return 1;
     }
   }
 
-  if (parsed.check !== undefined) {
+  if (values.check !== undefined) {
     let baseline: RouterEvalReport;
     try {
-      baseline = JSON.parse(deps.readFile(parsed.check)) as RouterEvalReport;
+      baseline = JSON.parse(deps.readFile(values.check)) as RouterEvalReport;
     } catch {
       deps.err('error: could not read the baseline report');
       return 1;
@@ -146,6 +114,6 @@ export async function cmdEvalRouter(args: string[], overrides: EvalRouterCliDeps
     return 0;
   }
 
-  deps.out(parsed.json ? JSON.stringify(report, null, 2) : formatRouterEvalMarkdown(report).trimEnd());
+  deps.out(booleans.json ? JSON.stringify(report, null, 2) : formatRouterEvalMarkdown(report).trimEnd());
   return 0;
 }

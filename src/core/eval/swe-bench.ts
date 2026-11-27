@@ -25,6 +25,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { asRecord, loadSortedEvalJsonFiles } from './dataset-jsonl.js';
 
 // ---------------------------------------------------------------------------
 // Security helpers
@@ -376,21 +377,14 @@ export function saveReport(report: BenchReport): string {
   return file;
 }
 
+function isBenchReport(value: unknown): value is BenchReport {
+  const rec = asRecord(value);
+  return rec !== undefined && typeof rec['ts'] === 'string';
+}
+
 /** Load all persisted reports sorted by ts ascending. */
-export function loadReports(): BenchReport[] {
-  const dir = evalReportDir();
-  if (!fs.existsSync(dir)) return [];
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
-  const reports: BenchReport[] = [];
-  for (const f of files) {
-    try {
-      const raw = fs.readFileSync(path.join(dir, f), 'utf8');
-      reports.push(JSON.parse(raw) as BenchReport);
-    } catch {
-      // skip malformed files
-    }
-  }
-  return reports.sort((a, b) => a.ts.localeCompare(b.ts));
+function loadReports(): BenchReport[] {
+  return loadSortedEvalJsonFiles(evalReportDir(), isBenchReport, (report) => report.ts);
 }
 
 /** Load the most recent persisted report (or undefined if none). */
