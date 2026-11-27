@@ -105,11 +105,11 @@ New executors also need explicit `tiers` and `cost_class`; unknown tier or cost
 evidence excludes them. Advertise only supported `tiers`. Targets and operator
 bounds remain enforced; no new fixed market concurrency limit is introduced.
 
-`repos` is an allowlist of repository names the executor serves; absent means
-every repo. `data_class` is the executor's clearance. Without it, the remote
-built-in executors are cleared for `internal`, on-host models for `restricted`,
-and any other advertised executor for `public` only. Malformed values fail
-closed (no repos, `public`).
+`repos` is an allowlist of repository names the executor serves; absent or
+`null` means every repo. `data_class` is the executor's clearance. Without it,
+the remote built-in executors are cleared for `internal`, on-host models for
+`restricted`, and any other advertised executor for `public` only. Malformed
+values fail closed (no repos, `public`).
 
 The market rejects capability, tier, tier-ceiling, repo, data-class and cost
 mismatches, holds, auth failures,
