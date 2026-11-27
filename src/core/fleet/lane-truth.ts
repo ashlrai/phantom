@@ -54,7 +54,10 @@ const object = (v: unknown): Record<string, unknown> => v !== null && typeof v =
 const count = (v: unknown): number | null => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null;
 const instant = (v: unknown): string | null => typeof v === 'string' && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : null;
 const fresh = (v: string, now: number): boolean => Number.isFinite(now) && Date.parse(v) <= now && now - Date.parse(v) <= LANE_TRUTH_MAX_AGE_MS;
-const valid = (s: MeterSample): boolean => typeof s.usedPercent === 'number' && Number.isFinite(s.usedPercent) && s.usedPercent >= 0 && s.usedPercent <= 100 && !!s.window && instant(s.sampledAt) !== null && instant(s.resetAt) !== null;
+const valid = (s: MeterSample): boolean =>
+  typeof s.usedPercent === 'number' && Number.isFinite(s.usedPercent) &&
+  s.usedPercent >= 0 && s.usedPercent <= 100 && !!s.window &&
+  s.resetAt !== null && Date.parse(s.sampledAt) < Date.parse(s.resetAt);
 
 export interface LaneTruthRow {
   lane: string;
