@@ -66,6 +66,49 @@ describe('fleet edges', () => {
     // A filter that matches nothing is an honest empty list, not an error.
     expect(projectFleetEdges(rows, 2000, undefined, { from: () => false })).toEqual([]);
   });
+  it('narrows the projection to one group room or one room topic', () => {
+    const post = (id: string, from: string, to: string) =>
+      ({ id, from, to, priority: 'P2' as const, ttl: 9_000_000, body: { text: 'hi' } });
+    const opsGeneral = post('og', 'a', 'group:ops:general');
+    const opsAlerts = post('oa', 'b', 'group:ops:alerts');
+    const engGeneral = post('eg', 'c', 'group:eng:general');
+    const dm = post('dm', 'd', 'e');
+    const rows = [opsGeneral, opsAlerts, engGeneral, dm].map((envelope, cursor) => ({ cursor, receivedAt: 1000 + cursor, envelope }));
+    const edge = (from: string, to: string, messages = 1) =>
+      ({ from: { address: from, provider: null }, to: { address: to, provider: null }, messages, messagesLastHour: messages, lastAt: 1000 + rows.findIndex(row => row.envelope.id !== undefined && row.envelope.from === from && row.envelope.to === to) });
+    // --channel keeps the room's traffic under every topic, agent mail excluded.
+    // Edges sort newest-first, so the alerts link (lastAt 1001) leads.
+    expect(projectFleetEdges(rows, 2000, undefined, undefined, { channel: 'ops' })).toEqual([
+      edge('b', 'group:ops:alerts'), edge('a', 'group:ops:general'),
+    ]);
+    // --topic keeps one topic across every room.
+    expect(projectFleetEdges(rows, 2000, undefined, undefined, { topic: 'general' })).toEqual([
+      edge('c', 'group:eng:general'), edge('a', 'group:ops:general'),
+    ]);
+    // The two compose into one room AND one topic.
+    expect(projectFleetEdges(rows, 2000, undefined, undefined, { channel: 'ops', topic: 'alerts' })).toEqual([
+      edge('b', 'group:ops:alerts'),
+    ]);
+    // A bare group:<room> label and an agent address never match; the room
+    // prefix rule keeps deeper labels under group:<room>:* like every other
+    // bus read's --channel, while --topic still requires the well-formed parse.
+    const odd = [post('bare', 'a', 'group:ops'), post('deep', 'a', 'group:ops:general:extra'),
+      post('agent', 'a', 'agent:b')].map((envelope, cursor) => ({ cursor, receivedAt: 5000 + cursor, envelope }));
+    expect(projectFleetEdges(odd, 6000, undefined, undefined, { topic: 'general' })).toEqual([]);
+    expect(projectFleetEdges(odd, 6000, undefined, undefined, { channel: 'ops' })).toEqual([
+      { from: { address: 'a', provider: null }, to: { address: 'group:ops:general:extra', provider: null },
+        messages: 1, messagesLastHour: 1, lastAt: 5001 },
+    ]);
+    // A room filter that matches nothing is an honest empty list, not an error.
+    expect(projectFleetEdges(rows, 2000, undefined, undefined, { channel: 'missing' })).toEqual([]);
+    // A presence heartbeat inside the room still drops out under agentToAgent.
+    const beat = { id: 'beat', from: 'a', to: 'group:ops:general', priority: 'P3' as const, ttl: 300_000,
+      body: { kind: 'group.presence', state: 'online' } };
+    const withBeat = [...rows, { cursor: 9, receivedAt: 5000, envelope: beat }];
+    expect(projectFleetEdges(withBeat, 6000, undefined, undefined, { channel: 'ops' })).toEqual([
+      edge('b', 'group:ops:alerts'), edge('a', 'group:ops:general'),
+    ]);
+  });
   it('reads --from/--to through the same identity-label rule the bus reads apply', () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-edges-filter-'));
     const options = { root, now: () => 1000 };
@@ -173,12 +216,48 @@ describe('fleet edges', () => {
       expect(JSON.parse(none.out[0]!).edges).toEqual([]);
     });
 
+    it('passes --channel and --topic through to the same projection', async () => {
+      const now = Date.now();
+      const room = (id: string, from: string, to: string) => appendBusInbox(
+        { id, from, to, priority: 'P2', ttl: 9_000_000, body: { text: 'private body' } },
+        { root, now: () => now });
+      expect(room('og', 'a', 'group:ops:general').status).toBe('posted');
+      expect(room('oa', 'b', 'group:ops:alerts').status).toBe('posted');
+      expect(room('eg', 'c', 'group:eng:general').status).toBe('posted');
+      expect(room('dm', 'd', 'e').status).toBe('posted');
+      const ops = await run(['--root', root, '--channel', 'ops', '--json']);
+      expect(ops.code).toBe(0);
+      // The room's traffic under every topic; agent mail never reaches the page.
+      // Tied lastAt sorts by sender address, so a's link leads.
+      expect(JSON.parse(ops.out[0]!).edges).toEqual([
+        { from: { address: 'a', provider: null }, to: { address: 'group:ops:general', provider: null }, messages: 1, messagesLastHour: 1, lastAt: now },
+        { from: { address: 'b', provider: null }, to: { address: 'group:ops:alerts', provider: null }, messages: 1, messagesLastHour: 1, lastAt: now },
+      ]);
+      const general = await run(['--root', root, '--topic', 'general', '--json']);
+      expect(JSON.parse(general.out[0]!).edges).toEqual([
+        { from: { address: 'a', provider: null }, to: { address: 'group:ops:general', provider: null }, messages: 1, messagesLastHour: 1, lastAt: now },
+        { from: { address: 'c', provider: null }, to: { address: 'group:eng:general', provider: null }, messages: 1, messagesLastHour: 1, lastAt: now },
+      ]);
+      // The two compose into one room AND one topic.
+      const both = await run(['--root', root, '--channel', 'ops', '--topic', 'alerts', '--json']);
+      expect(JSON.parse(both.out[0]!).edges).toEqual([
+        { from: { address: 'b', provider: null }, to: { address: 'group:ops:alerts', provider: null }, messages: 1, messagesLastHour: 1, lastAt: now },
+      ]);
+      // A room nothing carries is an honest empty list.
+      const none = await run(['--root', root, '--channel', 'missing', '--json']);
+      expect(JSON.parse(none.out[0]!).edges).toEqual([]);
+      expect(JSON.stringify(ops.out)).not.toContain('private body');
+    });
+
     it('rejects malformed flags before touching the store', async () => {
       for (const bad of [['--help', '--json'], ['--window-minutes'], ['--window-minutes', '--json'],
         ['--window-minutes', '0'], ['--window-minutes', '1441'], ['--window-minutes', '1.5'],
         ['--window-minutes', 'abc'], ['--window-minutes', '60', '--window-minutes', '30'],
         ['--from'], ['--from', '--json'], ['--from', 'has space'], ['--from', ''],
         ['--from', 'a', '--from', 'b'], ['--to'], ['--to', '--json'], ['--to', 'a b'],
+        ['--channel'], ['--channel', '--json'], ['--channel', 'Bad Room'], ['--channel', ''],
+        ['--channel', 'a', '--channel', 'b'], ['--topic'], ['--topic', '--json'],
+        ['--topic', 'has space'], ['--topic', 'x'.repeat(33)], ['--topic', 'a', '--topic', 'b'],
         ['--root'], ['--root', 'relative'], ['--root', root, '--root', root], ['--json', '--json'],
         ['--unknown'], ['edges']]) {
         expect((await run(bad)).code).toBe(2);

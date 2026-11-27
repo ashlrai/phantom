@@ -65,6 +65,17 @@ describe('fleet_agent_edges argument parsing', () => {
       .toEqual({ windowMinutes: 1, from: 'a', to: 'b' });
     expect(parseFleetAgentEdgesArgs({ windowMinutes: 1440 })).toEqual({ windowMinutes: 1440 });
     expect(parseFleetAgentEdgesArgs({ from: 'x'.repeat(128) })).toEqual({ from: 'x'.repeat(128) });
+    expect(parseFleetAgentEdgesArgs({ channel: 'ops' })).toEqual({ channel: 'ops' });
+    expect(parseFleetAgentEdgesArgs({ topic: 'alerts' })).toEqual({ topic: 'alerts' });
+    expect(parseFleetAgentEdgesArgs({ channel: 'ops', topic: 'general', from: 'a', windowMinutes: 5 }))
+      .toEqual({ channel: 'ops', topic: 'general', from: 'a', windowMinutes: 5 });
+  });
+
+  it('rejects malformed channel and topic names', () => {
+    for (const bad of ['', 'Bad Room', 'has space', 'x'.repeat(33), 'line\nbreak', 'group:ops', 5, null, true, ['a']]) {
+      expect(parseFleetAgentEdgesArgs({ channel: bad })).toBeNull();
+      expect(parseFleetAgentEdgesArgs({ topic: bad })).toBeNull();
+    }
   });
 
   it('rejects an out-of-range or non-integer windowMinutes', () => {
@@ -97,10 +108,10 @@ describe('fleet_agent_edges reader', () => {
       return availableEdges();
     };
     const result = await readFleetAgentEdges(
-      parseFleetAgentEdgesArgs({ windowMinutes: 30, from: 'agent:sender', to: 'ops' })!,
+      parseFleetAgentEdgesArgs({ windowMinutes: 30, from: 'agent:sender', to: 'ops', channel: 'ops', topic: 'alerts' })!,
       { read },
     );
-    expect(seen).toEqual([{ windowMinutes: 30, from: 'agent:sender', to: 'ops' }]);
+    expect(seen).toEqual([{ windowMinutes: 30, from: 'agent:sender', to: 'ops', channel: 'ops', topic: 'alerts' }]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       schema: 'fleet.edges.v1', source: 'available',
@@ -140,11 +151,17 @@ describe('fleet_agent_edges MCP tool', () => {
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['to'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['channel'])
+      .toMatchObject({ type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$' });
+    expect(tool?.inputSchema.properties?.['topic'])
+      .toMatchObject({ type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$' });
   });
 
   it.each([
     [{ windowMinutes: 0 }], [{ windowMinutes: 1441 }], [{ windowMinutes: 1.5 }], [{ windowMinutes: '60' }],
     [{ from: '' }], [{ from: 'has space' }], [{ from: 'x'.repeat(129) }], [{ to: 5 }],
+    [{ channel: 'Bad Room' }], [{ channel: '' }], [{ channel: 'x'.repeat(33) }], [{ channel: 5 }],
+    [{ topic: 'has space' }], [{ topic: 'group:ops' }], [{ topic: null }],
     [{ root: '/tmp/fake-root' }], [{ path: '/tmp/x' }], [{ cwd: '/tmp' }], [{ limit: 5 }], [{ extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const agentEdges = vi.fn();
