@@ -340,6 +340,83 @@ describe('listBusClaims', () => {
     expect(listed.claims[0]?.jobs).toBeUndefined();
   });
 
+  it('narrows live claims to the ones blocking the named feed job', () => {
+    const root = tempDir('v2claim-job-');
+    const post = { kind: 'work.post', jobId: 'RQ-JOB', title: 'T', repo: 'a/b',
+      claimKeys: ['queue:RQ-JOB', 'path:a/b:docs/**'], provider: 'devin' };
+    expect(appendBusInbox({ id: 'w-post-j', from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: post }, { root, now: () => NOW }).status).toBe('posted');
+    acquire('queue:RQ-JOB', 'worker-1', 600_000, 'op-1', root);
+    acquire('path:a/b:docs/guide.md', 'worker-2', 600_000, 'op-2', root);
+    acquire('repo:other/repo', 'worker-3', 600_000, 'op-3', root);
+
+    const listed = listBusClaims({ root, now: NOW, job: 'RQ-JOB' });
+    expect(listed).toMatchObject({ status: 'ok', source: 'available', feed: 'ok',
+      job: { id: 'RQ-JOB', announced: true, claimKeys: 2 } });
+    if (listed.status !== 'ok') throw new Error('expected ok');
+    // Both declared keys are covered: the queue claim matches the queue key
+    // and the path claim overlaps the path key; the unrelated repo claim is out.
+    expect(listed.claims.map(row => row.key).sort())
+      .toEqual(['path:a/b:docs/guide.md', 'queue:RQ-JOB']);
+    // --job composes with --jobs: the filtered claims still carry the feed join.
+    const joined = listBusClaims({ root, now: NOW, job: 'RQ-JOB', jobs: true });
+    if (joined.status !== 'ok') throw new Error('expected ok');
+    expect(joined.claims.map(row => row.jobs?.map(job => job.id))).toEqual([['RQ-JOB'], ['RQ-JOB']]);
+    // And with the other row filters.
+    expect(listBusClaims({ root, now: NOW, job: 'RQ-JOB', owner: 'worker-1' }))
+      .toMatchObject({ status: 'ok', claims: [{ key: 'queue:RQ-JOB' }] });
+    expect(listBusClaims({ root, now: NOW, job: 'RQ-JOB', key: 'queue:RQ-JOB' }))
+      .toMatchObject({ status: 'ok', claims: [{ key: 'queue:RQ-JOB' }] });
+    expect(listBusClaims({ root, now: NOW, job: 'RQ-JOB', origin: 'message' }))
+      .toMatchObject({ status: 'ok', claims: [] });
+  });
+
+  it('reports an unannounced job as a proven-empty list', () => {
+    const root = tempDir('v2claim-job-');
+    const post = { kind: 'work.post', jobId: 'RQ-JOB', title: 'T', repo: 'a/b',
+      claimKeys: ['queue:RQ-JOB'], provider: 'devin' };
+    expect(appendBusInbox({ id: 'w-post-j2', from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: post }, { root, now: () => NOW }).status).toBe('posted');
+    acquire('queue:RQ-JOB', 'worker-1', 600_000, 'op-1', root);
+
+    const listed = listBusClaims({ root, now: NOW, job: 'RQ-MISSING' });
+    // The feed reads ok but announces no such job — nothing declared a scope
+    // a claim could block, so the empty list is proven, not a guess.
+    expect(listed).toMatchObject({ status: 'ok', source: 'available', feed: 'ok', claims: [],
+      job: { id: 'RQ-MISSING', announced: false, claimKeys: 0 } });
+  });
+
+  it('answers unavailable when the feed cannot resolve the job scope', () => {
+    const root = tempDir('v2claim-jobbad-');
+    // A work.post with no provider and no registry hint refuses the whole feed.
+    const post = { kind: 'work.post', jobId: 'RQ-BAD', title: 'T', repo: 'a/b', claimKeys: ['queue:RQ-BAD'] };
+    expect(appendBusInbox({ id: 'w-post-bad', from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: post }, { root, now: () => NOW }).status).toBe('posted');
+    acquire('queue:RQ-BAD', 'worker-1', 600_000, 'op-1', root);
+
+    // Claims remain listed, so the job-scoped view is unknown — never an
+    // unfiltered list or an invented empty one.
+    expect(listBusClaims({ root, now: NOW, job: 'RQ-BAD' }))
+      .toMatchObject({ status: 'unavailable', feed: 'refused' });
+
+    // With no claims at all the filtered list is proven empty regardless —
+    // the feed state still reports honestly.
+    const empty = tempDir('v2claim-jobempty-');
+    expect(appendBusInbox({ id: 'w-post-bad2', from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: post }, { root: empty, now: () => NOW }).status).toBe('posted');
+    const listed = listBusClaims({ root: empty, now: NOW, job: 'RQ-BAD' });
+    expect(listed).toMatchObject({ status: 'ok', source: 'missing', claims: [], feed: 'refused' });
+    if (listed.status !== 'ok') throw new Error('expected ok');
+    expect(listed.job).toBeUndefined();
+  });
+
+  it('rejects a malformed job id on claim list', () => {
+    const root = tempDir('v2claim-job-');
+    expect(listBusClaims({ root, now: NOW, job: 'bad job' })).toMatchObject({ status: 'invalid' });
+    expect(listBusClaims({ root, now: NOW, job: '' })).toMatchObject({ status: 'invalid' });
+    expect(listBusClaims({ root, now: NOW, job: 'x'.repeat(129) })).toMatchObject({ status: 'invalid' });
+  });
+
   it('filters live claims by origin class and composes with owner and key', () => {
     const root = tempDir('v2claim-list-');
     acquire('queue:RQ-RESOURCE-1', 'dot-main', 600_000, 'op-1', root);
