@@ -1055,6 +1055,10 @@ The leader's compact brief (`leader.compact-brief.v1`) counts each lane's
 `queued`/`queuedReady` by the same market-resolved hint, reports lane-open
 rows once as `openRows`, and credits that shared supply before calling a
 lane supply-starved; `null` stays unknown when `ready.tsv` cannot be read.
+Each lane's `target` is the launch target described below — the configured
+target tightened by the controller's `effective_target` shed — so a shed
+lane has no phantom room in the supply-starved headline or the idle
+explanations.
 
 `lane-starve` exits 1 when it finds a starved lane; `launchable` exits 1 when
 any lane has more free slots than launchable rows plus lane-open supply — a
@@ -1128,7 +1132,8 @@ publishes after load shedding (`min(target, effective_target)`, the configured
 target when the shed is absent or unreadable). A lane running at its shed ceiling
 has no phantom room, so `fleet admission --details`, `fleet lane-idle`, `fleet lane-share`,
 `fleet lane-starve`, `fleet starved`, `fleet launchable`, `fleet idle-lanes`,
-`fleet trim` and the idle-lane checks in `fleet doctor` and the bottleneck ideas
+`fleet trim`, the leader's compact brief and the idle-lane checks in `fleet doctor`
+and the bottleneck ideas
 all measure "under target", "full" and "starved" against it. `fleet trim`'s
 `SLOTS` suggestion still retunes the configured target it would change.
 
