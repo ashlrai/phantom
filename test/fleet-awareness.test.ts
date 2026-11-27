@@ -188,6 +188,37 @@ test('unattributed live claims hold capacity and executor identity binds latency
   expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.freeSlots === null)).toBe(true);
 });
 
+test('pool latency ignores legacy completions without a recorded execution host', () => {
+  const f = fixture();
+  const worker = f.add('worker', { hostId: 'old-mac', slots: 1 });
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  f.enqueue('legacy');
+  const legacy = nodes.pull(worker)!;
+  f.advance(100);
+  expect(nodes.complete(legacy.claim, 'done')).toBe(true);
+  delete f.state.jobs[0]!.executionHostId;
+
+  f.beat('worker', { hostId: 'new-mac', slots: 1 });
+  f.enqueue('measured');
+  const measured = nodes.pull(worker)!;
+  f.advance(1000);
+  expect(nodes.complete(measured.claim, 'done')).toBe(true);
+  expect(projectFleetAwareness(f.state, f.now()).hosts[0]).toMatchObject({
+    hostId: 'new-mac', latency: { samples: 1, medianMs: 1000 },
+  });
+
+  // Give the peer its own measured completion while the moved worker is full.
+  f.beat('worker', { hostId: 'new-mac', slots: 0 });
+  const peer = f.add('peer', { slots: 1 });
+  f.enqueue('peer-sample');
+  const peerSample = nodes.pull(peer)!;
+  f.advance(700);
+  expect(nodes.complete(peerSample.claim, 'done')).toBe(true);
+  f.beat('worker', { hostId: 'new-mac', slots: 1 });
+  f.enqueue('next');
+  expect(f.plan()[0]?.nodeId).toBe('peer');
+});
+
 test('bounded projection reads actual fixture mirrors and rejects symlinks, oversized files and stale lanes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'fleet-aware-')); const f = fixture(); f.add('mac');
   try {
