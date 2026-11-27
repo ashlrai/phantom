@@ -850,7 +850,10 @@ identity on the merge receipt and, for a ledger revert, on the revert receipt.
 Every valid PR reference counts when checking for competing standing revert
 claims. A ledger revert with a repository label and no PR reference discounts
 a merge only when the reward resolves to that repository, ignoring case.
-Ledger reverts without either identity retain job-level attribution.
+Ledger reverts with no PR reference and an omitted, null or blank repository
+label retain job-level attribution. A supplied but unusable repository label
+without a valid PR reference can neither discount a merge nor resolve a
+standalone reward.
 The fold uses the recorded revert time when available and the receipt
 timestamp otherwise.
 Receipts for the same effective merge or close time retain all observed PR
