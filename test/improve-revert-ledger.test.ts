@@ -13,6 +13,7 @@ import {
 import { revertedPrKeys, type RevertOutcomeRecord } from '../src/core/improve/reverted.js';
 import { cmdFleetReverts } from '../src/cli/fleet-reverts.js';
 import type { ObserveExec } from '../src/core/improve/observe.js';
+import type { CloudTaskV1 } from '../src/core/cloud/types.js';
 
 const MERGE = 'a'.repeat(40);
 const REVERT = 'c'.repeat(40);
@@ -151,6 +152,33 @@ describe('revertedPrKeys with recorded scan detections', () => {
     const scan = { records: [rec()], intact: false, reasons: ['unreadable-line-1'], state: 'unreadable' as const };
     const keys = revertedPrKeys([], [], scan);
     expect(keys.size).toBe(0);
+  });
+});
+
+describe('revertedPrKeys task claims vs the scan journal', () => {
+  const taskWithRevert = (number: number) => ({
+    id: `t${number}`, repo: 'ashlrai/phantom', state: 'merged',
+    pr: { number, url: `https://github.com/ashlrai/phantom/pull/${number}`, state: 'merged', draft: false, title: 'x' },
+    outcome: { observedAt: 'x', headSha: null, mergeSha: null, ci: null, failedChecks: [], reviewDecision: null, changesRequested: 0, revertedBy: REVERT },
+  }) as unknown as CloudTaskV1;
+
+  it('yields a stale task revertedBy to the journal\'s recorded re-land', () => {
+    // The task field still says reverted, but the journal's newest record for
+    // the same PR resolved the revert as re-landed — the merge held.
+    const scan = { records: [rec({ relandedBy: RELAND })], intact: true, reasons: [], state: 'read' as const };
+    expect(revertedPrKeys([taskWithRevert(5)], [], scan).has('ashlrai/phantom#5')).toBe(false);
+  });
+
+  it('keeps the task claim when the journal never scanned the PR or agrees it stands', () => {
+    const uncovered = { records: [rec({ number: 6, pr: 'ashlrai/phantom#6' })], intact: true, reasons: [], state: 'read' as const };
+    expect(revertedPrKeys([taskWithRevert(5)], [], uncovered).has('ashlrai/phantom#5')).toBe(true);
+    const standing = { records: [rec()], intact: true, reasons: [], state: 'read' as const };
+    expect(revertedPrKeys([taskWithRevert(5)], [], standing).has('ashlrai/phantom#5')).toBe(true);
+  });
+
+  it('keeps the task claim when the ledger is not intact', () => {
+    const scan = { records: [rec({ relandedBy: RELAND })], intact: false, reasons: ['unreadable-line-1'], state: 'unreadable' as const };
+    expect(revertedPrKeys([taskWithRevert(5)], [], scan).has('ashlrai/phantom#5')).toBe(true);
   });
 });
 
