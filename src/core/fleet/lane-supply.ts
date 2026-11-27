@@ -38,7 +38,7 @@ export interface LaneSupplyLane {
   resetAt: string | null;
   hoursToReset: number | null;
   verdict: LaneSupplyVerdict;
-  /** The hold reason or "until <time>" for a held or out-of-usage lane; else null. */
+  /** The hold reason, reset timing, or missing lane-open supply explanation when applicable. */
   detail: string | null;
   /** One plain sentence, e.g. "claude idle: 6 free slots, 68% left". */
   text: string;
@@ -102,6 +102,7 @@ export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: num
   let detail: string | null = null;
   if (held) { verdict = 'held'; detail = view.hold?.reason ?? null; text = `${view.lane} held${detail ? `: ${detail}` : ''}`; }
   else if (leftPct !== null && leftPct <= 0) { verdict = 'out-of-usage'; detail = `until ${resetWords(view.credit.resetAt)}`; text = `${view.lane} out of usage ${detail}`; }
+  else if (idle && openRows === null) { verdict = 'unknown'; detail = 'lane-open supply unknown'; text = `${view.lane}: ${detail}`; }
   else if (idle && leftPct !== null && openSupply) { verdict = 'open-supply'; text = `${view.lane} open supply: ${plural(free, 'free slot')}, ${pct(leftPct)}% left, ${plural(openRows, 'open row')} wait`; }
   else if (idle && leftPct !== null) { verdict = 'idle-with-usage-left'; text = `${view.lane} idle: ${plural(free, 'free slot')}, ${pct(leftPct)}% left`; }
   else if (idle) { verdict = 'idle-usage-unknown'; text = `${view.lane} idle: ${plural(free, 'free slot')}, usage unknown`; }
