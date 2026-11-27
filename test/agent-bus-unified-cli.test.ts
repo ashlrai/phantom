@@ -2115,10 +2115,25 @@ describe('phm agents bus (unified)', () => {
     expect((await run(['work', 'feed', '--job', 'RQ-J-1', '--owner', 'atlas', '--claims'])).json)
       .toMatchObject({ status: 'ok', claims: { source: 'missing', holds: [] } });
     expect((await run(['work', 'feed', '--job', 'RQ-J-1', '--owner', 'nova'])).json.jobs).toEqual([]);
+    // --exclude-owner drops jobs announced by that agent under the same
+    // identity-label rule, inverted.
+    for (const ref of ['atlas', 'agent:atlas']) {
+      expect((await run(['work', 'feed', '--exclude-owner', ref])).json.jobs)
+        .toEqual([expect.objectContaining({ id: 'RQ-J-2', owner: 'agent:nova' })]);
+    }
+    expect((await run(['work', 'feed', '--exclude-owner', 'nova'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-J-1', owner: 'agent:atlas' })]);
+    // The pair composes include-then-exclude: atlas's own jobs match --owner
+    // and drop under --exclude-owner, so nothing lists.
+    expect((await run(['work', 'feed', '--owner', 'atlas', '--exclude-owner', 'atlas'])).json.jobs).toEqual([]);
+    expect((await run(['work', 'feed', '--owner', 'atlas', '--exclude-owner', 'nova'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-J-1' })]);
     // Unresolvable owner refs keep exact-label matching — never widen.
     expect((await run(['work', 'feed', '--owner', 'ghost'])).json.jobs).toEqual([]);
+    expect((await run(['work', 'feed', '--exclude-owner', 'ghost'])).json.jobs).toHaveLength(2);
     expect(await run(['work', 'feed', '--job', 'bad job'])).toMatchObject({ code: 2 });
     expect(await run(['work', 'feed', '--owner', 'bad owner'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'feed', '--exclude-owner', 'bad owner'])).toMatchObject({ code: 2 });
   });
 
   it('filters the work feed by cited envelope id', async () => {

@@ -655,6 +655,58 @@ describe('work-feed view filters', () => {
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
+  it('matches --exclude-owner under the same identity-label rule, inverted', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bus-feed-exclude-owner-'));
+    try {
+      expect(registerAgentIdentity({ handle: 'atlas', aliases: ['a-cloud'] }, { root }).status).toBe('created');
+      expect(registerAgentIdentity({ handle: 'nova' }, { root }).status).toBe('created');
+      const result = okResult([
+        viewJob({ id: 'handle', owner: 'agent:atlas', updatedAt: 400 }),
+        viewJob({ id: 'alias', owner: 'a-cloud', updatedAt: 300 }),
+        viewJob({ id: 'caseenv', owner: 'Atlas', updatedAt: 200 }),
+        viewJob({ id: 'other', owner: 'agent:nova', updatedAt: 100 }),
+      ]);
+      const shown = (owner: string, at: string = root): string[] => {
+        const view = projectBusWorkFeedView(result, { excludeOwnerMatch: busWorkFeedOwnerMatcher(owner, { root: at }) });
+        if (view.status !== 'ok') throw new Error('expected an ok view');
+        return view.jobs.map(job => job.id).sort();
+      };
+      // atlas and every spelling of her identity are excluded — the
+      // case-folded 'Atlas' owner label still resolves to her identity, so
+      // only nova's job survives.
+      for (const ref of ['atlas', 'a-cloud', 'agent:atlas']) {
+        expect(shown(ref)).toEqual(['other']);
+      }
+      // 'Atlas' names no registered label exactly, so as an exclude ref it
+      // keeps exact-label matching: only the job literally owned 'Atlas'
+      // drops — the identity's handle and alias announcements survive.
+      expect(shown('Atlas')).toEqual(['alias', 'handle', 'other']);
+      expect(shown('ghost')).toEqual(['alias', 'caseenv', 'handle', 'other']);
+      // The pair composes include-then-exclude like every sender filter.
+      const both = projectBusWorkFeedView(result, {
+        ownerMatch: busWorkFeedOwnerMatcher('atlas', { root }),
+        excludeOwnerMatch: busWorkFeedOwnerMatcher('atlas', { root }),
+      });
+      expect(ids(both)).toEqual([]);
+      const narrowed = projectBusWorkFeedView(result, {
+        ownerMatch: busWorkFeedOwnerMatcher('atlas', { root }),
+        excludeOwnerMatch: busWorkFeedOwnerMatcher('nova', { root }),
+      });
+      expect(ids(narrowed)).toEqual(['handle', 'alias', 'caseenv']);
+      // An unreadable registry never widens: 'atlas' falls back to the
+      // literal owner label, so only a job literally owned 'atlas' would
+      // drop — here none does, while the literal 'agent:atlas' ref still
+      // excludes its own row.
+      const bad = mkdtempSync(join(tmpdir(), 'bus-feed-exclude-owner-bad-'));
+      try {
+        mkdirSync(join(bad, 'agent-identities'), { mode: 0o700 });
+        writeFileSync(join(bad, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+        expect(shown('atlas', bad)).toEqual(['alias', 'caseenv', 'handle', 'other']);
+        expect(shown('agent:atlas', bad)).toEqual(['alias', 'caseenv', 'other']);
+      } finally { rmSync(bad, { recursive: true, force: true }); }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('passes non-ok reads through untouched', () => {
     const refused: BusWorkFeedReadResult = { status: 'refused', reason: 'duplicate-job', receipts: 2, asOf: 'now' };
     expect(projectBusWorkFeedView(refused, { repo: 'a/b', provider: 'devin', claimable: true, since: 1, before: 2, contains: 'x' })).toBe(refused);

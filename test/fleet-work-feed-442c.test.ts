@@ -898,16 +898,55 @@ describe('work-feed --job and --owner filters', () => {
     expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-sink')]);
   });
 
-  it('rejects bad --job and --owner values with usage on stderr and exit 2', async () => {
+  it('matches --exclude-owner under every label of one agent identity and never widens on unknown identity', async () => {
+    append(post, 1, 'agent:worker-bot');
+    append({ ...post, jobId: 'fake-sink' }, 2, 'fake-other');
+    const jobLines = (calls: unknown[][]) => calls.map(call => String(call[0])).filter(line => line.startsWith('fake-'));
+    const log = output();
+    // No registry: only the literal announcer label is excluded — 'worker-bot'
+    // resolves to no identity, so 'agent:worker-bot' survives under it.
+    expect(await cmdFleetWorkFeed(['--root', root, '--exclude-owner', 'worker-bot'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toHaveLength(2);
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--exclude-owner', 'agent:worker-bot'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-sink')]);
+    log.mockClear();
+    expect(registerAgentIdentity({ handle: 'worker-bot', aliases: ['lane-7'],
+      runtime: { cli: 'codex', provider: 'codex-cmp', model: null } }, { root, now: () => now }).status).toBe('created');
+    for (const ref of ['worker-bot', 'agent:worker-bot', 'lane-7']) {
+      log.mockClear();
+      expect(await cmdFleetWorkFeed(['--root', root, '--exclude-owner', ref])).toBe(0);
+      expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-sink')]);
+    }
+    // The other announcer's exclusion keeps worker-bot's job, and an
+    // unresolvable ref excludes nothing — exact-label matching, never widened.
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--exclude-owner', 'fake-other'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-job')]);
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--exclude-owner', 'ghost'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toHaveLength(2);
+    // --owner and --exclude-owner compose include-then-exclude.
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--owner', 'worker-bot', '--exclude-owner', 'worker-bot'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toHaveLength(0);
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--owner', 'worker-bot', '--exclude-owner', 'fake-other'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-job')]);
+  });
+
+  it('rejects bad --job, --owner and --exclude-owner values with usage on stderr and exit 2', async () => {
     const log = output();
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     for (const args of [['--job'], ['--job', 'two words'], ['--job', 'a\nb'], ['--job', 'x', '--job', 'y'],
       ['--owner'], ['--owner', 'two words'], ['--owner', 'a\nb'], ['--owner', 'x', '--owner', 'y'],
-      ['--job', 'x', '--owner', 'bad owner']]) {
+      ['--exclude-owner'], ['--exclude-owner', 'two words'], ['--exclude-owner', 'a\nb'],
+      ['--exclude-owner', 'x', '--exclude-owner', 'y'],
+      ['--job', 'x', '--owner', 'bad owner'], ['--exclude-owner', 'bad owner']]) {
       expect(await cmdFleetWorkFeed(args)).toBe(2);
     }
     expect(log).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledTimes(9);
+    expect(error).toHaveBeenCalledTimes(14);
   });
 });
 

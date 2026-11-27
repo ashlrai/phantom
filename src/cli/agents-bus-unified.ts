@@ -65,7 +65,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--exclude-owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work claim-next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>] [--exclude-announcer <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--wait-ms <1..300000>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>]
@@ -304,7 +304,10 @@ read-only and need no identity; work feed --to keeps jobs announced to that
 agent — the literal routing label, every label of one agent identity, and
 group:<channel>:<topic> addresses of registry channels the identity belongs
 to, minus that identity's own channel posts — while --owner keeps jobs
-announced by that agent under every label of one agent identity, --channel
+announced by that agent under every label of one agent identity and
+--exclude-owner drops jobs announced by that agent under the same
+identity-label rule, inverted — the pair composes include-then-exclude
+like every other sender filter —, --channel
 keeps only jobs announced to group:<channel>:* — the room's traffic under
 every topic, the same address prefix inbox --channel and channel read
 match —, --repo keeps jobs announced for one
@@ -1272,8 +1275,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         }
         return value;
       };
-      const to = labelArg('--to'), owner = labelArg('--owner'), jobId = labelArg('--job'),
-        envelopeId = labelArg('--id');
+      const to = labelArg('--to'), owner = labelArg('--owner'), excludeOwner = labelArg('--exclude-owner'),
+        jobId = labelArg('--job'), envelopeId = labelArg('--id');
       const repoRaw = one('--repo');
       const repo = repoRaw === undefined ? undefined : busWorkFeedRepoKey(repoRaw);
       if (repoRaw !== undefined && repo === undefined) {
@@ -1314,7 +1317,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           provider: providerRaw as WorkJob['provider'] | undefined, tier,
           open: open || undefined, claimable: claimable ? true : undefined, since: sinceArg(), before: beforeArg(), contains, channel, topic, result: resultOutcome, id: envelopeId,
           toMatch: to === undefined ? undefined : busWorkFeedPendingToMatcher(to, { root: options.root }),
-          ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }) });
+          ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }),
+          excludeOwnerMatch: excludeOwner === undefined ? undefined : busWorkFeedOwnerMatcher(excludeOwner, { root: options.root }) });
       const paged = limit === undefined ? result : sliceBusWorkFeedView(result, limit);
       out(json ? JSON.stringify(paged) : formatBusWorkFeed(paged).join('\n'));
       return paged.status === 'ok' ? 0 : 1;

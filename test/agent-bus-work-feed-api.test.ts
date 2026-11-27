@@ -59,7 +59,7 @@ describe('GET /api/verse/agent-bus/work-feed', () => {
     for (const query of ['?after=0', '?limit=0', '?limit=201', '?limit=abc', '?limit=', '?limit=1.5', '?limit=-1',
       '?claims=1', '?claims=false', '?claims', '?claims=true&claims=true',
       '?status=bogus', '?status=QUEUED', '?job=', '?repo=not-a-repo', '?provider=bogus', '?provider=DEVIN',
-      '?tier=bogus', '?tier=FAST', '?to=', '?owner=', '?since=not-a-time', '?before=not-a-time', '?before=', '?contains=', '?channel=', '?channel=Bad%20Name', '?channel=UPPER', '?topic=', '?topic=Bad%20Name', '?topic=UPPER', '?result=', '?result=bogus', '?result=COMPLETE', '?id=', '?id=has%20space', '?open=false', '?claimable=1',
+      '?tier=bogus', '?tier=FAST', '?to=', '?owner=', '?excludeOwner=', '?excludeOwner=has%20space', '?since=not-a-time', '?before=not-a-time', '?before=', '?contains=', '?channel=', '?channel=Bad%20Name', '?channel=UPPER', '?topic=', '?topic=Bad%20Name', '?topic=UPPER', '?result=', '?result=bogus', '?result=COMPLETE', '?id=', '?id=has%20space', '?open=false', '?claimable=1',
       '?status=queued&status=done', '?bogus=1']) {
       expect((await request(`${FEED}${query}`)).status, query).toBe(400);
     }
@@ -189,6 +189,13 @@ describe('GET /api/verse/agent-bus/work-feed filters', () => {
     expect(ids((await feedRequest('?tier=fast')).wire)).toEqual(['job-a']);
     expect(ids((await feedRequest('?to=leaders')).wire)).toEqual(['job-a']);
     expect(ids((await feedRequest('?owner=other-agent')).wire)).toEqual(['job-b']);
+    // excludeOwner drops jobs announced by that agent under the same
+    // identity-label rule, inverted; with owner the pair composes
+    // include-then-exclude.
+    expect(ids((await feedRequest('?excludeOwner=other-agent')).wire)).toEqual(['job-a']);
+    expect(ids((await feedRequest('?excludeOwner=fake-agent')).wire)).toEqual(['job-b']);
+    expect(ids((await feedRequest('?owner=fake-agent&excludeOwner=fake-agent')).wire)).toEqual([]);
+    expect(ids((await feedRequest('?owner=fake-agent&excludeOwner=other-agent')).wire)).toEqual(['job-a']);
     expect(ids((await feedRequest('?since=1500')).wire)).toEqual(['job-b']);
     // before is the exclusive upper bound on the same updatedAt field.
     expect(ids((await feedRequest('?before=1500')).wire)).toEqual(['job-a']);

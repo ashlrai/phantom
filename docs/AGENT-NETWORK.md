@@ -509,7 +509,8 @@ but must agree. `--priority` keeps one exact P0..P3 envelope band — the same
 match every other bus read's `--priority` applies. `peers work-feed` accepts
 the shared work-feed query instead —
 `--claims`, `--open`, `--claimable`, `--status`, `--job`, `--repo`,
-`--provider`, `--tier`, `--to`, `--owner`, `--channel`, `--result`, `--id`,
+`--provider`, `--tier`, `--to`, `--owner`, `--exclude-owner`, `--channel`,
+`--topic`, `--result`, `--id`,
 `--since`, `--before`, `--contains` and `--limit` — the same
 `parseBusWorkFeedQuery` validation `phm fleet work-feed` and the feed
 HTTP/MCP surfaces apply, projected through `readPeerFleet`'s authenticated

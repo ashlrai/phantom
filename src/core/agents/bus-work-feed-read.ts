@@ -354,6 +354,16 @@ export interface BusWorkFeedViewFilters {
   /** Announcer predicate over `job.owner` from `busWorkFeedOwnerMatcher`. */
   ownerMatch?: (owner: string) => boolean;
   /**
+   * Announcer exclusion predicate over `job.owner` from
+   * `busWorkFeedOwnerMatcher`, applied inverted — the `--exclude-owner`
+   * counterpart of `ownerMatch`: a job whose announcing owner satisfies it
+   * drops out, so "the feed minus one announcer's jobs" is one filtered read
+   * under the same identity-label rule `--owner` applies. The pair composes
+   * include-then-exclude like every other include/exclude filter pair: a job
+   * announced by a ref both name matches nothing.
+   */
+  excludeOwnerMatch?: (owner: string) => boolean;
+  /**
    * Keep only jobs whose descriptive text carries the needle as a
    * case-insensitive substring — the announcement title, the newest status
    * detail and the declared dispatch scope/acceptance, each scrubbed,
@@ -429,7 +439,7 @@ export function busWorkFeedJobCitesEnvelope(job: BusWorkFeedJob, id: string): bo
 
 /**
  * Client-side `--status`/`--job`/`--repo`/`--provider`/`--tier`/`--claimable`/`--since`/`--before`/
- * `--to`/`--owner`/`--contains`/`--channel`/`--topic`/`--result`/`--id` filters and newest-first ordering shared by
+ * `--to`/`--owner`/`--exclude-owner`/`--contains`/`--channel`/`--topic`/`--result`/`--id` filters and newest-first ordering shared by
  * the feed CLIs;
  * the matchers are the `busWorkFeedPendingToMatcher`/`busWorkFeedOwnerMatcher`
  * predicates. `since` keeps jobs whose `updatedAt` — the newest status
@@ -469,6 +479,7 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: B
       && (filters.before === undefined || job.updatedAt < filters.before)
       && (filters.toMatch === undefined || filters.toMatch(job.to, job.owner))
       && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner))
+      && (filters.excludeOwnerMatch === undefined || !filters.excludeOwnerMatch(job.owner))
       && (filters.channel === undefined || job.to.startsWith(`group:${filters.channel}:`))
       && (filters.topic === undefined || groupAddressTopicOf(job.to) === filters.topic)
       && (filters.result === undefined || job.result?.outcome === filters.result)
