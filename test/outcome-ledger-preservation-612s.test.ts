@@ -2875,12 +2875,14 @@ describe('router outcome cross-review join', () => {
     }
   });
 
-  it('withholds the standing review when it cannot be placed by the recorded merge or close', async () => {
+  it('selects the latest eligible review at the recorded merge or close', async () => {
     const resolvedAt = '2026-11-22T00:00:00Z';
     const root = runsDir([
       { pr: 42, phase: 'MERGED', mergedAt: resolvedAt },
       { pr: 43, phase: 'CLOSED', closedAt: resolvedAt },
       { pr: 44, phase: 'MERGED', mergedAt: resolvedAt },
+      { pr: 45, phase: 'CLOSED', closedAt: resolvedAt },
+      { pr: 46, phase: 'MERGED', mergedAt: resolvedAt },
     ].map(({ pr, ...verdict }) => JSON.stringify({
       job: `J${pr}`, pr_url: `https://github.com/ashlrai/phantom/pull/${pr}`,
       ts: '2026-11-20T00:00:00Z', ...verdict,
@@ -2890,13 +2892,20 @@ describe('router outcome cross-review join', () => {
       crossReview(42, 'reject', { at: '2026-11-23T00:00:00Z' }),
       crossReview(43, 'reject', { at: resolvedAt }),
       crossReview(44, 'approve', { at: null }),
+      crossReview(45, 'approve', { at: '2026-11-23T00:00:00Z' }),
+      crossReview(46, 'approve'),
+      crossReview(46, 'approve', { at: resolvedAt }),
+      crossReview(46, 'reject', { at: resolvedAt }),
+      crossReview(46, 'approve', { at: '2026-11-23T00:00:00Z' }),
     ]);
 
     const result = await readRouterOutcomes({ runsDir: root, ashlarDir, authorityEvidence: null });
     expect(result.outcomes).toMatchObject([
-      { job_id: 'J42', merged: true, cross_review: null },
+      { job_id: 'J42', merged: true, cross_review: { outcome: 'approve', at: '2026-11-21T00:00:00.000Z' } },
       { job_id: 'J43', merged: false, cross_review: { outcome: 'reject', at: resolvedAt } },
       { job_id: 'J44', merged: true, cross_review: null },
+      { job_id: 'J45', merged: false, cross_review: null },
+      { job_id: 'J46', merged: true, cross_review: null },
     ]);
   });
 

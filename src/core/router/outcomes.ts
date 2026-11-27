@@ -1806,6 +1806,7 @@ function foldRouterOutcomesWithCiCoverage(
   rewards?: ReadonlyMap<string, RewardOutcomeEvidence>,
   throughMs = Infinity,
   spendCosts?: ReadonlyMap<string, number>,
+  reviewReceipts?: ReadonlyMap<string, readonly CrossReviewReceipt[]>,
 ): RouterOutcomeFold {
   const rows: Row[] = [];
   let malformed = 0;
@@ -2367,7 +2368,7 @@ function foldRouterOutcomesWithCiCoverage(
       }
     }
   }
-  if (rewards || spendCosts || opts.mergeEvents !== undefined || opts.crossReviews !== undefined || opts.revertedPrKeys?.size) {
+  if (rewards || spendCosts || opts.mergeEvents !== undefined || opts.crossReviews !== undefined || reviewReceipts !== undefined || opts.revertedPrKeys?.size) {
     for (const o of outcomes.values()) {
       const latestClaim = jobPrKeys.get(o.job_id);
       const verdictClaim = verdictPrKeys.get(o.job_id);
@@ -2404,15 +2405,12 @@ function foldRouterOutcomesWithCiCoverage(
           }
         }
       }
-      if (opts.crossReviews !== undefined) {
-        const review = opts.crossReviews.get(prKey);
-        // Use the timestamp of the winning jobs-ledger verdict. The review
-        // summary only carries the latest receipt for the PR.
-        const resolvedAt = mergedAt.get(o.job_id);
-        if (review !== undefined && (resolvedAt === undefined || !Number.isFinite(resolvedAt) ||
-            (review.at !== null && Date.parse(review.at) <= resolvedAt))) {
-          o.cross_review = { ...review };
-        }
+      const resolvedAt = mergedAt.get(o.job_id);
+      const review = reviewReceipts === undefined ? opts.crossReviews?.get(prKey)
+        : latestCrossReview(reviewReceipts.get(prKey) ?? [], resolvedAt);
+      if (review !== undefined && (resolvedAt === undefined || !Number.isFinite(resolvedAt) ||
+          (review.at !== null && Date.parse(review.at) <= resolvedAt))) {
+        o.cross_review = { ...review };
       }
     }
   }
@@ -3265,16 +3263,22 @@ export interface CrossReviewEvidence {
  * itself never creates outcomes.
  */
 export function foldCrossReviews(text: string): Map<string, CrossReviewEvidence> {
-  return foldCrossReviewsThrough(text, Infinity);
+  const reviews = new Map<string, CrossReviewEvidence>();
+  for (const [key, receipts] of crossReviewReceipts(text, Infinity)) {
+    const review = latestCrossReview(receipts);
+    if (review !== undefined) reviews.set(key, review);
+  }
+  return reviews;
 }
 
-function foldCrossReviewsThrough(text: string, asOfMs: number): Map<string, CrossReviewEvidence> {
-  const latest = new Map<string, {
-    evidence: CrossReviewEvidence;
-    timestamp: number;
-    head: string | null;
-    conflicting: boolean;
-  }>();
+interface CrossReviewReceipt {
+  evidence: CrossReviewEvidence;
+  timestamp: number;
+  head: string | null;
+}
+
+function crossReviewReceipts(text: string, asOfMs: number): Map<string, CrossReviewReceipt[]> {
+  const byPr = new Map<string, CrossReviewReceipt[]>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     const row = parseJsonObjectLine(line);
@@ -3293,27 +3297,36 @@ function foldCrossReviewsThrough(text: string, asOfMs: number): Map<string, Cros
     const rawHead = row['reviewedHeadSha'];
     const head = typeof rawHead === 'string' && CROSS_REVIEW_HEAD_SHA.test(rawHead) ? rawHead : null;
     const key = `${repo.toLowerCase()}#${pr}`;
-    const previous = latest.get(key);
-    if (!previous || timestamp > previous.timestamp || (timestamp === -Infinity && previous.timestamp === -Infinity)) {
-      latest.set(key, {
-        evidence: { outcome: outcome as CrossReviewVerdict, at: timestamp === -Infinity ? null : at },
-        timestamp,
-        head,
-        conflicting: false,
-      });
-    } else if (timestamp === previous.timestamp) {
-      if (outcome !== previous.evidence.outcome ||
-          (head !== null && previous.head !== null && head !== previous.head)) {
-        previous.conflicting = true;
-      }
-      previous.head ??= head;
+    const receipts = byPr.get(key) ?? [];
+    receipts.push({
+      evidence: { outcome: outcome as CrossReviewVerdict, at: timestamp === -Infinity ? null : at },
+      timestamp,
+      head,
+    });
+    byPr.set(key, receipts);
+  }
+  return byPr;
+}
+
+function latestCrossReview(
+  receipts: readonly CrossReviewReceipt[], resolvedAt?: number,
+): CrossReviewEvidence | undefined {
+  const datedResolution = resolvedAt !== undefined && Number.isFinite(resolvedAt);
+  let latest: CrossReviewReceipt | undefined;
+  let conflicting = false;
+  for (const receipt of receipts) {
+    const { timestamp, head, evidence } = receipt;
+    if (datedResolution && (timestamp === -Infinity || timestamp > resolvedAt)) continue;
+    if (latest === undefined || timestamp > latest.timestamp || timestamp === -Infinity && latest.timestamp === -Infinity) {
+      latest = { ...receipt };
+      conflicting = false;
+    } else if (timestamp === latest.timestamp) {
+      conflicting ||= evidence.outcome !== latest.evidence.outcome ||
+        (head !== null && latest.head !== null && head !== latest.head);
+      latest.head ??= head;
     }
   }
-  const reviews = new Map<string, CrossReviewEvidence>();
-  for (const [key, review] of latest) {
-    if (!review.conflicting) reviews.set(key, review.evidence);
-  }
-  return reviews;
+  return conflicting ? undefined : latest?.evidence;
 }
 
 export interface RouterOutcomeRead extends RouterOutcomeFold {
@@ -3674,11 +3687,9 @@ export async function readRouterOutcomes(opts: {
       revertLedger.keys),
     mergeEvents: mergeEvents?.evidence,
     mergeEventsTruncated,
-    crossReviews: crossReviewRead.state === 'read'
-      ? foldCrossReviewsThrough(crossReviewRead.text, reportStartedAt)
-      : undefined,
   }, ambiguousCiJobs, mergeEvents?.coverage, rewards, reportStartedAt,
-  spendRead.state === 'read' && !spendTruncated ? foldSpendCosts(spendRead.text, reportStartedAt) : undefined);
+  spendRead.state === 'read' && !spendTruncated ? foldSpendCosts(spendRead.text, reportStartedAt) : undefined,
+  crossReviewRead.state === 'read' ? crossReviewReceipts(crossReviewRead.text, reportStartedAt) : undefined);
   if (emptyTagRead.state === 'read') {
     const tags = foldEmptyTags(emptyTagRead.text, reportStartedAt);
     for (const o of folded.outcomes) {
