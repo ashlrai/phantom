@@ -634,6 +634,12 @@ recorded outcomes, while an unreadable one refuses the route. Explicit `--outcom
 entries win per provider over ledger tallies, and the JSON plan reports the
 ledger state, truncation and provider count under `outcomes_ledger`.
 
+A lane with no recorded attempts or invalid outcome counts ranks with the
+neutral 0.5 prior. Its placement reports `mergeRate`, `mergesPerMTok` and
+`mergesPerHour` as `null` in JSON and `unknown` in text. With at least one
+recorded attempt, these fields show smoothed estimates, including when all
+recorded attempts failed to merge.
+
 ## Limits
 
 State is a private local directory (`~/.ashlr/nodes`, or `$ASHLR_HOME/nodes`)

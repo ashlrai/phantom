@@ -155,7 +155,7 @@ export async function cmdNodeRoute(args: string[]): Promise<number> {
     } else {
       if (ledger) console.log(`lane outcomes: ${ledger.path} state=${ledger.state} providers=${Object.keys(ledger.outcomes).length} truncated=${ledger.truncated}`);
       for (const p of plan) {
-        console.log(p.nodeId ? `${p.jobId} -> ${p.nodeId} ${p.provider}/${p.model} score ${p.score} (merge ${p.mergeRate}, ${p.mergesPerMTok}/Mtok, ${p.mergesPerHour}/h)`
+        console.log(p.nodeId ? `${p.jobId} -> ${p.nodeId} ${p.provider}/${p.model} score ${p.score} (merge ${p.mergeRate ?? 'unknown'}, ${p.mergesPerMTok ?? 'unknown'}/Mtok, ${p.mergesPerHour ?? 'unknown'}/h)`
           : `${p.jobId}: unplaced ${JSON.stringify(p.rejected)}`);
       }
     }

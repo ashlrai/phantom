@@ -187,6 +187,30 @@ describe('autoscale router scoring', () => {
     expect(mergeRate({ attempts: -1, merged: 1 } as never)).toBe(0.5);
   });
 
+  it.each([
+    undefined,
+    { attempts: 0, merged: 0 },
+    { attempts: 1, merged: 2 },
+    { attempts: 1, merged: -1 },
+  ])('uses the ranking prior but reports unknown rates for unusable outcomes %j', (outcomes) => {
+    const [placement] = planAutoscaleRoutes({
+      nodes: [node(mbp())], costs: COSTS.slice(0, 2),
+      outcomes: { claude: { attempts: 1, merged: 0 }, ...(outcomes ? { codex: outcomes } : {}) },
+      nowMs: T0, jobs: [{ id: 'cold-lane', tokenWeight: 0 }],
+    });
+    expect(placement).toMatchObject({
+      provider: 'codex', score: 1, mergeRate: null, mergesPerMTok: null, mergesPerHour: null,
+    });
+  });
+
+  it('reports smoothed rates when a lane has recorded attempts and zero merges', () => {
+    const [placement] = planAutoscaleRoutes({
+      nodes: [node(mbp())], costs: [COSTS[0]!], outcomes: { codex: { attempts: 2, merged: 0 } },
+      nowMs: T0, jobs: [{ id: 'observed-lane' }],
+    });
+    expect(placement).toMatchObject({ mergeRate: 0.25, mergesPerMTok: 0.125, mergesPerHour: 0.5 });
+  });
+
   it('picks the best outcome per token and per minute, and honours the weight', () => {
     const outcomes = { codex: { attempts: 10, merged: 8 }, claude: { attempts: 10, merged: 8 }, grok: { attempts: 10, merged: 2 } };
     const input = { nodes: [node(mbp())], costs: COSTS, outcomes, nowMs: T0 + 1000 };

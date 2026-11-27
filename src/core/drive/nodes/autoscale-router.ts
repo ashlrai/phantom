@@ -74,6 +74,7 @@ export interface Placement {
   provider: string | null;
   model: string | null;
   score: number | null;
+  /** Smoothed estimate supported by recorded attempts, or null without usable outcomes. */
   mergeRate: number | null;
   mergesPerMTok: number | null;
   mergesPerHour: number | null;
@@ -198,12 +199,17 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
   for (const job of input.jobs) {
     const rejected: Record<string, number> = {};
     const reject = (why: string) => { rejected[why] = (rejected[why] ?? 0) + 1; };
-    type Cand = { state: NodeState; cost: HarnessModelCost; fp: FootprintCost; fpSource: 'node' | 'fleet'; load: number; localModelKey: string | null; p: number; perMTok: number; perHour: number };
+    type Cand = { state: NodeState; cost: HarnessModelCost; fp: FootprintCost; fpSource: 'node' | 'fleet'; load: number; localModelKey: string | null; mergeEstimate: number | null; perMTok: number; perHour: number };
     const cands: Cand[] = [];
     for (const cost of costs) {
       if (job.providers && !job.providers.includes(cost.provider)) { reject('provider-not-in-job'); continue; }
       if (job.models && !job.models.includes(cost.model)) { reject('model-not-in-job'); continue; }
       if (exhausted.has(cost.provider)) { reject('provider-exhausted'); continue; }
+      const outcomes = input.outcomes[cost.provider];
+      const mergeEstimate = outcomes && Number.isSafeInteger(outcomes.attempts) && outcomes.attempts > 0 &&
+        Number.isSafeInteger(outcomes.merged) && outcomes.merged >= 0 && outcomes.merged <= outcomes.attempts
+        ? mergeRate(outcomes) : null;
+      const p = mergeEstimate ?? mergeRate(undefined);
       const localModelKey = cost.local ? JSON.stringify([cost.provider, cost.model, cost.harness]) : null;
       for (const state of states) {
         if (state.blocked) { reject(`node-${state.blocked}`); continue; }
@@ -223,8 +229,7 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
         if (fp.mem_bytes_max + load > state.bytes) { reject('memory'); continue; }
         if (state.cores === 0 || (state.cores !== null && fp.cpu_cores_per_session !== null &&
           fp.cpu_cores_per_session - state.cores > state.cpuRoundoff)) { reject('cpu'); continue; }
-        const p = mergeRate(input.outcomes[cost.provider]);
-        cands.push({ state, cost, fp, fpSource: own ? 'node' : 'fleet', load, localModelKey, p,
+        cands.push({ state, cost, fp, fpSource: own ? 'node' : 'fleet', load, localModelKey, mergeEstimate,
           perMTok: p / cost.tokensPerJob * 1e6, perHour: p / (cost.minutesPerJob + Math.max(0, state.node.overheadMinutes ?? 0)) * 60 });
       }
     }
@@ -260,7 +265,9 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
     }
     const r = (n: number) => Math.round(n * 1e4) / 1e4;
     plan.push({ jobId: job.id, nodeId: best.state.node.doc.node, provider: best.cost.provider, model: best.cost.model,
-      score: r(bestScore), mergeRate: r(best.p), mergesPerMTok: r(best.perMTok), mergesPerHour: r(best.perHour), footprint: best.fpSource });
+      score: r(bestScore), mergeRate: best.mergeEstimate === null ? null : r(best.mergeEstimate),
+      mergesPerMTok: best.mergeEstimate === null ? null : r(best.perMTok),
+      mergesPerHour: best.mergeEstimate === null ? null : r(best.perHour), footprint: best.fpSource });
   }
   return plan;
 }
