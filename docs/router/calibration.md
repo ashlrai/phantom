@@ -4,7 +4,7 @@
 
 Use numeric `predicted_merge_rate` (probability from 0 to 1), `predicted_tokens`, and `predicted_wall_time_ms` for predictions. Actual usage is `tokens` or `total_tokens` and `wall_time_ms` or `duration_ms`. Camel-case equivalents are accepted. A finish and launch with ISO timestamp fields `timestamp`, `at`, or `time` supply wall time if it is otherwise absent. An outcome of `merged` is positive; `closed`, `rejected`, `failed`, or `not_merged` is negative. A boolean `merged` is also accepted. Publishing, unknown outcomes and missing outcomes are not evidence of a merge or failure.
 
-The optional PostHog export is a JSON array or an object with a `results` array; each row is a run or has a `properties` object. Join by `job_id` or `jobId`, using the same numeric fields. Unmatched rows are counted. PostHog export input must represent one run per job or contain consistent duplicate observations.
+The optional PostHog export is a JSON array or an object with a `results` array; each row is a run or has a `properties` object. Join by `job_id` or `jobId`, using the same numeric fields. When both aliases contain nonblank strings, they must identify the same job. Rows with conflicting IDs count as unmatched and contribute no measurements, even if one ID matches the ledger. Unmatched rows are counted. PostHog export input must represent one run per job or contain consistent duplicate observations.
 
 The fleet's `result`, `resolved`, and `resolution` events use the same
 verdict rules as `outcome`. Verdict strings are case-insensitive.
