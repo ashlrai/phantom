@@ -138,8 +138,10 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
         memberBatches.set(id, batches);
       }
     }
+    const reserved = event === 'claim' && r.launch_dedupe === true;
     const empty = phase?.toLowerCase() === 'empty' ? true : typeof r.empty === 'boolean' ? r.empty : null;
-    if (launch || event === 'batch_claim' || empty !== null) job.empty = empty;
+    if (reserved) job.empty = null;
+    else if (launch || event === 'batch_claim' || empty !== null) job.empty = empty;
     if (!job.pr && PR_KEYS.some(key => {
       const pr = prKeyOf(r[key]);
       return pr !== null && Number.isSafeInteger(pr.number) && pr.number > 0;
