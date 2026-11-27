@@ -2654,7 +2654,10 @@ See [node admission](docs/NODES.md#small-mac-enrollment-and-admission).
 `src/core/drive/nodes/provider-binary.ts` exports `NODE_PROVIDERS`,
 `isNodeProvider`, `providerBinaryCandidates(provider, deps?)` and
 `resolveProviderBinary(provider, deps?) => string | null`, the single absolute
-allowlist resolver (no `PATH` lookup). `worker.ts` adds
+allowlist resolver (no `PATH` lookup). The allowlist covers macOS and
+user-level locations first, then version-manager shims and Linux system
+locations (`/usr/bin`, `/bin`, `/snap/bin`); appended locations only resolve
+when nothing earlier exists. `worker.ts` adds
 `probeProviderBinaries(run?, deps?) => ProviderBinaries`,
 `classifyRunnerReply(code, fenced, stdout)`, `PACK_FAILURE_LIMIT` (2), and an
 optional third `binaryDeps` argument to `probeNodeLanes`. `NodeRunnerRequest` gains
