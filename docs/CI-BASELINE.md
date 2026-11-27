@@ -31,6 +31,10 @@ only when they carry no parseable failure or per-test pass output. The
 default reporter's green-module pass lines are expected from checkout jobs
 that never bound a receipt, so they neither verify nor poison a run; any
 other consumable evidence in an unverifiable log keeps the run unknown.
+A failed job whose log has no checkout proof and no parseable evidence
+still makes its run incomplete. The exception is an evidence-free Merge
+Gate log when a sibling failed job has verified checkout proof. That
+sibling must still supply a recognized failure for the run to be known.
 Unreadable, incomplete, capped, or unverified logs are unknown, never clean.
 A job whose conclusion is not a verdict — `cancelled`, `timed_out`,
 `action_required`, `startup_failure` or `stale` — is incomplete evidence
