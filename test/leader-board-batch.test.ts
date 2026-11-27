@@ -2,6 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { conflictingPrIds } from '../src/core/fleet/leader-board.js';
 
 describe('leader board rebase members recovered from #7167', () => {
+  it('counts queued conflicts across positional, keyed and header-based rows', () => {
+    const ids = conflictingPrIds([
+      'DONE\tRQ-REBASE-PHANTOM-7-abcdef0\tcodex\twork',
+      'job_id=RQ-REBASE-PHANTOM-8-abcdef0\tstate=RUNNING\tlane=codex',
+      'status=ready\tid=RQ-REBASE-PHANTOM-9-abcdef0\tpool=codex',
+      'job_id\tpool\tstate',
+      'RQ-REBASE-BATCH-PHANTOM-10-11-abcdef\tcodex\tCANCELLED',
+      'RQ-REBASE-BATCH-PHANTOM-12-13-abcdef\tcodex\tPARKED-DEP.codex',
+      'RQ-REBASE-PHANTOM-14-abcdef0\tcodex\tREADY',
+    ].join('\n'));
+    expect([...ids]).toEqual(['PHANTOM-9', 'PHANTOM-12', 'PHANTOM-13', 'PHANTOM-14']);
+  });
+
   it('counts every member PR of batch rebase rows and unknown-head singles', () => {
     const ids = conflictingPrIds([
       'READY\tRQ-REBASE-BATCH-PHANTOM-4021-4023-a1b2c3\tdevin\twork',
