@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { groupAddress, groupAddressTopicOf, groupPresence, publishGroupMessage, publishGroupPresence, subscribeGroup, GROUP_PRESENCE_TTL_MS } from '../src/core/fleet/bus-group.js';
+import type { BusJsonValue, BusPriority } from '../src/core/fleet/bus-envelope.js';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -73,4 +74,66 @@ it('runs the documented group commands through the CLI', async () => {
   }
   expect(JSON.parse(output[1]!).messages[0].envelope.body.value).toEqual({ text: 'Ready for review' });
   expect(JSON.parse(output[3]!).members[0].member).toBe('codex');
+});
+
+it('filters group reads with the shared bus-read filters', async () => {
+  const { cmdCommsBus } = await import('../src/cli/comms-bus.js');
+  const { appendBusInbox } = await import('../src/core/fleet/bus-inbox.js');
+  const root = setup();
+  const output: string[] = [];
+  const deps = { emit: (value: string) => { output.push(value); } };
+  const send = (id: string, from: string, body: BusJsonValue, at: number, priority?: BusPriority, topic = 'work') =>
+    publishGroupMessage({ room: 'team', topic, id, from, ttl: 100000, body, priority }, { root, now: () => at });
+  expect(send('m1', 'codex', { text: 'alpha deploy' }, 100, 'P1').status).toBe('posted');
+  expect(send('m2', 'claude', { text: 'beta review' }, 200).status).toBe('posted');
+  expect(send('m3', 'codex', { text: 'gamma deploy' }, 300, 'P0').status).toBe('posted');
+  // A different room topic never enters this subscription.
+  expect(send('m4', 'codex', { text: 'delta deploy' }, 350, undefined, 'other').status).toBe('posted');
+  // Retained rows any local writer can leave on the group label: a protocol
+  // body (topic-less — a protocol topic must equal the envelope's to, which a
+  // group address never is) and a v2 note carrying the thread/job/inReplyTo
+  // conventions a channel post uses.
+  expect(appendBusInbox({ id: 'p1', from: 'codex', to: 'group:team:work', priority: 'P3', ttl: 100000,
+    body: { protocol: { version: 1, kind: 'status' } } }, { root, now: () => 400 }).status).toBe('posted');
+  expect(appendBusInbox({ id: 'n1', from: 'claude', to: 'group:team:work', priority: 'P3', ttl: 100000,
+    body: { kind: 'note', thread: 'job:J1', inReplyTo: 'm2', text: 'note on J1' } }, { root, now: () => 500 }).status).toBe('posted');
+
+  const read = async (filterArgs: string[] = []) => {
+    output.length = 0;
+    const code = await cmdCommsBus(['group', 'read', 'team', 'work', '0', ...filterArgs], { root, now: () => 1000 }, deps);
+    const page = output.length === 0 ? undefined : JSON.parse(output[0]!) as { status: string; messages?: { cursor: number; envelope: { id: string } }[]; nextCursor?: number };
+    return { code, ids: page?.messages?.map(row => row.envelope.id) ?? [], nextCursor: page?.nextCursor };
+  };
+
+  const all = await read();
+  expect(all.code).toBe(0);
+  expect(all.ids).toEqual(['m1', 'm2', 'm3', 'p1', 'n1']);
+  expect(all.nextCursor).toBeGreaterThan(0);
+  expect((await read(['--from', 'codex'])).ids).toEqual(['m1', 'm3', 'p1']);
+  expect((await read(['--from=claude'])).ids).toEqual(['m2', 'n1']);
+  expect((await read(['--exclude-from', 'codex'])).ids).toEqual(['m2', 'n1']);
+  expect((await read(['--id', 'm2'])).ids).toEqual(['m2']);
+  expect((await read(['--priority', 'P0'])).ids).toEqual(['m3']);
+  expect((await read(['--priority', 'P3'])).ids).toEqual(['p1', 'n1']);
+  expect((await read(['--contains', 'alpha'])).ids).toEqual(['m1']);
+  expect((await read(['--since', '150'])).ids).toEqual(['m2', 'm3', 'p1', 'n1']);
+  expect((await read(['--before', '250'])).ids).toEqual(['m1', 'm2']);
+  expect((await read(['--since', '150', '--before', '250'])).ids).toEqual(['m2']);
+  expect((await read(['--kind', 'status'])).ids).toEqual(['p1']);
+  // A protocol topic must equal the envelope's to, which a group address never
+  // is, so the protocol --topic dimension honestly matches nothing here.
+  expect((await read(['--topic', 'fleet.*'])).ids).toEqual([]);
+  expect((await read(['--thread', 'job:J1'])).ids).toEqual(['n1']);
+  expect((await read(['--job', 'J1'])).ids).toEqual(['n1']);
+  expect((await read(['--in-reply-to', 'm2'])).ids).toEqual(['n1']);
+
+  // The address dimensions the positional room/topic already pin, unknown
+  // flags and malformed values are usage errors, never silent matches.
+  for (const bad of [
+    ['--to', 'agent:codex'], ['--channel', 'eng'], ['--group-topic', 'work'],
+    ['--priority', 'P9'], ['--kind', 'bogus'], ['--topic', 'Bad Topic'],
+    ['--from'], ['--unknown', 'x'], ['--id', 'm1', '--id', 'm2'], ['--since', 'soon'],
+  ]) {
+    expect((await read(bad)).code).toBe(2);
+  }
 });
