@@ -60,6 +60,8 @@ export interface RouterInput {
   costs: HarnessModelCost[];
   /** Keyed by provider (lane). */
   outcomes: Record<string, LaneOutcomes>;
+  /** Explicit provider tallies. Only usable evidence overrides the base tally. */
+  outcomeOverrides?: Record<string, unknown>;
   jobs: RouteJob[];
   nowMs: number;
   /** Providers out of included usage; never routed (no spend). */
@@ -116,6 +118,14 @@ export function mergeRate(o: LaneOutcomes | undefined): number {
   const attempts = o && Number.isSafeInteger(o.attempts) && o.attempts >= 0 ? o.attempts : 0;
   const merged = o && Number.isSafeInteger(o.merged) && o.merged >= 0 ? Math.min(o.merged, attempts) : 0;
   return (merged + 1) / (attempts + 2);
+}
+
+function observedMergeRate(value: unknown): number | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { attempts, merged } = value as Partial<LaneOutcomes>;
+  return attempts !== undefined && Number.isSafeInteger(attempts) && attempts > 0 &&
+    merged !== undefined && Number.isSafeInteger(merged) && merged >= 0 && merged <= attempts
+    ? mergeRate({ attempts, merged }) : null;
 }
 
 type FootprintCost = Pick<HarnessFootprint, 'mem_bytes_max' | 'cpu_cores_per_session'>;
@@ -206,10 +216,8 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
       if (job.providers && !job.providers.includes(cost.provider)) { reject('provider-not-in-job'); continue; }
       if (job.models && !job.models.includes(cost.model)) { reject('model-not-in-job'); continue; }
       if (exhausted.has(cost.provider)) { reject('provider-exhausted'); continue; }
-      const outcomes = input.outcomes[cost.provider];
-      const mergeEstimate = outcomes && Number.isSafeInteger(outcomes.attempts) && outcomes.attempts > 0 &&
-        Number.isSafeInteger(outcomes.merged) && outcomes.merged >= 0 && outcomes.merged <= outcomes.attempts
-        ? mergeRate(outcomes) : null;
+      const mergeEstimate = observedMergeRate(input.outcomeOverrides?.[cost.provider]) ??
+        observedMergeRate(input.outcomes[cost.provider]);
       const p = mergeEstimate ?? mergeRate(undefined);
       const localModelKey = cost.local ? JSON.stringify([cost.provider, cost.model, cost.harness]) : null;
       for (const state of states) {

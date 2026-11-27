@@ -639,8 +639,10 @@ excludes the job even if a PR verdict is present. A later launch clears
 the no-op, allowing a known verdict to contribute again. A merge recorded as reverted
 counts as an attempt but not as a held merge; an absent ledger means no
 recorded outcomes, while an unreadable one refuses the route. Explicit `--outcomes`
-entries win per provider over ledger tallies, and the JSON plan reports the
-ledger state, truncation and provider count under `outcomes_ledger`.
+entries with positive integer attempts and a merge count from zero through
+the attempt count win per provider. Empty or invalid entries fall back to the
+provider's ledger tally. The JSON plan reports ledger state, truncation and
+provider count under `outcomes_ledger`.
 
 A lane with no recorded attempts or invalid outcome counts ranks with the
 neutral 0.5 prior. Its placement reports `mergeRate`, `mergesPerMTok` and
