@@ -16,6 +16,7 @@ export async function cmdFleetGuardianRetry(
   prepare = prepareGuardianRetryState,
   verify = cmdFleetGuardianVerify,
 ): Promise<number> {
+  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
   const values: Record<string, string> = {};
   let json = false;
   let verifyNow = false;

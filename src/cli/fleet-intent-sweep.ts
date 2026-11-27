@@ -5,6 +5,7 @@ const usage = 'Usage: ashlr fleet intent-sweep [--apply] [--now <ISO>] [--json]'
 export async function cmdFleetIntentSweep(args: string[], deps: { output?: (text: string) => void; error?: (text: string) => void } = {}): Promise<number> {
   const output = deps.output ?? ((text: string) => console.log(text));
   const error = deps.error ?? ((text: string) => process.stderr.write(text));
+  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { output(usage); return 0; }
   let apply = false;
   let json = false;
   let now: string | undefined;

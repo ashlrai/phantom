@@ -6,6 +6,7 @@ export const usage = 'Usage: ashlr fleet guardian-compact --manifest <file> --so
 // fleet-subcommand registry, whose generator only collects `export async
 // function` verbs. Convention dispatch activates with the next registry pass.
 export const cmdFleetGuardianCompact = async (args: string[], compact = compactGuardianState): Promise<number> => {
+  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
   const values: Record<string, string> = {};
   let json = false;
   for (let i = 0; i < args.length; i++) {

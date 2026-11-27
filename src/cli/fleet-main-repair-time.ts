@@ -62,6 +62,7 @@ export function buildMainRepairTime(guardian: Record<string, unknown>[] | null, 
 
 export async function cmdFleetMainRepairTime(args: string[], deps: FleetMainRepairTimeDeps = {}): Promise<number> {
   const output = deps.output ?? { log: console.log, error: console.error };
+  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { output.log(`Usage: ${USAGE}`); return 0; }
   let guardian = join(home(), 'guardian.jsonl');
   let finish = join(home(), 'jobs-finished.jsonl');
   let json = false;

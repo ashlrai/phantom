@@ -112,6 +112,7 @@ const DOCS = [
   // docs/llms.txt route agents to. Dated audits, specs, roadmaps, versioned
   // contracts and the generated CLI pages (cli.md, CODEMAP.md) stay out: they
   // record a point in time or are rebuilt by docs-sync from src/cli/help.ts.
+  'docs/AGENT-CLI-CONTRACTS.md',
   'docs/AGENT-NATIVE-QUICKSTART.md',
   'docs/AMPLIFY.md',
   'docs/APP-STEER.md',
@@ -164,6 +165,7 @@ const DOCS = [
   // test/cli-help-no-side-effects.
   'docs/BRIEF-SEND.md',
   'docs/DISK-MAINT.md',
+  'docs/FLEET-CONFIG.md',
   'docs/FLEET-EMPTIES.md',
   'docs/FLEET-PROFILE.md',
   'docs/FLEET-MERGE-LATENCY.md',
@@ -171,7 +173,9 @@ const DOCS = [
   'docs/FLEET-REBASE-PLAN.md',
   'docs/FLEET-REBASE-STATUS.md',
   'docs/GROK-ULTRA-RUNWAY.md',
+  'docs/INTENT.md',
   'docs/MACHINERY-MIGRATION.md',
+  'docs/main-guardian.md',
   'docs/REBASE-ORDERING.md',
   'docs/RESOURCE-EVIDENCE.md',
   'docs/VERSE.md',
