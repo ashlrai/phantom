@@ -204,6 +204,10 @@ The items keep the association-not-causation framing since
 shadow selections never steered those runs. Withdrawing or rewriting a card
 itself remains an owner-only act on the host-signed ledger.
 
+Skill-evidence ledger and trajectory evidence-gap repair briefs from
+`phm improve discover` also target `ashlrai/phantom` or the bare `phantom`
+shorthand, matching case-insensitively.
+
 ## Exit codes
 
 `0` listed (including an empty list), `2` bad usage (unknown flag, bad
