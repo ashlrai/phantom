@@ -1416,7 +1416,8 @@ the untagged-majority brief. Recurring recorded `blocked` and `unknown` tags
 can still produce briefs, with counts labeled as covering the retained
 receipts.
 
-The self-improvement discovery feed queues recurring refusals after four
+The self-improvement discovery feed targets `ashlrai/phantom` and its bare
+`phantom` shorthand, matching case-insensitively. It queues recurring refusals after four
 distinct recorded rejection observations for one source and reason across
 at least two UTC days in the last seven days, through the evaluation time
 inclusive. Future-dated rejections and drafts enter the counts only once

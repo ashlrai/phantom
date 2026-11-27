@@ -207,6 +207,10 @@ describe('generatorYieldBacklogItems', () => {
     expect(await generatorYieldBacklogItems({ repo: REPO, now: NOW, ledgerText: '   \n  \n' })).toEqual([]);
     const text = recurringRows('autofill:bet', 'stopped_family', 4, [4, 3, 4, 3], 'bet-z').join('\n');
     expect(await generatorYieldBacklogItems({ repo: 'ashlrai/other-repo', now: NOW, ledgerText: text })).toEqual([]);
+    expect(await generatorYieldBacklogItems({ repo: 'another-owner/phantom', now: NOW, ledgerText: text })).toEqual([]);
+    const mixedCase = await generatorYieldBacklogItems({ repo: ' AshlrAI/Phantom ', now: NOW, ledgerText: text });
+    expect(mixedCase).toHaveLength(1);
+    expect(mixedCase[0]!.repo).toBe('AshlrAI/Phantom');
     // A bare repository name still matches the fleet gate but carries no owner/repo field.
     const bare = await generatorYieldBacklogItems({ repo: 'phantom', now: NOW, ledgerText: text });
     expect(bare).toHaveLength(1);
