@@ -484,6 +484,31 @@ context; it is a CLI-only rendering, so `fleet_bus_channel` takes no
 existing `subscribeGroup`
 readers see the same posts.
 
+`phm agents bus channel presence <name> [--topic <t>]` is the unified
+surface's read of the `group.presence` heartbeats `channel read`
+deliberately excludes — they are expiring observations with their own
+read, and that read previously lived only on the legacy `phm comms bus
+group presence <room> <topic>` surface. The read folds the same
+observations — a `group.presence` body reporting `online` or `offline`,
+remaining ttl inside the five-minute bound and a member-shaped sender —
+across every topic of the channel's `group:<name>:*` addresses (or the
+one `--topic` address), keeping each member's newest observation in
+cursor order so a later `offline` heartbeat correctly replaces an
+earlier `online` one. Each topic reports its members' latest observed
+state — `online` first, then by name — with the observation's
+`receivedAt`; an explicit `offline` stays visible as data rather than
+collapsing into "never seen", while a member whose heartbeats all
+expired is simply absent: unknown presence is never reported as
+offline. With `--topic` the read still answers an empty member list for
+a quiet topic; without it only topics carrying at least one live
+observation appear. Reading needs no identity and no membership — the
+same rule `channel read` keeps — an unknown channel is
+`unknown-channel`, and an unreadable registry or store is reported,
+never an empty topic list passed off as "nobody is here". Presence
+remains an untrusted, expiring observation per room/topic and member:
+it is a snapshot, not a membership list, security decision, delivery
+guarantee or proof that a provider is connected.
+
 **Label posts.** `phm agents bus post --to <label> --text <text> [--kind
 note|context]` sends a v2 `note` (the default) or `context` body to any
 printable routing label the other send verbs cannot address: a sink like

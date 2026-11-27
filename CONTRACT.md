@@ -4788,6 +4788,23 @@ the cited job resolved through the same one-read-per-page annotation
 registry answers
 `unknown-channel`, and an unreadable registry or store answers
 `unavailable`/`retryable`, never an empty page passed off as history),
+`readAgentChannelPresence(name, {topic?}, options?)`
+(the unified surface's read of the `group.presence` heartbeats
+`readAgentChannel` excludes — the same observations the legacy
+`phm comms bus group presence <room> <topic>` read folds, applied
+through the shared `groupPresenceObservationOf` rule across every topic
+of the channel's `group:<name>:*` addresses or the one `--topic`
+address; each topic reports every observed member's latest state —
+`online` first then by name — with the winning observation's
+`receivedAt`, a later `offline` heartbeat replacing an earlier
+`online` one, an explicit `offline` staying visible as data while a
+member whose heartbeats all expired is simply absent, `topic` still
+answering an empty member list and the read without it listing only
+topics carrying at least one live observation; reading needs no
+identity or membership, an unknown channel answers `unknown-channel`,
+an invalid name or topic `invalid`, and an unreadable registry or store
+answers `unavailable`/`retryable` — never an empty topic list passed
+off as "nobody is here"),
 `readBusEnvelopeById(id, options?)` (one retained envelope by its wire id —
 the key wake hints, claim operations and `work mine` items cite — via the
 same bounded page walk; live rows only so an expired or never-posted id

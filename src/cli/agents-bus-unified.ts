@@ -6,7 +6,7 @@ import {
 } from '../core/agents/bus-identity.js';
 import {
   agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodyFallbackSummary, busInboxJobMarker, busPageResumeCursor, listBusChannels, postChannelMessage, postLabelMessage,
-  readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
+  readAgentChannel, readAgentChannelPresence, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
   updateWorkStatus, INBOX_KINDS, type AllWakesPage, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WakePage, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
@@ -48,6 +48,7 @@ ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--kind note|context] [--from <agent>] [--topic <t>] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
 ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--after <cursor>] [--limit <1..100>] [--frame <cli>]
+ashlr agents bus channel presence <name> [--topic <t>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
@@ -1195,6 +1196,17 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           ...(result.matched === undefined ? [] : [`matched ${result.matched}`]),
           `nextCursor ${nextCursor}`,
         ].join('\n'));
+        return 0;
+      }
+      if (sub === 'presence') {
+        const result = readAgentChannelPresence(arg, { topic: one('--topic') }, options);
+        if (result.status !== 'ok') return finish(result, '');
+        out(json ? JSON.stringify(result) : [
+          ...result.topics.map(t => `#${result.channel}:${t.topic}` +
+            (t.members.length === 0 ? '  (no live presence)' :
+              `  ${t.members.map(m => `${m.member}=${m.state}`).join(' ')}`)),
+          `topics=${result.topics.length}`,
+        ].join('\n') || `#${result.channel}  (no live presence)`);
         return 0;
       }
     }
