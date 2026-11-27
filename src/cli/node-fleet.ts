@@ -1,17 +1,29 @@
 /** `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave`: thin handlers over DriveNodes. */
 import { hostname } from 'node:os';
 import type { DriveNodes, NodesStore } from '../core/drive/nodes/index.js';
-import { UsageError, joinHintCommand, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
+import { UsageError, joinHintCommand, knownOwnerScopes, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
 import { validId, type NodeAuth } from '../core/drive/nodes/state.js';
+import type { SelfUpdatePlan } from '../core/drive/nodes/phm-version.js';
+import type { LocalLaneProbeDeps } from '../core/drive/nodes/local-model-caps.js';
+import { parseNodeWatchFlags, type NodeWatchFlags } from './node-watch.js';
+import type { NodeBeatWatchDeps } from './node-beat-watch.js';
 
 export interface NodeFleetDeps {
   store?: NodesStore;
   now?: () => number;
   probeAuth?: () => NodeAuth;
-  /** This build's version for the join `phm-<version>` cap; defaults to localPhmVersion. */
+  /** This build's version for the join `phm-<version>` cap and the status/list
+   * drift target; defaults to localPhmVersion. */
   phmVersion?: () => string | null;
   /** This computer's hostname for the join `--node` default; defaults to os.hostname. */
   hostname?: () => string;
+  /** Test seam for the standalone join's local-model lane probe
+   * (`local-lanes.json` + live headroom → advertised caps); defaults to this
+   * machine's real probe. */
+  localLanes?: LocalLaneProbeDeps;
+  /** Test seam for `join --watch`: forwarded to the beat watch loop (run, sleep,
+   * signal, capacity/host-stats measurement). */
+  watch?: NodeBeatWatchDeps;
 }
 
 
@@ -49,12 +61,41 @@ function expiredRejoinHints(nodes: DriveNodes, out: Record<string, unknown>): Ma
     if (n.live !== false || typeof n.nodeId !== 'string') continue;
     let profile: ReturnType<DriveNodes['nodeProfile']> = null;
     try { profile = nodes.nodeProfile(n.nodeId); } catch { /* degrade to the generic rejoin hint */ }
-    hints.set(n.nodeId, joinHintCommand(n.nodeId, profile));
+    // The standalone keep-alive is `join --watch`: a bare join's session dies
+    // 30 s after its last beat, so the hint that restores "Phantom running"
+    // must also hold the session. This view only renders for the local store —
+    // a pool Mac's status delegates before reaching here.
+    hints.set(n.nodeId, joinHintCommand(n.nodeId, profile, { watch: true }));
   }
   return hints.size ? hints : undefined;
 }
 
-function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<string, string>): string {
+/** Text-only note for an empty `phm node plan`: an empty routes array cannot
+ * say whether the scope holds no jobs or jobs that are all claimed or
+ * complete, so the note counts them from one snapshot — the same read the
+ * status empty-scope hint makes. Scope matching mirrors planRoutes exactly:
+ * ownerless legacy jobs never route and are not counted, and plan's --owner
+ * is a single scope. The counts are point-in-time facts: a job enqueued
+ * between the plan and this read still reports honestly. */
+function planEmptyNote(nodes: DriveNodes, owner: string | undefined): string {
+  try {
+    const jobs = nodes.snapshot().jobs.filter(j => j.owner && (owner === undefined || j.owner === owner));
+    const scope = owner === undefined ? 'any owner scope' : `owner '${owner}'`;
+    if (!jobs.length) {
+      return `No jobs queued in ${scope}. Enqueue one: phm node enqueue --job <id> --owner ${owner ?? '<scope>'}`;
+    }
+    const counts = { pending: 0, running: 0, completed: 0 };
+    for (const j of jobs) counts[j.state] += 1;
+    return `No routable jobs. ${jobs.length} job(s) in ${scope}: ${counts.pending} pending, ${counts.running} running, ${counts.completed} completed.`;
+  } catch { return 'No routable jobs.'; }
+}
+
+function text(verb: string, out: Record<string, unknown>, notes?: {
+  rejoin?: ReadonlyMap<string, string>;
+  drift?: SelfUpdatePlan;
+  knownScopes?: readonly string[];
+  planEmpty?: string;
+}): string {
   if (verb === 'join') {
     // Join is the first command every new node runs; its text answer is a
     // sentence, not the key:value dump, and it states the 30-second session
@@ -63,16 +104,47 @@ function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<s
     // private to this machine, so the node only ever sees jobs enqueued here.
     const owners = out['owners'] as string[];
     const caps = out['caps'] as string[];
-    return [
+    const lines = [
       `Joined ${String(out['nodeId'])} as session ${String(out['session'])} for ${owners.length === 1 ? 'owner' : 'owners'} ${owners.join(', ')} (caps: ${caps.join(', ') || 'none'}).`,
       'The session expires 30 seconds after the last beat. Keep it live:',
       `  ${String(out['next'])}`,
-      'This registry is local to this machine — the node sees only jobs enqueued on this computer; other machines cannot see it. A shared queue needs a pool or team (docs/NODES.md).',
-    ].join('\n');
+      'This registry is local to this machine — the node sees only jobs enqueued on this computer; other machines cannot see it. A shared queue needs the SSH pool (docs/NODES.md; join commands: docs/AGENT-NETWORK.md).',
+    ];
+    // A malformed local-lanes.json is a diagnostic, not a join failure: the
+    // node joined without its lane caps, and the reply names the broken file.
+    const lanes = out['localLanes'] as { error?: unknown; fix?: unknown } | undefined;
+    if (typeof lanes?.error === 'string') {
+      const fix = typeof lanes.fix === 'string' ? lanes.fix : 'Run: phm node lanes';
+      lines.push(`Local model lanes not advertised: ${lanes.error}. ${fix}`);
+    }
+    // A re-join replaces the whole advertised profile, so owners, caps or the
+    // --slots bound the last join carried but this one did not are gone —
+    // silently, unless the reply names them. `dropped` rides the reply only
+    // when something was actually lost; `restore` is the re-join that keeps
+    // this join's profile and adds the dropped pieces back.
+    const dropped = out['dropped'] as { owners?: string[]; caps?: string[]; slots?: number; restore?: string } | undefined;
+    if (dropped !== undefined) {
+      const lost = [
+        dropped.owners?.length ? `owner scopes ${dropped.owners.join(', ')}` : null,
+        dropped.caps?.length ? `caps ${dropped.caps.join(', ')}` : null,
+        dropped.slots !== undefined ? `the --slots ${dropped.slots} bound` : null,
+      ].filter((part): part is string => part !== null);
+      lines.push(`This join replaces the profile the node last advertised and drops ${lost.join('; ')}. Name them again to keep them:`,
+        `  ${String(dropped.restore)}`);
+    }
+    return lines.join('\n');
+  }
+  if (verb === 'beat') {
+    // Beat is the keep-alive `join --watch` and `beat --watch` print every pass,
+    // so its text answer is one sentence like the other verbs', not the
+    // key:value dump. auth appears only when the beat carried --probe-auth or
+    // --auth; 'ok' is the only report that lets gh work route to the node.
+    const auth = typeof out['auth'] === 'string' ? `; auth ${out['auth']}` : '';
+    return `Heartbeat recorded for ${String(out['nodeId'])}${out['leader'] === true ? ' (leader)' : ''}${auth}.`;
   }
   if (verb === 'plan') {
     const routes = out['routes'] as { jobId: string; nodeId: string | null; fix?: string }[];
-    return routes.length ? routes.map(r => `${r.jobId} -> ${r.nodeId ?? `nobody. ${r.fix}`}`).join('\n') : 'No routable jobs.';
+    return routes.length ? routes.map(r => `${r.jobId} -> ${r.nodeId ?? `nobody. ${r.fix}`}`).join('\n') : notes?.planEmpty ?? 'No routable jobs.';
   }
   if (verb === 'status' || verb === 'list') {
     const nodes = out['nodes'] as { nodeId: string; live: boolean; usage: number | null; auth: string; caps: string[];
@@ -95,17 +167,42 @@ function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<s
     // hint a session-expired error prints — so the diagnostic command also
     // says how to bring the node back.
     const rejoinFor = (nodeId: string): string => {
-      const cmd = rejoin?.get(nodeId);
+      const cmd = notes?.rejoin?.get(nodeId);
       return cmd === undefined ? '' : ` — rejoin: ${cmd}`;
     };
+    // A node that outlived a phm upgrade keeps advertising its join-time build —
+    // beats renew the session but never re-stamp caps — so status reads the same
+    // drift verdict `phm node self-update` plans instead of leaving the stale
+    // `phm-<version>` cap for the operator to interpret. Only non-current
+    // states annotate; the version itself already sits in caps.
+    const driftFor = (nodeId: string): string => {
+      const row = notes?.drift?.nodes.find(n => n.nodeId === nodeId);
+      return row !== undefined && row.status !== 'current' ? ` phm=${row.status}` : '';
+    };
     const lines = [`Owner scope: ${scope}`,
-      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} slots=${n.slots ?? 'unbounded'}${n.capacity?.held ? ` held=${n.capacity.held}` : ''} caps=${n.caps.join(',') || '-'}${n.live ? '' : rejoinFor(n.nodeId)}`),
+      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} slots=${n.slots ?? 'unbounded'}${n.capacity?.held ? ` held=${n.capacity.held}` : ''} caps=${n.caps.join(',') || '-'}${driftFor(n.nodeId)}${n.live ? '' : rejoinFor(n.nodeId)}`),
       ...jobs.map(j => `job ${j.id} ${jobStateWords(j)}${fixes.has(j.id) ? ` — ${fixes.get(j.id)}` : ''}`)];
     // An empty scope is the first-run case: say so and print the join command,
     // the same next step `phm node plan` prints for a job with no live node.
+    // view() filters to the requested scopes, so an empty view also means none
+    // of them exist in this store — naming the scopes it does know turns a
+    // mistyped --owner into a correction instead of a second scope fragment.
     if (!nodes.length) lines.push('No nodes joined in this scope.');
     if (!jobs.length) lines.push('No jobs queued in this scope.');
-    if (!nodes.length && !jobs.length && scope) lines.push(`Join this computer: phm node join --owner ${scope}`);
+    if (!nodes.length && !jobs.length && scope) {
+      const known = notes?.knownScopes;
+      if (known !== undefined && known.length > 0) {
+        lines.push(`This store knows: ${known.join(', ')} — none of the requested scopes have nodes or jobs here.`);
+      }
+      lines.push(`Join this computer: phm node join --owner ${scope} --watch`);
+    }
+    // self-update takes one --owner scope; a multi-scope status keeps the
+    // placeholder rather than silently checking only the first scope.
+    const driftPlan = notes?.drift;
+    if (driftPlan !== undefined && driftPlan.drifted.length) {
+      const owner = scope.includes(',') ? '<scope>' : scope;
+      lines.push(`Some nodes run a different phm build than this machine or do not report one: phm node self-update --owner ${owner} reports the per-node update plan.`);
+    }
     return lines.join('\n');
   }
   if (verb === 'enqueue') {
@@ -146,12 +243,16 @@ function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<s
   if (verb === 'pull') {
     if (!out['pulled']) {
       // An empty pull can still say why this node takes nothing: a measured
-      // capacity hold or an advertised zero-slot bound, in the same words
-      // `phm node status` uses. No hold means the queue simply had nothing.
+      // capacity hold or an advertised zero-slot bound (the same words
+      // `phm node status` uses), or open work that fit but routed elsewhere.
+      // Any of them means the queue was not simply empty.
       const held = typeof out['held'] === 'string' ? out['held'] : null;
       const slots = typeof out['slots'] === 'number' ? out['slots'] : null;
+      const open = typeof out['open'] === 'number' && out['open'] > 0 ? out['open'] : null;
       const why = held !== null ? `this node is held (${PULL_HELD_WORDS[held] ?? held})`
-        : slots === 0 ? 'this node advertises zero job slots' : null;
+        : slots === 0 ? 'this node advertises zero job slots'
+        : open !== null ? `${open} open job${open === 1 ? '' : 's'} fit this node but routed to other nodes or wait on a free slot`
+        : null;
       return why === null ? 'No job for this node. Run: phm node plan'
         : `No job for this node; ${why}. Run: phm node plan`;
     }
@@ -173,14 +274,20 @@ function text(verb: string, out: Record<string, unknown>, rejoin?: ReadonlyMap<s
       `Lease token ${claim.token}, leader-token ${claim.leaderToken}; expires ${new Date(claim.expiresAt).toISOString()}. Renew before expiry; pass the token to every effect.`,
     ];
     if (typeof job?.task?.text === 'string' && job.task.text.length) lines.push('', 'Task:', job.task.text);
-    lines.push('', `Run: phm node renew ${lease}`, `Done? Run: phm node complete ${lease} --result <text>`);
+    // The third lifecycle verb matters as much as renew/complete here: a manual
+    // runner that cannot do the job (missing secret, wrong pack, out of its
+    // depth) must hand the claim back at once instead of stranding it until the
+    // lease lapses. --decline stays optional — only a permanent inability bars
+    // this session; a temporary one releases plainly and stays retryable.
+    lines.push('', `Run: phm node renew ${lease}`, `Done? Run: phm node complete ${lease} --result <text>`,
+      `Cannot run it? Run: phm node release ${lease} (add --decline if this node can never run it)`);
     return lines.join('\n');
   }
   if (verb === 'result') {
     const jobId = String(out['jobId']), state = out['state'];
     if (state === 'absent') return `job ${jobId}: absent (no such job in this owner scope)`;
     if (state === 'pending') return `job ${jobId}: pending`;
-    if (state === 'running') return `job ${jobId}: running${out['claimedBy'] ? ` (claimed by ${out['claimedBy']})` : ''}`;
+    if (state === 'running') return `job ${jobId}: ${jobStateWords({ state, claimedBy: out['claimedBy'] as string | undefined })}`;
     const head = out['producerWithdrawn'] === true ? 'withdrawn by the producer'
       : `completed by ${String(out['completedBy'] ?? 'unknown')}`;
     const when = typeof out['completedAt'] === 'number' ? ` at ${new Date(out['completedAt']).toISOString()}` : '';
@@ -196,18 +303,40 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
   // the caller asked for JSON even when flag parsing fails first.
   const json = args.includes('--json');
   try {
+    // `join --watch` is a dispatcher-level keep-alive like `beat --watch`: the
+    // watch flags are stripped here so the fleet parser never sees them, and a
+    // successful standalone join hands its new session to the beat watch loop.
+    let joinWatch: NodeWatchFlags | null = null;
+    if (verb === 'join' && args.includes('--watch')) {
+      const parsed = parseNodeWatchFlags(args);
+      if ('error' in parsed) throw new UsageError('usage', parsed.error, 'Run: phm node join --help');
+      joinWatch = parsed;
+      args = parsed.base;
+    }
     const flags = parseNodeFleetFlags(verb, args);
     if (!deps.store) {
       const { cmdNodePool, hasNodePool } = await import('./node-pool.js');
-      if (hasNodePool()) return cmdNodePool(verb, args);
+      if (hasNodePool()) {
+        // A pool join releases its probe session on purpose and workers hold
+        // their own sessions per batch, so the standalone keep-alive has no
+        // pool meaning — refuse rather than silently drop --watch.
+        if (joinWatch !== null) throw new UsageError('usage',
+          'join --watch keeps a standalone registry session alive; this Mac is in a node pool, where join releases its probe session and workers hold their own sessions per batch.',
+          'Run: phm node join --json, then phm node worker --runner /absolute/host-owned-runner --json');
+        return cmdNodePool(verb, args);
+      }
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
-    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join }, { localPhmVersion, versionCap, versionFromCaps }] = await Promise.all([
+    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join },
+      { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }, { probeLocalLanePlan }] = await Promise.all([
       import('../core/drive/nodes/index.js'), import('../core/drive/nodes/auth-probe.js'),
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path'),
-      import('../core/drive/nodes/phm-version.js')]);
+      import('../core/drive/nodes/phm-version.js'), import('../core/drive/nodes/local-model-caps.js')]);
     const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
     const drive = new DriveNodes(store, deps.now ? { now: deps.now } : {});
+    // Join's lane probe runs once; a malformed local-lanes.json rides the reply
+    // as a diagnostic below instead of silently costing the node its lane caps.
+    let localLaneError: string | null = null;
     if (verb === 'join') {
       // A standalone join defaults --node to this computer's sanitized hostname,
       // the same default a pool join applies. Like the version cap below it stays
@@ -233,8 +362,29 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
         caps.push(reported);
         flags.set('--caps', caps.join(','));
       }
+      // A standalone join also advertises this machine's planned local-model
+      // lanes — the same caps a pool join or worker sends through
+      // probeNodeLanes — so a node with local-lanes.json enabled is not
+      // invisible to --requires omlx jobs. Like the version cap this stays in
+      // the CLI layer: runNodeFleet is shared with the SSH endpoint, where the
+      // joining worker's own machine — not this host — owns the lanes it
+      // reports. An absent, disabled or backed-off lane contributes nothing;
+      // explicit --caps entries are kept and deduped against the probe. A
+      // malformed local-lanes.json contributes nothing either, but its parse
+      // error is kept for the reply: silently dropping a lane the operator
+      // asked for is exactly the failure `phm node lanes` exists to explain.
+      const laneProbe = probeLocalLanePlan(deps.localLanes);
+      localLaneError = laneProbe?.configError ?? null;
+      const localCaps = laneProbe?.plan.caps ?? [];
+      if (localCaps.length > 0) {
+        const caps = [...new Set([...(flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean), ...localCaps])];
+        flags.set('--caps', caps.join(','));
+      }
     }
-    const out = runNodeFleet(verb, flags, drive, deps.probeAuth ?? probeLocalAuth);
+    // rejoinWatch: this path only runs with no pool config (or an injected
+    // store), so a session-expired fix may name `join --watch` — the command
+    // that both creates the session and holds it live.
+    const out = runNodeFleet(verb, flags, drive, deps.probeAuth ?? probeLocalAuth, { rejoinWatch: true });
     // Standalone join names its keep-alive beat. This stays out of runNodeFleet:
     // pool replies already carry their own `next` (the worker command) and a
     // `next` inside result.result would override it in the spread below. The
@@ -251,13 +401,55 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // that boundary in the reply instead of letting a first-time node
       // assume it joined a shared fleet.
       out['registry'] = 'local';
+      // The node joined without its lane caps; name the broken file so the
+      // first-run output says why instead of looking never-configured.
+      if (localLaneError !== null) {
+        out['localLanes'] = { state: 'invalid', error: localLaneError, fix: 'Run: phm node lanes' };
+      }
     }
     // status/list name each expired node's rejoin command. Text only: the
     // --json view stays the scope-filtered projection, and a machine caller
     // already gets the same command in a session-expired error's fix. The
     // profile reads run only for the rendered verbs, never for --json.
     const rejoin = !json && (verb === 'status' || verb === 'list') ? expiredRejoinHints(drive, out) : undefined;
-    console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out, rejoin));
+    // status/list read phm-build drift against this machine through the same
+    // pure plan self-update prints, so the two commands can never disagree.
+    // Text only like rejoin: --json consumers already get caps per node.
+    const drift = !json && (verb === 'status' || verb === 'list')
+      ? planNodeSelfUpdate(out['nodes'] as Parameters<typeof planNodeSelfUpdate>[0], (deps.phmVersion ?? localPhmVersion)())
+      : undefined;
+    // status/list on a scope the store does not know still print the join
+    // command; naming the scopes the store does know (minus the requested
+    // ones, which an empty view proves are absent) lets the operator correct
+    // a mistyped --owner before fragmenting the registry. Text only, like
+    // rejoin/drift: the --json view stays the scope-filtered projection.
+    const knownScopes = !json && (verb === 'status' || verb === 'list') &&
+      Array.isArray(out['nodes']) && Array.isArray(out['jobs']) &&
+      (out['nodes'] as unknown[]).length === 0 && (out['jobs'] as unknown[]).length === 0
+      ? (knownOwnerScopes(drive) ?? []).filter(s => !(out['owners'] as string[]).includes(s))
+      : undefined;
+    // plan on an empty route set cannot tell an empty queue from jobs that
+    // are all claimed or complete; the text-only note counts the scope's
+    // jobs from one snapshot, like the status empty-scope hint. --json keeps
+    // {routes} alone.
+    const planEmpty = !json && verb === 'plan' && Array.isArray(out['routes']) && (out['routes'] as unknown[]).length === 0
+      ? planEmptyNote(drive, flags.get('--owner'))
+      : undefined;
+    console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out, { rejoin, drift, knownScopes, planEmpty }));
+    if (joinWatch !== null) {
+      // The join printed its session; now hold it live exactly like
+      // `phm node beat --watch` — same loop, same fresh capacity/host-stats
+      // samples, and --probe-auth under the same gh-cap rule `next` uses.
+      const { cmdNodeBeatWatch } = await import('./node-beat-watch.js');
+      const caps = out['caps'];
+      const probe = Array.isArray(caps) && caps.includes('gh') ? ['--probe-auth'] : [];
+      const { watch: watchDeps, ...fleetDeps } = deps;
+      const run = watchDeps?.run ?? (async (beatArgs: string[]) => cmdNodeFleet('beat', beatArgs, fleetDeps));
+      return cmdNodeBeatWatch([
+        '--node', String(out['nodeId']), '--session', String(out['session']),
+        ...(json ? ['--json'] : []), ...probe, '--every', String(joinWatch.everySeconds),
+      ], { ...watchDeps, run });
+    }
     return 0;
   } catch (error) {
     const known = error instanceof UsageError;

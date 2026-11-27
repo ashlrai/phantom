@@ -36,6 +36,15 @@ export interface WorkBoardItem {
   /** `bus-claim:<id>:<cursor>:<receivedAt>` receipt of the matched claim, or
    * null. Never a fencing token. */
   claimReceipt: string | null;
+  /** Raw sender routing label of the request envelope — untrusted data,
+   * never authenticated identity. Optional so hand-built fixtures still
+   * compile; listWorkBoard always sets it. */
+  from?: string;
+  /** Raw recipient routing label of the request envelope (`agent:<handle>`,
+   * a bare label or a `group:<channel>:<topic>` address) — untrusted data,
+   * never authenticated identity. Optional so hand-built fixtures still
+   * compile; listWorkBoard always sets it. */
+  to?: string;
   /** The proof behind a VERIFIED chip or the dependency behind a BLOCKED one,
    * taken from the validated evidence reader's reply fields (never message
    * prose). Omitted for every other state. Strings are capped at 200 chars. */
@@ -185,6 +194,8 @@ export function listWorkBoard(opts: {
         missing: classified.missing,
         owner: evidence.owner ?? null,
         claimReceipt: evidence.claimReceipt ?? null,
+        from: row.envelope.from,
+        to: row.envelope.to,
         ...(result ? { result } : {}),
       };
     };

@@ -1,6 +1,9 @@
-import { createHash } from 'node:crypto';
-
 import type { RunProposalOutcomeKind, RunState } from '../types.js';
+import {
+  exactKeys,
+  isCanonicalIsoTimestamp,
+  sha256Tuple,
+} from './policy-assignment-identity.js';
 
 export const AGENT_WORK_PHASES = [
   'orient',
@@ -89,36 +92,6 @@ const OPTIONAL_KEYS = ['parentSubjectRef', 'predecessorTransitionId'];
 
 type UnsignedAgentWorkTransitionV1 = Omit<AgentWorkTransitionV1, 'transitionId'>;
 
-function canonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
-function exactKeys(value: Record<string, unknown>): boolean {
-  const expected = [
-    ...REQUIRED_KEYS,
-    ...OPTIONAL_KEYS.filter((key) => value[key] !== undefined),
-  ].sort();
-  return Object.keys(value).sort().join(',') === expected.join(',');
-}
-
-function transitionPayload(transition: UnsignedAgentWorkTransitionV1): string {
-  return JSON.stringify([
-    'ashlr.agent-work-transition.v1',
-    transition.schemaVersion,
-    transition.subjectRef,
-    transition.ordinal,
-    transition.predecessorTransitionId ?? null,
-    transition.phase,
-    transition.transition,
-    transition.trigger,
-    transition.parentSubjectRef ?? null,
-    transition.producerVersion,
-    transition.observedAt,
-  ]);
-}
-
 function validSubjectRef(value: unknown): value is string {
   return typeof value === 'string' && SUBJECT_RE.test(value);
 }
@@ -155,9 +128,18 @@ export function agentWorkTransitionBoundSubjectRef(
 export function agentWorkTransitionId(
   transition: UnsignedAgentWorkTransitionV1,
 ): string {
-  return `awt-${createHash('sha256')
-    .update(transitionPayload(transition), 'utf8')
-    .digest('hex')}`;
+  return `awt-${sha256Tuple('ashlr.agent-work-transition.v1', [
+    transition.schemaVersion,
+    transition.subjectRef,
+    transition.ordinal,
+    transition.predecessorTransitionId ?? null,
+    transition.phase,
+    transition.transition,
+    transition.trigger,
+    transition.parentSubjectRef ?? null,
+    transition.producerVersion,
+    transition.observedAt,
+  ])}`;
 }
 
 export function defineAgentWorkTransitions(
@@ -193,8 +175,12 @@ export function defineAgentWorkTransitions(
 function sanitizeOne(value: unknown): AgentWorkTransitionV1 | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const transition = value as Record<string, unknown>;
+  const expectedKeys = [
+    ...REQUIRED_KEYS,
+    ...OPTIONAL_KEYS.filter((key) => transition[key] !== undefined),
+  ];
   if (
-    !exactKeys(transition) ||
+    !exactKeys(transition, expectedKeys) ||
     transition['schemaVersion'] !== 1 ||
     typeof transition['transitionId'] !== 'string' ||
     !TRANSITION_ID_RE.test(transition['transitionId']) ||
@@ -209,7 +195,7 @@ function sanitizeOne(value: unknown): AgentWorkTransitionV1 | undefined {
     typeof transition['trigger'] !== 'string' ||
     !TRIGGERS.has(transition['trigger']) ||
     transition['producerVersion'] !== 'agent-work-transition-v1' ||
-    !canonicalTimestamp(transition['observedAt']) ||
+    !isCanonicalIsoTimestamp(transition['observedAt']) ||
     (transition['predecessorTransitionId'] !== undefined && (
       typeof transition['predecessorTransitionId'] !== 'string' ||
       !TRANSITION_ID_RE.test(transition['predecessorTransitionId'])

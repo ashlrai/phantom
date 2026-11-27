@@ -474,6 +474,24 @@ describe('busy state', () => {
     expect(body.jobs.jobs).toHaveLength(1);
     expect(body.jobs.jobs[0].id).toBe('RQ-2');
   });
+
+  it('resolves spec-less ready rows through router-queue envelopes past the old file bound', async () => {
+    const dir = path.join(tmpHome, '.ashlr-runs', 'queue');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'ready.tsv'), 'RQ-ENV-DEEP\tphantom\tcodex\twork\t/abs/env.md\n');
+    // router-queue.md is append-mostly history; past the old 4 MiB window the
+    // market still resolves the envelope, so the jobs section must too.
+    const pad = `# ${'y'.repeat(1024)}\n`.repeat(4300);
+    fs.writeFileSync(path.join(dir, 'router-queue.md'), pad +
+      '- READY phantom RQ-ENV-DEEP (preferred_lane=claude): hinted work\n');
+    ghReadMock.mockRejectedValue(new Error('gh is down'));
+
+    const h = await serve();
+    const body = JSON.parse((await getFleet(h)).body);
+    expect(body.jobs.state).toBe('ok');
+    const job = body.jobs.jobs.find((j: { id: string }) => j.id === 'RQ-ENV-DEEP');
+    expect(job).toMatchObject({ pool: 'claude', source: 'ready.tsv' });
+  });
 });
 
 // ---------------------------------------------------------------------------

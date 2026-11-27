@@ -2,6 +2,7 @@
 import { isStatusAsk } from '../fleet/status-ask.js';
 import { buildStatusDigest } from '../leader/status-digest.js';
 import { gatherStatusDigestInput } from '../leader/status-digest-sources.js';
+import { readOwnerDisplayName } from '../owner-display-read.js';
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { listWorkBoard, type WorkBoardResult } from '../comms/work-board.js';
@@ -37,7 +38,7 @@ import type { SlackStatusReply } from './slack-leader.js';
 
 /** The five-line digest from real state; the heading is swapped for the clock below. */
 const digestBrief = async (runsDir: string, now: Date): Promise<string> =>
-  ['Morning leader brief', ...buildStatusDigest(await gatherStatusDigestInput(runsDir, now))].join('\n');
+  ['Morning leader brief', ...buildStatusDigest(await gatherStatusDigestInput(runsDir, now), await readOwnerDisplayName())].join('\n');
 const MAX_REPLY_CHARS = 1500;
 export const OWNER_STATUS_FALLBACK = "Phantom status: the status read failed; your message is in the Leader's inbox and it will answer there.";
 export const OWNER_RECHECK_FALLBACK = "Phantom recheck: the recheck read failed; your message is in the Leader's inbox.";

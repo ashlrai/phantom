@@ -4,9 +4,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   canonicalJsonBytes,
+  canonicalJsonString,
   decodeStrictUtf8JsonBytes,
   deepFreeze,
   exactKeys,
+  hmacSha256Hex,
   isCanonicalIsoTimestamp,
   isEnumValue,
   isSafeIntegerInRange,
@@ -39,6 +41,10 @@ describe('external-contract-codec', () => {
   });
 
   it('canonicalizes bounded JSON values and rejects hostile or oversized inputs', () => {
+    expect(canonicalJsonString({ b: -0, a: [1, true, null] })).toBe('{"a":[1,true,null],"b":0}');
+    expect(() => canonicalJsonString({ a: { b: { c: 1 } } }, { maxDepth: 2 })).toThrow(TypeError);
+    expect(() => canonicalJsonString({ a: 1, b: 2 }, { maxNodes: 2 })).toThrow(TypeError);
+    expect(() => canonicalJsonString({ a: Number.NaN })).toThrow(TypeError);
     expect(canonicalJsonBytes({ b: -0, a: [1, true, null] }, BOUNDS)?.toString('utf8'))
       .toBe('{"a":[1,true,null],"b":0}');
     expect(canonicalJsonBytes({ a: Number.NaN }, BOUNDS)).toBeNull();
@@ -52,10 +58,15 @@ describe('external-contract-codec', () => {
     expect(canonicalJsonBytes({ pad: 'x'.repeat(300) }, BOUNDS)).toBeNull();
   });
 
-  it('computes NUL-delimited domain digests without double-delimiting', () => {
+  it('computes NUL-delimited domain digests and HMACs without double-delimiting', () => {
     const payload = Buffer.from('{"ok":true}', 'utf8');
+    const key = Buffer.alloc(32, 7);
+    const otherKey = Buffer.alloc(32, 9);
     expect(sha256Hex('ashlr:test:v1', payload)).toBe(sha256Hex('ashlr:test:v1\0', payload));
     expect(sha256Prefixed('ashlr:test:v1', payload)).toBe(`sha256:${sha256Hex('ashlr:test:v1', payload)}`);
+    expect(hmacSha256Hex(key, 'ashlr:test:v1', payload)).toBe(hmacSha256Hex(key, 'ashlr:test:v1\0', '{"ok":true}'));
+    expect(hmacSha256Hex(key, 'ashlr:test:v1', payload)).not.toBe(hmacSha256Hex(otherKey, 'ashlr:test:v1', payload));
+    expect(hmacSha256Hex(key, 'ashlr:test:v1', payload)).not.toBe(hmacSha256Hex(key, 'ashlr:test:v2', payload));
     expect(timingSafeUtf8Equal('abc', 'abc')).toBe(true);
     expect(timingSafeUtf8Equal('abc', 'abd')).toBe(false);
     expect(timingSafeUtf8Equal('abc', 123)).toBe(false);

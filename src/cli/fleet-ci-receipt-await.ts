@@ -1,10 +1,14 @@
 import { CiResumeInputsError } from '../core/fleet/ci-resume-inputs.js';
-import { artifactNameField } from '../core/fleet/ci-receipt-discovery.js';
 import {
   awaitCiReceipt, CI_RECEIPT_AWAIT_DEFAULT_POLL_MS, CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS,
   CI_RECEIPT_AWAIT_MAX_POLL_MS, CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS, CI_RECEIPT_AWAIT_MIN_POLL_MS,
 } from '../core/fleet/ci-receipt-await.js';
-import { isAwaitMs } from '../core/fleet/needs-mason-answer-await.js';
+import {
+  isValidArtifactNameFlag,
+  isValidCiRepo,
+  parseBoundedMsFlag,
+  parsePositiveIdFlag,
+} from '../core/fleet/ci-receipt-shared.js';
 import type { GitRunner } from '../core/verse/git-ops.js';
 
 const USAGE = 'usage: ashlr fleet ci-receipt-await --repo owner/name --run ID --attempt N --artifact-name NAME [--timeout-ms N] [--poll-ms N] [--json]';
@@ -34,12 +38,6 @@ Timeout and abort exit nonzero with empty stdout.
 Read-only: every call is a GET metadata/listing read plus a bounded archive
 download; there are no POSTs, no workflow dispatch and no check mutation.`;
 
-const REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
-const idNum = (v: string | undefined): number | null =>
-  v !== undefined && /^\d+$/.test(v) && Number.isSafeInteger(Number(v)) && Number(v) >= 1 ? Number(v) : null;
-const boundedMs = (v: string | undefined, max: number): number | null =>
-  v !== undefined && /^\d+$/.test(v) && isAwaitMs(Number(v), max) ? Number(v) : null;
-
 export interface FleetCiReceiptAwaitDeps {
   gh?: GitRunner;
   now?: () => number;
@@ -61,17 +59,16 @@ export async function cmdFleetCiReceiptAwait(args: string[], deps: FleetCiReceip
     }
     values.set(arg, args[++i]!);
   }
-  const repo = values.get('--repo') ?? '';
-  const run = idNum(values.get('--run'));
-  const attempt = idNum(values.get('--attempt'));
-  const artifactName = artifactNameField(values.get('--artifact-name'));
+  const repo = values.get('--repo');
+  const run = parsePositiveIdFlag(values.get('--run'));
+  const attempt = parsePositiveIdFlag(values.get('--attempt'));
+  const artifactName = values.get('--artifact-name');
   const timeoutMs = values.has('--timeout-ms')
-    ? boundedMs(values.get('--timeout-ms'), CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS) : CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS;
+    ? parseBoundedMsFlag(values.get('--timeout-ms'), CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS) : CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS;
   const pollMs = values.has('--poll-ms')
-    ? boundedMs(values.get('--poll-ms'), CI_RECEIPT_AWAIT_MAX_POLL_MS) : CI_RECEIPT_AWAIT_DEFAULT_POLL_MS;
-  if (!REPO.test(repo) || repo.split('/')[0]!.endsWith('-') || repo.split('/')[0]!.includes('--')
-    || repo.endsWith('/.') || repo.endsWith('/..') || run === null || attempt === null
-    || artifactName === null || artifactName.startsWith('-')
+    ? parseBoundedMsFlag(values.get('--poll-ms'), CI_RECEIPT_AWAIT_MAX_POLL_MS) : CI_RECEIPT_AWAIT_DEFAULT_POLL_MS;
+  if (!isValidCiRepo(repo) || run === null || attempt === null
+    || !isValidArtifactNameFlag(artifactName)
     || timeoutMs === null || pollMs === null || pollMs < CI_RECEIPT_AWAIT_MIN_POLL_MS) {
     process.stderr.write(`Invalid arguments. ${USAGE}\n`); return 2;
   }

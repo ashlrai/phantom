@@ -8,7 +8,7 @@
  * Names, counts and times only: no message text leaves this read.
  */
 import type { BusInboxOptions } from './bus-inbox.js';
-import { parseSince } from './agent-messages.js';
+import { parseAgentMessagesQuery, parseSince } from './agent-messages.js';
 import { MAP_EDGES_DEFAULT_SINCE, readMapEdges, type MapEdgeAgent, type MapEdges, type MapEdgesOptions } from './map-edges.js';
 import { PROVIDER_NAMES, providerFor, type ProviderName } from './provider.js';
 
@@ -63,21 +63,39 @@ export function buildMessageGraph(read: MapEdges): FleetMessageGraph {
   return { ...head, organizations: PROVIDER_NAMES.flatMap(name => organizations.get(name) ?? []), groups: [...groups.values()], messages: read.messages, skipped: read.skipped };
 }
 
-/** The one read behind the CLI, the API and the Fleet map. `since`/`options.before` take `10m`, `2h`, `1d`, epoch ms or an ISO time; null when either is none of those. */
+/** The one read behind the CLI, the API and the Fleet map. `since`/`options.before` take `10m`, `2h`, `1d`, epoch ms or an ISO time; null when either is none of those. `options.filters` is the shared `phm messages` filter set, already parsed — the same `matchAgentMessages` pipeline `map edges`, `agents messages` and `bus recent` run — narrowed onto the matched rows before the edges aggregate, so "which organizations talked about job X" or "which lines carry P0 traffic" is one filtered read here too; `messages` then counts exactly the rows the filters kept. An absent or empty filter keeps the `buildMapEdges` path byte-identical. */
 export function readMessageGraph(since: string = MAP_EDGES_DEFAULT_SINCE, options: MapEdgesOptions = {}): FleetMessageGraph | null {
   const edges = readMapEdges(since, options);
   return edges && buildMessageGraph(edges);
 }
 
-/** GET /api/fleet/message-graph[?since=10m&before=1h]: 200 the graph, 400 a bad query, 503 the typed "unknown" graph. */
+/**
+ * The `phm messages` filter params this read shares with `map edges` — every
+ * param of the same name the map-edges read takes, minus `limit`: the graph
+ * aggregates the whole matched set into organization pairs and never
+ * paginates, so a `limit` param is a bad query, never a silently ignored one.
+ */
+const MESSAGE_GRAPH_FILTER_KEYS = ['agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'topic', 'contains',
+  'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to', 'result'] as const;
+
+/** GET /api/fleet/message-graph[?since=10m&before=1h&job=RQ-1&…]: 200 the graph, 400 a bad query, 503 the typed "unknown" graph. Every filter is a `phm messages` param of the same name (camelCase where the flag is dashed), validated by the same parser, each at most once. */
 export function messageGraphResponse(url: string, options: BusInboxOptions = {}): { status: 200 | 400 | 503; body: FleetMessageGraph | { error: string } } {
   const params = new URL(url, 'http://localhost').searchParams;
-  if ([...params.keys()].some(key => key !== 'since' && key !== 'before') || params.getAll('since').length > 1 || params.getAll('before').length > 1) {
-    return { status: 400, body: { error: 'Use since and before only, once each.' } };
+  const keys = [...params.keys()];
+  if (keys.some(key => key !== 'since' && key !== 'before' && !(MESSAGE_GRAPH_FILTER_KEYS as readonly string[]).includes(key)) ||
+      keys.some(key => params.getAll(key).length > 1)) {
+    return { status: 400, body: { error: `Use since, before and the phm messages filters (${MESSAGE_GRAPH_FILTER_KEYS.join(', ')}) only, once each.` } };
   }
   const rawBefore = params.get('before');
   if (rawBefore !== null && parseSince(rawBefore) === null) return { status: 400, body: { error: 'before takes 10m, 2h, 1d, epoch ms or an ISO time.' } };
-  const graph = readMessageGraph(params.get('since') ?? undefined, { ...options, before: rawBefore ?? undefined });
+  const filterInput: Record<string, string> = {};
+  for (const key of MESSAGE_GRAPH_FILTER_KEYS) {
+    const value = params.get(key);
+    if (value !== null) filterInput[key] = value;
+  }
+  const parsed = parseAgentMessagesQuery(filterInput);
+  if (!parsed.ok) return { status: 400, body: { error: parsed.error } };
+  const graph = readMessageGraph(params.get('since') ?? undefined, { ...options, before: rawBefore ?? undefined, filters: parsed.query });
   if (!graph) return { status: 400, body: { error: 'since takes 10m, 2h, 1d, epoch ms or an ISO time.' } };
   return { status: graph.source === 'unavailable' ? 503 : 200, body: graph };
 }

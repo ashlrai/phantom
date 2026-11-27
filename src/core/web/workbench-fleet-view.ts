@@ -239,6 +239,8 @@ async function lanesSection(queueDir: string | undefined): Promise<WorkbenchLane
 // ---------------------------------------------------------------------------
 
 const MAX_QUEUE_FILE_BYTES = 4 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; same 32 MiB bound the other market readers use. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 interface QueueFileRead {
   state: FileReadState;
@@ -246,14 +248,14 @@ interface QueueFileRead {
   mtimeMs: number | null;
 }
 
-async function readQueueFile(path: string): Promise<QueueFileRead> {
+async function readQueueFile(path: string, maxBytes = MAX_QUEUE_FILE_BYTES): Promise<QueueFileRead> {
   let info;
   try {
     info = await stat(path);
   } catch (error) {
     return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid', text: null, mtimeMs: null };
   }
-  if (!info.isFile() || info.size > MAX_QUEUE_FILE_BYTES) {
+  if (!info.isFile() || info.size > maxBytes) {
     return { state: 'invalid', text: null, mtimeMs: info.mtimeMs };
   }
   try {
@@ -297,9 +299,10 @@ function projectReadyTsvJob(row: FleetLaneQueueRow): WorkbenchJobRow {
 }
 
 async function jobsSection(queueDir: string): Promise<WorkbenchJobsSection> {
-  const [queueV1, readyTsv] = await Promise.all([
+  const [queueV1, readyTsv, routerQueue] = await Promise.all([
     readQueueFile(join(queueDir, 'queue.v1.json')),
     readQueueFile(join(queueDir, 'ready.tsv')),
+    readQueueFile(join(queueDir, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES),
   ]);
 
   const sources: WorkbenchJobsSection['sources'] = {
@@ -321,7 +324,7 @@ async function jobsSection(queueDir: string): Promise<WorkbenchJobsSection> {
     }
   }
   if (readyTsv.state === 'ok') {
-    const parsed = parseReadyTsv(readyTsv.text!);
+    const parsed = parseReadyTsv(readyTsv.text!, routerQueue.state === 'ok' ? routerQueue.text! : null);
     dropped += parsed.dropped;
     for (const row of parsed.rows) {
       // queue.v1 is authoritative where present: its ids win, and id-less TSV

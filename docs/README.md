@@ -81,6 +81,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Inspect iMessage intake, teammate tasks and acknowledgement evidence | [iMessage](https://github.com/ashlrai/phantom/blob/master/docs/IMESSAGE.md#fleet-teammate-tasks-and-evidence) |
 | Drive and watch the fleet from any agent or script | [Fleet API](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-API.md) |
 | Move ops-side fleet machinery into the repo deploy pipeline | [Machinery-as-code migration](https://github.com/ashlrai/phantom/blob/master/docs/MACHINERY-MIGRATION.md) |
+| Review merged Mac changes before updating live pins | [Security re-pin queue](https://github.com/ashlrai/phantom/blob/master/docs/SECURITY-REPIN-QUEUE.md) |
 | Set up or compare machines with a shared software and agent profile | [Fleet profile](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-PROFILE.md) |
 | Trace fleet state, ownership, failure modes and cleanup evidence | [Fleet state map](https://github.com/ashlrai/phantom/blob/master/STATE-MAP.md) |
 | Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |

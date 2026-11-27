@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import type { AntigravityUsageGroup, ResourceLiveReading } from './types.js';
+import { IDLE_POLL_MS, nextResetCheck } from './cadence.js';
+import type { AntigravityUsageGroup, PollState, ResourceLiveReading } from './types.js';
 
 export const antigravityResetTime = z.iso.datetime({ offset: true }).refine(value => Number.isFinite(Date.parse(value)))
   .transform(value => new Date(value).toISOString());
@@ -17,6 +18,18 @@ export const antigravityGroupsSchema = z.array(z.object({
 export const ANTIGRAVITY_SOURCE = 'antigravity-cli-status';
 export const ANTIGRAVITY_EXHAUSTION = 'quota_exhausted_until_reset';
 export const antigravityExecutionContext = z.enum(['gui-resident', 'ssh', 'unknown']);
+
+export function antigravityPollState(reading: ResourceLiveReading, prior: PollState | undefined, poll: PollState, now: number): PollState {
+  if (reading.execution_context === undefined && !prior?.reset_checks) return poll;
+  const groups = reading.source === ANTIGRAVITY_SOURCE && reading.verified && reading.execution_context === 'gui-resident'
+    ? reading.groups : undefined;
+  const resets = groups ? groups.flatMap(group => group.buckets.map(bucket => bucket.reset_at))
+    : reading.reason === 'identity_mismatch' || reading.reason === 'non_gui_context' ? [] : prior?.reset_checks ?? [];
+  const reset_checks = [...new Set(resets)].filter(at => Date.parse(at) > now).sort();
+  const interval = Math.min(groups ? IDLE_POLL_MS : 5 * 60_000,
+    ...reset_checks.map(at => nextResetCheck(now, Date.parse(at)) - now));
+  return { ...poll, reset_checks, interval_s: interval / 1000, next_poll_at: new Date(now + interval).toISOString() };
+}
 
 export function antigravityExhaustedUntil(groups: AntigravityUsageGroup[], now: number): string | null {
   const groupResets = groups.map(group => {

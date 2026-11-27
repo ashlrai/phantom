@@ -12,8 +12,18 @@
  * envelopes and worker-handoff assignments in bus-next order, the
  * conversation threads waiting on its answer, its own unanswered asks,
  * blocked threads it is party to, wake hints, the next inbox page,
- * legacy `phm bus` mailbox mail, the shared task board digest, its
- * registry channels and its bot-seat handoff records. Every section
+ * legacy `phm bus` mailbox mail, the shared task board digest, the
+ * coordination work board's requests still needing a decision that
+ * involve the agent — addressed to it, sent by it or naming it claim
+ * owner, each carrying the board's own RECEIVED/ASSIGNED/BLOCKED
+ * classification, claim receipt and missing evidence —
+ * the fleet's open session-handoff checkpoints awaiting resume or failover,
+ * the advisory fleet coordination ledger's pending surface addressed to
+ * or owed by the agent — live messages, assignment proposals and
+ * unpublished RESULT intents through the same
+ * `readFleetCoordinationPending` read `phm fleet coordination inbox`
+ * serves — its registry channels and its bot-seat handoff records. Every
+ * section
  * reports its own read state, so one unreadable store degrades only its
  * own section and unknown stays unknown — never an empty list passed
  * off as fact.
@@ -22,7 +32,7 @@
  * registry with the same handle/`agent:`/stable-id/alias refs
  * `resolveAgent` accepts; `job`, `since`, `before`, `contains`,
  * `priority`, `channel`, `from`, `excludeFrom`, `id`, `inReplyTo`,
- * `bodyKind` and `result` apply the same rules the
+ * `bodyKind`, `result` and `thread` apply the same rules the
  * `phm agents bus work mine` flags share and are validated before any
  * store read. Read-only: no caller
  * root, path or cwd is
@@ -43,7 +53,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent` and `job` share — the same bound every bus read applies. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'before', 'priority', 'channel', 'from', 'excludeFrom', 'id', 'inReplyTo', 'bodyKind', 'result']);
+const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'before', 'priority', 'channel', 'from', 'excludeFrom', 'id', 'inReplyTo', 'bodyKind', 'result', 'thread']);
 
 export interface FleetAgentWorkArgs {
   /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. */
@@ -72,6 +82,8 @@ export interface FleetAgentWorkArgs {
   bodyKind?: string;
   /** Keep only pending items tied to a `work.result` receipt reporting this outcome — the same `--result` rule every bus read shares. */
   result?: WorkResultOutcome;
+  /** Keep only pending items tied to one v2 conversation thread label — the same `--thread` rule every bus read shares. */
+  thread?: string;
 }
 
 /**
@@ -84,8 +96,8 @@ export interface FleetAgentWorkArgs {
  * epoch-ms/ISO grammar resolved to a safe non-negative epoch-ms integer,
  * `priority` one exact P0..P3 band, `channel` the strict channel-name
  * grammar every bus `--channel` read validates, `from`/`excludeFrom`/`id`/
- * `inReplyTo`/`bodyKind` the same printable-label bound every bus
- * `--from`/`--exclude-from`/`--id`/`--in-reply-to`/`--body-kind` read
+ * `inReplyTo`/`bodyKind`/`thread` the same printable-label bound every bus
+ * `--from`/`--exclude-from`/`--id`/`--in-reply-to`/`--body-kind`/`--thread` read
  * validates, and `result` one exact `WORK_RESULT_OUTCOMES` code — the
  * same vocabulary `phm agents bus work mine --result` and every other
  * bus read's `--result` flag shares. Unknown
@@ -136,7 +148,7 @@ export function parseFleetAgentWorkArgs(args: Record<string, unknown>): FleetAge
     if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
     parsed.channel = channel;
   }
-  for (const key of ['from', 'excludeFrom', 'id', 'inReplyTo', 'bodyKind'] as const) {
+  for (const key of ['from', 'excludeFrom', 'id', 'inReplyTo', 'bodyKind', 'thread'] as const) {
     const value = args[key];
     if (value !== undefined) {
       if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
@@ -178,5 +190,6 @@ export async function readFleetAgentWork(
     ...(args.inReplyTo === undefined ? {} : { inReplyTo: args.inReplyTo }),
     ...(args.bodyKind === undefined ? {} : { bodyKind: args.bodyKind }),
     ...(args.result === undefined ? {} : { result: args.result }),
+    ...(args.thread === undefined ? {} : { thread: args.thread }),
   });
 }

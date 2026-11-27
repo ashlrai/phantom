@@ -9,7 +9,9 @@
  *   - gh absent → sourceState 'missing'; an unreadable revert ledger marks
  *     every verdict 'unknown', never "not reverted"; a missing ledger is an
  *     honest empty evidence set.
- *   - agent/model are always null — gh records only the author login.
+ *   - agent is convention attribution only (recorded branch/login
+ *     convention, null when unmatched); model is always null — gh records
+ *     no model.
  *   - No path, URL, token or hostname is ever emitted.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -17,7 +19,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { listOutsidePrOutcomes, type ListOutsidePrOutcomesOptions } from '../src/core/fleet/outside-pr-outcomes.js';
+import {
+  listOutsidePrOutcomes,
+  outsidePrAgentAttribution,
+  type ListOutsidePrOutcomesOptions,
+} from '../src/core/fleet/outside-pr-outcomes.js';
 import { recordRevertOutcomes } from '../src/core/improve/revert-ledger.js';
 import type { RevertOutcomeRecord } from '../src/core/improve/reverted.js';
 
@@ -91,16 +97,22 @@ describe('listOutsidePrOutcomes', () => {
     // Fleet-branch, fleet-bot and out-of-window rows are excluded; mergedAt desc.
     expect(repo.prs.map((pr) => pr.number)).toEqual([7, 11, 12, 13]);
     const byNumber = new Map(repo.prs.map((pr) => [pr.number, pr]));
-    expect(byNumber.get(7)).toMatchObject({ author: 'ext-dev', reverted: 'no', mergedAt: '2026-11-15T00:00:00.000Z' });
+    expect(byNumber.get(7)).toMatchObject({ author: 'ext-dev', agent: null, model: null, reverted: 'no', mergedAt: '2026-11-15T00:00:00.000Z' });
     expect(byNumber.get(11)).toMatchObject({ author: 'other-dev', reverted: 'yes' });
     // A reland clears the standing revert: newest record wins.
     expect(byNumber.get(12)).toMatchObject({ author: 'other-dev', reverted: 'no' });
     expect(byNumber.get(13)).toMatchObject({ author: null, reverted: 'no' });
-    // Author rollup: agent/model are always null — gh never records them.
+    // Author rollup stays per-login: agent/model are always null there —
+    // one login pushes work for many agents.
     expect(result.authors).toEqual([
       { author: 'other-dev', agent: null, model: null, prs: 2, reverted: 1 },
       { author: null, agent: null, model: null, prs: 1, reverted: 0 },
       { author: 'ext-dev', agent: null, model: null, prs: 1, reverted: 0 },
+    ]);
+    // Agent rollup: none of these heads/logins match a known convention,
+    // so every PR lands in the honest unattributed bucket.
+    expect(result.agents).toEqual([
+      { agent: null, model: null, prs: 4, reverted: 1 },
     ]);
     expect(JSON.stringify(result)).not.toMatch(/scratch|\/Users\/|github\.com|ghp_|token/i);
   });
@@ -146,5 +158,64 @@ describe('listOutsidePrOutcomes', () => {
     expect(result.repos[0]!.listed).toBe(7);
     expect(result.repos[0]!.prs.some((pr) => pr.number === 10)).toBe(true);
     expect(result.repos[0]!.prs.every((pr) => typeof pr.number === 'number')).toBe(true);
+  });
+
+  it('attributes agent by recorded branch/login convention and rolls up per agent', async () => {
+    const rows = [
+      { number: 20, title: 'devin session', author: { login: 'ext-dev' }, headRefName: 'devin/1700000000-fix-thing', mergedAt: '2026-11-15T00:00:00Z' },
+      { number: 21, title: 'cursor session', author: { login: 'ext-dev' }, headRefName: 'cursor/fix-x-a1b2', mergedAt: '2026-11-14T00:00:00Z' },
+      { number: 22, title: 'fleet devin task', author: { login: 'ext-dev' }, headRefName: 'ashlr-devin/task-9', mergedAt: '2026-11-13T00:00:00Z' },
+      { number: 23, title: 'devin bot', author: { login: 'devin-ai-integration[bot]' }, headRefName: 'fix/bot-branch', mergedAt: '2026-11-12T00:00:00Z' },
+      { number: 24, title: 'human branch', author: { login: 'ext-dev' }, headRefName: 'feat/plain', mergedAt: '2026-11-11T00:00:00Z' },
+    ];
+    // #21 carries a standing revert so the agents tally shows a nonzero reverted count.
+    const ledgerPath = join(scratch, 'improve', 'revert-outcomes.jsonl');
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(join(scratch, 'improve'), { recursive: true });
+    await recordRevertOutcomes([revertRecord(21)], { path: ledgerPath, now: NOW });
+    const result = await listOutsidePrOutcomes(await fixtureOpts({
+      gh: fakeGh(rows), revertLedgerPath: ledgerPath,
+    }));
+    const byNumber = new Map(result.repos[0]!.prs.map((pr) => [pr.number, pr]));
+    expect(byNumber.get(20)).toMatchObject({ agent: 'devin', model: null });
+    expect(byNumber.get(21)).toMatchObject({ agent: 'cursor', model: null, reverted: 'yes' });
+    expect(byNumber.get(22)).toMatchObject({ agent: 'devin' });
+    expect(byNumber.get(23)).toMatchObject({ agent: 'devin' });
+    expect(byNumber.get(24)).toMatchObject({ agent: null, model: null });
+    // Sort: prs desc, then agent name with the unattributed (null) bucket
+    // first on ties — the same convention the authors rollup applies.
+    expect(result.agents).toEqual([
+      { agent: 'devin', model: null, prs: 3, reverted: 0 },
+      { agent: null, model: null, prs: 1, reverted: 0 },
+      { agent: 'cursor', model: null, prs: 1, reverted: 1 },
+    ]);
+  });
+});
+
+describe('outsidePrAgentAttribution', () => {
+  it('matches known branch namespaces case-insensitively and requires the slash', () => {
+    expect(outsidePrAgentAttribution('devin/1700000000-x', 'ext-dev')).toBe('devin');
+    expect(outsidePrAgentAttribution('Devin/1700000000-x', 'ext-dev')).toBe('devin');
+    expect(outsidePrAgentAttribution('cursor/fix-x-a1b2', null)).toBe('cursor');
+    expect(outsidePrAgentAttribution('claude/feat-x', 'ext-dev')).toBe('claude');
+    expect(outsidePrAgentAttribution('copilot/fix-x', 'ext-dev')).toBe('copilot');
+    // A bare product name is not the namespace convention.
+    expect(outsidePrAgentAttribution('devin', 'ext-dev')).toBeNull();
+    // Human conventions and unknown prefixes stay unattributed.
+    expect(outsidePrAgentAttribution('fix/thing', 'ext-dev')).toBeNull();
+    expect(outsidePrAgentAttribution('feat/x', 'some-agent')).toBeNull();
+  });
+
+  it('falls back to known agent-bot author logins, branch winning first', () => {
+    expect(outsidePrAgentAttribution('fix/x', 'devin-ai-integration[bot]')).toBe('devin');
+    expect(outsidePrAgentAttribution('fix/x', 'App/Devin-AI-Integration')).toBe('devin');
+    expect(outsidePrAgentAttribution('fix/x', 'chatgpt-codex-connector[bot]')).toBe('codex');
+    expect(outsidePrAgentAttribution('fix/x', 'app/dependabot')).toBe('dependabot');
+    // Branch evidence outranks the login: a devin bot author on a cursor branch is cursor work.
+    expect(outsidePrAgentAttribution('cursor/x-a1b2', 'devin-ai-integration[bot]')).toBe('cursor');
+    // Human logins and ghost authors never attribute on their own.
+    expect(outsidePrAgentAttribution('fix/x', 'ext-dev')).toBeNull();
+    expect(outsidePrAgentAttribution('fix/x', null)).toBeNull();
+    expect(outsidePrAgentAttribution('fix/x', 'github-actions[bot]')).toBeNull();
   });
 });

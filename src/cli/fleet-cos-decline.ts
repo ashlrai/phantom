@@ -1,4 +1,5 @@
 import { declineCosDraft } from '../core/cos/decline.js';
+import { isCosDigest, isCosJobId } from '../core/cos/intake.js';
 
 const usage = 'Usage: ashlr fleet cos-decline <cos-id> --digest <64-hex> [--json]';
 
@@ -19,7 +20,7 @@ export async function cmdFleetCosDecline(args: string[]): Promise<number> {
     outputError(usage);
     return 2;
   }
-  if (!id || !/^cos-[a-f0-9]{32}$/.test(id) || !digest || !/^[a-f0-9]{64}$/.test(digest)) {
+  if (!isCosJobId(id) || !isCosDigest(digest)) {
     outputError(usage);
     return 2;
   }

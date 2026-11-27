@@ -1,15 +1,18 @@
 import { readFileSync } from 'node:fs';
-import { ledgerPhase } from '../fleet/empty-cause.js';
+import { isDeepStrictEqual } from 'node:util';
+import { ledgerPhase, ledgerStateTokens } from '../fleet/empty-cause.js';
 import { isNodePoolLedgerRow, ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 import { isRewardSignalV1 } from '../metrics/reward-signal.js';
 
 type Row = Record<string, unknown>;
+const OUTCOME_EVENTS = new Set(['outcome', 'result', 'resolved', 'resolution']);
 type Metric = { predicted: number | null; actual: number | null; paired: number };
 export interface CalibrationArm {
   arm: string;
   jobs: number;
   resolved: number;
+  observedMergeRate: number | null;
   mergeRate: Metric;
   brier: number | null;
   tokens: Metric;
@@ -31,8 +34,11 @@ interface Job {
   finished?: number;
   merged?: boolean;
   launched: boolean;
-  /** A reward-signal row was seen: a self-contained outcome record, not a launch. */
-  rewarded?: boolean;
+  launchReceipt?: Row;
+  batchLanes?: Set<string>;
+  batchClaimTimes?: Set<number | null>;
+  /** Reward signals can account for reversions after the PR merged. */
+  rewardMerged?: boolean;
 }
 
 function object(value: unknown): Row | undefined {
@@ -46,14 +52,25 @@ function stringField(row: Row, ...names: string[]): string | undefined {
   const value = field(row, ...names);
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
+function observedArm(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const arm = value.trim();
+    if (arm && arm.toLowerCase() !== 'unknown') return arm;
+  }
+  return undefined;
+}
 function numberField(row: Row, names: string[], max = Infinity): number | undefined {
   const value = field(row, ...names);
   if (value === undefined) return undefined;
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > max) throw new Error(`Invalid ${names[0]}`);
   return value;
 }
+function timestampField(row: Row): unknown {
+  return field(row, 'timestamp', 'at', 'time', 'ts');
+}
 function timestamp(row: Row): number | undefined {
-  const value = field(row, 'timestamp', 'at', 'time', 'ts');
+  const value = timestampField(row);
   if (value === undefined) return undefined;
   const parsed = parseLedgerTs(value);
   if (parsed === null) throw new Error('Invalid event timestamp');
@@ -68,8 +85,9 @@ function outcome(row: Row): boolean | undefined {
   const value = field(row, 'merged', 'outcome', 'result', 'status');
   if (typeof value === 'boolean') return value;
   if (typeof value !== 'string') return undefined;
-  if (value === 'merged') return true;
-  if (['not_merged', 'not-merged', 'closed', 'rejected', 'failed'].includes(value)) return false;
+  const verdict = value.trim().toLowerCase();
+  if (verdict === 'merged') return true;
+  if (['not_merged', 'not-merged', 'closed', 'rejected', 'failed'].includes(verdict)) return false;
   return undefined;
 }
 function metrics(job: Job, row: Row): void {
@@ -112,7 +130,7 @@ function pair(jobs: Job[], prediction: (job: Job) => number | undefined, actual:
     paired: pairs.length,
   };
 }
-/** Join one launch per job ID. Unknown outcomes remain unresolved. */
+/** Join per-job predictions with recorded dispatch and outcome evidence. */
 export function calibrateRouting(jobsJsonl: string, posthogJson?: string): CalibrationReport {
   const jobs = new Map<string, Job>();
   const rows = parseJsonl(jobsJsonl);
@@ -125,26 +143,40 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
       recognized++;
       const job = jobs.get(row.jobId) ?? { launched: false };
       jobs.set(row.jobId, job);
-      job.rewarded = true;
-      if (row.pool !== null) assign(job, 'arm', row.pool);
-      assign(job, 'merged', row.merged);
+      assign(job, 'arm', observedArm(row.pool));
+      assign(job, 'rewardMerged', row.merged);
       continue;
     }
     const id = ledgerJobId(row);
     if (isNodePoolLedgerRow(row) || id?.startsWith('RQ-BATCH-')) continue;
-    const phase = ledgerPhase(row);
+    const terminalPhases = new Set(ledgerStateTokens(row).filter((value) => value === 'MERGED' || value === 'CLOSED'));
+    const phase = terminalPhases.values().next().value ?? ledgerPhase(row);
     const event = ledgerLifecycleEvent(row, phase);
     const state = ledgerOutcomeState(row, event, phase);
-    if (state === null && !['launch', 'finish', 'publish', 'outcome'].includes(event ?? '')) continue;
+    const isOutcomeEvent = OUTCOME_EVENTS.has(event ?? '');
+    if (state === null && !isOutcomeEvent && !['launch', 'batch_claim', 'finish', 'publish'].includes(event ?? '')) continue;
     recognized++;
+    if (row['launched'] === false) continue;
+    if (state !== null && terminalPhases.size > 1) throw new Error('Conflicting merged verdicts on a job receipt');
     if (!id) throw new Error('Event is missing job ID');
     const job = jobs.get(id) ?? { launched: false };
     jobs.set(id, job);
+    if (event === 'batch_claim') {
+      const lane = observedArm(row['lane'], row['pool'], row['arm']);
+      job.batchLanes ??= new Set();
+      if (lane) job.batchLanes.add(lane);
+      job.batchClaimTimes ??= new Set();
+      job.batchClaimTimes.add(parseLedgerTs(timestampField(row)));
+    }
     if (event === 'launch') {
-      if (job.launched) throw new Error('Duplicate launch for a job');
+      if (job.launched) {
+        if (job.launchReceipt && isDeepStrictEqual(row, job.launchReceipt)) continue;
+        throw new Error('Duplicate launch for a job');
+      }
       job.launched = true;
-      assign(job, 'arm', stringField(row, 'arm', 'lane', 'pool'));
+      assign(job, 'arm', observedArm(row['arm'], row['lane'], row['pool']));
       assign(job, 'started', timestamp(row));
+      if (job.started !== undefined) job.launchReceipt = row;
     }
     if (event === 'finish') {
       assign(job, 'finished', timestamp(row));
@@ -153,8 +185,14 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
         assign(job, 'wallTimeMs', seconds * 1000);
       }
     }
-    const verdict = event === 'outcome' ? outcome(row) : undefined;
-    assign(job, 'merged', verdict ?? (state === 'MERGED' ? true : state === 'CLOSED' ? false : undefined));
+    const verdict = isOutcomeEvent ? outcome(row) : undefined;
+    const terminalVerdict = state === 'MERGED' ? true : state === 'CLOSED' ? false : undefined;
+    const explicitVerdict = typeof row['merged'] === 'boolean' ? row['merged'] : verdict;
+    if ((terminalVerdict !== undefined && explicitVerdict !== undefined && terminalVerdict !== explicitVerdict)
+      || (row['merged'] === true && terminalPhases.has('CLOSED'))) {
+      throw new Error('Conflicting merged verdicts on a job receipt');
+    }
+    assign(job, 'merged', verdict ?? terminalVerdict);
     metrics(job, row);
   }
   if (rows.length && !recognized) throw new Error('No recognized dispatch events');
@@ -162,29 +200,35 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
   if (posthogJson !== undefined) for (const row of parseExport(posthogJson)) {
     const id = stringField(row, 'jobId', 'job_id');
     const job = id ? jobs.get(id) : undefined;
-    if (!job || (!job.launched && !job.rewarded)) { unmatchedPosthogRuns++; continue; }
+    if (!job || (!job.launched && !job.batchLanes && job.rewardMerged === undefined)) { unmatchedPosthogRuns++; continue; }
     metrics(job, row);
   }
   const groups = new Map<string, Job[]>();
   for (const job of jobs.values()) {
-    if (!job.launched && !job.rewarded) throw new Error('Event has no matching launch');
+    if (!job.launched && !job.batchLanes && job.rewardMerged === undefined) throw new Error('Event has no matching launch');
     if (!job.arm) {
-      if (!job.rewarded) throw new Error('Launch is missing arm');
-      job.arm = 'unknown';
+      job.arm = !job.launched && job.batchLanes?.size === 1 ? [...job.batchLanes][0]! : 'unknown';
     }
-    if (job.started !== undefined && job.finished !== undefined) {
-      if (job.finished < job.started) throw new Error('Finish precedes launch');
-      const duration = job.finished - job.started;
-      if (job.wallTimeMs === undefined) job.wallTimeMs = duration;
+    job.merged = job.rewardMerged ?? job.merged;
+    const started = job.started;
+    const finished = job.finished;
+    if (started !== undefined && finished !== undefined) {
+      if (finished < started) throw new Error('Finish precedes launch');
+      const ambiguous = [...(job.batchClaimTimes ?? [])].some(
+        (claim) => claim === null || (claim >= started && claim <= finished),
+      );
+      if (job.wallTimeMs === undefined && !ambiguous) job.wallTimeMs = finished - started;
     }
     const group = groups.get(job.arm) ?? [];
     group.push(job); groups.set(job.arm, group);
   }
   const arms = [...groups.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([arm, group]): CalibrationArm => {
-    const resolved = group.filter((job) => job.merged !== undefined).length;
+    const resolved = group.filter((job) => job.merged !== undefined);
     const mergeRate = pair(group, (job) => job.prediction, (job) => job.merged === undefined ? undefined : Number(job.merged));
     const scored = group.filter((job) => job.prediction !== undefined && job.merged !== undefined);
-    return { arm, jobs: group.length, resolved, mergeRate,
+    return { arm, jobs: group.length, resolved: resolved.length,
+      observedMergeRate: resolved.length ? resolved.filter((job) => job.merged === true).length / resolved.length : null,
+      mergeRate,
       brier: scored.length ? scored.reduce((sum, job) => sum + (job.prediction! - Number(job.merged)) ** 2 / scored.length, 0) : null,
       tokens: pair(group, (job) => job.predictedTokens, (job) => job.tokens),
       wallTimeMs: pair(group, (job) => job.predictedWallTimeMs, (job) => job.wallTimeMs),
@@ -198,10 +242,10 @@ export function readCalibration(jobsPath: string, posthogPath?: string): Calibra
 export function calibrationMarkdown(report: CalibrationReport): string {
   const format = (n: number | null): string => n === null ? 'n/a' : Number(n.toFixed(4)).toString();
   const metric = (m: Metric): string => `${format(m.predicted)} / ${format(m.actual)} (${m.paired})`;
-  const lines = ['# Router calibration', '', 'Values are predicted / actual (paired jobs). Wall time is in milliseconds.', '',
-    '| Arm | Jobs | Resolved | Merge rate | Brier | Tokens | Wall time ms |',
-    '| --- | ---: | ---: | --- | ---: | --- | --- |'];
-  for (const a of report.arms) lines.push(`| ${a.arm.replace(/[|\\\r\n]/g, ' ')} | ${a.jobs} | ${a.resolved} | ${metric(a.mergeRate)} | ${format(a.brier)} | ${metric(a.tokens)} | ${metric(a.wallTimeMs)} |`);
+  const lines = ['# Router calibration', '', 'Predicted / actual values use paired jobs. Observed merge rate uses all resolved jobs. Wall time is in milliseconds.', '',
+    '| Arm | Jobs | Resolved | Merge rate | Brier | Tokens | Wall time ms | Observed merge rate |',
+    '| --- | ---: | ---: | --- | ---: | --- | --- | ---: |'];
+  for (const a of report.arms) lines.push(`| ${a.arm.replace(/[|\\\r\n]/g, ' ')} | ${a.jobs} | ${a.resolved} | ${metric(a.mergeRate)} | ${format(a.brier)} | ${metric(a.tokens)} | ${metric(a.wallTimeMs)} | ${format(a.observedMergeRate)} |`);
   lines.push('', `Unmatched PostHog runs: ${report.unmatchedPosthogRuns}`, '');
   return lines.join('\n');
 }

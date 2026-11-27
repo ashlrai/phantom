@@ -14,6 +14,7 @@ import type { TeamIdentity } from './channel-policy.js';
 import type { LeaderChannelAdapter } from './leader-channel-adapter.js';
 import type { SlackInboundDecision } from './slack-inbound.js';
 import { slackSendStoreKey } from './slack-reply-identity.js';
+import { recordSlackOutbound } from './slack-outbound.js';
 
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): value is RecordValue => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -128,8 +129,27 @@ function readSendStore(path: string): SendStore {
   return data as unknown as SendStore;
 }
 
-/** Persist intent BEFORE the single post. An ambiguous post is only reconciled, never replayed. */
+/** Persist intent BEFORE the single post. An ambiguous post is only reconciled, never replayed.
+ * Every outcome -- sent, duplicate, uncertain or refused -- is journaled to the
+ * outbound observation journal so terminal refusals and unproved sends leave
+ * durable evidence; the append is best-effort and never changes the result. */
 export async function deliverSlackEnvelope(envelope: BusEnvelope, input: {
+  config: SlackBridgeConfig; teamIdentities: readonly TeamIdentity[]; confirmedByMason: boolean;
+  call: SlackCall; stateRoot?: string; runsDir?: string; busRoot?: string; leaderRequestId?: string;
+  readPolicy?: () => SlackDeliveryPolicy | undefined;
+  signal?: AbortSignal;
+  /** Trusted Leader composer fallback only; retain its minimal presentation. */
+  plainReply?: boolean;
+}): Promise<SlackDelivery> {
+  const delivery = await deliverSlackEnvelopeAttempt(envelope, input);
+  recordSlackOutbound({
+    at: new Date().toISOString(), kind: 'delivery', status: delivery.status, reason: delivery.reason,
+    topic: envelope?.to, envelopeId: envelope?.id,
+  }, { runsDir: input.runsDir });
+  return delivery;
+}
+
+async function deliverSlackEnvelopeAttempt(envelope: BusEnvelope, input: {
   config: SlackBridgeConfig; teamIdentities: readonly TeamIdentity[]; confirmedByMason: boolean;
   call: SlackCall; stateRoot?: string; runsDir?: string; busRoot?: string; leaderRequestId?: string;
   readPolicy?: () => SlackDeliveryPolicy | undefined;

@@ -21,6 +21,46 @@
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+/** Reason codes are short lowercase identifiers written by the dispatcher. */
+export const MARKET_REASON_CODE = /^[a-z][a-z0-9_]{0,63}$/;
+export const MARKET_RECORDED_LANE = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
+export const MAX_MARKET_CODES = 32;
+
+const count = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+
+/** Each waiting job can contribute at most once to a given reason. */
+export function marketBlockedCodes(value: unknown, waitingElsewhere: number): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!isRecord(value)) return out;
+  for (const [code, n] of Object.entries(value)) {
+    if (Object.keys(out).length >= MAX_MARKET_CODES) break;
+    if (MARKET_REASON_CODE.test(code) && count(n) && n > 0 && n <= waitingElsewhere) out[code] = n;
+  }
+  return out;
+}
+
+/** Usable lane observations in a decoded unfed_capacity row. */
+export function unfedTickLanes(row: Record<string, unknown>): { lane: string; slots: number; blocked: Record<string, number> }[] {
+  if (!isRecord(row.lanes)) return [];
+  const waiting = count(row.waiting) ? row.waiting : null;
+  const snapshot = [];
+  for (const [lane, value] of Object.entries(row.lanes)) {
+    if (!MARKET_RECORDED_LANE.test(lane) || !isRecord(value) || value.unfed !== true || value.held === true
+      || !count(value.headroom) || value.headroom === 0
+      || !count(value.waiting_elsewhere) || value.waiting_elsewhere === 0) continue;
+    if (waiting !== null && value.waiting_elsewhere > waiting) continue;
+    if (count(value.running) && count(value.target) &&
+        value.headroom !== Math.max(0, value.target - value.running)) continue;
+    snapshot.push({
+      lane,
+      slots: Math.min(value.headroom, value.waiting_elsewhere),
+      blocked: marketBlockedCodes(value.blocked, value.waiting_elsewhere),
+    });
+  }
+  return snapshot;
+}
+
 const finite = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
 
@@ -29,10 +69,24 @@ const MARKET_COSTS: Readonly<Record<string, number>> = { local: 0, included: 1, 
 const MARKET_DATA: Readonly<Record<string, number>> = { public: 0, internal: 1, confidential: 2, restricted: 3 };
 const MARKET_BUILTIN = new Set(['codex-personal', 'claude', 'devin', 'claude-api', 'codex-local', 'omlx']);
 const MARKET_LOCAL = new Set(['codex-local', 'omlx']);
+const METERED_API_LANES = new Set(['claude-api', 'openai-api']);
 const MARKET_CAP = /^(?:[a-z][a-z0-9-]*|secrets:[A-Za-z0-9_.-]+)$/;
 const MARKET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 /** work_market preferred_lane spelling: lowercase lane ids only. */
 export const MARKET_LANE_ID = /^[a-z][a-z0-9-]*$/;
+/** Market lanes that execute only on this host (`local_execution_required` in
+ * the market): a node never takes their ready rows. */
+export const LOCAL_LANES: ReadonlySet<string> = MARKET_LOCAL;
+/** The node cap a ready lane needs on a remote computer, or null when the lane
+ * only runs on this host or on an API key. The claim bridge and the read-only
+ * planners (`phm nodes plan`/`offload`, the fleet resource plan) share this
+ * map so advice matches what a node can actually be offered. */
+export function remoteLaneCap(lane: string): string | null {
+  if (LOCAL_LANES.has(lane)) return null;
+  if (lane === 'codex' || lane.startsWith('codex-')) return 'codex';
+  if (lane === 'claude' || (lane.startsWith('claude-') && lane !== 'claude-api')) return 'claude';
+  return null;
+}
 const MAX_REQUIREMENTS = 8192;
 
 const rank = (table: Readonly<Record<string, number>>, key: string): number | undefined =>
@@ -152,6 +206,24 @@ function envelopeAttrs(routerQueue: string | null | undefined, job: string): str
 }
 
 /**
+ * The spec a spec-less (five-column) ready row inherits from its
+ * router-queue.md `(attrs)` envelope, resolved like dispatchd's routed pass:
+ * a matching envelope replaces the requirements wholesale — its
+ * preferred_lane (or explicit open) decides the hint and the lane column is
+ * never consulted — while no match returns null so the caller falls back to
+ * work_market.requirements on the row itself (the lane column). 'invalid'
+ * where from_envelope or requirements would reject the row before the
+ * market sees it (a malformed exclusive or impact).
+ */
+export function readyEnvelopeSpec(
+  routerQueue: string | null | undefined, job: string,
+): Record<string, unknown> | 'invalid' | null {
+  const attrs = envelopeAttrs(routerQueue, job);
+  if (attrs === null) return null;
+  return envelopeSpec(attrs) ?? 'invalid';
+}
+
+/**
  * Strict port of work_market.requirements: returns the row's resolved fields,
  * or null where the Python raises (unknown key, malformed field, tier order,
  * repo disagreement). The dispatcher drops such rows before the market sees
@@ -228,6 +300,50 @@ export function readySpecCell(cell: string | undefined): Record<string, unknown>
 }
 
 /**
+ * One ready.tsv line's market verdict, shared by every ready-row reader.
+ * Returns null when the line is not a dispatcher market row at all — blank,
+ * comment, parked, or shorter than the five-column job/repo/lane/tier/prompt
+ * shape — so tolerant readers can apply their own dialect to it; 'invalid'
+ * when the row carries the dispatcher's shape but work_market.requirements
+ * would reject it before the market sees it (bad job id, repo or tier, or a
+ * malformed spec/envelope — dead work, never supply); otherwise the resolved
+ * market row, whose `hint` is null for lane-open supply. Status-first rows
+ * (`READY job lane ...`) are not dispatcher jobs — callers filter them on
+ * KNOWN_STATUSES before calling, exactly like countReady.
+ */
+export function readyMarketLine(
+  line: string, routerQueue?: string | null,
+): ReadyMarketRow | 'invalid' | null {
+  if (!line.trim() || line.startsWith('#')) return null;
+  const cols = line.split('\t');
+  if (cols.length < 5 || !cols[0] || cols[0].startsWith('PARKED-') || (cols[2] ?? '').startsWith('PARKED-')) return null;
+  const job = cols[0]!;
+  if (!JOB_ID.test(job) || cols[1]!.includes('/')) return 'invalid';
+  const tier = cols[3]!;
+  if (!known(MARKET_TIERS, tier)) return 'invalid';
+  let spec: Record<string, unknown> = {};
+  if (cols.length > 5) {
+    const cell = readySpecCell(cols[5]);
+    if (cell === 'invalid' || cell === null) return 'invalid';
+    spec = cell;
+  } else {
+    // Like dispatchd's routed pass, a matching router-queue.md `(attrs)`
+    // envelope replaces the requirements wholesale: its spec decides the hint
+    // and the lane column is never consulted — the dispatcher's routed pass
+    // writes that spec into the row's requirements cell before launch, so a
+    // lane cell that is not a lane id cannot reject an enveloped row. Only a
+    // spec-less row with no envelope falls back to work_market.requirements
+    // on the row itself, where the lane column defaults to preferred_lane.
+    const env = readyEnvelopeSpec(routerQueue, job);
+    if (env === 'invalid') return 'invalid';
+    if (env !== null) spec = env;
+  }
+  const row = resolveReadyMarketRow(cols, spec);
+  if (row === null) return 'invalid';
+  return { ...row, id: job, prompt: cols[4]!, tier };
+}
+
+/**
  * Parse dispatcher ready.tsv rows (job, repo, lane hint, tier, prompt[, requirements]).
  * Parked rows, comments and short rows are skipped exactly like readyHints; rows
  * the dispatcher's ok-check or work_market.requirements would reject are counted
@@ -240,34 +356,9 @@ export function parseReadyMarketRows(readyTsv: string, routerQueue?: string | nu
   const rows: ReadyMarketRow[] = [];
   let invalid = 0;
   for (const line of readyTsv.split('\n')) {
-    if (!line.trim() || line.startsWith('#')) continue;
-    const cols = line.split('\t');
-    if (cols.length < 5 || !cols[0] || cols[0].startsWith('PARKED-') || (cols[2] ?? '').startsWith('PARKED-')) continue;
-    const job = cols[0]!;
-    if (!JOB_ID.test(job) || cols[1]!.includes('/')) { invalid++; continue; }
-    const tier = cols[3]!;
-    if (!known(MARKET_TIERS, tier)) { invalid++; continue; }
-    let spec: Record<string, unknown> = {};
-    if (cols.length > 5) {
-      const cell = readySpecCell(cols[5]);
-      if (cell === 'invalid' || cell === null) { invalid++; continue; }
-      spec = cell;
-    } else {
-      // Spec-less rows are validated like work_market.requirements first: the
-      // lane column defaults to preferred_lane, so a non-empty cell that is
-      // not a lane id rejects the row before its router-queue envelope is read.
-      const laneCell = cols[2] ?? '';
-      if (laneCell !== '' && !MARKET_LANE_ID.test(laneCell)) { invalid++; continue; }
-      const attrs = envelopeAttrs(routerQueue, job);
-      if (attrs !== null) {
-        const env = envelopeSpec(attrs);
-        if (env === null) { invalid++; continue; }
-        spec = env;
-      }
-    }
-    const row = resolveReadyMarketRow(cols, spec);
-    if (row === null) { invalid++; continue; }
-    rows.push({ ...row, id: job, prompt: cols[4]!, tier });
+    const row = readyMarketLine(line, routerQueue);
+    if (row === 'invalid') invalid++;
+    else if (row !== null) rows.push(row);
   }
   return { rows, invalid };
 }
@@ -275,23 +366,25 @@ export function parseReadyMarketRows(readyTsv: string, routerQueue?: string | nu
 /**
  * The dispatcher's admission-stopped waiting set (dispatchd's `_waiting` else
  * branch): when the launch gate kept the market from running, every non-parked
- * row with a valid job id and tier counts, hinted by its raw lane column —
- * requirements are never parsed, so spec-invalid rows still wait. No per-row
- * market fields are produced.
+ * row with a valid job id and tier can count. Use the first such row per job
+ * and its raw lane column. Requirements are never parsed, so spec-invalid
+ * rows still wait.
  */
 export function stoppedReadyHints(readyTsv: string): { waiting: number; byLane: Map<string, number> } {
   const byLane = new Map<string, number>();
-  let waiting = 0;
+  const jobs = new Set<string>();
   for (const line of readyTsv.split('\n')) {
     if (!line.trim() || line.startsWith('#')) continue;
     const cols = line.split('\t');
     if (cols.length < 5 || cols[0]!.startsWith('PARKED-') || (cols[2] ?? '').startsWith('PARKED-')) continue;
     if (!JOB_ID.test(cols[0]!) || !known(MARKET_TIERS, cols[3]!)) continue;
-    waiting++;
+    const job = cols[0]!;
+    if (jobs.has(job)) continue;
+    jobs.add(job);
     const lane = cols[2] || '';
     byLane.set(lane, (byLane.get(lane) ?? 0) + 1);
   }
-  return { waiting, byLane };
+  return { waiting: jobs.size, byLane };
 }
 
 /** Shared market inputs parsed once per report. */
@@ -451,6 +544,13 @@ export function derivedRowCodes(row: ReadyMarketRow, lane: string, v: MarketLane
   if (v.quota !== null && v.quota <= 0) reasons.push('quota_exhausted');
   if (v.backoff) reasons.push('provider_backoff');
   if (v.running >= v.target) reasons.push('saturated');
-  if (v.capabilities === null) reasons.push('invalid_capability_advertisement');
+  // The dispatcher keeps one `unavailable` verdict per lane: lane_view's
+  // invalid_capability_advertisement is overwritten by the per-destination
+  // metered-API opt-in gate, and choose appends that single code — never both.
+  if (METERED_API_LANES.has(lane) && v.costClass === 'metered' && row.maxCostClass !== 'metered') {
+    reasons.push('metered_api_opt_in_required');
+  } else if (v.capabilities === null) {
+    reasons.push('invalid_capability_advertisement');
+  }
   return reasons.length ? reasons : ['deferred_after_selection'];
 }

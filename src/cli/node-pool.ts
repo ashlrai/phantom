@@ -80,9 +80,21 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
       const existing = verb === 'join' ? readPoolConfig() : null;
       const config = existing ?? configFrom(f, role);
       if (!existing && verb === 'join' && !f.has('--node')) config.node = hostname().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100);
-      if (existing && ['--role', '--node', '--owner', '--primary', '--backup'].some(key => f.has(key) && f.get(key) !== existing[key.slice(2) as keyof PoolConfig])) throw new PoolUsageError('Join cannot change pool identity');
+      // Each identity refusal names its flag: a first enrollment that forgets
+      // --owner or --node, reuses one SSH alias for both pool hosts, or repeats
+      // a join with a changed flag must not dead-end on one generic message.
+      const changed = existing && ['--role', '--node', '--owner', '--primary', '--backup']
+        .find(key => f.has(key) && f.get(key) !== existing[key.slice(2) as keyof PoolConfig]);
+      if (changed) throw new PoolUsageError(`Join cannot change pool identity; ${changed} differs from this computer's saved pool config.`);
       if (!validSshHost(config.primary) || !validSshHost(config.backup)) throw new PoolUsageError('Use explicit team SSH config aliases for --primary and --backup');
-      if (config.primary === config.backup || !validId(config.owner) || !validId(config.node)) throw new PoolUsageError('Invalid node pool identity');
+      if (config.primary === config.backup) throw new PoolUsageError('--primary and --backup must name two different SSH aliases.');
+      if (!validId(config.owner)) throw new PoolUsageError(config.owner === ''
+        ? 'Add --owner <scope>: the label this pool\'s jobs carry.'
+        : '--owner is not a valid scope id.');
+      if (!validId(config.node)) throw new PoolUsageError(verb === 'join' && !f.has('--node')
+        ? 'This computer\'s hostname cannot form a node id; pass --node <id> explicitly.'
+        : verb === 'pool' && !f.has('--node') ? 'Add --node <id>: the name this computer joins the pool under.'
+        : '--node is not a valid node id.');
       if (verb === 'pool' && config.role !== 'primary' && config.role !== 'backup') throw new PoolUsageError('phm node pool --role must be primary or backup');
       if (verb === 'join') {
         const capacity = readNodeCapacity();

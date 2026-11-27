@@ -165,9 +165,7 @@ interface JobGateFold {
   firstAction: GateAction | null;
   /** That decision's recorded timestamp; null when absent or unparseable. */
   firstAtMs: number | null;
-  /** Whether any skip decision was recorded (a later non-skip decision makes it a false skip). */
-  skipped: boolean;
-  /** The first launch/warn decision after a skip, anchored on its recorded timestamp. */
+  /** The first launch/warn decision after an initial skip, anchored on its recorded timestamp. */
   relaunchAtMs: number | null;
   /** The first outcome row's recorded timestamp; null when absent or unparseable. */
   outcomeAtMs: number | null;
@@ -201,14 +199,12 @@ export interface DupcheckGateFold {
   falseSkips: number;
 }
 
-const GATE_ACTIONS: ReadonlySet<string> = new Set(['skip', 'warn', 'launch', 'outcome']);
-
 /**
  * Pure: fold one dupcheck.jsonl text into recurring precision cells.
  * `text` is the raw JSONL; each line validates through parseDupcheckEvents
- * (schema + job id), then per-job sequences fold in ledger order exactly
- * like summarizeDupcheck — first non-outcome decision wins, a non-skip
- * decision after a skip is a relaunch, an outcome row marks the job. Only
+ * (schema, job id and action). As in summarizeDupcheck, the first decision
+ * determines the cohort, and a launch or warn after an initial skip is a
+ * relaunch. An outcome row marks the job. Only
  * timestamps inside the window anchor a cell.
  */
 export function foldDupcheckGate(
@@ -225,15 +221,11 @@ export function foldDupcheckGate(
   const jobs = new Map<string, JobGateFold>();
   let events = 0;
   for (const event of parseDupcheckEvents(text)) {
-    // The stats reader accepts any action spelling; the fold only trusts
-    // the recorded vocabulary — an unknown action is corrupt evidence,
-    // never a decision.
-    if (!GATE_ACTIONS.has(event.action)) continue;
     events += 1;
     const atMs = parseAt(event.at);
     let fold = jobs.get(event.job);
     if (fold === undefined) {
-      fold = { firstAction: null, firstAtMs: null, skipped: false, relaunchAtMs: null, outcomeAtMs: null };
+      fold = { firstAction: null, firstAtMs: null, relaunchAtMs: null, outcomeAtMs: null };
       jobs.set(event.job, fold);
     }
     if (event.action === 'outcome') {
@@ -245,9 +237,7 @@ export function foldDupcheckGate(
       fold.firstAction = event.action;
       fold.firstAtMs = atMs;
     }
-    if (event.action === 'skip') {
-      fold.skipped = true;
-    } else if (fold.skipped && fold.relaunchAtMs === null && atMs !== null) {
+    if (fold.firstAction === 'skip' && event.action !== 'skip' && fold.relaunchAtMs === null && atMs !== null) {
       fold.relaunchAtMs = atMs;
     }
   }

@@ -25,6 +25,7 @@ import { boardNotifyDir, boardNotifyLedgerPath, diffBoard, planNotifications,
   snapshotBoard, writeBoardNotifySnapshot,
   type BoardNotice, type BoardNotifySender, type BoardNotifySenders } from '../core/fleet/work-board-notify.js';
 import { killSwitchOn } from '../core/sandbox/policy.js';
+import { scrubSecrets } from '../core/util/scrub.js';
 
 const usage = 'Usage: ashlr fleet board-notify [--root <absolute>] [--state-dir <absolute>] [--limit <1..100>] [--dry-run] [--json]\n'
   + 'Diffs the work board against the last snapshot and replies in each item\'s source thread: ASSIGNED <id> — owner,\n'
@@ -180,6 +181,11 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
     return emit({
       status: 'dry-run', baselined: prev === null, killed, inbox: board.inbox,
       transitions: transitions.length, planned: plan.notices.length, dropped: plan.dropped,
+      notices: plan.notices.map(n => ({
+        itemId: scrubSecrets(n.itemId), state: n.state, sourceChannel: scrubSecrets(n.sourceChannel),
+        sourceThread: n.sourceThread === null ? null : scrubSecrets(n.sourceThread),
+        asOf: scrubSecrets(n.asOf), source: scrubSecrets(n.source), detail: scrubSecrets(n.detail), text: n.text,
+      })),
       lines: [
         `board-notify dry-run: transitions=${transitions.length} planned=${plan.notices.length} dropped=${plan.dropped.length}${prev === null ? ' (first pass would baseline)' : ''}${killed ? ' (KILL armed)' : ''}`,
         ...plan.notices.map(n => `would-post [${n.sourceChannel}${n.sourceThread ? ` ${n.sourceThread}` : ''}] ${n.text}`),
@@ -189,7 +195,10 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   }
   if (killed) return emit({ status: 'halted', planned: plan.notices.length, lines: ['board-notify: KILL is armed; sends halted, snapshot kept for the next pass'] });
   if (prev === null) {
-    writeBoardNotifySnapshot(dir, next);
+    if (!writeBoardNotifySnapshot(dir, next).ok) return emit({
+      status: 'snapshot-persistence-failed', reason: 'snapshot-write-failed',
+      lines: ['board-notify: baseline snapshot could not be saved; retry after restoring state storage'],
+    }, 1);
     return emit({ status: 'baselined', items: next.length, planned: plan.notices.length,
       lines: [`board-notify: baseline recorded for ${next.length} item(s); transitions post from the next pass`] });
   }
@@ -208,7 +217,9 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
     if (!sender) continue;
     tracked[channel] = async notice => {
       const receipt = await sender(notice);
-      if (receipt.status === 'sent' || receipt.status === 'duplicate') {
+      if (receipt !== null && typeof receipt === 'object' && !Array.isArray(receipt)
+        && (receipt.status === 'sent' || receipt.status === 'duplicate')
+        && typeof receipt.receipt === 'string' && receipt.receipt.trim() !== '') {
         evidence.set(notice, deliveryFor(channel, injected, receipt.status === 'duplicate'));
       }
       return receipt;
@@ -216,26 +227,33 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   }
   const results = await sendNotifications(plan.notices, { senders: tracked, ledgerPath });
   const delivered = results.filter(r => r.status === 'sent' || r.status === 'duplicate');
+  const resultEvidence = (r: typeof results[number]): NoticeDelivery | undefined =>
+    r.status === 'sent' || r.status === 'duplicate' ? evidence.get(r.notice) : undefined;
   const deliveries = results.map(r => ({ itemId: r.notice.itemId, state: r.notice.state, status: r.status,
-    ...(evidence.get(r.notice) ?? { evidence: 'none', transport: 'none' }) }));
+    ...(resultEvidence(r) ?? { evidence: 'none', transport: 'none' }) }));
   const count = (e: NoticeDelivery['evidence']): number => deliveries.filter(d => d.evidence === e).length;
   const queued = count('slack-bus-note-enqueued');
   const busPosted = count('bus-reply-posted');
   const pending = new Set(results.filter(r => r.status !== 'sent' && r.status !== 'duplicate').map(r => r.notice.itemId));
+  for (const drop of plan.dropped) {
+    if (drop.reason !== `${drop.state} dropped: already notified`) pending.add(drop.itemId);
+  }
   // A truncated listing is a bounded projection, not the whole board:
   // preserve prior rows for items outside the page so their baselines —
   // including pending undelivered updates — are not silently discarded.
-  writeBoardNotifySnapshot(dir, snapshotAfterSend(prev, next, pending, { preserveUnseen: board.truncated }));
+  const saved = writeBoardNotifySnapshot(dir, snapshotAfterSend(prev, next, pending, { preserveUnseen: board.truncated })).ok;
   return emit({
-    status: 'completed', transitions: transitions.length, planned: plan.notices.length,
+    status: saved ? 'completed' : 'snapshot-persistence-failed',
+    ...(!saved ? { reason: 'snapshot-write-failed' } : {}), transitions: transitions.length, planned: plan.notices.length,
     // `sent` is the legacy count of durable sender receipts (incl. dedupes). It
     // is NOT a count of Slack deliveries: see `queued`, `busPosted`, `deliveries`.
     sent: delivered.length, queued, busPosted, pending: pending.size, dropped: plan.dropped,
     deliveries,
     lines: [
+      ...(!saved ? ['board-notify: snapshot could not be saved; retry after restoring state storage'] : []),
       `board-notify: transitions=${transitions.length} planned=${plan.notices.length} receipts=${delivered.length} queued=${queued} bus-posted=${busPosted} pending=${pending.size} dropped=${plan.dropped.length}`,
-      ...results.map(r => `${describeResult(r.status, evidence.get(r.notice))} [${r.notice.sourceChannel}${r.notice.sourceThread ? ` ${r.notice.sourceThread}` : ''}] ${r.notice.text}${r.reason ? ` (${r.reason})` : ''}`),
+      ...results.map(r => `${describeResult(r.status, resultEvidence(r))} [${r.notice.sourceChannel}${r.notice.sourceThread ? ` ${r.notice.sourceThread}` : ''}] ${r.notice.text}${r.reason ? ` (${r.reason})` : ''}`),
       ...plan.dropped.map(d => `dropped ${d.itemId}: ${d.reason}`),
     ],
-  });
+  }, saved ? 0 : 1);
 }

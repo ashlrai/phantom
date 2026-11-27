@@ -81,6 +81,25 @@ describe('fleet launchable', () => {
       { lane: 'beta', free: 1, launchable: 1 },
     ] });
   });
+  it('counts each job once across lane-hinted and lane-open supply', async () => {
+    const prompt = join(root, 'prompt.md');
+    writeFileSync(prompt, 'task');
+    status({ alpha: { target: 3, running: 0 }, beta: { target: 1, running: 0 } });
+    writeFileSync(join(queue, 'ready.tsv'), [
+      row('RQ-HINT', 'alpha', join(root, 'missing')),
+      row('RQ-HINT', 'alpha', prompt),
+      row('RQ-HINT', 'alpha', prompt),
+      row('RQ-HINT', '', prompt),
+      row('RQ-OPEN', '', prompt),
+      row('RQ-OPEN', 'beta', prompt),
+      row('RQ-OPEN', '', prompt),
+    ].join('\n'));
+    expect(await cmdFleetLaunchable(['--json'])).toBe(1);
+    expect(report()).toMatchObject({ openRows: 1, lanes: [
+      { lane: 'alpha', free: 3, launchable: 1 },
+      { lane: 'beta', free: 1, launchable: 0 },
+    ] });
+  });
   it('resolves spec-less rows through their router-queue envelope like the market', async () => {
     const prompt = join(root, 'prompt.md');
     writeFileSync(prompt, 'task');
@@ -95,7 +114,8 @@ describe('fleet launchable', () => {
       row('RQ-ENV', 'alpha', prompt), row('RQ-ENVALPHA', 'alpha', prompt),
       row('RQ-ENVLONE', 'alpha', prompt), // no envelope line: the lane column stands
       row('RQ-ENVBAD', 'alpha', prompt), // envelope spec the market rejects: dead work
-      // a spec-less row whose lane cell is not a lane id is invalid, envelope or not
+      // a spec-less row whose lane cell is not a lane id and matches no
+      // envelope fails the requirements fallback: dead work
       [ 'RQ-BADLANE', 'repo', 'Not A Lane!', 'work', prompt ].join('\t'),
     ].join('\n'));
     // beta gets RQ-ENV through its envelope; alpha gets RQ-ENVALPHA and

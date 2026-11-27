@@ -89,6 +89,13 @@ group is exhausted, the planner reports an advisory target of zero with
 does not prove the next balance, and a partially exhausted response does not
 zero the lane. AI credits remain metered and opt-in.
 
+The resident capacity publisher refreshes official Antigravity quota without
+the desktop evidence watcher. In the GUI session it checks two minutes before
+and at each reported bucket reset, with checks at most ten minutes apart while
+the reset schedule is known. Missing or failed readings remain unknown and
+retry within five minutes; a failed check does not turn the prior schedule
+into current quota. SSH and unconfirmed sessions never invoke `agy`.
+
 For an agent check, give the operator or a designated agent one read-only task:
 inspect only the named, already signed-in usage surface (or use the
 [desktop operator's read action](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-OPERATOR.md)), then record only the

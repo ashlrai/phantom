@@ -17,6 +17,7 @@ import { flatTree, type LiveSessionsV1 } from './live-sessions.js';
 import { buildSessionThread, type SessionThreadMessage, type SessionThreadSession, type SessionThreadSource, type SessionThreadV1 } from './session-thread.js';
 import { pickSessions, type SessionThreadsParts } from './session-threads.js';
 import { sanitizePublicJson } from '../util/public-json.js';
+import { ownerDisplayName } from '../owner-display.js';
 
 export const SESSION_FIND_SCHEMA = 'fleet.session-find.v1';
 /** The most sessions one search reads, the newest matching messages a result carries, and the longest excerpt. */
@@ -100,7 +101,7 @@ export function buildSessionFind(list: LiveSessionsV1, parts: SessionThreadsPart
   const results: SessionFindResult[] = [];
   let read = 0;
   for (const { id, jobId, kind } of searched) {
-    const thread = sanitizePublicJson(buildSessionThread(list, id, { sessionsRead: true, bus: parts.bus,
+    const thread = sanitizePublicJson(buildSessionThread(list, id, { sessionsRead: true, bus: parts.bus, ownerName: parts.ownerName,
       ...(jobId !== null && parts.activity.has(jobId) ? { activity: parts.activity.get(jobId) } : {}),
       ...(jobId !== null && parts.output?.has(jobId) ? { output: parts.output.get(jobId) } : {}),
       ...(jobId !== null && parts.controls !== undefined ? { controls: parts.controls } : {}),
@@ -118,7 +119,7 @@ export function buildSessionFind(list: LiveSessionsV1, parts: SessionThreadsPart
   const busDown = parts.bus === null || parts.bus.source === 'unavailable', ownerDown = parts.owner === null || parts.owner?.sourceState === 'degraded';
   const ordersDown = parts.orders === null || parts.orders?.sources.inbox === 'degraded';
   if (busDown) gaps.push('Bus messages not searched: the agent bus could not be read.');
-  if (ownerDown) gaps.push('Messages from Mason not searched: the Leader inbox could not be read.');
+  if (ownerDown) gaps.push(`Messages from ${ownerDisplayName(parts.ownerName)} not searched: the Leader inbox could not be read.`);
   if (ordersDown) gaps.push('Routing not searched: the order trace could not be read.');
   if ([...parts.activity.values()].some(activity => activity === null)) gaps.push('Some sessions\' recorded steps not searched: their activity could not be read.');
   const source = (down: boolean, asked: boolean): SessionThreadSource => (down ? 'unavailable' : asked ? 'available' : 'none');

@@ -48,11 +48,20 @@ that can launch now, using the same rule.
 to avoid. `phm lanes yield` shows, per lane and size, merged PRs per launch over the
 last 50 jobs, the empty rate and the weight the router uses (1 is neutral; a lane with
 fewer than 10 jobs is unknown and stays neutral). A merge recorded as reverted
-counts as reverted, never as merged. The lane router sends rows bigger
+counts as reverted, never as merged. Exact replays of timestamped launch
+receipts count once toward the yield window and minimum sample. The lane router sends rows bigger
 than small to lanes at 0.5 or better when they have room, and gives a low-yield lane
 small, test-only rows. The yield fold reads the fleet's jobs-ledger dialect, so
 GitHub-resolved merges recorded by the outcome reconciler (`jobId`/`prUrl`/
-`outcome` rows) count the same as dispatcher outcome rows. `phm lanes yield` also gives every lane a verdict over `--since`
+`outcome` rows) count the same as dispatcher outcome rows. Rows with explicit
+`launched: false` supply no finish or empty evidence, even when an earlier
+attempt used the same job ID. Finish, empty, merge and revert evidence must
+follow the job's latest launch by timestamp. A reconciled merge uses its
+recorded merge time when available. When timestamps tie or either receipt
+lacks one, ledger order determines whether the outcome follows the launch.
+A retry with only earlier outcome evidence contributes a launch to the yield
+window and no finished job to the lane verdict.
+`phm lanes yield` also gives every lane a verdict over `--since`
 (default 24h): "low-yield" when 80% or more of at least 20 finished jobs ended empty,
 "unknown" under 10 finished jobs, else "productive". The router skips a low-yield lane
 for remaps and free capacity ("skipped zai: 92 of 99 recent jobs ended empty") unless the

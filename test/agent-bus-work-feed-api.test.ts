@@ -59,7 +59,7 @@ describe('GET /api/verse/agent-bus/work-feed', () => {
     for (const query of ['?after=0', '?limit=0', '?limit=201', '?limit=abc', '?limit=', '?limit=1.5', '?limit=-1',
       '?claims=1', '?claims=false', '?claims', '?claims=true&claims=true',
       '?status=bogus', '?status=QUEUED', '?job=', '?repo=not-a-repo', '?provider=bogus', '?provider=DEVIN',
-      '?tier=bogus', '?tier=FAST', '?to=', '?owner=', '?since=not-a-time', '?before=not-a-time', '?before=', '?contains=', '?channel=', '?channel=Bad%20Name', '?channel=UPPER', '?result=', '?result=bogus', '?result=COMPLETE', '?id=', '?id=has%20space', '?open=false', '?claimable=1',
+      '?tier=bogus', '?tier=FAST', '?to=', '?owner=', '?since=not-a-time', '?before=not-a-time', '?before=', '?contains=', '?channel=', '?channel=Bad%20Name', '?channel=UPPER', '?topic=', '?topic=Bad%20Name', '?topic=UPPER', '?result=', '?result=bogus', '?result=COMPLETE', '?id=', '?id=has%20space', '?open=false', '?claimable=1',
       '?status=queued&status=done', '?bogus=1']) {
       expect((await request(`${FEED}${query}`)).status, query).toBe(400);
     }
@@ -199,6 +199,14 @@ describe('GET /api/verse/agent-bus/work-feed filters', () => {
     expect(ids((await feedRequest('?contains=retry%20budget')).wire)).toEqual(['job-b']);
     expect(ids((await feedRequest('?channel=release')).wire)).toEqual(['job-b']);
     expect(ids((await feedRequest('?channel=ops')).wire)).toEqual([]);
+    // topic keeps jobs announced to a well-formed group:<room>:<topic>
+    // address carrying that exact topic component — job-b's
+    // group:release:deploy matches 'deploy' in any room; job-a's 'leaders'
+    // label carries no topic and never matches.
+    expect(ids((await feedRequest('?topic=deploy')).wire)).toEqual(['job-b']);
+    expect(ids((await feedRequest('?topic=general')).wire)).toEqual([]);
+    expect(ids((await feedRequest('?channel=release&topic=deploy')).wire)).toEqual(['job-b']);
+    expect(ids((await feedRequest('?channel=ops&topic=deploy')).wire)).toEqual([]);
     // result keeps jobs whose newest work.result citation carries the outcome;
     // job-b has no retained result and never matches.
     expect(ids((await feedRequest('?result=complete')).wire)).toEqual(['job-a']);

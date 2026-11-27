@@ -15,6 +15,7 @@ import {
 import type { OutcomeRecord } from '../src/core/autonomy/outcome-records.js';
 import type { DispatchProductionEvent } from '../src/core/fleet/dispatch-production-ledger.js';
 import type { AgentActionEvent } from '../src/core/fleet/agent-action-ledger.js';
+import { readSkillTrajectoryOutcomes } from '../src/core/fleet/skill-outcomes.js';
 import type { Proposal, SkillUseEvent } from '../src/core/types.js';
 import { ROUTER_POLICY_VERSION } from '../src/core/learning/causal.js';
 import {
@@ -286,6 +287,31 @@ function deps(overrides: Partial<TrajectoryRecordReadDeps> = {}): TrajectoryReco
 }
 
 describe('Trajectory records', () => {
+  it.each([[24, 3], [168, 8], [24 * 60, 31]])(
+    'sizes dated ledger reads for a %i-hour window with a %i-file budget',
+    (windowHours, maxFiles) => {
+      const readDispatchProductionEvents = vi.fn(() => []);
+      const readAgentActions = vi.fn(() => []);
+      const readSkillUseEvents = vi.fn(() => []);
+      listTrajectoryRecords({
+        windowHours,
+        deps: {
+          readDispatchProductionEvents,
+          readAgentActions,
+          readSkillUseEvents,
+          listOutcomeRecords: () => [],
+        },
+      });
+      expect(readDispatchProductionEvents).toHaveBeenCalledWith(expect.objectContaining({ asOfMs: TEST_NOW_MS }));
+      for (const read of [readDispatchProductionEvents, readAgentActions, readSkillUseEvents]) {
+        expect(read).toHaveBeenCalledWith(expect.objectContaining({
+          sinceMs: TEST_NOW_MS - windowHours * 60 * 60 * 1000,
+          maxFiles,
+        }));
+      }
+    },
+  );
+
   it('materializes preclaim route infeasibility as an action-only trajectory', () => {
     const attemptId = 'attempt-12345678-1234-4123-8123-123456789abc';
     const [record] = listTrajectoryRecords({
@@ -1926,9 +1952,23 @@ describe('Trajectory records', () => {
           dispatch({ ts: TS3, itemId: 'item-d', proposalId: 'prop-d', runId: 'run-d', trajectoryId: 'traj-d' }),
         ],
         listOutcomeRecords: () => [
-          outcomeFor('a', 'merged', TS2),
+          outcomeFor('a', 'merged', TS2, [{
+            ...revertedObservation,
+            observedAt: '2026-05-01T00:00:00.000Z',
+            proposalId: 'prop-a',
+            runId: 'run-a',
+            trajectoryId: 'traj-a',
+            workItemId: 'item-a',
+          }]),
           outcomeFor('b', 'rejected', TS2),
-          outcomeFor('c', 'merged', TS2),
+          outcomeFor('c', 'merged', TS2, [{
+            ...revertedObservation,
+            observedAt: '2026-07-11T12:00:00.000Z',
+            proposalId: 'prop-c',
+            runId: 'run-c',
+            trajectoryId: 'traj-c',
+            workItemId: 'item-c',
+          }]),
           outcomeFor('d', 'merged', TS2, [revertedObservation]),
         ],
         readAgentActions: () => [],
@@ -2428,6 +2468,171 @@ describe('Trajectory records', () => {
       },
     });
     expect(JSON.stringify(summary.routeDiagnostics)).not.toContain('private-arbitrary-reason');
+  });
+
+  it('counts only skill-use receipts inside the trajectory window toward outcome coverage', () => {
+    const windowHours = 24;
+    const start = TEST_NOW_MS - windowHours * 60 * 60 * 1000;
+    const at = (ms: number) => new Date(ms).toISOString();
+    const trajectoryIds = ['traj-a', 'traj-b', 'traj-c'];
+    const summarizeWithThirdReceipt = (ts: string) => summarizeTrajectoryLearning(listTrajectoryRecords({
+      windowHours,
+      deps: deps({
+        readDispatchProductionEvents: () => trajectoryIds.map((trajectoryId) => dispatch({
+          ts: at(start),
+          itemId: trajectoryId,
+          proposalId: undefined,
+          runId: trajectoryId,
+          trajectoryId,
+        })),
+        listOutcomeRecords: () => [],
+        readAgentActions: () => [],
+        readSkillUseEvents: () => [at(start), at(TEST_NOW_MS), ts].map((receiptTime, index) => skillUse({
+          eventId: `use-${index}`,
+          ts: receiptTime,
+          proposalId: undefined,
+          runId: trajectoryIds[index],
+          trajectoryId: trajectoryIds[index],
+        })),
+      }),
+    }), windowHours);
+
+    for (const ts of [at(start - 1), at(TEST_NOW_MS + 1), 'invalid']) {
+      expect(summarizeWithThirdReceipt(ts).skillOutcomes).toBeUndefined();
+    }
+    const published = summarizeWithThirdReceipt(at(TEST_NOW_MS));
+    expect(published.coverage.skillUse).toEqual({ count: 3, rate: 1 });
+    expect(published.skillOutcomes).toBeDefined();
+  });
+
+  it('excludes future proposal snapshots from existing dispatch trajectories', () => {
+    const outcome = outcomeRecord();
+    const readRecords = (createdAtMs: number) => listTrajectoryRecords({
+      asOfMs: TEST_NOW_MS,
+      deps: deps({
+        readDispatchProductionEvents: () => [dispatch()],
+        listOutcomeRecords: () => [{
+          ...outcome,
+          proposal: {
+            ...outcome.proposal,
+            status: 'applied',
+            realizedMergeSource: 'github-host',
+            createdAt: new Date(createdAtMs).toISOString(),
+          },
+        }],
+        readAgentActions: () => [],
+      }),
+    });
+
+    const future = readRecords(TEST_NOW_MS + 1);
+    expect(future).toHaveLength(1);
+    expect(future[0]?.coverage).toMatchObject({ dispatch: true, proposal: false });
+    expect(future[0]?.terminalOutcome).toBe('pending');
+    expect(readRecords(TEST_NOW_MS)[0]).toMatchObject({ terminalOutcome: 'merged', coverage: { proposal: true } });
+  });
+
+  it('withholds proposal decisions until their recorded time', () => {
+    const outcome = outcomeRecord();
+    const readRecords = (decisionMs: number) => listTrajectoryRecords({
+      asOfMs: TEST_NOW_MS,
+      deps: deps({
+        listOutcomeRecords: () => [{
+          ...outcome,
+          decisions: outcome.decisions.map((decision) => ({
+            ...decision,
+            action: 'rejected',
+            ts: new Date(decisionMs).toISOString(),
+          })),
+        }],
+        readAgentActions: () => [],
+        loadProposal: () => null,
+      }),
+    });
+
+    const [future] = readRecords(TEST_NOW_MS + 1);
+    expect(future).toMatchObject({
+      latestAt: TS2,
+      terminalOutcome: 'pending',
+      coverage: { decision: false },
+    });
+    expect(future?.timeline.some((event) => event.kind === 'decision')).toBe(false);
+    expect(readRecords(TEST_NOW_MS)[0]).toMatchObject({
+      latestAt: new Date(TEST_NOW_MS).toISOString(),
+      terminalOutcome: 'rejected',
+      coverage: { decision: true },
+    });
+  });
+
+  it('excludes future dispatches from the skill outcome sample', () => {
+    const at = (ms: number) => new Date(ms).toISOString();
+    const trajectoryIds = ['traj-a', 'traj-b', 'traj-c'];
+    const readRecords = (thirdDispatchMs: number) => listTrajectoryRecords({
+      asOfMs: TEST_NOW_MS,
+      deps: deps({
+        readDispatchProductionEvents: () => trajectoryIds.map((trajectoryId, index) => dispatch({
+          ts: at(index === 2 ? thirdDispatchMs : TEST_NOW_MS - 1),
+          itemId: trajectoryId,
+          outcome: 'engine-failed',
+          proposalCreated: false,
+          proposalId: undefined,
+          runEventSummary: undefined,
+          runId: trajectoryId,
+          trajectoryId,
+        })),
+        listOutcomeRecords: () => [],
+        readAgentActions: () => [],
+        readSkillUseEvents: () => trajectoryIds.map((trajectoryId) => skillUse({
+          eventId: `use-${trajectoryId}`,
+          ts: at(TEST_NOW_MS),
+          proposalId: undefined,
+          runId: trajectoryId,
+          trajectoryId,
+        })),
+      }),
+    });
+
+    const records = readRecords(TEST_NOW_MS + 1);
+    expect(records.map((record) => record.trajectoryId).sort()).toEqual(['traj-a', 'traj-b']);
+    expect(summarizeTrajectoryLearning(records, 24).skillOutcomes).toBeUndefined();
+    const atCutoff = summarizeTrajectoryLearning(readRecords(TEST_NOW_MS), 24);
+    expect(atCutoff.coverage.skillUse).toEqual({ count: 3, rate: 1 });
+    expect(atCutoff.skillOutcomes).toBeDefined();
+  });
+
+  it('keeps the skill outcome window fixed while reading the ledger', () => {
+    const windowHours = 24;
+    const start = TEST_NOW_MS - windowHours * 60 * 60 * 1000;
+    const trajectoryIds = ['traj-a', 'traj-b', 'traj-c'];
+    const events = trajectoryIds.map((trajectoryId) => skillUse({
+      eventId: `use-${trajectoryId}`,
+      ts: new Date(start).toISOString(),
+      proposalId: undefined,
+      runId: trajectoryId,
+      trajectoryId,
+    }));
+    const outcomes = readSkillTrajectoryOutcomes({ windowHours }, {
+      readSkillUseEvents: () => {
+        vi.mocked(Date.now).mockReturnValue(TEST_NOW_MS + 1000);
+        return { events, sourcePresent: true, sourceState: 'healthy', eventState: 'present' };
+      },
+      listRecords: (opts) => listTrajectoryRecords({
+        ...opts,
+        deps: deps({
+          ...opts?.deps,
+          readDispatchProductionEvents: () => trajectoryIds.map((trajectoryId) => dispatch({
+            ts: new Date(start + 1000).toISOString(),
+            itemId: trajectoryId,
+            proposalId: undefined,
+            runId: trajectoryId,
+            trajectoryId,
+          })),
+          listOutcomeRecords: () => [],
+          readAgentActions: () => [],
+        }),
+      }),
+    });
+    // Each receipt is needed to clear the three-trajectory publication gate.
+    expect(outcomes).not.toBeNull();
   });
 
   it('suppresses every exact skill metric when the observation source is degraded', () => {

@@ -18,15 +18,13 @@
  */
 
 import type { TypeSafeAnswer, TypeSafeChoiceQuestion, TypeSafeNoulQuestion } from '../classify/typesafe-client.js';
-import { decide } from './decide.js';
+import { decide, readChoiceAnswer, readNoulAnswer } from './decide.js';
 import { JUDGE_VERDICTS, RED_TEAM_SEVERITIES, TASTE_VERDICTS } from './registry.js';
-import type { DecideOptions, Decision } from './types.js';
+import type { Decision, DecisionCallOptions } from './types.js';
 
 export type JudgeVerdictLabel = (typeof JUDGE_VERDICTS)[number];
 export type TasteVerdictLabel = (typeof TASTE_VERDICTS)[number];
 export type RedTeamSeverityLabel = (typeof RED_TEAM_SEVERITIES)[number];
-
-type ExtractOptions<T> = Omit<DecideOptions<T>, 'fallback' | 'interpret' | 'escalateOnly'>;
 
 /** Judge replies can be long transcripts; the verdict lives at the end. */
 const MAX_REPLY_CHARS = 6_000;
@@ -58,24 +56,17 @@ function choiceScore(answers: Readonly<Record<string, TypeSafeAnswer>>, name: st
   return { score: n, confidence: a.confidence };
 }
 
-function choiceOf<K extends string>(answers: Readonly<Record<string, TypeSafeAnswer>>, name: string, allowed: readonly K[]): { label: K; confidence: number } | undefined {
-  const a = answers[name];
-  if (!a || a.type !== 'choice' || !(allowed as readonly string[]).includes(a.choice)) return undefined;
-  return { label: a.choice as K, confidence: a.confidence };
-}
-
 function decisiveYes(answers: Readonly<Record<string, TypeSafeAnswer>>, name: string): number | undefined {
-  const a = answers[name];
-  if (!a || a.type !== 'noul') return undefined;
+  const a = readNoulAnswer(answers, name);
   // Only a "yes" counts; its strength is the confidence.
-  return a.noul >= 0.5 ? a.noul : undefined;
+  return a?.yes ? a.probability : undefined;
 }
 
 /** "do not ship", "wouldn't ship this", "never ship": a ship extraction is refused outright. */
 const NEGATED_SHIP = /\b(?:not|n't|never|no)\s+(?:\w+\s+){0,2}ship\b/i;
 
 /** Deterministic rationale recovery — never sent anywhere, never invented. */
-export function recoverRationale(raw: string): string {
+function recoverRationale(raw: string): string {
   const line = raw.match(/RATIONALE\s*[:=]\s*(.+)/i)?.[1]
     ?? raw.match(/"rationale"\s*:\s*"((?:[^"\\]|\\.){1,400})"/i)?.[1];
   const cleaned = (line ?? '').replace(/\\n/g, ' ').replace(/\s+/g, ' ').trim();
@@ -106,7 +97,7 @@ export interface ExtractedJudgeRubric {
  */
 export async function extractJudgeRubric(
   raw: string,
-  opts: ExtractOptions<ExtractedJudgeRubric | null> = {},
+  opts: DecisionCallOptions = {},
 ): Promise<Decision<ExtractedJudgeRubric | null>> {
   const text = typeof raw === 'string' ? tail(raw) : '';
   return decide<ExtractedJudgeRubric | null>('judge-verdict', text, {
@@ -130,17 +121,17 @@ export async function extractJudgeRubric(
     fallback: null,
     interpret: (answers) => {
       const stated = decisiveYes(answers, 'states_verdict');
-      const verdict = choiceOf(answers, 'verdict', JUDGE_VERDICTS);
+      const verdict = readChoiceAnswer(answers, 'verdict', JUDGE_VERDICTS);
       const dims = (['value', 'correctness', 'scope', 'alignment'] as const).map((d) => choiceScore(answers, d));
       if (stated === undefined || !verdict || dims.some((d) => d === undefined)) return undefined;
       const [value, correctness, scope, alignment] = dims.map((d) => d!.score) as [number, number, number, number];
       // Deterministic guards on what Jev extracted (see module header).
-      if (verdict.label === 'ship' && (!/\bship\b/i.test(text) || NEGATED_SHIP.test(text) || value < 3 || correctness < 4)) return undefined;
+      if (verdict.choice === 'ship' && (!/\bship\b/i.test(text) || NEGATED_SHIP.test(text) || value < 3 || correctness < 4)) return undefined;
       const confidence = Math.min(stated, verdict.confidence, ...dims.map((d) => d!.confidence));
       return {
-        value: { verdict: verdict.label, value, correctness, scope, alignment, rationale: recoverRationale(text) },
+        value: { verdict: verdict.choice, value, correctness, scope, alignment, rationale: recoverRationale(text) },
         confidence,
-        label: verdict.label,
+        label: verdict.choice,
       };
     },
   });
@@ -165,7 +156,7 @@ export interface ExtractedTasteScore {
  */
 export async function extractTasteScore(
   raw: string,
-  opts: ExtractOptions<ExtractedTasteScore | null> = {},
+  opts: DecisionCallOptions = {},
 ): Promise<Decision<ExtractedTasteScore | null>> {
   const text = typeof raw === 'string' ? tail(raw) : '';
   return decide<ExtractedTasteScore | null>('taste-verdict', text, {
@@ -187,14 +178,14 @@ export async function extractTasteScore(
     fallback: null,
     interpret: (answers) => {
       const stated = decisiveYes(answers, 'states_verdict');
-      const verdict = choiceOf(answers, 'verdict', TASTE_VERDICTS);
+      const verdict = readChoiceAnswer(answers, 'verdict', TASTE_VERDICTS);
       const dims = (['alignment', 'ambition', 'design'] as const).map((d) => choiceScore(answers, d));
       if (stated === undefined || !verdict || dims.some((d) => d === undefined)) return undefined;
       const [alignment, ambition, design] = dims.map((d) => d!.score) as [number, number, number];
       return {
-        value: { verdict: verdict.label, alignment, ambition, design },
+        value: { verdict: verdict.choice, alignment, ambition, design },
         confidence: Math.min(stated, verdict.confidence, ...dims.map((d) => d!.confidence)),
-        label: verdict.label,
+        label: verdict.choice,
       };
     },
   });
@@ -212,7 +203,7 @@ const SEVERITY_RANK: Readonly<Record<RedTeamSeverityLabel, number>> = { none: 0,
  */
 export async function extractRedTeamSeverity(
   raw: string,
-  opts: ExtractOptions<RedTeamSeverityLabel> = {},
+  opts: DecisionCallOptions = {},
 ): Promise<Decision<RedTeamSeverityLabel>> {
   const text = typeof raw === 'string' ? tail(raw) : '';
   return decide<RedTeamSeverityLabel>('red-team-verdict', text, {

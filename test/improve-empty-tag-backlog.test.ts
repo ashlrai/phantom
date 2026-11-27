@@ -9,6 +9,7 @@ import {
   EMPTY_TAG_RECURRING,
 } from '../src/core/improve/empty-tag-backlog.js';
 import type { EmptiesFinish } from '../src/core/fleet/empty-finishes.js';
+import { ROUTER_OUTCOME_LEDGER_LIMIT } from '../src/core/router/outcomes.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
 
 let home: string;
@@ -78,6 +79,37 @@ describe('foldEmptyTagWindow', () => {
 });
 
 describe('emptyTagBacklogItems', () => {
+  it.each(['launch', 'batch_claim'])('uses only current-attempt finishes after a %s', async (event) => {
+    const ids = ['RQ-RETRY-1', 'RQ-RETRY-2', 'RQ-RETRY-3'];
+    const receipts = ids.flatMap((job) => [
+      finishRow(job, 4),
+      JSON.stringify({ ts: iso(4), job, event }),
+      finishRow(job, 4), // Replaying the old finish cannot complete the retry.
+    ]);
+    const options = { repo: 'ashlrai/phantom', now: NOW, tagsText: '' };
+    expect(await emptyTagBacklogItems({ ...options, jobsText: receipts.join('\n') })).toEqual([]);
+
+    // New finishes count even when their receipts were appended out of timestamp order.
+    const jobsText = [...ids.map((job) => finishRow(job, 2)), ...receipts].join('\n');
+    const items = await emptyTagBacklogItems({ ...options, jobsText });
+    expect(items.map((item) => item.id)).toEqual(['fleet-empty-tag-untagged']);
+    expect(items[0]?.prompt).toContain('untagged=3');
+  });
+
+  it('counts recurring tags only when their recording time reaches the window cutoff', async () => {
+    const ids = ['RQ-F1', 'RQ-F2', 'RQ-F3'];
+    const jobsText = ids.map(id => finishRow(id, 1)).join('\n');
+    const tagsText = ids.map(id => JSON.stringify({
+      ...JSON.parse(tagRow(id, 'blocked')),
+      ts: new Date(NOW.getTime() + 1).toISOString(),
+    })).join('\n');
+    const opts = { repo: 'ashlrai/phantom', jobsText, tagsText };
+    const before = await emptyTagBacklogItems({ ...opts, now: NOW });
+    expect(before.map(item => item.id)).toEqual(['fleet-empty-tag-untagged']);
+    const at = await emptyTagBacklogItems({ ...opts, now: new Date(NOW.getTime() + 1) });
+    expect(at.map(item => item.id)).toEqual(['fleet-empty-tag-blocked']);
+  });
+
   it('turns a recurring recorded tag into a valid priority-3 backlog item', async () => {
     const jobs = [finishRow('RQ-AAA-1', 5), finishRow('RQ-AAA-2', 4), finishRow('RQ-AAA-3', 3)].join('\n');
     const tags = [tagRow('RQ-AAA-1', 'blocked'), tagRow('RQ-AAA-2', 'blocked'), tagRow('RQ-AAA-3', 'blocked')].join('\n');
@@ -127,6 +159,28 @@ describe('emptyTagBacklogItems', () => {
     expect(minority).toEqual([]);
   });
 
+  it('withholds an untagged majority from a clipped jobs read while reporting recorded tags', async () => {
+    const clippedIds = ['RQ-T1', 'RQ-T2', 'RQ-T3', 'RQ-T4'];
+    const blockedIds = ['RQ-B1', 'RQ-B2', 'RQ-B3'];
+    const untaggedIds = ['RQ-U1', 'RQ-U2', 'RQ-U3', 'RQ-U4'];
+    const jobs = [
+      ...clippedIds.map(id => finishRow(id, 8)),
+      ' '.repeat(ROUTER_OUTCOME_LEDGER_LIMIT),
+      ...blockedIds.map(id => finishRow(id, 5)),
+      ...untaggedIds.map(id => finishRow(id, 4)),
+    ].join('\n');
+    const tags = [
+      ...clippedIds.map(id => tagRow(id, 'already_done')),
+      ...blockedIds.map(id => tagRow(id, 'blocked')),
+    ].join('\n');
+    const items = await emptyTagBacklogItems({
+      repo: 'ashlrai/phantom', runsDir: writeRuns('runs-clipped', jobs, tags), now: NOW,
+    });
+    expect(items.map(item => item.id)).toEqual(['fleet-empty-tag-blocked']);
+    expect(items[0]?.prompt).toContain('blocked=3');
+    expect(items[0]?.prompt).toContain('counts cover only the retained receipts');
+  });
+
   it('emits nothing below the recurring bar or when only explained tags recur', async () => {
     const belowJobs = Array.from({ length: EMPTY_TAG_RECURRING - 1 }, (_, i) => finishRow(`RQ-D${i + 1}`, 6 - i)).join('\n');
     const belowTags = Array.from({ length: EMPTY_TAG_RECURRING - 1 }, (_, i) => tagRow(`RQ-D${i + 1}`, 'blocked')).join('\n');
@@ -146,6 +200,18 @@ describe('emptyTagBacklogItems', () => {
     ].join('\n');
     expect(await emptyTagBacklogItems({
       repo: 'ashlrai/phantom', runsDir: writeRuns('runs-d2', healthy, healthyTags), now: NOW,
+    })).toEqual([]);
+  });
+
+  it('ignores duplicate tags that would create a false recurring blocker', async () => {
+    const ids = Array.from({ length: EMPTY_TAG_RECURRING }, (_, i) => `RQ-DUP-${i + 1}`);
+    const jobs = ids.map(id => finishRow(id, 4)).join('\n');
+    const tags = [
+      ...ids.map(id => tagRow(id, 'already_done')),
+      ...ids.map(id => tagRow(id, 'blocked')),
+    ].join('\n');
+    expect(await emptyTagBacklogItems({
+      repo: 'ashlrai/phantom', runsDir: writeRuns('runs-duplicates', jobs, tags), now: NOW,
     })).toEqual([]);
   });
 
@@ -203,6 +269,9 @@ describe('emptyTagBacklogItems', () => {
     const tags = [tagRow('RQ-H1', 'blocked'), tagRow('RQ-H2', 'blocked'), tagRow('RQ-H3', 'blocked')].join('\n');
     const runsDir = writeRuns('runs-h', jobs, tags);
     expect(await emptyTagBacklogItems({ repo: 'ashlrai/other', runsDir, now: NOW })).toEqual([]);
+    expect(await emptyTagBacklogItems({ repo: 'other-owner/phantom', runsDir, now: NOW })).toEqual([]);
+    expect(await emptyTagBacklogItems({ repo: 'AshlrAI/Phantom', runsDir, now: NOW }))
+      .toEqual([expect.objectContaining({ id: 'fleet-empty-tag-blocked', repo: 'AshlrAI/Phantom' })]);
     expect(await emptyTagBacklogItems({ repo: 'phantom', runsDir, now: NOW })).not.toEqual([]);
   });
 

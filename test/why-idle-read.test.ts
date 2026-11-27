@@ -57,5 +57,10 @@ it('requires structured evidence and rejects malformed nested readings', async (
     const expected = ['Codex: 3 free spots, 0 ready jobs'];
     expect(await check({ ...base, lanes: [lane] })).toEqual(expected);
     expect((await readFleetBrief({ runsDir: dir, now })).whyIdle).toEqual(expected);
+    // Stored lane-open supply suppresses the "0 ready jobs" claim on both read paths.
+    const openLane = { ...lane, pause_new_until: null };
+    expect(await check({ ...base, openRows: 2, lanes: [lane] })).toEqual([]);
+    expect(await check({ ...base, openRows: 2, idleEvidence: { lanes: [openLane], attention: [] } })).toEqual([]);
+    expect(await check({ ...base, openRows: 0, lanes: [lane] })).toEqual(expected);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

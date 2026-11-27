@@ -22,6 +22,13 @@
  * rounded to six decimals, so the two can differ by rounding.
  */
 
+import {
+  CODING_CLI_ULTRA_CONSUMERS,
+  isNonEmptyString,
+  round6,
+  type CodingCliUltraConsumer,
+} from './validation.js';
+
 export const RECORDED_COEFFICIENT_PROVENANCE = {
   sourcePr: 5952,
   sourceSha: '3d6c8fb7c7f7d52655fb3e0f13ef239686f7b886',
@@ -29,12 +36,11 @@ export const RECORDED_COEFFICIENT_PROVENANCE = {
 } as const;
 
 /** Local mirror of the scheduler roles; no import from unmerged work. */
-export const RECORDED_COEFFICIENT_ROLES = ['produce', 'review', 'merge', 'credential', 'orchestration'] as const;
+const RECORDED_COEFFICIENT_ROLES = ['produce', 'review', 'merge', 'credential', 'orchestration'] as const;
 export type RecordedCoefficientRole = (typeof RECORDED_COEFFICIENT_ROLES)[number];
 
 /** Local mirror of the Grok Ultra consumers; `null` means no ultra consumer. */
-export const RECORDED_COEFFICIENT_CONSUMERS = ['orchestrator', 'cloud-agent'] as const;
-export type RecordedCoefficientConsumer = (typeof RECORDED_COEFFICIENT_CONSUMERS)[number];
+export type RecordedCoefficientConsumer = CodingCliUltraConsumer;
 
 export const ROLE_FIT_BONUS = 0.05;
 
@@ -69,11 +75,6 @@ export interface RecordedCoefficientResult {
   provenance: typeof RECORDED_COEFFICIENT_PROVENANCE;
 }
 
-/** Source round6, preserved exactly. */
-function round6(value: number): number {
-  return Math.round(value * 1_000_000) / 1_000_000;
-}
-
 function finiteNumber(name: string, value: unknown): number {
   if (typeof value !== 'number') throw new TypeError(`${name} must be a number; unknown evidence is refused`);
   if (!Number.isFinite(value)) throw new RangeError(`${name} must be finite, got ${String(value)}`);
@@ -89,7 +90,7 @@ function assertRole(role: unknown): RecordedCoefficientRole {
 
 function assertConsumer(consumer: unknown): RecordedCoefficientConsumer | null {
   if (consumer === null) return null;
-  if (!(RECORDED_COEFFICIENT_CONSUMERS as readonly unknown[]).includes(consumer)) {
+  if (!(CODING_CLI_ULTRA_CONSUMERS as readonly unknown[]).includes(consumer)) {
     throw new TypeError(`unknown consumer ${String(consumer)}; use null for no ultra consumer`);
   }
   return consumer as RecordedCoefficientConsumer;
@@ -104,7 +105,7 @@ export function roleFitEligible(role: RecordedCoefficientRole, consumer: Recorde
 
 export function recordedCoefficient(input: RecordedCoefficientInput): RecordedCoefficientResult {
   const learnedValue = finiteNumber('learnedValue', input.learnedValue);
-  if (typeof input.policyId !== 'string' || input.policyId.trim() === '') {
+  if (!isNonEmptyString(input.policyId)) {
     throw new TypeError('policyId must be a non-empty string; unknown policy is refused');
   }
   const monetaryCost = finiteNumber('monetaryCost', input.monetaryCost);

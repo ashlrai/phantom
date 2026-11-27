@@ -153,6 +153,10 @@ attempted before awaiting the channel transport; an interrupted or thrown send
 has an unknown outcome and requires reconciliation before another attempt.
 This avoids replaying an ambiguous external send. A transport must also dedupe
 the stable envelope ID; no local receipt proves exactly-once remote delivery.
+Pending and ambiguous routes surface read-only as `leader-network` items in
+`phm comms inbox` — answered requests, incomplete ingests and unconfirmed
+deliveries each name their own kind — so the backlog is visible without
+taking the writer lock.
 
 A leader tick continues planning regardless of owner presence or digest policy.
 After 72 hours since the last fresh verified message, each verified team owner

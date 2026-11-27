@@ -4,8 +4,8 @@ import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { agentActorForToken } from '../approvals/actor.js';
 import { inviteMember, memberIdForGithubUser } from '../teams/membership.js';
-import { validId, type TeamActor } from '../teams/protocol.js';
-import { teamState, type TeamState } from '../teams/state.js';
+import { validTeamId, type TeamActor } from '../teams/protocol.js';
+import { isOpenHandoff, teamState, type TeamState } from '../teams/state.js';
 import { DEFAULT_TEAM } from '../teams/tools.js';
 import { describeAccessAction } from '../teams/workspace.js';
 import { addTeamPerson, DirectoryInputError, DirectoryRefusedError, OWNER_ONLY, teamDirectory } from '../teams/directory.js';
@@ -34,8 +34,6 @@ const REFUSED = /owner\/admin|only humans|agent process|not accepted|team owner/
 const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const hasExactKeys = (body: Record<string, unknown>, keys: string[]): boolean =>
   Object.keys(body).length === keys.length && keys.every(k => typeof body[k] === 'string');
-// teamDir (store.ts) refuses exactly these spellings; check before a read can throw.
-const validTeamId = (team: unknown): team is string => validId(team) && !team.includes('/') && !team.includes('..');
 // Free text on the wire: secret-scrubbed and bounded; a private path shape becomes ''.
 const wireText = (value: unknown): string =>
   typeof value === 'string' && !PRIVATE_PATH.test(value) ? scrubSecrets(value).slice(0, TEXT_MAX) : '';
@@ -77,7 +75,7 @@ export function createTeamApi(deps: TeamApiDeps = {}): ApiModule {
         holder: c.holder, expiresAt: c.expiresAt,
       })),
       openHandoffs: state.handoffs
-        .filter((h) => h.state !== 'completed' && h.state !== 'declined')
+        .filter(isOpenHandoff)
         .map((h) => ({ id: h.id, title: wireText(h.title), state: h.state, from: h.from, assignee: h.assignee ?? h.to ?? '' })),
       pendingApprovals: state.approvals
         .filter((a) => a.state === 'pending')

@@ -1,5 +1,6 @@
 /** Local companion coordination evidence. No record authorizes provider contact. */
 import { createHash } from 'node:crypto';
+import type { ProactiveResourceIdentity } from './resource-evidence-types.js';
 import type { ProactiveIdentity } from './types.js';
 import { canonicalJson } from './validation.js';
 
@@ -46,8 +47,7 @@ export interface CompanionRecord {
   schemaVersion: 1; revision: number; previousDigest: string | null; commandId: string;
   requestDigest: string; taskId: string; state: CompanionLedger; digest: string;
 }
-export interface CompanionCommandBase { commandId: string; expectedRevision: number }
-export type CompanionCommand = CompanionCommandBase & (
+export type CompanionCommand = { commandId: string; expectedRevision: number } & (
   | { kind: 'create'; task: CompanionTaskInput }
   | { kind: 'assign'; taskId: string; assignee: CompanionIdentity; ownerId: string; leaseMs: number }
   | { kind: 'handoff'; taskId: string; attemptId: string; epoch: number; ownerId: string }
@@ -91,7 +91,15 @@ export function companionTextDigest(text: string): string { return createHash('s
 export function companionTaskId(input: Pick<CompanionTaskInput, 'tenantId' | 'projectBindingId' | 'taskKey'>): string {
   return `ct_${companionDigest([input.tenantId, input.projectBindingId, input.taskKey]).slice(0, 32)}`;
 }
-export interface ProactiveIdentityLike { provider: string; accountId: string | null; agentId: string | null }
-export function companionIdentityEqual(left: ProactiveIdentityLike, right: ProactiveIdentityLike): boolean {
+export function companionIdentityEqual(left: ProactiveResourceIdentity, right: ProactiveResourceIdentity): boolean {
   return left.provider === right.provider && left.accountId === right.accountId && left.agentId === right.agentId;
+}
+export function isTerminalAttemptContact(contact: string): boolean {
+  return contact === 'proved-unstarted' || contact === 'cancel-confirmed';
+}
+export function isCanceledBeforeIntent(
+  attempt: Pick<CompanionAttempt, 'contact' | 'handoffAt' | 'cancelRequestedAt' | 'providerRunId'>,
+): boolean {
+  return attempt.contact === 'not-contacted' && attempt.handoffAt === null &&
+    attempt.cancelRequestedAt !== null && attempt.providerRunId === null;
 }

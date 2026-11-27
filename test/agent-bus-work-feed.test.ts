@@ -453,6 +453,51 @@ describe('work-feed view filters', () => {
     expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['room-a']);
   });
 
+  it('keeps jobs announced to group:<room>:<topic> under the exact topic component', () => {
+    const result = okResult([
+      viewJob({ id: 'release-general', to: 'group:release:general', updatedAt: 500 }),
+      viewJob({ id: 'release-deploy', to: 'group:release:deploy', updatedAt: 400 }),
+      viewJob({ id: 'ops-deploy', to: 'group:ops:deploy', updatedAt: 300 }),
+      viewJob({ id: 'bare-room', to: 'group:release', updatedAt: 200 }),
+      viewJob({ id: 'deep-label', to: 'group:release:deploy:extra', updatedAt: 150 }),
+      viewJob({ id: 'empty-room', to: 'group::deploy', updatedAt: 100 }),
+      viewJob({ id: 'bad-room', to: 'group:Release:deploy', updatedAt: 90 }),
+      viewJob({ id: 'direct', to: 'agent:nova', updatedAt: 80 }),
+      viewJob({ id: 'leaders', to: 'leaders', updatedAt: 70 }),
+    ]);
+    // The topic component matches across every room — the same
+    // groupAddressTopicOf parse work next --topic and comms bus next --topic
+    // apply on the raw routing label.
+    expect(ids(projectBusWorkFeedView(result, { topic: 'deploy' }))).toEqual(['release-deploy', 'ops-deploy']);
+    expect(ids(projectBusWorkFeedView(result, { topic: 'general' }))).toEqual(['release-general']);
+    expect(ids(projectBusWorkFeedView(result, { topic: 'ghost' }))).toEqual([]);
+    // Only a well-formed two-component group address carries a topic: a bare
+    // group:<room>, a deeper label, an empty or malformed component and every
+    // non-group label resolve to no topic and never match.
+    for (const id of ['bare-room', 'deep-label', 'empty-room', 'bad-room', 'direct', 'leaders']) {
+      for (const topic of ['deploy', 'general', 'release', 'extra']) {
+        expect(ids(projectBusWorkFeedView(result, { topic }))).not.toContain(id);
+      }
+    }
+    // The match is exact and case-sensitive like every other feed filter.
+    expect(ids(projectBusWorkFeedView(result, { topic: 'Deploy' }))).toEqual([]);
+    expect(ids(projectBusWorkFeedView(result, { topic: 'deploy2' }))).toEqual([]);
+    // It composes with --channel into one room AND one topic, and holds
+    // still regroup under the shown jobs only.
+    expect(ids(projectBusWorkFeedView(result, { channel: 'release', topic: 'deploy' }))).toEqual(['release-deploy']);
+    expect(ids(projectBusWorkFeedView(result, { channel: 'ops', topic: 'deploy' }))).toEqual(['ops-deploy']);
+    expect(ids(projectBusWorkFeedView(result, { channel: 'release', topic: 'general' }))).toEqual(['release-general']);
+    const claims: BusWorkFeedClaims = { source: 'available', truncated: false, holds: [
+      { jobId: 'release-deploy', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:x' },
+      { jobId: 'ops-deploy', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:y' },
+    ] };
+    const view = projectBusWorkFeedView(okResult(result.status === 'ok' ? result.jobs : [], claims), { topic: 'deploy' });
+    expect(ids(view)).toEqual(['release-deploy', 'ops-deploy']);
+    expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['release-deploy', 'ops-deploy']);
+  });
+
   it('keeps jobs whose newest work.result citation carries the --result outcome', () => {
     const report = (outcome: 'reserved' | 'admitted' | 'complete' | 'failed') =>
       ({ id: 'm-r', from: 'agent:worker', outcome, receivedAt: 150 });

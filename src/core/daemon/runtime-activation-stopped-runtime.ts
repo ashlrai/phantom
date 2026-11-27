@@ -72,7 +72,7 @@ function launchdAbsent(output: string): boolean {
   return /(?:could not find (?:specified )?service|service .* not found|no such process|not loaded)/iu.test(output);
 }
 
-export function observeLaunchdStopped(): RuntimeActivationStoppedLaunchdState {
+function observeLaunchdStopped(): RuntimeActivationStoppedLaunchdState {
   const uid = typeof process.getuid === 'function' ? process.getuid() : userInfo().uid;
   const domain = `gui/${uid}`;
   const loaded = launchdCommand(['print', `${domain}/ai.ashlr.daemon`]);

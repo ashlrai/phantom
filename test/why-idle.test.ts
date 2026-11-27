@@ -32,3 +32,8 @@ it('returns no reasons for full capacity, unknown readings, expired pauses or qu
   expect(whyIdle({ at, lanes: [{ ...lane, queuedReady: 1, pause_new_until: Date.parse(at) / 1000 - 1 }] })).toEqual([]);
   expect(whyIdle({ at })).toEqual([]);
 });
+it('does not claim zero ready jobs while lane-open supply waits', () => {
+  expect(whyIdle({ at, lanes: [lane], openRows: 3 })).toEqual([]);
+  expect(whyIdle({ at, lanes: [lane], openRows: 0 })).toEqual(['Codex: 3 free spots, 0 ready jobs']);
+  expect(whyIdle({ at, lanes: [lane], openRows: null })).toEqual(['Codex: 3 free spots, 0 ready jobs']);
+});

@@ -366,7 +366,7 @@ describe('M566 Execution Capacity Lease V1', () => {
     };
     const entry = fixture(true, mutableVerifier);
     mutableVerifier.verify = () => true;
-    const unsigned = unsignedEvidence(digest('forged'));
+    const unsigned = unsignedEvidence(digest('forged'), 1, 2);
     const forged: ExecutionCapacityEvidenceEnvelopeV1 = {
       ...unsigned,
       evidenceDigest: digestExecutionCapacityEvidenceV1(unsigned),

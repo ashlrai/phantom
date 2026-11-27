@@ -133,6 +133,9 @@ export interface DecideOptions<T> {
   readonly cacheSalt?: string;
 }
 
+/** Per-call options shared by decision site wrappers (transport, gate override, cache). */
+export type DecisionCallOptions = Omit<DecideOptions<unknown>, 'fallback' | 'interpret' | 'escalateOnly'>;
+
 /** One registry entry. */
 export interface DecisionKindSpec {
   readonly kind: DecisionKind;

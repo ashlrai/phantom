@@ -47,18 +47,22 @@ export function rankLanes(tier: EngineTier, resourceSnapshot: LaneResourceSnapsh
     if (!Number.isSafeInteger(slots) || slots! <= 0 || !route || route.tier !== tier ||
         route.backend !== LANE_BACKENDS[pool] || !view || view.mode === 'held') continue;
     const buckets = Object.values(view.buckets);
-    const observed = buckets.filter(b => b.state === 'observed');
+    const observed = buckets.filter(b => b.state === 'observed').map(bucket => ({
+      bucket,
+      observedAt: bucket.timestamp === null ? NaN : Date.parse(bucket.timestamp),
+      resetAt: bucket.resetAt === null ? null : Date.parse(bucket.resetAt),
+    }));
     // Follow pool-budget's tightest observed bucket; never assume a refill after reset.
-    if (!observed.length || buckets.some(b => b.state === 'reset-pending') || observed.some(b =>
-      typeof b.remaining !== 'number' || !Number.isFinite(b.remaining) || b.remaining <= 0 ||
-      !b.timestamp || !Number.isFinite(Date.parse(b.timestamp)) || Date.parse(b.timestamp) > now ||
-      b.resetAt !== null && (!Number.isFinite(Date.parse(b.resetAt)) || Date.parse(b.resetAt) <= now))) continue;
-    const resets = observed.flatMap(b => b.resetAt === null ? [] : [Date.parse(b.resetAt)]);
-    const forecasts = observed.flatMap(b => {
-      const at = b.projectedExhaustion && Date.parse(b.projectedExhaustion);
-      const observedAt = b.timestamp && Date.parse(b.timestamp);
-      return typeof at === 'number' && Number.isFinite(at) && typeof observedAt === 'number' &&
-        now - observedAt <= MAX_OBSERVATION_AGE_MS && (b.resetAt === null || at < Date.parse(b.resetAt)) ? [at] : [];
+    if (!observed.length || buckets.some(b => b.state === 'reset-pending') || observed.some(({ bucket, observedAt, resetAt }) =>
+      bucket.remaining === null || !Number.isFinite(bucket.remaining) || bucket.remaining <= 0 ||
+      !Number.isFinite(observedAt) || observedAt > now ||
+      (resetAt !== null && (!Number.isFinite(resetAt) || resetAt <= now)) ||
+      (now - observedAt > MAX_OBSERVATION_AGE_MS && !(bucket.source === 'manual' && resetAt !== null)))) continue;
+    const resets = observed.flatMap(({ resetAt }) => resetAt === null ? [] : [resetAt]);
+    const forecasts = observed.flatMap(({ bucket, observedAt, resetAt }) => {
+      const at = bucket.projectedExhaustion === null ? NaN : Date.parse(bucket.projectedExhaustion);
+      return Number.isFinite(at) && now - observedAt <= MAX_OBSERVATION_AGE_MS &&
+        (resetAt === null || at < resetAt) ? [at] : [];
     });
     const exhaustion = forecasts.length ? Math.min(...forecasts) : null;
     ranked.push({ pool, backend: route.backend, availableSlots: slots!,

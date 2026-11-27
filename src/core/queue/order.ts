@@ -7,7 +7,10 @@
  * that are waiting to launch and edits them:
  *   top   move a job's row to the front;
  *   lane  rewrite the row's lane column and its spec's preferred_lane — the
- *         work market prefers the spec hint, so both must move together;
+ *         work market prefers the spec hint, so both must move together. A
+ *         spec-less row's requirements live in its router-queue.md envelope;
+ *         the steer materializes that spec with the new preferred_lane, the
+ *         same cell the dispatcher's routed pass writes each tick;
  *   drop  take the row out, after copying it to queue/dropped.tsv.
  *
  * EVERY WRITE holds queue/ready.lock, the flock(2) lock dispatchd.py,
@@ -30,7 +33,8 @@ import { lstat, open, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DROP_JOB_LANES } from '../fleet/drop-job-writer.js';
 import { defaultRunsDir } from '../fleet/landed-closes-read.js';
-import { readySpecCell } from '../fleet/unfed-market.js';
+import { readSource } from '../fleet/runs-parked-queue.js';
+import { readyEnvelopeSpec, readyMarketLine, readySpecCell } from '../fleet/unfed-market.js';
 import { parseReadyRows, readReadyText, type ReadyRow } from '../fleet/ready-row-edit.js';
 import { readLaneTargets } from '../fleet/runs-lane-targets.js';
 import { replaceQueueText } from './dedupe.js';
@@ -39,6 +43,9 @@ import { ROUTER_LINE, appendGuarded, cycleOf, eventClock, parked, repoKey, super
 
 export const READY_BACKUP = 'ready.tsv.bak';
 export const DROP_ARCHIVE = 'dropped.tsv';
+// router-queue.md envelopes resolve spec-less ready rows' requirements; the
+// same 32 MiB bound the unfed report and queue supply read it under.
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 export class QueueSteerError extends Error {
   readonly status: 404 | 422 | 503;
@@ -117,6 +124,14 @@ export async function readQueueOrder(opts: QueueOrderOptions = {}): Promise<Queu
   const runsDir = opts.runsDir ?? defaultRunsDir(), queueDir = join(runsDir, 'queue'), now = (opts.now ?? (() => new Date()))();
   const rows = parseReadyRows(await readReadyText(join(queueDir, 'ready.tsv')).catch(missing));
   const live = rows.filter(row => !parked(row));
+  // A spec-less row's lane hint lives in its router-queue.md envelope; read it
+  // once, and only when such a row is queued. Missing or over-bound leaves the
+  // lane column, the market's own fallback.
+  let routerQueueText: string | null = null;
+  if (live.some(row => row.raw.split('\t').length === 5)) {
+    const source = await readSource(join(queueDir, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false);
+    routerQueueText = source.state === 'healthy' ? source.text : null;
+  }
   const plan = await supersedeQueue({ runsDir }).catch(() => null);
   const newer = new Map(plan?.superseded.map(job => [`${job.repo}\n${job.id}`, job.supersededBy]));
   // A job's age is the age of its prompt, which the producer writes as it queues the row.
@@ -125,7 +140,7 @@ export async function readQueueOrder(opts: QueueOrderOptions = {}): Promise<Queu
     try { return Math.max(0, Math.round((now.getTime() - (await lstat(path)).mtimeMs) / 1000)); } catch { return null; }
   };
   const jobs = await Promise.all(live.map(async (row, index) => ({
-    position: index + 1, id: row.id, repo: row.repo, lane: row.lane, tier: row.tier, ageSeconds: await age(row.promptPath),
+    position: index + 1, id: row.id, repo: row.repo, lane: marketHint(row, routerQueueText) ?? row.lane, tier: row.tier, ageSeconds: await age(row.promptPath),
     family: cycleOf(row.id)?.family ?? null, supersededBy: newer.get(`${repoKey(row.repo)}\n${row.id}`) ?? null,
   })));
   return { schema: 'queue.order.v1', version: 1, generatedAt: now.toISOString(), count: jobs.length, parked: rows.length - live.length, lanes: await openLanes(runsDir), jobs };
@@ -135,13 +150,16 @@ export async function readQueueOrder(opts: QueueOrderOptions = {}): Promise<Queu
  * The lane the work market prefers for this ready row: the requirements
  * cell's `preferred_lane` when the row carries a spec — explicit `null` is
  * the open hint — else the lane column, the fallback work_market.requirements
- * applies when the key is absent. Null when the hint is open or the row has
- * no lane at all. A spec the market would reject still reports its declared
- * preference: the steer rewrites that cell, not the market's verdict. Spec-less
- * rows read column-only — their router-queue.md envelope is transient, since
- * the dispatcher materializes it into the spec cell on the next tick.
+ * applies when the key is absent. A spec-less row resolves its spec from the
+ * matching queue/router-queue.md `(attrs)` envelope exactly like the
+ * dispatcher's routed pass: the envelope's lane attr is the hint and the lane
+ * column is never consulted, an envelope naming no lane attr is lane-open,
+ * and a row the market rejects (bad job id, tier or lane cell, malformed
+ * envelope) reports its column. Null when the hint is open or the row has no
+ * lane at all. A spec the market would reject still reports its declared
+ * preference: the steer rewrites that cell, not the market's verdict.
  */
-function marketHint(row: ReadyRow): string | null {
+function marketHint(row: ReadyRow, routerQueue?: string | null): string | null {
   const cells = row.raw.split('\t');
   if (cells.length > 5) {
     const spec = readySpecCell(cells[5]);
@@ -149,13 +167,16 @@ function marketHint(row: ReadyRow): string | null {
       const value = spec.preferred_lane;
       return typeof value === 'string' ? value : null;
     }
+  } else if (cells.length === 5) {
+    const market = readyMarketLine(row.raw, routerQueue);
+    if (market !== null && market !== 'invalid') return market.hint;
   }
   const lane = cells[2] ?? '';
   return lane === '' ? null : lane;
 }
 
 /** Pure: the rows after the action, or null when the queue already is the way the action wants it. */
-export function planQueueAction(rows: readonly ReadyRow[], req: QueueActionRequest): ReadyRow[] | null {
+export function planQueueAction(rows: readonly ReadyRow[], req: QueueActionRequest, routerQueue?: string | null): ReadyRow[] | null {
   const mine = rows.filter(row => row.id === req.id && !parked(row));
   if (!mine.length) return null;
   const rest = rows.filter(row => !mine.includes(row));
@@ -165,7 +186,7 @@ export function planQueueAction(rows: readonly ReadyRow[], req: QueueActionReque
   // The market prefers a row's spec preferred_lane over the lane column, so a
   // row is "already on" the lane only when both agree — a spec pinning another
   // lane still needs the rewrite even when its column already says it.
-  if (mine.every(row => row.lane === lane && marketHint(row) === lane)) return null;
+  if (mine.every(row => row.lane === lane && marketHint(row, routerQueue) === lane)) return null;
   // The dispatcher can hand back the old row beside the moved one; moving both leaves one copy.
   const seen = new Set<string>();
   return rows.flatMap(row => {
@@ -180,6 +201,20 @@ export function planQueueAction(rows: readonly ReadyRow[], req: QueueActionReque
       if (spec !== null && spec !== 'invalid' && spec.preferred_lane !== lane) {
         spec.preferred_lane = lane;
         cells[5] = JSON.stringify(spec) + (cells[5]!.endsWith('\r') ? '\r' : '');
+      }
+    } else if (cells.length === 5) {
+      // A spec-less row's requirements live in its router-queue.md envelope,
+      // which the market reads instead of the lane column: a column-only
+      // rewrite would leave the job on the envelope's lane. Materialize the
+      // envelope spec with the new preferred_lane — the same cell the
+      // dispatcher's routed pass writes on its next tick — so the hint moves
+      // with the column. No matching envelope means the column is the hint.
+      const spec = readyEnvelopeSpec(routerQueue, row.id);
+      if (spec !== null && spec !== 'invalid') {
+        spec.preferred_lane = lane;
+        const tail = cells[4]!.endsWith('\r') ? '\r' : '';
+        if (tail) cells[4] = cells[4]!.slice(0, -1);
+        cells[5] = JSON.stringify(spec) + tail;
       }
     }
     const raw = cells.join('\t');
@@ -236,13 +271,24 @@ export async function steerQueue(req: QueueActionRequest, opts: QueueOrderOption
     try {
       const text = await readReadyText(path).catch(missing);
       const rows = parseReadyRows(text), live = rows.filter(row => !parked(row)), at = live.findIndex(row => row.id === req.id);
+      // Spec-less rows resolve their lane hint through router-queue.md
+      // envelopes; read it once per pass, only when a hint or a lane steer
+      // needs it. Missing or over-bound leaves the lane column.
+      let routerQueueText: string | null | undefined;
+      const routerQueue = async (): Promise<string | null> => {
+        if (routerQueueText === undefined) {
+          const source = await readSource(join(queueDir, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false);
+          routerQueueText = source.state === 'healthy' ? source.text : null;
+        }
+        return routerQueueText;
+      };
       if (!from) {
         if (at < 0) throw new QueueSteerError('job-not-found');
         // Report the lane the market actually prefers, not just the column —
-        // a spec pinning another lane is the lane the job was really on.
-        from = { position: at + 1, of: live.length, lane: marketHint(live[at]!) ?? live[at]!.lane };
+        // a spec or envelope pinning another lane is the lane the job was on.
+        from = { position: at + 1, of: live.length, lane: marketHint(live[at]!, await routerQueue()) ?? live[at]!.lane };
       }
-      const next = planQueueAction(rows, req);
+      const next = planQueueAction(rows, req, req.action === 'lane' ? await routerQueue() : null);
       if (next === null) { verified = writes ? true : null; break; }
       planned = true;
       if (dryRun) break;

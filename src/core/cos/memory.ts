@@ -25,7 +25,9 @@ function assertClean(...parts: string[]): void {
   catch { fail('Secret-shaped memory refused. Store credentials in Phantom Secrets and refer to them by binding name only.'); }
 }
 
-const isKind = (v: unknown): v is MemoryKind => (MEMORY_KINDS as readonly string[]).includes(v as string);
+export function isMemoryKind(value: unknown): value is MemoryKind {
+  return typeof value === 'string' && (MEMORY_KINDS as readonly string[]).includes(value);
+}
 
 function encode(e: MemoryEntry): string {
   return `---\nid: ${e.id}\nkind: ${e.kind}\nsource: ${e.source}\nupdated: ${e.updated}\n---\n${e.text}\n`;
@@ -42,7 +44,7 @@ function decode(raw: string, expectedId: string): MemoryEntry | null {
   }
   const { id, kind, source, updated } = fields;
   const text = m[2]!;
-  if (id !== expectedId || !isKind(kind) || source === undefined || !updated || !text || text.length > MAX_TEXT || Number.isNaN(Date.parse(updated))) return null;
+  if (id !== expectedId || !isMemoryKind(kind) || source === undefined || !updated || !text || text.length > MAX_TEXT || Number.isNaN(Date.parse(updated))) return null;
   try { assertMetadata(raw); } catch { return null; }
   return { id, kind, source, updated, text };
 }
@@ -75,7 +77,7 @@ export async function listMemory(opts: { kind?: MemoryKind; home?: string } = {}
 
 /** Entry ids derive from kind and text, so re-adding identical memory refreshes it instead of duplicating. */
 export async function addMemory(input: { kind: string; text: string; source?: string; id?: string }, opts: { home?: string; now?: Date } = {}): Promise<MemoryEntry> {
-  if (!isKind(input.kind)) fail(`Unknown kind. Use ${MEMORY_KINDS.join(', ')}.`);
+  if (!isMemoryKind(input.kind)) fail(`Unknown kind. Use ${MEMORY_KINDS.join(', ')}.`);
   const text = input.text.trim();
   const source = (input.source ?? 'cli').trim();
   if (!text) fail('Memory text is empty. Supply the preference, doctrine or fact to remember.');

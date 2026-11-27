@@ -447,6 +447,42 @@ describe('phm agents bus (unified)', () => {
     expect(human).toContain('kindless follow-up');
   });
 
+  it('filters the reply chain members through the shared bus-read flags', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'root question', '--priority', 'P1',
+      '--id', 'f-1'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'nova', '--to', 'atlas', '--text', 'the alpha answer',
+      '--reply-to', 'f-1', '--id', 'f-2'])).json).toMatchObject({ status: 'posted' });
+    expect(appendBusInbox({ id: 'f-3', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { inReplyTo: 'f-2', kind: 'context', text: 'kindless follow-up', thread: 'rq-7' } }, { root }).status).toBe('posted');
+
+    const ids = (json: { messages: Array<{ envelope: { id: string } }> }) => json.messages.map(m => m.envelope.id);
+    // The shared filters narrow members; the chain and its honesty fields stay whole.
+    expect(ids((await run(['thread', 'f-1', '--from', 'nova'])).json)).toEqual(['f-2']);
+    expect(ids((await run(['thread', 'f-1', '--exclude-from', 'atlas'])).json)).toEqual(['f-2']);
+    expect(ids((await run(['thread', 'f-1', '--to', 'atlas'])).json)).toEqual(['f-2']);
+    expect(ids((await run(['thread', 'f-1', '--priority', 'P3'])).json)).toEqual(['f-3']);
+    expect(ids((await run(['thread', 'f-1', '--contains', 'ALPHA'])).json)).toEqual(['f-2']);
+    expect(ids((await run(['thread', 'f-1', '--in-reply-to', 'f-1'])).json)).toEqual(['f-2']);
+    expect(ids((await run(['thread', 'f-1', '--in-reply-to', 'f-2'])).json)).toEqual(['f-3']);
+    expect(ids((await run(['thread', 'f-1', '--thread', 'rq-7'])).json)).toEqual(['f-3']);
+    expect(ids((await run(['thread', 'f-1', '--body-kind', 'note'])).json)).toEqual(['f-1', 'f-2']);
+    expect(ids((await run(['thread', 'f-1', '--body-kind', 'context'])).json)).toEqual(['f-3']);
+    expect(ids((await run(['thread', 'f-1', '--from', 'nova', '--priority', 'P2'])).json)).toEqual(['f-2']);
+    // A filter excluding every member keeps rootFound — never a proven miss.
+    const none = await run(['thread', 'f-1', '--priority', 'P0']);
+    expect(none.code).toBe(0);
+    expect(none.json).toMatchObject({ rootFound: true, messages: [], complete: true });
+    // Enum and time grammar errors are usage errors; label and contains
+    // grammar errors are the core invalid read, the inbox convention.
+    expect(await run(['thread', 'f-1', '--priority', 'P9'])).toMatchObject({ code: 2 });
+    expect(await run(['thread', 'f-1', '--since', 'whenever'])).toMatchObject({ code: 2 });
+    expect(await run(['thread', 'f-1', '--channel', 'Bad Name'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['thread', 'f-1', '--from', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['thread', 'f-1', '--contains', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('annotates work envelope lookups with the live feed job', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--job', 'RQ-CLI-SHOW', '--title', 'CLI job', '--repo', 'ashlrai/phantom',
@@ -1420,6 +1456,44 @@ describe('phm agents bus (unified)', () => {
     }
   });
 
+  it('filters the work feed by --topic on the announcement group topic', async () => {
+    const spy = vi.spyOn(Date, 'now');
+    let clock = 1_800_000_000_000;
+    spy.mockImplementation(() => clock);
+    try {
+      expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+      for (const [job, to, id] of [
+        ['RQ-TOPIC-A', 'group:release:deploy', 'tp-a'],
+        ['RQ-TOPIC-B', 'group:ops:deploy', 'tp-b'],
+        ['RQ-TOPIC-C', 'group:release:general', 'tp-c'],
+        ['RQ-TOPIC-D', 'group:release', 'tp-d'],
+        ['RQ-TOPIC-E', 'leaders', 'tp-e'],
+      ] as const) {
+        clock += 1_000;
+        expect((await run(['work', 'post', '--from', 'atlas', '--job', job, '--title', `${job} title`,
+          '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--to', to, '--id', id])).json)
+          .toMatchObject({ status: 'posted' });
+      }
+      const ids = (feed: { json: { jobs: { id: string }[] } }) => feed.json.jobs.map(job => job.id);
+      // The topic component matches across every room — the same
+      // groupAddressTopicOf parse work next --topic applies.
+      expect(ids(await run(['work', 'feed', '--topic', 'deploy']))).toEqual(['RQ-TOPIC-B', 'RQ-TOPIC-A']);
+      expect(ids(await run(['work', 'feed', '--topic', 'general']))).toEqual(['RQ-TOPIC-C']);
+      expect(ids(await run(['work', 'feed', '--topic', 'ghost']))).toEqual([]);
+      // A bare group:<room> and a non-group label carry no topic and never match.
+      expect(ids(await run(['work', 'feed', '--topic', 'release']))).toEqual([]);
+      // The filter composes with --channel into one room AND one topic.
+      expect(ids(await run(['work', 'feed', '--channel', 'release', '--topic', 'deploy']))).toEqual(['RQ-TOPIC-A']);
+      expect(ids(await run(['work', 'feed', '--channel', 'ops', '--topic', 'deploy']))).toEqual(['RQ-TOPIC-B']);
+      // A value outside the channel-name grammar is a usage error, never a guessed match.
+      for (const bad of ['Has Space', 'UPPER', 'a:b']) {
+        expect(await run(['work', 'feed', '--topic', bad])).toMatchObject({ code: 2 });
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('pages the work feed with --limit and reports matched/omitted', async () => {
     const spy = vi.spyOn(Date, 'now');
     let clock = 1_800_000_000_000;
@@ -1504,6 +1578,104 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('RQ-CLI-CLAIM(queued)');
   });
 
+  it('claims the next claimable work-feed job in one step', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-NEXT-A', '--title', 'Older job',
+      '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-NEXT-A', '--to', 'agent:atlas', '--id', 'cn-a'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-NEXT-B', '--title', 'Newer job',
+      '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-NEXT-B', '--claim', 'repo:ashlrai/phantom',
+      '--to', 'agent:atlas', '--id', 'cn-b'])).json).toMatchObject({ status: 'posted' });
+
+    // The newest open job's declared queue key is claimed atomically; --owner
+    // defaults to PHM_AGENT_ID and the positional agent scopes the to-filter.
+    const claimed = await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '600000', '--owner', 'worker-1'],
+      { PHM_AGENT_ID: 'atlas' });
+    expect(claimed.code).toBe(0);
+    expect(claimed.json).toMatchObject({ status: 'acquired', attempted: 1,
+      job: { id: 'RQ-NEXT-B', owner: 'agent:atlas', status: 'queued' },
+      claim: { claimKey: 'queue:RQ-NEXT-B', owner: 'worker-1' } });
+    expect(claimed.json.claim.token).toMatch(/^[a-f0-9]{64}$/);
+    // RQ-NEXT-B declared a second key, so holding its queue key leaves the
+    // job claimable: the next pass takes the provably-free sibling in the
+    // same step, and only a fully-held job stops being a candidate.
+    const sibling = await run(['work', 'claim-next', '--lease-ms', '60000'], { PHM_AGENT_ID: 'atlas' });
+    expect(sibling.code).toBe(0);
+    expect(sibling.json).toMatchObject({ status: 'acquired', attempted: 1,
+      job: { id: 'RQ-NEXT-B' }, claim: { claimKey: 'repo:ashlrai/phantom' } });
+    // The new hold joins the feed read like any other claim.
+    const feed = await run(['work', 'feed', '--claims']);
+    expect(feed.json.claims.holds).toEqual(expect.arrayContaining([
+      expect.objectContaining({ jobId: 'RQ-NEXT-B', claimKey: 'queue:RQ-NEXT-B', owner: 'worker-1' }),
+      expect.objectContaining({ jobId: 'RQ-NEXT-B', claimKey: 'repo:ashlrai/phantom' })]));
+
+    // The next pass claims the remaining job; once both are fully held the
+    // well reads empty with the observed candidate/held totals.
+    const second = await run(['work', 'claim-next', '--lease-ms', '60000'], { PHM_AGENT_ID: 'atlas' });
+    expect(second.code).toBe(0);
+    expect(second.json).toMatchObject({ status: 'acquired', job: { id: 'RQ-NEXT-A' } });
+    const drained = await run(['work', 'claim-next', '--lease-ms', '60000'], { PHM_AGENT_ID: 'atlas' });
+    expect(drained.code).toBe(0);
+    expect(drained.json).toMatchObject({ status: 'empty', candidates: 2, held: 2 });
+
+    // Usage errors exit 2; a filtered miss is an honest empty, not a guess.
+    expect(await run(['work', 'claim-next', '--lease-ms', '60000'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '60000', '--job', 'RQ-GONE']))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+
+    // Human output names the job, the claim and the attempt count.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'claim-next', 'agent:atlas', '--lease-ms', '60000',
+      '--owner', 'worker-2', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('empty candidates=');
+  });
+
+  it('excludes jobs the named announcer posted on work claim-next', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'relay'])).json).toMatchObject({ status: 'created' });
+    // relay announces the older job, atlas the newer — both addressed to
+    // agent:atlas, so only the announcer exclusion picks between them.
+    expect((await run(['work', 'post', '--from', 'relay', '--job', 'RQ-X-OLD', '--title', 'Relay job',
+      '--repo', 'ashlrai/phantom', '--provider', 'devin', '--claim', 'queue:RQ-X-OLD',
+      '--to', 'agent:atlas', '--id', 'xn-old'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-X-NEW', '--title', 'Atlas job',
+      '--repo', 'ashlrai/phantom', '--provider', 'devin', '--claim', 'queue:RQ-X-NEW',
+      '--to', 'agent:atlas', '--id', 'xn-new'])).json).toMatchObject({ status: 'posted' });
+
+    // --exclude-announcer drops atlas's newer job, so relay's older one claims.
+    const claimed = await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '600000',
+      '--owner', 'worker-1', '--exclude-announcer', 'atlas'], { PHM_AGENT_ID: 'atlas' });
+    expect(claimed.code).toBe(0);
+    expect(claimed.json).toMatchObject({ status: 'acquired', job: { id: 'RQ-X-OLD' },
+      claim: { claimKey: 'queue:RQ-X-OLD', owner: 'worker-1' } });
+
+    // Excluding atlas again leaves only relay's now-held job as a candidate —
+    // atlas's open job is dropped, so the well reads empty with the observed
+    // held count, never a guessed claim.
+    const drained = await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '60000',
+      '--exclude-announcer', 'atlas'], { PHM_AGENT_ID: 'atlas' });
+    expect(drained.code).toBe(0);
+    expect(drained.json).toMatchObject({ status: 'empty', candidates: 1, held: 1 });
+
+    // A malformed announcer ref is a usage error, and the agent:<handle>
+    // spelling resolves to the same identity — it drops atlas's open job
+    // exactly like the bare handle did, leaving relay's held job the sole
+    // candidate.
+    expect(await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '60000',
+      '--exclude-announcer', 'bad announcer'])).toMatchObject({ code: 2 });
+    const byAlias = await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '60000',
+      '--exclude-announcer', 'agent:atlas'], { PHM_AGENT_ID: 'atlas' });
+    expect(byAlias.code).toBe(0);
+    expect(byAlias.json).toMatchObject({ status: 'empty', candidates: 1, held: 1 });
+
+    // --announcer keeps only the named announcer's jobs — the flag the usage
+    // line always documented but the parser never accepted until now.
+    const byAnnouncer = await run(['work', 'claim-next', 'agent:atlas', '--lease-ms', '60000',
+      '--announcer', 'atlas'], { PHM_AGENT_ID: 'atlas' });
+    expect(byAnnouncer.code).toBe(0);
+    expect(byAnnouncer.json).toMatchObject({ status: 'acquired', job: { id: 'RQ-X-NEW' } });
+  });
+
   it('claims the next pending work envelope addressed to an agent', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
@@ -1566,6 +1738,55 @@ describe('phm agents bus (unified)', () => {
     expect(emptyText.join('\n')).toContain('empty candidates=2 held=2');
   });
 
+  it('waits for claimable work on work next and work claim-next', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    const env = { PHM_AGENT_ID: 'atlas' };
+
+    // A dry well waits honestly to timeout on both claim surfaces — the
+    // unified spelling of fleet bus-wait-claim, exit 1 like every refusal.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--wait-ms', '30'], env))
+      .toMatchObject({ code: 1, json: { status: 'timeout' } });
+    expect(await run(['work', 'claim-next', '--lease-ms', '60000', '--wait-ms', '30'], env))
+      .toMatchObject({ code: 1, json: { status: 'timeout' } });
+
+    // Work landing mid-wait claims on the next poll, under the same filters.
+    const envelopeWait = run(['work', 'next', '--lease-ms', '60000', '--wait-ms', '5000',
+      '--contains', 'waited-for'], env);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(appendBusInbox({ id: 'ww-env', from: 'agent:nova', to: 'agent:atlas', priority: 'P2',
+      ttl: 3_600_000, body: { kind: 'work', text: 'the waited-for fix' } }, { root }).status).toBe('posted');
+    expect((await envelopeWait).json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'ww-env' } } });
+
+    const jobWait = run(['work', 'claim-next', '--lease-ms', '60000', '--wait-ms', '5000'], env);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-WAIT-CLI', '--title', 'Waited job',
+      '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-WAIT-CLI', '--to', 'agent:atlas', '--id', 'ww-job'], env)).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await jobWait).json).toMatchObject({ status: 'acquired', job: { id: 'RQ-WAIT-CLI' },
+      claim: { claimKey: 'queue:RQ-WAIT-CLI' } });
+
+    // A filtered wait never widens: the job above is held, and a wait scoped
+    // to a different job id still times out rather than claiming it.
+    expect(await run(['work', 'claim-next', '--lease-ms', '60000', '--wait-ms', '30',
+      '--job', 'RQ-NEVER'], env)).toMatchObject({ code: 1, json: { status: 'timeout' } });
+
+    // Malformed waits are usage errors before any poll; the core bound is
+    // 1..300000 like fleet bus-wait-claim.
+    for (const bad of ['0', '300001', '1.5', 'abc']) {
+      expect(await run(['work', 'next', '--lease-ms', '60000', '--wait-ms', bad], env))
+        .toMatchObject({ code: 2 });
+      expect(await run(['work', 'claim-next', '--lease-ms', '60000', '--wait-ms', bad], env))
+        .toMatchObject({ code: 2 });
+    }
+
+    // Human output names the wait's own end state.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'claim-next', '--lease-ms', '60000', '--wait-ms', '30',
+      '--job', 'RQ-NEVER', '--root', root], t => text.push(t), () => {}, env)).toBe(1);
+    expect(text.join('\n')).toContain('timeout');
+  });
+
   it('filters the next-work claim by contains, since and priority', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     const post = (id: string, priority: BusEnvelope['priority'], body: unknown): void => {
@@ -1622,6 +1843,36 @@ describe('phm agents bus (unified)', () => {
       .toMatchObject({ code: 2 });
     expect(await run(['work', 'next', '--lease-ms', '60000', '--contains', '   '], env))
       .toMatchObject({ code: 2, json: { status: 'invalid' } });
+  });
+
+  it('claims the named work envelope under --id', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    const post = (id: string, to: string, priority: BusEnvelope['priority'], body: unknown): void => {
+      expect(appendBusInbox({ id, from: 'agent:nova', to, priority, ttl: 3_600_000,
+        body: body as BusEnvelope['body'] }, { root }).status).toBe('posted');
+    };
+    post('wi-target', 'agent:atlas', 'P3', { kind: 'work', text: 'hinted fix' });
+    post('wi-decoy', 'agent:atlas', 'P0', { kind: 'work', text: 'other work' });
+    post('wi-note', 'agent:atlas', 'P0', { kind: 'note', text: 'not claimable' });
+    post('wi-foreign', 'agent:nova', 'P0', { kind: 'work', text: 'nova only' });
+    const env = { PHM_AGENT_ID: 'atlas' };
+
+    // --id claims the named P3 receipt even though a P0 claimable receipt exists.
+    const first = await run(['work', 'next', '--lease-ms', '60000', '--id', 'wi-target'], env);
+    expect(first.code).toBe(0);
+    expect(first.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wi-target' } } });
+    // The held named receipt reports held work, not a dry well.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--id', 'wi-target'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 1, held: 1 } });
+    // Foreign, non-work and absent ids are honest empty matches.
+    for (const id of ['wi-foreign', 'wi-note', 'wi-missing']) {
+      expect(await run(['work', 'next', '--lease-ms', '60000', '--id', id], env))
+        .toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+    }
+    // A malformed id is a usage error, never a widened claim.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--id', 'has space'], env))
+      .toMatchObject({ code: 2 });
   });
 
   it('filters the next-work claim by channel and sender', async () => {

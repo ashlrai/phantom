@@ -75,7 +75,7 @@ const WORK_FEED = `${PATH}/work-feed`;
 /** The query keys the work-feed read accepts — the `claims` hold join, the
  * filter set `parseBusWorkFeedQuery` validates into `projectBusWorkFeedView`,
  * and the `limit` page bound `sliceBusWorkFeedView` applies after it. */
-const WORK_FEED_PARAMS = ['claims', 'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'before', 'contains', 'channel', 'result', 'id', 'open', 'claimable', 'limit'] as const;
+const WORK_FEED_PARAMS = ['claims', 'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'before', 'contains', 'channel', 'topic', 'result', 'id', 'open', 'claimable', 'limit'] as const;
 const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
 const ASKS = `${NEEDS_MASON}/asks`;
 const ASKS_ANSWER = `${ASKS}/answer`;
@@ -144,7 +144,7 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     try { params = new URL(req.url ?? path, 'http://localhost').searchParams; }
     catch { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
     const allowed = method === 'GET' && path === PATH ? ['after', 'limit']
-      : method === 'GET' && path === MESSAGES ? ['since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to', 'result', 'limit']
+      : method === 'GET' && path === MESSAGES ? ['since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'topic', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to', 'result', 'limit']
       : method === 'GET' && path === WORK_FEED ? [...WORK_FEED_PARAMS] : [];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
@@ -171,7 +171,7 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
           agent: params.get('agent') ?? undefined, with: params.get('with') ?? undefined,
           kind: params.get('kind') ?? undefined, priority: params.get('priority') ?? undefined,
           job: params.get('job') ?? undefined, thread: params.get('thread') ?? undefined,
-          channel: params.get('channel') ?? undefined,
+          channel: params.get('channel') ?? undefined, topic: params.get('topic') ?? undefined,
           contains: params.get('contains') ?? undefined, from: params.get('from') ?? undefined,
           excludeFrom: params.get('excludeFrom') ?? undefined,
           inReplyTo: params.get('inReplyTo') ?? undefined,

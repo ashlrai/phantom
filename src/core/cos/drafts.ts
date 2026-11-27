@@ -31,8 +31,12 @@ import {
 export class DraftError extends Error {}
 const fail = (message: string): never => { throw new DraftError(message); };
 
-export const DRAFT_STATUSES = ['pending', 'approved', 'rejected'] as const;
-export type DraftStatus = (typeof DRAFT_STATUSES)[number];
+const DRAFT_STATUSES = ['pending', 'approved', 'rejected'] as const;
+export type DraftStatus = 'pending' | 'approved' | 'rejected';
+
+export function isDraftStatus(value: unknown): value is DraftStatus {
+  return typeof value === 'string' && (DRAFT_STATUSES as readonly string[]).includes(value);
+}
 
 export interface Draft {
   id: string;
@@ -60,14 +64,14 @@ const STALE_MS = 60_000;
 export const draftsDir = (runsDir: string = join(homedir(), '.ashlr-runs')): string => join(runsDir, 'drafts');
 const storePath = (runsDir?: string): string => join(draftsDir(runsDir), 'drafts.jsonl');
 
-export const draftDigest = (input: Pick<Draft, 'to' | 'subject' | 'body'>): string =>
+const draftDigest = (input: Pick<Draft, 'to' | 'subject' | 'body'>): string =>
   createHash('sha256').update(`${input.to}\n${input.subject}\n${input.body}`).digest('hex');
 
 function isDraft(value: unknown): value is Draft {
-  if (typeof value !== 'object' || value === null) return false;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const d = value as Record<string, unknown>;
   return typeof d['id'] === 'string' && ID.test(d['id'])
-    && (DRAFT_STATUSES as readonly unknown[]).includes(d['status'])
+    && isDraftStatus(d['status'])
     && d['channel'] === 'email'
     && typeof d['to'] === 'string' && typeof d['subject'] === 'string' && typeof d['body'] === 'string'
     && typeof d['source'] === 'string' && typeof d['digest'] === 'string'

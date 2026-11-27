@@ -50,7 +50,7 @@ function importJob(value: unknown): ImportedJob {
   const repo = string(row.repo, 'repository');
   const pr = row.pr === undefined ? undefined : object(row.pr, 'PR');
   const prNumber = pr ? number(pr.number, 'PR number') : undefined;
-  if (pr && (!prNumber || !Number.isSafeInteger(prNumber))) return invalid('PR number');
+  if (pr && !prNumber) return invalid('PR number');
   const mergedAt = timestamp(pr?.mergedAt);
   const rawStatus = row.status;
   if (!['merged', 'failed', 'empty', 'pending', 'done'].includes(rawStatus as string)) return invalid('job status');
@@ -75,11 +75,14 @@ function importJob(value: unknown): ImportedJob {
 
 interface QueueNode { key: string; repo?: string; dependsOn: string[]; tags: string[] }
 function queueNodes(value: unknown): QueueNode[] {
-  if (!Array.isArray(value)) {
+  let rows: unknown;
+  if (Array.isArray(value)) {
+    rows = value;
+  } else {
     const root = object(value, 'queue graph');
     if (root.schemaVersion !== undefined && root.schemaVersion !== 1) return invalid('queue schema version');
+    rows = root.nodes;
   }
-  const rows = Array.isArray(value) ? value : object(value, 'queue graph').nodes;
   if (!Array.isArray(rows) || rows.length > MAX_NODES) return invalid('queue nodes');
   const nodes = rows.map(value => {
     const row = object(value, 'queue node');

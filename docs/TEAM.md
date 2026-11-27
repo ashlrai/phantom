@@ -122,11 +122,13 @@ phm team view --team acme                      # confirm you are a member
 phm team remove octocat --team acme
 ```
 
-Add `--json` to any of these for machine-readable output. `remove` takes effect
-at once: the member's claims are released, their accepted handoffs go back to
-`open` for someone else, and anything they post afterwards is ignored. Re-run
-`invite` to bring them back. Owners cannot be removed, and you cannot remove
-yourself.
+Add `--json` to any of these for machine-readable output. Failures print the
+same `phantom.team.v1` envelope with `error` and `refused` on stderr instead of
+`phm team: ...` text, so a scripted caller always gets JSON back. `remove` takes
+effect at once: the member's claims are released, their accepted handoffs go
+back to `open` for someone else, and anything they post afterwards is ignored.
+Re-run `invite` to bring them back. Owners cannot be removed, and you cannot
+remove yourself.
 
 If `join` says the identity does not match, run it from the invited person's
 account or pin their name in `owner.json` as the message shows. If it says there

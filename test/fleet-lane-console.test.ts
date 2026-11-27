@@ -17,7 +17,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import * as http from 'node:http';
@@ -147,12 +147,12 @@ describe('parseReadyTsv', () => {
   it('counts lane-open dispatcher rows as unhinted instead of guessing a lane', () => {
     // An empty lane cell is the market's open hint (work_market.requirements
     // maps fields[2] or None). The generic positional reader used to steal
-    // these rows and surface the repo name as a lane — or drop owner/name
-    // repos outright. The requirements' preferred_lane is the only honest
-    // lane left; a row naming none is lane-open work, counted as unhinted.
-    // Rows the market itself rejects — an invalid preferred_lane or an
-    // invalid spec-less lane cell — are invalid_requirements: dropped dead
-    // work, never open supply.
+    // these rows and surface the repo name as a lane. The requirements'
+    // preferred_lane is the only honest lane left; a row naming none is
+    // lane-open work, counted as unhinted. Rows the market itself rejects —
+    // an invalid preferred_lane, an invalid spec-less lane cell, or a repo
+    // cell dispatchd's ok-check refuses (`"/" not in f[1]`) — are
+    // invalid_requirements: dropped dead work, never open supply.
     const { rows, dropped, invalid, unhinted, unhintedRows } = parseReadyTsv([
       'RQ-OPEN-A\tphantom\t\twork\t/Users/x/prompts/a.md',
       'RQ-OPEN-B\tashlrai/phantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
@@ -160,19 +160,39 @@ describe('parseReadyTsv', () => {
       'RQ-OPEN-D\tphantom\t\twork\tprompts/d.md\t{"preferred_lane":"CLAUDE!"}',
       'RQ-OPEN-E\tphantom\tnot a lane!\twork\tprompts/e.md',
     ].join('\n'));
-    expect(dropped).toBe(2);
-    expect(invalid).toBe(2);
-    expect(unhinted).toBe(2);
+    expect(dropped).toBe(3);
+    expect(invalid).toBe(3);
+    expect(unhinted).toBe(1);
     // Lane-open rows keep their validated id, repo and tier for supply counts; the
     // row that resolved a preferred_lane and the invalid rows are not among them.
     expect(unhintedRows).toEqual([
       { id: 'RQ-OPEN-A', repo: 'phantom', tier: 'work' },
-      { id: 'RQ-OPEN-B', repo: 'ashlrai/phantom', tier: 'mid' },
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: 'RQ-OPEN-C', status: 'READY', pool: 'claude', tier: 'frontier', repo: 'phantom' });
     expect(rows.map(r => r.pool)).not.toContain('phantom');
     expect(rows.map(r => r.pool)).not.toContain('ashlrai/phantom');
+  });
+
+  it('counts slash-repo dispatcher rows as invalid dead work, never supply', () => {
+    // dispatchd's ok-check requires `"/" not in f[1]`: the repo cell names a
+    // checkout under ~/Projects/ashlrai, so an owner/name spelling can never
+    // launch — the same invalid verdict readyMarketLine gives the market
+    // readers. The row is dead in every requirements shape: spec-less,
+    // spec'd, lane-open, and enveloped (the ok-check precedes the envelope).
+    const routerQueue = '- READY RQ-SLASH-ENV (P1, preferred_lane=claude): an envelope cannot rescue a dead repo';
+    const { rows, dropped, invalid, unhinted, unhintedRows } = parseReadyTsv([
+      'RQ-SLASH-A\towner/repo\tclaude\twork\tprompts/a.md',
+      'RQ-SLASH-B\towner/repo\tclaude\twork\tprompts/b.md\t{"preferred_lane":"claude"}',
+      'RQ-SLASH-C\towner/repo\t\twork\tprompts/c.md',
+      'RQ-SLASH-ENV\towner/repo\tdevin\twork\tprompts/d.md',
+      'RQ-SLASH-D\towner/repo/deep\tclaude\tmid\tprompts/e.md',
+    ].join('\n'), routerQueue);
+    expect(dropped).toBe(5);
+    expect(invalid).toBe(5);
+    expect(unhinted).toBe(0);
+    expect(unhintedRows).toEqual([]);
+    expect(rows).toHaveLength(0);
   });
 
   it('resolves the requirements preferred_lane ahead of the lane cell like the market', () => {
@@ -194,6 +214,55 @@ describe('parseReadyTsv', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ id: 'RQ-SPEC-A', status: 'READY', pool: 'claude', tier: 'work', repo: 'phantom' });
     expect(rows[1]).toMatchObject({ id: 'RQ-SPEC-C', status: 'READY', pool: 'devin', tier: 'work', repo: 'phantom' });
+  });
+
+  it('resolves spec-less rows through router-queue envelopes like the market', () => {
+    // dispatchd's routed pass replaces a five-column row's requirements with
+    // the matching router-queue.md `(attrs)` envelope wholesale and writes it
+    // into the requirements cell before launch: its preferred_lane (or lane/
+    // pool attr) beats the lane column — which is never consulted, so a bad
+    // lane cell cannot reject an enveloped row — an envelope naming no lane
+    // is open supply, and a malformed spec is invalid_requirements — never
+    // supply.
+    const routerQueue = [
+      '- READY phantom RQ-ENV-A (preferred_lane=claude): hinted work',
+      '- READY phantom RQ-ENV-B (P2): no lane named, open supply',
+      '- READY phantom RQ-ENV-C (lane=devin): lane attr fallback',
+      '- READY phantom RQ-ENV-D (): no lane named',
+      '- READY phantom RQ-ENV-E (preferred_lane=CLAUDE!): bad spec',
+      '- READY phantom RQ-ENV-G (preferred_lane=claude): fills an empty cell',
+      '- READY phantom RQ-ENV-H (preferred_lane=claude): bad lane cell is never read',
+      '- READY phantom RQ-OTHER (preferred_lane=zai): a different job',
+    ].join('\n');
+    const { rows, dropped, invalid, unhinted, unhintedRows } = parseReadyTsv([
+      'RQ-ENV-A\tphantom\tcodex\twork\tprompts/a.md',
+      'RQ-ENV-B\tphantom\tcodex\twork\tprompts/b.md',
+      'RQ-ENV-C\tphantom\tcodex\twork\tprompts/c.md',
+      'RQ-ENV-D\tphantom\tcodex\twork\tprompts/d.md',
+      'RQ-ENV-E\tphantom\tcodex\twork\tprompts/e.md',
+      'RQ-ENV-G\tphantom\t\twork\tprompts/g.md',
+      'RQ-ENV-H\tphantom\tnot a lane!\twork\tprompts/h.md',
+      'RQ-PLAIN\tphantom\tcodex\twork\tprompts/f.md',
+      'RQ-SPEC-F\tphantom\tcodex\twork\tprompts/i.md\t{"preferred_lane":"zai"}',
+    ].join('\n'), routerQueue);
+    expect(dropped).toBe(1);
+    expect(invalid).toBe(1);
+    expect(unhinted).toBe(2);
+    expect(unhintedRows).toEqual([
+      { id: 'RQ-ENV-B', repo: 'phantom', tier: 'work' },
+      { id: 'RQ-ENV-D', repo: 'phantom', tier: 'work' },
+    ]);
+    expect(rows).toHaveLength(6);
+    expect(rows[0]).toMatchObject({ id: 'RQ-ENV-A', status: 'READY', pool: 'claude', tier: 'work', repo: 'phantom' });
+    expect(rows[1]).toMatchObject({ id: 'RQ-ENV-C', status: 'READY', pool: 'devin', tier: 'work' });
+    expect(rows[2]).toMatchObject({ id: 'RQ-ENV-G', status: 'READY', pool: 'claude', tier: 'work' });
+    // The envelope's preferred_lane applies past the malformed lane cell.
+    expect(rows[3]).toMatchObject({ id: 'RQ-ENV-H', status: 'READY', pool: 'claude', tier: 'work' });
+    // No envelope match: the lane column still decides, and a requirements
+    // cell on a six-column row wins over any envelope.
+    expect(rows[4]).toMatchObject({ id: 'RQ-PLAIN', status: 'READY', pool: 'codex', tier: 'work' });
+    expect(rows[5]).toMatchObject({ id: 'RQ-SPEC-F', status: 'READY', pool: 'zai', tier: 'work' });
+    expect(rows.map(r => r.pool)).not.toContain('codex-personal');
   });
 
   it('keeps generic positional rows on the generic contract', () => {
@@ -334,6 +403,35 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(snapshot.lanes.find(l => l.lane === 'claude')!.mergesPerHour).toBe(0);
   });
 
+  it('keeps usable merge evidence when matching receipts have future merge times', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    const pr = 'https://github.com/ashlrai/phantom/pull/42';
+    const at = '2026-10-28T01:50:00Z';
+    const future = '2026-10-28T02:00:01Z';
+    const rows = [
+      { job: 'future-pr', pr, pool: 'claude', outcome: 'MERGED', at, mergedAt: future },
+      { job: 'legacy-pr', pr, pool: 'devin', outcome: 'MERGED', at },
+      { job: 'legacy-job', pool: 'claude', outcome: 'MERGED', at, mergedAt: future },
+      { job: 'old-job', pool: 'claude', outcome: 'MERGED', at, mergedAt: '2026-10-28T00:59:59Z' },
+      { job: 'attributed-job', pool: 'claude', outcome: 'MERGED', at, mergedAt: future },
+      { job: 'attributed-job', pool: 'devin', outcome: 'MERGED', at },
+      { job: 'attributed-job', outcome: 'MERGED', mergedAt: at },
+    ];
+    await writeFile(join(dir, 'jobs.jsonl'), rows.map(row => JSON.stringify(row)).join('\n'));
+    await writeFile(join(dir, 'ready.tsv'), [
+      'id\tstatus\tpool\tat',
+      `legacy-job\tLAND\tcodex-personal\t${at}`,
+      `old-job\tLAND\tcodex-personal\t${at}`,
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    expect(snapshot.lanes.find(l => l.lane === 'devin')?.mergesPerHour).toBe(2);
+    expect(snapshot.lanes.find(l => l.lane === 'codex-personal')?.mergesPerHour).toBe(1);
+    expect(snapshot.lanes.find(l => l.lane === 'claude')?.mergesPerHour).toBe(0);
+  });
+
   it('finds recent event timestamps before a large backfilled ledger tail', async () => {
     const dir = join(scratch, 'queue');
     await mkdir(dir, { recursive: true });
@@ -346,6 +444,75 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     });
     expect(snapshot.lanes.find(l => l.lane === 'devin')!.mergesPerHour).toBe(1);
     expect(snapshot.sources.ledger).toMatchObject({ state: 'healthy', events: 2 });
+  });
+
+  it('times colon-less dispatchd offsets and attributes merges via the job lane map', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'jobs.jsonl'), [
+      // dispatchd stamps rows with a basic-format offset (-0400, no colon);
+      // outcome rows carry no lane, so the merge resolves through the same
+      // job's earlier launch row — the lane that actually ran it.
+      JSON.stringify({ event: 'launch', job: 'RQ-OFFSET', lane: 'codex-cmp', ts: '2026-10-27T21:30:00-0400' }),
+      JSON.stringify({ event: 'outcome', job: 'RQ-OFFSET', state: 'MERGED', ts: '2026-10-27T21:45:00-0400' }),
+      JSON.stringify({ event: 'outcome', job: 'RQ-UNLANED', state: 'MERGED', ts: '2026-10-27T21:50:00-0400' }),
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    const lane = snapshot.lanes.find(l => l.lane === 'codex-cmp')!;
+    expect(lane.mergesPerHour).toBe(1);
+    expect(lane.startsInWindow).toBe(1);
+    expect(snapshot.sources.ledger.mergeWindow).toBe('complete');
+  });
+
+  it('reports merges from a truncated tail that still covers the window', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    // The cut lands inside the padding row, so the first retained event is
+    // the pre-window row — the tail provably reaches back past the window.
+    const pad = JSON.stringify({ event: 'launch', job: 'RQ-PAD', lane: 'devin', ts: '2026-10-26T00:00:00Z', padding: 'x'.repeat(600) });
+    await writeFile(join(dir, 'jobs.jsonl'), [
+      pad,
+      JSON.stringify({ event: 'outcome', job: 'RQ-PRE', state: 'MERGED', lane: 'devin', ts: '2026-10-28T00:30:00Z' }),
+      JSON.stringify({ event: 'outcome', job: 'RQ-IN', state: 'MERGED', lane: 'devin', ts: '2026-10-28T01:30:00Z' }),
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR, ledgerBytes: 512,
+    });
+    expect(snapshot.sources.ledger.state).toBe('degraded');   // file read was partial — honest
+    expect(snapshot.sources.ledger.mergeWindow).toBe('complete');
+    expect(snapshot.lanes.find(l => l.lane === 'devin')!.mergesPerHour).toBe(1);
+  });
+
+  it('keeps merges unknown when the truncated tail cannot reach the window', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    // The only pre-window event sits in the cut prefix; the retained tail
+    // starts inside the window, so an earlier in-window merge could be lost.
+    await writeFile(join(dir, 'jobs.jsonl'), [
+      JSON.stringify({ event: 'outcome', job: 'RQ-CUT', state: 'MERGED', lane: 'devin', ts: '2026-10-28T01:30:00Z', padding: 'x'.repeat(500) }),
+      JSON.stringify({ event: 'launch', job: 'RQ-LATE', lane: 'devin', ts: '2026-10-28T01:45:00Z' }),
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR, ledgerBytes: 512,
+    });
+    expect(snapshot.sources.ledger.mergeWindow).toBe('partial');
+    expect(snapshot.lanes.find(l => l.lane === 'devin')!.mergesPerHour).toBeNull();
+  });
+
+  it('marks the merge window partial when retained rows fail to parse', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'jobs.jsonl'), [
+      '{"event":"outcome","job":"RQ-BAD","state":"MERGED","lane":"devin","ts":"2026-10-28T01:30:00Z"}',
+      'not json at all',
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    expect(snapshot.sources.ledger).toMatchObject({ state: 'degraded', dropped: 1, mergeWindow: 'partial' });
+    expect(snapshot.lanes.find(l => l.lane === 'devin')!.mergesPerHour).toBe(1); // observed merge still reports
   });
 
   it('projects credit, queue depth, live jobs and merges per lane', async () => {
@@ -511,7 +678,7 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'ready.tsv'), [
       'RQ-OPEN-A\tphantom\t\twork\t/Users/x/prompts/a.md',
-      'RQ-OPEN-B\tashlrai/phantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
+      'RQ-OPEN-B\tphantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
       'RQ-OPEN-C\tphantom\t\tfrontier\tprompts/c.md\t{"preferred_lane":"claude"}',
       'RQ-LANED\tphantom\tdevin\twork\t/Users/x/prompts/d.md',
     ].join('\n'));
@@ -525,6 +692,63 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(snapshot.sources.queue).toMatchObject({ state: 'healthy', rows: 2, dropped: 0, unhinted: 2 });
     expect(snapshot.starved.open_rows).toBe(2);
     expect(JSON.stringify(snapshot)).not.toContain('/Users/x/prompts');
+  });
+
+  it('counts each READY job once across lane hints and open supply', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'ready.tsv'), [
+      'RQ-A\tphantom\tclaude\twork\tprompts/a.md',
+      'RQ-A\tphantom\tdevin\twork\tprompts/a.md',
+      'RQ-A\tphantom\t\twork\tprompts/a.md',
+      'RQ-B\tphantom\t\twork\tprompts/b.md',
+      'RQ-B\tphantom\tclaude\twork\tprompts/b.md',
+      'RQ-C\tphantom\tdevin\twork\tprompts/c.md',
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    const byLane = new Map(snapshot.lanes.map(l => [l.lane, l]));
+    expect(byLane.get('claude')!.queueDepth).toBe(1);
+    expect(byLane.get('devin')!.queueDepth).toBe(1);
+    expect(snapshot.sources.queue).toMatchObject({ state: 'healthy', rows: 2, dropped: 0, unhinted: 1 });
+    expect(snapshot.starved.open_rows).toBe(1);
+  });
+
+  it('resolves spec-less rows through a router-queue.md past the ready.tsv bound', async () => {
+    // router-queue.md is append-mostly history and outgrows the 4 MiB
+    // ready.tsv bound in normal operation. The lane view reads it with the
+    // wider bound the other market readers use, so the (attrs) envelope
+    // still decides the hint instead of degrading the whole queue read.
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'ready.tsv'), 'RQ-ENV-BIG\tphantom\tdevin\twork\tprompts/big.md\n');
+    const padding = '# archive\n'.repeat(Math.ceil((5 * 1024 * 1024) / 10));
+    await writeFile(join(dir, 'router-queue.md'),
+      '- READY RQ-ENV-BIG (preferred_lane=claude): hinted job\n' + padding);
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    const byLane = new Map(snapshot.lanes.map(l => [l.lane, l]));
+    expect(snapshot.sources.queue).toMatchObject({ state: 'healthy', rows: 1, dropped: 0, unhinted: 0 });
+    expect(byLane.get('claude')!.queueDepth).toBe(1);
+    expect(snapshot.starved.open_rows).toBe(0);
+  });
+
+  it('marks the queue read degraded when router-queue.md exceeds its bound', async () => {
+    // Past the envelope bound the file is unreadable evidence: the snapshot
+    // reports degraded queue sources and null supply counts, never a
+    // lane-column guess.
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'ready.tsv'), 'READY\tRQ-1\tdevin\n');
+    await writeFile(join(dir, 'router-queue.md'), '- READY RQ-1 (preferred_lane=devin): job\n');
+    await truncate(join(dir, 'router-queue.md'), 33 * 1024 * 1024);
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    expect(snapshot.sources.queue).toMatchObject({ state: 'degraded', rows: 0 });
+    expect(snapshot.starved.open_rows).toBeNull();
   });
 
   it('marks a present-but-corrupt file degraded and still projects its rows', async () => {

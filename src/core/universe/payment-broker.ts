@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
+import { isSha256Hex } from './artifacts.js';
 
 const PAYMENT_BROKER_MAX_ENTRIES = 512;
 const DAY_MS = 86_400_000;
 const MAX_CLOCK = 253_402_300_799_999;
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
-const HASH = /^[a-f0-9]{64}$/;
 
 export interface PaymentBrokerPolicy {
   schemaVersion: 1; policyId: string; currency: string; allowedMerchantIds: string[]; allowedScopeIds: string[];
@@ -20,7 +20,7 @@ export interface PaymentBrokerEntry {
 export interface PaymentBrokerState {
   schemaVersion: 1; policyDigest: string; dayIndex: number; highWaterMs: number; entries: PaymentBrokerEntry[];
 }
-export type PaymentBrokerAction =
+type PaymentBrokerAction =
   { schemaVersion: 1; kind: 'request'; nowMs: number; request: PaymentBrokerRequest } |
   { schemaVersion: 1; kind: 'reserve' | 'deny'; nowMs: number; requestId: string; requestDigest: string } |
   { schemaVersion: 1; kind: 'settle'; nowMs: number; requestId: string; requestDigest: string;
@@ -56,7 +56,7 @@ function array(value: unknown, max: number): unknown[] {
   return copy;
 }
 function identifier(value: unknown): string { if (typeof value !== 'string' || !ID.test(value)) invalid(); return value; }
-function hash(value: unknown): string { if (typeof value !== 'string' || !HASH.test(value)) invalid(); return value; }
+function hash(value: unknown): string { if (!isSha256Hex(value)) invalid(); return value; }
 function integer(value: unknown, minimum = 0, maximum = Number.MAX_SAFE_INTEGER): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || Object.is(value, -0) || value < minimum || value > maximum) invalid();
   return value;

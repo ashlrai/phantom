@@ -4,8 +4,8 @@
  * empty temp home. No real home, no network, no real bridge.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -310,5 +310,67 @@ describe('default reader', () => {
     const by = byChannel(view.channels);
     expect(by['telegram']!.verifiedSenders).toBe('unknown');
     expect(by['email']!.verifiedSenders).toBe('unknown');
+  });
+
+  it('counts every allowlisted iMessage sender, not just the handle', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'channels-overview-'));
+    roots.push(root);
+    const source = (name: string): ChannelSource => ({
+      configMissing: () => [`${name} config`],
+      processAlive: () => false,
+      inbound: () => [],
+      replies: () => [],
+    });
+    const reader = createDefaultChannelsReader({
+      cfg: {
+        comms: {
+          enabled: true,
+          imessageHandle: '+15550001111',
+          imessageAllow: ['+15550001111', '+15550002222', '+15550003333', '+15550002222'],
+        },
+      } as never,
+      homeDir: root, runsDir: join(root, '.ashlr-runs'), env: {}, now: () => NOW,
+      sources: { slack: source('slack'), imessage: source('imessage') },
+      mobileDevices: () => 0,
+    });
+    const view = buildChannelsOverview(await reader());
+    expect(byChannel(view.channels)['imessage']!.verifiedSenders).toBe(3);
+  });
+
+  it('reports config-derived facts as unknown when the main config cannot be read', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'channels-overview-'));
+    roots.push(root);
+    // loadConfigReadOnlyStrict resolves ~/.ashlr/config.json under the isolated
+    // worker HOME; snapshot whatever is there and restore it afterwards.
+    const configPath = join(homedir(), '.ashlr', 'config.json');
+    const prior = existsSync(configPath) ? readFileSync(configPath, 'utf8') : null;
+    mkdirSync(join(homedir(), '.ashlr'), { recursive: true });
+    writeFileSync(configPath, '{broken');
+    try {
+      const source = (name: string): ChannelSource => ({
+        configMissing: () => [`${name} config`],
+        processAlive: () => false,
+        inbound: () => [],
+        replies: () => [],
+      });
+      const reader = createDefaultChannelsReader({
+        homeDir: root, runsDir: join(root, '.ashlr-runs'), env: {}, now: () => NOW,
+        sources: { slack: source('slack'), imessage: source('imessage') },
+        mobileDevices: () => 0,
+      });
+      const view = buildChannelsOverview(await reader());
+      const by = byChannel(view.channels);
+      // The allowlist is unprovable — never a guessed 0.
+      expect(by['imessage']!.verifiedSenders).toBe('unknown');
+      // Telegram's configured flag comes from the same unreadable config, so
+      // "not set up" would be a guess; it must read unknown instead.
+      expect(by['telegram']).toMatchObject({ state: 'unknown', reason: 'the main config could not be read' });
+      expect(by['telegram']!.next).toContain('config.json');
+      // Stores independent of the main config still report measured values.
+      expect(by['mobile']!.verifiedSenders).toBe(0);
+    } finally {
+      if (prior === null) rmSync(configPath, { force: true });
+      else writeFileSync(configPath, prior);
+    }
   });
 });

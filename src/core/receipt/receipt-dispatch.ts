@@ -13,8 +13,15 @@ import { execFileSync } from 'node:child_process';
 import { basename, isAbsolute } from 'node:path';
 import { isCancelledDispatchProductionEvent, type DispatchProductionEvent } from '../fleet/dispatch-production-ledger.js';
 import { emitReceiptV1, type EmitReceiptResult } from './receipt-store.js';
-import type { ReceiptV1Secrets } from './receipt-v1.js';
-import { EXECUTION_OUTCOMES, isReceiptV1Body, RECEIPT_V1_SCHEMA, type ReceiptV1Body } from './receipt-v1.js';
+import {
+  EXECUTION_OUTCOMES,
+  isNonNegativeInt,
+  isReceiptV1Body,
+  RECEIPT_REPO_RE,
+  RECEIPT_V1_SCHEMA,
+  type ReceiptV1Body,
+  type ReceiptV1Secrets,
+} from './receipt-v1.js';
 
 type Execution = (typeof EXECUTION_OUTCOMES)[number];
 
@@ -32,8 +39,6 @@ function execution(event: DispatchProductionEvent): Execution {
   }
 }
 
-const RECEIPT_REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
-
 /**
  * Pure. owner/name from a GitHub remote URL (https, ssh, scp-like). Userinfo
  * (which can carry a token) is never returned. Null for non-GitHub or
@@ -44,7 +49,7 @@ export function ownerNameFromRemote(url: string): string | null {
   const m = /^(?:(?:https?|ssh|git):\/\/(?:[^@/]*@)?github\.com(?::\d+)?\/|(?:[^@/:\s]+@)?github\.com:)([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100}?)(?:\.git)?\/?$/i.exec(u);
   if (!m) return null;
   const out = `${m[1]}/${m[2]}`;
-  return RECEIPT_REPO.test(out) && m[2] !== '.' && m[2] !== '..' ? out : null;
+  return RECEIPT_REPO_RE.test(out) && m[2] !== '.' && m[2] !== '..' ? out : null;
 }
 
 /** Pure. local/<folder> with the folder sanitized to receipt characters. */
@@ -65,13 +70,13 @@ function readOriginUrl(dir: string): string | null {
 
 /** Receipt repo field: owner/name as-is, a local path mapped via origin or local/<folder>. Never the full path. */
 export function receiptRepoName(repo: string, readOrigin: (dir: string) => string | null = readOriginUrl): string | null {
-  if (RECEIPT_REPO.test(repo) && !isAbsolute(repo)) return repo;
+  if (RECEIPT_REPO_RE.test(repo) && !isAbsolute(repo)) return repo;
   if (!isAbsolute(repo) && !/^[A-Za-z]:[\\/]/.test(repo)) return null;
   const remote = readOrigin(repo);
   return (remote ? ownerNameFromRemote(remote) : null) ?? localRepoName(repo);
 }
 
-const count = (v: unknown): number => (Number.isSafeInteger(v) && (v as number) >= 0 ? (v as number) : 0);
+const count = (v: unknown): number => (isNonNegativeInt(v) ? v : 0);
 
 /** Pure. Null when the event cannot produce a valid receipt (no run id, shadow rows, bad repo). */
 export function receiptBodyFromDispatchEvent(
@@ -106,7 +111,7 @@ export function receiptBodyFromDispatchEvent(
   return isReceiptV1Body(body) ? body : null;
 }
 
-export function runReceiptsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+function runReceiptsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env['ASHLR_RUN_RECEIPTS'] === '1';
 }
 

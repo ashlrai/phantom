@@ -3,9 +3,10 @@
  * Pure; the caller reads `metrics/jobs.jsonl` and passes its text.
  *
  * Per lane and size (a launch row's `size`, else "unknown"), plus a per-lane
- * "all" row, the window is the lane's last 50 launches. A job's merge and empty
- * finish count once, on its latest launch. Rows fold through the fleet's
- * jobs-ledger dialect (see the field sets below computeLaneYield): reconciler
+ * "all" row, the window is the lane's last 50 launches. A job's merge counts
+ * once on its latest launch, and outcome evidence must follow that launch.
+ * Exact replays of timestamped launch receipts count once.
+ * Rows fold through the fleet's jobs-ledger dialect: reconciler
  * outcome rows keyed by `jobId`/`prUrl`/`outcome`/`status`, `type`/`kind`
  * event spellings, the `pool` lane alias and terminal empty phases
  * (DONE-NOOP and kin) all count, so GitHub-resolved merges are not invisible.
@@ -78,7 +79,7 @@ const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
-const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt', 'revertedAt', 'reverted_at'] as const;
 
 /** Terminal "no work" phases: the fleet's empty-outcome vocabulary (skill-nudge EMPTY_PHASES, launch_precheck _TERMINAL_EMPTY). */
 const EMPTY_PHASES: ReadonlySet<string> = new Set(['DONE-NOOP', 'EMPTY', 'EMPTY_DONE', 'SKIPPED-EMPTY', 'NOOP']);
@@ -127,7 +128,7 @@ const mergeEvidence = (row: Row, event: string | null, phase: string): boolean =
 
 /** Empty evidence: `empty: true` on a finish or outcome-ish row, or a terminal no-work phase on an outcome row. */
 const emptyEvidence = (row: Row, event: string | null, phase: string): boolean =>
-  event !== null && (
+  row.launched !== false && event !== null && (
     (FINISH_EVENTS.has(event) && row['empty'] === true)
     || (OUTCOME_EVENTS.has(event) && (row['empty'] === true || EMPTY_PHASES.has(phase))));
 
@@ -139,14 +140,14 @@ export function yieldWeight(yieldRate: number | null): number {
 export function computeLaneYield(ledger: string | null): LaneYieldReport {
   const report: LaneYieldReport = { schema: LANE_YIELD_SCHEMA, known: ledger !== null, windowJobs: YIELD_WINDOW_JOBS, minJobs: YIELD_MIN_JOBS, highYield: YIELD_HIGH, rows: [] };
   if (ledger === null) return report;
-  type Launch = { lane: string; size: string; at: number; seq: number; merged: boolean; reverted: boolean; empty: boolean };
+  type Receipt = { at: number | null; seq: number };
+  type Launch = Receipt & { lane: string; size: string; merged: boolean; reverted: boolean; empty: boolean };
   const launches: Launch[] = [];
-  const byJob = new Map<string, Launch[]>();
-  const merged = new Set<string>();
-  const reverted = new Set<string>();
-  const empty = new Set<string>();
-  let seq = 0;
-  for (const line of ledger.split('\n')) {
+  const seenLaunchReceipts = new Set<string>();
+  const byJob = new Map<string, Launch>();
+  type Outcome = Receipt & { kind: 'reverted' | 'merged' | 'empty' };
+  const outcomes = new Map<string, Outcome[]>();
+  for (const [seq, line] of ledger.split('\n').entries()) {
     let row: Row;
     try { const value: unknown = JSON.parse(line); if (!value || typeof value !== 'object' || Array.isArray(value)) continue; row = value as Row; } catch { continue; }
     const id = firstString(row, JOB_KEYS);
@@ -157,22 +158,35 @@ export function computeLaneYield(ledger: string | null): LaneYieldReport {
       const lane = firstString(row, LANE_KEYS);
       if (!lane) continue;
       const at = eventTs(row, phase);
-      const launch: Launch = { lane, size: text(row.size) ?? 'unknown', at: at ?? 0, seq: seq++, merged: false, reverted: false, empty: false };
+      if (at !== null) {
+        const receipt = line.trim();
+        if (seenLaunchReceipts.has(receipt)) continue;
+        seenLaunchReceipts.add(receipt);
+      }
+      const launch: Launch = { lane, size: text(row.size) ?? 'unknown', at, seq, merged: false, reverted: false, empty: false };
       launches.push(launch);
-      byJob.set(id, [...(byJob.get(id) ?? []), launch]);
-    } else {
-      if (mergeEvidence(row, event, phase)) merged.add(id);
-      else if (emptyEvidence(row, event, phase)) empty.add(id);
-      if (hasRevertEvidence(row)) reverted.add(id);
+      const prev = byJob.get(id);
+      if (!prev || (at ?? 0) >= (prev.at ?? 0)) byJob.set(id, launch);
+      continue;
     }
+    const kind = hasRevertEvidence(row) ? 'reverted'
+      : mergeEvidence(row, event, phase) ? 'merged'
+      : emptyEvidence(row, event, phase) ? 'empty' : null;
+    if (kind === null) continue;
+    const receipts = outcomes.get(id) ?? [];
+    receipts.push({ at: eventTs(row, phase), seq, kind });
+    outcomes.set(id, receipts);
   }
-  for (const [id, runs] of byJob) {
-    const last = runs.reduce((a, b) => (b.at > a.at || (b.at === a.at && b.seq > a.seq) ? b : a));
-    if (reverted.has(id)) last.reverted = true;
-    else if (merged.has(id)) last.merged = true;
-    else if (empty.has(id)) last.empty = true;
+  for (const [id, last] of byJob) {
+    const eligible = outcomes.get(id)?.filter(receipt =>
+      receipt.at !== null && last.at !== null && receipt.at !== last.at
+        ? receipt.at > last.at
+        : receipt.seq > last.seq) ?? [];
+    last.reverted = eligible.some(receipt => receipt.kind === 'reverted');
+    last.merged = !last.reverted && eligible.some(receipt => receipt.kind === 'merged');
+    last.empty = !last.reverted && !last.merged && eligible.some(receipt => receipt.kind === 'empty');
   }
-  launches.sort((a, b) => b.at - a.at || b.seq - a.seq);
+  launches.sort((a, b) => (b.at ?? 0) - (a.at ?? 0) || b.seq - a.seq);
   const groups = new Map<string, Launch[]>();
   const add = (lane: string, size: string, launch: Launch): void => {
     const key = JSON.stringify([lane, size]);

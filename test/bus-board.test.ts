@@ -556,6 +556,42 @@ describe('bus board pending digest', () => {
     expect(store.pending('bob').tasks.matched).toBe(2);
   });
 
+  it('targets one retained envelope id under the shared --id rule', async () => {
+    const store = board();
+    const first = threadWith('alice', 'bob');
+    const second = store.createThread('carol', 'Other work').id;
+    store.joinThread('bob', second);
+    await store.post('alice', first, 'first note');
+    await store.post('carol', second, 'second note');
+    store.createTask('alice', first, 'job-1', 'Job one task');
+    const target = store.readThread('bob', first, true)[0]!.id;
+
+    // --id keeps only the delivery whose stored envelope id strictly equals
+    // it; the sibling delivery and every task drop out, matched counts the
+    // filtered set, and the rollup lists only the surviving delivery's
+    // thread. An id no pending delivery carries is a verified-empty read.
+    const byId = store.pending('bob', Date.now(), undefined, undefined, undefined, undefined, undefined, target);
+    expect(byId.deliveries.matched).toBe(1);
+    expect(byId.deliveries.items.map((row) => row.id)).toEqual([target]);
+    expect(byId.tasks.matched).toBe(0);
+    expect(byId.threads.map((row) => row.id)).toEqual([first]);
+    expect(byId.threads[0]!.pendingDeliveries).toBe(1);
+    expect(store.pending('bob', Date.now(), undefined, undefined, undefined, undefined, undefined, 'no-such-id')
+      .deliveries.matched).toBe(0);
+
+    // The fleet-wide form answers the same question across every member:
+    // bob's copy matches under --all while carol's sibling delivery id does
+    // not, and tasks still never match an envelope id.
+    const all = store.pendingAll(Date.now(), undefined, undefined, undefined, undefined, undefined, target);
+    expect(all.deliveries.matched).toBe(1);
+    expect(all.deliveries.items[0]!.id).toBe(target);
+    expect(all.tasks.matched).toBe(0);
+    expect(all.threads.map((row) => row.id)).toEqual([first]);
+    const carolCopy = store.readThread('carol', second, true)[0]!.id;
+    expect(store.pendingAll(Date.now(), undefined, undefined, undefined, undefined, undefined, carolCopy)
+      .deliveries.items[0]!.recipient).toBe('carol');
+  });
+
   it('refuses while disabled and enforces the peer allowlist', () => {
     expect(() => board({ cfg: disabledCfg }).pending('alice')).toThrow('Fleet event bus is disabled');
     expect(() => board({ peers: [{ id: 'alice' }] }).pending('mallory'))
@@ -1109,6 +1145,47 @@ describe('phm bus CLI end-to-end', () => {
     expect((await call(['thread', 'receipts', thread, '--contains', 'x'])).code).toBe(2);
     // --contains now reaches the title reads it always applied to.
     expect((await call(['task', 'list', thread, '--contains', 'absent-text'])).code).toBe(0);
+  });
+
+  it('targets one retained envelope id through board pending --id', async () => {
+    const thread = (await call(['thread', 'create', 'Board'])).value.result.id;
+    await call(['thread', 'join', thread], 'bob');
+    await call(['thread', 'post', thread, 'first note'], 'alice');
+    await call(['thread', 'post', thread, 'second note'], 'alice');
+    const other = (await call(['thread', 'create', 'Other work'])).value.result.id;
+    await call(['thread', 'join', other], 'bob');
+    await call(['thread', 'post', other, 'sibling note'], 'alice');
+    await call(['task', 'create', thread, 'job-1', 'Job task'], 'alice');
+    const target = (await call(['thread', 'read', thread], 'bob')).value.result[0].id;
+
+    // --id keeps only the unacknowledged delivery whose stored envelope id
+    // strictly equals it; the sibling delivery and every task drop out and
+    // the rollup lists only the surviving delivery's thread.
+    const byId = await call(['board', 'pending', '--id', target], 'bob');
+    expect(byId.code).toBe(0);
+    expect(byId.value.result.deliveries.matched).toBe(1);
+    expect(byId.value.result.deliveries.items.map((row: { id: string }) => row.id)).toEqual([target]);
+    expect(byId.value.result.tasks.matched).toBe(0);
+    expect(byId.value.result.threads.map((row: { id: string }) => row.id)).toEqual([thread]);
+
+    // An id no pending delivery carries is a verified-empty read, and the
+    // fleet-wide --all form answers the same question across every member.
+    expect((await call(['board', 'pending', '--id', 'no-such-id'], 'bob')).value.result.deliveries.matched).toBe(0);
+    output = [];
+    const all = await cmdFleetBus(['board', 'pending', '--all', '--id', target, '--json',
+      '--root', boardRoot, '--queue-root', queueDir], { loadConfig, out: (t) => output.push(t) });
+    expect(all).toBe(0);
+    const allResult = JSON.parse(output.at(-1)!).result;
+    expect(allResult.deliveries.matched).toBe(1);
+    expect(allResult.deliveries.items[0].id).toBe(target);
+    expect(allResult.tasks.matched).toBe(0);
+
+    // --id stays board pending's own flag: it composes with the other
+    // filters, is a usage error on any other command, and an ungrammatical
+    // id is refused at parse like every other flag value.
+    expect((await call(['board', 'pending', '--id', target, '--contains', 'absent'], 'bob')).value.result.deliveries.matched).toBe(0);
+    expect((await call(['thread', 'read', thread, '--id', target], 'bob')).code).toBe(2);
+    expect((await call(['board', 'pending', '--id', 'has space'], 'bob')).code).toBe(2);
   });
 
   it('filters the thread reads through argv', async () => {

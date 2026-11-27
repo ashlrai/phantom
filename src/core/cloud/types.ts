@@ -32,6 +32,7 @@
  */
 
 import type { MetricSpec } from '../improve/outcomes.js';
+import type { MapFreshness } from '../knowledge/wiki/system-map-git.js';
 import type { PlaybookRef } from '../playbooks/types.js';
 
 export const CLOUD_TASK_SCHEMA_VERSION = 1 as const;
@@ -56,8 +57,16 @@ export const CLOUD_LAUNCH_TIMEOUT_MS = 90_000;
 
 /** Task ids look like `ct_20260924T2331_k3f9q2` (sortable, branch-safe). */
 export const CLOUD_TASK_ID_PATTERN = /^ct_\d{8}T\d{4}_[a-z0-9]{6}$/;
+/** GitHub `owner/name` — the one repo shape every cloud entry point accepts. */
+export const CLOUD_REPO_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
+/** Full 40-character lowercase Git SHA-1. */
+export const CLOUD_SHA1_PATTERN = /^[0-9a-f]{40}$/;
+/** Maximum self-improvement tasks launched in one request. */
+export const CLOUD_IMPROVE_MAX_COUNT = 5;
 
 export type CloudTaskOrigin = 'chat' | 'operator' | 'leader' | 'self-improve' | 'cli';
+export const CLOUD_TASK_ORIGINS: readonly CloudTaskOrigin[] = ['chat', 'operator', 'leader', 'self-improve', 'cli'];
+export const CLOUD_REPORT_STATUSES: readonly CloudTaskReport['status'][] = ['done', 'partial', 'blocked', 'no-change'];
 
 /**
  * queued     accepted, waiting for its repo's launch slot (launches are
@@ -210,7 +219,7 @@ export interface CloudTaskV1 {
   /** Lessons trial arm and the approved notes that applied at launch (improve/lesson-trial.ts); absent = none applied. */
   lessons?: CloudTaskLessons;
   /** Measured Wiki context at launch; absent means this task predates measurement. */
-  wikiSlice?: { bytes: number; nodeIds: string[] };
+  wikiSlice?: { bytes: number; nodeIds: string[]; freshness?: MapFreshness };
   /** CI and review evidence at merge/close (cloud/tracker.ts); absent = not captured. */
   outcome?: CloudTaskOutcome;
   /** Budget accounting — an ESTIMATE fixed at launch. */
@@ -316,6 +325,18 @@ export interface CloudBacklogItem {
    * session that reports "no-change".
    */
   doneWhen?: CloudBacklogDoneWhen;
+  /**
+   * When a producer last asserted this item into the backlog — stamped by
+   * appendUserBacklogItems on insert and refreshed whenever the same id is
+   * emitted again (the evidence feeders re-emit while their condition
+   * holds). A task's claim releases a `merged` end only when this is later
+   * than the task's creation: evidence asserted after the prompt was minted
+   * is evidence the merge cannot have covered, so the item becomes
+   * claimable again instead of retiring for good. Items never re-asserted
+   * (built-in and hand-written) carry no stamp and keep done-for-good
+   * semantics.
+   */
+  assertedAt?: string;
 }
 
 export type CloudBacklogDoneWhen = { path: string; contains?: string } | { issue: number };
@@ -380,4 +401,49 @@ export interface CloudImproveRequest {
 export interface CloudImproveResponse {
   launched: CloudTaskV1[];
   skipped: Array<{ itemId: string; reason: string }>;
+}
+
+// ---------------------------------------------------------------------------
+// Shared pure helpers (node-free; reused across cloud core and CLI)
+// ---------------------------------------------------------------------------
+
+export function isCloudRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function isValidIsoTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+export function roundCents(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+export function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+export function sameCloudRepo(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+export function canonicalCloudPrUrl(repo: string, number: number): string {
+  return `https://github.com/${repo}/pull/${number}`;
+}
+
+export function isCanonicalCloudPrUrl(url: string, repo: string, number: number): boolean {
+  return url.toLowerCase() === canonicalCloudPrUrl(repo, number).toLowerCase();
+}
+
+export function clipCloudText(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+}
+
+export function flattenControlWhitespace(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+export function pluralize(count: number, singular: string, plural: string): string {
+  return count === 1 ? singular : plural;
 }

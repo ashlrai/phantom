@@ -44,9 +44,9 @@ import { buildLearningState } from '../learn/harness-registry.js';
 import type { LearningStateV1 } from '../learn/harness-types.js';
 import { listEnrolled } from '../sandbox/policy.js';
 import { DEFAULT_TEAM } from '../teams/tools.js';
-import { validId, type TeamActor, type TeamEvent } from '../teams/protocol.js';
+import { isAdminRole, validId, type TeamActor, type TeamEvent } from '../teams/protocol.js';
 import { appendEvent, readEvents } from '../teams/store.js';
-import { foldTeam, type Handoff, type Member } from '../teams/state.js';
+import { foldTeam, isOpenHandoff, type Handoff, type Member } from '../teams/state.js';
 import { describeAccessAction } from '../teams/workspace.js';
 import { createCompanionCoordinator } from '../proactive/coordination.js';
 import type { CompanionList, CompanionTask } from '../proactive/coordination-types.js';
@@ -355,7 +355,7 @@ async function buildFleet(deps: OpsApiDeps): Promise<OpsFleetV1> {
 // ---------------------------------------------------------------------------
 
 function isLeader(member: Member): boolean {
-  return member.role === 'owner' || member.role === 'admin' || member.capabilities.includes('leader');
+  return isAdminRole(member.role) || member.capabilities.includes('leader');
 }
 
 function buildLeaders(events: TeamEvent[], team: string, canPost: boolean, now: number): OpsLeadersV1 {
@@ -396,7 +396,7 @@ function buildLeaders(events: TeamEvent[], team: string, canPost: boolean, now: 
     channels: [...channelCounts.entries()].map(([channel, count]) => ({ channel, count })).sort((a, b) => b.count - a.count),
     messages: messages.slice(-OPS_LEADERS_MESSAGE_LIMIT),
     openHandoffs: state.handoffs
-      .filter((h) => h.state === 'open' || h.state === 'accepted' || h.state === 'awaiting-approval')
+      .filter(isOpenHandoff)
       .map((h) => ({ id: h.id, from: h.from, to: h.to, title: h.title, state: h.state, updatedAt: h.updatedAt })),
     pendingApprovals: state.approvals
       .filter((a) => a.state === 'pending')

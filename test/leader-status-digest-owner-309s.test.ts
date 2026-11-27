@@ -127,7 +127,7 @@ describe('status digest owner reply over the real Slack path (RQ-PHX-STATUSDIGES
     expect(second.text).toContain('published 3.31.0 · update pending');
     expect(second.text).toContain('Merges: 2 in the last hour · 2 in the last 24h');
     expect(second.text).toContain('Lanes: devin 2/6');
-    expect(second.text).toContain('Needs Mason: none waiting');
+    expect(second.text).toContain('Needs the owner: none waiting');
     expect(second.text).toContain('Top P0: second status ask');
     for (const stale of ['3.30.32', 'claude 4/8', 'first status ask', '1 in the last hour']) expect(second.text).not.toContain(stale);
 
@@ -166,7 +166,7 @@ describe('status digest owner reply over the real Slack path (RQ-PHX-STATUSDIGES
     expect(body.text).toContain('App: installed 3.29.15 · published unknown (published release not readable)');
     expect(body.text).toContain('Merges: unknown (GitHub merge count unavailable or incomplete) · unknown (GitHub merge count unavailable or incomplete)');
     expect(body.text).toContain('Lanes: unknown (queue/status.json missing or invalid)');
-    expect(body.text).toContain('Needs Mason: unknown (NEEDS-MASON.md could not be read)');
+    expect(body.text).toContain('Needs the owner: unknown (NEEDS-MASON.md could not be read)');
     expect(body.text).toContain('Top P0: unknown (MASON-INBOX.md not readable)');
     // No stale or fabricated healthy facts, and raw error markers never escape.
     for (const bad of ['MARKER-', '3.30.32', 'claude 9/9', 'stale', 'up to date', 'update pending', 'none waiting', 'none in the inbox', '0 in the last']) {

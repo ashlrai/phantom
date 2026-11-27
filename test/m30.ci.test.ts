@@ -20,6 +20,7 @@ import ts from 'typescript';
 import { parse } from 'yaml';
 // Plain-JS CI proof helper; exercised here as the real contract, not a copy.
 import { proveHistoryFastPath } from '../.github/scripts/ci-history-source.mjs';
+import { diffNeedsOsLegs, WINDOWS_FAST_TESTS } from '../.github/scripts/ci-os-paths.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
@@ -330,7 +331,7 @@ describe('M30 CI workflow', () => {
       job['runs-on'] === '${{ matrix.os }}'
         ? (job.strategy?.matrix?.include ?? []).map((row) => row.os)
         : [job['runs-on']];
-    const evaluateIf = (condition: string | undefined, event: string, lane: string, ref = '', release = 'false', ready = 'false', osSensitive = 'false', installSmoke = false, xplatInstall = 'false'): boolean => {
+    const evaluateIf = (condition: string | undefined, event: string, lane: string, ref = '', release = 'false', ready = 'false', osSensitive = 'false', installSmoke = false, xplatInstall = 'false', windowsFast = false): boolean => {
       if (condition === undefined) return true;
       const expression = condition
         .replace(/^\$\{\{\s*/, '').replace(/\s*\}\}$/, '')
@@ -344,12 +345,13 @@ describe('M30 CI workflow', () => {
         .replace(/\bneeds\.classify\.outputs\.lane\b/g, 'lane')
         .replace(/\bneeds\.classify\.outputs\.release_gate\b/g, 'release')
         .replace(/\bneeds\.release-build\.outputs\.ready\b/g, 'ready')
+        .replace(/\binputs\.windows_fast\b/g, 'windowsFast')
         .replace(/\binputs\.install_smoke\b/g, 'installSmoke');
       // A condition form this evaluator does not know must fail loudly rather
       // than fall through to a guessed result.
       expect(expression).not.toMatch(/\$\{\{|\}\}|github\.|needs\.|always|contains|fromJSON/);
       return Boolean(runInNewContext(`(${expression})`, {
-        event, lane, draft: false, ref, release, ready, osSensitive, installSmoke, xplatInstall, schedule: '17 */6 * * *',
+        event, lane, draft: false, ref, release, ready, osSensitive, installSmoke, xplatInstall, windowsFast, schedule: '17 */6 * * *',
         startsWith: (value: unknown, prefix: unknown) => String(value).startsWith(String(prefix)),
       }));
     };
@@ -387,6 +389,9 @@ describe('M30 CI workflow', () => {
       }
     }
     // Classification cannot serialize or suppress the longest fast job.
+    expect(evaluateIf(jobs['fast-windows']!.if, 'workflow_dispatch', 'full')).toBe(false);
+    expect(evaluateIf(jobs['fast-windows']!.if, 'workflow_dispatch', 'full', '', 'false', 'false', 'false', false, 'false', true)).toBe(true);
+    expect(evaluateIf(jobs['fast-macos']!.if, 'workflow_dispatch', 'full', '', 'false', 'false', 'false', false, 'false', true)).toBe(false);
     expect(jobs.quick!.needs).toBeUndefined();
     // The required gate and typecheck report for every PR and merge queue lane.
     for (const event of fastEvents) {
@@ -430,6 +435,28 @@ describe('M30 CI workflow', () => {
       expect(evaluateIf(jobs['release-build']!.if, 'workflow_dispatch', 'full', 'refs/tags/v3.30.28', 'true')).toBe(true);
       expect(evaluateIf(jobs['release-build']!.if, 'push', 'full', 'refs/tags/v3.30.28', 'false')).toBe(false);
     }
+  });
+
+  it('uses the native Windows regression files for test-only diff classification and manual proof', () => {
+    expect(WINDOWS_FAST_TESTS).toContain('test/m22.backlog.test.ts');
+    expect(WINDOWS_FAST_TESTS).toContain('test/m250.resource-control.test.ts');
+    for (const file of WINDOWS_FAST_TESTS) {
+      expect(existsSync(resolve(repoRoot, file)), file).toBe(true);
+      expect(diffNeedsOsLegs([file]), file).toBe(true);
+    }
+    expect(diffNeedsOsLegs(['test/m30.ci.test.ts', 'docs/QUEUE.md'])).toBe(false);
+    const paths = spawnSync(process.execPath, ['.github/scripts/ci-os-paths.mjs', '--windows-tests'], {
+      cwd: repoRoot, encoding: 'utf8',
+    });
+    expect(paths.status, paths.stderr).toBe(0);
+    expect(paths.stdout.trim().split(/\r?\n/)).toEqual(WINDOWS_FAST_TESTS);
+    const workflow = parse(ciYml);
+    expect(workflow.on.workflow_dispatch.inputs.windows_fast).toMatchObject({ type: 'boolean', default: false });
+    const steps = workflow.jobs['fast-windows'].steps;
+    expect(steps.find((step: { name: string }) => step.name === 'Run Windows regression suites')).toMatchObject({
+      if: "github.event_name == 'workflow_dispatch'",
+      run: expect.stringContaining('node scripts/test-ci.mjs "${windows_tests[@]}"'),
+    });
   });
 
   it('qualifies the tag full job set on the six-hour schedule with the documented Mac and service delta', () => {

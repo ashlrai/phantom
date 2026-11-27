@@ -7,17 +7,21 @@
 
 import type { AshlrConfig } from '../types.js';
 import { typeSafeAvailable, TYPESAFE_DISABLE_ENV } from '../classify/typesafe-client.js';
-import { JEV_DISABLE_ENV, jevKilledByEnv, localDay, readJevConfig, readLedger, summarizeByKind, calledSum, validTokenCount } from './ledger.js';
+import {
+  JEV_DISABLE_ENV,
+  calledSum,
+  classifierKilledByEnv,
+  fallbackRateOf,
+  isNonNegativeFinite,
+  jevKilledByEnv,
+  localDay,
+  meanOf,
+  readJevConfig,
+  readLedger,
+  summarizeByKind,
+  validTokenCount,
+} from './ledger.js';
 import type { DecisionRecord, JevStatus } from './types.js';
-
-function mean(values: readonly number[]): number | null {
-  return values.length ? values.reduce((s, v) => s + v, 0) / values.length : null;
-}
-
-function classifierKilled(): boolean {
-  const raw = process.env[TYPESAFE_DISABLE_ENV]?.trim().toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes';
-}
 
 export function jevStatusFromRecords(
   records: readonly DecisionRecord[],
@@ -26,6 +30,8 @@ export function jevStatusFromRecords(
   const called = records.filter((r) => r.called);
   const answered = records.filter((r) => typeof r.jevConfidence === 'number');
   const jev = records.filter((r) => r.path === 'jev').length;
+  const reportedCalls = called.filter((r) => validTokenCount(r.inputTokens) && validTokenCount(r.outputTokens)).length;
+  const pricedCalls = called.filter((r) => isNonNegativeFinite(r.estCostUsd)).length;
   return {
     enabled: meta.enabled,
     keyed: meta.keyed,
@@ -38,19 +44,19 @@ export function jevStatusFromRecords(
     outputTokensToday: calledSum(records, 'outputTokens'),
     estCostUsdToday: calledSum(records, 'estCostUsd'),
     usageCoverage: {
-      reportedCalls: called.filter((r) => validTokenCount(r.inputTokens) && validTokenCount(r.outputTokens)).length,
-      unknownCalls: called.filter((r) => !validTokenCount(r.inputTokens) || !validTokenCount(r.outputTokens)).length,
+      reportedCalls,
+      unknownCalls: called.length - reportedCalls,
     },
     costCoverage: {
-      pricedCalls: called.filter((r) => typeof r.estCostUsd === 'number' && Number.isFinite(r.estCostUsd) && r.estCostUsd >= 0).length,
-      unknownCalls: called.filter((r) => typeof r.estCostUsd !== 'number' || !Number.isFinite(r.estCostUsd) || r.estCostUsd < 0).length,
+      pricedCalls,
+      unknownCalls: called.length - pricedCalls,
       source: 'recorded-estimates',
     },
     lastSuccessfulCallAt: called.filter((r) => typeof r.jevConfidence === 'number' && Number.isFinite(Date.parse(r.ts)))
       .map((r) => r.ts).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null,
-    fallbackRateToday: records.length ? (records.length - jev) / records.length : 0,
-    avgConfidenceToday: mean(answered.map((r) => r.jevConfidence!)),
-    avgLatencyMsToday: mean(called.map((r) => r.durationMs)),
+    fallbackRateToday: fallbackRateOf(records.length, jev),
+    avgConfidenceToday: meanOf(answered.map((r) => r.jevConfidence!)),
+    avgLatencyMsToday: meanOf(called.map((r) => r.durationMs)),
     byKind: summarizeByKind(records),
     disabledKinds: meta.disabledKinds,
   };
@@ -59,13 +65,14 @@ export function jevStatusFromRecords(
 /** Status for one local day (default today). */
 export function jevStatus(cfg: AshlrConfig = {} as AshlrConfig, day: string = localDay()): JevStatus {
   const jc = readJevConfig();
+  const classifyKilled = classifierKilledByEnv();
   let disabledBy: string | undefined;
   if (jevKilledByEnv()) disabledBy = `${JEV_DISABLE_ENV} is set`;
-  else if (classifierKilled()) disabledBy = `${TYPESAFE_DISABLE_ENV} is set`;
+  else if (classifyKilled) disabledBy = `${TYPESAFE_DISABLE_ENV} is set`;
   else if (!jc.enabled) disabledBy = 'jev/config.json enabled=false';
   let keyed = false;
   try {
-    keyed = !classifierKilled() && typeSafeAvailable(cfg);
+    keyed = !classifyKilled && typeSafeAvailable(cfg);
   } catch {
     keyed = false;
   }

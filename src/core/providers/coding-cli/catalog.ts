@@ -16,18 +16,24 @@
  * Pure: no process, network, home-directory or write side effects.
  */
 
-/** Billing classes, copied from the source's routing/billing-class.ts (not on master). */
-export const BILLING_CLASSES = ['subscription', 'metered', 'local', 'loopback'] as const;
-export type BillingClass = (typeof BILLING_CLASSES)[number];
+import {
+  CODING_CLI_BILLING_CLASSES,
+  isFiniteNumber,
+  isNonEmptyString,
+  isRecord,
+  type CodingCliBillingClass,
+} from './validation.js';
+
+export type BillingClass = CodingCliBillingClass;
 
 function isBillingClass(value: unknown): value is BillingClass {
-  return typeof value === 'string' && (BILLING_CLASSES as readonly string[]).includes(value);
+  return typeof value === 'string' && (CODING_CLI_BILLING_CLASSES as readonly string[]).includes(value);
 }
 
-export const ACCOUNT_STATUSES = ['unverified', 'listed', 'rejected', 'accepted'] as const;
+const ACCOUNT_STATUSES = ['unverified', 'listed', 'rejected', 'accepted'] as const;
 export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
 
-export const MODEL_TIERS = ['frontier', 'workhorse', 'cheap', 'local'] as const;
+const MODEL_TIERS = ['frontier', 'workhorse', 'cheap', 'local'] as const;
 export type ModelTierName = (typeof MODEL_TIERS)[number];
 
 export interface TierCandidate {
@@ -88,13 +94,13 @@ function failRef(path: string, id: string): never {
 }
 
 function str(value: unknown, path: string): string {
-  if (typeof value !== 'string' || value.trim() === '') fail(path);
+  if (!isNonEmptyString(value)) fail(path);
   return value.trim();
 }
 
 function parseCandidate(raw: unknown, path: string): TierCandidate {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) fail(path);
-  const row = raw as Record<string, unknown>;
+  if (!isRecord(raw)) fail(path);
+  const row = raw;
   const accountStatus = str(row['accountStatus'], `${path}.accountStatus`);
   if (!(ACCOUNT_STATUSES as readonly string[]).includes(accountStatus)) fail(`${path}.accountStatus`);
   const out: TierCandidate = {
@@ -105,7 +111,7 @@ function parseCandidate(raw: unknown, path: string): TierCandidate {
   };
   if (row['note'] !== undefined) out.note = str(row['note'], `${path}.note`);
   if (row['sizeGb'] !== undefined) {
-    if (typeof row['sizeGb'] !== 'number' || !Number.isFinite(row['sizeGb']) || row['sizeGb'] <= 0) fail(`${path}.sizeGb`);
+    if (!isFiniteNumber(row['sizeGb']) || row['sizeGb'] <= 0) fail(`${path}.sizeGb`);
     out.sizeGb = row['sizeGb'];
   }
   if (row['task'] !== undefined) {
@@ -126,16 +132,16 @@ export function parseCatalog(text: string): CodingCliCatalog {
   } catch {
     fail('invalid JSON');
   }
-  if (typeof json !== 'object' || json === null || Array.isArray(json)) fail('root');
-  const root = json as Record<string, unknown>;
+  if (!isRecord(json)) fail('root');
+  const root = json;
   if (root['version'] !== 1) fail('version');
   const machine = root['machine'];
   if (typeof machine !== 'object' || machine === null) fail('machine');
   const m = machine as Record<string, unknown>;
   const backendsRaw = root['backends'];
-  if (typeof backendsRaw !== 'object' || backendsRaw === null || Array.isArray(backendsRaw)) fail('backends');
+  if (!isRecord(backendsRaw)) fail('backends');
   const backends: Record<string, BackendRecord> = {};
-  for (const [id, value] of Object.entries(backendsRaw as Record<string, unknown>)) {
+  for (const [id, value] of Object.entries(backendsRaw)) {
     if (typeof value !== 'object' || value === null) fail(`backends.${id}`);
     const row = value as Record<string, unknown>;
     const billing = row['billing'];

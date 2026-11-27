@@ -1,5 +1,5 @@
 /**
- * `phm channels` — the six inbound channel kinds: what is configured, where the
+ * `phm channels` — the inbound channel kinds: what is configured, where the
  * credential lives, and how much each has carried.
  *
  * `add` writes configuration only. It never accepts, stores, or prints a
@@ -19,6 +19,8 @@ import {
   writeEmailDropConfig,
   type EmailDropConfig,
 } from '../comms/email-drop-config.js';
+import { commsEnabled, imessageAllowlist, probeChatDb } from '../integrations/imessage.js';
+import { listTeammateTasks } from '../comms/imessage-teammate-tasks.js';
 import { readPrivateFileCapped } from '../verse/preferences.js';
 import { INBOUND_CHANNELS, type InboundChannel } from './channel-envelope.js';
 import { readInboxEntries } from './mason-inbox.js';
@@ -71,7 +73,11 @@ export interface ChannelsStatusOptions {
 /** Map an inbox `source` label back to its channel kind. */
 export function channelKindForSource(source: string): InboundChannel | 'other' {
   const value = source.trim().toLowerCase();
-  if ((INBOUND_CHANNELS as readonly string[]).includes(value)) return value as InboundChannel;
+  // Channel entries round-trip as `<slug> (<id>)` — the parenthesised id is a
+  // storage artifact, so the exact-kind match runs on the bare slug. Without
+  // this, `imessage (imessage-…)` matched no substring fallback and read 'other'.
+  const slug = value.replace(/\s*\([^)]*\)\s*$/, '');
+  if ((INBOUND_CHANNELS as readonly string[]).includes(slug)) return slug as InboundChannel;
   if (value.includes('telegram')) return 'telegram';
   if (value.includes('mail')) return 'email';
   if (value.includes('mobile') || value.includes('remote') || value.includes('phone')) return 'mobile';
@@ -179,6 +185,23 @@ function emailPendingOutbound(config: EmailDropConfig | undefined): CountOrUnkno
   }
 }
 
+/**
+ * iMessage outbound work still queued: Dot/Instinct teammate tasks reserved
+ * or mid-dispatch in the `imessage.teammate-tasks.v1` ledger — the same read
+ * `phm fleet imessage-tasks list` and the unified inbox's teammate-tasks
+ * source serve. 'pending' tasks were already sent and await the peer's
+ * result, so they are not outbound queue; a missing ledger is a verified
+ * zero and an unreadable or invalid one is 'unknown', never a guessed 0.
+ */
+function imessagePendingOutbound(runsDir: string): CountOrUnknown {
+  try {
+    return listTeammateTasks({ runsDir }).tasks
+      .filter((task) => task.state === 'queued' || task.state === 'sending').length;
+  } catch {
+    return 'unknown';
+  }
+}
+
 const BUILT_IN: ReadonlySet<InboundChannel> = new Set(['cli', 'desktop', 'page']);
 
 export async function buildChannelsStatus(opts: ChannelsStatusOptions = {}): Promise<ChannelsStatus> {
@@ -221,6 +244,16 @@ export async function buildChannelsStatus(opts: ChannelsStatusOptions = {}): Pro
 
   const mobileConfigured = existsSync(join(homeDir, '.ashlr', 'verse-remote.json'));
 
+  // iMessage is a first-class INBOUND_CHANNELS member: config is
+  // comms.enabled + comms.imessageHandle, verified senders are the
+  // imessageAllow/imessageHandle allowlist, and readiness needs chat.db
+  // readable for intake — probed at the same homeDir-derived path
+  // `phm imessage doctor` checks. No credential exists to custody.
+  const imessageConfigured = commsEnabled(cfg);
+  const imessagePaired = imessageAllowlist(cfg).length > 0;
+  const chatDbState = probeChatDb(join(homeDir, 'Library', 'Messages', 'chat.db'));
+  const imessageReady = imessageConfigured && chatDbState === 'ok';
+
   const rows: ChannelStatusRow[] = [
     {
       kind: 'telegram',
@@ -250,6 +283,25 @@ export async function buildChannelsStatus(opts: ChannelsStatusOptions = {}): Pro
         next: emailConfig.state === 'invalid'
           ? `email-drop config is invalid at ${emailConfig.path}`
           : 'phm channels add email <inboxDir> --from <address>',
+      }),
+    },
+    {
+      kind: 'imessage',
+      configured: imessageConfigured,
+      credential: 'none-needed',
+      paired: imessagePaired,
+      received: receivedOf('imessage'),
+      lastSeenAt: lastSeenOf('imessage'),
+      pendingOutbound: imessagePendingOutbound(runsDir),
+      ready: imessageReady,
+      ...(imessageReady ? {} : {
+        next: !imessageConfigured
+          ? 'run `phm imessage doctor`, then set comms.imessageHandle in ~/.ashlr/config.json'
+          : chatDbState === 'blocked_full_disk_access'
+            ? 'grant Full Disk Access to the app running Phantom (System Settings > Privacy & Security > Full Disk Access), then restart it'
+            : process.platform === 'darwin'
+              ? 'chat.db is not readable — Messages must have been used once on this Mac'
+              : 'iMessage intake needs macOS',
       }),
     },
     {
@@ -391,6 +443,18 @@ export async function addChannel(kind: InboundChannel, input: ChannelAddInput = 
       next: configured
         ? 'the phone gateway is already configured — open /verse/m'
         : 'the phone gateway needs a private ~/.ashlr/verse-remote.json — see docs/REMOTE-PHONE.md',
+    };
+  }
+
+  if (kind === 'imessage') {
+    // iMessage is a real INBOUND_CHANNELS member but its setup is not a
+    // config write this command can complete: it needs the owner's own
+    // handle in comms.imessageHandle, the macOS Full Disk Access and
+    // Automation grants `phm imessage doctor` verifies, and a readable
+    // chat.db. Reporting "built in" here would be a lie.
+    return {
+      ok: false, kind, changed: [], credential: 'none-needed',
+      reason: 'iMessage setup is `phm imessage doctor` plus comms.imessageHandle in ~/.ashlr/config.json and macOS permissions — `phm channels add` cannot grant those',
     };
   }
 

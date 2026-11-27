@@ -10,10 +10,21 @@
  * not protect it from a malicious process running as the same OS user.
  */
 
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { TextDecoder } from 'node:util';
 
 import { loadExistingProvenanceKeyReadOnly } from '../foundry/provenance.js';
+import {
+  SHA256_PREFIXED_DIGEST_RE as DIGEST_RE,
+  canonicalJsonBytes,
+  canonicalJsonString,
+  deepFreeze,
+  exactKeys,
+  hmacSha256Hex,
+  isCanonicalIsoTimestamp as canonicalTimestamp,
+  strictPlainRecord as record,
+  timingSafeUtf8Equal,
+} from './external-contract-codec.js';
 import {
   LOCUS_WORKSPACE_IDENTITY_OBSERVATION_GENESIS_DIGEST,
   LOCUS_WORKSPACE_IDENTITY_OBSERVATION_MAX_FUTURE_SKEW_MS,
@@ -27,7 +38,7 @@ export const LOCUS_BINDING_CAPABILITY_PURPOSE = 'locus-workspace-identity-observ
 export const LOCUS_BINDING_CAPABILITY_MAX_BYTES = 8 * 1024;
 export const LOCUS_BINDING_CAPABILITY_MAX_AUDIENCE_BYTES = 512;
 export const LOCUS_BINDING_CAPABILITY_MAX_WORKSPACE_BYTES = 4 * 1024;
-export const LOCUS_BINDING_CAPABILITY_NONCE_BYTES = 32;
+const LOCUS_BINDING_CAPABILITY_NONCE_BYTES = 32;
 export const LOCUS_BINDING_CAPABILITY_MIN_LIFETIME_MS = 1_000;
 
 const RECORD_TYPE = 'locus-binding-capability' as const;
@@ -36,12 +47,14 @@ const AUDIENCE_DOMAIN = 'ashlr:locus-binding-capability:audience:v1\0';
 const WORKSPACE_DOMAIN = 'ashlr:locus-binding-capability:workspace:v1\0';
 const IDENTITY_DOMAIN = 'ashlr:locus-binding-capability:identity:v1\0';
 const ATTESTATION_DOMAIN = 'ashlr:locus-binding-capability:attestation:v1\0';
-const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
 const CAPABILITY_ID_RE = /^hmac-sha256:[a-f0-9]{64}$/;
 const ATTESTATION_RE = /^hmac-sha256:[a-f0-9]{64}$/;
 const NONCE_RE = /^[A-Za-z0-9_-]{43}$/;
-const MAX_CANONICAL_DEPTH = 4;
-const MAX_CANONICAL_NODES = 64;
+const CANONICAL_BOUNDS = {
+  maxDepth: 4,
+  maxNodes: 64,
+  maxBytes: LOCUS_BINDING_CAPABILITY_MAX_BYTES,
+};
 
 const CAPABILITY_KEYS = [
   'schemaVersion', 'protocol', 'recordType', 'authority', 'capabilityScope', 'sourceState', 'purpose',
@@ -156,81 +169,12 @@ const DEFAULT_DEPENDENCIES: LocusBindingCapabilityDependenciesV1 = {
   randomBytes: (size) => randomBytes(size),
 };
 
-type Canonical = null | boolean | number | string | Canonical[] | { [key: string]: Canonical };
-
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    const keys = Reflect.ownKeys(value);
-    if (keys.some((key) => typeof key !== 'string' || !descriptors[String(key)]?.enumerable ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const sorted = [...expected].sort();
-  return actual.length === sorted.length && actual.every((key, index) => key === sorted[index]);
-}
-
-function canonicalize(
-  value: unknown,
-  state = { depth: 0, nodes: 0, ancestors: new Set<object>() },
-): Canonical {
-  state.nodes += 1;
-  if (state.nodes > MAX_CANONICAL_NODES || state.depth > MAX_CANONICAL_DEPTH) {
-    throw new TypeError('value exceeds bounds');
-  }
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new TypeError('non-finite number');
-    return Object.is(value, -0) ? 0 : value;
-  }
-  if (typeof value !== 'object' || state.ancestors.has(value)) throw new TypeError('non-json value');
-  state.ancestors.add(value);
-  state.depth += 1;
-  try {
-    if (Array.isArray(value)) {
-      if (Reflect.ownKeys(value).some((key) => typeof key === 'symbol' ||
-        (key !== 'length' && !/^(?:0|[1-9][0-9]*)$/.test(key)))) throw new TypeError('invalid array');
-      return value.map((entry, index) => {
-        if (!Object.hasOwn(value, index)) throw new TypeError('sparse array');
-        return canonicalize(entry, state);
-      });
-    }
-    const row = record(value);
-    if (!row) throw new TypeError('non-plain object');
-    const output: { [key: string]: Canonical } = Object.create(null) as { [key: string]: Canonical };
-    for (const key of Object.keys(row).sort()) output[key] = canonicalize(row[key], state);
-    return output;
-  } finally {
-    state.depth -= 1;
-    state.ancestors.delete(value);
-  }
-}
-
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(canonicalize(value));
-}
-
 function hmac(key: Buffer, domain: string, value: unknown): string {
-  return createHmac('sha256', key).update(domain, 'utf8').update(canonicalJson(value), 'utf8').digest('hex');
+  return hmacSha256Hex(key, domain, canonicalJsonString(value, CANONICAL_BOUNDS));
 }
 
 function keyedDigest(key: Buffer, domain: string, value: unknown): string {
   return `sha256:${hmac(key, domain, value)}`;
-}
-
-function canonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
 }
 
 function boundedPrivateString(value: unknown, maxBytes: number): value is string {
@@ -244,19 +188,6 @@ function boundedPrivateString(value: unknown, maxBytes: number): value is string
 
 function validKey(value: unknown): value is Buffer {
   return Buffer.isBuffer(value) && value.length === 32;
-}
-
-function safeEqualHex(left: string, right: string): boolean {
-  const first = Buffer.from(left, 'hex');
-  const second = Buffer.from(right, 'hex');
-  return first.length === 32 && second.length === 32 && timingSafeEqual(first, second);
-}
-
-function deepFreeze<T>(value: T, seen = new Set<object>()): T {
-  if (value === null || typeof value !== 'object' || seen.has(value)) return value;
-  seen.add(value);
-  for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested, seen);
-  return Object.freeze(value);
 }
 
 function failure(issue: LocusBindingCapabilityIssueV1): MintLocusBindingCapabilityResultV1 {
@@ -411,7 +342,7 @@ export function mintLocusBindingCapabilityV1(
     capabilityId,
     attestation: `hmac-sha256:${hmac(key, ATTESTATION_DOMAIN, [capabilityId, unsigned])}`,
   };
-  if (Buffer.byteLength(canonicalJson(capability), 'utf8') > LOCUS_BINDING_CAPABILITY_MAX_BYTES) {
+  if (!canonicalJsonBytes(capability, CANONICAL_BOUNDS)) {
     return failure('invalid-input');
   }
   return deepFreeze({ ok: true as const, capability: deepFreeze(capability), issue: null });
@@ -420,13 +351,7 @@ export function mintLocusBindingCapabilityV1(
 /** Return the one canonical UTF-8 representation accepted by the verifier. */
 export function canonicalLocusBindingCapabilityBytesV1(value: unknown): Buffer | null {
   const candidate = record(value);
-  if (!candidate || !validCapability(candidate)) return null;
-  try {
-    const bytes = Buffer.from(canonicalJson(candidate), 'utf8');
-    return bytes.length <= LOCUS_BINDING_CAPABILITY_MAX_BYTES ? bytes : null;
-  } catch {
-    return null;
-  }
+  return candidate && validCapability(candidate) ? canonicalJsonBytes(candidate, CANONICAL_BOUNDS) : null;
 }
 
 /**
@@ -455,9 +380,9 @@ export function verifyLocusBindingCapabilityV1(
   }
   const candidate = record(parsed);
   if (!candidate || !validCapability(candidate)) return verifyFailure('invalid-capability');
-  let canonical: string;
-  try { canonical = canonicalJson(candidate); } catch { return verifyFailure('invalid-capability'); }
-  if (!Buffer.from(canonical, 'utf8').equals(owned)) return verifyFailure('non-canonical-json');
+  const canonical = canonicalJsonBytes(candidate, CANONICAL_BOUNDS);
+  if (!canonical) return verifyFailure('invalid-capability');
+  if (!canonical.equals(owned)) return verifyFailure('non-canonical-json');
 
   const verificationContext = record(context);
   if (!verificationContext || !exactKeys(verificationContext, ['capabilityId', 'purpose', 'policyGeneration']) ||
@@ -488,12 +413,10 @@ export function verifyLocusBindingCapabilityV1(
   key = Buffer.from(key);
 
   const unsigned = unsignedCapability(candidate);
-  const expectedId = hmac(key, IDENTITY_DOMAIN, unsigned);
-  const actualId = (candidate['capabilityId'] as string).slice('hmac-sha256:'.length);
-  if (!safeEqualHex(actualId, expectedId)) return verifyFailure('capability-id-mismatch');
-  const expectedAttestation = hmac(key, ATTESTATION_DOMAIN, [candidate['capabilityId'], unsigned]);
-  const actualAttestation = (candidate['attestation'] as string).slice('hmac-sha256:'.length);
-  if (!safeEqualHex(actualAttestation, expectedAttestation)) return verifyFailure('attestation-mismatch');
+  const expectedId = `hmac-sha256:${hmac(key, IDENTITY_DOMAIN, unsigned)}`;
+  if (!timingSafeUtf8Equal(candidate['capabilityId'], expectedId)) return verifyFailure('capability-id-mismatch');
+  const expectedAttestation = `hmac-sha256:${hmac(key, ATTESTATION_DOMAIN, [candidate['capabilityId'], unsigned])}`;
+  if (!timingSafeUtf8Equal(candidate['attestation'], expectedAttestation)) return verifyFailure('attestation-mismatch');
 
   return deepFreeze({
     ok: true as const,

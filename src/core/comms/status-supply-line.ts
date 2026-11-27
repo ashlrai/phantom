@@ -25,6 +25,8 @@ const LANES = [
 const FAIL_REASONS = ['usage-limit', 'auth-rejected', 'executor-fail'] as const;
 const UNKNOWN_REASONS = ['missing-events-log', 'unreadable-events-log', 'no-leader-rows', 'unavailable'] as const;
 const unknownPlanner: StatusSupply['planner'] = { status: 'unknown', lastGoodPassAt: null, reason: 'unavailable' };
+/** router-queue.md is append-mostly Markdown history; same 32 MiB bound the other market readers use. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 export function summarizeStatusSupply(rows: FleetLaneQueueRow[], health: PlannerHealth, sourceState: StatusSupply['sourceState']): StatusSupply {
   const lanes: StatusSupply['lanes'] = [];
@@ -48,11 +50,12 @@ export function summarizeStatusSupply(rows: FleetLaneQueueRow[], health: Planner
 export async function readStatusSupply(runsDir: string | undefined, now: () => Date): Promise<StatusSupply> {
   try {
     const root = runsDir ?? join(homedir(), '.ashlr-runs');
-    const [source, planner] = await Promise.all([
+    const [source, router, planner] = await Promise.all([
       readSource(join(root, 'queue', 'ready.tsv'), 2 * 1024 * 1024, false),
+      readSource(join(root, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
       readPlannerHealth(root, now().getTime()).catch(() => null),
     ]);
-    const parsed = parseReadyTsv(source.text);
+    const parsed = parseReadyTsv(source.text, router.state === 'healthy' ? router.text : null);
     const state = source.state === 'healthy' && parsed.dropped ? 'degraded' : source.state;
     return summarizeStatusSupply(parsed.rows, planner ?? { ...unknownPlanner, failingSince: null, resetAt: null }, state);
   } catch {

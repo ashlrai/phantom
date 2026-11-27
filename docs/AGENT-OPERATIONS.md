@@ -29,6 +29,9 @@ returns `{schema: "fleet.lane-rank.v1", tier, lanes}` ordered by nearest budget 
 `routes.json` maps pool names to existing `routeBackend` decisions, e.g.
 `{"codex-personal":{"backend":"codex","tier":"frontier","reason":"prior route"}}`.
 Supply currently free slots; missing routes, slots or usable budgets exclude a lane.
+Each observed budget bucket must be at most two hours old. A manual reading
+with a declared reset can qualify until that reset. Spill forecasts still
+require a reading from the last two hours.
 This reads the pool-budget ledger without writes or reservations. Decisions remain
 advisory: the dispatcher must recheck policy, account admission and capacity.
 The command consumes route evidence because invoking the legacy router can publish usage.
@@ -43,7 +46,7 @@ The command consumes route evidence because invoking the legacy router can publi
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
-| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, runs the docs link check when the diff touches markdown or deletes files, the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and a syntax check of each changed file by type (Python, shell, Perl, shebang scripts, JSON, XML, Rust, Swift, YAML, TOML, CSS, Vitest snapshots, patch diffs, embedded payloads in HTML files, and scripts in the independently-owned `src/raycast/` and `examples/universe-site/` trees), plus the `contrib/router` program type check when its inputs change (the tree runs under `tsx` and no `tsconfig` project covers it); reference in [verify-changed.md](verify-changed.md) |
+| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, runs the docs link check when the diff touches markdown or deletes files, the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and a syntax check of each changed file by type (Python, shell, Perl, shebang scripts, JSON, XML, Rust, Swift, YAML, TOML, CSS, Vitest snapshots, patch diffs, embedded payloads in HTML files, and scripts in the independently-owned `src/raycast/` and `examples/universe-site/` trees), plus the `contrib/` and `scripts/` program type checks when their inputs change (both run under `tsx`/node and no `tsconfig` project covers them); reference in [verify-changed.md](verify-changed.md) |
 | Type check (backend + web + desktop) | `npm run typecheck` |
 | Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
@@ -1030,8 +1033,10 @@ The merge rate counts a GitHub PR once across repeated observations and jobs;
 legacy transitions without a PR URL deduplicate by job, including LAND rows in
 `ready.tsv`. Rows with neither identifier remain separate observations. Event
 timestamps must include a timezone; the trailing window includes both endpoints
-and uses the event timestamp, not reconciliation time. The bounded ledger is
-read in full because backfilled events need not be ordered by event time. Credit
+and uses the event timestamp, not reconciliation time. An explicit merge time
+after the report time cannot override another receipt or supply its lane.
+The bounded ledger is read in full because backfilled events can arrive out of
+event-time order. Credit
 comes from the pool-budget ledger; a queue-local `budgets/` directory or the
 usage journal fill pools the ledger has not observed.
 
@@ -1204,11 +1209,22 @@ repos running fleet jobs touch plus the workspace checkout, it lists
 recently-merged PRs whose head is not `codex-bridge/*` and whose author is not
 the fleet App, joins each `owner/name#N` against the standing revert ledger
 (`improve/revert-outcomes.jsonl`), and rolls up per-author merged/reverted
-counts. Agent and model are always null — gh records only the PR author login.
-An unreadable revert ledger marks every verdict `unknown`, never "not
-reverted"; a missing `gh` reports `sourceState: 'missing'`. Read-only — `gh pr
-list` and the local ledger only; see
+counts plus a per-agent rollup. `agent` is convention attribution only — the
+head branch's first path segment against known agent branch namespaces
+(`devin/…`, `cursor/…`, `claude/…`, `copilot/…`, …) or a known agent-bot
+author login; unmatched stays null (an honest unknown, never a guess), and
+`model` is always null since gh records none. An unreadable revert ledger
+marks every verdict `unknown`, never "not reverted"; a missing `gh` reports
+`sourceState: 'missing'`. Read-only — `gh pr list` and the local ledger
+only; see
 [core/fleet/outside-pr-outcomes.ts](../src/core/fleet/outside-pr-outcomes.ts).
+The cloud scheduler's hourly improve tick also journals each read into
+`metrics/outside-pr-outcomes.jsonl` (`fleet.outside-pr-outcome.v1` /
+`fleet.outside-pr-scan.v1` rows via
+[core/fleet/outside-outcome-sync.ts](../src/core/fleet/outside-outcome-sync.ts)),
+and `phm improve discover` folds repos whose outside merges keep carrying
+standing revert verdicts into self-targeted backlog items — see
+[core/improve/outside-pr-backlog.ts](../src/core/improve/outside-pr-backlog.ts).
 
 `phm fleet pr-hygiene [--repo <owner/name>] [--stale-days <n>] [--limit <n>] [--json]`
 audits one repo's open PRs and emits the `fleet.pr-hygiene.v1` triage report

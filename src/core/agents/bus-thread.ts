@@ -13,7 +13,7 @@
  * and reports `not-found` here exactly as it does on the fleet read — hint
  * resolution stays `show`'s alone.
  */
-import { readBusThread, type BusThreadResult } from '../fleet/bus-thread-context.js';
+import { readBusThread, validBusThreadFilters, type BusThreadFilters, type BusThreadResult } from '../fleet/bus-thread-context.js';
 import type { UnifiedBusOptions } from './bus-unified.js';
 
 /** The printable routing-label rule every bus id filter shares. */
@@ -29,11 +29,20 @@ export type AgentBusThread =
  * id returns the `fleet.bus-thread.v1` result verbatim — `rootFound` false
  * is a proven miss (expired, reclaimed or never posted), `complete` false
  * with `sourceFailure` naming why means the bounded walk could not finish,
- * never an invented empty thread.
+ * never an invented empty thread. `filters` is the shared bus-read filter
+ * set `fleet bus-thread`, `fleet_bus_thread` and `agents bus inbox` apply —
+ * validated here like every other read's filters, so a malformed value is
+ * `invalid` before the store is touched and a valid one narrows `messages`
+ * to the matching chain members while `rootFound`/`scannedThrough`/
+ * `complete`/`sourceFailure` keep describing the whole chain.
  */
-export function readAgentBusThread(id: string, options: UnifiedBusOptions = {}): AgentBusThread {
+export function readAgentBusThread(id: string, options: UnifiedBusOptions = {},
+  filters?: BusThreadFilters): AgentBusThread {
   if (typeof id !== 'string' || !THREAD.test(id)) {
     return { status: 'invalid', reason: 'Invalid message id.' };
   }
-  return { status: 'ok', thread: readBusThread(id, { ...options, liveEvidence: true }) };
+  if (!validBusThreadFilters(filters)) {
+    return { status: 'invalid', reason: 'Invalid thread filter.' };
+  }
+  return { status: 'ok', thread: readBusThread(id, { ...options, liveEvidence: true, filters }) };
 }

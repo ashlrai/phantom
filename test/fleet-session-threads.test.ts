@@ -88,7 +88,7 @@ describe('buildSessionThreads', () => {
     expect(read.threads.map(entry => entry.session.id)).toEqual(['leader', 'RQ-A', 'RQ-QUIET']);
     const [leader, worker, quiet] = read.threads as [SessionThreadsV1['threads'][number], SessionThreadsV1['threads'][number], SessionThreadsV1['threads'][number]];
     expect(leader.messages.map(m => m.key)).toEqual(['bus:m1', 'bus:m2', 'reply:0']);
-    expect(leader.messages.at(-1)).toMatchObject({ label: 'Leader to Mason', text: 'On it.', truncated: false });
+    expect(leader.messages.at(-1)).toMatchObject({ label: 'Leader to the owner', text: 'On it.', truncated: false });
     // The worker's thread holds brief, two steps, commands and two bus messages; the read keeps the newest three.
     expect(worker.messageCount).toBe(6);
     expect(worker.messages.map(m => `${m.key}|${m.side}`)).toEqual(['commands|session', 'bus:m1|other', 'bus:m2|session']);
@@ -161,27 +161,27 @@ describe('buildSessionThreads', () => {
     const [leader, worker, quiet] = read.threads as [SessionThreadsV1['threads'][number], SessionThreadsV1['threads'][number], SessionThreadsV1['threads'][number]];
     expect(read.sources.owner).toBe('available');
     expect(leader.messages.map(m => [m.key, m.side, m.label])).toEqual([
-      ['owner:desk-1', 'other', 'Mason to Leader, from desktop'], ['owner:tg-1', 'other', 'Mason to Leader, from telegram'], ['owner:desk-2', 'other', 'Mason to Leader, from desktop'],
+      ['owner:desk-1', 'other', 'The owner to Leader, from desktop'], ['owner:tg-1', 'other', 'The owner to Leader, from telegram'], ['owner:desk-2', 'other', 'The owner to Leader, from desktop'],
     ]);
     expect(worker.messages.map(m => [m.key, m.kind, m.at, m.text])).toEqual([
       ['owner:desk-1', 'owner', '2026-11-17T11:40:00.000Z', 'Stop, @RQ-A. Use the shared form.'], ['owner:desk-2', 'owner', '2026-11-17T11:55:00.000Z', '@RQ-A also keep the draft'],
     ]);
-    expect(worker.summary.at(-1)).toBe('Mason aimed 2 messages at it through the Leader inbox, the newest at 2026-11-17T11:55:00.000Z.');
+    expect(worker.summary.at(-1)).toBe('The owner aimed 2 messages at it through the Leader inbox, the newest at 2026-11-17T11:55:00.000Z.');
     expect([leader.sources.owner, worker.sources.owner, quiet.sources.owner, quiet.messageCount]).toEqual(['available', 'available', 'none', 0]);
-    expect(renderSessionThreadsText(read)).toContain('  > Mason to the Leader, aimed at RQ-A, from desktop [2026-11-17T11:55:00.000Z]: @RQ-A also keep the draft');
+    expect(renderSessionThreadsText(read)).toContain('  > The owner to the Leader, aimed at RQ-A, from desktop [2026-11-17T11:55:00.000Z]: @RQ-A also keep the draft');
   });
 
   it('tells an unreadable inbox from an empty one and from one nobody asked for', async () => {
     for (const owner of [null, inbox([wrote('06:40', '@RQ-A hi')], 'degraded')]) {
       const read = buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: none, owner }, NOW);
       expect(read.sources.owner).toBe('unavailable');
-      expect(read.gaps).toContain('Messages from Mason unknown: the Leader inbox could not be read.');
+      expect(read.gaps).toContain('Messages from the owner unknown: the Leader inbox could not be read.');
       expect(read.threads.map(entry => [entry.sources.owner, entry.messages.filter(m => m.kind === 'owner').length])).toEqual([['unavailable', 0], ['unavailable', 0], ['unavailable', 0]]);
     }
     for (const owner of [inbox([], 'missing'), inbox([wrote('06:40', 'nobody named')]), undefined]) {
       const read = buildSessionThreads(await liveList([session('RQ-A')]), { sessionsRead: true, bus: bus([]), activity: none, ...(owner ? { owner } : {}) }, NOW);
       expect(read.threads.find(entry => entry.session.id === 'RQ-A')!.sources.owner).toBe('none');
-      expect(read.gaps).not.toContain('Messages from Mason unknown: the Leader inbox could not be read.');
+      expect(read.gaps).not.toContain('Messages from the owner unknown: the Leader inbox could not be read.');
     }
   });
 
@@ -225,7 +225,7 @@ describe('buildSessionThreads', () => {
     expect(leader.messages.map(m => [m.key, m.kind, m.side])).toEqual([['owner:desk-0', 'owner', 'other'], ['routing:desk-0', 'routing', 'record']]);
     expect(leader.messages[1]!.text.split('\n')).toEqual(['RQ-A, on claude: launched', 'RQ-B, lane unknown: queued']);
     expect(worker.messages.map(m => m.key)).toEqual(['order:desk-0', 'routing:desk-0']);
-    expect(worker.summary.join(' ')).toContain('Serves Mason\'s message of 2026-11-17 06:20 ET');
+    expect(worker.summary.join(' ')).toContain('Serves the owner\'s message of 2026-11-17 06:20 ET');
     expect([read.sources.orders, leader.sources.orders, worker.sources.orders, quiet.sources.orders]).toEqual(['available', 'available', 'available', 'none']);
     // The worker's entry names the message it serves, with every job the trace ties to it; nobody else's does.
     expect(worker.serves).toEqual({ key: 'desk-0', at: '2026-11-17 06:20', source: 'desktop', text: 'Fix the reply box.', truncated: false, jobs: 2 });
@@ -384,7 +384,7 @@ describe('readSessionThreads', () => {
     expect(read.sources.owner).toBe('available');
     const noInbox = await readSessionThreads({ now: NOW, ...reads(), readOwner: async () => { throw new Error('z'); } });
     expect([noInbox.sources.owner, noInbox.sources.bus, noInbox.threads.length]).toEqual(['unavailable', 'available', 3]);
-    expect(noInbox.gaps).toContain('Messages from Mason unknown: the Leader inbox could not be read.');
+    expect(noInbox.gaps).toContain('Messages from the owner unknown: the Leader inbox could not be read.');
     const noTrace = await readSessionThreads({ now: NOW, ...reads(), readOrders: async () => { throw new Error('t'); } });
     expect([noTrace.sources.orders, noTrace.sources.owner, noTrace.threads.length]).toEqual(['unavailable', 'available', 3]);
     expect(noTrace.gaps).toContain('Routing unknown: the order trace could not be read.');

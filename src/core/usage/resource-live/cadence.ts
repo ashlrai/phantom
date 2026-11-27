@@ -9,6 +9,11 @@ import type { PollState, ResourceLiveReading } from './types.js';
 export const ACTIVE_POLL_MS = 60_000;
 export const IDLE_POLL_MS = 10 * 60_000;
 
+export function nextResetCheck(observed: number, end: number): number {
+  const lead = end - 2 * 60_000;
+  return observed < lead ? lead : end;
+}
+
 /** What makes two readings the same observation of the same window. */
 export function readingFingerprint(reading: Pick<ResourceLiveReading, 'verified' | 'used' | 'limit' | 'reset_at' | 'source'>): string {
   return reading.verified ? `${reading.used}|${reading.limit}|${reading.reset_at}|${reading.source}` : 'unverified';

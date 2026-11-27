@@ -12,15 +12,18 @@
  * automates the same recording on the daemon's self-improvement cadence,
  * beside the reward-sync and skill-nudge off-tick jobs.
  *
- * THE RULES, matching the `--record` path exactly:
+ * THE RULES, sharing the finish and tag classification with `--record`:
  *   - WINDOWED FINISHES ONLY. Candidates are the jobs whose newest finish
- *     inside the retained window recorded `empty` — the same
- *     `ledgerFinishes` fold `phm jobs empty` runs (empty-finishes.ts, the
+ *     inside the retained window recorded `empty` and was not a precheck
+ *     skip — the same
+ *     finish fold `phm jobs empty` runs (empty-finishes.ts, the
  *     pure ledger projection split out of empties.ts), over the same
  *     jobs-ledger dialect, here bounded to the newest
  *     ROUTER_OUTCOME_LEDGER_LIMIT bytes of jobs.jsonl like the sibling
  *     syncs. A job whose finish rows fell out of the tail is simply not a
- *     candidate this pass; its earlier recorded tag still stands.
+ *     candidate this pass; its earlier recorded tag still stands. A new
+ *     launch or batch claim supersedes finishes from an earlier attempt
+ *     because the job's log can already belong to the newer attempt.
  *   - LOG TAIL IS THE ONLY INPUT. The tag comes from `tagEmpty` over the
  *     job's `<runs>/<id>.log` tail — the same 64 KiB bounded read
  *     `readEmptyJobs` performs — never from notes, publish output or the
@@ -40,7 +43,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { ledgerFinishes } from './empty-finishes.js';
+import { currentAttemptFinishes } from './empty-finishes.js';
+import { readLedgerLines } from './ledger-lines.js';
 import { EMPTY_TAGS, recordEmptyTags, tagEmpty, type EmptyTag, type TaggedEmptyJob } from './empty-tags.js';
 import { readSource } from './runs-parked-queue.js';
 import { recordDupcheckOutcomes } from '../queue/dupcheck-gate.js';
@@ -102,24 +106,20 @@ async function tailOrInjected(injected: string | undefined, path: string): Promi
   return readLedgerTail(path);
 }
 
-/** job id -> recorded tag, from the tags ledger's `job.empty-tag.v1` rows. */
-function recordedTags(text: string): Map<string, EmptyTag> {
-  const tags = new Map<string, EmptyTag>();
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    let row: Record<string, unknown>;
-    try {
-      const parsed: unknown = JSON.parse(line);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-      row = parsed as Record<string, unknown>;
-    } catch { continue; }
-    if (row['schema'] !== 'job.empty-tag.v1') continue;
-    const job = row['job'];
-    const tag = row['tag'];
-    if (typeof job !== 'string' || typeof tag !== 'string') continue;
-    if ((EMPTY_TAGS as readonly string[]).includes(tag)) tags.set(job, tag as EmptyTag);
-  }
-  return tags;
+/** Keep the first valid recorded tag for each current candidate. */
+function collectRecordedTag(line: string, candidates: ReadonlySet<string>, tags: Map<string, EmptyTag>): void {
+  if (!line.includes('job.empty-tag.v1')) return;
+  let row: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(line);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+    row = parsed as Record<string, unknown>;
+  } catch { return; }
+  if (row['schema'] !== 'job.empty-tag.v1') return;
+  const job = row['job'];
+  const tag = row['tag'];
+  if (typeof job !== 'string' || !candidates.has(job) || tags.has(job) || typeof tag !== 'string') return;
+  if ((EMPTY_TAGS as readonly string[]).includes(tag)) tags.set(job, tag as EmptyTag);
 }
 
 /**
@@ -152,11 +152,26 @@ export async function syncEmptyTagsFromJobsLedger(
       ...emptyResult('read', jobsPath), truncated: jobs.truncated, tagsState,
     };
     if (tagsState !== 'read' && tagsState !== 'missing') return base;
-    const seen = tagsRead.state === 'read' ? recordedTags(tagsRead.text) : new Map<string, EmptyTag>();
 
-    const candidates = ledgerFinishes(jobs.text, nowMs, EMPTY_TAG_SYNC_HOURS)
-      .finishes.filter(finish => finish.empty === true)
+    const candidates = currentAttemptFinishes(jobs.text, nowMs, EMPTY_TAG_SYNC_HOURS)
+      .filter(finish => finish.empty && !finish.skipped)
       .map(finish => ({ id: finish.id, lane: finish.lane }));
+    if (candidates.length === 0) return base;
+
+    const candidateIds = new Set(candidates.map(candidate => candidate.id));
+    const seen = new Map<string, EmptyTag>();
+    const collect = (line: string) => collectRecordedTag(line, candidateIds, seen);
+    if (tagsRead.state === 'read') {
+      if (tagsRead.truncated) {
+        // Older tags still reserve their jobs in the writer. Recover them
+        // before spending classification slots or deriving dupcheck outcomes.
+        if (!await readLedgerLines(tagsPath, collect)) return { ...base, tagsState: 'unreadable' };
+      } else {
+        for (const line of tagsRead.text.split('\n')) collect(line);
+      }
+    }
+    if (opts.signal?.aborted) return base;
+
     const fresh = candidates.filter(candidate => !seen.has(candidate.id));
     const toClassify = fresh.slice(0, Math.max(0, opts.maxClassify ?? EMPTY_TAG_SYNC_MAX_CLASSIFY));
 

@@ -73,6 +73,7 @@ export async function getLaneQueueCounts(
     } }),
     getFleetLaneSnapshot({
       queueDir, now: () => at, mergeWindowMs: 3_600_000, usageLogPaths: [], budgetsDir: join(queueDir, 'budgets'),
+      ledgerBytes: opts.ledgerBytes,
     }),
     readSourceEnds(join(opts.runsDir, 'metrics', 'jobs.jsonl'), opts.ledgerBytes ?? QUEUE_COUNTS_LEDGER_BYTES),
   ]);
@@ -161,7 +162,13 @@ export async function getLaneQueueCounts(
   for (const row of rows) for (const r of row.blockedReasons) totalReasons.set(r.reason, (totalReasons.get(r.reason) ?? 0) + r.count);
   const runningState: QueueCountsSourceState = snapshot.sources.queueState.state === 'healthy' || snapshot.sources.queue.state === 'healthy'
     ? 'healthy' : snapshot.sources.queueState.state === 'degraded' || snapshot.sources.queue.state === 'degraded' ? 'degraded' : 'missing';
-  const sources = { ready: queue.sources.ready, running: runningState, ledger: snapshot.sources.ledger.state };
+  // The merge ledger's file state can be degraded (a truncated tail) while
+  // the merge window itself is still fully observed; the report's ledger
+  // source answers whether merge counts are complete, not whether every
+  // byte was read.
+  const ledgerState: QueueCountsSourceState = snapshot.sources.ledger.mergeWindow === 'complete' ? 'healthy'
+    : snapshot.sources.ledger.mergeWindow === 'partial' ? 'degraded' : 'missing';
+  const sources = { ready: queue.sources.ready, running: runningState, ledger: ledgerState };
   const notes: string[] = [];
   const say = (what: string, state: QueueCountsSourceState, effect: string) => {
     if (state === 'missing') notes.push(`${what} not found: ${effect}.`);
@@ -179,7 +186,7 @@ export async function getLaneQueueCounts(
       ready: readyKnown ? sum(rows, 'ready') : null,
       parked: readyKnown ? sum(rows, 'parked') : null,
       running: (snapshot.sources.queueState.state === 'healthy' || snapshot.sources.queue.state === 'healthy') && rows.every(r => r.running !== null) ? sum(rows, 'running') : null,
-      merges: snapshot.sources.ledger.state === 'healthy' && rows.every(r => r.merges !== null) ? sum(rows, 'merges') : null,
+      merges: ledgerState === 'healthy' && rows.every(r => r.merges !== null) ? sum(rows, 'merges') : null,
       blockedReasons: rankReasons(totalReasons),
       stale: readyKnown ? sum(rows, 'stale') : null,
     },

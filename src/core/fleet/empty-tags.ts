@@ -89,6 +89,12 @@ export async function recordEmptyTags(runsDir: string, jobs: readonly TaggedEmpt
     try { const row = JSON.parse(line) as { job?: unknown }; if (typeof row.job === 'string') seen.add(row.job); } catch { /* skip a torn line */ }
   }
   const fresh = jobs.filter(job => !seen.has(job.id));
-  if (fresh.length) await appendFile(file, fresh.map(job => `${JSON.stringify({ schema: 'job.empty-tag.v1', job: job.id, lane: job.lane, tag: job.tag })}\n`).join(''));
+  if (fresh.length) {
+    const ts = new Date().toISOString();
+    const rows = fresh.map(job => JSON.stringify({
+      schema: 'job.empty-tag.v1', job: job.id, lane: job.lane, tag: job.tag, ts,
+    }));
+    await appendFile(file, rows.join('\n') + '\n');
+  }
   return fresh.length;
 }

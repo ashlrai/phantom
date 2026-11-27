@@ -18,6 +18,7 @@
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { TYPESAFE_DISABLE_ENV } from '../classify/typesafe-client.js';
 import type { DecisionKind, DecisionRecord, JevKindStats } from './types.js';
 import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
 
@@ -32,7 +33,7 @@ function ashlrHome(): string {
     : join(homedir(), '.ashlr');
 }
 
-export function jevDir(): string {
+function jevDir(): string {
   return join(ashlrHome(), 'jev');
 }
 
@@ -70,8 +71,8 @@ export const DEFAULT_DAILY_CALL_BUDGET = 1500;
 /** Published concrete-model tariff, verified 2026-10-01: https://docs.typesafe.ai/models.
  * Aliases can move: only the actual response model jev-1.13.0 selects this rate.
  * Output tokens are free; the request is NOT free. These are estimates, not invoices. */
-export const DEFAULT_INPUT_USD_PER_MTOK = 0.042;
-export const DEFAULT_OUTPUT_USD_PER_MTOK = 0;
+const DEFAULT_INPUT_USD_PER_MTOK = 0.042;
+const DEFAULT_OUTPUT_USD_PER_MTOK = 0;
 
 export interface JevConfig {
   /** Master switch. Default true (still inert until a key is present). */
@@ -93,8 +94,32 @@ const DEFAULT_CONFIG: JevConfig = {
   outputUsdPerMTok: null,
 };
 
-function positiveNumber(value: unknown, fallback: number | null): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function isNonNegativeFinite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+export function isValidThreshold(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 1;
+}
+
+export function validTokenCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+export function isValidCallBudget(value: unknown): value is number | null {
+  return value === null || validTokenCount(value);
+}
+
+export function meanOf(values: readonly number[]): number | null {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+}
+
+export function fallbackRateOf(total: number, jev: number): number {
+  return total ? (total - jev) / total : 0;
 }
 
 /** Read config; a missing or malformed file is the defaults (never throws). */
@@ -102,13 +127,13 @@ export function readJevConfig(): JevConfig {
   const path = jevConfigPath();
   if (!existsSync(path)) return DEFAULT_CONFIG;
   try {
-    const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return DEFAULT_CONFIG;
+    const raw: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (!isPlainRecord(raw)) return DEFAULT_CONFIG;
     const thresholds: Partial<Record<DecisionKind, number>> = {};
-    if (typeof raw['thresholds'] === 'object' && raw['thresholds'] !== null) {
-      for (const [k, v] of Object.entries(raw['thresholds'] as Record<string, unknown>)) {
+    if (isPlainRecord(raw['thresholds'])) {
+      for (const [k, v] of Object.entries(raw['thresholds'])) {
         // A threshold of 0 would accept any coin-flip; refuse it rather than obey it.
-        if (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 1) {
+        if (isValidThreshold(v)) {
           thresholds[k as DecisionKind] = v;
         }
       }
@@ -119,9 +144,9 @@ export function readJevConfig(): JevConfig {
         ? (raw['disabledKinds'].filter((k) => typeof k === 'string') as DecisionKind[])
         : [],
       thresholds,
-      dailyCallBudget: raw['dailyCallBudget'] === null ? null : typeof raw['dailyCallBudget'] === 'number' && Number.isSafeInteger(raw['dailyCallBudget']) && raw['dailyCallBudget'] >= 0 ? raw['dailyCallBudget'] : DEFAULT_DAILY_CALL_BUDGET,
-      inputUsdPerMTok: positiveNumber(raw['inputUsdPerMTok'], null),
-      outputUsdPerMTok: positiveNumber(raw['outputUsdPerMTok'], null),
+      dailyCallBudget: isValidCallBudget(raw['dailyCallBudget']) ? raw['dailyCallBudget'] : DEFAULT_DAILY_CALL_BUDGET,
+      inputUsdPerMTok: isNonNegativeFinite(raw['inputUsdPerMTok']) ? raw['inputUsdPerMTok'] : null,
+      outputUsdPerMTok: isNonNegativeFinite(raw['outputUsdPerMTok']) ? raw['outputUsdPerMTok'] : null,
     };
   } catch {
     return DEFAULT_CONFIG;
@@ -140,13 +165,13 @@ export function jevKilledByEnv(): boolean {
 
 /** The classifier client's process-wide switch (also honoured before the cache). */
 export function classifierKilledByEnv(): boolean {
-  return truthyEnv('ASHLR_CLASSIFY_DISABLE');
+  return truthyEnv(TYPESAFE_DISABLE_ENV);
 }
 
 /** Only this preference is editable here; preserve every unrelated existing field.
  * Missing is the legacy default; unreadable/malformed existing files are never overwritten. */
 export function updateJevCallBudget(value: unknown): JevConfig {
-  if (value !== null && !(typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)) {
+  if (!isValidCallBudget(value)) {
     throw new Error('invalid daily call preference');
   }
   const path = jevConfigPath();
@@ -163,16 +188,12 @@ export function updateJevCallBudget(value: unknown): JevConfig {
     const file = readPrivateFileCapped(path, 64 * 1024);
     if (!file || file.truncated) throw new Error('jev config unavailable');
     const parsed: unknown = JSON.parse(file.text);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('jev config unavailable');
-    current = parsed as Record<string, unknown>;
+    if (!isPlainRecord(parsed)) throw new Error('jev config unavailable');
+    current = parsed;
   }
   ensurePrivateDirectory(jevDir());
   writePrivateFileAtomic(path, `${JSON.stringify({ ...current, dailyCallBudget: value }, null, 2)}\n`);
   return readJevConfig();
-}
-
-export function validTokenCount(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 export function costEstimate(
@@ -194,7 +215,7 @@ export function calledSum(records: readonly DecisionRecord[], field: 'inputToken
   for (const r of records) {
     if (!r.called) continue;
     const value = r[field];
-    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || (field !== 'estCostUsd' && !Number.isSafeInteger(value))) return null;
+    if (!isNonNegativeFinite(value) || (field !== 'estCostUsd' && !Number.isSafeInteger(value))) return null;
     sum += value;
     if (!Number.isFinite(sum) || (field !== 'estCostUsd' && !Number.isSafeInteger(sum))) return null;
   }
@@ -283,12 +304,10 @@ export function summarizeByKind(records: readonly DecisionRecord[]): JevKindStat
       fallback: list.length - jev,
       cached: list.filter((r) => r.cached).length,
       calls: called.length,
-      avgConfidence: answered.length
-        ? answered.reduce((s, r) => s + (r.jevConfidence ?? 0), 0) / answered.length
-        : null,
-      fallbackRate: list.length ? (list.length - jev) / list.length : 0,
+      avgConfidence: meanOf(answered.map((r) => r.jevConfidence!)),
+      fallbackRate: fallbackRateOf(list.length, jev),
       estCostUsd: calledSum(list, 'estCostUsd'),
-      avgLatencyMs: called.length ? called.reduce((s, r) => s + r.durationMs, 0) / called.length : null,
+      avgLatencyMs: meanOf(called.map((r) => r.durationMs)),
       topFallbackReasons: [...reasons.entries()]
         .sort((a, b) => b[1] - a[1])
         .slice(0, 3)

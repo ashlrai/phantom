@@ -49,6 +49,10 @@ on:
         description: Run the per-OS npm install smokes for this commit and the published release
         type: boolean
         default: false
+      windows_fast:
+        description: Run the Windows Fast Gate regression suites and print their full diagnostics
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -766,7 +770,7 @@ jobs:
   fast-windows:
     name: Fast gate (windows)
     needs: classify
-    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.classify.outputs.os_sensitive == 'true'
+    if: (github.event_name == 'workflow_dispatch' && inputs.windows_fast == true) || ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.classify.outputs.os_sensitive == 'true')
     runs-on: windows-latest
     timeout-minutes: 8
     defaults:
@@ -784,6 +788,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
           persist-credentials: false
       - name: Fetch the candidate range
+        if: github.event_name != 'workflow_dispatch'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
@@ -791,6 +796,7 @@ jobs:
         run: node .github/scripts/ci-fetch-range.mjs
       - name: Restore dependency graph
         id: dep_graph
+        if: github.event_name != 'workflow_dispatch'
         continue-on-error: true
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -798,11 +804,12 @@ jobs:
           key: phantom-dep-graph-v2-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
           restore-keys: phantom-dep-graph-v2-
       - name: Update dependency graph
+        if: github.event_name != 'workflow_dispatch'
         env:
           CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
         run: node .github/scripts/ci-dep-graph.mjs update --out "$CI_DEP_GRAPH"
       - name: Save dependency graph
-        if: steps.dep_graph.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: github.event_name != 'workflow_dispatch' && steps.dep_graph.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -810,11 +817,13 @@ jobs:
           key: phantom-dep-graph-v2-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
       - name: Select affected tests
         id: select
+        if: github.event_name != 'workflow_dispatch'
         env:
           CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
         run: node .github/scripts/ci-fast-select.mjs
       - name: Hash typecheck inputs
         id: inputs
+        if: github.event_name != 'workflow_dispatch'
         env:
           CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
         run: node .github/scripts/ci-fast-inputs.mjs plan
@@ -830,8 +839,14 @@ jobs:
           PROJECTS: ${{ steps.inputs.outputs.projects }}
         run: node .github/scripts/ci-os-typecheck.mjs
       - name: Run affected tests
-        if: steps.select.outputs.mode != 'docs'
+        if: github.event_name != 'workflow_dispatch' && steps.select.outputs.mode != 'docs'
         run: node .github/scripts/ci-fast-run.mjs
+      - name: Run Windows regression suites
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          tests=$(node .github/scripts/ci-os-paths.mjs --windows-tests)
+          mapfile -t windows_tests <<< "$tests"
+          node scripts/test-ci.mjs "${windows_tests[@]}"
 
   fast-macos:
     name: Fast gate (macos)

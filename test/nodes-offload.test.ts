@@ -104,6 +104,24 @@ describe('nodes offload', () => {
     expect(unknown.moves).toEqual([]);
   });
 
+  it('resolves market lanes to the node cap the bridge requires; host-bound lanes stay', async () => {
+    // job.lane is a market lane: codex-personal needs the codex cap — the same
+    // map the claim bridge applies (remoteLaneCap in unfed-market). `omlx` only
+    // runs on this host, so a remote omlx cap never takes it; it keeps waiting here.
+    const report = await readNodesOffload(deps(busy, {
+      nodes: [node('node-a'), node('node-b', { caps: ['codex', 'omlx', 'omlx-work'] })],
+      jobs: [job('j1', 'codex-personal', 1), job('j2', 'omlx', 2), job('j3', 'codex-personal', 3)],
+    }), { dryRun: true });
+    expect(report.moves.map(m => [m.job, m.node])).toEqual([['j1', 'node-b'], ['j3', 'node-b']]);
+    expect(report.stays).toEqual([{ job: 'j2', lane: 'omlx', why: 'the omlx lane cannot run on another computer; waiting here' }]);
+    const without = await readNodesOffload(deps(busy, {
+      nodes: [node('node-a'), node('node-b', { caps: ['claude'] })],
+      jobs: [job('j1', 'codex-personal', 1)],
+    }), { dryRun: true });
+    expect(without.moves).toEqual([]);
+    expect(without.stays).toEqual([{ job: 'j1', lane: 'codex-personal', why: 'no ready computer has a free codex-personal slot; waiting here' }]);
+  });
+
   it('assessHostGuard: the launch guard speaks first; load ratio only when it is silent', () => {
     const silent = { ...fine, admission: { ...fine.admission, state: 'unknown' as const }, load: { ...fine.load, ratio: 4.5 } };
     expect(assessHostGuard(silent)).toMatchObject({ state: 'busy', reasons: ['load'] });
