@@ -12,7 +12,7 @@ const claim = { id: 'claim-fake-494', repo: 'ashlrai/phantom', task: 'fake task'
   claimedAt: now - 1000, expiresAt: now + 3_600_000 };
 const binding = { v: 1, claimId: claim.id, repo: claim.repo, threadKey: thread,
   pr: 123, head: 'abcdef1234567890' };
-const key = JSON.stringify(['ASSIGNED', claim.id, binding.head]);
+const key = JSON.stringify(['ASSIGNED', claim.repo, claim.id, claim.agent, claim.claimedAt, binding.head]);
 const board: FleetBoard = { schema: 'fleet.coordination.v1', state: 'known', claims: [claim],
   messages: [], proposals: [], expiredClaims: 0 };
 const config: AgentNetworkConfig = { path: 'fake-config', state: 'ok', teamIdentities: [],
