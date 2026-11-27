@@ -1,6 +1,17 @@
 import { applySeatHandoff, applySeatHandoffs, listSeats, planSeatHandoff, planSeatHandoffs, sendSeatMessage } from '../core/bots/seats.js';
 import { explainPhantomBot, listPhantomBots, planPhantomBot, readPhantomBot } from '../core/agents/phantom-bot.js';
 
+const VALUE_FLAGS = ['--seat', '--id', '--outcome', '--profile', '--needs', '--min-tier', '--max-tier', '--max-cost-class', '--from', '--to', '--text'];
+const VALUE_FLAG_SET = new Set(VALUE_FLAGS);
+
+// A -h token is help only when it is not the value of a preceding option
+// (e.g. `bots message --text -h` sends the text "-h"). --help can never be
+// an option value, so it counts anywhere.
+function wantsHelp(args: string[]): boolean {
+  return args.includes('--help')
+    || args.some((a, i) => a === '-h' && !(i > 0 && VALUE_FLAG_SET.has(args[i - 1]!)));
+}
+
 function options(args: string[], flags: string[], values: string[]): Record<string, string> {
   const result: Record<string, string> = {};
   while (args.length) {
@@ -14,11 +25,11 @@ function options(args: string[], flags: string[], values: string[]): Record<stri
 export async function runBotsCli(argv: string[], out = console.log, home?: string): Promise<number> {
   try {
     const [verb, ...args] = argv;
-    if (!verb || ['help', '--help', '-h'].includes(verb) || args.includes('--help')) {
+    if (!verb || ['help', '--help', '-h'].includes(verb) || wantsHelp(args)) {
       out('phm bots list|seats|handoffs [--apply]|handoff --seat <id> [--apply]|show <id>|explain <id>|create --dry-run --id <id> --outcome <text> --profile <id>|message --from <seat> --to <seat|owner> --text <text> [--json]'); return 0;
     }
     const name = ['show', 'explain'].includes(verb) ? args.shift()! : '';
-    const opts = options(args, ['--json', '--dry-run', '--apply'], ['--seat', '--id', '--outcome', '--profile', '--needs', '--min-tier', '--max-tier', '--max-cost-class', '--from', '--to', '--text']);
+    const opts = options(args, ['--json', '--dry-run', '--apply'], VALUE_FLAGS);
     let result: unknown;
     if (verb === 'seats') result = await listSeats({ home });
     else if (verb === 'handoffs') result = await (opts['--apply'] ? applySeatHandoffs : planSeatHandoffs)({ home });

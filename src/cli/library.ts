@@ -8,6 +8,9 @@ const size = (bytes: number | null): string => bytes === null ? 'size unknown' :
 const row = (item: LibraryItem): string =>
   `${item.title} (${item.kind})\n  ${item.source} · by ${item.owner ?? 'unknown'} · ${item.asOf} · ${size(item.size)}\n  ${item.preview}`;
 async function show(args: string[], deps: LibraryCliDeps): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage: ${showUsage}\nIds look like memory:0123456789abcdef; list them with phm library --json.`); return 0;
+  }
   const json = args.includes('--json'), rest = args.filter(arg => arg !== '--json');
   if (rest.length !== 1 || args.length - rest.length > 1 || !LIBRARY_ID.test(rest[0]!)) {
     console.error(`Usage: ${showUsage}\nIds look like memory:0123456789abcdef; list them with phm library --json.`); return 2;
@@ -26,6 +29,9 @@ export async function cmdLibrary(args: string[], deps: LibraryCliDeps = {}): Pro
   }
   if (args[0] === 'show') return show(args.slice(1), deps);
   if (args[0] === 'list') {
+    if (args.slice(1).includes('--help') || args.slice(1).includes('-h')) {
+      console.log('Usage: phm library list [--json]'); return 0;
+    }
     if (args.slice(1).some(arg => arg !== '--json') || args.length > 2) {
       console.error('Usage: phm library list [--json]'); return 2;
     }
