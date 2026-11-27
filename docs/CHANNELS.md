@@ -276,7 +276,22 @@ Comms-agent reply drafts that have no cos mirror (every non-email transport,
 or an email mirror that failed to write; a mirrored copy lists through its
 `phm drafts` item while pending and still suppresses the Comms record once
 decided, so one pending reply is one item, and items never carry the
-recipient, which can be a handle) — live bus envelopes whose body the claim
+recipient, which can be a handle) — mail in the Comms agent's own inbox
+(`<runsDir>/comms-agent/inbox.json`, the document `phm comms-agent run`
+triages) that no reply-draft record covers: kept mail still awaiting a
+pass, mail whose send the policy refused (a refused send leaves no draft,
+so it lists here — the pending work `phm comms-agent status` counts as
+`inbox` depth but no item-level surface ever showed), each item naming
+the transport and the scrubbed subject only — never `from`, which is a
+handle, body or labels; a Comms draft — pending (already listed under
+`drafts`) or sent (the reply was delivered; archiving the row is the next
+pass's bookkeeping) — covers its `messageId`, so one pending reply stays
+one item. The schema keeps no timestamp, so `since`/`expiresAt` stay
+null; an unreadable or malformed inbox is `unavailable` — the pending set
+is unknown, never an empty inbox — and an unreadable drafts store
+degrades the read, coverage then unproven so every message lists rather
+than suppressing on a guess; deep links `phm comms-agent run` and
+`phm comms-agent drafts` — live bus envelopes whose body the claim
 contract accepts (`isClaimableWork`: a `kind:"work"` body or a protocol-v1
 transport `task` body) with no
 live claim (a live coordination-table row on the envelope's `queue:<id>` key
