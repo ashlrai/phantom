@@ -50,12 +50,22 @@ export interface VerifiedRuntimeArchive {
 // Buffers cannot be frozen. Remember each admitted digest so the extraction
 // boundary also rejects accidental mutation of an otherwise frozen observation.
 const admitted = new WeakMap<VerifiedRuntimeArchive, readonly string[]>();
-const digest = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
+
+/** Compute a lowercase hexadecimal SHA-256 digest of a UTF-8 string or Buffer. */
+export function sha256Hex(bytes: string | Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+/** Compare two BigInt stat readings for identical inode, size, and timestamps. */
+export function sameFileIdentity(a: BigIntStats, b: BigIntStats): boolean {
+  return a.dev === b.dev && a.ino === b.ino && a.size === b.size &&
+    a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+}
+
 function fail(message: string): never { throw new Error(`local runtime archive: ${message}`); }
 
 function sameFile(a: BigIntStats, b: BigIntStats): boolean {
-  return a.dev === b.dev && a.ino === b.ino && a.size === b.size &&
-    a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs && b.isFile() && b.nlink === 1n;
+  return sameFileIdentity(a, b) && b.isFile() && b.nlink === 1n;
 }
 
 function readArtifact(path: string): Buffer {
@@ -174,7 +184,7 @@ async function readArchive(options: PinnedRuntimeArchiveOptions,
   if (!SHA256.test(options.sha256) || !REVISION.test(options.revision) ||
       options.version.length > 128 || !VERSION.test(options.version)) fail('invalid artifact pins');
   const bytes = readArtifact(options.artifactPath);
-  if (digest(bytes) !== options.sha256) fail('artifact SHA256 does not match pin');
+  if (sha256Hex(bytes) !== options.sha256) fail('artifact SHA256 does not match pin');
   const entries = parseEntries(bytes);
   const profile = verifyPackage(entries, options, profileForPackage);
   const archive: VerifiedRuntimeArchive = Object.freeze({
@@ -182,7 +192,7 @@ async function readArchive(options: PinnedRuntimeArchiveOptions,
       integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}`, size: bytes.length }),
     entries: Object.freeze(entries),
   });
-  admitted.set(archive, entries.map((entry) => digest(entry.bytes)));
+  admitted.set(archive, entries.map((entry) => sha256Hex(entry.bytes)));
   return Object.freeze({archive, profile});
 }
 
@@ -283,7 +293,7 @@ function extractArchive(archive: VerifiedRuntimeArchive, packageRoot: string, ti
   if (timing) measure(timing, 'destination-validation', validate); else validate();
   for (let index = 0; index < archive.entries.length; index += 1) {
     const bytes = archive.entries[index]!.bytes;
-    const observed = timing ? measure(timing, 'entry-digests', () => digest(bytes)) : digest(bytes);
+    const observed = timing ? measure(timing, 'entry-digests', () => sha256Hex(bytes)) : sha256Hex(bytes);
     if (observed !== digests![index]) fail('admitted bytes changed before extraction');
   }
   const directories = new Set([packageRoot]);

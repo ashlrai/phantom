@@ -17,8 +17,8 @@ import { createServer } from 'node:net';
 import { mkdirSync, openSync, closeSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import {
-  DEFAULT_LLAMA_HOST,
   buildLlamaServerArgs,
+  gateBindHost,
   isLoopbackHost,
   originFor,
   resolveLlamaRuntimeConfig,
@@ -29,7 +29,7 @@ import { ensureAnthropicProxy, stopAnthropicProxy } from './anthropic-proxy.js';
 import { probeLlamaRuntime } from './health.js';
 import { bootoutLaunchAgent, launchAgentLoaded } from './launchd.js';
 import { resolveOllamaModelBlob, resolveOllamaRefForBlobPath } from './ollama-blob.js';
-import { logsDir, stderrLogPath, stdoutLogPath } from './paths.js';
+import { errorMessage, logsDir, stderrLogPath, stdoutLogPath } from './paths.js';
 import {
   findLlamaServersOnPort,
   livenessFactsFor,
@@ -54,7 +54,7 @@ import type {
  * deadline here would report failure for a runtime that was about to work,
  * and the operator would then kill it and try again — the worst outcome.
  */
-export const DEFAULT_START_TIMEOUT_MS = 300_000;
+const DEFAULT_START_TIMEOUT_MS = 300_000;
 
 /** Poll interval while waiting for health. */
 const HEALTH_POLL_MS = 500;
@@ -100,10 +100,12 @@ function effectiveEndpoint(options: LifecycleOptions): LlamaRuntimeSettings {
 function gateOverride<T extends LlamaRuntimeSettings>(base: T, options: LifecycleOptions): T {
   const merged = { ...base, ...(options.runtime ?? {}) };
   const allowNonLoopback = base.hostDowngradedFrom === null && !isLoopbackHost(base.host);
-  if (isLoopbackHost(merged.host) || allowNonLoopback) {
-    return { ...merged, hostDowngradedFrom: base.hostDowngradedFrom };
-  }
-  return { ...merged, host: DEFAULT_LLAMA_HOST, hostDowngradedFrom: merged.host };
+  const gated = gateBindHost(merged.host, allowNonLoopback);
+  return {
+    ...merged,
+    host: gated.host,
+    hostDowngradedFrom: gated.downgradedFrom ?? base.hostDowngradedFrom,
+  };
 }
 
 /**
@@ -195,7 +197,7 @@ export async function statusLocalRuntime(
  * a descendant still holding the listener, both keep the port busy while the
  * pid we killed is gone. `stop` reports the port free only when this says so.
  */
-export function isPortFree(host: string, port: number, timeoutMs = 1_000): Promise<boolean> {
+function isPortFree(host: string, port: number, timeoutMs = 1_000): Promise<boolean> {
   return new Promise((resolve) => {
     const server = createServer();
     let settled = false;
@@ -412,7 +414,7 @@ export async function startLocalRuntime(
     return {
       ok: false,
       action: 'failed',
-      detail: `could not open the runtime logs: ${err instanceof Error ? err.message : String(err)}`,
+      detail: `could not open the runtime logs: ${errorMessage(err)}`,
       snapshot: existing,
       logs,
     };
@@ -434,7 +436,7 @@ export async function startLocalRuntime(
     return {
       ok: false,
       action: 'failed',
-      detail: `could not spawn llama-server: ${err instanceof Error ? err.message : String(err)}`,
+      detail: `could not spawn llama-server: ${errorMessage(err)}`,
       snapshot: existing,
       logs,
     };
