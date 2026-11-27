@@ -7,7 +7,7 @@ import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic }
 import { killSwitchOn } from '../sandbox/policy.js';
 import { isPaused } from './pause.js';
 import { readOwnerLiveStatus } from './owner-live-status.js';
-import type { OwnerThreadOptions } from './owner-thread.js';
+import { postOwnerNotice, type OwnerThreadOptions } from './owner-thread.js';
 export async function sendOwnerPlanReply(options: OwnerThreadOptions, input: { dryRun?: boolean; planLog?: string } = {}) {
   const result = (status: 'sent' | 'duplicate' | 'dry-run' | 'blocked' | 'no-reply', reason: string, text?: string) => ({ schema: 'owner.reply.v1' as const, status, reason, ...(text ? { text, destination: 'paired owner on iMessage' } : {}) });
   const hold = { halted: options.halted === true || killSwitchOn(), paused: options.paused === true || isPaused() };
@@ -32,7 +32,17 @@ export async function sendOwnerPlanReply(options: OwnerThreadOptions, input: { d
     const state: unknown = read ? JSON.parse(read.text) : {};
     if (!state || typeof state !== 'object' || Array.isArray(state) || Object.entries(state).some(([k, v]) => !/^plan-[a-f0-9]{16}$/.test(k) || (v !== 'sent' && v !== 'pending'))) throw new Error('invalid state');
     const keys = state as Record<string, 'sent' | 'pending'>;
-    if (keys[reply.id]) return result(keys[reply.id] === 'sent' ? 'duplicate' : 'blocked', keys[reply.id] === 'sent' ? 'Already sent.' : 'Previous send is unconfirmed; not sending twice.');
+    const mirror = async () => {
+      try {
+        const notice = await postOwnerNotice({ text: reply.text, idempotencyKey: `plan-reply:${reply.id}` }, options);
+        return { status: notice.status === 'accepted' ? 'recorded' as const : notice.status === 'duplicate' ? 'duplicate' as const : 'failed' as const };
+      } catch { return { status: 'failed' as const }; }
+    };
+    if (keys[reply.id] === 'pending') return result('blocked', 'Previous send is unconfirmed; not sending twice.');
+    if (keys[reply.id] === 'sent') {
+      const prior = result('duplicate', 'Already sent.');
+      return input.dryRun ? prior : { ...prior, mirror: await mirror() };
+    }
     if (input.dryRun) return result('dry-run', 'Would send to the paired owner on iMessage.', reply.text);
     const transport = options.transports?.imessage;
     if (!transport) return result('blocked', 'No iMessage transport is attached.');
@@ -42,7 +52,7 @@ export async function sendOwnerPlanReply(options: OwnerThreadOptions, input: { d
     const sent = await transport.deliver({ idempotencyKey: reply.id, text: reply.text, ownerId: owner });
     if (sent.status === 'refused') { delete keys[reply.id]; writePrivateFileAtomic(file, JSON.stringify(keys)); return result('blocked', 'iMessage did not send; try again.'); }
     keys[reply.id] = 'sent'; writePrivateFileAtomic(file, JSON.stringify(keys));
-    return result('sent', 'Sent to the paired owner on iMessage.');
+    return { ...result('sent', 'Sent to the paired owner on iMessage.'), mirror: await mirror() };
   } catch { return result('blocked', 'Reply state or delivery is unavailable; no automatic resend.'); }
   finally { if (lock?.state === 'acquired') releaseLocalStoreLock(lock.lock); }
 }

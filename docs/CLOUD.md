@@ -1501,7 +1501,11 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   wall time into one stage never became work). For phases bounded by PR
   events, fleet job latency and pulse merge latency withhold a sample when
   publish, CI, merge or close receipts identify conflicting PRs within the
-  span. Undated PR receipts can also make the span ambiguous. A phase emits only
+  span. Undated PR receipts can also make the span ambiguous. A claim inside
+  a measured span marks another attempt and withholds the sample — a
+  batch_claim in any span, a solo claim in any post-queue span; queue wait
+  keeps solo claims because failed attempts are part of the admission delay.
+  A phase emits only
   when measured on at least ten job attempts and carrying at least
   six hours of recorded wait across the bounded tail — enough
   samples that the total is not one fluke and enough accumulated
