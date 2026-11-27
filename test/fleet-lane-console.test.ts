@@ -432,6 +432,26 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(snapshot.lanes.find(l => l.lane === 'claude')?.mergesPerHour).toBe(0);
   });
 
+  it('attributes a lane-less merge without borrowing lane evidence from future events', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    const at = '2026-10-28T01:50:00Z';
+    const future = '2026-10-28T02:00:01Z';
+    const rows = [
+      { job: 'known-lane', lane: 'devin', event: 'launch', at },
+      { job: 'known-lane', outcome: 'MERGED', mergedAt: at },
+      { job: 'known-lane', lane: 'claude', event: 'launch', at: future },
+      { job: 'unknown-lane', outcome: 'MERGED', mergedAt: at },
+      { job: 'unknown-lane', lane: 'claude', outcome: 'MERGED', at, mergedAt: future },
+    ];
+    await writeFile(join(dir, 'jobs.jsonl'), rows.map(row => JSON.stringify(row)).join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    expect(snapshot.lanes.find(l => l.lane === 'devin')?.mergesPerHour).toBe(1);
+    expect(snapshot.lanes.find(l => l.lane === 'claude')?.mergesPerHour).toBe(0);
+  });
+
   it('finds recent event timestamps before a large backfilled ledger tail', async () => {
     const dir = join(scratch, 'queue');
     await mkdir(dir, { recursive: true });
