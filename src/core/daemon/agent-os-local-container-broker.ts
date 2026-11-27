@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { isProxy } from 'node:util/types';
 
 import {
@@ -6,6 +5,14 @@ import {
   type ExecutionCapacityEvidenceEnvelopeV1,
   type ExecutionCapacityLeaseStoreV1,
 } from '../fabric/execution-capacity-lease.js';
+import {
+  canonicalEpochJson as canonicalJson,
+  canonicalEpochJsonDigest,
+  deepFreezeEpochValue as immutable,
+  immutablePlainDataSnapshot as snapshot,
+  isValidRawEpochDigest,
+  ownDataPropertyValue as ownValue,
+} from '../vision/agent-os-epoch-shared.js';
 import {
   createAgentOsObservationIsolationFinalizeAttestationV2,
   createAgentOsObservationIsolationPrepareAttestationV2,
@@ -53,12 +60,10 @@ import {
   type AgentOsLocalContainerBrokerJournalV1,
 } from './agent-os-local-container-broker-journal.js';
 
-export const AGENT_OS_LOCAL_CONTAINER_BROKER_V1 = 'ashlr-agent-os-local-container-broker-v1' as const;
-export const AGENT_OS_LOCAL_CONTAINER_BROKER_MAX_RUN_MS_V1 = 240_000;
-export const AGENT_OS_LOCAL_CONTAINER_BROKER_MAX_KILL_WAIT_MS_V1 = 5_000;
-export const AGENT_OS_LOCAL_CONTAINER_BROKER_MAX_SETTLEMENT_MS_V1 = 10_000;
+const AGENT_OS_LOCAL_CONTAINER_BROKER_MAX_RUN_MS_V1 = 240_000;
+const AGENT_OS_LOCAL_CONTAINER_BROKER_MAX_KILL_WAIT_MS_V1 = 5_000;
+const AGENT_OS_LOCAL_CONTAINER_BROKER_MAX_SETTLEMENT_MS_V1 = 10_000;
 
-const RAW_DIGEST_RE = /^[a-f0-9]{64}$/u;
 const MAX_FRAME_WAIT_MS = 5_000;
 
 export const AGENT_OS_LOCAL_CONTAINER_BROKER_NO_AUTHORITY_V1 = Object.freeze({
@@ -176,76 +181,8 @@ interface ExecutionOutcome {
   attachment: Awaited<AgentOsDockerAttachmentV1['completion']> | null;
 }
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const row = value as Record<string, unknown>;
-  return `{${Object.keys(row).sort().map((key) =>
-    `${JSON.stringify(key)}:${canonicalJson(row[key])}`).join(',')}}`;
-}
-
 function digest(domain: string, value: unknown): string {
-  return createHash('sha256').update(domain, 'utf8').update('\0', 'utf8')
-    .update(canonicalJson(value), 'utf8').digest('hex');
-}
-
-function plainData(value: unknown, seen = new Set<object>(), depth = 0): boolean {
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return true;
-  if (typeof value === 'number') return Number.isSafeInteger(value);
-  if (typeof value !== 'object' || isProxy(value) || depth > 16 || seen.size >= 256 || seen.has(value)) return false;
-  seen.add(value);
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (Array.isArray(value)) {
-      if (prototype !== Array.prototype || value.length > 128) return false;
-    } else if (prototype !== Object.prototype && prototype !== null) return false;
-    return Object.values(Object.getOwnPropertyDescriptors(value)).every((descriptor) =>
-      Object.hasOwn(descriptor, 'value') && plainData(descriptor.value, seen, depth + 1));
-  } catch {
-    return false;
-  }
-}
-
-function immutable<T>(value: T, seen = new WeakSet<object>()): T {
-  if (ArrayBuffer.isView(value)) return value;
-  if (value !== null && typeof value === 'object' && !seen.has(value)) {
-    seen.add(value);
-    for (const nested of Object.values(value as Record<string, unknown>)) immutable(nested, seen);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function snapshot<T>(value: T): T | null {
-  try {
-    if (!plainData(value)) return null;
-    const owned = structuredClone(value);
-    return plainData(owned) ? immutable(owned) : null;
-  } catch {
-    return null;
-  }
-}
-
-function dataProperty<T>(value: unknown, key: string, validate: (candidate: unknown) => candidate is T): T | null {
-  if (value === null || typeof value !== 'object' || isProxy(value)) return null;
-  try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    return descriptor && Object.hasOwn(descriptor, 'value') && validate(descriptor.value)
-      ? descriptor.value
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function ownValue(value: unknown, key: string): unknown {
-  if (value === null || typeof value !== 'object' || isProxy(value)) return undefined;
-  try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
-  } catch {
-    return undefined;
-  }
+  return canonicalEpochJsonDigest(`${domain}\0`, value);
 }
 
 function method(value: unknown, key: string): ((...args: never[]) => unknown) | null {
@@ -264,10 +201,11 @@ function method(value: unknown, key: string): ((...args: never[]) => unknown) | 
 }
 
 function keyedVerifier<T extends { readonly keyId: string }>(value: T, methodName: string): T | null {
-  const keyId = dataProperty(value, 'keyId', (candidate): candidate is string =>
-    typeof candidate === 'string' && RAW_DIGEST_RE.test(candidate));
+  const keyId = ownValue(value, 'keyId');
   const callback = method(value, methodName);
-  return keyId && callback ? Object.freeze({ keyId, [methodName]: callback }) as T : null;
+  return isValidRawEpochDigest(keyId) && callback
+    ? Object.freeze({ keyId, [methodName]: callback }) as T
+    : null;
 }
 
 function capturePorts(dependencies: AgentOsLocalContainerBrokerDependenciesV1): BrokerPorts | null {
@@ -421,7 +359,7 @@ export class AgentOsLocalContainerBrokerV1 {
 
   #ready(): boolean {
     return Boolean(this.#configurationValid && this.#ports && this.#policy && this.#createConfigDigest &&
-      RAW_DIGEST_RE.test(this.#brokerDigest) && RAW_DIGEST_RE.test(this.#expectedEngineDigest) &&
+      isValidRawEpochDigest(this.#brokerDigest) && isValidRawEpochDigest(this.#expectedEngineDigest) &&
       agentOsDockerEngineCreateRequestDigestV1(this.#policy!, this.#seccompProfile));
   }
 
