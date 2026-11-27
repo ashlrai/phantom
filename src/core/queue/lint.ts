@@ -1,9 +1,10 @@
 import { realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { QUEUE_ID_PATTERN, QUEUE_TIERS } from './schema.js';
 
 export interface QueueLintFinding { line: number; id: string | null; reason: string }
 const lanes = new Set(['codex-personal', 'claude', 'devin', 'claude-api', 'codex-local']);
-const tiers = new Set(['frontier', 'work', 'mid', 'fast']);
+const tiers = new Set<string>(QUEUE_TIERS);
 
 /** First required READY-line field absent from the parenthesized metadata, in contract order. */
 function missingReadyField(text: string, id: string | undefined): string | null {
@@ -51,7 +52,7 @@ export async function lintQueue(router: string, ready: string, runsDir: string, 
     if (f[2] === 'codex-cmp') reasons.push('Retired lane');
     else if (!lanes.has(f[2] ?? '')) reasons.push('Unknown lane');
     if (!tiers.has(f[3] ?? '')) reasons.push('Unknown tier');
-    if (!f[1] || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(f[1]) || !(await stat(join(home, 'Projects/ashlrai', f[1])).then(s => s.isDirectory()).catch(() => false))) reasons.push('Repository directory not found or invalid');
+    if (!f[1] || !QUEUE_ID_PATTERN.test(f[1]) || !(await stat(join(home, 'Projects/ashlrai', f[1])).then(s => s.isDirectory()).catch(() => false))) reasons.push('Repository directory not found or invalid');
     const prompt = f[4] ?? '';
     const resolved = await realpath(prompt).catch(() => null);
     if (!resolved || !promptRoot || !resolved.startsWith(`${promptRoot}/`) || !(await stat(prompt).then(s => s.isFile()).catch(() => false))) reasons.push('Prompt file not found in queue/prompts');

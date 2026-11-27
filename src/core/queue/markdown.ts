@@ -1,4 +1,4 @@
-import { QUEUE_STATUSES, validateQueue, type QueueDocument, type QueueJob, type QueueRawLine, type QueueStatus } from './schema.js';
+import { isIsoTimestamp, QUEUE_ID_PATTERN, QUEUE_STATUSES, validateQueue, type QueueDocument, type QueueJob, type QueueRawLine, type QueueStatus } from './schema.js';
 
 const statusSet = new Set<string>(QUEUE_STATUSES);
 // Optional bullet, bold or bracket decoration, then an all-caps status token.
@@ -146,13 +146,13 @@ function parseJob(line: string, parsed: ParsedLine & { id: string }): { job: Que
     acceptance: acceptance ? parsed.body.slice(acceptance.index + acceptance[0].length).trim() : '',
     claims: [],
   };
-  if (owner && claimedAt && /^\d{4}-\d\d-\d\dT/.test(claimedAt) && Number.isFinite(Date.parse(claimedAt))) job.claims.push({ owner, claimedAt });
+  if (owner && isIsoTimestamp(claimedAt)) job.claims.push({ owner, claimedAt });
   const prUrl = line.match(/https:\/\/[^\s<>"'()]+\/pull\/\d+/)?.[0] ?? field('pr');
   if (prUrl && /^https:\/\/[^\s]+$/.test(prUrl)) job.prUrl = prUrl;
   const reason = field('reason') ?? field('blocked[-_]?reason') ?? field('blocked');
   if ((parsed.statusWord === 'BLOCKED' || parsed.statusWord === 'HOLD') && (reason || parsed.preamble)) job.blockedReason = reason ?? parsed.preamble;
   const parent = routing('parent');
-  if (parent !== undefined && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(parent) && parent !== job.id) job.parent = parent;
+  if (parent !== undefined && QUEUE_ID_PATTERN.test(parent) && parent !== job.id) job.parent = parent;
   const depth = routing('depth');
   if (depth !== undefined && /^\d{1,2}$/.test(depth)) job.depth = Number(depth);
   const preferred = routing('preferred_lane') ?? routing('lane');

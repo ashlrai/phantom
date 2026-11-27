@@ -5,23 +5,25 @@
  */
 import { execFile } from 'node:child_process';
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { homedir, loadavg, availableParallelism } from 'node:os';
+import { loadavg, availableParallelism } from 'node:os';
 import { join } from 'node:path';
+import { defaultRunsDir } from '../fleet/landed-closes-read.js';
 import { GLOBAL_SLOT_KEYS } from '../fleet/runs-lane-targets.js';
 import { adaptiveSettle, readAdaptiveSettle, type SettleInputs, type SettleConfig, type SettleDecision } from './adaptive-settle.js';
+import { isNonNegativeInt, isPlainRecord, parseEpochOrIsoMs } from './schema.js';
 
-export const LOAD_MAX = 36;
-export const PROCS_MAX = 800;
+const LOAD_MAX = 36;
+const PROCS_MAX = 800;
 /** Floor of the active-worktree limit; the limit scales with cores (worktreesMax). */
-export const WORKTREES_MAX = 40;
+const WORKTREES_MAX = 40;
 /** Active job worktrees allowed per core before admission blocks (18 cores → 72). */
-export const WORKTREES_PER_CPU = 4;
+const WORKTREES_PER_CPU = 4;
 /**
  * A job worktree is ACTIVE when its job log, its `.base` record or the worktree
  * directory changed within this window. Parked worktrees (kept for uncommitted
  * work, publish holds) sit idle and are reported as `worktreesParked`, not counted.
  */
-export const ACTIVE_WORKTREE_WINDOW_S = 30 * 60;
+const ACTIVE_WORKTREE_WINDOW_S = 30 * 60;
 
 export function worktreesMax(ncpu: number): number {
   const cores = Number.isFinite(ncpu) && ncpu >= 1 ? Math.floor(ncpu) : 1;
@@ -33,7 +35,7 @@ export const DAEMON_TICK_MAX_S = 15 * 60;
  * the fixed 18 is gone. A top-level slots.json hard_cap is an optional operator ceiling; a malformed one fails
  * closed to this legacy value, as dispatchd does.
  */
-export const LEGACY_GLOBAL_HARD_CAP = 18;
+const LEGACY_GLOBAL_HARD_CAP = 18;
 const STATUS_TIMEOUT_MS = 30_000;
 
 /** RQ-PACE-TO-RESET: one lane's weekly-quota pacing verdict (mirrors dispatchd's usage_verdict). */
@@ -55,8 +57,7 @@ export function usageVerdict(row: Record<string, unknown>, now: number, critical
   if (typeof used !== 'number' || !Number.isFinite(used) || used < 0 || used > 100) {
     return { admit: true, reason: 'usage unknown', used_fraction: null, elapsed_fraction: null, limit: null };
   }
-  const reset = typeof row.reset_at === 'number' ? row.reset_at * 1000
-    : typeof row.reset_at === 'string' ? Date.parse(row.reset_at) : NaN;
+  const reset = parseEpochOrIsoMs(row.reset_at);
   const week = 7 * 86400_000;
   const elapsed = Number.isFinite(reset) && now < reset && reset <= now + week ? Math.max(0, 1 - (reset - now) / week) : null;
   const limit = critical ? 0.95 : elapsed === null ? 0.60 : Math.min(1, elapsed + 0.10);
@@ -99,20 +100,17 @@ export interface AdmissionReport {
   staleSnapshot?: { ts: string | null; ageSeconds: number | null };
 }
 
-const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
-
 /**
  * min(sum of unheld lane targets, adaptive cap, operator hard_cap); a lane target is itself bounded by that lane's
  * hard_cap. Hosts without controller state keep the legacy ncpu bound in place of the adaptive cap.
  */
 export function globalCap(slots: Record<string, unknown>, ncpu: number, adaptiveCap: number | null = null): { cap: number; hardCap: number | null } {
-  const hardCap = !('hard_cap' in slots) ? null : isCount(slots.hard_cap) ? slots.hard_cap : LEGACY_GLOBAL_HARD_CAP;
+  const hardCap = !('hard_cap' in slots) ? null : isNonNegativeInt(slots.hard_cap) ? slots.hard_cap : LEGACY_GLOBAL_HARD_CAP;
   let sum = 0;
   for (const [lane, value] of Object.entries(slots)) {
-    if (GLOBAL_SLOT_KEYS.has(lane) || typeof value !== 'object' || value === null) continue;
-    const row = value as Record<string, unknown>;
-    if (row.held === true || !isCount(row.target)) continue;
-    sum += isCount(row.hard_cap) ? Math.min(row.target, row.hard_cap) : row.target;
+    if (GLOBAL_SLOT_KEYS.has(lane) || !isPlainRecord(value)) continue;
+    if (value.held === true || !isNonNegativeInt(value.target)) continue;
+    sum += isNonNegativeInt(value.hard_cap) ? Math.min(value.target, value.hard_cap) : value.target;
   }
   return { cap: Math.max(0, Math.min(sum, adaptiveCap ?? ncpu, hardCap ?? Infinity)), hardCap };
 }
@@ -174,17 +172,15 @@ async function mtimeMs(path: string): Promise<number | null> {
 
 export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<AdmissionReport> {
   const now = (opts.now ?? Date.now)();
-  const report = await readAdmissionState({ ...opts, now: () => now });
-  const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const root = opts.runsDir ?? defaultRunsDir();
+  const report = await readAdmissionState(opts, root, now);
   return { ...report, settle: await readAdaptiveSettle(root, now, report.snapshot, opts.settleConfig) };
 }
 
-async function readAdmissionState(opts: ReadAdmissionOptions): Promise<Omit<AdmissionReport, 'settle'>> {
-  const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+async function readAdmissionState(opts: ReadAdmissionOptions, root: string, now: number): Promise<Omit<AdmissionReport, 'settle'>> {
   const queue = join(root, 'queue');
   // v2 is the dispatcher verdict, including starvation probes and its rolling swap window.
   // Keep the legacy probe path for hosts that have not installed the pinned dispatcher yet.
-  const now = (opts.now ?? Date.now)();
   let staleSnapshot: AdmissionReport['staleSnapshot'];
   try {
     const a = JSON.parse(await text(join(queue, 'admission.json')) ?? '{}') as Record<string, unknown>;
@@ -202,11 +198,11 @@ async function readAdmissionState(opts: ReadAdmissionOptions): Promise<Omit<Admi
       reasons: Array.isArray(a.reasons) ? a.reasons as string[] : [], disabled: a.disabled === true,
       load: { load1: Number(a.load1), max: Number(a.load_max) }, ncpu: Number(a.ncpu),
       procs: Number(a.procs), worktrees: Number(a.worktrees),
-      ...(isCount(a.worktrees_max) ? { worktreesMax: a.worktrees_max } : {}),
+      ...(isNonNegativeInt(a.worktrees_max) ? { worktreesMax: a.worktrees_max } : {}),
       daemon: { tickAgeSeconds: typeof a.daemon_tick_age_s === 'number' ? a.daemon_tick_age_s : null,
         maxAgeSeconds: Number(a.tick_max_s), error: null },
-      cap: Number(a.cap), hardCap: isCount(a.hard_cap) ? a.hard_cap : null,
-      adaptiveCap: isCount(a.concurrency_cap) ? a.concurrency_cap : null, running: Number(a.running),
+      cap: Number(a.cap), hardCap: isNonNegativeInt(a.hard_cap) ? a.hard_cap : null,
+      adaptiveCap: isNonNegativeInt(a.concurrency_cap) ? a.concurrency_cap : null, running: Number(a.running),
       installLock: { holder: a.install_lock_holder as InstallLockHolder | null }, snapshot: a,
       lanes: a.lanes as Record<string, LaneAdmission> | undefined,
     };
@@ -214,18 +210,18 @@ async function readAdmissionState(opts: ReadAdmissionOptions): Promise<Omit<Admi
   const alive = opts.pidAlive ?? defaultAlive;
 
   let slots: Record<string, unknown> = {};
-  try { const raw = JSON.parse(await text(join(queue, 'slots.json')) ?? '{}'); if (raw && typeof raw === 'object' && !Array.isArray(raw)) slots = raw; } catch { /* unreadable: cap 0 */ }
+  try { const raw: unknown = JSON.parse(await text(join(queue, 'slots.json')) ?? '{}'); if (isPlainRecord(raw)) slots = raw; } catch { /* unreadable: cap 0 */ }
 
   let adaptiveCap: number | null = null;
   try {
     const c = JSON.parse(await text(join(queue, 'concurrency.json')) ?? '{}') as Record<string, unknown>;
-    if (c.schema === 'dispatchd.concurrency.v1' && isCount(c.cap)) adaptiveCap = c.cap;
+    if (c.schema === 'dispatchd.concurrency.v1' && isNonNegativeInt(c.cap)) adaptiveCap = c.cap;
   } catch { /* no controller state: legacy ncpu bound */ }
 
   let running = 0;
   try {
     const lanes = (JSON.parse(await text(join(queue, 'status.json')) ?? '{}') as { lanes?: Record<string, { running?: unknown }> }).lanes ?? {};
-    for (const row of Object.values(lanes)) if (isCount(row?.running)) running += row.running;
+    for (const row of Object.values(lanes)) if (isNonNegativeInt(row?.running)) running += row.running;
   } catch { /* no status yet: nothing known to be running */ }
 
   // Active, not existing: a worktree kept for uncommitted work stays on disk for days and is no load.
@@ -263,12 +259,12 @@ async function readAdmissionState(opts: ReadAdmissionOptions): Promise<Omit<Admi
   // budget-overrides.json for hosts whose dispatcher predates the lanes field.
   let usage: Record<string, unknown> = {};
   try {
-    const raw = JSON.parse(await text(join(queue, 'budget-overrides.json')) ?? '{}');
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) usage = raw;
+    const raw: unknown = JSON.parse(await text(join(queue, 'budget-overrides.json')) ?? '{}');
+    if (isPlainRecord(raw)) usage = raw;
   } catch { /* unknown usage: every verdict admits */ }
   const lanes = Object.fromEntries(Object.keys(slots).filter(lane => !GLOBAL_SLOT_KEYS.has(lane)).map(lane => {
     const row = usage[lane];
-    const r = row && typeof row === 'object' && !Array.isArray(row) ? row as Record<string, unknown> : {};
+    const r = isPlainRecord(row) ? row : {};
     return [lane, { routine: usageVerdict(r, now), critical: usageVerdict(r, now, true) }];
   }));
   const report = evaluateAdmission({

@@ -30,9 +30,9 @@ import { createHash } from 'node:crypto';
 import { isQueueTier, queueTierProblem, type QueueTier } from '../drive/queue-tier.js';
 import { drivePoolAllowed } from '../drive/pool-routing.js';
 import { scrubSecrets } from '../util/scrub-secrets.js';
-import type { QueueDocument, QueueJob } from './schema.js';
+import { isNonEmptyString, isPlainRecord, QUEUE_JOB_ID_PATTERN, type QueueDocument, type QueueJob } from './schema.js';
 
-export const SPAWN_SCHEMA = 'spawn.v1';
+const SPAWN_SCHEMA = 'spawn.v1';
 
 /** Capability order for escalation checks: fast < work < mid < frontier. */
 const TIER_RANK: Readonly<Record<QueueTier, number>> = Object.freeze({ fast: 0, work: 1, mid: 2, frontier: 3 });
@@ -103,11 +103,9 @@ export class SpawnRejection extends Error {
   }
 }
 
-const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CHILD_ID = /^RQ-[A-Za-z0-9][A-Za-z0-9._-]{0,124}$/;
 const LABEL = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const PRIORITY = /^P([0-9])$/;
-const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 function invalid(field: string, why: string): never {
   throw new SpawnRejection('invalid-document', `${field}: ${why}`);
@@ -115,7 +113,7 @@ function invalid(field: string, why: string): never {
 
 /** Prompt-data text: bounded, printable, and free of secret-shaped material. */
 export function promptText(field: string, value: unknown, max: number): string {
-  if (typeof value !== 'string' || value.trim().length === 0) invalid(field, 'required');
+  if (!isNonEmptyString(value)) invalid(field, 'required');
   if (value.length > max) invalid(field, `exceeds ${max} characters`);
   for (const char of value) {
     const code = char.charCodeAt(0);
@@ -127,12 +125,12 @@ export function promptText(field: string, value: unknown, max: number): string {
 
 /** Strict-key, bounded parse of a spawn.v1 document; throws SpawnRejection. */
 export function parseSpawn(value: unknown): SpawnDocument {
-  if (!record(value)) invalid('document', 'expected an object');
+  if (!isPlainRecord(value)) invalid('document', 'expected an object');
   const keys = Object.keys(value).sort().join(',');
   if (keys !== 'jobs,owner,parent,schema') invalid('document', 'unexpected or missing fields');
   if (value['schema'] !== SPAWN_SCHEMA) invalid('schema', 'must be spawn.v1');
   const parent = value['parent'];
-  if (typeof parent !== 'string' || !JOB_ID.test(parent)) invalid('parent', 'must be a queue job id');
+  if (typeof parent !== 'string' || !QUEUE_JOB_ID_PATTERN.test(parent)) invalid('parent', 'must be a queue job id');
   const owner = value['owner'];
   if (typeof owner !== 'string' || !LABEL.test(owner)) invalid('owner', 'must be a printable label');
   const list = value['jobs'];
@@ -142,7 +140,7 @@ export function parseSpawn(value: unknown): SpawnDocument {
   const jobs: SpawnJobInput[] = [];
   for (const [index, row] of list.entries()) {
     const field = (name: string): string => `jobs[${index}].${name}`;
-    if (!record(row)) invalid(`jobs[${index}]`, 'expected an object');
+    if (!isPlainRecord(row)) invalid(`jobs[${index}]`, 'expected an object');
     const allowed = new Set(['acceptance', 'deps', 'id', 'priority', 'scope', 'tier']);
     for (const key of Object.keys(row)) if (!allowed.has(key)) invalid(`jobs[${index}]`, `unexpected field ${key.slice(0, 32)}`);
     const input: SpawnJobInput = {
@@ -156,7 +154,7 @@ export function parseSpawn(value: unknown): SpawnDocument {
     if (row['deps'] !== undefined) {
       const deps = row['deps'];
       if (!Array.isArray(deps) || deps.length > SPAWN_LIMITS.depsPerJob ||
-          deps.some(d => typeof d !== 'string' || !JOB_ID.test(d)) || new Set(deps).size !== deps.length ||
+          deps.some(d => typeof d !== 'string' || !QUEUE_JOB_ID_PATTERN.test(d)) || new Set(deps).size !== deps.length ||
           (typeof input.id === 'string' && (deps as string[]).includes(input.id))) {
         invalid(field('deps'), `must be ${SPAWN_LIMITS.depsPerJob} or fewer unique job ids, never self`);
       }
