@@ -1264,7 +1264,9 @@ measures each job's current queue dwell in `~/.ashlr-runs/metrics/jobs.jsonl`:
 `enqueue`/`queued` rows, `launch_failed` retries and retried `task_outcome`
 rows are arrivals, while `claim`, `batch_claim` and `launch` end a dwell, so a
 re-queued job's wait restarts at its re-arrival rather than its first-ever
-enqueue. It is `null` when there are no waiting jobs, the queue or metrics are
+enqueue. The lane counts and Leader board replay dated queue events in
+timestamp order, using ledger order for equal timestamps. It is `null`
+when there are no waiting jobs, the queue or metrics are
 unavailable, or any waiting job's arrival is unevidenced — including silent
 requeues (deferred launches, released batches) that leave no ledger row. The
 command reads up to 2 MiB at each end of the metrics ledger — the oldest

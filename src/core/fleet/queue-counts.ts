@@ -77,7 +77,7 @@ export async function getLaneQueueCounts(
     }),
     readSourceEnds(join(opts.runsDir, 'metrics', 'jobs.jsonl'), opts.ledgerBytes ?? QUEUE_COUNTS_LEDGER_BYTES),
   ]);
-  // Queue marks per job in ledger order. dispatchd emits `enqueue` once per
+  // Queue marks per job, collected in ledger order. dispatchd emits `enqueue` once per
   // job (its .enqueued receipt), so a re-queued job's current wait starts at
   // its latest re-arrival — a launch_failed retry, a retried task_outcome or
   // a fresh enqueue — not its first-ever enqueue. A departure clears the
@@ -114,7 +114,10 @@ export async function getLaneQueueCounts(
   /** Current queue-dwell start for one job: the first entry mark after its last departure. */
   const arrivalOf = (id: string): number | null => {
     let arrival: number | null = null;
-    for (const mark of marks.get(id) ?? []) {
+    // A late receipt can describe an older dwell. Stable sorting keeps ledger
+    // order for transitions recorded at the same timestamp.
+    const ordered = marks.get(id)?.sort((a, b) => a.at - b.at) ?? [];
+    for (const mark of ordered) {
       if (!mark.entry) arrival = null;
       else if (mark.restart || arrival === null) arrival = mark.at;
     }
