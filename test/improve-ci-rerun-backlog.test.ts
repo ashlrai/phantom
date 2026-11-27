@@ -264,13 +264,14 @@ describe('ciRerunBacklogItems', () => {
       at: daysAgo(1), repo: REPO, head: sha(runId), runId, pr: runId, outcome: 'failed',
     }));
     const [first, second, third, fourth] = failures;
-    const success: Row = { ...first!, head: sha(45), outcome: 'ok' };
+    const success: Row = { ...first!, runId: 45, head: sha(45), outcome: 'ok' };
     const replay = (row: Row): Row => ({ ...row, at: daysAgo(0.5), repo: 'AshlrAI/Phantom' });
     const discover = (rows: Row[]) => ciRerunBacklogItems({
       repo: REPO, now: NOW, journalPath: writeJournal(rows),
     });
 
     expect(await discover([first!, second!, replay(first!), replay(second!)])).toEqual([]);
+    expect(await discover([first!, second!, third!, { ...first!, head: sha(45) }])).toEqual([]);
     const items = await discover([
       ...failures, success, ...Array.from({ length: 4 }, () => replay(success)),
       { ...third!, outcome: 'ok' },

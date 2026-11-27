@@ -265,9 +265,11 @@ describe('resident CI reruns', () => {
     };
     const failed = { ...first, runId: 124, outcome: 'failed' };
     const conflict = { ...first, runId: 125 };
+    const headConflict = { ...first, runId: 126 };
     const rows = [
       first, { ...first, at: '2026-01-01T11:59:00Z' },
       failed, failed, conflict, { ...conflict, outcome: 'failed' },
+      headConflict, { ...headConflict, repo: 'Org/Repo', head: 'b'.repeat(40) },
       { ...first, outcome: 'failed', at: '2026-01-01T12:01:00Z' },
     ];
     appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
@@ -283,11 +285,12 @@ describe('resident CI reruns', () => {
     expect(readCiReruns(opts.journalPath!, Date.parse('2026-01-01T12:01:00Z')).verdicts.pending).toBe(0);
   });
 
-  it('keeps a future verdict out of the report until its timestamp without polling again', async () => {
+  it.each([false, true])('withholds duplicate polling for a future verdict (different head: %s)', async differentHead => {
     const { opts, gh, report } = setup();
     await runCiRerunMaintenance(opts);
     appendFileSync(opts.journalPath!, JSON.stringify({
       ...report.groups[0]!.runs[0]!, repo: 'org/repo', at: '2026-01-01T12:11:00Z',
+      ...(differentHead ? { head: 'b'.repeat(40) } : {}),
       outcome: 'verdict', verdict: 'pass',
     }) + '\n');
     opts.now = () => Date.parse('2026-01-01T12:10:00Z');
