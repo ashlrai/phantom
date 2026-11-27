@@ -86,7 +86,18 @@ function planEmptyNote(nodes: DriveNodes, owner: string | undefined): string {
     const jobs = nodes.snapshot().jobs.filter(j => j.owner && (owner === undefined || j.owner === owner));
     const scope = owner === undefined ? 'any owner scope' : `owner '${owner}'`;
     if (!jobs.length) {
-      return `No jobs queued in ${scope}. Enqueue one: phm node enqueue --job <id> --owner ${owner ?? '<scope>'}`;
+      // The same unknown-scope guard the status empty-scope hint applies: a
+      // mistyped --owner must not be invited to enqueue into a scope fragment
+      // no node serves, so the note names the scopes the store does know —
+      // but only when the requested scope is absent from them (a scope with a
+      // node and no jobs is legitimate and keeps the plain enqueue line). With
+      // no --owner at all, one known scope also replaces the <scope>
+      // placeholder with a runnable command.
+      const known = knownOwnerScopes(nodes) ?? [];
+      const hint = known.length > 0 && (owner === undefined || !known.includes(owner))
+        ? ` This store knows: ${known.join(', ')}.` : '';
+      const target = owner ?? (known.length === 1 ? known[0]! : '<scope>');
+      return `No jobs queued in ${scope}.${hint} Enqueue one: phm node enqueue --job <id> --owner ${target}`;
     }
     const counts = { pending: 0, running: 0, completed: 0 };
     for (const j of jobs) counts[j.state] += 1;
