@@ -465,6 +465,11 @@ When timestamps match, the last valid decision appended for the job wins
 across overrides, rejections and decision outcomes.
 Decision and claim windows include both endpoints and exclude events
 timestamped after the report time.
+The improvement backlog also excludes future decisions and uses the last
+valid append for a job when tick timestamps match. It requires an explicit
+null chosen lane to count a job as unrouted and checks override endpoints
+against the decision's preferred and chosen lanes before proposing work for
+an unknown preference.
 The same collapsed decisions also fold their
 `rejected_lanes` into `rejections`: every lane the market refused each job,
 with the reason codes that say why (`missing_capability`, `quota_exhausted`,

@@ -100,7 +100,7 @@ describe('foldWorkMarket', () => {
       J({ schema: 'session-failover.v1', event: 'session_handoff_advisory', ts: NOW_S, job: 'RQ-A', trigger: 'quota-exhausted' }),
       J({ schema: 'other.v9', event: 'route_decision', ts: NOW_S, job: 'RQ-B' }),
       decisionRow(NOW_S - 200 * 3600, { job: 'RQ-C' }), // outside the 168 h window
-      decisionRow(NOW_S + 600, { job: 'RQ-D' }), // beyond the +300 s skew tolerance
+      decisionRow(NOW_S + 1, { job: 'RQ-D' }),
       'not json',
       '',
     ].join('\n');
@@ -123,6 +123,26 @@ describe('foldWorkMarket', () => {
     const cells = marketDecisionCells(fold);
     // Only one unrouted job (RQ-B) — below the recurring bar.
     expect(cells.filter((c) => c.kind === 'unrouted')).toEqual([]);
+  });
+
+  it('uses the last valid append for a tick and preserves explicit requirements failures', () => {
+    const routed = decisionRow(NOW_S, { job: 'RQ-A', chosen: 'devin' });
+    const corrected = decisionRow(NOW_S, { job: 'RQ-A', chosen: 'claude' });
+    const invalidRequirements = JSON.parse(decisionRow(NOW_S, {
+      job: 'RQ-B', chosen: null, codes: ['invalid_requirements'],
+    }));
+    delete invalidRequirements.preferred_lane;
+    const rows = [
+      routed, corrected,
+      J({ ...JSON.parse(routed), chosen_lane: undefined }),
+      J({ ...JSON.parse(routed), preferred_lane: 'bad lane' }),
+      decisionRow(NOW_S - 1, { job: 'RQ-B' }), J(invalidRequirements),
+    ];
+
+    const { latest } = foldWorkMarket(rows.join('\n'), NOW_MS, 168);
+
+    expect(latest.get('RQ-A')?.chosen).toBe('claude');
+    expect(latest.get('RQ-B')).toMatchObject({ chosen: null, decisionCodes: ['invalid_requirements'] });
   });
 
   it('requires unfed===true plus positive headroom and waiting_elsewhere', () => {
@@ -246,6 +266,7 @@ describe('unfedLaneCells / marketDecisionCells', () => {
 
     const pref = decisionSeries(3, (job) => ({
       job, chosen: 'claude',
+      preferred: 'ghost-lane',
       override: { from: 'ghost-lane', to: 'claude', reason: 'unknown_preference' },
     }));
     const cellsP = marketDecisionCells(foldWorkMarket(pref.join('\n'), NOW_MS, 168));
@@ -253,9 +274,14 @@ describe('unfedLaneCells / marketDecisionCells', () => {
     expect(up).toHaveLength(1);
     expect(up[0]!.pairs[0]![0]).toBe('ghost-lane→claude');
 
+    const inconsistent = pref.map(row => J({ ...JSON.parse(row), preferred_lane: 'devin' }));
+    expect(marketDecisionCells(foldWorkMarket(inconsistent.join('\n'), NOW_MS, 168))
+      .filter((c) => c.kind === 'unknown-preference')).toEqual([]);
+
     // resource_fit overrides are designed behavior — never emit.
     const fitRows = decisionSeries(3, (job) => ({
       job, chosen: 'claude',
+      preferred: 'devin',
       override: { from: 'devin', to: 'claude', reason: 'resource_fit' },
     }));
     expect(marketDecisionCells(foldWorkMarket(fitRows.join('\n'), NOW_MS, 168))
@@ -316,6 +342,7 @@ describe('unfedBacklogItems', () => {
       ...decisionSeries(3, () => ({ job: `RQ-U${u++}`, chosen: null, codes: ['no_runnable_lane'] })),
       ...decisionSeries(3, (job) => ({
         job: `RQ-P${job.slice(4)}`, chosen: 'claude',
+        preferred: 'ghost-lane',
         override: { from: 'ghost-lane', to: 'claude', reason: 'unknown_preference' },
       })),
     ];
