@@ -27,6 +27,8 @@ import { loadOwnerThreadSettings } from './owner-channel.js';
 
 export const PAIR_TEXT = 'Phantom: reply YES to get fleet updates here.';
 export const PAIR_TTL_MS = 24 * 60 * 60 * 1000;
+/** Maximum time spent waiting on Messages during one pairing pass. */
+export const PAIR_BRIDGE_DEADLINE_MS = 5_000;
 const STATE_FILE = 'owner-pair.json';
 
 export const PAIR_MAX_HANDLES = 4;
@@ -44,7 +46,7 @@ export interface PairBridge {
   /** Texts after `afterRowId` in the chats with `handles` (received, or sent-by-me); null when Messages is unreadable. */
   replies(afterRowId: number, handles: string[]): Promise<PairInbound[] | null>;
 }
-export interface PairDeps { configDir: string; bridge: PairBridge; now?: () => number }
+export interface PairDeps { configDir: string; bridge: PairBridge; now?: () => number; bridgeDeadlineMs?: number }
 
 export interface OwnerPairStatusV1 {
   schema: 'owner-pair.status.v1';
@@ -59,14 +61,34 @@ export interface OwnerPairStatusV1 {
 }
 
 export type PairStartResult =
-  | { status: 'pending'; handles: string[]; since: number }
-  | { status: 'already-paired' | 'already-pending' | 'too-soon' | 'none-found' | 'send-failed' | 'messages-unreadable' | 'bad-handle' };
+  | { status: 'pending'; handles: string[]; since: number; uncertainSend?: true }
+  | { status: 'send-failed'; uncertainSend?: true }
+  | { status: 'already-paired' | 'already-pending' | 'too-soon' | 'none-found' | 'messages-unreadable' | 'bad-handle' };
 export type PairCheckResult =
   | { status: 'none' | 'waiting' | 'expired' | 'unreadable' }
   | { status: 'bound'; confirmed: boolean; reason?: string };
 
 const mask = (handle: string): string => `**${handle.slice(-2)}`;
 const clock = (deps: PairDeps): number => (deps.now ?? Date.now)();
+
+const timedOut = Symbol('bridge deadline');
+/** Race only bridge work: late settlement is observed but never resumes pairing state changes. */
+function bridgeBudget(deps: PairDeps): <T>(operation: () => Promise<T>) => Promise<T | typeof timedOut> {
+  const duration = deps.bridgeDeadlineMs ?? PAIR_BRIDGE_DEADLINE_MS;
+  const end = Date.now() + Math.max(0, Number.isFinite(duration) ? duration : PAIR_BRIDGE_DEADLINE_MS);
+  return async <T>(operation: () => Promise<T>): Promise<T | typeof timedOut> => {
+    const remaining = end - Date.now();
+    if (remaining <= 0) return timedOut;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(operation),
+        new Promise<typeof timedOut>(resolve => { timer = setTimeout(() => resolve(timedOut), remaining); }),
+      ]);
+    } finally { if (timer !== undefined) clearTimeout(timer); }
+  };
+}
+
 
 // ---------------------------------------------------------------------------
 // State file
@@ -194,16 +216,28 @@ export async function startOwnerPair(deps: PairDeps, input: { handle?: string; a
   if (live && (explicit === undefined || live.handles.some(h => h.toLowerCase() === explicit.toLowerCase()))) return { status: 'already-pending' };
   if (input.auto && (state.autoOff || (state.lastStartAt !== null && now - state.lastStartAt < PAIR_TTL_MS))) return { status: 'too-soon' };
 
+  const budget = bridgeBudget(deps);
   // --handle narrows to one; otherwise every own handle found is Mason's.
-  const targets = explicit !== undefined ? [explicit] : [...new Map((await deps.bridge.ownHandles()).map(h => [h.toLowerCase(), h])).values()].slice(0, PAIR_MAX_HANDLES);
+  const discovered = explicit !== undefined ? [explicit] : await budget(() => deps.bridge.ownHandles());
+  if (discovered === timedOut) return { status: 'messages-unreadable' };
+  const targets = [...new Map(discovered.map(h => [h.toLowerCase(), h])).values()].slice(0, PAIR_MAX_HANDLES);
   if (targets.length === 0) return { status: 'none-found' };
-  const afterRowId = await deps.bridge.baseline();
-  if (afterRowId === null) return { status: 'messages-unreadable' };
+  const afterRowId = await budget(() => deps.bridge.baseline());
+  if (afterRowId === null || afterRowId === timedOut) return { status: 'messages-unreadable' };
   const sent: string[] = [];
-  for (const handle of targets) if (await deps.bridge.send(handle, PAIR_TEXT)) sent.push(handle);
-  if (sent.length === 0) return { status: 'send-failed' };
+  let uncertainSend = false;
+  for (const handle of targets) {
+    const result = await budget(() => deps.bridge.send(handle, PAIR_TEXT));
+    if (result === timedOut) { uncertainSend = true; break; }
+    if (result) sent.push(handle);
+  }
+  if (sent.length === 0) {
+    // Delivery may still happen after the deadline. Suppress automatic retries for a day.
+    if (uncertainSend) writePairState(deps.configDir, { ...state, lastStartAt: now });
+    return uncertainSend ? { status: 'send-failed', uncertainSend: true } : { status: 'send-failed' };
+  }
   writePairState(deps.configDir, { pending: { handles: sent, startedAt: now, expiresAt: now + PAIR_TTL_MS, afterRowId }, lastStartAt: now, autoOff: false });
-  return { status: 'pending', handles: sent, since: now };
+  return { status: 'pending', handles: sent, since: now, ...(uncertainSend ? { uncertainSend: true as const } : {}) };
 }
 
 /** A row that counts as the owner's YES: in a pending handle's chat, exactly YES, never the pairing text itself. */
@@ -216,8 +250,8 @@ export async function checkOwnerPair(deps: PairDeps): Promise<PairCheckResult> {
   const pending = state.pending;
   if (!pending) return { status: 'none' };
   if (pending.expiresAt <= now) { writePairState(deps.configDir, { ...state, pending: null }); return { status: 'expired' }; }
-  const inbound = await deps.bridge.replies(pending.afterRowId, pending.handles);
-  if (inbound === null) return { status: 'unreadable' };
+  const inbound = await bridgeBudget(deps)(() => deps.bridge.replies(pending.afterRowId, pending.handles));
+  if (inbound === null || inbound === timedOut) return { status: 'unreadable' };
   const own = new Set(pending.handles.map(h => h.toLowerCase()));
   // Rows at or before the send are older than the pairing; only the chats with pending own handles count.
   const mine = inbound.filter(m => m.rowid > pending.afterRowId && own.has(m.handle.toLowerCase())).sort((a, b) => a.rowid - b.rowid);
@@ -276,7 +310,8 @@ export async function pairTick(deps: PairDeps): Promise<PairTickReport> {
     expired = true;
   }
   const started = await startOwnerPair(deps, { auto: true });
-  if (started.status === 'pending') return { action: 'started', detail: sentLine(started.handles.length) };
+  if (started.status === 'pending') return { action: 'started', detail: sentLine(started.handles.length) + (started.uncertainSend ? '; another invitation may have been delivered' : '') };
+  if (started.status === 'send-failed' && started.uncertainSend) return { action: 'none', detail: 'send-failed; invitation delivery is uncertain; automatic retry deferred' };
   return { action: expired ? 'expired' : 'none', detail: started.status };
 }
 
