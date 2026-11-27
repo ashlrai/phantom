@@ -65,6 +65,11 @@ An out-of-range Codex reset timestamp is recorded as an unknown reset without
 discarding the other readings in the rollout. If it is the latest reading for
 its window, the lane verdict stays unknown.
 
+Lane truth uses the modification time of `queue/slots.json` to qualify its
+running count, queued count and hold state. These fields are null when the
+file is more than 15 minutes old or dated after report time. The configured
+target remains visible.
+
 The `idle_with_work` verdict requires a positive lane target, queued work,
 zero running workers, no hold and remaining quota in every observed window.
 A current reading of 100% used in any window suppresses the stall verdict,
