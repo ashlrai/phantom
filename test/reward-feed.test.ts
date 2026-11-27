@@ -1299,6 +1299,18 @@ describe('syncRewardSignalsFromJobsLedger', () => {
     ]);
   });
 
+  it('records a merge with unknown USD cost when one spend call straddles the sync cutoff', async () => {
+    writeJobs([launch('RQ-A'), merged('RQ-A')].join('\n'));
+    writeSpend([
+      line({ job: 'RQ-A', cost_usd: 2 }),
+      line({ job: 'RQ-A', cost_usd: 1, ts: new Date(NOW_MS + 1).toISOString(), at: NOW().toISOString() }),
+    ].join('\n'));
+
+    const result = await syncRewardSignalsFromJobsLedger({ runsDir, home, now: NOW });
+    expect(result).toMatchObject({ state: 'read', spendState: 'read', recorded: 1 });
+    expect(rewardRows()).toMatchObject([{ jobId: 'RQ-A', merged: true, cost: { costUsd: null } }]);
+  });
+
   it('records a merge with unknown USD cost when earlier spend is outside the retained tail', async () => {
     writeJobs([launch('RQ-A'), merged('RQ-A')].join('\n'));
     writeSpend(line({ job: 'RQ-A', cost_usd: 2.5 }) + '\n');
