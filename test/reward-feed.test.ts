@@ -981,6 +981,32 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs[0]?.ciWallMs).toBe(ciWallMs);
   });
 
+  it.each(['MERGED', 'CLOSED'])('distinguishes missing and disputed repository evidence for %s CI timing', (state) => {
+    const job = 'RQ-CI-REPO-DISPUTED';
+    const dispatch = { job, event: 'launch', ts: DISPATCH_ISO, lane: 'codex-cmp' };
+    const resolution = { job, state, ts: MERGED_ISO };
+    const phantom = { repo: 'ashlrai/phantom' };
+    const lexicon = { repo: 'ashlrai/lexicon' };
+    const ci = [
+      ciStart(job, '2026-10-28T15:10:00.000Z'),
+      ciComplete(job, '2026-10-28T15:25:00.000Z'),
+    ];
+    const fold = (dispatches: Record<string, unknown>[], resolutions: Record<string, unknown>[]) =>
+      foldJobsLedgerRewards([...dispatches.map(line), ...ci, ...resolutions.map(line)].join('\n'), NOW_MS);
+    const conflictedDispatches = [{ ...dispatch, ...phantom }, { ...dispatch, ...lexicon }];
+
+    expect(fold([dispatch], [resolution])).toMatchObject([{ repo: null, ciWallMs: 900_000 }]);
+    expect(fold(conflictedDispatches, [{ ...resolution, ...phantom }]))
+      .toMatchObject([{ ...phantom, ciWallMs: 900_000 }]);
+    for (const inputs of [
+      fold(conflictedDispatches, [resolution]),
+      fold([{ ...dispatch, ...phantom }], [{ ...resolution, ...phantom }, { ...resolution, ...lexicon }]),
+    ]) {
+      expect(inputs).toMatchObject([{ jobId: job, repo: null, merged: state === 'MERGED' }]);
+      expect(inputs[0]).not.toHaveProperty('ciWallMs');
+    }
+  });
+
   it('measures CI across equivalent PR URLs and ignores out-of-window claims', () => {
     const job = 'RQ-CI-PR';
     const rows = [
