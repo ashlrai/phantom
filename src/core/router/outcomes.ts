@@ -1899,6 +1899,7 @@ function foldRouterOutcomesWithCiCoverage(
 
   const outcomes = new Map<string, RouterOutcome>();
   const mergedAt = new Map<string, number>();
+  const disputedCiFirstPass = new Set<string>();
   let unattached = 0;
   let sessionRows = 0;
   for (const r of rows) {
@@ -1995,7 +1996,15 @@ function foldRouterOutcomesWithCiCoverage(
         o.reverted = false;
       }
     }
-    if (typeof r['ci_first_pass'] === 'boolean') o.ci_first_pass = r['ci_first_pass'];
+    const ciFirstPass = r['ci_first_pass'];
+    if (typeof ciFirstPass === 'boolean' && !disputedCiFirstPass.has(j)) {
+      if (o.ci_first_pass === null || o.ci_first_pass === ciFirstPass) {
+        o.ci_first_pass = ciFirstPass;
+      } else {
+        disputedCiFirstPass.add(j);
+        o.ci_first_pass = null;
+      }
+    }
     o.cost_usd = num(r['cost_usd']) ?? num(r['usd']) ?? num(r['cost']) ?? o.cost_usd;
     o.wall_s = num(r['wall_s']) ?? o.wall_s;
     o.tokens_total = num(r['tokens_total']) ?? num(r['tokensTotal']) ?? o.tokens_total;
@@ -2246,10 +2255,9 @@ function foldRouterOutcomesWithCiCoverage(
         const evidence = opts.mergeEvents.get(prKey);
         if (evidence !== undefined) {
           o.merge_queue = { ...evidence, blocked_reasons: [...evidence.blocked_reasons] };
-          // Fill-only: a jobs-row ci_first_pass verdict always wins; the
-          // merge-queue check record resolves what the jobs rows left
-          // unknown.
-          if (o.ci_first_pass === null) {
+          // Queue observations only fill gaps where the jobs ledger
+          // supplied no explicit verdict.
+          if (o.ci_first_pass === null && !disputedCiFirstPass.has(o.job_id)) {
             const incomplete = opts.mergeEventsTruncated === true ||
               mergeEventCoverage?.unattributed === true || mergeEventCoverage?.incompletePrs.has(prKey) === true;
             o.ci_first_pass = mergeQueueCiFirstPass(evidence, incomplete);
