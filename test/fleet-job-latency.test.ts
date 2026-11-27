@@ -194,15 +194,26 @@ it('reports measured local Git operations and exact cross-lane overlaps only', a
 });
 
 const event = (event: string, ts: string | null) => ({ job: 'attempt-1', event, ts });
-it('counts exact dated Git-operation replays once in the contention report', async () => {
+it('counts dated Git-operation replays once even when JSON serialization changes', async () => {
   const lockFailure = JSON.stringify({ event: 'git_operation', machine: 'mac-a', lane: 'work',
     operation: 'index.lock', ts: '2026-01-01T00:00:01Z', elapsed_ms: 110, failed: true });
   const original = [(await readFile(gitFixture, 'utf8')).trimEnd(), lockFailure].join('\n');
   const datedReceipts = original.split('\n').filter(line => line.includes('"git_operation"') && line.includes('"ts"'));
   expect(datedReceipts).toHaveLength(6);
 
-  const replayed = [original, ...datedReceipts.map(line => `  ${line}  `)].join('\n');
+  const reordered = datedReceipts.map(line =>
+    JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(line)).reverse())));
+  const replayed = [original, ...datedReceipts.map(line => `  ${line}  `), ...reordered].join('\n');
   expect(jobLatency(replayed)).toEqual(jobLatency(original));
+});
+
+it('preserves repeated Git-operation measurements without a timestamp', () => {
+  const receipt = JSON.stringify({ event: 'git_operation', machine: 'mac-a', lane: 'work',
+    operation: 'fetch', elapsed_ms: 900, retries: 2 });
+  const operations = jobLatency([receipt, receipt].join('\n')).git_contention?.machines?.[0]?.lanes[0]?.operations;
+  expect(operations?.find(op => op.operation === 'fetch')).toMatchObject({
+    timed_samples: 2, retries: { samples: 2, total: 4 }, concurrent_retries: { samples: null, total: null },
+  });
 });
 
 const start = '2026-01-01T00:00:00Z', end = '2026-01-01T00:01:00Z';
