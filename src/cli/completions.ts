@@ -159,6 +159,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'recover-state', 'resolve-state', 'install', 'uninstall', 'service-status',
     'pause', 'resume', 'doctor', 'health',
   ],
+  lanes: ['pool', 'held', 'yield', 'caps', 'pressure', 'fit', 'health', 'route', '--json', '--help'],
   worker: ['setup', 'status'],
   prs: ['triage'],
   pr: ['resolve-conflicts', '--repo', '--pr', '--limit', '--root', '--out', '--allowlist', '--apply', '--json'],

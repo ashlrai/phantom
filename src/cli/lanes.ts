@@ -10,6 +10,8 @@ import { laneYieldAll, parseLaneJobs, type LaneYieldStats } from '../core/fleet/
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { computeLaneYield, NEUTRAL_WEIGHT, type LaneYieldRow } from '../core/fleet/lane-yield-weight.js';
 import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
+import { readLaneTargets } from '../core/fleet/runs-lane-targets.js';
+import { routeToEligibleLane, type LaneRouteDecision } from '../core/fleet/lane-route-eligibility.js';
 import { buildFleetLiveSnapshot } from '../core/verse/fleet-live-api.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge } from '../core/fleet/lane-health.js';
 import { readPauseState, pauseLine, defaultPauseDir, type PausePaths } from '../core/fleet/pause-state.js';
@@ -19,7 +21,7 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const USAGE = `Usage: phm lanes --json | phm lanes pool [--json] | phm lanes health [--json] | phm lanes fit --lane <lane> [--json]
        phm lanes yield [--json] [--since 24h] | phm lanes held [--json] | phm lanes caps [--check <prompt-file>] [--json]
-       phm lanes pressure [--json]
+       phm lanes pressure [--json] | phm lanes route [--size <size>] [--lane <name>] [--since <dur>] [--json]
 "phm lanes pool" says per lane whether queued rows wait on a used-up pool (98% used or more, nothing running):
 "waiting on a used-up pool until <time> (<n> rows)", "normal", or "no meter" (no pool reading, so unknown).
 Calls, error rate, p50 latency and deployed commit per lane over the last 12 h,
@@ -35,6 +37,12 @@ worktree); with --check it says which lanes can run the job in that prompt file.
 "phm lanes pressure" says, per lane, whether this Mac's memory is throttling it and why. Lanes whose model runs
 on this Mac (codex-local by default, or memory_class "local" in queue/slots.json) step down first; cloud lanes keep
 their target until memory is critical (under 15% free, or swap growing fast while memory is short). Read-only.
+"phm lanes route" says which queue lane may take the next job, from the lane-targets snapshot
+(queue/slots.json) and this fleet's running counts (queue/status.json). Held lanes, lanes at target 0
+or already running their target, zero-paid lanes without a fresh flat-rate reading and low-yield lanes
+are skipped with a reason; --size weighs recent yield for that row size, --lane names the lane the job
+asks for (never skipped as low-yield) and --since sets the yield-verdict window (default 24h). Advisory
+only: the dispatcher makes the real choice, and when a snapshot is not healthy no lane is chosen.
 Health and pressure also report global or local-model launch pause switches.
 Figures that cannot be measured print "unknown".`;
 
@@ -84,6 +92,52 @@ async function lanesCaps(flags: string[]): Promise<number> {
 
 const laneWait = (l: { queued: number; running: number; seat?: { usedPct: number | null; resetAt: string | null } }, now: number): PoolWait =>
   lanePoolWait({ queued: l.queued, running: l.running, usedPct: l.seat?.usedPct ?? null, resetAt: l.seat?.resetAt ?? null }, now);
+
+/** `phm lanes route [--size <size>] [--lane <name>] [--since <dur>] [--json]`: which lane may take the next job. */
+async function lanesRoute(flags: string[], runsDir: string): Promise<number> {
+  const json = flags.includes('--json');
+  const at = (name: string): number => flags.indexOf(name);
+  const sizeAt = at('--size'); const laneAt = at('--lane'); const sinceAt = at('--since');
+  const value = (i: number): string | undefined => i >= 0 ? flags[i + 1] : undefined;
+  const size = value(sizeAt); const named = value(laneAt); const sinceText = value(sinceAt) ?? '24h';
+  const consumed = new Set<number>();
+  for (const i of [sizeAt, laneAt, sinceAt]) if (i >= 0) { consumed.add(i); consumed.add(i + 1); }
+  const rest = flags.filter((x, i) => x !== '--json' && !consumed.has(i));
+  const badValue = [sizeAt, laneAt, sinceAt].some(i => i >= 0 && (flags.filter(x => x === flags[i]).length > 1 || i + 1 >= flags.length || flags[i + 1]!.startsWith('-')));
+  const now = Date.now();
+  const since = parseSince(sinceText, now);
+  if (rest.length || badValue || flags.filter(x => x === '--json').length > 1 || since === null) { console.error(USAGE); return 2; }
+  const [targets, state] = await Promise.all([readLaneTargets({ runsDir }), readFleetRunsDirState({ runsDir })]);
+  const live: Record<string, number> = {};
+  for (const lane of state.lanes) live[lane.lane] = lane.running;
+  let ledger: string | null;
+  try { ledger = await readFile(join(runsDir, 'metrics', 'jobs.jsonl'), 'utf8'); } catch { ledger = null; }
+  const yields = ledger === null ? undefined : computeLaneYield(ledger).rows;
+  const verdicts: Record<string, LaneYieldStats> = {};
+  if (ledger !== null) {
+    for (const row of laneYieldAll(parseLaneJobs(ledger), ORG_LANES, { since, until: now })) verdicts[row.lane] = row;
+  }
+  let decision: LaneRouteDecision = routeToEligibleLane({ targets, live, yields, verdicts, size, named, now: new Date(now) });
+  // Running counts are a snapshot input too: when status.json cannot be read, room is
+  // unknown, so a lane the pure rule would pick is withheld rather than guessed.
+  if (decision.lane !== null && state.sources.status !== 'healthy') {
+    decision = { lane: null, testOnly: false, skipped: [{ lane: '*', kind: 'snapshot', reason: `Running counts are ${state.sources.status}, so room cannot be checked.` }, ...decision.skipped] };
+  }
+  if (json) {
+    console.log(JSON.stringify(sanitizePublicJson({
+      schema: 'lanes.route.v1', lane: decision.lane, testOnly: decision.testOnly, skipped: decision.skipped,
+      targetsState: targets.sourceState, statusState: state.sources.status, ledgerKnown: ledger !== null,
+      size: size ?? null, named: named ?? null, since: new Date(since).toISOString(),
+    })));
+    return 0;
+  }
+  if (ledger === null) console.log('Job history is unavailable. Yield is unknown, so every lane is neutral.');
+  if (state.sources.status !== 'healthy') console.log(`Running counts are ${state.sources.status}.`);
+  if (decision.lane === null) console.log('No lane chosen.');
+  else console.log(`Chosen: ${decision.lane}${decision.testOnly ? ' (low recent yield: give it a small, test-only row)' : ''}.`);
+  for (const skip of decision.skipped) console.log(`  ${skip.lane}: ${skip.reason}`);
+  return 0;
+}
 
 export interface LanesDeps extends PausePaths {
   runsDir?: string;
@@ -173,6 +227,7 @@ export async function cmdLanes(args: string[], deps: LanesDeps = {}): Promise<nu
     else for (const kind of report.kinds) console.log(`${kind.repo ?? 'unknown repo'} / ${kind.tier ?? 'unknown tier'} / ${kind.verb ?? 'unknown verb'}: ${kind.recommendation}; ${kind.prs}/${kind.jobs - kind.unknownOutcomes} produced a PR, ${kind.unknownOutcomes} unknown`);
     return 0;
   }
+  if (args[0] === 'route') return lanesRoute(args.slice(1), runsDir);
   if (args[0] !== 'health' || args.slice(1).some((a) => a !== '--json')) {
     console.error(USAGE);
     return 2;
