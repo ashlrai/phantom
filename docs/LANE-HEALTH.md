@@ -65,6 +65,9 @@ provider window. Ordering and reset detection use readable observation times
 at or before report time. If a window has no such reading, the lane verdict
 is unknown. The Runs History API's meter field shows the newest reading at
 or before report time, or null when there is none.
+A reading must predate its own reset to support a reset comparison.
+A previous window can expire by report time and still establish a rollover
+if its reading was taken before it expired.
 The default reader scans personal Codex rollouts in descending file
 modification order and uses the first rollout with a quota observation dated
 at or before report time. Rollouts with only future or unreadable observation

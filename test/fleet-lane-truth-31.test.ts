@@ -22,6 +22,14 @@ describe('lane truth fixtures', () => {
   it('detects a reset moving later without a percent drop', async () => {
     expect(await verdict({}, [sample, { ...sample, resetAt: '2026-11-01T11:00:00Z', sampledAt: '2026-10-31T11:55:00Z' }])).toBe('reset_detected');
   });
+  it.each([
+    ['2026-10-31T11:54:59Z', 'idle_with_work'],
+    ['2026-10-31T11:55:00Z', 'idle_with_work'],
+    ['2026-10-31T11:55:01Z', 'reset_detected'],
+  ])('qualifies a previous window ending at %s against its observation time', async (resetAt, expected) => {
+    const previous = { ...sample, resetAt, sampledAt: '2026-10-31T11:55:00Z' };
+    expect(await verdict({ running: 0 }, [previous, sample])).toBe(expected);
+  });
   it('detects idle work and ordinary activity', async () => {
     expect(await verdict({ running: 0 })).toBe('idle_with_work');
     expect(await verdict()).toBe('ok');
