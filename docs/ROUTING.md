@@ -455,11 +455,14 @@ recorded verdict folds as `node_outcome`/`node_id`/`node_pack`: the
 producer's closed `succeeded`/`fenced`/`failed` execution word for the
 offloaded pack job (result artifacts, never pull requests, so `merged`
 stays `null`) plus the node and pack that ran it in the bounded id
-shape. `work_class` is the class a jobs row recorded when
-one exists; otherwise it is the job's newest `work-market.v1`
-`route_decision` class — the market's own classification of the job,
-written for every evaluated job — and stays `null` when neither ledger
-recorded one. The market read
+shape. `work_class` uses the last usable class on a jobs row. Otherwise,
+it uses the class from the job's newest `work-market.v1` `route_decision`.
+Both sources require a valid route identifier and treat the
+case-insensitive `unknown` placeholder as missing. A jobs row with a
+missing or invalid class leaves any earlier usable class intact.
+An unusable class on the newest market decision leaves the market
+classification unknown. The outcome's class stays `null` when neither
+source supplies one. The market read
 degrades independently: the report's
 `market_state` mirrors the jobs `state` vocabulary and `market_truncated`
 marks a cut decision tail, in which case joined classes cover only the

@@ -2025,7 +2025,7 @@ function foldRouterOutcomesWithCiCoverage(
     }
     o.model = str(r, 'model') ?? o.model;
     o.tier = str(r, 'tier') ?? o.tier;
-    o.work_class = str(r, 'work_class') ?? o.work_class;
+    o.work_class = recordedWorkClass(str(r, 'work_class')) ?? o.work_class;
     o.repo = repoLabel(r) ?? o.repo;
     // The claim rows are the job's routing decisions: the newest one
     // stands, so a later claim that ran on its hint clears an earlier
@@ -2330,7 +2330,7 @@ function foldRouterOutcomesWithCiCoverage(
       }
       if (opts.workClassFor && o.work_class === null) {
         const workClass = opts.workClassFor(o.job_id);
-        if (typeof workClass === 'string' && workClass.trim()) o.work_class = workClass.trim();
+        if (typeof workClass === 'string') o.work_class = recordedWorkClass(workClass.trim());
       }
     }
   }
@@ -2426,7 +2426,12 @@ export function foldSpendCosts(text: string, asOfMs = Infinity): Map<string, num
 }
 
 /** work_class joins only values shaped like the route identifiers weight proposals group on. */
-const MARKET_WORK_CLASS = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const WORK_CLASS_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function recordedWorkClass(value: unknown): string | null {
+  return typeof value === 'string' && WORK_CLASS_ID.test(value) && value.toLowerCase() !== 'unknown'
+    ? value : null;
+}
 
 /**
  * Folds work-market.jsonl route_decision rows into each job's latest recorded
@@ -2453,8 +2458,7 @@ export function foldRouteDecisionWorkClasses(text: string, throughEpochSeconds =
     if (typeof ts !== 'number' || !Number.isFinite(ts) || ts > throughEpochSeconds) continue;
     const prev = latest.get(job);
     if (prev !== undefined && prev.ts > ts) continue;
-    const rawClass = row['work_class'];
-    const workClass = typeof rawClass === 'string' && MARKET_WORK_CLASS.test(rawClass) ? rawClass : null;
+    const workClass = recordedWorkClass(row['work_class']);
     if (prev?.ts === ts) {
       if (prev.workClass !== workClass) prev.workClass = null;
     } else {
