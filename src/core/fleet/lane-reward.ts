@@ -198,7 +198,9 @@ type ScoredAttempt =
 /** Score one folded attempt through the one-ask reward inspector. */
 function scoreAttempt(job: string, attempt: LaneRewardAttempt, deps: LaneRewardDeps): ScoredAttempt {
   const merged = attempt.outcome === 'merged';
-  if (!merged && !attempt.published && attempt.outcome !== 'closed') return { scored: false, reason: 'unresolved' };
+  if (!merged && !attempt.published) {
+    return { scored: false, reason: attempt.outcome === 'closed' ? 'publication-unobserved' : 'unresolved' };
+  }
   const tokens = attempt.tokens;
   if (typeof tokens !== 'number' || !Number.isSafeInteger(tokens) || tokens <= 0)
     return { scored: false, reason: 'invalid-usage' };
