@@ -188,6 +188,46 @@ describe('getFleetTruth', () => {
     expect(truth.queued).toBe(2);
   });
 
+  it('counts lane-open supply and resolves spec-less rows through router-queue envelopes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    writeFileSync(join(root, 'queue', 'ready.tsv'), [
+      // Six-column requirements cell: explicit open hint — runnable supply any executor may claim.
+      'RQ-OPEN-SPEC\tphantom\tclaude\twork\tprompts/open-spec.md\t{"preferred_lane":null}',
+      // Spec-less row whose envelope names no lane: open supply, lane cell never consulted.
+      'RQ-OPEN-ENV\tphantom\tclaude\twork\tprompts/open-env.md',
+      // Spec-less row whose malformed lane cell the envelope's preferred_lane overrides.
+      'RQ-ENV-HINT\tphantom\tnot a lane!\twork\tprompts/env-hint.md',
+      // Spec-less row whose malformed envelope the market rejects — dead work, never supply.
+      'RQ-ENV-BAD\tphantom\tclaude\twork\tprompts/env-bad.md',
+      // No envelope: the lane column still decides.
+      'RQ-LOCAL\tphantom\tclaude\twork\tprompts/local.md',
+      // Status-first parked row: held work, not queued.
+      'PARKED-DEP\tRQ-PARKED\tclaude\twork\tphantom\tprompts/parked.md',
+    ].join('\n'));
+    writeFileSync(join(root, 'queue', 'router-queue.md'), [
+      '- READY phantom RQ-OPEN-ENV (): open supply',
+      '- READY phantom RQ-ENV-HINT (preferred_lane=devin): hinted work',
+      '- READY phantom RQ-ENV-BAD (preferred_lane=CLAUDE!): bad spec',
+    ].join('\n'));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root });
+    // RQ-ENV-HINT + RQ-LOCAL hinted, RQ-OPEN-SPEC + RQ-OPEN-ENV lane-open; RQ-ENV-BAD invalid; RQ-PARKED blocked.
+    expect(truth.queued).toBe(4);
+    expect(truth.blocked).toBe(1);
+  });
+
+  it('counts a job listed as both hinted and lane-open only once', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    writeFileSync(join(root, 'queue', 'ready.tsv'), [
+      'RQ-DUP\tphantom\tclaude\twork\tprompts/dup.md',
+      'RQ-DUP\tphantom\tclaude\twork\tprompts/dup.md\t{"preferred_lane":null}',
+      'RQ-DUP\tphantom\tclaude\twork\tprompts/dup.md',
+    ].join('\n'));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root });
+    expect(truth.queued).toBe(1);
+  });
+
   it('falls back to live job pids when admission.json is stale', async () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
     mkdirSync(join(root, 'queue'));
