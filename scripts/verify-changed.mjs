@@ -183,6 +183,26 @@ const REALIO_LANE_INPUTS = new Set([
 const VERSE_ROUTE_FILE = /^src\/core\/verse\/.*-api\.ts$/;
 const VERSE_SYNC_IO_CHECKER = 'scripts/check-verse-sync-io.mjs';
 
+/**
+ * The Merge Gate "Check generated files" job regenerates docs/llms.txt from
+ * the docs page tree and verifies bin/ashlr's sha256 is still listed in the
+ * canonical launcher digest manifest, then fails on any drift. verify-changed
+ * runs the same read-only --check modes when a diff can stale either output,
+ * so the verdict lands locally instead of as a red gate step. The index
+ * inputs are every docs markdown page (docs/internal pages are excluded from
+ * the index but still trigger the cheap check), the index source block, the
+ * committed index itself, and the generator plus its page model. The digest
+ * inputs are the launcher bytes, the manifest and the checker.
+ */
+const LLMS_INDEX_INPUT = /^docs\/(?:.*\.md|llms-source\.txt|llms\.txt)$/;
+const LLMS_INDEX_GENERATOR = 'scripts/generate-docs-llms.mjs';
+const LLMS_INDEX_PAGE_MODEL = 'scripts/lib/docs-pages.mjs';
+const LAUNCHER_DIGEST_INPUTS = new Set([
+  'bin/ashlr',
+  'scripts/canonical-launcher-digests.json',
+  'scripts/canonical-launcher-digests.mjs',
+]);
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -220,6 +240,9 @@ export function selectChangedFiles(changedPaths, existingPaths) {
       SHARED_MANIFEST_FILE.test(path) || BACKEND_SRC_FILE.test(path)),
     realioLaneCheck: changed.some((path) => REALIO_LANE_TEST_FILE.test(path) || REALIO_LANE_INPUTS.has(path)),
     verseSyncIoCheck: changed.some((path) => VERSE_ROUTE_FILE.test(path) || path === VERSE_SYNC_IO_CHECKER),
+    llmsIndexCheck: changed.some((path) =>
+      LLMS_INDEX_INPUT.test(path) || path === LLMS_INDEX_GENERATOR || path === LLMS_INDEX_PAGE_MODEL),
+    launcherDigestCheck: changed.some((path) => LAUNCHER_DIGEST_INPUTS.has(path)),
   };
 }
 
@@ -2413,6 +2436,16 @@ function main() {
     }
   } else {
     console.log('PASS docs check skipped: no markdown change or file deletion');
+  }
+  if (selection.llmsIndexCheck) {
+    run('docs llms index freshness', 'scripts/generate-docs-llms.mjs', ['--check']);
+  } else {
+    console.log('PASS docs llms index freshness skipped: no docs page or index input change');
+  }
+  if (selection.launcherDigestCheck) {
+    run('canonical launcher digests', 'scripts/canonical-launcher-digests.mjs', ['--check']);
+  } else {
+    console.log('PASS canonical launcher digests skipped: no launcher or manifest change');
   }
   const preflight = eslintPreflight(root);
   if (!preflight.ok) {
