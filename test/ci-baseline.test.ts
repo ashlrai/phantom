@@ -402,6 +402,29 @@ describe('CI baseline evidence', () => {
       expect(poisoned.freshness.every(p => p.state === 'unknown')).toBe(true);
     }
   });
+  it('withholds PR freshness when only the checkout-free Merge Gate failed', async () => {
+    const { gh } = github({ count: 1, pass: true, gate: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      if (!args[1]?.includes('/runs/2/jobs?')) return result;
+      const page = JSON.parse(result.stdout);
+      page.jobs[0].conclusion = 'success';
+      return { ...result, stdout: JSON.stringify(page) };
+    });
+    expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'incomplete-check' }]);
+    expect(report.groups).toEqual([]);
+  });
+  it('withholds master pass evidence when another failed job stopped before checkout', async () => {
+    const { gh } = github({ count: 1, pass: true, extraMasterJob: 'failure' });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      if (args[1]?.endsWith('/jobs/30/logs')) {
+        return { ok: true, stdout: '##[error]Runner setup failed\n', stderr: '' };
+      }
+      return gh(args);
+    });
+    expect(report.master.known).toBe(false);
+    expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
+  });
   it('accepts the source-binding receipt as checkout proof', async () => {
     // Bound CI jobs print `Bound candidate <sha> to event tree|merge ...`
     // instead of a `git log -1` echo; the bound revision must equal head.

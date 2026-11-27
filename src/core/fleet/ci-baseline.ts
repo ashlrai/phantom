@@ -11,7 +11,7 @@ import { nextFixGeneration } from './ci-fix-generations.js';
 type Failure = { testId: string; file: string; names: string; excerpt: string };
 type Pr = { number: number; headRefOid: string; headRefName: string; files: { path: string }[] };
 type Run = { id: number; head_sha: string; workflow_id: number; status: string; conclusion?: string };
-type Job = { id: number; conclusion: string; head_sha: string };
+type Job = { id: number; name?: string; conclusion: string; head_sha: string };
 type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: number };
 
 // Job conclusions that mean the check never reached a verdict: cancelled,
@@ -2197,10 +2197,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     // The workflow can stop before starting other jobs. Its conclusion
     // still applies when every listed job reached a verdict. A failed
     // workflow without a failed job has an unexplained failure.
-    const incomplete = data.jobs.some(job => INCOMPLETE_CONCLUSIONS.has(job.conclusion)) ||
+    let incomplete = data.jobs.some(job => INCOMPLETE_CONCLUSIONS.has(job.conclusion)) ||
       (run.conclusion !== undefined && INCOMPLETE_CONCLUSIONS.has(run.conclusion)) ||
       (run.conclusion === 'failure' && !data.jobs.some(job => job.conclusion === 'failure'));
     const result: { conclusion: string; text: string }[] = [];
+    let failedMergeGateSummary = false;
     for (const job of data.jobs) {
       if (job.conclusion === 'skipped') continue;
       if (job.head_sha !== head) return null;
@@ -2243,7 +2244,14 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // unattributed evidence pass as head-verified.
       if (output.some(line => CHECKOUT_GROUP.test(line) || PASS_LINE.test(line)) ||
           parseBaselineFailures(r.stdout, repo).length > 0) return null;
+      if (job.conclusion === 'failure') {
+        if (job.name === 'Merge Gate') failedMergeGateSummary = true;
+        else incomplete = true;
+      }
     }
+    // A checkout-free Merge Gate failure can summarize a verified sibling
+    // failure. Without one, the failed gate is itself unexplained.
+    if (failedMergeGateSummary && !result.some(entry => entry.conclusion === 'failure')) incomplete = true;
     return { entries: result, incomplete };
   }
   const branch = await json<{ commit: { sha: string } }>(`repos/${repo}/branches/master`);
