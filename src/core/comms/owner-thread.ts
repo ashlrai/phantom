@@ -555,18 +555,39 @@ export async function sendOwnerHello(options: OwnerThreadOptions): Promise<Owner
 /** Per-channel delivery receipts keyed by outbound message id; a channel with no record is unknown. */
 export type OwnerThreadReceipts = Record<string, MessageReceipts>;
 
+const OWNER_LIVE_NOTICE_KEY_PREFIX = 'leader-live-';
+
 /**
- * Live inbound messages no recorded outbound reply cites. `sendOwnerReply`
- * stores the answered inbound's idempotency key in `replyTo`, so a proactive
- * notice never clears the mark and a reply recorded but undelivered still
- * counts as answered — channel delivery stays with the receipts. Archived
- * inbound messages are outside the live window and are not reported.
+ * The generated "Leader is live here" notice identity, `leader-live-<owner
+ * channel>`, minted by `planOwnerLiveNotices` in owner-live-notice.ts. Matched
+ * on the stored key only, never the text: a human reply that repeats the
+ * notice wording stays an ordinary reply. Persisted notices carry the same
+ * key, so historical threads classify without migration.
+ */
+export function isOwnerLiveNoticeKey(key: string): boolean {
+  return key.startsWith(OWNER_LIVE_NOTICE_KEY_PREFIX) && isOwnerChannel(key.slice(OWNER_LIVE_NOTICE_KEY_PREFIX.length));
+}
+
+/**
+ * Outbound messages that answer an inbound via `replyTo`, excluding the live
+ * notice. A notice cites the inbound it greets so its fanout and receipts
+ * resolve, but it never answers the owner's request. Both the awaiting-reply
+ * and undelivered-reply projections read this set.
+ */
+function recordedReplies(state: ThreadState): OwnerThreadMessage[] {
+  return state.messages.filter(message =>
+    message.direction === 'outbound' && typeof message.replyTo === 'string' && !isOwnerLiveNoticeKey(message.idempotencyKey));
+}
+
+/**
+ * Live inbound messages no recorded reply cites. `sendOwnerReply` stores the
+ * answered inbound's idempotency key in `replyTo`; a reply recorded but
+ * undelivered still counts as answered — channel delivery stays with the
+ * receipts. A proactive notice never clears the mark. Archived inbound
+ * messages are outside the live window and are not reported.
  */
 function awaitingReplyMessages(state: ThreadState): OwnerThreadMessage[] {
-  const answered = new Set(
-    state.messages.filter(message => message.direction === 'outbound' && message.replyTo !== undefined)
-      .map(message => message.replyTo!),
-  );
+  const answered = new Set(recordedReplies(state).map(message => message.replyTo!));
   return state.messages
     .filter(message => message.direction === 'inbound' && !answered.has(message.idempotencyKey));
 }
@@ -814,14 +835,13 @@ export type OwnerUndeliveredReplies =
  * delivered when the thread's own sent-mark (`deliveries[<key>:<channel>]`)
  * or the latest receipt journal row says so — the sent-mark survives receipt
  * journal rotation, and a rotated or crashed-away row reads 'unknown',
- * never delivered. Notices and hellos carry no `replyTo` and stay out: they
- * were never replies to a waiting owner message. An unreadable thread
+ * never delivered. Hellos carry no `replyTo` and live notices are excluded
+ * by `recordedReplies`: neither was a reply to a waiting owner message, and
+ * their own receipts report their delivery. An unreadable thread
  * reports `unavailable` — never an empty list passed off as fact.
  */
 function undeliveredReplyItems(state: ThreadState, runsDir: string): OwnerUndeliveredReply[] {
-  const replies = state.messages.filter(message =>
-    message.direction === 'outbound' && typeof message.replyTo === 'string' &&
-    Array.isArray(message.fanout) && message.fanout.length > 0);
+  const replies = recordedReplies(state).filter(message => Array.isArray(message.fanout) && message.fanout.length > 0);
   if (replies.length === 0) return [];
   const receipts = readReceipts(runsDir, replies.map(message => message.id));
   const items: OwnerUndeliveredReply[] = [];
