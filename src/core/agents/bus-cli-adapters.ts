@@ -17,6 +17,7 @@ import {
   BUS_CLIS, agentAddress, registerAgentIdentity, readAgentRegistry, resolveAgent,
   type AgentIdentity, type AgentRegistryOptions, type BusCli, type BusProvider, type RegisterAgentResult,
 } from './bus-identity.js';
+import type { AgentsMessage } from '../fleet/agents-messages.js';
 import { busBodyFallbackSummary, busBodySummary, busInboxJobMarker,
   type AgentWakeRow, type BusEnvelopeLookupJob, type ChannelReadMessage, type InboxMessage } from './bus-unified.js';
 
@@ -366,4 +367,34 @@ export function frameBusWorkMine(cli: BusCli, lines: readonly string[]): string 
   if (shown < lines.length) framed.push(`(${lines.length - shown} more digest lines not shown; read work mine again)`);
   framed.push(BUS_WORK_FRAME_END);
   return framed.join('\n');
+}
+
+/**
+ * The same bounded untrusted-data block `frameBusInbox` produces, rendered
+ * for one `agents messages` page (`phm agents messages --frame <cli>`) — the
+ * fleet-wide agent-to-agent timeline. Each row is already the projection's
+ * scrubbed one-line summary, so the bracket carries what the flat text read
+ * shows: the short UTC time, the classified kind, the recorded sender and
+ * recipient routing labels (claims, never proven identities) and the named
+ * thread when the body carried one. The map's node ids stay out of the
+ * frame — `unknown` is a map-drawing verdict, not a routing fact the next
+ * turn can act on. Same markers, same scrub and clip bound; identical for
+ * every CLI.
+ */
+export function frameBusAgentMessages(cli: BusCli, messages: readonly AgentsMessage[]): string {
+  if (!getBusCliAdapter(cli)) throw new Error('Unknown CLI.');
+  const lines = [BUS_INBOX_FRAME_BEGIN];
+  let used = BUS_INBOX_FRAME_BEGIN.length + BUS_INBOX_FRAME_END.length + 64;
+  let shown = 0;
+  for (const message of messages) {
+    const thread = message.threadId === undefined ? '' : ` thread=${message.threadId}`;
+    const line = clean(`[${message.at.slice(11, 19)}Z ${message.kind} ${message.fromName} -> ${message.toName}${thread}] ${message.summary}`);
+    if (used + line.length + 1 > BUS_INBOX_FRAME_MAX) break;
+    lines.push(line);
+    used += line.length + 1;
+    shown += 1;
+  }
+  if (shown < messages.length) lines.push(`(${messages.length - shown} more messages not shown; read agents messages again)`);
+  lines.push(BUS_INBOX_FRAME_END);
+  return lines.join('\n');
 }

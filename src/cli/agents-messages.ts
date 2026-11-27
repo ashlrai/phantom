@@ -1,5 +1,7 @@
+import type { BusCli } from '../core/agents/bus-identity.js';
+
 /** `phm agents messages`: thin argv adapter for core/fleet/agents-messages.ts. Exit 0 read, 1 bus unreadable, 2 bad usage. */
-export const AGENTS_MESSAGES_USAGE = `Usage: phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--limit N] [--json]
+export const AGENTS_MESSAGES_USAGE = `Usage: phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--limit N] [--frame <cli>] [--json]
 
 Recent agent-to-agent messages from the agent bus (default: the last hour,
 newest 50): time, from, to, kind, a summary of at most 160 characters and the
@@ -22,9 +24,16 @@ resolution \`phm messages --help\` describes. --before keeps only messages
 received strictly before its cutoff, so --since and --before read one closed
 [since, before) window. from and to are the node ids the map draws
 (leader, lane:<name>, job:<id>); an agent the map does not draw is "unknown".
---json prints agents.messages.v1 (schema, version, messages[], pairs[] with the
-message count and last 5 summaries per line, matched counting every message
-the filters kept before --limit). Read only.`;
+--frame <cli> prints the page as the same bounded block the bus inbox,
+channel read, wakes and work mine --frame reads produce — BEGIN/END
+UNTRUSTED AGENT BUS MESSAGES markers, the same scrub and 32 KiB clip with
+the cut stated — one line per message carrying its short UTC time, kind,
+recorded sender and recipient labels and thread; --json then carries it as
+\`framed\` beside the full projection. An unreadable bus frames nothing:
+the unknown read prints as usual. --json prints agents.messages.v1 (schema,
+version, messages[], pairs[] with the message count and last 5 summaries per
+line, matched counting every message the filters kept before --limit).
+Read only.`;
 
 export async function runAgentsMessagesCli(args: string[], out: (text: string) => void = console.log,
   err: (text: string) => void = console.error): Promise<number> {
@@ -32,7 +41,7 @@ export async function runAgentsMessagesCli(args: string[], out: (text: string) =
   let json = false;
   const values: { since?: string; before?: string; limit?: string; agent?: string; with?: string; kind?: string;
     priority?: string; job?: string; thread?: string; channel?: string; topic?: string; contains?: string; from?: string;
-    excludeFrom?: string; to?: string; inReplyTo?: string; id?: string; bodyKind?: string; result?: string } = {};
+    excludeFrom?: string; to?: string; inReplyTo?: string; id?: string; bodyKind?: string; result?: string; frame?: string } = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!, value = args[i + 1];
     if (arg === '--json' && !json) { json = true; continue; }
@@ -42,13 +51,23 @@ export async function runAgentsMessagesCli(args: string[], out: (text: string) =
       : arg === '--contains' ? 'contains' : arg === '--from' ? 'from' : arg === '--exclude-from' ? 'excludeFrom'
       : arg === '--to' ? 'to' : arg === '--in-reply-to' ? 'inReplyTo' : arg === '--id' ? 'id' : arg === '--body-kind' ? 'bodyKind'
       : arg === '--result' ? 'result'
-      : arg === '--limit' ? 'limit' : null;
+      : arg === '--limit' ? 'limit' : arg === '--frame' ? 'frame' : null;
     if (!key || values[key] !== undefined || value === undefined || value.startsWith('--')) { err(AGENTS_MESSAGES_USAGE); return 2; }
     values[key] = value; i++;
   }
-  const { formatAgentsMessagesText, readAgentsMessages } = await import('../core/fleet/agents-messages.js');
+  const [{ formatAgentsMessagesText, readAgentsMessages }, { frameBusAgentMessages }, { BUS_CLIS }] = await Promise.all([
+    import('../core/fleet/agents-messages.js'),
+    import('../core/agents/bus-cli-adapters.js'),
+    import('../core/agents/bus-identity.js'),
+  ]);
+  if (values.frame !== undefined && !(BUS_CLIS as readonly string[]).includes(values.frame)) {
+    err(AGENTS_MESSAGES_USAGE); return 2;
+  }
   const read = readAgentsMessages(values);
   if (!read.ok) { err(read.error); return 2; }
-  out(json ? JSON.stringify(read.result, null, 2) : formatAgentsMessagesText(read.result));
+  const framed = values.frame === undefined || read.result.messages === null
+    ? undefined : frameBusAgentMessages(values.frame as BusCli, read.result.messages);
+  out(json ? JSON.stringify(framed === undefined ? read.result : { ...read.result, framed }, null, 2)
+    : framed ?? formatAgentsMessagesText(read.result));
   return read.result.source === 'unavailable' ? 1 : 0;
 }
