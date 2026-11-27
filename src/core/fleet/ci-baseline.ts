@@ -11,7 +11,8 @@ import { nextFixGeneration } from './ci-fix-generations.js';
 type Failure = { testId: string; file: string; names: string; excerpt: string };
 type Pr = { number: number; headRefOid: string; headRefName: string; files: { path: string }[] };
 type Run = { id: number; head_sha: string; workflow_id: number; status: string; conclusion?: string };
-type Job = { id: number; conclusion: string; head_sha: string };
+type Job = { id: number; conclusion?: string | null; head_sha: string };
+type JobLog = { conclusion: Job['conclusion']; text: string };
 type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: number };
 
 // Job conclusions that mean the check never reached a verdict: cancelled,
@@ -21,6 +22,7 @@ type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: n
 // and `neutral` are deliberate non-verdicts (path filters, `if:` gates,
 // required-check-neutral), not incomplete checks, and stay ignored.
 const INCOMPLETE_CONCLUSIONS = new Set(['cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
+const COMPLETE_JOB_CONCLUSIONS = new Set<Job['conclusion']>(['success', 'failure', 'skipped', 'neutral']);
 
 function completeActionsPage<T extends { id: number }>(rows: T[] | undefined, total: number | undefined): rows is T[] {
   return Array.isArray(rows) && rows.length === total && rows.length <= 100 &&
@@ -2184,7 +2186,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const seen = new Set<number>();
     return data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
   }
-  async function logs(run: Run, head: string): Promise<{ entries: { conclusion: string; text: string }[]; incomplete: boolean } | null> {
+  async function logs(run: Run, head: string): Promise<{ entries: JobLog[]; incomplete: boolean } | null> {
     const data = await json<{ jobs: Job[]; total_count: number }>(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
     if (!data || !completeActionsPage(data.jobs, data.total_count)) return null;
     // A job that never reached a verdict — cancelled while queued, timed
@@ -2197,10 +2199,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     // The workflow can stop before starting other jobs. Its conclusion
     // still applies when every listed job reached a verdict. A failed
     // workflow without a failed job has an unexplained failure.
-    const incomplete = data.jobs.some(job => INCOMPLETE_CONCLUSIONS.has(job.conclusion)) ||
+    const incomplete = data.jobs.some(job => !COMPLETE_JOB_CONCLUSIONS.has(job.conclusion)) ||
       (run.conclusion !== undefined && INCOMPLETE_CONCLUSIONS.has(run.conclusion)) ||
       (run.conclusion === 'failure' && !data.jobs.some(job => job.conclusion === 'failure'));
-    const result: { conclusion: string; text: string }[] = [];
+    const result: JobLog[] = [];
     for (const job of data.jobs) {
       if (job.conclusion === 'skipped') continue;
       if (job.head_sha !== head) return null;
@@ -2209,7 +2211,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       if (!r?.ok) {
         // The job list already marks this run incomplete. A job that
         // never started may have no log, while its siblings still do.
-        if (INCOMPLETE_CONCLUSIONS.has(job.conclusion)) continue;
+        if (!COMPLETE_JOB_CONCLUSIONS.has(job.conclusion)) continue;
         return null;
       }
       const output = lines(r.stdout);
@@ -2248,7 +2250,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   }
   const branch = await json<{ commit: { sha: string } }>(`repos/${repo}/branches/master`);
   const masterRuns = branch?.commit?.sha ? await masterRunsAt(branch.commit.sha) : null;
-  const masterLogs: { conclusion: string; text: string }[] = [];
+  const masterLogs: JobLog[] = [];
   let masterKnown = !!branch?.commit?.sha && !!masterRuns?.length;
   for (const run of masterRuns ?? []) {
     if (run.head_sha !== branch?.commit?.sha || run.status !== 'completed') { masterKnown = false; continue; }

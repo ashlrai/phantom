@@ -38,7 +38,8 @@ even when its log is absent or empty: the run cannot prove the ref's
 checks, so the PR reads `unknown` rather than `fresh` — freshness reason
 `incomplete-check`, distinct from `unreadable-log-or-unverified-checkout` —
 and master's known state drops while the run's verified job logs still
-feed failure parsing. If an incomplete job's log is unavailable, the
+feed failure parsing. Job conclusions that are missing, null or unrecognized
+also mark the run incomplete. If an incomplete job's log is unavailable, the
 analyzer retains verified sibling logs. These same conclusions on the
 workflow run itself mark it incomplete even when every listed job reached
 a verdict. Verified master failures still contribute evidence. Master jobs
