@@ -49,9 +49,16 @@ const MAX_NEEDS_ITEMS = 10;
 const MAX_TIER_KEYS = 16;
 const TIER_RE = /^[a-z][a-z0-9-]{0,15}$/;
 /** RQ-REBASE-<REPO>-<pr number>-<head sha7> from queuegen (queuegen.rebaseId). */
-const REBASE_JOB_RE = /^RQ-REBASE-(?!BATCH-)([A-Z0-9][A-Z0-9-]*)-(\d{1,7})-(?:[0-9a-f]{7,40}|u[0-9a-f]{6})$/i;
-/** Batch members share a repo and end with a six-character hash. */
-const REBASE_BATCH_RE = /^RQ-REBASE-BATCH-([A-Za-z][A-Za-z0-9-]*?)-((?:\d{1,7}-)*\d{1,7})-[0-9a-f]{6}$/i;
+const REBASE_JOB_RE = /^RQ-REBASE-(?!BATCH-)([A-Za-z0-9][A-Za-z0-9._-]*)-(\d{1,7})-(?:[0-9a-f]{7,40}|u[0-9a-f]{6})$/i;
+/**
+ * Batch members share a repo and end with a six-character hash. The repo
+ * anchor is greedy over the full job-id charset and members require at least
+ * two numbers — the same grammar merge-plan's titleOrigins uses — so a repo
+ * short name containing digit segments (svc-2) is not split into phantom PRs.
+ */
+const REBASE_BATCH_RE = /^RQ-REBASE-BATCH-([A-Za-z0-9][A-Za-z0-9._-]*)-((?:\d{1,7}-)+\d{1,7})-[0-9a-f]{6}$/i;
+/** Degenerate one-member batch ids still name their PR. */
+const REBASE_BATCH_ONE_RE = /^RQ-REBASE-BATCH-([A-Za-z0-9][A-Za-z0-9._-]*)-(\d{1,7})-[0-9a-f]{6}$/i;
 const KEYED_JOB_ID = /^(?:id|job|job[._-]?id|task|name)=\s*/i;
 
 export interface LeaderBoardLane {
@@ -181,7 +188,7 @@ export function conflictingPrIds(readyTsvText: string): Set<string> {
       : KNOWN_STATUSES.has(first.toUpperCase()) || parkedCell(first) ? cells[1]
       : first;
     const jobId = id?.replace(KEYED_JOB_ID, '') ?? '';
-    const batch = REBASE_BATCH_RE.exec(jobId);
+    const batch = REBASE_BATCH_RE.exec(jobId) ?? REBASE_BATCH_ONE_RE.exec(jobId);
     if (batch) {
       const repo = batch[1]!.toUpperCase();
       for (const pr of batch[2]!.split('-')) prs.add(`${repo}-${pr}`);

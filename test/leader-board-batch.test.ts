@@ -36,6 +36,27 @@ describe('leader board rebase members recovered from #7167', () => {
     expect([...conflictingPrIds(id)]).toEqual([]);
   });
 
+  it('parses repo short names with dots, underscores and digit segments', () => {
+    const ids = conflictingPrIds([
+      'READY\tRQ-REBASE-BATCH-my.repo-12-34-a1b2c3\tdevin\twork',
+      'READY\tRQ-REBASE-my_repo-7-abcdef0\tdevin\twork',
+      'READY\tRQ-REBASE-BATCH-svc-2-123-456-a1b2c3\tdevin\twork',
+      'READY\tRQ-REBASE-svc-2-123-abcdef0\tdevin\twork',
+      'READY\tRQ-REBASE-BATCH-2024-app-5-6-abcdef\tdevin\twork',
+      'READY\tRQ-REBASE-BATCH-legacy-9-a1b2c3\tdevin\twork',
+    ].join('\n'));
+    expect([...ids].sort()).toEqual([
+      '2024-APP-5',
+      '2024-APP-6',
+      'LEGACY-9',
+      'MY.REPO-12',
+      'MY.REPO-34',
+      'MY_REPO-7',
+      'SVC-2-123',
+      'SVC-2-456',
+    ]);
+  });
+
   it('retains SHA singles, parked conflicts, cross-repo identity and comment filtering', () => {
     expect([...conflictingPrIds([
       '# RQ-REBASE-PHANTOM-99-uabcdef',
