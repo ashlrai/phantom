@@ -50,10 +50,15 @@ export async function readTail(path: string, maxBytes: number): Promise<TailRead
     try {
       const size = (await handle.stat()).size;
       const start = Math.max(0, size - maxBytes);
-      const buf = Buffer.alloc(size - start);
-      await handle.read(buf, 0, buf.length, start);
-      const text = buf.toString('utf8');
-      return { text: start > 0 ? text.slice(text.indexOf('\n') + 1) : text, truncated: start > 0 };
+      // Inspect the preceding byte so a cutoff on a line boundary keeps that line.
+      const offset = Math.max(0, start - 1);
+      const buf = Buffer.alloc(size - offset);
+      const { bytesRead } = await handle.read(buf, 0, buf.length, offset);
+      if (bytesRead !== buf.length) return null;
+      if (start === 0) return { text: buf.toString('utf8'), truncated: false };
+      const newline = buf.indexOf(0x0a);
+      const text = newline === -1 ? '' : buf.toString('utf8', newline + 1);
+      return { text, truncated: true };
     } finally { await handle.close(); }
   } catch { return null; }
 }

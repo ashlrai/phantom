@@ -514,6 +514,9 @@ A missing or unreadable jobs ledger leaves `claims.claimed` and
 matching events supplies zero counts.
 `claims.truncated` is true when the ledger
 exceeded the retained tail, so those counts are a lower bound.
+The jobs and work-market journal readers retain the first line at a byte
+cutoff when it starts on a line boundary. When the cutoff lands inside a
+line, they discard its fragment, including when no newline follows it.
 The same collapsed decisions also join the retained tail of
 `metrics/jobs.jsonl` into `decisionOutcomes`: each decided job counts once,
 by how its latest decision treated the hint — `hinted` (chose the declared

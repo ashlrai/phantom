@@ -219,9 +219,13 @@ describe('collector readers', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tail-'));
     writeFileSync(join(dir, 'f'), 'aaaa\nbbbb\ncccc\n');
     expect(await readTail(join(dir, 'f'), 7)).toEqual({ text: 'cccc\n', truncated: true });
+    expect(await readTail(join(dir, 'f'), 10)).toEqual({ text: 'bbbb\ncccc\n', truncated: true });
     expect(await readTail(join(dir, 'f'), 100)).toEqual({ text: 'aaaa\nbbbb\ncccc\n', truncated: false });
     expect(await readTail(join(dir, 'missing'), 10)).toBeNull();
     expect(await readTail(dir, 10)).toBeNull();
+    const record = '{"event":"claim"}';
+    writeFileSync(join(dir, 'fragment'), `damaged prefix ${record}`);
+    expect(await readTail(join(dir, 'fragment'), record.length)).toEqual({ text: '', truncated: true });
   });
 });
 
