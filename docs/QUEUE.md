@@ -1191,6 +1191,11 @@ when a lane has been starved for 30 minutes, at most once per lane every 6 hours
 and remembers first sightings in `~/.ashlr/vision/leader/starved-lanes.json`. The
 router queue is never written.
 
+Usage-journal quota percentages expire at their recorded reset, even when
+their freshness deadline is later. An expired reading leaves remaining quota
+unknown unless another source supplies a current reading, so it cannot keep a
+lane marked drained after reset.
+
 Each lane in the `fleet.lanes.v1` read also carries one `health` verdict:
 `{ state, reason, number }` with `state` one of `ok`, `held`, `starved`, `wasteful`
 or `drained` and a one-line reason that starts with the state, for example

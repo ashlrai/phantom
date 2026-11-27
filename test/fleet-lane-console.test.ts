@@ -515,6 +515,33 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(snapshot.lanes.find(l => l.lane === 'devin')!.mergesPerHour).toBe(1); // observed merge still reports
   });
 
+  it.each([
+    { resetOffsetMs: 1, remainingPct: 0, state: 'drained' },
+    { resetOffsetMs: 0, remainingPct: null, state: 'starved' },
+    { resetOffsetMs: -1, remainingPct: null, state: 'starved' },
+  ])('expires usage-journal credit at its reset ($resetOffsetMs ms from report time)', async ({ resetOffsetMs, remainingPct, state }) => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    const usagePath = join(dir, 'usage-readings.log');
+    const resetAt = new Date(ANCHOR.getTime() + resetOffsetMs).toISOString();
+    await writeFile(usagePath, JSON.stringify({
+      pool: 'grok-ultra', pctUsed: 100, resetAt,
+      observedAt: new Date(ANCHOR.getTime() - 60_000).toISOString(),
+      staleAfter: new Date(ANCHOR.getTime() + 60_000).toISOString(),
+    }));
+    await writeFile(join(dir, 'ready.tsv'), '');
+    await writeFile(join(dir, 'status.json'), JSON.stringify({
+      last_tick: ANCHOR.toISOString(), lanes: { 'grok-ultra': { running: 0, target: 2 } },
+    }));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [usagePath], now: () => ANCHOR, starvedStateDir: scratch,
+    });
+    expect(snapshot.lanes.find(lane => lane.lane === 'grok-ultra')).toMatchObject({
+      credit: { remainingPct, resetAt, state: remainingPct === null ? 'unknown' : 'observed' },
+      health: { state },
+    });
+  });
+
   it('projects credit, queue depth, live jobs and merges per lane', async () => {
     const snapshot = await getFleetLaneSnapshot(fixtureOptions);
     expect(snapshot.schema).toBe('fleet.lanes.v1');
