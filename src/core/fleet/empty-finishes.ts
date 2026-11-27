@@ -6,6 +6,7 @@
  * from disk here. Split out of empties.ts so evidence-only consumers do not
  * pull the reason-classification subtree.
  */
+import { canonicalJson } from '../authority/canonical-json.js';
 import { ledgerEventName, ledgerRows, ledgerStateTokens, type LedgerRow } from './empty-cause.js';
 
 /** One job's newest finish in the window. `skipped` means the dispatcher never launched it. */
@@ -67,7 +68,13 @@ export function currentAttemptFinishes(text: string, nowMs: number, hours: numbe
       seen.clear();
       timestamp = at;
     }
-    const receipt = JSON.stringify(row);
+    let receipt: string;
+    try {
+      receipt = canonicalJson(row);
+    } catch {
+      // Keep the reader usable for noncanonical values, such as overflowed JSON numbers.
+      receipt = JSON.stringify(row);
+    }
     if (seen.has(receipt)) return false;
     seen.add(receipt);
     return true;

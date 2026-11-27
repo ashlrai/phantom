@@ -1450,7 +1450,8 @@ or its bare `phantom` shorthand, matching case-insensitively.
 A launch or batch claim supersedes earlier finishes, so a retry
 awaiting its own finish is excluded from the backlog's empty and untagged
 counts. Receipt timestamps determine the order, with ledger order breaking ties.
-Identical receipts keep their first position, so replayed rows at the same
+Receipts with the same JSON fields and values keep their first position,
+even when a replay changes key order or whitespace. A replay at the same
 timestamp cannot move a finish across a dispatch boundary.
 If the bounded jobs-ledger read drops older receipts, discovery withholds
 the untagged-majority brief. Recurring recorded `blocked` and `unknown` tags
