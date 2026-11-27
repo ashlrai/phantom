@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cmdFleetVitals, readFleetVitals, readHostVitals } from '../src/cli/fleet-vitals.js';
 import { readLaunchVitals } from '../src/core/fleet/launch-vitals.js';
+import { readFleetCompute } from '../src/core/fleet/compute-view.js';
 import { readLaunchCosts } from '../src/core/fleet/launch-cost.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 
@@ -63,6 +64,27 @@ it.each(['over_host', 'over_owned', 'settling', 'pressure', 'admit'])('does not 
   const root = await fixture({ 'admission-ctl.json': { reason }, 'status.json': { lanes: { claude: { running: 1, target: 8, queued: 3 } } } });
   expect(await readLaunchVitals(root)).toEqual({ reason: null, nextWindowSeconds: null, queued: 3, lanes: [{ lane: 'claude', running: 1, target: 8, queued: 3 }] });
 });
+it('projects the guard reason and pacing at the report time across both views', async () => {
+  const now = 1795350000 * 1000;
+  const guard = { ts: new Date(now).toISOString(), settle_s: 300, last_admit: now / 1000 - 60,
+    why: 'settle', total_running: 10, max_total_running: 48 };
+  const root = await fixture({ 'admission-ctl.json': guard });
+  const expected = { reason: 'waiting between starts', nextWindowSeconds: 240, queued: null, lanes: [] };
+  expect((await readHostVitals(root, now)).launch).toEqual(expected);
+  expect((await readFleetCompute({ home: root, runsDir: root, now })).launchVitals).toEqual(expected);
+  expect(await readLaunchVitals(root, now + 240_000)).toMatchObject({ reason: 'guard allows a start', nextWindowSeconds: 0 });
+  for (const time of [now - 1, now + 300_001]) {
+    expect(await readLaunchVitals(root, time)).toMatchObject({ reason: null, nextWindowSeconds: null });
+  }
+
+  const path = join(root, 'queue/admission-ctl.json');
+  await writeFile(path, JSON.stringify({ ...guard, why: 'over_host' }));
+  expect(await readLaunchVitals(root, now)).toMatchObject({ reason: 'host busy', nextWindowSeconds: null });
+
+  await writeFile(path, JSON.stringify({ ...guard, why: 'unrecognized private detail' }));
+  expect(await readLaunchVitals(root, now)).toMatchObject({ reason: 'guard reports a wait', nextWindowSeconds: null });
+});
+
 it('does not invent a queue total when a lane is missing its count', async () => {
   expect((await readLaunchVitals(await fixture({ 'status.json': { lanes: { claude: { running: 0 } } } }))).queued).toBeNull();
 });

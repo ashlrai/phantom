@@ -50,7 +50,7 @@ export interface HostVitals extends FleetVitals {
   stuck: { count: number | null; oldestAgeSeconds: number | null };
 }
 export async function readHostVitals(root = join(homedir(), '.ashlr-runs'), now = Date.now()): Promise<HostVitals> {
-  const [disk, launch, launchCost, empties, stuck] = await Promise.all([readFleetVitals(root, now), readLaunchVitals(root), readLaunchCosts(root), readEmptyCauses(root, now, 24), readStuckJobs({ runsDir: root }, now)]);
+  const [disk, launch, launchCost, empties, stuck] = await Promise.all([readFleetVitals(root, now), readLaunchVitals(root, now), readLaunchCosts(root), readEmptyCauses(root, now, 24), readStuckJobs({ runsDir: root }, now)]);
   return { ...disk, launch, launchCost, local_models: localModelsVitals(root, now), emptyCauses: { window_hours: 24, total: empties.total, top: topEmptyCauses(empties) },
     stuck: { count: stuck.count, oldestAgeSeconds: stuck.oldestAgeSeconds } };
 }
