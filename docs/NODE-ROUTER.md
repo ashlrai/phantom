@@ -372,6 +372,11 @@ the next pass cannot start until the previous child closes. Direct live
 ticks wait at most for the deadline, with no abort grace. Optional settings are `maxPerPass`
 (default 4) and `pendingTtlMs` (default 300000).
 
+The bridge counts fresh measured slots once per physical host and enforces
+each worker's advertised limit on its own assignments. A worker capped at
+zero can share a host with siblings that still have room for work. Legacy
+nodes without a capacity sample use their advertised slots as the host bound.
+
 The bridge uses the claim that dispatchd already honors, so the pinned
 dispatcher needs no change:
 

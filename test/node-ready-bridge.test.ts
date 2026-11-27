@@ -261,6 +261,29 @@ describe('ready.tsv -> node router bridge', () => {
     expect(new Set(second.rows.map(r => r.nodeId))).toEqual(new Set(['node-a', 'node-c']));
   });
 
+  it('keeps a capped sibling from reducing measured host headroom', async () => {
+    const f = fixture([row('RQ-REVIEW-A'), row('RQ-REVIEW-B'), row('RQ-REVIEW-C')], [
+      { id: 'capped', caps: READ, slots: 0 },
+      { id: 'worker', caps: READ, slots: 3 },
+    ]);
+    const capacity = { hostId: 'shared-host', ramBytes: 8 * 1024 ** 3, slots: 2, held: null, sampledAtMs: 1_000_000 };
+    f.nodes.heartbeat(f.sessions.get('capped')!, { capacity });
+    f.nodes.heartbeat(f.sessions.get('worker')!, { capacity });
+    f.nodes.heartbeat(f.sessions.get('capped')!, { slots: 0 });
+    f.nodes.heartbeat(f.sessions.get('worker')!, { slots: 3 });
+
+    const report = await f.pass(false);
+    expect(report.nodes).toMatchObject([
+      { nodeId: 'capped', freeSlots: 0 },
+      { nodeId: 'worker', freeSlots: 2 },
+    ]);
+    expect(report.rows).toMatchObject([
+      { offload: true, nodeId: 'worker' },
+      { offload: true, nodeId: 'worker' },
+      { offload: false, reasons: ['no_free_slot'] },
+    ]);
+  });
+
   it('reserves slots for router assignments only when the router provides a plan', async () => {
     const f = fixture([row('RQ-REVIEW-A')], [{ id: 'worker', caps: [...READ, 'gh'], slots: 1 }]);
     f.nodes.enqueue('needs-auth', { owner: 'ashlr', requires: ['gh'] });
