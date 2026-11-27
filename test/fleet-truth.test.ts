@@ -188,6 +188,61 @@ describe('getFleetTruth', () => {
     expect(truth.queued).toBe(2);
   });
 
+  it('counts lane-open ready rows as queued supply', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    writeFileSync(join(root, 'queue', 'ready.tsv'), [
+      // requirements preferred_lane:null — open market supply on any lane.
+      'RQ-TEST-OPEN\trepo\tclaude\twork\tqueue/prompts/open.md\t{"preferred_lane":null}',
+      'RQ-TEST-HINT\trepo\tclaude\twork\tqueue/prompts/hint.md',
+      // Held work is blocked, never ready.
+      'PARKED-BUDGET\tRQ-TEST-PARK\tclaude\twork\trepo\tqueue/prompts/park.md',
+      '',
+    ].join('\n'));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root });
+    expect(truth.queued).toBe(2);
+    expect(truth.blocked).toBe(1);
+  });
+
+  it('counts each ready job once across repeated rows', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    writeFileSync(join(root, 'queue', 'ready.tsv'), [
+      // Two rows for one job on different lane hints: the market launches once.
+      'RQ-TEST-DUP\trepo\tclaude\twork\tqueue/prompts/dup-a.md',
+      'RQ-TEST-DUP\trepo\tdevin\twork\tqueue/prompts/dup-b.md',
+      'RQ-TEST-SOLO\trepo\tclaude\twork\tqueue/prompts/solo.md',
+      '',
+    ].join('\n'));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root });
+    expect(truth.queued).toBe(2);
+  });
+
+  it('resolves spec-less ready rows through router-queue envelopes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    writeFileSync(join(root, 'queue', 'ready.tsv'), [
+      // Empty lane cell; the envelope's preferred_lane supplies the hint.
+      'RQ-TEST-ENV\trepo\t\twork\tqueue/prompts/env.md',
+      'RQ-TEST-ENV2\trepo\t\twork\tqueue/prompts/env2.md',
+      // The envelope is market-invalid (malformed exclusive): dead work.
+      'RQ-TEST-DEAD\trepo\tclaude\twork\tqueue/prompts/dead.md',
+      // Envelope names no lane: explicit open supply.
+      'RQ-TEST-FREE\trepo\tclaude\twork\tqueue/prompts/free.md',
+      '',
+    ].join('\n'));
+    writeFileSync(join(root, 'queue', 'router-queue.md'), [
+      '- READY RQ-TEST-ENV (P2, repo=repo, preferred_lane=devin): ship the env row',
+      '- READY RQ-TEST-ENV2 (P2, repo=repo, preferred_lane=codex): ship the env2 row',
+      '- READY RQ-TEST-DEAD (P2, repo=repo, exclusive=bogus): ship the dead row',
+      '- READY RQ-TEST-FREE (P2, repo=repo): ship the free row',
+      '',
+    ].join('\n'));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root });
+    // ENV + ENV2 resolve to hinted rows, FREE to lane-open supply, DEAD drops.
+    expect(truth.queued).toBe(3);
+  });
+
   it('falls back to live job pids when admission.json is stale', async () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
     mkdirSync(join(root, 'queue'));
