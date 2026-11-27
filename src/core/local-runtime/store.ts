@@ -18,7 +18,7 @@ import { requireBeforeRuntimeReleaseObservationDeadline, type RuntimeReleaseObse
 import { extractPinnedRuntimeArchive, readCompatiblePinnedRuntimeArchive } from './archive.js';
 import { desktopUpdateProfileForPackage, type DesktopUpdateProfile } from '../desktop/update-manifest.js';
 import type { InstallLocalRuntimeOptions, LocalRuntimeInstallation, LocalRuntimeStatus } from './types.js';
-export type { InstallLocalRuntimeOptions, LocalRuntimeInstallation, LocalRuntimeResolution, LocalRuntimeStatus } from './types.js';
+export type { LocalRuntimeResolution, LocalRuntimeStatus } from './types.js';
 
 const SHA = /^[a-f0-9]{64}$/;
 const REVISION = /^[a-f0-9]{40}$/;

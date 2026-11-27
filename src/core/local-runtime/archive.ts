@@ -274,16 +274,17 @@ export function extractPinnedRuntimeArchiveWithTiming(archive: VerifiedRuntimeAr
 
 function extractArchive(archive: VerifiedRuntimeArchive, packageRoot: string, timing: ExtractionTiming | null): void {
   const digests = admitted.get(archive);
-  const validate = (): void => {
+  const run = <T>(bucket: ExtractionBucket, operation: () => T): T =>
+    timing ? measure(timing, bucket, operation) : operation();
+  run('destination-validation', () => {
     if (!digests) fail('archive was not admitted by this process');
     if (!isAbsolute(packageRoot) || realpathSync(packageRoot) !== resolve(packageRoot)) fail('extraction path is not canonical');
     privateDirectory(packageRoot);
     if (readdirSync(packageRoot).length !== 0) fail('extraction directory is not empty');
-  };
-  if (timing) measure(timing, 'destination-validation', validate); else validate();
+  });
   for (let index = 0; index < archive.entries.length; index += 1) {
     const bytes = archive.entries[index]!.bytes;
-    const observed = timing ? measure(timing, 'entry-digests', () => digest(bytes)) : digest(bytes);
+    const observed = run('entry-digests', () => digest(bytes));
     if (observed !== digests![index]) fail('admitted bytes changed before extraction');
   }
   const directories = new Set([packageRoot]);
@@ -293,33 +294,31 @@ function extractArchive(archive: VerifiedRuntimeArchive, packageRoot: string, ti
     for (const part of parts.slice(0, -1)) {
       parent = join(parent, part);
       if (!directories.has(parent)) {
-        if (timing) measure(timing, 'directory-create', () => mkdirSync(parent, { mode: 0o700 }));
-        else mkdirSync(parent, { mode: 0o700 });
+        run('directory-create', () => mkdirSync(parent, { mode: 0o700 }));
         directories.add(parent);
       }
-      if (timing) measure(timing, 'ancestor-validation', () => privateDirectory(parent)); else privateDirectory(parent);
+      run('ancestor-validation', () => privateDirectory(parent));
     }
     const path = join(packageRoot, entry.path);
     const mode = entry.executable ? 0o700 : 0o600;
     const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
-    const fd = timing ? measure(timing, 'leaf-open', () => openSync(path, flags, mode)) : openSync(path, flags, mode);
+    const fd = run('leaf-open', () => openSync(path, flags, mode));
     try {
       let offset = 0;
       while (offset < entry.bytes.length) {
-        const count = timing ? measure(timing, 'leaf-write', () => writeSync(fd, entry.bytes, offset, entry.bytes.length - offset, offset)) :
-          writeSync(fd, entry.bytes, offset, entry.bytes.length - offset, offset);
+        const count = run('leaf-write', () => writeSync(fd, entry.bytes, offset, entry.bytes.length - offset, offset));
         if (timing && count > 0) timing.writtenBytes += count;
         if (count <= 0) fail('extraction write made no progress');
         offset += count;
       }
-      if (timing) measure(timing, 'leaf-chmod', () => fchmodSync(fd, mode)); else fchmodSync(fd, mode);
-      if (timing) measure(timing, 'leaf-fsync', () => fsyncSync(fd)); else fsyncSync(fd);
+      run('leaf-chmod', () => fchmodSync(fd, mode));
+      run('leaf-fsync', () => fsyncSync(fd));
     } finally {
-      if (timing) measure(timing, 'leaf-close', () => closeSync(fd)); else closeSync(fd);
+      run('leaf-close', () => closeSync(fd));
     }
   }
   for (const directory of [...directories].reverse()) {
-    if (timing) measure(timing, 'directory-barrier', () => fsyncDirectory(directory)); else fsyncDirectory(directory);
+    run('directory-barrier', () => fsyncDirectory(directory));
   }
-  if (timing) measure(timing, 'directory-barrier', () => fsyncDirectory(dirname(packageRoot))); else fsyncDirectory(dirname(packageRoot));
+  run('directory-barrier', () => fsyncDirectory(dirname(packageRoot)));
 }

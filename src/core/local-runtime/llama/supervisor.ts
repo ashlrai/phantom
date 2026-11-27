@@ -54,7 +54,7 @@ import type {
  * deadline here would report failure for a runtime that was about to work,
  * and the operator would then kill it and try again — the worst outcome.
  */
-export const DEFAULT_START_TIMEOUT_MS = 300_000;
+const DEFAULT_START_TIMEOUT_MS = 300_000;
 
 /** Poll interval while waiting for health. */
 const HEALTH_POLL_MS = 500;
@@ -195,7 +195,7 @@ export async function statusLocalRuntime(
  * a descendant still holding the listener, both keep the port busy while the
  * pid we killed is gone. `stop` reports the port free only when this says so.
  */
-export function isPortFree(host: string, port: number, timeoutMs = 1_000): Promise<boolean> {
+function isPortFree(host: string, port: number, timeoutMs = 1_000): Promise<boolean> {
   return new Promise((resolve) => {
     const server = createServer();
     let settled = false;

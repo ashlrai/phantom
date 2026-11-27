@@ -24,7 +24,7 @@ import { readKillSwitch } from '../../sandbox/policy.js';
 import { launchAgentInstalled } from './launchd.js';
 import { argvMatchesRecord, findLlamaServersOnPortAsync, processAliveAsync, processArgvAsync } from './process.js';
 import { readOwnershipRecord } from './record.js';
-import { resolveLlamaServerBaseUrl } from './config.js';
+import { originFromBaseUrl, resolveLlamaServerBaseUrl } from './config.js';
 import type {
   LlamaOwnershipRecord,
   LlamaRuntimeSnapshot,
@@ -68,7 +68,7 @@ export interface LlamaProbeReadings {
  * while measuring docs/LOCAL-FLEET.md. Carried verbatim as the runtime's words
  * so a surface can show evidence beside its own sentence.
  */
-export const OLLAMA_PARALLEL_REFUSAL =
+const OLLAMA_PARALLEL_REFUSAL =
   'ollama: "model architecture does not currently support parallel requests" ' +
   '(architecture=qwen35) — requests queue rather than batch, and OLLAMA_NUM_PARALLEL ' +
   'does not change it';
@@ -92,7 +92,6 @@ export function identifyRuntime(
     return 'ollama';
   }
   if (state === 'up' || state === 'loading') return 'llama-server';
-  if (state === 'down') return 'unknown';
   return 'unknown';
 }
 
@@ -384,14 +383,7 @@ const defaultFetch: FetchLike = (url, init) =>
 export async function probeLlamaRuntime(options: ProbeOptions = {}): Promise<LlamaRuntimeSnapshot> {
   const record = options.record !== undefined ? options.record : readOwnershipRecord();
   const baseUrl = options.baseUrl ?? resolveLlamaServerBaseUrl();
-  let origin = options.origin ?? null;
-  if (origin === null) {
-    try {
-      origin = new URL(baseUrl).origin;
-    } catch {
-      origin = baseUrl.replace(/\/v1\/?$/, '');
-    }
-  }
+  const origin = options.origin ?? originFromBaseUrl(baseUrl);
 
   let host = record?.host ?? '';
   let port = record?.port ?? 0;
