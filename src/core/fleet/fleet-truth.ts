@@ -219,17 +219,30 @@ function runsRoot(opts: FleetTruthOptions): string {
   return opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
 }
 
+/** router-queue.md is append-mostly Markdown history; same bound the unfed read uses. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
+
 async function readQueue(root: string): Promise<{ ready: number; blocked: number } | null> {
   try {
-    const { parseReadyTsv } = await import('./lane-console.js');
-    const text = await readFile(join(root, 'queue', 'ready.tsv'), 'utf8');
-    const rows = parseReadyTsv(text).rows;
+    const [{ parseReadyTsv }, { readSource }] = await Promise.all([
+      import('./lane-console.js'), import('./runs-parked-queue.js'),
+    ]);
+    const [text, routerQueue] = await Promise.all([
+      readFile(join(root, 'queue', 'ready.tsv'), 'utf8'),
+      readSource(join(root, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
+    ]);
+    // Spec-less rows resolve their requirements through the router-queue.md
+    // `(attrs)` envelope like every other market reader; an absent or
+    // over-bound queue leaves the lane column standing.
+    const parsed = parseReadyTsv(text, routerQueue.state === 'healthy' ? routerQueue.text : null, true);
     const parked = (pool: string): boolean => /^PARKED[^.]*\./i.test(pool);
+    // The shared parser keeps the first valid READY occurrence of each job.
+    // Lane-open jobs are runnable supply even though they have no lane row.
     return {
-      ready: rows.filter((r) => r.status === 'READY' && !parked(r.pool)).length,
+      ready: parsed.rows.filter((r) => r.status === 'READY' && !parked(r.pool)).length + parsed.unhinted,
       // PARKED-<reason>[.<lane>] statuses are held work too — parked rows no
       // longer hide inside READY once the dispatcher dialect parses natively.
-      blocked: rows.filter((r) => ['BLOCKED', 'HOLD'].includes(r.status) || parked(r.pool) || r.status.startsWith('PARKED')).length,
+      blocked: parsed.rows.filter((r) => ['BLOCKED', 'HOLD'].includes(r.status) || parked(r.pool) || r.status.startsWith('PARKED')).length,
     };
   } catch {
     return null;
