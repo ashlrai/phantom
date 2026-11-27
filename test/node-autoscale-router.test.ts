@@ -367,6 +367,20 @@ describe('autoscale router scoring', () => {
     });
   });
 
+  it('excludes reported slots on a node with zero measured memory headroom', () => {
+    const saturated = computeNodeCapacity(mbp({
+      mem: { ...mbp().mem, freePercent: CAPACITY_POLICY.memReserveFreePct },
+    }));
+    expect(saturated.mem_free.headroom_bytes).toBe(0);
+    saturated.agents_runnable_now.codex = 2;
+    const peer = computeNodeCapacity(mbp({ node: 'peer' }));
+    expect(fleetRunnable([saturated], T0)).toMatchObject({ codex: 0, devin: null });
+    expect(fleetRunnable([saturated, peer], T0).codex).toBe(peer.agents_runnable_now.codex);
+    expect(planAutoscaleRoutes({
+      nodes: [{ doc: saturated }], costs: [COSTS[0]!], outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }],
+    })[0]).toMatchObject({ nodeId: null, rejected: { memory: 1 } });
+  });
+
   it('is deterministic regardless of input order', () => {
     const a = planAutoscaleRoutes({ nodes: [node(mbp()), node(mbp8())], costs: COSTS, outcomes: {}, nowMs: T0, jobs: [{ id: '1' }, { id: '2' }, { id: '3' }] });
     const b = planAutoscaleRoutes({ nodes: [node(mbp8()), node(mbp())], costs: [...COSTS].reverse(), outcomes: {}, nowMs: T0, jobs: [{ id: '1' }, { id: '2' }, { id: '3' }] });
