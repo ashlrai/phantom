@@ -5400,3 +5400,11 @@ after the cutoff are excluded from the fold and from PR claim attribution.
 Receipts at the cutoff are included. Exact replays of dated terminal
 receipts preserve the first occurrence's position and evidence snapshot.
 Undated receipts retain ledger order.
+
+## Launch vitals reader
+
+`readLaunchVitals(runs?, now?)` accepts optional report time in epoch
+milliseconds, defaulting to the current time. It projects the validated
+launch guard's public reason and exposes `nextWindowSeconds` only for
+open or settling guard states. Missing or invalid guard evidence leaves
+both fields null. Queue counts use independent dispatcher evidence.

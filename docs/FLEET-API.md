@@ -390,6 +390,13 @@ warns above four times the CPU count. Swap and free disk are in GB. Missing or
 invalid measurements are `null` in JSON and shown as “unknown” in the card.
 Worktrees are the dispatcher's active worker worktrees, not all Git worktrees.
 
+The Fleet Operations deck and `phm fleet vitals` show the launch guard's reason
+from the selected runs directory's `queue/admission-ctl.json`. Missing, invalid,
+future or more than five-minute-old observations leave the reason and countdown
+unknown. A blocked guard supplies a reason and leaves the countdown unknown.
+An open or settling guard reports the seconds remaining in its pacing window.
+Queue counts come independently from `queue/status.json`.
+
 ### Fleet map
 
 The Fleet screen shows the Leader, ready profile lanes, observed lanes and active jobs.
