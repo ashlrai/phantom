@@ -32,9 +32,12 @@ import { readSource, type Source } from '../fleet/runs-parked-queue.js';
 import { ledgerPhase } from '../fleet/empty-cause.js';
 import { ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
 import { isKeptWorktree, readKeptWorktrees, measureWorktreeBytes, type KeptWorktrees } from '../worktree-retention.js';
-import { parseJobLedger } from '../../cli/disk.js';
 import { protectedReason, protectedRoots, resolveMaintRoots, type MaintRoots } from './protect.js';
-import { isWorktreeJobId, worktreeActivity, worktreeHasUnpushed, worktreeHold, worktreeOutcomes, worktreePayloadHold, type WorktreeDeps } from './worktrees.js';
+import { bytesToGb } from './removal-plan.js';
+import {
+  isPlainRecord, isWorktreeJobId, parseJobLedger, worktreeActivity, worktreeHasUnpushed, worktreeHold,
+  worktreeOutcomes, worktreePayloadHold, type JobLedgerRecord, type WorktreeDeps,
+} from './worktrees.js';
 
 /** Matches dispatchd's DISK_REUSE_ONLY_GB default. Reported, never changed. */
 export const DISKGUARD_REUSE_ONLY_GB = 100;
@@ -191,7 +194,7 @@ export interface MaintDeps extends WorktreeDeps {
   deadlineMs?: number;
 }
 
-const MAX_JOBS_BYTES = 8 * 1024 * 1024;
+export const DISK_MAX_JOBS_BYTES = 8 * 1024 * 1024;
 const WALK_MAX_ENTRIES = 100_000;
 
 interface FileRow { path: string; bytes: number; mtimeMs: number }
@@ -202,7 +205,7 @@ interface ScanCtx {
   policy: MaintPolicy;
   protectedRoots: readonly string[];
   refused: { path: string; reason: string }[];
-  ledger: Map<string, { state: string | null; finishMs: number | null; finishEmpty: boolean }> | null;
+  ledger: Map<string, JobLedgerRecord> | null;
   kept: (dir: string) => boolean;
   measure: (dir: string) => { bytes: number; complete: boolean };
   deadlineMs: number;
@@ -221,8 +224,8 @@ function parseCompletedArtifactJobs(text: string): Set<string> | null {
   const states = new Map<string, { finished: boolean; merged: boolean }>();
   for (const line of text.split(/\r?\n/)) {
     try {
-      const row = JSON.parse(line) as Record<string, unknown>;
-      if (!row || typeof row !== 'object') continue;
+      const row: unknown = JSON.parse(line);
+      if (!isPlainRecord(row)) continue;
       const id = ledgerJobId(row);
       if (id === null || !/^[A-Za-z0-9][\w.-]*$/.test(id)) continue;
       const phase = ledgerPhase(row);
@@ -389,15 +392,13 @@ function scanRunLogs(ctx: ScanCtx): MaintCandidate[] {
       // Named rolling logs (disk.log, outcomes.log, dispatch-events.log,
       // restock.log) and sidecars with no finished ledger record: rotate by
       // size, compress when quiet, delete only when long dead.
-      if (!sidecar || ctx.ledger === null || !terminal) {
-        const row = { path, bytes: entry.bytes, mtimeMs: entry.mtimeMs };
-        if (entry.bytes > p.rotateBytes) {
-          if (!refused(ctx, path)) out.push({ path, action: 'rotate-compress', bytes: entry.bytes, ageDays: dayAge(ctx.now, entry.mtimeMs), mtimeMs: entry.mtimeMs, reason: `live log over ${Math.round(p.rotateBytes / 1e6)}MB` });
-          continue;
-        }
-        const c = aged(ctx, row, p.orphanCompressDays, p.orphanDeleteDays, 'unclaimed log');
-        if (c) out.push(c);
+      const row = { path, bytes: entry.bytes, mtimeMs: entry.mtimeMs };
+      if (entry.bytes > p.rotateBytes) {
+        if (!refused(ctx, path)) out.push({ path, action: 'rotate-compress', bytes: entry.bytes, ageDays: dayAge(ctx.now, entry.mtimeMs), mtimeMs: entry.mtimeMs, reason: `live log over ${Math.round(p.rotateBytes / 1e6)}MB` });
+        continue;
       }
+      const c = aged(ctx, row, p.orphanCompressDays, p.orphanDeleteDays, 'unclaimed log');
+      if (c) out.push(c);
     }
   }
   return out;
@@ -408,26 +409,36 @@ const SESSION_SUBDIRS = new Set([
   'shell-snapshots', 'statsig', 'history', 'file-history', 'backups', 'tmp',
 ]);
 const LEFTOVER = /\.(log|jsonl|out|err|tmp|temp|cache|bak|old|gz)$/i;
+const RECOVERY_PROFILE_DIR = /(recovery|backup)-\w{4,}$/i;
+
+function scanSessionStateDir(
+  ctx: ScanCtx,
+  dir: string,
+  compressDays: number,
+  deleteDays: number,
+  reason: string,
+  out: MaintCandidate[],
+): void {
+  for (const sub of children(dir, ctx, 'dir').filter(d => SESSION_SUBDIRS.has(d.name))) {
+    const { files } = walkFiles(join(dir, sub.name), ctx);
+    for (const row of files) {
+      const c = aged(ctx, row, compressDays, deleteDays, reason);
+      if (c) out.push(c);
+    }
+  }
+  for (const f of children(dir, ctx, 'file').filter(f => LEFTOVER.test(f.name))) {
+    const c = aged(ctx, { path: join(dir, f.name), bytes: f.bytes, mtimeMs: f.mtimeMs }, compressDays, deleteDays, reason);
+    if (c) out.push(c);
+  }
+}
 
 function scanAgentSessions(ctx: ScanCtx): MaintCandidate[] {
   const out: MaintCandidate[] = [];
   const p = ctx.policy;
   const profiles = join(ctx.roots.ashlrDir, 'native-profiles');
   for (const profile of children(profiles, ctx, 'dir')) {
-    if (/(recovery|backup)-\w{4,}$/i.test(profile.name)) continue; // recovery-dirs owns these
-    const state = join(profiles, profile.name, 'native-state');
-    const subs = children(state, ctx, 'dir').filter(d => SESSION_SUBDIRS.has(d.name));
-    for (const sub of subs) {
-      const { files } = walkFiles(join(state, sub.name), ctx);
-      for (const row of files) {
-        const c = aged(ctx, row, p.sessionCompressDays, p.sessionDeleteDays, 'agent session leftover');
-        if (c) out.push(c);
-      }
-    }
-    for (const f of children(state, ctx, 'file').filter(f => LEFTOVER.test(f.name))) {
-      const c = aged(ctx, { path: join(state, f.name), bytes: f.bytes, mtimeMs: f.mtimeMs }, p.sessionCompressDays, p.sessionDeleteDays, 'agent session leftover');
-      if (c) out.push(c);
-    }
+    if (RECOVERY_PROFILE_DIR.test(profile.name)) continue; // recovery-dirs owns these
+    scanSessionStateDir(ctx, join(profiles, profile.name, 'native-state'), p.sessionCompressDays, p.sessionDeleteDays, 'agent session leftover', out);
   }
   return out;
 }
@@ -460,7 +471,7 @@ function scanRecovery(ctx: ScanCtx): MaintCandidate[] {
   const p = ctx.policy;
   const profiles = join(ctx.roots.ashlrDir, 'native-profiles');
   for (const dir of children(profiles, ctx, 'dir')) {
-    if (!/(recovery|backup)-\w{4,}$/i.test(dir.name)) continue;
+    if (!RECOVERY_PROFILE_DIR.test(dir.name)) continue;
     if (dayAge(ctx.now, dir.mtimeMs) < p.recoveryDays) continue;
     const c = dirCandidate(ctx, join(profiles, dir.name), dir.mtimeMs, `recovery copy older than ${p.recoveryDays}d`);
     if (c) out.push(c);
@@ -477,7 +488,8 @@ function scanRecovery(ctx: ScanCtx): MaintCandidate[] {
   return out;
 }
 
-const TEMP_WORKTREE = /^(vwt|mwt|mergewt|wt)-[0-9a-f]+$/;
+/** Names inbox merge/apply gives throwaway worktrees under ~/.ashlr/tmp. */
+export const TEMP_WORKTREE_PATTERN = /^(vwt|mwt|mergewt|wt)-[0-9a-f]+$/;
 const STAGING_PARENTS = [
   join('updates', 'staged'), join('updates', 'consumer-staging'), join('updates', 'manual-staging'),
 ];
@@ -500,7 +512,7 @@ function scanStaging(ctx: ScanCtx): MaintCandidate[] {
   }
   const tmp = join(ctx.roots.ashlrDir, 'tmp');
   for (const child of children(tmp, ctx, 'dir')) {
-    if (!TEMP_WORKTREE.test(child.name) || dayAge(ctx.now, child.mtimeMs) < p.stagingDays) continue;
+    if (!TEMP_WORKTREE_PATTERN.test(child.name) || dayAge(ctx.now, child.mtimeMs) < p.stagingDays) continue;
     const c = dirCandidate(ctx, join(tmp, child.name), child.mtimeMs, `crash-leftover temp worktree older than ${p.stagingDays}d`);
     if (c) out.push(c);
   }
@@ -624,18 +636,7 @@ function scanVenvs(ctx: ScanCtx): MaintCandidate[] {
 function scanHubClaude(ctx: ScanCtx): MaintCandidate[] {
   const out: MaintCandidate[] = [];
   if (!ctx.roots.hubDir) return out;
-  const dot = join(ctx.roots.hubDir, '.claude');
-  for (const sub of children(dot, ctx, 'dir').filter(d => SESSION_SUBDIRS.has(d.name))) {
-    const { files } = walkFiles(join(dot, sub.name), ctx);
-    for (const row of files) {
-      const c = aged(ctx, row, ctx.policy.hubClaudeDays, ctx.policy.hubClaudeDays, 'hub .claude session cache');
-      if (c) out.push(c);
-    }
-  }
-  for (const f of children(dot, ctx, 'file').filter(f => LEFTOVER.test(f.name))) {
-    const c = aged(ctx, { path: join(dot, f.name), bytes: f.bytes, mtimeMs: f.mtimeMs }, ctx.policy.hubClaudeDays, ctx.policy.hubClaudeDays, 'hub .claude session cache');
-    if (c) out.push(c);
-  }
+  scanSessionStateDir(ctx, join(ctx.roots.hubDir, '.claude'), ctx.policy.hubClaudeDays, ctx.policy.hubClaudeDays, 'hub .claude session cache', out);
   return out;
 }
 
@@ -658,7 +659,7 @@ const CLASS_NOTES: Partial<Record<MaintClassId, string>> = {
   'hub-claude': 'gated: enable with --allow hub-claude (ashlr-hub .claude session cache)',
 };
 
-export const defaultFreeBytes = (path: string): number | null => {
+const defaultFreeBytes = (path: string): number | null => {
   let current = resolve(path);
   for (;;) {
     try {
@@ -672,6 +673,43 @@ export const defaultFreeBytes = (path: string): number | null => {
   }
 };
 
+/** Safe free-space probe: rejects throwing probes, non-finite values, and negatives. */
+export async function probeFreeBytes(
+  path: string,
+  probe: (path: string) => number | null | Promise<number | null> = defaultFreeBytes,
+): Promise<number | null> {
+  try {
+    const raw = await probe(path);
+    return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Bounded jobs-ledger reader that degrades cleanly instead of throwing. */
+export async function readJobsLedgerSource(
+  runsDir: string,
+  readJobs?: (path: string) => { state: Source; text: string } | Promise<{ state: Source; text: string }>,
+): Promise<{ state: Source; text: string }> {
+  const reader = readJobs ?? ((path: string) => readSource(path, DISK_MAX_JOBS_BYTES, true));
+  try {
+    return await reader(join(runsDir, 'metrics', 'jobs.jsonl'));
+  } catch {
+    return { state: 'degraded', text: '' };
+  }
+}
+
+/** Fail-closed kept-worktree policy reader. */
+export async function readKeptWorktreesSafe(
+  readPins?: () => KeptWorktrees | Promise<KeptWorktrees>,
+): Promise<KeptWorktrees> {
+  try {
+    return await (readPins ?? readKeptWorktrees)();
+  } catch {
+    return { paths: [], valid: false };
+  }
+}
+
 export async function planDiskMaint(deps: MaintDeps = {}): Promise<DiskMaintPlan> {
   if (deps.worktree !== undefined && !isWorktreeJobId(deps.worktree)) throw new Error('invalid worktree job id');
   const now = deps.now ?? Date.now();
@@ -680,26 +718,16 @@ export async function planDiskMaint(deps: MaintDeps = {}): Promise<DiskMaintPlan
   const deadlineMs = deps.deadlineMs ?? Date.now() + 20_000;
   const measure = deps.measure ?? ((dir: string) => measureWorktreeBytes(dir, { deadlineMs }));
 
-  let jobs: { state: Source; text: string };
-  try {
-    jobs = await (deps.readJobs ?? ((path: string) => readSource(path, MAX_JOBS_BYTES, true)))(join(roots.runsDir, 'metrics', 'jobs.jsonl'));
-  } catch {
-    jobs = { state: 'degraded', text: '' };
-  }
+  const jobs = await readJobsLedgerSource(roots.runsDir, deps.readJobs);
   // Unreadable ledger means unknown states everywhere: logs fall to orphan
   // ages and no worktree is ever claimed on a guess.
   const ledger = jobs.state === 'healthy' ? parseJobLedger(jobs.text) : null;
   const completedJobs = jobs.state === 'healthy' ? parseCompletedArtifactJobs(jobs.text) : null;
 
-  let pins: KeptWorktrees;
-  try { pins = await (deps.readPins ?? readKeptWorktrees)(); } catch { pins = { paths: [], valid: false }; }
+  const pins = await readKeptWorktreesSafe(deps.readPins);
   const kept = deps.kept ?? ((dir: string) => isKeptWorktree(dir, pins));
 
-  let freeBytes: number | null = null;
-  try {
-    const raw = await (deps.freeBytes ?? defaultFreeBytes)(roots.runsDir);
-    freeBytes = typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : null;
-  } catch { freeBytes = null; }
+  const freeBytes = await probeFreeBytes(roots.runsDir, deps.freeBytes);
 
   const ctx: ScanCtx = {
     roots, now, policy, ledger, kept, measure, deadlineMs,
@@ -747,7 +775,7 @@ export async function planDiskMaint(deps: MaintDeps = {}): Promise<DiskMaintPlan
     generatedAt: new Date(now).toISOString(),
     apply: false,
     roots,
-    freeGb: freeBytes === null ? null : Math.round((freeBytes / 1e9) * 10) / 10,
+    freeGb: freeBytes === null ? null : bytesToGb(freeBytes),
     diskguardReuseOnlyGb: DISKGUARD_REUSE_ONLY_GB,
     jobsSource: jobs.state,
     classes,
@@ -782,6 +810,4 @@ export function candidateStillSafe(candidate: MaintCandidate, roots: MaintRoots,
   return null;
 }
 
-/** CLI-facing root override plumbing lives in protect.ts; re-export the bits. */
-export { resolveMaintRoots, protectedRoots, protectedReason };
 export type { MaintRoots };

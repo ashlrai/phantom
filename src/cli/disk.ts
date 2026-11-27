@@ -18,25 +18,29 @@
  * exact total.
  */
 import { execFile } from 'node:child_process';
-import { readdirSync, statSync, statfsSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { buildDiskPlanReport, formatDiskPlan, type DiskPlanReportV1, type WorktreeRecord, type WorktreeResult } from '../core/disk-maint/removal-plan.js';
-import { ledgerPhase } from '../core/fleet/empty-cause.js';
-import { ledgerEventTs, ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from '../core/fleet/jobs-ledger-dialect.js';
+import { isAbsolute, join } from 'node:path';
+import {
+  TEMP_WORKTREE_PATTERN, probeFreeBytes, readJobsLedgerSource, readKeptWorktreesSafe,
+} from '../core/disk-maint/plan.js';
+import {
+  buildDiskPlanReport, bytesToGb, formatDiskPlan, round1,
+  type DiskPlanReportV1, type WorktreeRecord, type WorktreeResult,
+} from '../core/disk-maint/removal-plan.js';
+import { parseJobLedger } from '../core/disk-maint/worktrees.js';
 import { HOST_DISK_FLOOR_GB, diskTrend, type HostDiskTrend } from '../core/fleet/host-top-view.js';
 import { readDiskSamples } from '../core/fleet/host-top.js';
-import { readSource, type Source } from '../core/fleet/runs-parked-queue.js';
+import type { Source } from '../core/fleet/runs-parked-queue.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import {
-  isKeptWorktree, measureWorktreeBytes, readKeptWorktrees,
+  isKeptWorktree, measureWorktreeBytes,
   type KeptWorktrees, type WorktreeMeasurement,
 } from '../core/worktree-retention.js';
 
-export const DISK_MAX_JOBS_BYTES = 8 * 1024 * 1024;
-export const DISK_REAPABLE_AGE_HOURS = 1;
-/** Names inbox merge/apply gives throwaway worktrees under ~/.ashlr/tmp. */
-const TEMP_WORKTREE_NAME = /^(vwt|mwt|mergewt|wt)-[0-9a-f]+$/;
+export { parseJobLedger };
+
+const DISK_REAPABLE_AGE_HOURS = 1;
 /** Hidden folders, lane guardians and separator-bearing names are never job worktrees. */
 const SKIP_DIR = (name: string): boolean =>
   name.startsWith('.') || name.startsWith('guardian-') || name === '..' ||
@@ -107,52 +111,7 @@ export interface DiskReportV1 {
   };
 }
 
-const round1 = (n: number): number => Math.round(n * 10) / 10;
 const HOUR_MS = 3_600_000;
-
-/**
- * Latest outcome and finish rows after the last launch per job id, read in the
- * jobs-ledger dialect (job|job_id|jobId|id, event|type|kind, phase aliases,
- * timestamp aliases and eventless reconciler rows). The last resolved outcome
- * wins — a phase-less outcome row records nothing rather than overwriting a
- * merge — and finish.empty marks an empty run. Publish claims and other
- * operational rows are not lifecycle rows. Torn lines are skipped, never
- * echoed.
- */
-export function parseJobLedger(
-  text: string,
-): Map<string, { state: string | null; finishMs: number | null; finishEmpty: boolean }> {
-  const latest = new Map<string, { outcome?: string; finishMs: number | null; finishEmpty: boolean }>();
-  for (const line of text.split(/\r?\n/)) {
-    try {
-      const row = JSON.parse(line) as Record<string, unknown> | null;
-      if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-      const id = ledgerJobId(row);
-      if (id === null) continue;
-      const phase = ledgerPhase(row);
-      const event = ledgerLifecycleEvent(row, phase);
-      if (event === 'launch') { latest.delete(id); continue; }
-      const state = ledgerOutcomeState(row, event, phase);
-      if (event !== 'finish' && state === null) continue;
-      const entry = latest.get(id) ?? { finishMs: null, finishEmpty: false };
-      if (event === 'finish') {
-        entry.finishMs = ledgerEventTs(row, phase);
-        entry.finishEmpty = row['empty'] === true;
-      }
-      if (state !== null) entry.outcome = state.toLowerCase();
-      latest.set(id, entry);
-    } catch { /* skip damaged rows; never echo their contents */ }
-  }
-  const records = new Map<string, { state: string | null; finishMs: number | null; finishEmpty: boolean }>();
-  for (const [id, entry] of latest) {
-    records.set(id, {
-      state: entry.outcome ?? null,
-      finishMs: entry.finishMs,
-      finishEmpty: entry.finishEmpty,
-    });
-  }
-  return records;
-}
 
 /** Same lifecycle words as `ashlr fleet wt-reap`: merged, empty, open, none. */
 export function classifyWorktree(
@@ -167,21 +126,6 @@ export function classifyWorktree(
 const defaultListDirs = (path: string): string[] =>
   readdirSync(path, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name);
 
-/** Free bytes on the volume holding path, walking to its nearest existing ancestor. */
-const defaultFreeBytes = (path: string): number | null => {
-  let current = resolve(path);
-  for (;;) {
-    try {
-      const stat = statfsSync(current);
-      if (stat.bsize <= 0 || stat.bavail < 0) return null;
-      return stat.bavail * stat.bsize;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || dirname(current) === current) return null;
-      current = dirname(current);
-    }
-  }
-};
-
 export async function readDiskReport(deps: DiskDeps = {}): Promise<DiskReportV1> {
   const nowMs = deps.now ?? Date.now();
   const wtRoot = deps.wtRoot ?? join(homedir(), 'Projects', 'ashlrai', 'wt');
@@ -194,24 +138,12 @@ export async function readDiskReport(deps: DiskDeps = {}): Promise<DiskReportV1>
   const measure = deps.measure ??
     (async (dir: string) => measureWorktreeBytes(dir, { deadlineMs: measureDeadline }));
 
-  let jobs: JobsSource;
-  try {
-    jobs = await (deps.readJobs ?? ((path: string) => readSource(path, DISK_MAX_JOBS_BYTES, true)))(
-      join(runsRoot, 'metrics', 'jobs.jsonl'),
-    );
-  } catch {
-    jobs = { state: 'degraded', text: '' };
-  }
+  const jobs = await readJobsLedgerSource(runsRoot, deps.readJobs);
   // A ledger that could not be read means "unknown", not "no record": merged
   // work must never masquerade as reclaimable on a guess.
   const ledger = jobs.state === 'healthy' ? parseJobLedger(jobs.text) : null;
 
-  let pins: KeptWorktrees;
-  try {
-    pins = await (deps.readPins ?? readKeptWorktrees)();
-  } catch {
-    pins = { paths: [], valid: false };
-  }
+  const pins = await readKeptWorktreesSafe(deps.readPins);
   const kept = deps.kept ?? ((dir: string) => isKeptWorktree(dir, pins));
 
   const scan = async (root: string): Promise<DiskEntry[] | null> => {
@@ -270,19 +202,13 @@ export async function readDiskReport(deps: DiskDeps = {}): Promise<DiskReportV1>
     return area;
   };
 
-  let freeBytes: number | null = null;
-  try {
-    freeBytes = await (deps.freeBytes ?? defaultFreeBytes)(wtRoot);
-    if (typeof freeBytes === 'number' && (!Number.isFinite(freeBytes) || freeBytes < 0)) freeBytes = null;
-  } catch {
-    freeBytes = null;
-  }
+  const freeBytes = await probeFreeBytes(wtRoot, deps.freeBytes);
 
   const [worktrees, runsWorktrees, quarantine, temp] = await Promise.all([
     scan(wtRoot),
     scan(join(runsRoot, 'wt')),
     summarize(join(runsRoot, 'quarantine')),
-    summarize(tmpRoot, TEMP_WORKTREE_NAME),
+    summarize(tmpRoot, TEMP_WORKTREE_PATTERN),
   ]);
 
   const all = [...(worktrees ?? []), ...(runsWorktrees ?? [])];
@@ -325,7 +251,7 @@ const git = (dir: string, args: string[]): Promise<string | null> => new Promise
 });
 
 /** Read-only: stat plus `git status` and `git rev-list`. Never writes to the folder. */
-export async function inspectFolder(dir: string): Promise<FolderFacts> {
+async function inspectFolder(dir: string): Promise<FolderFacts> {
   let modifiedMs: number | null = null;
   try { modifiedMs = statSync(dir).mtimeMs; } catch { /* unknown */ }
   const status = await git(dir, ['status', '--porcelain']);
@@ -410,7 +336,7 @@ function displayDir(path: string): string {
 
 /** Decimal GB like the fleet disk views; a measured 0-byte folder stays "0". */
 function formatGb(bytes: number): string {
-  const gb = round1(bytes / 1e9);
+  const gb = bytesToGb(bytes);
   return `${gb === 0 && bytes > 0 ? '<0.1' : gb} GB`;
 }
 

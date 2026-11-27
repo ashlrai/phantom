@@ -8,11 +8,18 @@
  */
 import type { HostDiskTrend } from '../fleet/host-top-view.js';
 
-export const DISK_PLAN_SCHEMA = 'disk.plan.v1';
-export const DISK_PLAN_MIN_AGE_HOURS = 6;
+const DISK_PLAN_SCHEMA = 'disk.plan.v1' as const;
+const DISK_PLAN_MIN_AGE_HOURS = 6;
 const GB = 1e9;
 const HOUR_MS = 3_600_000;
-const round1 = (n: number): number => Math.round(n * 10) / 10;
+
+export function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+export function bytesToGb(bytes: number): number {
+  return round1(bytes / GB);
+}
 
 export const WORKTREE_RESULTS = ['pr-open', 'pr-merged', 'pr-closed', 'empty', 'publish-aborted', 'running', 'unknown'] as const;
 export type WorktreeResult = (typeof WORKTREE_RESULTS)[number];
@@ -33,7 +40,7 @@ export interface PlanFolder { jobId: string; gb: number | null; result: Worktree
 export interface PlanKept extends PlanFolder { reason: string }
 
 export interface RemovalPlanReport {
-  schema: typeof DISK_PLAN_SCHEMA;
+  schema: 'disk.plan.v1';
   minAgeHours: number;
   folders: number;
   /** GB per result class; folders with an unknown size add nothing here. */
@@ -52,7 +59,7 @@ export interface RemovalPlanReport {
   kept: PlanKept[];
 }
 
-const gbOf = (bytes: number | null): number | null => (bytes === null ? null : round1(bytes / GB));
+const gbOf = (bytes: number | null): number | null => (bytes === null ? null : bytesToGb(bytes));
 
 /** Why a record is not safe yet, from its unknown fields; empty when every field is known. */
 function unknownFields(r: WorktreeRecord): string[] {
@@ -97,7 +104,7 @@ export function planWorktreeRemoval(
     if (reason) kept.push({ ...folder, reason });
     else planned.push({ ...folder, bytes: r.bytes! });
   }
-  for (const result of WORKTREE_RESULTS) gbByResult[result] = round1(bytesByResult[result] / GB);
+  for (const result of WORKTREE_RESULTS) gbByResult[result] = bytesToGb(bytesByResult[result]);
 
   const bySize = (a: { gb: number | null; jobId: string }, b: { gb: number | null; jobId: string }) =>
     (b.gb ?? -1) - (a.gb ?? -1) || a.jobId.localeCompare(b.jobId);
@@ -113,7 +120,7 @@ export function planWorktreeRemoval(
     gbByResult,
     countByResult,
     largest,
-    plan: { folders: planned.map(({ jobId, gb, result }) => ({ jobId, gb, result })), count: planned.length, gb: round1(planBytes / GB) },
+    plan: { folders: planned.map(({ jobId, gb, result }) => ({ jobId, gb, result })), count: planned.length, gb: bytesToGb(planBytes) },
     notSure: notSure.sort(bySize),
     unpublished: unpublished.sort(bySize),
     kept: kept.sort(bySize),
@@ -158,7 +165,7 @@ export function diskPlanSentence(runway: DiskPlanRunway, plan: RemovalPlanReport
 }
 
 export interface DiskPlanReportV1 {
-  schema: typeof DISK_PLAN_SCHEMA;
+  schema: 'disk.plan.v1';
   generatedAt: string;
   /** The same sentence the CLI prints first and the card shows. */
   sentence: string;
