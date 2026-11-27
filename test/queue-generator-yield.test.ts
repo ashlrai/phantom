@@ -69,6 +69,21 @@ describe('generator yield', () => {
     expect(report([...receipts, row({ job, event: 'finish', empty: false }), dispatch]))
       .toMatchObject([{ generator: 'fixup', jobs: 1, emptyRate: 0 }]);
   });
+  it('keeps reserialized receipt replays from replacing newer evidence at the same timestamp', () => {
+    const job = 'RQ-DRAIN-1';
+    const finish = row({ job, event: 'finish', src: 'old', empty: true, tokens_total: 20, diff_lines: 0 });
+    const reordered = JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(finish)).reverse()))
+      .replace(/^{/, '{ ');
+    const report = generatorYield([
+      finish,
+      row({ job, event: 'finish', src: 'drain', empty: false, tokens_total: 100, diff_lines: 8 }),
+      reordered,
+      row({ job, state: 'MERGED' }),
+    ].join('\n'), 24, now);
+    expect(report.generators).toMatchObject([
+      { generator: 'drain', jobs: 1, merged: 1, emptyRate: 0, medianDiffLines: 8, tokensPerMergedPr: 100 },
+    ]);
+  });
   it('uses terminal timestamps to place reconciled receipts in the report window', () => {
     const report = generatorYield([
       row({ job: 'RQ-DRAIN-1', event: 'publish', outcome: 'MERGED',

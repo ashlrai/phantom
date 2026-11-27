@@ -1383,8 +1383,11 @@ marked `launched: false` do not create jobs or contribute execution evidence.
 Other receipts for the same job and generation-journal decisions still count.
 Empty rate uses jobs with a recorded
 empty or nonempty result on their latest observed attempt. A launch or batch
-claim supersedes earlier results. Exact receipt replays keep their first
-position when timestamps tie. Median diff lines uses recorded `diff_lines`.
+claim supersedes earlier results. Replayed job receipts keep their first
+position when timestamps tie, including when JSON key order or whitespace
+changes. A replay cannot replace a later receipt's source, empty result,
+diff size or token total at the same timestamp. Median diff lines uses
+recorded `diff_lines`.
 Tokens per merged PR is the sum of recorded job tokens divided by merged PRs; it is unknown if any
 job in the group lacks a token total or no PR merged. Missing measurements are
 unknown, and malformed lines are skipped and counted. The report describes

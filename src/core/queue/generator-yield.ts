@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { canonicalJson } from '../authority/canonical-json.js';
 import { isNodePoolLedgerRow, ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
 
 export interface GenerationDecision {
@@ -58,7 +59,7 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   const generation = new Map<string, Map<string, { drafted: boolean; reasons: Set<string> }>>();
   const launchedBatches = new Map<string, number>();
   const memberBatches = new Map<string, Map<string, number>>();
-  const rows: { id: string; at: number; event: string | undefined; terminal: ReturnType<typeof terminalVerdict>; row: Record<string, unknown> }[] = [];
+  const rows: { id: string; at: number; event: string | undefined; terminal: ReturnType<typeof terminalVerdict>; row: Record<string, unknown>; line: string }[] = [];
   const since = now - hours * 3600000;
   for (const [text, isGenerationJournal] of [[raw, false], [decisions, true]] as const) {
     for (const line of text.split(/\r?\n/)) {
@@ -78,14 +79,14 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
       const at = ledgerEventTs(r, terminal);
       if (!id || at === null) { malformedLines++; continue; }
       if (at < since || at > now) continue;
-      rows.push({ id, at, event, terminal, row: r });
+      rows.push({ id, at, event, terminal, row: r, line });
     }
   }
   // Late receipts can be appended out of order. Stable sorting preserves
   // ledger order when receipts share a timestamp.
-  let emptyEvidenceAt: number | undefined;
-  const seenEmptyEvidence = new Set<string>();
-  for (const { id, at, event, terminal, row: r } of rows.sort((a, b) => a.at - b.at)) {
+  let receiptTime: number | undefined;
+  const seenReceipts = new Set<string>();
+  for (const { id, at, event, terminal, row: r, line } of rows.sort((a, b) => a.at - b.at)) {
     const launch = event === 'launch' || event === 'launched';
     if (id.startsWith('RQ-BATCH-')) {
       if (launch) launchedBatches.set(id, at);
@@ -103,6 +104,18 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
       else decision.reasons.add(string(r.reason) ?? 'unknown');
       group.set(id, decision); generation.set(source, group); continue;
     }
+    if (at !== receiptTime) {
+      seenReceipts.clear();
+      receiptTime = at;
+    }
+    let receipt = line.trim();
+    try {
+      receipt = canonicalJson(r);
+    } catch {
+      // Fall back to the original text for rows that cannot be canonicalized.
+    }
+    if (seenReceipts.has(receipt)) continue;
+    seenReceipts.add(receipt);
     const job = jobs.get(id) ?? { generator: null, explicit: false, empty: null, pr: false, merged: false, diff: null, tokens: null, launched: false };
     const src = string(r.src);
     if (src) { job.generator = src; job.explicit = true; }
@@ -118,18 +131,7 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
       }
     }
     const empty = phase?.toLowerCase() === 'empty' ? true : typeof r.empty === 'boolean' ? r.empty : null;
-    const dispatch = launch || event === 'batch_claim';
-    if (dispatch || empty !== null) {
-      if (at !== emptyEvidenceAt) {
-        seenEmptyEvidence.clear();
-        emptyEvidenceAt = at;
-      }
-      const receipt = JSON.stringify(r);
-      if (!seenEmptyEvidence.has(receipt)) {
-        seenEmptyEvidence.add(receipt);
-        job.empty = empty;
-      }
-    }
+    if (launch || event === 'batch_claim' || empty !== null) job.empty = empty;
     if (pickString(r, PR_KEYS) !== null) job.pr = true;
     if (terminal === 'MERGED') { job.merged = true; job.pr = true; }
     job.diff = count(r.diff_lines) ?? job.diff;
