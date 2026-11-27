@@ -3032,8 +3032,9 @@ const rewardPctUsed = (v: unknown): number | null =>
  * Folds reward-signals.jsonl text into per-job evidence. The first usable
  * retained row wins, matching the writer's first-write-wins contract.
  * A row counts only as reward-signal v1 evidence: `v:1`, a bounded
- * `jobId`, a boolean `merged` verdict and the row's `dispatchedAt`/
- * `recordedAt` stamps — the fields every producer row carries. Consumed
+ * `jobId`, a boolean `merged` verdict and consistent lifecycle timestamps.
+ * A merge needs a valid `mergedAt` at or after dispatch, and its duration
+ * must agree with those timestamps to join. Other consumed
  * fields join under their own bounded shapes: milliseconds become seconds,
  * `costUsd`/`pctUsedDelta`/`repo` keep their recorded-value-or-null rule,
  * and malformed values drop to null without discarding the row. Malformed
@@ -3053,20 +3054,22 @@ function foldRewardSignalsThrough(text: string, throughMs: number): Map<string, 
     const jobId = str(r, 'jobId');
     const dispatchedAt = typeof r['dispatchedAt'] === 'string' ? Date.parse(r['dispatchedAt']) : NaN;
     const recordedAt = typeof r['recordedAt'] === 'string' ? Date.parse(r['recordedAt']) : NaN;
-    const mergedAt = r['merged'] === true && typeof r['mergedAt'] === 'string' ? Date.parse(r['mergedAt']) : NaN;
+    const mergeStamp = r['mergedAt'];
+    const mergedAt = typeof mergeStamp === 'string' ? Date.parse(mergeStamp) : NaN;
     if (r['v'] !== 1 || jobId === null || !REWARD_JOB_ID.test(jobId) ||
         typeof r['merged'] !== 'boolean' ||
         !Number.isFinite(dispatchedAt) || !Number.isFinite(recordedAt) ||
         dispatchedAt > throughMs || recordedAt > throughMs || mergedAt > throughMs) continue;
+    if (r['merged'] ? !Number.isFinite(mergedAt) || mergedAt < dispatchedAt : mergeStamp != null) continue;
     if (rewards.has(jobId)) continue;
     const cost = r['cost'];
     const costRow = isLedgerRecord(cost) ? cost : null;
-    const ttmMs = r['merged'] ? num(r['timeToMergeMs']) : null;
+    const ttmMs = num(r['timeToMergeMs']);
     const ciWallMs = num(r['ciWallMs']);
     const repo = str(r, 'repo');
     rewards.set(jobId, {
       merged: r['merged'],
-      ttm_s: ttmMs === null ? null : ttmMs / 1000,
+      ttm_s: r['merged'] && ttmMs !== null && ttmMs === mergedAt - dispatchedAt ? ttmMs / 1000 : null,
       ci_wall_s: ciWallMs === null ? null : ciWallMs / 1000,
       cost_usd: costRow === null ? null : num(costRow['costUsd']),
       repo: repo !== null && REPO_LABEL.test(repo) ? repo : null,

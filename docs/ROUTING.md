@@ -887,9 +887,14 @@ either and never summed with them, and it stays `null` when the pool
 window reset or readings were missing (the producer leaves the delta
 null — unknown stays unknown, never 0). Only rows with `v:1`, a
 bounded `jobId`, a boolean `merged` verdict and parseable
-`dispatchedAt`/`recordedAt` stamps count; consumed fields join under
-their own bounded shapes and malformed values drop to `null` without
-discarding the row. A reward receipt with a dispatch, recording, or
+`dispatchedAt`/`recordedAt` stamps count. A merged receipt must also
+record a parseable `mergedAt` at or after dispatch, and a receipt with
+`merged:false` must leave `mergedAt` empty. Receipts with contradictory
+lifecycle timestamps are skipped before first-usable selection. A recorded
+`timeToMergeMs` contributes to `ttm_s` only when it equals the elapsed time
+between dispatch and merge. Other consumed fields join under their own
+bounded shapes and malformed values drop to `null` without discarding
+the row. A reward receipt with a dispatch, recording, or
 recorded merge time after the report started is excluded before selecting
 the first usable receipt for each job. The read degrades independently like the other
 side ledgers: the report's `reward_state` mirrors the jobs `state`
