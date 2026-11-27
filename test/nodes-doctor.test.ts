@@ -70,6 +70,21 @@ describe('readNodesDoctor', () => {
     expect(studio.lanes.every(l => l.status === 'unknown' && l.reason === 'computer is offline')).toBe(true);
   });
 
+  it('offline node: one shared cause prints one unknown line, not one per check', async () => {
+    // Every lane check reports 'computer is offline'; the unknowns list is a
+    // set of reasons, so the identical line collapses to its first occurrence
+    // while disk and repo unknowns (different wording) still print.
+    const report = await readNodesDoctor({ view: deps([['studio-mac', false]]), probe: fake({ 'home-mac': healthy() }) });
+    const studio = report.nodes.find(n => n.name === 'studio-mac')!;
+    expect(studio.unknowns.filter(u => u === 'studio-mac: computer is offline')).toHaveLength(1);
+    expect(new Set(studio.unknowns).size).toBe(studio.unknowns.length);
+    expect(studio.unknowns).toEqual([
+      'studio-mac: computer is offline',
+      'studio-mac: free disk unknown (no measurement from that computer)',
+      'studio-mac: repo clones unknown (computer is offline)',
+    ]);
+  });
+
   it('a computer that cannot be probed stays unknown, never guessed', async () => {
     const report = await readNodesDoctor({ view: deps([['studio-mac', true]]), probe: fake({ 'home-mac': healthy() }) });
     const studio = report.nodes.find(n => n.name === 'studio-mac')!;
