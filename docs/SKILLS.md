@@ -178,6 +178,10 @@ when their recorded timestamps are at or before report time. Evidence packs
 contribute verification and trajectory metadata only when their generation
 timestamp is parseable and at or before report time. The same cutoff applies
 to evidence packs in the proposal-to-verification join diagnostic.
+When a proposal's latest recorded activity is after report time, the join
+diagnostic checks its retained timestamps for activity inside the report
+window. Future activity alone cannot pull a historical proposal into join
+counts.
 The skill-outcome report anchors its ledger read and trajectory join to one
 report time, so time spent reading the ledger cannot shift either boundary.
 The trajectory timeline, join diagnostics and outcome tallies use only
