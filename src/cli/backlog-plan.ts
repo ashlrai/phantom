@@ -1,30 +1,15 @@
 /** The bridge owns collection, queue application and scheduling. This command reads only. */
-import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
-import { formatRqQueue, parseRqConfig, planRqBacklog, RQ_MAX_FILE_BYTES, rqDigest, rqQueueDiff, type RqConfig } from '../core/portfolio/rq-backlog.js';
+import {
+  formatRqQueue,
+  parseRqConfig,
+  planRqBacklog,
+  readBoundedRqSnapshot,
+  rqDigest,
+  rqQueueDiff,
+  type RqConfig,
+} from '../core/portfolio/rq-backlog.js';
 
-export const BACKLOG_PLAN_USAGE = 'phm backlog plan --config <config.json> --input <sources.json> --queue <router-queue.md> [--previous-queue <snapshot.md>] [--report-json]';
-
-async function readSnapshot(path: string): Promise<string> {
-  // One bounded read through the same descriptor: size checks cannot be
-  // defeated by replacing/growing a file between stat and readFile.
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const stat = await file.stat();
-    if (!stat.isFile() || stat.size > RQ_MAX_FILE_BYTES) throw new Error('Invalid snapshot file');
-    const buffer = Buffer.alloc(RQ_MAX_FILE_BYTES + 1);
-    let length = 0;
-    while (length < buffer.length) {
-      const { bytesRead } = await file.read(buffer, length, buffer.length - length, null);
-      if (bytesRead === 0) break;
-      length += bytesRead;
-    }
-    if (length > RQ_MAX_FILE_BYTES) throw new Error('Snapshot is too large');
-    // Preserve BOM bytes in decoded text: silently stripping them would make
-    // the queue SHA differ from the actual file. JSON validation rejects BOMs.
-    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, length));
-  } finally { await file.close(); }
-}
+const BACKLOG_PLAN_USAGE = 'phm backlog plan --config <config.json> --input <sources.json> --queue <router-queue.md> [--previous-queue <snapshot.md>] [--report-json]';
 
 type QueueAudit = ReturnType<typeof rqQueueDiff> | { event: 'rq-queue-read'; beforeSha: string; sha: string; verdict: 'reject' };
 
@@ -77,15 +62,15 @@ export async function cmdBacklogPlan(args: string[]): Promise<number> {
     return error('usage');
   }
   try {
-    const config = parseRqConfig(JSON.parse(await readSnapshot(flags.get('--config')!)) as unknown);
+    const config = parseRqConfig(JSON.parse(await readBoundedRqSnapshot(flags.get('--config')!)) as unknown);
     let previous = '';
     if (flags.has('--previous-queue')) {
-      previous = await readSnapshot(flags.get('--previous-queue')!);
+      previous = await readBoundedRqSnapshot(flags.get('--previous-queue')!);
       auditQueue('', previous, config, record);
     }
-    const queue = await readSnapshot(flags.get('--queue')!);
+    const queue = await readBoundedRqSnapshot(flags.get('--queue')!);
     const diff = auditQueue(previous, queue, config, record);
-    const sourceText = await readSnapshot(flags.get('--input')!);
+    const sourceText = await readBoundedRqSnapshot(flags.get('--input')!);
     const sources: unknown = JSON.parse(sourceText);
     const plan = planRqBacklog(config, sources, queue);
     const capacity = {
