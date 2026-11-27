@@ -1198,7 +1198,8 @@ The command exits 1 when a lane is starved. The same data is the `starved` objec
 `fleet.lanes.v1` read (`phm fleet lanes --json`, `GET /api/fleet/lanes`): per lane
 `free_slots` (slot target minus running, 0 when held), `ready_rows` and `starved_since`,
 plus read-level `open_rows` — the lane-open READY rows (no lane hint) the market
-may place on any lane. Open supply keeps a free lane from reading as starved.
+may place on eligible executors that accept open work. Open supply keeps a free
+lane that accepts it from reading as starved.
 Both ready counts come from a healthy `ready.tsv` read. For dispatcher rows
 without a requirements cell, the lane view resolves the hint from the matching
 `router-queue.md` envelope when present. If the envelope file is absent, it uses
@@ -1229,6 +1230,10 @@ and running count remain visible separately.
 An idle alarm also requires a known zero lane-open READY count. If shared
 queue evidence is missing or degraded, a lane with free slots and zero
 queued jobs reports unknown lane-open supply and raises no idle alarm.
+The market requires an explicit lane hint for `codex-local` and `omlx`.
+Lane-open rows still appear in the shared count, and those rows leave local
+starvation verdicts, idle alarms and autopilot restock proposals in effect
+when their other conditions are met.
 The desktop lane
 card (Ops, Lanes on this Mac) shows the same line. The Leader posts one chat notice
 when a lane has been starved for 30 minutes, at most once per lane every 6 hours,

@@ -9,6 +9,7 @@
  * writes to the router queue; the state file lives under the Leader root.
  */
 import { join } from 'node:path';
+import { LOCAL_LANES } from './unfed-market.js';
 
 export const FLEET_STARVED_SCHEMA = 'fleet.starved.v1' as const;
 /** A lane starved this long earns a Leader-chat notice. */
@@ -49,8 +50,8 @@ export interface StarvedRead {
   /** READY rows hinted to held or drained lanes, or null if their total is unknown. */
   waiting_elsewhere: number | null;
   /**
-   * Lane-open READY rows — supply the shared market may place on any lane,
-   * so a positive count keeps a free lane from reading as starved. Null when
+   * Lane-open READY rows suppress starvation for lanes that accept open work.
+   * Local executors require an explicit hint. Null when
    * the caller cannot say (the queue read did not report it).
    */
   open_rows: number | null;
@@ -86,13 +87,12 @@ export function readStarved(
 ): StarvedRead {
   const lanes: Record<string, StarvedLane> = {};
   let waiting: number | null = 0;
-  // Lane-open READY rows are open supply: the market may place them on any
-  // lane, so a positive count means no lane is out of work.
-  const open = typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows > 0;
+  const openCount = typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows >= 0 ? openRows : null;
   for (const input of inputs) {
     const free = input.held || input.target === 0 ? 0
       : input.target === null || input.running === null ? null : Math.max(0, input.target - input.running);
-    const starved = free !== null && free > 0 && input.ready === 0 && !open && !input.held && !input.drained;
+    const hasOpenSupply = openCount !== null && openCount > 0 && !LOCAL_LANES.has(input.lane);
+    const starved = free !== null && free > 0 && input.ready === 0 && !hasOpenSupply && !input.held && !input.drained;
     const recorded = since[input.lane];
     const at = starved && recorded !== undefined && Date.parse(recorded) <= nowMs ? recorded : null;
     const row: StarvedLane = { free_slots: free, ready_rows: input.ready, starved, starved_since: at, line: null };
@@ -103,7 +103,6 @@ export function readStarved(
     }
   }
   const any = Object.values(lanes).some(row => row.starved);
-  const openCount = typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows >= 0 ? openRows : null;
   return { lanes, waiting_elsewhere: any ? waiting : 0, open_rows: openCount };
 }
 

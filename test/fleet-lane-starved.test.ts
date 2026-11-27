@@ -96,6 +96,16 @@ describe('readStarved', () => {
     expect(read.open_rows).toBe(2);
   });
 
+  it.each(['codex-local', 'omlx'])('requires hinted supply for %s to clear starvation', lane => {
+    const since = { [lane]: minutesAgo(42) };
+    const read = readStarved([input({ lane }), input()], since, NOW, 2);
+    expect(read.open_rows).toBe(2);
+    expect(read.lanes.claude).toMatchObject({ starved: false });
+    expect(read.lanes[lane]).toMatchObject({ starved: true, starved_since: since[lane] });
+    expect(readStarved([input({ lane, ready: 1 })], since, NOW, 2).lanes[lane])
+      .toMatchObject({ starved: false, starved_since: null });
+  });
+
   it('still calls a lane starved when the open-row count is zero or unknown', () => {
     expect(readStarved([input()], {}, NOW, 0).lanes.claude!.starved).toBe(true);
     expect(readStarved([input()], {}, NOW, 0).open_rows).toBe(0);
