@@ -1,7 +1,7 @@
 /**
  * routes/verse/fleet/FleetCards.runsdir.test.tsx — the lanes strip's
  * dispatchd fallback: when the live API reports the stale-standing reason
- * (slots 0, "capacity unknown"), a fresh /api/verse/fleet/runs read supplies
+ * (slots null, "capacity unknown"), a fresh /api/verse/fleet/runs read supplies
  * the chip's counts and the strip names the source.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,7 +19,7 @@ const MIN = 60_000;
 
 function staleLive(now: number) {
   const live = fleetLive('live', now);
-  live.lanes = [{ lane: 'devin-cli', slots: 0, busy: 0, capReason: STALE_STANDING_LANES }];
+  live.lanes = [{ lane: 'devin-cli', slots: null, busy: 0, capReason: STALE_STANDING_LANES }];
   return live;
 }
 

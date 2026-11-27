@@ -1,7 +1,8 @@
 /**
  * routes/verse/fleet/lane-runsdir-fallback.ts — when the standing tick's lane
- * observation is stale the live API reports every lane as slots 0 with the
- * STALE_STANDING_LANES reason, which the chips print as "capacity unknown".
+ * observation is stale the live API reports every lane's slots as unknown
+ * (null) with the STALE_STANDING_LANES reason, which the chips print as
+ * "capacity unknown".
  * dispatchd's own figures (~/.ashlr-runs/queue/status.json, served through
  * GET /api/verse/fleet/runs) are an independent observation of the same Mac
  * fleet, so a stale chip falls back to them: "7 of 10 · 712 queued", or
@@ -47,7 +48,7 @@ export type FallbackRunsLane = Pick<FleetRunsLane, 'lane' | 'running' | 'target'
  * instant, so a dead dispatcher keeps answering "unknown" rather than a lie).
  */
 export function laneFallback(lane: FleetLiveLaneState, runs: readonly FallbackRunsLane[] | null, readAt: string | null, now: number): { slots: string; note: string } | null {
-  if (lane.slots !== 0 || lane.capReason !== STALE_STANDING_LANES) return null;
+  if (lane.slots !== null || lane.capReason !== STALE_STANDING_LANES) return null;
   const match = runs?.find((r) => r.lane === DISPATCHD_LANE[lane.lane]);
   if (!match) return null;
   const readMs = readAt === null ? NaN : Date.parse(readAt);

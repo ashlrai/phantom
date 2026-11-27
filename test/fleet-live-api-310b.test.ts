@@ -260,7 +260,8 @@ describe('GET /api/verse/fleet/live — states', () => {
     expect(res.body.stateReason).not.toMatch(/dark since/i);
     expect(res.body.darkSince).toBe('2026-09-01T19:10:00.000Z');
     expect(res.body.darkSince).toBe(res.body.lastActivityAt);
-    expect(res.body.lanes.every((l) => l.slots === 0 && l.capReason !== null)).toBe(true);
+    // No standing tick ever reported lane capacity: unknown stays null, never an observed 0 (off).
+    expect(res.body.lanes.every((l) => l.slots === null && l.capReason !== null)).toBe(true);
     // The ledger was readable and empty: zero is a measurement here, not a default.
     expect(res.body.summary).toMatchObject({ mergedToday: 0, merged7d: 0, revertsToday: 0, postMergeGreenPct7d: null, cycleTimeP50Ms7d: null });
   });
@@ -338,11 +339,35 @@ describe('GET /api/verse/fleet/live — states', () => {
     })]);
     expect(body.repos[0]!.greenTrend).toHaveLength(14);
     tick.at = iso(45 * MIN);
-    expect((await buildFleetLiveSnapshot()).snapshot.lanes.every(lane => lane.slots === 0)).toBe(true);
+    // A stale tick leaves capacity unobserved: slots stay null, never a measured 0.
+    expect((await buildFleetLiveSnapshot()).snapshot.lanes.every(lane => lane.slots === null)).toBe(true);
     tick.at = iso(0); // A new observation while the old tick is still preparing mirrors.
     expect((await buildFleetLiveSnapshot()).snapshot.lanes.find(lane => lane.lane === 'local')?.slots).toBe(2);
     tick.at = iso(-MIN);
-    expect((await buildFleetLiveSnapshot()).snapshot.lanes.every(lane => lane.slots === 0)).toBe(true);
+    expect((await buildFleetLiveSnapshot()).snapshot.lanes.every(lane => lane.slots === null)).toBe(true);
+  });
+
+  it('reports lane busy as unknown (null), not 0, when the in-flight read fails', async () => {
+    policy = policyFixture();
+    alive = true;
+    tick = {
+      v: 1, at: iso(MIN), capabilityKind: 'resident-standing', dryRun: false,
+      standing: { grantId: 'g', stageId: '2a', switch: 'autonomous' },
+      lanes: [
+        { lane: 'local', slots: 2, busy: 0, capReason: null },
+        { lane: 'grok-cli', slots: 2, busy: 0, capReason: null },
+      ],
+      presence: { present: true, reason: '', evidenceAt: iso(MIN) },
+      holdProduction: null, pausedRepos: [], waitingVerify: 0, openPrsByRepo: {}, ledgerHead: null,
+      held: [], watch: { available: true, reason: null },
+    };
+    // The dispatch tail is the only source of "producing" runs; unreadable means busy is unknown.
+    setFleetLiveDepsForTest({ ...deps(), inFlight: () => null });
+    const { snapshot } = await buildFleetLiveSnapshot();
+    expect(snapshot.summary.building).toBeNull();
+    expect(snapshot.lanes.every((lane) => lane.busy === null)).toBe(true);
+    // Slot capacity still comes from the fresh tick — only the busy count is unknown.
+    expect(snapshot.lanes.find((lane) => lane.lane === 'local')?.slots).toBe(2);
   });
 });
 

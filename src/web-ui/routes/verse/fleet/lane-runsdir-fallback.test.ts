@@ -4,14 +4,14 @@
  * read is fresh.
  */
 import { describe, expect, it } from 'vitest';
-import type { FleetLaneState } from '../../../../core/fleet/fleet-types.js';
+import type { FleetLiveLaneState } from '../../../../core/fleet/fleet-types.js';
 import { laneFallback, STALE_STANDING_LANES, type FallbackRunsLane } from './lane-runsdir-fallback.js';
 
 const NOW = Date.parse('2026-11-04T22:53:00Z');
 const MIN = 60_000;
 
-const staleLane = (overrides: Partial<FleetLaneState> = {}): FleetLaneState => ({
-  lane: 'devin-cli', slots: 0, busy: 0, capReason: STALE_STANDING_LANES, ...overrides,
+const staleLane = (overrides: Partial<FleetLiveLaneState> = {}): FleetLiveLaneState => ({
+  lane: 'devin-cli', slots: null, busy: 0, capReason: STALE_STANDING_LANES, ...overrides,
 });
 const runsLane = (overrides: Partial<FallbackRunsLane> = {}): FallbackRunsLane => ({
   lane: 'devin', running: 7, target: 10, queued: 0, held: false, ...overrides,
@@ -60,6 +60,7 @@ describe('laneFallback', () => {
   it('returns null for a lane that is not the stale-standing case', () => {
     const runs = [runsLane()];
     expect(laneFallback(staleLane({ slots: 4, capReason: null }), runs, ago(MIN), NOW)).toBeNull();
+    expect(laneFallback(staleLane({ slots: 0, capReason: 'off until its window resets' }), runs, ago(MIN), NOW)).toBeNull();
     expect(laneFallback(staleLane({ capReason: 'off until its window resets' }), runs, ago(MIN), NOW)).toBeNull();
     expect(laneFallback(staleLane({ slots: 2 }), runs, ago(MIN), NOW)).toBeNull();
   });
