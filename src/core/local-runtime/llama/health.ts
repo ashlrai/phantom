@@ -24,7 +24,7 @@ import { readKillSwitch } from '../../sandbox/policy.js';
 import { launchAgentInstalled } from './launchd.js';
 import { argvMatchesRecord, findLlamaServersOnPortAsync, processAliveAsync, processArgvAsync } from './process.js';
 import { readOwnershipRecord } from './record.js';
-import { resolveLlamaServerBaseUrl } from './config.js';
+import { isPlainRecord, originFromBaseUrl, resolveLlamaServerBaseUrl } from './config.js';
 import type {
   LlamaOwnershipRecord,
   LlamaRuntimeSnapshot,
@@ -68,7 +68,7 @@ export interface LlamaProbeReadings {
  * while measuring docs/LOCAL-FLEET.md. Carried verbatim as the runtime's words
  * so a surface can show evidence beside its own sentence.
  */
-export const OLLAMA_PARALLEL_REFUSAL =
+const OLLAMA_PARALLEL_REFUSAL =
   'ollama: "model architecture does not currently support parallel requests" ' +
   '(architecture=qwen35) — requests queue rather than batch, and OLLAMA_NUM_PARALLEL ' +
   'does not change it';
@@ -92,7 +92,6 @@ export function identifyRuntime(
     return 'ollama';
   }
   if (state === 'up' || state === 'loading') return 'llama-server';
-  if (state === 'down') return 'unknown';
   return 'unknown';
 }
 
@@ -235,8 +234,7 @@ export function deriveSlotContext(props: EndpointReading, slots: EndpointReading
   const positive = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
   const generation = observedProps.body !== null && typeof observedProps.body === 'object'
     ? (observedProps.body as Record<string, unknown>)['default_generation_settings'] : null;
-  const rawProps = generation !== null && typeof generation === 'object' && !Array.isArray(generation)
-    ? (generation as Record<string, unknown>)['n_ctx'] : null;
+  const rawProps = isPlainRecord(generation) ? generation['n_ctx'] : null;
   if (rawProps !== null && rawProps !== undefined && !positive(rawProps)) return unknown;
   const fromProps = positive(rawProps) ? rawProps : null;
   const list = Array.isArray(observedSlots.body) ? observedSlots.body as unknown[] : null;
@@ -246,14 +244,13 @@ export function deriveSlotContext(props: EndpointReading, slots: EndpointReading
   const ids = new Set<number>();
   let fromSlots: number | null = null;
   for (const slot of list) {
-    if (slot === null || typeof slot !== 'object' || Array.isArray(slot)) return unknown;
-    const row = slot as Record<string, unknown>;
+    if (!isPlainRecord(slot)) return unknown;
     // Missing IDs cannot prove coverage; string/fractional coercion can hide
     // duplicates. Older IDless payloads do not establish a slot allocation.
-    const id = row['id'];
+    const id = slot['id'];
     if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 0 || ids.has(id)) return unknown;
     ids.add(id);
-    const context = row['n_ctx'];
+    const context = slot['n_ctx'];
     if (!positive(context) || fromSlots !== null && context !== fromSlots || fromProps !== null && context !== fromProps) return unknown;
     fromSlots = context;
   }
@@ -384,14 +381,7 @@ const defaultFetch: FetchLike = (url, init) =>
 export async function probeLlamaRuntime(options: ProbeOptions = {}): Promise<LlamaRuntimeSnapshot> {
   const record = options.record !== undefined ? options.record : readOwnershipRecord();
   const baseUrl = options.baseUrl ?? resolveLlamaServerBaseUrl();
-  let origin = options.origin ?? null;
-  if (origin === null) {
-    try {
-      origin = new URL(baseUrl).origin;
-    } catch {
-      origin = baseUrl.replace(/\/v1\/?$/, '');
-    }
-  }
+  const origin = options.origin ?? originFromBaseUrl(baseUrl);
 
   let host = record?.host ?? '';
   let port = record?.port ?? 0;

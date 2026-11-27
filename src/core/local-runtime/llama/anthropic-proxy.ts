@@ -61,8 +61,9 @@ import {
   allowsNonLoopback,
   gateBindHost,
   isLoopbackHost,
+  isPlainRecord,
   originFor,
-  resolveLlamaRuntimeConfig,
+  resolveLlamaRuntimeSettings,
   resolveLocalAgentDefaults,
 } from './config.js';
 import type { LocalAgentRequestDefaults } from './config.js';
@@ -70,7 +71,7 @@ import { applyLocalAgentDefaults, normaliseAnthropicRequest } from './anthropic-
 import type { AshlrConfig } from '../../types.js';
 
 /** The one path whose POST bodies are normalised. Everything else is a pipe. */
-export const ANTHROPIC_MESSAGES_PATH = '/v1/messages';
+const ANTHROPIC_MESSAGES_PATH = '/v1/messages';
 
 /**
  * Largest request body we will hold in memory to normalise it.
@@ -82,7 +83,7 @@ export const ANTHROPIC_MESSAGES_PATH = '/v1/messages';
  * oversized request degrades to the unnormalised passthrough it would have had
  * without this proxy at all, instead of failing.
  */
-export const MAX_NORMALISED_BODY_BYTES = 32 * 1024 * 1024;
+const MAX_NORMALISED_BODY_BYTES = 32 * 1024 * 1024;
 
 /**
  * Headers that describe THIS hop and must not be copied to the next one
@@ -283,13 +284,13 @@ export function normaliseMessagesBody(
     reportRequestAttribution(observer, raw.length, raw.length, null);
     return raw;
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+  if (!isPlainRecord(parsed)) {
     reportRequestAttribution(observer, raw.length, raw.length, null);
     return raw;
   }
 
   try {
-    const normalised = normaliseAnthropicRequest(parsed as Record<string, unknown>);
+    const normalised = normaliseAnthropicRequest(parsed);
     // Defaults are applied AFTER the system-turn fold, and both are
     // identity-preserving when they add nothing, so an unconfigured runtime
     // still forwards the client's original bytes untouched.
@@ -319,7 +320,7 @@ export function normaliseMessagesBody(
 export async function startAnthropicProxy(
   options: AnthropicProxyOptions = {},
 ): Promise<AnthropicProxyHandle> {
-  const runtime = resolveLlamaRuntimeConfig(options.cfg);
+  const runtime = resolveLlamaRuntimeSettings(options.cfg);
   const upstreamOrigin = options.upstreamOrigin ?? originFor(runtime.host, runtime.port);
   const upstream = upstreamTarget(upstreamOrigin);
 
