@@ -593,6 +593,12 @@ timestamp more than 60 seconds ahead of report time cannot supersede another
 observation. A node with only unusable timestamps reports stale capacity.
 Conflicting inputs at the same newest plausible timestamp leave that node's
 capacity unknown.
+Fleet-wide runnable totals include a node's per-harness count only when the
+node also reports usable memory headroom and its own current footprint for
+that harness. A measured stop, such as swap growth or zero headroom, still
+reduces a reported count to zero.
+Learned footprints used for totals or placement must come from observations
+at or before both the containing snapshot and report time.
 For a node without its own harness footprint, routing can borrow measurements
 from other nodes whose latest snapshots pass the same freshness check.
 A borrowed footprint uses the largest observed memory and CPU costs for the
