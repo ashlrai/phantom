@@ -222,6 +222,18 @@ describe('daemon capacity publisher (c8)', () => {
     expect(h.snapshot.current).toBeNull(); // cold ⇒ readers fail closed
   });
 
+  it('an unconfigured node reports its own first-run state, never a phantom lease conflict', async () => {
+    const h = harness();
+    h.mode = 'unconfigured';
+    const pub = createDaemonCapacityPublisher(cfg, h.deps);
+    const status = await pub.cycle();
+    expect(status.state).toBe('unconfigured');
+    expect(status.reason).toContain('accounts are unconfigured');
+    expect(h.published).toHaveLength(0);
+    expect(h.closed).toBe(1);
+    expect(h.snapshot.current).toBeNull();
+  });
+
   it('a sample that never completes publishes nothing (no half-sampled readings) and releases the lease', async () => {
     const h = harness();
     h.refreshingReads = Number.MAX_SAFE_INTEGER;
