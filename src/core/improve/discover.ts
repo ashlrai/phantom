@@ -1522,6 +1522,22 @@
  *     recorded — truncated tails are stated as lower bounds, and
  *     items emit only for the fleet's own repository since the
  *     journal carries no repo column;
+ *   - the nightly retro's review-block journal's recurring per-repo
+ *     cells: the {v:1, id, jobId, repo, kind:'review-block',
+ *     updatedAt, body} rows ensureNightlyInputs merges latest-per-
+ *     (repo,id) into ~/.ashlr/learn/retro-input/review-blocks.jsonl
+ *     once per due night — fed by foldCloudTasks, one row per cloud
+ *     task whose recorded terminal GitHub outcome shows
+ *     CHANGES_REQUESTED or at least one recorded change request —
+ *     until now read only by runNightlyRetro's lesson extraction, so
+ *     a repository whose cloud-lane PRs kept bouncing off review
+ *     never became work (reviewBlocksBacklogItems below). A cell
+ *     emits only at the recurring bars of three review-block rows
+ *     across two distinct UTC days inside the 7-day window, deduped
+ *     on (repo,id) keeping the latest updatedAt like the producer's
+ *     own merge, truncated tails stated as lower bounds, and each
+ *     item self-targets the repository its blocked PRs named since
+ *     the journal carries the repo per row;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1664,6 +1680,7 @@ import { diskSweepBacklogItems } from './disk-sweep-backlog.js';
 import { resetReleaseBacklogItems } from './reset-release-backlog.js';
 import { nodesOffloadBacklogItems } from './nodes-offload-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
+import { reviewBlocksBacklogItems } from './review-blocks-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -3561,6 +3578,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // only the fleet's own repository inherits the items since the
   // journal carries no repo column.
   items.push(...await nodesOffloadBacklogItems({ repo }));
+  // The nightly retro's review-block journal
+  // (~/.ashlr/learn/retro-input/review-blocks.jsonl): the {v:1, id,
+  // jobId, repo, kind:'review-block', updatedAt, body} rows
+  // ensureNightlyInputs merges latest-per-(repo,id) once per due
+  // night — foldCloudTasks emits one row per cloud task whose
+  // recorded terminal GitHub outcome shows CHANGES_REQUESTED or at
+  // least one recorded change request (Devin tasks fold jobs but
+  // never review rows: the Devin tracker records no GitHub
+  // outcome). Until now the journal's only reader was
+  // runNightlyRetro's lesson extraction — prompt-level advice,
+  // never work items — so a repo whose cloud-lane PRs kept bouncing
+  // off review never became work. A cell emits only at the
+  // recurring bars of three review-block rows across two distinct
+  // UTC days inside the 7-day window, truncated tails stated as
+  // lower bounds, and each item self-targets the repository its
+  // blocked PRs named.
+  items.push(...await reviewBlocksBacklogItems());
   return { items, errors };
 }
 
