@@ -16,6 +16,21 @@ import { capacityFromSeat } from '../src/core/routing/headroom.js';
 import type { LeaderOutcomeRefinement } from '../src/core/vision/leader-types.js';
 import { defaultBudgetPolicy } from '../src/core/routing/policy.js';
 import { fakeLedger, makeApplyDeps, makePolicy, useTmpHome } from './helpers/leader-310b-fakes.js';
+
+vi.mock('../src/core/resources/local-memory-fit.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/resources/local-memory-fit.js')>();
+  return {
+    ...actual,
+    // Supply memory evidence for the fake local seat. Keep inventory matching
+    // and the real fit calculation while testing planning/retry behavior.
+    localModelFit: (model: string | null, contextTokens = 65536) =>
+      actual.localModelFit(model, contextTokens, {
+        models: [{ id: 'qwen', engine: 'local', residentBytes: 8 * 1024 ** 3 }],
+        memory: { totalBytes: 64 * 1024 ** 3, freeBytes: 48 * 1024 ** 3, swapGrowth: 0 },
+      }),
+  };
+});
+
 const home = useTmpHome();
 const NOW = Date.parse('2026-10-02T12:00:00.000Z');
 const AT = new Date(NOW).toISOString();

@@ -36,6 +36,43 @@ describe('leader board rebase members recovered from #7167', () => {
     expect([...conflictingPrIds(id)]).toEqual([]);
   });
 
+  it('parses repo short names with dots, underscores and digit segments', () => {
+    const ids = conflictingPrIds([
+      'READY\tRQ-REBASE-BATCH-my.repo-12-34-a1b2c3\tdevin\twork',
+      'READY\tRQ-REBASE-my_repo-7-abcdef0\tdevin\twork',
+      'READY\tRQ-REBASE-BATCH-svc-2-123-456-a1b2c3\tdevin\twork',
+      'READY\tRQ-REBASE-svc-2-123-abcdef0\tdevin\twork',
+      'READY\tRQ-REBASE-BATCH-2024-app-5-6-abcdef\tdevin\twork',
+      'READY\tRQ-REBASE-BATCH-legacy-9-a1b2c3\tdevin\twork',
+    ].join('\n'));
+    expect([...ids].sort()).toEqual([
+      '2024-APP-5',
+      '2024-APP-6',
+      'LEGACY-9',
+      'MY.REPO-12',
+      'MY.REPO-34',
+      'MY_REPO-7',
+      'SVC-2-123',
+      'SVC-2-456',
+    ]);
+  });
+
+  it('keeps every member of longer batches without a repository hint', () => {
+    expect([...conflictingPrIds('RQ-REBASE-BATCH-PHANTOM-7-8-9-10-abcdef')])
+      .toEqual(['PHANTOM-7', 'PHANTOM-8', 'PHANTOM-9', 'PHANTOM-10']);
+  });
+
+  it.each([
+    'RQ-REBASE-BATCH-svc-2-7-8-9-abcdef\tsvc-2\tdevin\twork\tprompt.md',
+    'status\tjob_id\trepo\tpool\nPARKED-HOLD\tRQ-REBASE-BATCH-svc-2-7-8-9-abcdef\torg/svc-2\tdevin',
+    'state=READY\tjob_id=RQ-REBASE-BATCH-svc-2-7-8-9-abcdef\trepo=svc-2\tlane=devin',
+    'READY\tRQ-REBASE-BATCH-svc-2-7-8-9-abcdef\tdevin\twork\tsvc-2',
+    'RQ-REBASE-BATCH-svc-2-7-8-9-abcdef\nRQ-REBASE-svc-2-7-abcdef0',
+  ])('uses repository evidence to disambiguate numeric suffixes: %s', row => {
+    expect([...conflictingPrIds(row)])
+      .toEqual(['SVC-2-7', 'SVC-2-8', 'SVC-2-9']);
+  });
+
   it('retains SHA singles, parked conflicts, cross-repo identity and comment filtering', () => {
     expect([...conflictingPrIds([
       '# RQ-REBASE-PHANTOM-99-uabcdef',

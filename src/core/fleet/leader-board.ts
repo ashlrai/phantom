@@ -49,9 +49,10 @@ const MAX_NEEDS_ITEMS = 10;
 const MAX_TIER_KEYS = 16;
 const TIER_RE = /^[a-z][a-z0-9-]{0,15}$/;
 /** RQ-REBASE-<REPO>-<pr number>-<head sha7> from queuegen (queuegen.rebaseId). */
-const REBASE_JOB_RE = /^RQ-REBASE-(?!BATCH-)([A-Z0-9][A-Z0-9-]*)-(\d{1,7})-(?:[0-9a-f]{7,40}|u[0-9a-f]{6})$/i;
-/** Batch members share a repo and end with a six-character hash. */
-const REBASE_BATCH_RE = /^RQ-REBASE-BATCH-([A-Za-z][A-Za-z0-9-]*?)-((?:\d{1,7}-)*\d{1,7})-[0-9a-f]{6}$/i;
+const REBASE_JOB_RE = /^RQ-REBASE-(?!BATCH-)([A-Za-z0-9][A-Za-z0-9._-]*)-(\d{1,7})-(?:[0-9a-f]{7,40}|u[0-9a-f]{6})$/i;
+/** Without repo evidence retain the legacy longest numeric member suffix. */
+const REBASE_BATCH_RE = /^RQ-REBASE-BATCH-([A-Za-z0-9][A-Za-z0-9._-]*?)-((?:\d{1,7}-)*\d{1,7})-[0-9a-f]{6}$/i;
+const REBASE_MEMBERS_RE = /^((?:\d{1,7}-)*\d{1,7})-[0-9a-f]{6}$/i;
 const KEYED_JOB_ID = /^(?:id|job|job[._-]?id|task|name)=\s*/i;
 
 export interface LeaderBoardLane {
@@ -166,22 +167,46 @@ export function readyRowsForDepth(text: string, routerQueue?: string): { status:
  */
 export function conflictingPrIds(readyTsvText: string): Set<string> {
   const prs = new Set<string>();
+  const jobs: { id: string; repo: string | null }[] = [];
+  const repos = new Set<string>();
   let idColumn: number | null = null;
+  let repoColumn: number | null = null;
   for (const raw of readyTsvText.split('\n')) {
     if (!raw.trim() || raw.trimStart().startsWith('#')) continue;
     const cells = raw.trimEnd().split('\t').map(cell => cell.trim());
     const header = readyTsvHeader(cells);
     if (header !== null) {
       idColumn = header.indexOf('id');
+      repoColumn = header.indexOf('repo');
       continue;
     }
     const first = cells[0] ?? '';
+    const statusFirst = KNOWN_STATUSES.has(first.toUpperCase()) || parkedCell(first);
     const id = idColumn !== null ? cells[idColumn]
       : first.includes('=') ? cells.find(cell => KEYED_JOB_ID.test(cell))
-      : KNOWN_STATUSES.has(first.toUpperCase()) || parkedCell(first) ? cells[1]
+      : statusFirst ? cells[1]
       : first;
-    const jobId = id?.replace(KEYED_JOB_ID, '') ?? '';
-    const batch = REBASE_BATCH_RE.exec(jobId);
+    const jobId = (id?.replace(KEYED_JOB_ID, '') ?? '').toUpperCase();
+    const rawRepo = repoColumn !== null ? cells[repoColumn]
+      : first.includes('=') ? cells.find(cell => /^repo=/i.test(cell))?.slice(5)
+      : statusFirst ? cells[4] : cells[1];
+    const repo = /^(?:[A-Za-z0-9._-]+\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/.test(rawRepo ?? '')
+      ? rawRepo!.split('/').at(-1)!.toUpperCase() : null;
+    jobs.push({ id: jobId, repo });
+    if (repo) repos.add(repo);
+    const single = REBASE_JOB_RE.exec(jobId);
+    if (single) repos.add(single[1]!);
+  }
+  // Numeric repo suffixes are ambiguous inside a batch ID. Prefer explicit
+  // queue columns or repo names evidenced by singles, never prompt text.
+  const knownRepos = [...repos].sort((a, b) => b.length - a.length);
+  for (const { id: jobId, repo: rowRepo } of jobs) {
+    const repo = [rowRepo, ...knownRepos].find(repo => repo !== null &&
+      jobId.startsWith(`RQ-REBASE-BATCH-${repo}-`) &&
+      REBASE_MEMBERS_RE.test(jobId.slice(`RQ-REBASE-BATCH-${repo}-`.length)));
+    const batch = repo
+      ? [jobId, repo, REBASE_MEMBERS_RE.exec(jobId.slice(`RQ-REBASE-BATCH-${repo}-`.length))![1]!]
+      : REBASE_BATCH_RE.exec(jobId);
     if (batch) {
       const repo = batch[1]!.toUpperCase();
       for (const pr of batch[2]!.split('-')) prs.add(`${repo}-${pr}`);
