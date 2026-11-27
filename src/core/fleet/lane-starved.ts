@@ -46,8 +46,8 @@ export interface StarvedLane {
 
 export interface StarvedRead {
   lanes: Record<string, StarvedLane>;
-  /** READY rows waiting on a held or drained pool that a starved lane could run instead (0 when no lane is starved). */
-  waiting_elsewhere: number;
+  /** READY rows hinted to held or drained lanes, or null if their total is unknown. */
+  waiting_elsewhere: number | null;
   /**
    * Lane-open READY rows — supply the shared market may place on any lane,
    * so a positive count keeps a free lane from reading as starved. Null when
@@ -85,7 +85,7 @@ export function readStarved(
   openRows: number | null = null,
 ): StarvedRead {
   const lanes: Record<string, StarvedLane> = {};
-  let waiting = 0;
+  let waiting: number | null = 0;
   // Lane-open READY rows are open supply: the market may place them on any
   // lane, so a positive count means no lane is out of work.
   const open = typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows > 0;
@@ -98,7 +98,9 @@ export function readStarved(
     const row: StarvedLane = { free_slots: free, ready_rows: input.ready, starved, starved_since: at, line: null };
     if (starved) row.line = starvedLine(input.lane, row, nowMs);
     lanes[input.lane] = row;
-    if ((input.held || input.drained) && input.ready !== null) waiting += input.ready;
+    if ((input.held || input.drained) && waiting !== null) {
+      waiting = input.ready === null ? null : waiting + input.ready;
+    }
   }
   const any = Object.values(lanes).some(row => row.starved);
   const openCount = typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows >= 0 ? openRows : null;
@@ -122,8 +124,8 @@ export function parseStarvedState(text: string | null): StarvedState {
   return state;
 }
 
-export function noticeText(line: string, waitingElsewhere: number): string {
-  return waitingElsewhere > 0 ? `${line}. ${plural(waitingElsewhere, 'READY row is', 'READY rows are')} waiting on a held or drained pool and could run there instead.` : `${line}.`;
+export function noticeText(line: string, waitingElsewhere: number | null): string {
+  return waitingElsewhere !== null && waitingElsewhere > 0 ? `${line}. ${plural(waitingElsewhere, 'READY row is', 'READY rows are')} waiting on a held or drained pool.` : `${line}.`;
 }
 
 /**

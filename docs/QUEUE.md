@@ -1167,9 +1167,13 @@ more jobs queued and none running.
 It also names a lane that has free slots and nothing ready to run on them, the
 reverse case: `claude: 8 free slots, 0 ready rows for 42 min; next step: add work
 for claude`. Those lines come first, followed by the count of READY rows waiting on
-a held or drained pool that a starved lane could run instead. `--json` adds
+a held or drained pool. The count describes where work is waiting. Executor
+eligibility depends on each job’s requirements and available resources.
+`--json` adds
 `starved_lanes`, `waiting_elsewhere` and `open_rows` under the `fleet.starved.v1`
-schema, and the command exits 1 when a lane is starved. The same data is the `starved` object of the
+schema. `waiting_elsewhere` is null when the lane snapshot is unavailable or
+a starved lane exists and a held or drained lane has an unknown READY count.
+The command exits 1 when a lane is starved. The same data is the `starved` object of the
 `fleet.lanes.v1` read (`phm fleet lanes --json`, `GET /api/fleet/lanes`): per lane
 `free_slots` (slot target minus running, 0 when held), `ready_rows` and `starved_since`,
 plus read-level `open_rows` — the lane-open READY rows (no lane hint) the market
