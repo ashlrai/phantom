@@ -14,14 +14,12 @@ import { loadBacklog } from '../core/portfolio/backlog.js';
 import { listProposalsDetailed } from '../core/inbox/store.js';
 import { readKillSwitch } from '../core/sandbox/policy.js';
 import { BUILTIN_ENGINE_REGISTRY } from '../core/run/engine-registry.js';
-import { BUS_HOPLOG_TAIL_MAX_ROWS, readBusHoplogTail } from '../core/fleet/bus-hoplog.js';
-import { summarizeBusHops } from '../core/fleet/bus-hop-summary.js';
 import { validateBusEnvelope } from '../core/fleet/bus-envelope.js';
-import { groupAddressTopicOf } from '../core/fleet/bus-group.js';
-import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
+import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
+import { BUS_HOPS_MAX_LIMIT, readBusHops } from '../core/fleet/bus-hops.js';
 
 export const MAX_FLEET_TICKS = 50;
-export const MAX_FLEET_BUS_HOPS = 50;
+export const MAX_FLEET_BUS_HOPS = BUS_HOPS_MAX_LIMIT;
 
 function nonnegativeNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -218,65 +216,11 @@ export function parseFleetBusHopsArgs(args: Record<string, unknown>): FleetBusHo
 }
 
 /**
- * Newest validated cross-agent bus hops (append order) from the private hop
- * log — the only source. A hop is a recorded send attempt: it carries message
- * id, from/to and nullable token usage, never a body, delivery, or lifecycle
- * claim. Missing and unreadable are distinct; neither yields invented rows.
- * Usage totals are subtotals of the returned tail's recorded attempts, not
- * provider usage or proof of delivery; unknown samples remain separate.
- *
- * The read scans the bounded tail window once (`BUS_HOPLOG_TAIL_MAX_ROWS`),
- * then applies the optional `from`/`to`/`excludeFrom`/`id`/`channel`/`topic`
- * filters and returns the newest `limit` matches oldest-first. `matched`
- * counts the filter hits inside that scanned window — a lower bound when
- * `truncated` reports rows beyond it, never a fleet-wide total the bounded
- * read cannot prove.
+ * The `fleet_bus_hops` read delegates to the shared core projection
+ * `readBusHops` (`src/core/fleet/bus-hops.ts`) — the same read
+ * `phm fleet bus-hops` serves — so the MCP tool and the CLI can never
+ * disagree about which hops match or how the bounded tail is reported.
  */
 export async function readFleetBusHops(input: FleetBusHopsArgs = {}) {
-  const limit = input.limit ?? 20;
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_FLEET_BUS_HOPS) {
-    throw new RangeError('Bus hop limit must be an integer between 1 and 50.');
-  }
-  const tail = readBusHoplogTail(BUS_HOPLOG_TAIL_MAX_ROWS);
-  const meta = {
-    schemaVersion: 1 as const, snapshotKind: 'local-persisted' as const,
-    authority: 'none' as const, generatedAt: new Date().toISOString(),
-    sourceState: tail.state, logBytes: tail.logBytes, limit,
-  };
-  if (tail.state !== 'ok' || tail.hops === null) {
-    return {
-      ...meta, hops: null, matched: null, usageSummary: null,
-      returnedHops: null, skippedRows: null, truncated: null,
-    };
-  }
-  const registryRead = input.from === undefined && input.to === undefined && input.excludeFrom === undefined
-    ? undefined : readAgentRegistry();
-  const registry = registryRead?.status === 'ok' ? registryRead.registry : undefined;
-  const from = input.from === undefined ? undefined : agentRefAddressMatcher(input.from, registry);
-  const to = input.to === undefined ? undefined : agentRefAddressMatcher(input.to, registry);
-  const excludeFrom = input.excludeFrom === undefined ? undefined : agentRefAddressMatcher(input.excludeFrom, registry);
-  // The room and topic filters decide on the hop's own `to` routing label —
-  // the same raw-prefix and groupAddressTopicOf matches every bus read's
-  // channel/topic filters apply — so they need no registry and never widen
-  // on unknown identity state: an agent address, a bare `group:<room>` or a
-  // malformed group label simply never matches.
-  const channelPrefix = input.channel === undefined ? undefined : `group:${input.channel}:`;
-  const matchedHops = tail.hops.filter(hop =>
-    (from === undefined || from(hop.from)) &&
-    (to === undefined || to(hop.to)) &&
-    (excludeFrom === undefined || !excludeFrom(hop.from)) &&
-    (input.id === undefined || hop.id === input.id) &&
-    (channelPrefix === undefined || hop.to.startsWith(channelPrefix)) &&
-    (input.topic === undefined || groupAddressTopicOf(hop.to) === input.topic));
-  const page = matchedHops.slice(-limit);
-  const hops = page.map(hop => ({
-    id: hop.id, from: hop.from, to: hop.to,
-    inputTokens: hop.inputTokens, outputTokens: hop.outputTokens,
-  }));
-  return {
-    ...meta, sourceState: 'ok' as const, hops, matched: matchedHops.length,
-    usageSummary: summarizeBusHops(hops), returnedHops: hops.length,
-    skippedRows: tail.skippedRows,
-    truncated: (tail.truncated ?? false) || matchedHops.length > hops.length,
-  };
+  return readBusHops(input);
 }

@@ -2021,9 +2021,10 @@ the wake queue (state, observed hint count before the row cap, and whether
 the bounded tail or cap truncated older hints), the bus hop log every
 wake-enabled send and accepted channel mirror appends
 (`<root>/bus/hops.jsonl` — `state` plus on-disk `bytes`, the `hops`
-count observed inside the bounded tail `fleet_bus_hops` reads,
-`skippedRows` for malformed or torn rows and a `truncated` flag for hops
-beyond the window; 0 counts on a verified-missing log, null when
+count observed inside the bounded tail `fleet_bus_hops` and `phm fleet
+bus-hops` read, `skippedRows` for malformed or torn rows and a
+`truncated` flag for hops beyond the window; 0 counts on a
+verified-missing log, null when
 unreadable, never message ids, agent labels or bodies), the shared
 coordination table
 (live claims and status rows), the message-id claim journal behind `fleet
