@@ -1460,6 +1460,22 @@
  *     without owner or reason stay out, and only the fleet's own
  *     repository inherits the items since the churn is this
  *     install's claim machinery, not any one target repo's;
+ *   - the amplify advisory tick journal's recurring adverse
+ *     recommendations and degraded inputs: the amplify.tick.v1
+ *     ADVISORY rows amplifyTick appends to metrics/amplify.jsonl on
+ *     every leader cycle and `phm amplify tick` — the projectAmplify
+ *     projection's own prioritized actions (per-pool
+ *     use-expiring-capacity, check-heartbeat, review-merge-flow,
+ *     refresh-evidence), heartbeat staleness and per-source health,
+ *     folded per cell across distinct UTC days inside the 7-day
+ *     window (amplifyBacklogItems below). Until now the journal's
+ *     only consumers were `phm amplify status`/`tick`/`goal` and the
+ *     leader memo's UNTRUSTED DATA block — all newest-snapshot
+ *     surfaces — so a recommendation the advisory loop kept making
+ *     tick after tick never became work; 'review-saturation' and
+ *     off-contract kinds never count, truncated tails are stated as
+ *     lower bounds, and only the fleet's own repository inherits the
+ *     items since pools are lane and quota labels, not repositories;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1596,6 +1612,7 @@ import { evalGateBacklogItems } from './eval-gate-backlog.js';
 import { teammateInboxBacklogItems } from './teammate-inbox-backlog.js';
 import { telemetrySpanBacklogItems } from './telemetry-span-backlog.js';
 import { coordinationBacklogItems } from './coordination-backlog.js';
+import { amplifyBacklogItems } from './amplify-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -3401,6 +3418,22 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the churn is this install's
   // claim machinery, not any one target repo's.
   items.push(...await coordinationBacklogItems({ repo }));
+
+  // Amplify advisory tick journal: the amplify.tick.v1 ADVISORY rows
+  // amplifyTick appends to metrics/amplify.jsonl on every leader cycle
+  // and `phm amplify tick` — the projectAmplify projection's own
+  // prioritized actions, heartbeat staleness and per-source health.
+  // Until now the journal's only consumers were `phm amplify
+  // status`/`tick`/`goal` and the leader memo's UNTRUSTED DATA block —
+  // all newest-snapshot surfaces — so a recommendation the advisory
+  // loop kept making tick after tick never became work. Cells emit
+  // only at the recurring bars of qualifying ticks across distinct
+  // UTC days inside the window; 'review-saturation' and off-contract
+  // kinds never count, an unreadable read yields nothing while a
+  // truncated tail folds lower-bound flagged, and only the fleet's
+  // own repository inherits the items since the journal describes
+  // this install's fleet machinery and carries no repository column.
+  items.push(...await amplifyBacklogItems({ repo }));
   return { items, errors };
 }
 
