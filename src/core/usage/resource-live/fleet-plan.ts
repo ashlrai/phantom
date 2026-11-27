@@ -61,13 +61,14 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
   const dispatch = object(status);
   const age = now - time(dispatch['last_tick']);
   const statusLanes = dispatch['schema'] === 'dispatchd.status.v1' && age >= 0 && age < 5 * MINUTE ? object(dispatch['lanes']) : {};
+  const paused = dispatch['paused'] === true || (typeof dispatch['paused'] === 'string' && dispatch['paused'].trim().length > 0);
   const antigravity = antigravityQuota(measured.get('antigravity'), now);
   const laneNames = [...new Set([...plan.allowances.flatMap(row => row.lane ? [row.lane] : []), ...Object.keys(statusLanes)])];
   const lanes = laneNames.map(lane => {
     const row = object(statusLanes[lane]);
     const running = count(row['running']), ceiling = count(row['ceiling']), hard = count(row['hard_cap']);
     const cap = ceiling === null || hard === null ? null : Math.min(ceiling, hard);
-    const held = typeof row['held'] === 'boolean' ? row['held'] || Boolean(dispatch['paused']) : null;
+    const held = (paused && Object.hasOwn(statusLanes, lane)) || (typeof row['held'] === 'boolean' ? row['held'] : null);
     const queued = demand?.get(lane)?.length ?? count(row['queued']);
     const recent = jobs.filter(job => job.lane === lane);
     const tokenJobs = recent.filter(job => job.tokens !== null);
@@ -120,6 +121,11 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
   for (const name of ordered) {
     const lane = laneByName.get(name)!;
     if (lane.reason === ANTIGRAVITY_EXHAUSTION) continue;
+    if (lane.held === true) {
+      lane.target_concurrency = lane.running;
+      lane.additional_slots = 0;
+      continue;
+    }
     const candidates = allowances.filter(row => row.lane === name);
     const active = candidates.filter(row => row.action === 'burn' && row.remaining !== null && row.jobs_per_slot !== null &&
       row.jobs_per_slot > 0 && row.estimated_quota_per_job !== null);
@@ -135,7 +141,7 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
       return serves ? [index] : [];
     });
     if (lane.running === null || lane.max_concurrency === null || lane.queued_jobs === null || lane.held === null) continue;
-    if (lane.held || lane.queued_jobs === 0 || lane.running >= lane.max_concurrency || candidates.some(row => row.action === 'hold')) {
+    if (lane.queued_jobs === 0 || lane.running >= lane.max_concurrency || candidates.some(row => row.action === 'hold')) {
       lane.target_concurrency = lane.running;
       lane.additional_slots = 0;
       continue;

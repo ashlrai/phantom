@@ -563,8 +563,12 @@ It exits 1 when fresh status shows at least one unfed lane and 0 when fresh
 status establishes that none are unfed. Exit 2 means the current verdict is
 unknown because status is unreadable or stale, or because the report has
 unknown lane verdicts and no confirmed unfed lane. The report is read-only.
-The resource plan uses the same
-bounded local host and Tailnet evidence as the resource planning command. The isolated fleet
+The resource plan uses the same bounded local host and Tailnet evidence as
+the resource planning command. A fresh dispatcher lane hold or fleet pause
+sets `additional_slots` to zero for the affected reported lane, even when
+queue depth or concurrency limits are unknown. `target_concurrency` follows
+the observed running count and stays unknown when that count is missing.
+The isolated fleet
 MCP server's `fleet_unfed` tool serves the same `fleet.unfed.v1` assembly —
 the same `readUnfedReport` read this command and the tool share — with
 `windowHours` taking the `--window` bound; see

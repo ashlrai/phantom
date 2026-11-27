@@ -85,6 +85,21 @@ describe('fleet resource plan', () => {
     expect(buildFleetResourcePlan(null, [], null, ledger, now).allowances.find(row => row.id === 'codex-personal')?.remaining).toBeNull();
   });
 
+  it.each([
+    { paused: null, row: { held: true, running: 1 }, target: 1 },
+    { paused: 'operator pause', row: { running: 1 }, target: 1 },
+    { paused: 'operator pause', row: {}, target: null },
+  ])('reports zero additional slots for a fresh hold with partial lane counts (%j)', ({ paused, row, target }) => {
+    const snapshot = { ...status(), paused, lanes: { 'codex-personal': row } };
+    const read = (last_tick: string) => buildFleetResourcePlan(live, [node], { ...snapshot, last_tick }, ledger, now)
+      .lanes.find(lane => lane.lane === 'codex-personal');
+    expect(read(iso(now))).toMatchObject({
+      held: true, running: target, queued_jobs: null, max_concurrency: null,
+      target_concurrency: target, additional_slots: 0,
+    });
+    expect(read(iso(now - hr))).toMatchObject({ held: null, target_concurrency: null, additional_slots: null });
+  });
+
   it('keeps advisory unfed slots unknown when only the dispatcher total is available', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'phantom-unfed-ready-'));
     try {
