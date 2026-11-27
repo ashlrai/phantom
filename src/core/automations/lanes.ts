@@ -36,7 +36,7 @@ import type { CloudInternalLaunch } from '../cloud/service.js';
 import type { DevinLaunchResponse } from '../devin/types.js';
 import type { DevinInternalLaunch } from '../devin/service.js';
 import type { EnqueueTaskResult, FleetTaskInput } from '../fleet/fleet-types.js';
-import type { AutomationFiringV1, AutomationLaneRef, AutomationV1 } from './types.js';
+import { roundAutomationUsd, type AutomationFiringV1, type AutomationLaneRef, type AutomationV1 } from './types.js';
 
 export type LaneOutcome =
   | { kind: 'dispatched'; ref: AutomationLaneRef; spendUsd: number; reason: string }
@@ -106,7 +106,7 @@ async function defaultEstimateUsd(lane: AutomationV1['lane']): Promise<number> {
     if (lane === 'devin') {
       const { readDevinBudget } = await import('../devin/store.js');
       const b = readDevinBudget();
-      return Math.round(b.maxAcuPerSession * b.usdPerAcu * 100) / 100;
+      return roundAutomationUsd(b.maxAcuPerSession * b.usdPerAcu);
     }
   } catch { /* fall through: unknown spend is not free — see caller */ }
   return lane === 'fleet' || lane === 'leader-review' ? 0 : Number.POSITIVE_INFINITY;
@@ -168,14 +168,21 @@ export function grantRepos(policy: EffectivePolicy | null): string[] {
   return policy ? policy.repos.map((r) => r.nameWithOwner) : [];
 }
 
+/** Fail-closed KILL read (any error counts as KILL active). */
+export async function safeReadKillActive(deps: Pick<Required<AutomationLaneDeps>, 'killActive'>): Promise<boolean> {
+  try { return await deps.killActive(); } catch { return true; }
+}
+
+/** Fail-closed standing policy read (any error counts as no grant). */
+export async function safeReadPolicy(deps: Pick<Required<AutomationLaneDeps>, 'policy'>): Promise<EffectivePolicy | null> {
+  try { return await deps.policy(); } catch { return null; }
+}
+
 /** KILL first (every lane), then the grant (every lane that does work). Null = clear. */
 export async function laneGateRefusal(lane: AutomationV1['lane'], repo: string, deps: Required<AutomationLaneDeps>): Promise<string | null> {
-  let kill = true;
-  try { kill = await deps.killActive(); } catch { kill = true; }
-  if (kill) return KILL_REASON;
+  if (await safeReadKillActive(deps)) return KILL_REASON;
   if (lane === 'leader-review') return null;
-  let policy: EffectivePolicy | null = null;
-  try { policy = await deps.policy(); } catch { policy = null; }
+  const policy = await safeReadPolicy(deps);
   if (!policy) return NO_GRANT_REASON;
   if (!repoInPolicy(policy, repo)) return `${repo} is not in the standing grant's current stage.`;
   return null;
@@ -222,7 +229,7 @@ export function buildAutomationPrompt(automation: AutomationV1, firing: Automati
 }
 
 /** Fleet dedupe keys are short identifiers without spaces (task-source cleanRef). */
-export function fleetDedupeKey(firing: AutomationFiringV1): string {
+function fleetDedupeKey(firing: AutomationFiringV1): string {
   return `automation:${firing.automationId}:${firing.id}`.slice(0, 190);
 }
 
@@ -230,7 +237,6 @@ export function fleetDedupeKey(firing: AutomationFiringV1): string {
 // Dispatch
 // ---------------------------------------------------------------------------
 
-const CLOUD_DEFER: ReadonlySet<string> = new Set(['budget', 'seat-unavailable', 'rate-limited', 'timeout']);
 const DEVIN_REFUSE: ReadonlySet<string> = new Set(['not-enabled', 'not-connected', 'auth', 'forbidden', 'invalid-request']);
 
 /**
@@ -291,7 +297,6 @@ export async function dispatchToLane(
       }
       const reason = res.error ?? 'The cloud lane did not start the session.';
       if (res.task) return { kind: 'failed', reason, ref: { lane: 'cloud', id: res.task.id, url: res.task.sessionUrl } };
-      if (res.failure && CLOUD_DEFER.has(res.failure)) return { kind: 'deferred', reason };
       return res.failure === null ? { kind: 'refused', reason } : { kind: 'deferred', reason };
     }
 

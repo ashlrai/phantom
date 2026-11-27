@@ -1,11 +1,11 @@
 import { assertMetadata } from '../connectors/profile.js';
 import { createAutomation } from './index.js';
-import { parseRrule } from './rrule.js';
+import { parseRrule, RRULE_DAY_CODES } from './rrule.js';
 import { readAutomations } from './store.js';
-import { AUTOMATION_LIMITS, type AutomationV1 } from './types.js';
-import { AutomationInputError, normaliseAutomation } from './validate.js';
+import { AUTOMATION_LIMITS, automationToInput, isAutomationRecord, type AutomationV1 } from './types.js';
+import { failAutomationInput, normaliseAutomation } from './validate.js';
 
-const fail = (message: string): never => { throw new AutomationInputError(message); };
+const fail = failAutomationInput;
 
 function field(raw: string, min: number, max: number): number[] {
   const values = new Set<number>();
@@ -26,7 +26,7 @@ function field(raw: string, min: number, max: number): number[] {
 }
 
 /** Convert only cron expressions representable without changing their calendar semantics. */
-export function cronToRrule(cron: string): string {
+function cronToRrule(cron: string): string {
   const parts = cron.trim().split(/\s+/);
   if (parts.length !== 5) return fail('Cron must have five fields: minute hour day-of-month month day-of-week.');
   const [minute, hour, day, month, weekday] = parts as [string, string, string, string, string];
@@ -36,11 +36,10 @@ export function cronToRrule(cron: string): string {
   const hours = field(hour, 0, 23);
   const days = field(day, 1, 31);
   const weekdays = field(weekday, 0, 7).map((n) => n === 7 ? 0 : n);
-  const codes = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
   const freq = day !== '*' ? 'MONTHLY' : weekday !== '*' ? 'WEEKLY' : 'DAILY';
   const rule = [`FREQ=${freq}`, `BYHOUR=${hours.join(',')}`, `BYMINUTE=${minutes.join(',')}`];
   if (day !== '*') rule.push(`BYMONTHDAY=${days.join(',')}`);
-  if (weekday !== '*') rule.push(`BYDAY=${[...new Set(weekdays)].map((n) => codes[n]).join(',')}`);
+  if (weekday !== '*') rule.push(`BYDAY=${[...new Set(weekdays)].map((n) => RRULE_DAY_CODES[n]).join(',')}`);
   return rule.join(';');
 }
 
@@ -50,8 +49,8 @@ export async function importRoutines(raw: unknown, dryRun = false): Promise<{ im
   const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const candidates: AutomationV1[] = [];
   for (const [index, value] of raw.entries()) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return fail(`Routine ${index + 1} must be an object.`);
-    const item = value as Record<string, unknown>;
+    if (!isAutomationRecord(value)) return fail(`Routine ${index + 1} must be an object.`);
+    const item = value;
     if (Object.keys(item).some((key) => !['name', 'schedule', 'timezone', 'prompt', 'limits'].includes(key))) return fail(`Routine ${index + 1} has an unknown field.`);
     if (typeof item['timezone'] !== 'string') return fail(`Routine ${index + 1} needs a timezone.`);
     let zone: string;
@@ -82,10 +81,7 @@ export async function importRoutines(raw: unknown, dryRun = false): Promise<{ im
   const imported: AutomationV1[] = [];
   for (const candidate of pending) {
     if (dryRun) imported.push(candidate);
-    else {
-      const { v: _v, id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...input } = candidate;
-      imported.push(await createAutomation(input));
-    }
+    else imported.push(await createAutomation(automationToInput(candidate)));
   }
   return { imported, skipped, dryRun };
 }

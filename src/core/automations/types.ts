@@ -198,6 +198,33 @@ export const AUTOMATION_ID_PATTERN = /^au_[a-z0-9][a-z0-9-]{1,47}$/;
 export const AUTOMATION_FIRING_ID_PATTERN = /^af_\d{8}T\d{6}_[a-z0-9]{6}$/;
 export const AUTOMATION_REPO_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 export const AUTOMATION_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 :._/+-]{0,49}$/;
+export const AUTOMATION_BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
+
+/** Non-null, non-array object guard shared across automation parsers, stores and CLI. */
+export function isAutomationRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Round a USD amount or estimate to 2 decimal places. */
+export function roundAutomationUsd(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** Cap text to `max` characters with a trailing ellipsis when truncated. */
+export function truncateAutomationText(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+/** Working lane a leader-review firing routes to once approved (defaults to fleet). */
+export function approvedReviewLane(automation: Pick<AutomationV1, 'lane'> | null): Exclude<AutomationLane, 'leader-review'> {
+  return automation && automation.lane !== 'leader-review' ? automation.lane : 'fleet';
+}
+
+/** Strip stored-only metadata fields so a saved definition can be re-submitted as input. */
+export function automationToInput(stored: AutomationV1): AutomationInput {
+  const { v: _v, id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...input } = stored;
+  return input;
+}
 
 // ---------------------------------------------------------------------------
 // Firings
