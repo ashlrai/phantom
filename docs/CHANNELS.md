@@ -436,7 +436,8 @@ Gmail archive-plan overages, LinkedIn messages saved as
 JSON files under `<runsDir>/comms/linkedin/inbox/` (answered when a file of the
 same id exists in `.../linkedin/answered/`; replies stay drafts) and live
 comms questions/approvals from the request queue (`~/.ashlr/comms/requests.jsonl`,
-the same store `phm comms status` counts — a sent one is the single
+the same store `phm comms status` counts and `phm comms requests` reads in
+full — answered, expired and report rows included — a sent one is the single
 outstanding slot Mason's numbered reply or button tap resolves and lists as a
 blocking warn, a pending one is queued behind it; informational reports never
 await a reply and never list, and `expiresAt` is the real TTL deadline
