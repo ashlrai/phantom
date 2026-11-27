@@ -2339,6 +2339,22 @@ describe('CI baseline evidence', () => {
       expect(report.groups[0]?.action, touched).toBe('pr-caused');
     }
   });
+  it.each([
+    { count: 1, pass: true },
+    { count: 2, pass: false },
+  ])('withholds CI actions when a PR adds a root Vitest config ($count PRs)', async options => {
+    const contents = {
+      'test/example.test.ts': "import { it } from 'vitest';",
+      'vitest.config.ts': "export default { test: { include: ['test/**/*.test.ts'] } };",
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({
+      ...options, touched: 'vitest.config.extra.ts', contents,
+    }).gh);
+    expect(report.freshness.map(pr => pr.state)).toEqual(Array(options.count).fill('fresh'));
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', unaffectedPrs: [] });
+    expect(report.updates).toEqual([]);
+  });
   it('fails closed when a harness probe errors or a setup entry is a glob', async () => {
     const contents = {
       'test/example.test.ts': "import { it } from 'vitest';",

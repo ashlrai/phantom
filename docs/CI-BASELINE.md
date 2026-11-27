@@ -558,7 +558,10 @@ file whose literal `include` globs cover the suite (a config with none governs
 every suite), that config's import closure, its `setupFiles`/`globalSetup`
 entries and their closures, the nearest `tsconfig.json`/`jsconfig.json`
 walking up from the test file, and the dependency manifests (which also cover
-suites running without bare imports). An unreadable governing config, an
+suites running without bare imports). A changed root Vitest config absent
+from master has unknown collection scope. Any failure without another
+observed dependency change stays unattributed for that PR, withholding its
+evidence from flake reruns and shared-baseline corroboration. An unreadable governing config, an
 unresolvable or globbed setup entry, or a failed harness probe yields
 `unknown`, never independence. A candidate that 404s tries the next
 resolution; any other fetch failure, unresolvable spec, alias, or computed

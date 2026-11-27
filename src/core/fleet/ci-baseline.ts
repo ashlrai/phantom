@@ -2617,8 +2617,22 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // the harness, and the secret-shape/
       // secret-scan/version-provenance trust gates have no vitest harness
       // at all, so the ambient set cannot reach any of them.
-      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === BUILD_STEP_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
-      const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
+      const usesHarness = !(failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === BUILD_STEP_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file));
+      const ambient = usesHarness ? await harnessAmbient(failure.file) : new Set<string>();
+      let touched: boolean | null = null;
+      if (pr.files?.some(f => f.path === failure.file)) {
+        touched = true;
+      } else if (deps && ambient && pr.files?.length < 100) {
+        touched = pr.files.some(f => deps.has(f.path) || ambient.has(f.path));
+        if (!touched && usesHarness) {
+          const changedConfigs = pr.files.filter(f => VITEST_CONFIG_NAME.test(f.path));
+          if (changedConfigs.length > 0) {
+            const configs = await discoverHarnessConfigs();
+            // A config absent on master has no observed collection scope.
+            if (!configs || changedConfigs.some(f => !configs.some(cfg => cfg.path === f.path))) touched = null;
+          }
+        }
+      }
       observations.push({ pr, failure, touched, runId: failure.runId });
     }
   }
