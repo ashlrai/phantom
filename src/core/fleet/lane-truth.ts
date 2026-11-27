@@ -216,7 +216,7 @@ export function defaultLaneTruthReaders(home = homedir(), now = Date.now()): Lan
               samples.push({ provider: 'codex-personal', window: count(window.window_minutes) !== null && Number(window.window_minutes) > 0 ? `${name}:${window.window_minutes}` : '', usedPercent: typeof window.used_percent === 'number' ? window.used_percent : null, resetAt, sampledAt: instant(row.timestamp) ?? '' });
             }
           }
-          if (samples.length) return samples;
+          if (samples.some(sample => sample.sampledAt !== '' && Date.parse(sample.sampledAt) <= now)) return samples;
         }
       } catch { /* No raw file data or filesystem error reaches output. */ }
       return [];
