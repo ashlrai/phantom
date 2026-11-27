@@ -58,6 +58,27 @@ test('unknown, stale, future and expired reports never become pool capacity; exa
   expect(projectFleetAwareness(legacy.state, legacy.now()).hosts[0]?.freeSlots).toBeNull();
 });
 
+test('delayed and future samples cannot replace the latest observed host capacity', () => {
+  const f = fixture();
+  const node = f.add('node', { slots: 2 });
+  f.enqueue();
+  f.advance(1);
+  f.beat('node', { sampledAtMs: f.now() - 2, slots: 0, held: 'memory-pressure' });
+  f.beat('node', { sampledAtMs: f.now() + 1, slots: 0, held: 'disk-pressure' });
+  expect(node.heartbeatAt).toBe(f.now());
+  expect(node.slots).toBe(2);
+  expect(projectFleetAwareness(f.state, f.now()).hosts[0]).toMatchObject({ freeSlots: 2, held: null });
+  expect(f.run('pull', ['--node', node.nodeId, '--session', String(node.session)]).pulled).toBe(true);
+
+  f.advance(1);
+  f.beat('node', { slots: 0, held: 'memory-pressure' });
+  f.beat('node', { sampledAtMs: f.now() - 1, slots: 2 });
+  f.enqueue('next');
+  expect(node.slots).toBe(0);
+  expect(projectFleetAwareness(f.state, f.now()).hosts[0]).toMatchObject({ freeSlots: 0, held: 'memory-pressure' });
+  expect(f.run('pull', ['--node', node.nodeId, '--session', String(node.session)]).pulled).toBe(false);
+});
+
 test.each([
   { paused: 'disk guard' },
   { admission: { admit: false } },
