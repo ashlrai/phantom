@@ -16,7 +16,8 @@ import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/co
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type FleetHeldRead, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import type { NotRunningRow } from '../src/core/fleet/fleet-held.js';
 import type { ParkedGroup, ParkedMetDep, ParkedUnmetDep } from '../src/core/fleet/runs-parked-queue.js';
 import type { StuckJob as RunningStuckJob } from '../src/core/fleet/running-stuck.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
@@ -5417,6 +5418,201 @@ describe('readUnifiedInbox queue parked', () => {
     const byGateStale = await readParked(pending, { filter: { job: 'RQ-DONE' } });
     expect(byGateStale.items.filter(i => i.source === 'queue-parked').map(i => i.id).sort())
       .toEqual(['queue-parked:RQ-STALE', 'queue-parked:RQ-WAIT']);
+  });
+});
+
+describe('readUnifiedInbox fleet held', () => {
+  const heldRead = (over: Partial<FleetHeldRead> = {}): FleetHeldRead => ({
+    state: 'healthy', rows: [], ...over,
+  });
+  const heldRow = (over: Partial<NotRunningRow> = {}): NotRunningRow => ({
+    job_or_lane: 'RQ-J1', kind: 'held_launch',
+    reason: 'kernel pressure', since: new Date(now - 3_600_000).toISOString(),
+    unblock: 'Free memory or disk on the host', ...over,
+  });
+  const readHeld = (h: FleetHeldRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readFleetHeld: async () => h, ...extra });
+
+  it('lists each not-running row once under its own kind, severity, title, detail, since and acts', async () => {
+    const inbox = await readHeld(heldRead({ rows: [
+      heldRow(),
+      heldRow({ job_or_lane: 'devin', kind: 'idle_lane', reason: 'Target above 0 with nothing running and nothing queued',
+        since: null, unblock: 'Queue work for this lane' }),
+      heldRow({ job_or_lane: 'RQ-OLD', kind: 'launched_no_finish', reason: 'No finish recorded more than 60 minutes after launch',
+        unblock: 'Check the job log, then stop or requeue the job' }),
+      heldRow({ job_or_lane: 'RQ-DONE', kind: 'finished_no_publish', reason: 'Finished with no publish record',
+        unblock: 'Republish this job or requeue it' }),
+    ] }));
+    expect(inbox.sources['fleet-held']).toEqual({ state: 'healthy', pending: 4 });
+    const items = inbox.items.filter(i => i.source === 'fleet-held');
+    expect(items).toHaveLength(4);
+
+    const held = items.find(i => i.id === 'fleet-held:held_launch:RQ-J1')!;
+    expect(held).toMatchObject({
+      kind: 'held-launch', severity: 'warn', blocking: false,
+      title: 'Job RQ-J1 launch held',
+      since: new Date(now - 3_600_000).toISOString(), expiresAt: null,
+      jobIds: ['RQ-J1'],
+      act: ['phm fleet held', 'phm fleet lanes'],
+    });
+    expect(held.detail).toContain('kernel pressure');
+    expect(held.detail).toContain('next: Free memory or disk on the host');
+
+    const idle = items.find(i => i.id === 'fleet-held:idle_lane:devin')!;
+    expect(idle).toMatchObject({
+      kind: 'idle-lane', severity: 'info', blocking: false,
+      title: 'Lane devin idle', since: null, expiresAt: null,
+      act: ['phm fleet held', 'phm fleet unfed --json'],
+    });
+    // A lane row names a lane, never a job — it cites no job id.
+    expect(idle.jobIds).toBeUndefined();
+    expect(idle.detail).toContain('Target above 0 with nothing running and nothing queued');
+    expect(idle.detail).toContain('next: Queue work for this lane');
+
+    const stale = items.find(i => i.id === 'fleet-held:launched_no_finish:RQ-OLD')!;
+    expect(stale).toMatchObject({
+      kind: 'launched-no-finish', severity: 'warn', blocking: false,
+      title: 'Job RQ-OLD launched with no finish',
+      jobIds: ['RQ-OLD'],
+      act: ['phm fleet held', 'phm jobs stuck'],
+    });
+    expect(stale.detail).toContain('No finish recorded more than 60 minutes after launch');
+
+    const unpublished = items.find(i => i.id === 'fleet-held:finished_no_publish:RQ-DONE')!;
+    expect(unpublished).toMatchObject({
+      kind: 'finished-no-publish', severity: 'warn', blocking: false,
+      title: 'Job RQ-DONE finished with no publish',
+      jobIds: ['RQ-DONE'],
+      act: ['phm fleet held', 'phm fleet republish'],
+    });
+    expect(unpublished.detail).toContain('Finished with no publish record');
+    expect(unpublished.detail).toContain('next: Republish this job or requeue it');
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readHeld(heldRead({ state: 'missing', rows: [heldRow()] }));
+    expect(missing.sources['fleet-held']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'fleet-held')).toHaveLength(0);
+
+    const unavailable = await readHeld(heldRead({ state: 'unavailable', rows: [heldRow()] }));
+    expect(unavailable.sources['fleet-held']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'fleet-held')).toHaveLength(0);
+
+    const throwing = await read({ readFleetHeld: async () => { throw new Error('fleet boom'); } });
+    expect(throwing.sources['fleet-held']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'fleet-held')).toHaveLength(0);
+  });
+
+  it('lists every row degraded when the fleet read is partial, saying so in the detail', async () => {
+    const inbox = await readHeld(heldRead({ state: 'degraded', rows: [heldRow(), heldRow({ job_or_lane: 'devin', kind: 'idle_lane' })] }));
+    expect(inbox.sources['fleet-held']).toEqual({ state: 'degraded', pending: 2 });
+    for (const item of inbox.items.filter(i => i.source === 'fleet-held')) {
+      expect(item.detail).toContain('fleet state read degraded');
+    }
+  });
+
+  it('reads the real runs-dir state: held launches, idle lanes, stale launches and unpublished finishes', async () => {
+    mkdirSync(join(runsDir, 'queue'), { recursive: true });
+    mkdirSync(join(runsDir, 'metrics'), { recursive: true });
+    mkdirSync(join(runsDir, 'leader', 'drop', 'done'), { recursive: true });
+    writeFileSync(join(runsDir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: new Date(now - 60_000).toISOString(), paused: false, mem_free_pct: 50,
+      lanes: {
+        devin: { running: 0, target: 2, queued: 0, held: false },
+        'codex-local': { running: 1, target: 1, queued: 0, held: false },
+      },
+    }), { mode: 0o600 });
+    writeFileSync(join(runsDir, 'queue', 'claimed.tsv'), '', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'dispatch-events.log'), '', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'queue', 'claude-lane.state'), 'claude\n', { mode: 0o600 });
+    // J-OLD launched 70m ago and never finished; J-DONE launched 40m ago and
+    // finished 30m ago with no publish; J-FRESH launched 5m ago — healthy.
+    writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), [
+      JSON.stringify({ event: 'launch', job: 'J-OLD', at: new Date(now - 70 * 60_000).toISOString() }),
+      JSON.stringify({ event: 'launch', job: 'J-DONE', at: new Date(now - 40 * 60_000).toISOString() }),
+      JSON.stringify({ event: 'finish', job: 'J-DONE', lane: 'codex-local', tokens_total: 1234, at: new Date(now - 30 * 60_000).toISOString(), empty: false }),
+      JSON.stringify({ event: 'launch', job: 'J-FRESH', at: new Date(now - 5 * 60_000).toISOString() }),
+    ].join('\n'), { mode: 0o600 });
+    // .launch records: J-HELD held before it ever ran; J-OLD and J-FRESH launched.
+    writeFileSync(join(runsDir, 'J-HELD.launch'), 'HELD: kernel pressure\n', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-OLD.launch'), 'launched codex-local tier work\n', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-FRESH.launch'), 'launched codex-local tier work\n', { mode: 0o600 });
+    utimesSync(join(runsDir, 'J-HELD.launch'), new Date(now - 10 * 60_000), new Date(now - 10 * 60_000));
+    utimesSync(join(runsDir, 'J-OLD.launch'), new Date(now - 70 * 60_000), new Date(now - 70 * 60_000));
+    utimesSync(join(runsDir, 'J-FRESH.launch'), new Date(now - 5 * 60_000), new Date(now - 5 * 60_000));
+
+    const inbox = await read();
+    expect(inbox.sources['fleet-held']).toEqual({ state: 'healthy', pending: 4 });
+    const items = inbox.items.filter(i => i.source === 'fleet-held');
+    expect(items.map(i => i.id).sort()).toEqual([
+      'fleet-held:finished_no_publish:J-DONE', 'fleet-held:held_launch:J-HELD',
+      'fleet-held:idle_lane:devin', 'fleet-held:launched_no_finish:J-OLD',
+    ]);
+    const held = items.find(i => i.id === 'fleet-held:held_launch:J-HELD')!;
+    expect(held).toMatchObject({ kind: 'held-launch', severity: 'warn', jobIds: ['J-HELD'], since: new Date(now - 10 * 60_000).toISOString() });
+    expect(held.detail).toContain('kernel pressure');
+    expect(held.detail).toContain('next: Free memory or disk on the host');
+    const idle = items.find(i => i.id === 'fleet-held:idle_lane:devin')!;
+    expect(idle).toMatchObject({ kind: 'idle-lane', severity: 'info', since: null });
+    expect(idle.jobIds).toBeUndefined();
+    expect(idle.detail).toContain('Queue work for this lane');
+    const stale = items.find(i => i.id === 'fleet-held:launched_no_finish:J-OLD')!;
+    expect(stale).toMatchObject({ kind: 'launched-no-finish', severity: 'warn', jobIds: ['J-OLD'], since: new Date(now - 70 * 60_000).toISOString() });
+    const unpublished = items.find(i => i.id === 'fleet-held:finished_no_publish:J-DONE')!;
+    expect(unpublished).toMatchObject({ kind: 'finished-no-publish', severity: 'warn', jobIds: ['J-DONE'], since: new Date(now - 30 * 60_000).toISOString() });
+    // J-FRESH launched 5m ago — inside the hour, never lists.
+    expect(items.some(i => i.id.includes('J-FRESH'))).toBe(false);
+    // codex-local runs 1 of target 1 — busy, never an idle lane.
+    expect(items.some(i => i.id.includes('codex-local'))).toBe(false);
+  });
+
+  it('degrades when the metrics ledger is absent — finish and publish states stay unproven, never fabricated', async () => {
+    mkdirSync(join(runsDir, 'queue'), { recursive: true });
+    mkdirSync(join(runsDir, 'leader', 'drop', 'done'), { recursive: true });
+    writeFileSync(join(runsDir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: new Date(now - 60_000).toISOString(), paused: false, mem_free_pct: 50,
+      lanes: { devin: { running: 0, target: 2, queued: 0, held: false } },
+    }), { mode: 0o600 });
+    writeFileSync(join(runsDir, 'queue', 'claimed.tsv'), '', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'dispatch-events.log'), '', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'queue', 'claude-lane.state'), 'claude\n', { mode: 0o600 });
+    // No metrics/jobs.jsonl: launched_no_finish and finished_no_publish
+    // cannot be proven either way, so only the launch-record and lane rows list.
+    writeFileSync(join(runsDir, 'J-HELD.launch'), 'HELD: kernel pressure\n', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-OLD.launch'), 'launched codex-local tier work\n', { mode: 0o600 });
+    utimesSync(join(runsDir, 'J-HELD.launch'), new Date(now - 10 * 60_000), new Date(now - 10 * 60_000));
+    utimesSync(join(runsDir, 'J-OLD.launch'), new Date(now - 70 * 60_000), new Date(now - 70 * 60_000));
+
+    const inbox = await read();
+    expect(inbox.sources['fleet-held']).toEqual({ state: 'degraded', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'fleet-held');
+    expect(items.map(i => i.id).sort()).toEqual(['fleet-held:held_launch:J-HELD', 'fleet-held:idle_lane:devin']);
+    for (const item of items) expect(item.detail).toContain('fleet state read degraded');
+  });
+
+  it('reports a verified-absent runs dir as missing', async () => {
+    const inbox = await read({ runsDir: join(root, 'absent-runs') });
+    expect(inbox.sources['fleet-held']).toEqual({ state: 'missing', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'fleet-held')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = heldRead({ rows: [
+      heldRow(),
+      heldRow({ job_or_lane: 'devin', kind: 'idle_lane' }),
+      heldRow({ job_or_lane: 'RQ-OLD', kind: 'launched_no_finish' }),
+    ] });
+    const bySource = await readHeld(pending, { filter: { source: 'fleet-held' } });
+    expect(bySource.items).toHaveLength(3);
+    expect(bySource.items.every(i => i.source === 'fleet-held')).toBe(true);
+    const byKind = await readHeld(pending, { filter: { kind: 'idle-lane' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['fleet-held:idle_lane:devin']);
+    expect(byKind.sources['fleet-held']).toEqual({ state: 'healthy', pending: 3 });
+    // A job row's own id is its citation; the lane row names no job.
+    const byJob = await readHeld(pending, { filter: { job: 'RQ-J1' } });
+    expect(byJob.items.filter(i => i.source === 'fleet-held').map(i => i.id)).toEqual(['fleet-held:held_launch:RQ-J1']);
+    const byLane = await readHeld(pending, { filter: { job: 'devin' } });
+    expect(byLane.items.filter(i => i.source === 'fleet-held')).toHaveLength(0);
   });
 });
 

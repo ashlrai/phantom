@@ -4847,7 +4847,9 @@ a claim-holder hint's `jobId` or a resolved referent's feed citation —
 teammate tasks by `jobId`, seat
 handoffs by `node-job` refs, peer-dispatch receipts by their peer-announced
 `jobId`, session-handoff items by their journal's job id, router-queue rows
-by their own READY id, jobs-stuck markers by their own job id) for `comms
+by their own READY id, jobs-stuck markers by their own job id, fleet-held
+job rows by their own job id — an idle-lane row names a lane, never a job,
+so it cites none) for `comms
 inbox --job` to match against,
 absent when no job relation is provable; `busReadContains(value)` and
 `busReadContainsMatch(body, needle)` — bounded by `BUS_READ_CONTAINS_MAX` —
