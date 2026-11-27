@@ -342,6 +342,34 @@ describe('CI baseline evidence', () => {
     expect(mismatch.groups).toEqual([]);
     expect(mismatch.freshness.every(p => p.state === 'unknown')).toBe(true);
   });
+  it.each([false, true])('rejects conflicting master checkout receipts (source-binding first: %s)', async bound => {
+    const { gh } = github({ count: 1, pass: true, bound });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const response = await gh(args);
+      if (!args[1]?.endsWith('/jobs/10/logs')) return response;
+      const receipt = bound
+        ? `/usr/bin/git log -1 --format=%H\n${head}`
+        : `Bound candidate ${head} to event tree ${'e'.repeat(40)}`;
+      return { ...response, stdout: `${response.stdout}\n${receipt}\n` };
+    });
+    expect(report.master.known).toBe(false);
+    expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
+  });
+  it.each([head, master])('requires repeated PR checkout echoes to match the head (%s)', async sha => {
+    const { gh } = github({ count: 1, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const response = await gh(args);
+      if (!args[1]?.endsWith('/jobs/20/logs')) return response;
+      return { ...response, stdout: `${response.stdout}\n/usr/bin/git log -1 --format=%H\n${sha}\n` };
+    });
+    if (sha === head) {
+      expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
+      expect(report.groups[0]).toMatchObject({ classification: 'probable-flake', master: 'pass' });
+    } else {
+      expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'unreadable-log-or-unverified-checkout' }]);
+      expect(report.groups).toEqual([]);
+    }
+  });
   it('verifies unbound gate jobs through the checkout ref echo', async () => {
     // secret-shape, quick, clean-tree, authority-drift, fast-gate,
     // secret-scan and the dependency-audit job never run
