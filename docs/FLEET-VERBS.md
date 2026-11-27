@@ -119,6 +119,11 @@ need work; conflicts and unavailable previews retain the original comparison.
 and `recut-sweep --json` uses that reason in `skipped`. Partly landed work keeps
 its missing paths; the recut loop reports its existing `landed` skip reason.
 
+Fleet eval report activity uses the lane and tier recorded on each receipt.
+Missing fields fall back to the job's latest routing receipt timestamped at
+or before that activity, even when the ledger rows arrive out of order.
+Fields without applicable routing evidence remain unattributed.
+
 For `fleet eval-report`, CI correlation uses required-check evidence only. A PR
 export must include `headRefOid`, a complete nonempty `requiredChecks` array of
 context names, and one rollup entry per required name with matching `headSha`.

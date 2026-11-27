@@ -60,10 +60,28 @@ describe('foldJobsLedger', () => {
     expect(finished).toHaveLength(3);
     expect(finished.filter((a) => a.failed)).toHaveLength(1);
     expect(finished.filter((a) => a.empty)).toHaveLength(1);
-    // Publish rows borrow the producing job's latest route even when missing fields.
+    // Publish rows borrow the producing job's route when fields are missing.
     expect(fold.activity.filter((a) => a.kind === 'publish' && a.lane === 'devin')).toHaveLength(3);
     // Out-of-window launch (RQ-OLD) is not an activity event.
     expect(fold.activity.filter((a) => a.kind === 'launch')).toHaveLength(6);
+  });
+
+  it('attributes activity to routes known at its timestamp, regardless of ledger order', () => {
+    const job = 'RQ-RETRY';
+    const text = [
+      { event: 'finish', job, ts: '2026-11-05T00:00:00Z' },
+      { event: 'finish', job, lane: 'explicit', ts: '2026-11-05T03:00:00Z' },
+      { event: 'launch', job, lane: 'retry', tier: 'frontier', ts: '2026-11-05T03:00:00Z' },
+      { event: 'publish', job, ts: '2026-11-05T02:00:00Z' },
+      { event: 'launch', job, lane: 'first', tier: 'work', ts: '2026-11-05T01:00:00Z' },
+    ].map((row) => JSON.stringify(row)).join('\n');
+
+    const fold = foldJobsLedger(text, NOW - 7 * 86_400_000, NOW);
+    expect(fold.activity.filter((event) => event.kind !== 'launch')).toMatchObject([
+      { kind: 'finish', lane: null, tier: null },
+      { kind: 'finish', lane: 'explicit', tier: 'frontier' },
+      { kind: 'publish', lane: 'first', tier: 'work' },
+    ]);
   });
 
   it('reads alias timestamp fields and prefers mergedAt on terminal rows', () => {
