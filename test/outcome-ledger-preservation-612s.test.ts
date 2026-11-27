@@ -680,6 +680,26 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(outcome?.review_findings).toEqual({ fixed: 1, rejected: 0, ignored: 0 });
   });
 
+  it.each([
+    ['older and undated receipts', [[2, 2], [1, 1], [null, 3]], 2],
+    ['identical receipts', [[2, 2], [2, 2]], 2],
+    ['conflicts followed by a replay', [[2, 2], [2, 3], [2, 2]], null],
+    ['a newer receipt after a conflict', [[2, 2], [2, 3], [3, 4]], 4],
+    ['only undated receipts', [[null, 1], [null, 2]], 2],
+  ] as const)('orders standing-PR review counts with %s', (_label, receipts, expected) => {
+    const pr_url = 'https://github.com/o/r/pull/1';
+    const rows = receipts.map(([day, fixed]) => ({
+      job: 'R1',
+      pr_url,
+      ...(day === null ? {} : { ts: `2026-11-0${day}T00:00:00Z` }),
+      review_findings: { fixed, rejected: 0, ignored: 0 },
+    }));
+    const [outcome] = foldRouterOutcomes(rows.map(row => JSON.stringify(row)).join('\n')).outcomes;
+    expect(outcome?.review_findings).toEqual(
+      expected === null ? null : { fixed: expected, rejected: 0, ignored: 0 },
+    );
+  });
+
   it('folds finish-row productivity verdicts, newest explicit value wins', () => {
     const fold = foldRouterOutcomes([
       '{"job":"F1","event":"finish","empty":true,"exit_code":1,"failure_class":"quota","wall_s":10,"tokens_total":1000}',

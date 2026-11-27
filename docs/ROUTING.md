@@ -1000,7 +1000,10 @@ verdict — while an empty readable ledger means zero recorded joins.
 Jobs-ledger `review_findings` counts follow the standing PR. The winning
 merge or close verdict selects the PR, and an unresolved job uses its latest
 unambiguous canonical PR claim. A terminal verdict without a URL can use a
-sole canonical claim. The last eligible count in ledger order stands.
+sole canonical claim. The newest eligible timestamped count stands.
+Conflicting counts at that timestamp stay unknown, while identical counts
+agree. When no eligible count has a parseable timestamp, the last eligible
+count in ledger order stands.
 Legacy job-only counts remain eligible for jobs with no PR claim or one
 uncontested canonical claim. Counts stay unknown when the available receipts
 cannot establish which PR the counts describe.

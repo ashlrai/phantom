@@ -1990,7 +1990,12 @@ function foldRouterOutcomesWithCiCoverage(
   const unlaunchedLanes = new Map<string, string>();
   const mergedAt = new Map<string, number>();
   const ciVerdicts: { job: string; pr: string | null; passed: boolean }[] = [];
-  const reviewFindings: { job: string; pr: string | null; findings: NonNullable<RouterOutcome['review_findings']> }[] = [];
+  const reviewFindings: {
+    job: string;
+    pr: string | null;
+    at: number | null;
+    findings: NonNullable<RouterOutcome['review_findings']>;
+  }[] = [];
   let unattached = 0;
   let sessionRows = 0;
   for (const r of rows) {
@@ -2115,7 +2120,7 @@ function foldRouterOutcomesWithCiCoverage(
     if (f !== null && typeof f === 'object' && !Array.isArray(f)) {
       const fixed = count((f as Row)['fixed']), rejected = count((f as Row)['rejected']), ignored = count((f as Row)['ignored']);
       if (fixed !== null && rejected !== null && ignored !== null && (u === null || rowPrKey !== null)) {
-        reviewFindings.push({ job: j, pr: rowPrKey, findings: { fixed, rejected, ignored } });
+        reviewFindings.push({ job: j, pr: rowPrKey, at: ledgerEventTs(r, null), findings: { fixed, rejected, ignored } });
       }
     }
     // The same claim rows carry the hinted lane's recorded blocking
@@ -2327,8 +2332,21 @@ function foldRouterOutcomesWithCiCoverage(
     return pr !== null ? pr === standingPr
       : standingPr !== null && (soleClaim === undefined || soleClaim === `pr:${standingPr}`);
   };
-  for (const { job, pr, findings } of reviewFindings) {
-    if (matchesStandingPr(job, pr)) outcomes.get(job)!.review_findings = findings;
+  const latestReviewAt = new Map<string, number>();
+  for (const { job, pr, at, findings } of reviewFindings) {
+    if (!matchesStandingPr(job, pr)) continue;
+    const latest = latestReviewAt.get(job);
+    const outcome = outcomes.get(job)!;
+    if (latest === undefined || (at !== null && at > latest)) {
+      outcome.review_findings = findings;
+      if (at !== null) latestReviewAt.set(job, at);
+    } else if (at === latest) {
+      const current = outcome.review_findings;
+      if (current && (current.fixed !== findings.fixed ||
+        current.rejected !== findings.rejected || current.ignored !== findings.ignored)) {
+        outcome.review_findings = null;
+      }
+    }
   }
   const disputedCiFirstPass = new Set<string>();
   for (const { job, pr, passed } of ciVerdicts) {
