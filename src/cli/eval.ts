@@ -128,6 +128,43 @@ export function formatEvalTable(rows: EvalRow[]): string {
   return lines.join('\n');
 }
 
+/** Shared help-flag check for `eval` subcommands. */
+export function isEvalHelpRequest(args: readonly string[]): boolean {
+  return args.includes('--help') || args.includes('-h') || args[0] === 'help';
+}
+
+/** Strict no-repeat flag parser shared by offline `eval` subcommands. */
+export function parseStrictEvalFlags<B extends string, V extends string>(
+  args: readonly string[],
+  spec: { boolFlags?: readonly B[]; valueFlags?: readonly V[] },
+): { bools: Record<B, boolean>; values: Partial<Record<V, string>>; usageError?: string } {
+  const boolSet = new Set<string>(spec.boolFlags ?? []);
+  const valueSet = new Set<string>(spec.valueFlags ?? []);
+  const bools = Object.fromEntries((spec.boolFlags ?? []).map((f) => [f, false])) as Record<B, boolean>;
+  const values: Partial<Record<V, string>> = {};
+  const seen = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (seen.has(arg)) return { bools, values, usageError: `repeated argument: ${arg}` };
+    if (boolSet.has(arg)) {
+      bools[arg as B] = true;
+      seen.add(arg);
+      continue;
+    }
+    if (valueSet.has(arg)) {
+      const value = args[++i];
+      if (value === undefined || value.startsWith('-')) {
+        return { bools, values, usageError: `${arg} requires a value` };
+      }
+      values[arg as V] = value;
+      seen.add(arg);
+      continue;
+    }
+    return { bools, values, usageError: `unknown argument: ${arg}` };
+  }
+  return { bools, values };
+}
+
 // ---------------------------------------------------------------------------
 // Arg parsing (minimal — mirrors run.ts style)
 // ---------------------------------------------------------------------------
@@ -244,47 +281,19 @@ async function evalFixture(
 // `ashlr eval` — main
 // ---------------------------------------------------------------------------
 
+const EVAL_SUBCOMMANDS: Record<string, (rest: string[]) => Promise<number> | number> = {
+  checkpoints: async (rest) => (await import('./eval-checkpoints.js')).cmdEvalCheckpoints(rest),
+  attention: async (rest) => (await import('./eval-attention.js')).cmdEvalAttention(rest),
+  'swe-bench': async (rest) => (await import('./eval-swe-bench.js')).cmdSweBench(rest),
+  router: async (rest) => (await import('./eval-router.js')).cmdEvalRouter(rest),
+  dataset: async (rest) => (await import('./eval-dataset.js')).cmdEvalDataset(rest),
+  prompts: async (rest) => (await import('./eval-prompts.js')).cmdEvalPrompts(rest),
+  passk: async (rest) => (await import('./eval-passk.js')).cmdEvalPassK(rest),
+};
+
 export async function cmdEval(args: string[]): Promise<number> {
-  if (args[0] === 'checkpoints') {
-    const { cmdEvalCheckpoints } = await import('./eval-checkpoints.js');
-    return cmdEvalCheckpoints(args.slice(1));
-  }
-
-  // M346: metadata-only fleet attention evaluation.
-  if (args[0] === 'attention') {
-    const { cmdEvalAttention } = await import('./eval-attention.js');
-    return cmdEvalAttention(args.slice(1));
-  }
-
-  // M143: dispatch swe-bench subcommand to its own handler.
-  if (args[0] === 'swe-bench') {
-    const { cmdSweBench } = await import('./eval-swe-bench.js');
-    return cmdSweBench(args.slice(1));
-  }
-
-  // RQ-SELFOPT-EVAL-HARNESS: offline router/prompt-policy replay benchmark.
-  if (args[0] === 'router') {
-    const { cmdEvalRouter } = await import('./eval-router.js');
-    return cmdEvalRouter(args.slice(1));
-  }
-
-  // Fold the live fleet ledgers into a router-eval.v1 dataset for replay.
-  if (args[0] === 'dataset') {
-    const { cmdEvalDataset } = await import('./eval-dataset.js');
-    return cmdEvalDataset(args.slice(1));
-  }
-
-  // RQ-SELFOPT-PROMPT-OPT: prompt-variant A/B eval + promotion dashboard.
-  if (args[0] === 'prompts') {
-    const { cmdEvalPrompts } = await import('./eval-prompts.js');
-    return cmdEvalPrompts(args.slice(1));
-  }
-
-  // RQ-SWE5-PASSK-EVAL: pass^k golden-task eval suite + nightly scheduler.
-  if (args[0] === 'passk') {
-    const { cmdEvalPassK } = await import('./eval-passk.js');
-    return cmdEvalPassK(args.slice(1));
-  }
+  const sub = args[0] !== undefined ? EVAL_SUBCOMMANDS[args[0]] : undefined;
+  if (sub) return sub(args.slice(1));
 
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
     printEvalHelp();

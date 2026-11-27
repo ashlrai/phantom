@@ -15,6 +15,7 @@ import { writeFileSync } from 'node:fs';
 
 import { foldRouterEvalDataset, routerEvalDatasetText } from '../core/eval/router-dataset.js';
 import { readRouterOutcomes, type RouterOutcomeRead } from '../core/router/outcomes.js';
+import { isEvalHelpRequest, parseStrictEvalFlags } from './eval.js';
 
 const USAGE = `Usage: phm eval dataset [--runs-dir <dir>] [--lane <lane>] [--out <jobs.jsonl>] [--json]
 
@@ -31,39 +32,6 @@ export interface EvalDatasetCliDeps {
   now?: () => Date;
 }
 
-interface ParsedArgs {
-  runsDir?: string;
-  lane?: string;
-  out?: string;
-  json: boolean;
-  usageError?: string;
-}
-
-function parseArgs(args: string[]): ParsedArgs {
-  const parsed: ParsedArgs = { json: false };
-  const valueFlags = new Set(['--runs-dir', '--lane', '--out']);
-  const seen = new Set<string>();
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (seen.has(arg)) { parsed.usageError = `repeated argument: ${arg}`; return parsed; }
-    if (arg === '--json') { parsed.json = true; seen.add(arg); continue; }
-    if (valueFlags.has(arg)) {
-      const value = args[++i];
-      if (value === undefined || value.startsWith('-')) {
-        parsed.usageError = `${arg} requires a value`;
-        return parsed;
-      }
-      const key = { '--runs-dir': 'runsDir', '--lane': 'lane', '--out': 'out' }[arg] as 'runsDir' | 'lane' | 'out';
-      parsed[key] = value;
-      seen.add(arg);
-      continue;
-    }
-    parsed.usageError = `unknown argument: ${arg}`;
-    return parsed;
-  }
-  return parsed;
-}
-
 export async function cmdEvalDataset(args: string[], overrides: EvalDatasetCliDeps = {}): Promise<number> {
   const deps: Required<EvalDatasetCliDeps> = {
     readOutcomes: (opts) => readRouterOutcomes({ ...opts, authorityEvidence: null }),
@@ -73,9 +41,18 @@ export async function cmdEvalDataset(args: string[], overrides: EvalDatasetCliDe
     now: () => new Date(),
     ...overrides,
   };
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { deps.out(USAGE); return 0; }
-  const parsed = parseArgs(args);
-  if (parsed.usageError) { deps.err(`error: ${parsed.usageError}\n${USAGE}`); return 2; }
+  if (isEvalHelpRequest(args)) { deps.out(USAGE); return 0; }
+  const flags = parseStrictEvalFlags(args, {
+    boolFlags: ['--json'] as const,
+    valueFlags: ['--runs-dir', '--lane', '--out'] as const,
+  });
+  if (flags.usageError) { deps.err(`error: ${flags.usageError}\n${USAGE}`); return 2; }
+  const parsed = {
+    runsDir: flags.values['--runs-dir'],
+    lane: flags.values['--lane'],
+    out: flags.values['--out'],
+    json: flags.bools['--json'],
+  };
 
   let read: RouterOutcomeRead;
   try {

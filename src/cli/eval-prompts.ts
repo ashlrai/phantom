@@ -33,6 +33,7 @@ import {
   parsePromptExperimentSpec,
   type PromptExperimentSpec,
 } from '../core/eval/prompt-variants.js';
+import { isEvalHelpRequest, parseStrictEvalFlags } from './eval.js';
 
 const USAGE = `Usage: phm eval prompts --dataset <jobs.jsonl> [--spec <experiment.json>] [--promote] [--write <report.json>] [--check <promotions.json>] [--json]
 
@@ -53,44 +54,9 @@ export interface EvalPromptsCliDeps {
   now?: string;
 }
 
-interface ParsedArgs {
-  dataset?: string;
-  spec?: string;
-  promote: boolean;
-  json: boolean;
-  write?: string;
-  check?: string;
-  usageError?: string;
-}
-
-function parseArgs(args: string[]): ParsedArgs {
-  const parsed: ParsedArgs = { promote: false, json: false };
-  const valueFlags = new Set(['--dataset', '--spec', '--write', '--check']);
-  const seen = new Set<string>();
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (seen.has(arg)) { parsed.usageError = `repeated argument: ${arg}`; return parsed; }
-    if (arg === '--json') { parsed.json = true; seen.add(arg); continue; }
-    if (arg === '--promote') { parsed.promote = true; seen.add(arg); continue; }
-    if (valueFlags.has(arg)) {
-      const value = args[++i];
-      if (value === undefined || value.startsWith('-')) {
-        parsed.usageError = `${arg} requires a value`;
-        return parsed;
-      }
-      parsed[arg.slice(2) as 'dataset' | 'spec' | 'write' | 'check'] = value;
-      seen.add(arg);
-      continue;
-    }
-    parsed.usageError = `unknown argument: ${arg}`;
-    return parsed;
-  }
-  return parsed;
-}
-
 /** The shipped experiment — class matchers and arms for the baked variants.
  * Parsed through parsePromptExperimentSpec so the match.task regexes compile. */
-export const DEFAULT_PROMPT_EXPERIMENT: PromptExperimentSpec = parsePromptExperimentSpec({
+const DEFAULT_PROMPT_EXPERIMENT: PromptExperimentSpec = parsePromptExperimentSpec({
   v: 1,
   id: 'prompt-ab-default',
   note: 'Builtin spec: docs/test/secrets job classes, plain vs adaptive prompts.',
@@ -152,9 +118,20 @@ export async function cmdEvalPrompts(args: string[], overrides: EvalPromptsCliDe
     now: new Date().toISOString(),
     ...overrides,
   };
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { deps.out(USAGE); return 0; }
-  const parsed = parseArgs(args);
-  if (parsed.usageError) { deps.err(`error: ${parsed.usageError}\n${USAGE}`); return 2; }
+  if (isEvalHelpRequest(args)) { deps.out(USAGE); return 0; }
+  const flags = parseStrictEvalFlags(args, {
+    boolFlags: ['--json', '--promote'] as const,
+    valueFlags: ['--dataset', '--spec', '--write', '--check'] as const,
+  });
+  if (flags.usageError) { deps.err(`error: ${flags.usageError}\n${USAGE}`); return 2; }
+  const parsed = {
+    dataset: flags.values['--dataset'],
+    spec: flags.values['--spec'],
+    write: flags.values['--write'],
+    check: flags.values['--check'],
+    promote: flags.bools['--promote'],
+    json: flags.bools['--json'],
+  };
   if (!parsed.dataset) { deps.err(`error: --dataset is required\n${USAGE}`); return 2; }
 
   let dataset: RouterEvalDataset;

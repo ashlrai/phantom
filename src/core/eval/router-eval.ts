@@ -25,7 +25,15 @@
  * not counterfactual certainty.
  */
 
-import { asRecord, fail, optString, parseDatasetLine } from './dataset-jsonl.js';
+import {
+  asRecord,
+  fail,
+  formatEvalMinutes,
+  formatEvalPct,
+  formatEvalUsd,
+  optString,
+  parseDatasetLine,
+} from './dataset-jsonl.js';
 import { createHash } from 'node:crypto';
 
 // ---------------------------------------------------------------------------
@@ -181,7 +189,7 @@ export function parseRouterEvalDataset(text: string, file = 'jobs.jsonl'): Route
       candidates = rec!.candidates as string[];
       if (new Set(candidates).size !== candidates.length) fail(file, i + 1, 'duplicate candidate');
     }
-    const chosen = rec!.chosen === undefined ? undefined : rec!.chosen;
+    const chosen = rec!.chosen;
     if (chosen !== null && typeof chosen !== 'string') fail(file, i + 1, 'bad chosen');
     const outcome = rec!.outcome;
     if (!OUTCOMES.includes(outcome as RouterOutcome)) fail(file, i + 1, `bad outcome ${JSON.stringify(outcome)}`);
@@ -213,7 +221,7 @@ export function parseRouterEvalDataset(text: string, file = 'jobs.jsonl'): Route
       priority: optString(file, i + 1, rec!, 'priority'),
       task: optString(file, i + 1, rec!, 'task'),
       candidates: candidates ?? [],
-      chosen: (chosen ?? null) as string | null,
+      chosen,
       outcome: outcome as RouterOutcome,
       costUsd: optNumber(file, i + 1, rec!, 'costUsd'),
       tokens: optNumber(file, i + 1, rec!, 'tokens', true),
@@ -328,7 +336,7 @@ export interface DecisionRow {
   reason?: string;
 }
 
-export interface ResolvedJob {
+interface ResolvedJob {
   decision: DecisionRow;
   /** Set on recorded/counterfactual rows. */
   outcome?: TerminalOutcome;
@@ -337,13 +345,14 @@ export interface ResolvedJob {
   wallTimeMs?: number;
 }
 
-function viewOf(job: RouterEvalJob): PolicyJobView {
+/** Strip outcome/cost/timing columns so policies and classifiers see only router-time fields. */
+export function policyJobView(job: RouterEvalJob): PolicyJobView {
   const { id, at, repo, pool, tier, priority, task, candidates } = job;
   return { id, at, repo, pool, tier, priority, task, candidates };
 }
 
 function decide(policy: RouterPolicy, job: RouterEvalJob, catalog: Readonly<Record<string, ArmMeta>>): PolicyDecision {
-  const d = policy.decide(viewOf(job), catalog);
+  const d = policy.decide(policyJobView(job), catalog);
   if (d === null || typeof d !== 'object' || (d.arm !== null && typeof d.arm !== 'string')) {
     throw new Error(`Policy ${policy.name} returned an invalid decision for ${job.id}`);
   }
@@ -362,7 +371,7 @@ function resolveOne(policy: RouterPolicy, job: RouterEvalJob, catalog: Readonly<
     else if (job.outcome === 'pending') row.resolution = 'pending';
     else {
       row.resolution = 'recorded';
-      row.outcome = job.outcome as TerminalOutcome;
+      row.outcome = job.outcome;
       return { decision: row, outcome: row.outcome, costUsd: job.costUsd, tokens: job.tokens, wallTimeMs: job.wallTimeMs };
     }
     return { decision: row };
@@ -572,14 +581,16 @@ export function evaluateRouterPolicy(dataset: RouterEvalDataset, policy: RouterP
 // Reporting
 // ---------------------------------------------------------------------------
 
-const usd = (n: number) => `$${n.toFixed(2)}`;
 const tok = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n));
-const minutes = (ms: number) => `${Math.round(ms / 60_000)}m`;
-const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
-function metricText(m: MetricReport, fmt: (n: number) => string): string {
+export function formatMetricReport(
+  m: MetricReport,
+  fmt: (n: number) => string,
+  opts?: { includeSampleCount?: boolean },
+): string {
   if (m.value === null) return 'unknown';
   const ci = m.ci95 ? ` [${fmt(m.ci95[0])} – ${fmt(m.ci95[1])}]` : ' [no CI]';
+  if (!opts?.includeSampleCount) return `${fmt(m.value)}${ci}`;
   return `${fmt(m.value)}${ci} (n=${m.n}${m.degenerate ? `, ${m.degenerate} degenerate` : ''})`;
 }
 
@@ -596,10 +607,10 @@ export function formatRouterEvalMarkdown(report: RouterEvalReport): string {
     '',
     `| Metric | Value |`,
     `| --- | --- |`,
-    `| Merge rate | ${metricText(report.mergeRate, pct)} |`,
-    `| Cost per merged PR | ${metricText(report.costPerMergedPrUsd, usd)} |`,
-    `| Tokens per merged PR | ${metricText(report.tokensPerMergedPr, tok)} |`,
-    `| Wall time (mean) | ${metricText(report.wallTimeMsMean, minutes)} |`,
+    `| Merge rate | ${formatMetricReport(report.mergeRate, formatEvalPct, { includeSampleCount: true })} |`,
+    `| Cost per merged PR | ${formatMetricReport(report.costPerMergedPrUsd, formatEvalUsd, { includeSampleCount: true })} |`,
+    `| Tokens per merged PR | ${formatMetricReport(report.tokensPerMergedPr, tok, { includeSampleCount: true })} |`,
+    `| Wall time (mean) | ${formatMetricReport(report.wallTimeMsMean, formatEvalMinutes, { includeSampleCount: true })} |`,
     '',
     '## Coverage',
     '',
@@ -611,7 +622,7 @@ export function formatRouterEvalMarkdown(report: RouterEvalReport): string {
     '| --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |',
   ];
   for (const a of report.perArm) {
-    lines.push(`| ${a.arm.replace(/[|\\\r\n]/g, ' ')} | ${a.decided} | ${a.observed} | ${a.merged} | ${a.resolved} | ${a.mergeRate === null ? 'unknown' : pct(a.mergeRate)} | ${usd(a.costUsd)} | ${tok(a.tokens)} | ${a.wallTimeMsMean === null ? 'unknown' : minutes(a.wallTimeMsMean)} |`);
+    lines.push(`| ${a.arm.replace(/[|\\\r\n]/g, ' ')} | ${a.decided} | ${a.observed} | ${a.merged} | ${a.resolved} | ${a.mergeRate === null ? 'unknown' : formatEvalPct(a.mergeRate)} | ${formatEvalUsd(a.costUsd)} | ${tok(a.tokens)} | ${a.wallTimeMsMean === null ? 'unknown' : formatEvalMinutes(a.wallTimeMsMean)} |`);
   }
   lines.push(
     '',
