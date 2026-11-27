@@ -1654,6 +1654,31 @@
  *     7-day window, truncated tails are stated as lower bounds,
  *     and items emit only for the fleet's own repository since
  *     the journal describes this install's comms machinery;
+ *   - the amplify advisory engine's own recommendation journal:
+ *     the amplify.tick.v1 records amplifyTick appends to
+ *     metrics/amplify.jsonl under the runs root on every leader
+ *     tick and `phm amplify tick` — the capacity projection's
+ *     pools, vitals, heartbeat and merge-velocity verdicts plus
+ *     its closed five-kind actions list — until now read by no
+ *     one at all (readAmplifyStatus re-reads the live sources and
+ *     readAmplifyGoal reads leader/decisions.jsonl; the tick
+ *     history itself was write-only), so a pool whose expiring
+ *     capacity kept wasting, whose quota evidence stayed
+ *     unusable, or a fleet whose heartbeats, saturation or merge
+ *     flow kept alarming never became work (amplifyBacklogItems
+ *     below). Rows count only under the writer's contract — the
+ *     tick schema, the ADVISORY marker, a parseable timestamp and
+ *     an actions array whose entries stay inside the closed kind
+ *     vocabulary, the null-or-ledger-key pool shape and a finite
+ *     priority — every recorded action is evidence since
+ *     projectAmplify only proposes for adverse conditions, a
+ *     (kind, pool) cell emits only at the recurring bars of three
+ *     recommending ticks across two UTC days inside the 7-day
+ *     window, pool keys are already inside the writer's name()
+ *     vocabulary and recommendation text is never quoted,
+ *     truncated tails are stated as lower bounds, and items emit
+ *     only for the fleet's own repository since the journal
+ *     describes this install's capacity evidence;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1804,6 +1829,7 @@ import { readStandingRevertKeys } from './revert-ledger.js';
 import { reviewBlocksBacklogItems } from './review-blocks-backlog.js';
 import { capacityHistoryBacklogItems } from './capacity-history-backlog.js';
 import { laneTargetChangesBacklogItems } from './lane-target-changes-backlog.js';
+import { amplifyBacklogItems } from './amplify-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -3839,6 +3865,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the fleet's own repository inherits the items since the journal
   // carries no repo column.
   items.push(...await commsRunBacklogItems({ repo }));
+
+  // Amplify advisory journal (metrics/amplify.jsonl under the runs
+  // root): the amplify.tick.v1 records amplifyTick appends per
+  // advisory pass — the capacity projection's verdicts and its
+  // closed five-kind actions list (amplifyBacklogItems below).
+  // Until now the journal had no reader at all — readAmplifyStatus
+  // re-reads the live sources and readAmplifyGoal reads
+  // leader/decisions.jsonl, so the recorded tick history was
+  // write-only and the engine's recurring recommendations never
+  // became work. Same bounded tail read; a (kind, pool) cell emits
+  // only at the recurring bars of three recommending ticks across
+  // two UTC days inside the 7-day window, rows count only under
+  // the writer's contract, recommendation text is never quoted,
+  // truncated tails are stated as lower bounds, and only the
+  // fleet's own repository inherits the items since the journal
+  // describes this install's capacity evidence.
+  items.push(...await amplifyBacklogItems({ repo }));
   return { items, errors };
 }
 
