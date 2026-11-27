@@ -39,7 +39,6 @@
  *     nothing; they only read the Goal record + swarm/inbox state.
  */
 
-import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type {
   AdvanceOptions,
@@ -53,7 +52,6 @@ import type {
   SwarmRun,
 } from '../types.js';
 import { assertMayMutate } from '../sandbox/policy.js';
-import { loadSwarm } from '../swarm/store.js';
 import { loadProposal, listProposals } from '../inbox/store.js';
 import {
   claimGoalMilestoneIfCurrent,
@@ -62,25 +60,8 @@ import {
   resumeMilestone,
 } from './store.js';
 import { proposalCompletesGoalMilestone } from './completion.js';
-
-// ---------------------------------------------------------------------------
-// HARD per-advance budget — a goal advance is ALWAYS bounded.
-// ---------------------------------------------------------------------------
-
-/** Default HARD ceiling for a single milestone advance. allowCloud defaults off. */
-const DEFAULT_ADVANCE_BUDGET: RunBudget = {
-  maxTokens: 200_000,
-  maxSteps: 40,
-  allowCloud: false,
-};
-
-function canonicalGoalCorrelationRepo(repo: string): string {
-  try {
-    return realpathSync.native(repo);
-  } catch {
-    return repo;
-  }
-}
+import { DEFAULT_GOAL_RUN_BUDGET, formatGoalError } from './open-goals.js';
+import { canonicalGoalCorrelationRepo } from './project-match.js';
 
 // ---------------------------------------------------------------------------
 // nextActionableMilestone — pure READ seam (no mutation, no swarm).
@@ -268,7 +249,7 @@ async function runMilestoneFrontierEngine(
       noMemory: false,
     } as Parameters<typeof runGoal>[2]);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = formatGoalError(err);
     if (isRateLimitOrServerError(msg)) {
       throw new FrontierRateLimitError(engine, `engine "${engine}" rate-limited: ${msg}`);
     }
@@ -518,7 +499,7 @@ export async function advanceGoal(
   }
 
   const budget: RunBudget = {
-    ...DEFAULT_ADVANCE_BUDGET,
+    ...DEFAULT_GOAL_RUN_BUDGET,
     ...(opts?.budget ?? {}),
     allowCloud: opts?.allowCloud ?? false,
   };
@@ -571,18 +552,7 @@ export async function advanceGoal(
     // Correlate the PENDING proposal filed by runEngineSandboxed.
     // origin:'agent' (not 'swarm') — use the pre-run snapshot diff.
     const proposalId = findProposalForFrontierRun(correlationRepo, beforeIds);
-
-    if (run.status === 'done' && proposalId) {
-      updateMilestoneStatus(goalId, milestone.id, 'proposed', {
-        swarmId: run.id,
-        proposalId,
-      });
-    } else {
-      updateMilestoneStatus(goalId, milestone.id, 'blocked', {
-        swarmId: run.id,
-        proposalId: proposalId ?? null,
-      });
-    }
+    recordMilestoneAdvanceOutcome(goalId, milestone, run.status === 'done', run.id, proposalId);
   } else {
     // BUILTIN-SWARM PATH (flag-off: no allowCloud, or no frontier engines configured).
     // Byte-identical to the pre-M229 behavior.
@@ -619,22 +589,33 @@ export async function advanceGoal(
     // Correlate the PENDING proposal the swarm emitted (its ONLY sink). We do NOT
     // create it here — runSwarm's propose path did. We only READ to link the id.
     const proposalId = findProposalForSwarm(run.id, correlationRepo);
-
-    if ((run.status === 'done' || run.status === 'needs-approval') && proposalId) {
-      updateMilestoneStatus(goalId, milestone.id, 'proposed', {
-        swarmId: run.id,
-        proposalId,
-      });
-    } else {
-      // Failed / aborted / escalated, or no proposal produced => blocked for a human.
-      updateMilestoneStatus(goalId, milestone.id, 'blocked', {
-        swarmId: run.id,
-        proposalId: proposalId ?? null,
-      });
-    }
+    recordMilestoneAdvanceOutcome(
+      goalId,
+      milestone,
+      run.status === 'done' || run.status === 'needs-approval',
+      run.id,
+      proposalId,
+    );
   }
 
   return run;
+}
+
+function recordMilestoneAdvanceOutcome(
+  goalId: string,
+  milestone: Pick<Milestone, 'id'>,
+  succeeded: boolean,
+  swarmId: string,
+  proposalId: string | null,
+): void {
+  if (succeeded && proposalId) {
+    updateMilestoneStatus(goalId, milestone.id, 'proposed', { swarmId, proposalId });
+  } else {
+    updateMilestoneStatus(goalId, milestone.id, 'blocked', {
+      swarmId,
+      proposalId: proposalId ?? null,
+    });
+  }
 }
 
 /**
@@ -738,6 +719,13 @@ export interface AdvanceCycleResult {
   proposalsFiled: number;
 }
 
+function isGoalDone(goal: Goal | null): boolean {
+  if (!goal) return false;
+  if (goal.status === 'done') return true;
+  const progress = progressOf(goal);
+  return progress.fractionDone >= 1 && progress.total > 0;
+}
+
 /**
  * Advance a goal's next actionable milestone with bounded retry on 'blocked'.
  *
@@ -795,13 +783,9 @@ export async function advanceGoalCycle(
         updateMilestoneStatus(goalId, stuckInProgress.id, 'blocked', { swarmId: run.id });
       }
       // Do not retry on a correlation failure — return a clear non-stuck result.
-      const progress = progressOf(goal);
-      const goalDone =
-        goal.status === 'done' ||
-        (progress.fractionDone >= 1 && progress.total > 0);
       return {
         runs,
-        goalDone,
+        goalDone: isGoalDone(goal),
         milestoneDone: false,
         proposalsFiled,
       };
@@ -816,16 +800,9 @@ export async function advanceGoalCycle(
       advanced.status === 'skipped';
 
     if (milestoneDone) {
-      // A goal is done when: the store rolled it to 'done' (every non-skipped
-      // milestone is 'done'), OR progressOf reports fractionDone === 1 (all
-      // non-skipped milestones are in a done/proposed terminal state).
-      const progress = progressOf(goal);
-      const goalDone =
-        goal.status === 'done' ||
-        (progress.fractionDone >= 1 && progress.total > 0);
       return {
         runs,
-        goalDone,
+        goalDone: isGoalDone(goal),
         milestoneDone: true,
         proposalsFiled,
       };
@@ -842,19 +819,10 @@ export async function advanceGoalCycle(
   }
 
   // Exhausted retries — report what we have.
-  const goal = loadGoal(goalId);
-  const progress = goal ? progressOf(goal) : null;
-  const goalDone =
-    goal?.status === 'done' ||
-    (progress ? progress.fractionDone >= 1 && progress.total > 0 : false);
   return {
     runs,
-    goalDone,
+    goalDone: isGoalDone(loadGoal(goalId)),
     milestoneDone: false,
     proposalsFiled,
   };
 }
-
-// Keep loadSwarm imported as the documented read-only tracking handle the CLI
-// status dashboard may use to surface swarm progress (read-only, never mutates).
-void loadSwarm;

@@ -50,6 +50,20 @@ import {
   releaseLocalStoreLock,
 } from '../fleet/local-store-lock.js';
 import { fsyncDirectory } from '../util/durability.js';
+import {
+  GOAL_LOCK_WAIT_MS,
+  GOAL_MAX_DIRECTORY_ENTRIES,
+  GOAL_MAX_FILE_BYTES,
+  GOAL_MAX_LIST,
+  goalIdIdentity,
+  goalIdsMatch,
+  isGoalRecordObject,
+  isSha256Hex,
+  isValidGoalId,
+  isValidIsoTimestamp,
+  parseIsoTimeMs,
+  slugifyGoalText,
+} from './open-goals.js';
 
 // Re-export so existing importers of `goalsDir` from the store keep working;
 // the canonical definition now lives in config.ts (single source of truth for
@@ -58,18 +72,11 @@ import { fsyncDirectory } from '../util/durability.js';
 export { goalsDir };
 
 // ---------------------------------------------------------------------------
-// Bounded list caps — never inspect an unbounded directory or read more than
-// this many goal files at once. The entry cap counts every physical entry,
-// including unrelated files and temporary sidecars, so noise cannot bypass the
-// reader's source-completeness boundary.
+// Bounded stale-lane defaults
 // ---------------------------------------------------------------------------
 
-const MAX_LIST = 200;
-const MAX_GOAL_DIRECTORY_ENTRIES = 512;
-const MAX_GOAL_FILE_BYTES = 256 * 1024;
-const GOAL_LOCK_WAIT_MS = 2_000;
 export const DEFAULT_STALE_GOAL_MILESTONE_MS = 6 * 60 * 60 * 1000;
-export const DEFAULT_STALE_GOAL_RECOVERY_LIMIT = 10;
+const DEFAULT_STALE_GOAL_RECOVERY_LIMIT = 10;
 
 export interface RecoveredStaleGoalLane {
   goalId: string;
@@ -156,18 +163,12 @@ export function goalSnapshotDigest(goal: Goal): string {
   return createHash('sha256').update(canonicalGoalValue(goal), 'utf8').digest('hex');
 }
 
-function goalLockPath(goalId: string): string {
+export function goalLockPath(goalId: string): string {
   return join(goalsDir(), `.${createHash('sha256').update(goalId).digest('hex')}.lock`);
 }
 
-function parseTimeMs(value: string | undefined): number | null {
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
 function staleMilestoneAgeMs(nowMs: number, goal: Goal, milestone: Milestone): number | null {
-  const updatedMs = parseTimeMs(milestone.updatedAt ?? goal.updatedAt ?? goal.createdAt);
+  const updatedMs = parseIsoTimeMs(milestone.updatedAt ?? goal.updatedAt ?? goal.createdAt);
   if (updatedMs === null) return null;
   return Math.max(0, nowMs - updatedMs);
 }
@@ -184,18 +185,8 @@ function staleMilestoneAgeMs(nowMs: number, goal: Goal, milestone: Milestone): n
  * @throws when `id` contains anything outside [\w.-].
  */
 function goalPath(dir: string, id: string): string {
-  if (!/^[\w.-]+$/.test(id)) throw new Error(`Invalid goal id: ${id}`);
+  if (!isValidGoalId(id)) throw new Error(`Invalid goal id: ${id}`);
   return join(dir, `${id}.json`);
-}
-
-function goalIdIdentity(id: string): string {
-  // Win32 resolves goal paths case-insensitively; other platforms retain the
-  // exact persisted spelling so distinct case-sensitive records stay distinct.
-  return process.platform === 'win32' ? id.toLowerCase() : id;
-}
-
-function goalIdsMatch(left: string, right: string): boolean {
-  return goalIdIdentity(left) === goalIdIdentity(right);
 }
 
 /** Ensure the goals directory exists, silently creating it if needed. */
@@ -212,27 +203,12 @@ function ensureDir(dir: string): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Derive a stable slug from text: lowercase, words joined with hyphens, max 48
- * chars, alphanumeric + hyphens only (mirrors spec-store's slugify).
- */
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .slice(0, 48)
-    .replace(/-$/, '');
-}
-
-/**
  * Generate a stable, readable, filename-safe goal id derived from the
  * objective (slug + short hash), mirroring spec-store's generateSpecId so two
  * similar objectives don't silently collide.
  */
 function generateGoalId(objective: string): string {
-  const slug = slugify(objective) || 'goal';
+  const slug = slugifyGoalText(objective, 48) || 'goal';
   const hash = createHash('sha256').update(objective).digest('hex').slice(0, 6);
   return `${slug}-${hash}`;
 }
@@ -264,14 +240,6 @@ const MILESTONE_STATUSES: ReadonlySet<MilestoneStatus> = new Set([
   'done',
 ]);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isValidTimestamp(value: unknown): value is string {
-  return typeof value === 'string' && Number.isFinite(Date.parse(value));
-}
-
 function timestampsAreOrdered(createdAt: string, updatedAt: string): boolean {
   return Date.parse(updatedAt) >= Date.parse(createdAt);
 }
@@ -284,30 +252,30 @@ const MISSION_BINDING_KEYS = new Set(['schemaVersion', 'graphDigest', 'missionKe
 const MISSION_BINDING_KEY_RE = /^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$/;
 
 function isValidGoalMissionBinding(value: unknown): value is GoalMissionBindingV1 {
-  if (!isRecord(value)) return false;
+  if (!isGoalRecordObject(value)) return false;
   const keys = Object.keys(value);
   return keys.length === MISSION_BINDING_KEYS.size && keys.every((key) => MISSION_BINDING_KEYS.has(key)) &&
     value['schemaVersion'] === 1 &&
-    typeof value['graphDigest'] === 'string' && /^[a-f0-9]{64}$/.test(value['graphDigest']) &&
+    isSha256Hex(value['graphDigest']) &&
     typeof value['missionKey'] === 'string' && MISSION_BINDING_KEY_RE.test(value['missionKey']) &&
     typeof value['nodeKey'] === 'string' && MISSION_BINDING_KEY_RE.test(value['nodeKey']);
 }
 
 export function isValidGoalOutcomeBinding(value: unknown): value is GoalOutcomeBindingV1 {
-  if (!isRecord(value)) return false;
+  if (!isGoalRecordObject(value)) return false;
   const keys = ['schemaVersion', 'outcomeId', 'nodeId', 'nodeBasisDigest', 'scopeRevision', 'scopeDigest'];
   return Object.keys(value).length === keys.length && Object.keys(value).every(key => keys.includes(key)) &&
     value['schemaVersion'] === 1 && typeof value['outcomeId'] === 'string' && MISSION_BINDING_KEY_RE.test(value['outcomeId']) &&
-    ['nodeId', 'nodeBasisDigest', 'scopeDigest'].every(key => typeof value[key] === 'string' && /^[a-f0-9]{64}$/.test(value[key] as string)) &&
+    ['nodeId', 'nodeBasisDigest', 'scopeDigest'].every(key => isSha256Hex(value[key])) &&
     Number.isSafeInteger(value['scopeRevision']) && (value['scopeRevision'] as number) >= 1;
 }
 
 function isValidMilestone(parsed: unknown): parsed is Milestone {
-  if (!isRecord(parsed)) return false;
+  if (!isGoalRecordObject(parsed)) return false;
   const createdAt = parsed['createdAt'];
   const updatedAt = parsed['updatedAt'];
   return (
-    typeof parsed['id'] === 'string' && /^[\w.-]+$/.test(parsed['id']) &&
+    isValidGoalId(parsed['id']) &&
     typeof parsed['title'] === 'string' &&
     typeof parsed['detail'] === 'string' &&
     Number.isSafeInteger(parsed['order']) && (parsed['order'] as number) >= 0 &&
@@ -316,8 +284,8 @@ function isValidMilestone(parsed: unknown): parsed is Milestone {
     isNullableString(parsed['specId']) &&
     isNullableString(parsed['swarmId']) &&
     isNullableString(parsed['proposalId']) &&
-    isValidTimestamp(createdAt) &&
-    isValidTimestamp(updatedAt) &&
+    isValidIsoTimestamp(createdAt) &&
+    isValidIsoTimestamp(updatedAt) &&
     timestampsAreOrdered(createdAt, updatedAt)
   );
 }
@@ -326,13 +294,13 @@ function isValidGoalRecordWithOptions(
   parsed: unknown,
   allowTopLevelUpdatedAtRegression: boolean,
 ): parsed is Goal {
-  if (!isRecord(parsed)) return false;
+  if (!isGoalRecordObject(parsed)) return false;
   const project = parsed['project'];
   const createdAt = parsed['createdAt'];
   const updatedAt = parsed['updatedAt'];
   const milestones = parsed['milestones'];
   if (
-    typeof parsed['id'] !== 'string' || !/^[\w.-]+$/.test(parsed['id']) ||
+    !isValidGoalId(parsed['id']) ||
     typeof parsed['objective'] !== 'string' ||
     (parsed['owner'] !== undefined && typeof parsed['owner'] !== 'string') ||
     (parsed['mission'] !== undefined && !isValidGoalMissionBinding(parsed['mission'])) ||
@@ -343,13 +311,13 @@ function isValidGoalRecordWithOptions(
     typeof parsed['status'] !== 'string' ||
     !GOAL_STATUSES.has(parsed['status'] as GoalStatus) ||
     !Array.isArray(milestones) ||
-    !isValidTimestamp(createdAt) ||
-    !isValidTimestamp(updatedAt) ||
+    !isValidIsoTimestamp(createdAt) ||
+    !isValidIsoTimestamp(updatedAt) ||
     (!allowTopLevelUpdatedAtRegression && !timestampsAreOrdered(createdAt, updatedAt))
   ) return false;
 
   if (parsed['outcome'] !== undefined && (milestones.length !== 1 ||
-      !isRecord(milestones[0]) || milestones[0]['id'] !== `milestone-${parsed['outcome'].nodeId}`)) return false;
+      !isGoalRecordObject(milestones[0]) || milestones[0]['id'] !== `milestone-${parsed['outcome'].nodeId}`)) return false;
 
   const milestoneIds = new Set<string>();
   const milestoneOrders = new Set<number>();
@@ -403,6 +371,36 @@ function sortMilestones(goal: Goal): void {
 // CRUD — Goal records
 // ---------------------------------------------------------------------------
 
+interface CreateGoalOptions {
+  project?: string | null;
+  now?: string;
+  cfg?: Pick<AshlrConfig, 'user'>;
+  mission?: GoalMissionBindingV1;
+}
+
+function goalOwnerFromConfig(cfg?: Pick<AshlrConfig, 'user'>): string | undefined {
+  return cfg?.user?.id ?? cfg?.user?.name;
+}
+
+function buildPlanningGoal(objective: string, opts?: CreateGoalOptions): { goal: Goal; now: string } {
+  const now = nowIso(opts?.now);
+  const owner = goalOwnerFromConfig(opts?.cfg);
+  return {
+    now,
+    goal: {
+      id: generateGoalId(objective),
+      objective,
+      project: opts?.project ?? null,
+      status: 'planning',
+      milestones: [],
+      createdAt: now,
+      updatedAt: now,
+      ...(owner !== undefined ? { owner } : {}),
+      ...(opts?.mission !== undefined ? { mission: structuredClone(opts.mission) } : {}),
+    },
+  };
+}
+
 /**
  * Create a new Goal from an objective, persist it, and return it.
  *
@@ -418,29 +416,8 @@ function sortMilestones(goal: Goal): void {
  * deterministic id returns the actual persisted goal; a new-record write
  * failure throws so callers cannot report an object that was never created.
  */
-export function createGoal(
-  objective: string,
-  opts?: {
-    project?: string | null;
-    now?: string;
-    cfg?: Pick<AshlrConfig, 'user'>;
-    mission?: GoalMissionBindingV1;
-  },
-): Goal {
-  const now = nowIso(opts?.now);
-  // M109: stamp owner from cfg.user when not already provided.
-  const owner = opts?.cfg?.user?.id ?? opts?.cfg?.user?.name;
-  const goal: Goal = {
-    id: generateGoalId(objective),
-    objective,
-    project: opts?.project ?? null,
-    status: 'planning',
-    milestones: [],
-    createdAt: now,
-    updatedAt: now,
-    ...(owner !== undefined ? { owner } : {}),
-    ...(opts?.mission !== undefined ? { mission: structuredClone(opts.mission) } : {}),
-  };
+export function createGoal(objective: string, opts?: CreateGoalOptions): Goal {
+  const { goal, now } = buildPlanningGoal(objective, opts);
   if (saveGoalWithMode(goal, { now }, () => true, true)) return goal;
   const existing = loadGoal(goal.id);
   if (existing) return existing;
@@ -458,26 +435,9 @@ export type CreateGoalIfAbsentResult =
  */
 export function createGoalIfAbsent(
   objective: string,
-  opts?: {
-    project?: string | null;
-    now?: string;
-    cfg?: Pick<AshlrConfig, 'user'>;
-    mission?: GoalMissionBindingV1;
-  },
+  opts?: CreateGoalOptions,
 ): CreateGoalIfAbsentResult {
-  const now = nowIso(opts?.now);
-  const owner = opts?.cfg?.user?.id ?? opts?.cfg?.user?.name;
-  const goal: Goal = {
-    id: generateGoalId(objective),
-    objective,
-    project: opts?.project ?? null,
-    status: 'planning',
-    milestones: [],
-    createdAt: now,
-    updatedAt: now,
-    ...(owner !== undefined ? { owner } : {}),
-    ...(opts?.mission !== undefined ? { mission: structuredClone(opts.mission) } : {}),
-  };
+  const { goal } = buildPlanningGoal(objective, opts);
   return installGoalIfAbsent(goal);
 }
 
@@ -488,10 +448,11 @@ export function createOutcomeGoalIfAbsent(input: {
   milestone: { title: string; detail: string };
 }, opts: GoalPersistenceOptions & { cfg?: Pick<AshlrConfig, 'user'> } = {}): CreateGoalIfAbsentResult {
   const now = nowIso(opts.now);
+  const owner = goalOwnerFromConfig(opts.cfg);
   const goal: Goal = { id: `outcome-${input.outcome.nodeId}`, objective: input.objective, project: input.project,
     mission: structuredClone(input.mission), outcome: structuredClone(input.outcome), status: 'active',
     createdAt: now, updatedAt: now,
-    ...(opts.cfg?.user?.id ?? opts.cfg?.user?.name ? { owner: opts.cfg?.user?.id ?? opts.cfg?.user?.name } : {}),
+    ...(owner !== undefined ? { owner } : {}),
     milestones: [{ id: `milestone-${input.outcome.nodeId}`, title: input.milestone.title, detail: input.milestone.detail,
       order: 0, status: 'pending', specId: null, swarmId: null, proposalId: null, createdAt: now, updatedAt: now }] };
   return installGoalIfAbsent(goal, opts.stillAuthorized);
@@ -588,7 +549,7 @@ function readBoundedGoalFile(file: string): string | null {
     const namedBefore = lstatSync(file);
     if (!openedBefore.isFile() || namedBefore.isSymbolicLink() || !namedBefore.isFile() ||
       !sameFileIdentity(openedBefore, namedBefore) ||
-      openedBefore.size > MAX_GOAL_FILE_BYTES) return null;
+      openedBefore.size > GOAL_MAX_FILE_BYTES) return null;
 
     const expectedBytes = openedBefore.size;
     const bytes = Buffer.alloc(expectedBytes);
@@ -640,12 +601,12 @@ export function listGoalsDetailed(filter?: { status?: GoalStatus }): ListGoalsDe
         const entry = handle.readSync();
         if (entry === null) break;
         directoryEntries += 1;
-        if (directoryEntries > MAX_GOAL_DIRECTORY_ENTRIES) {
+        if (directoryEntries > GOAL_MAX_DIRECTORY_ENTRIES) {
           limitExceeded = true;
           break;
         }
         if (!entry.name.endsWith('.json') || entry.name.endsWith('.tmp')) continue;
-        if (files.length >= MAX_LIST) {
+        if (files.length >= GOAL_MAX_LIST) {
           limitExceeded = true;
           break;
         }
@@ -720,6 +681,12 @@ export function listGoals(filter?: { status?: GoalStatus }): Goal[] {
   return listGoalsDetailed(filter).goals;
 }
 
+function sameSerializedField(before: unknown, after: unknown): boolean {
+  const left = before === undefined ? null : JSON.stringify(before);
+  const right = after === undefined ? null : JSON.stringify(after);
+  return left === right;
+}
+
 /**
  * Persist a Goal record atomically (tmp-write + rename). Bumps updatedAt.
  * Best-effort; returns false on revocation or I/O failure and never throws.
@@ -745,12 +712,8 @@ function saveGoalUnlocked(
       // the file, preventing a stale read-modify-write from overwriting a
       // signed claim after it waits for the lock.
       if (existing.updatedAt !== goal.updatedAt) return false;
-      const before = existing.mission === undefined ? null : JSON.stringify(existing.mission);
-      const after = goal.mission === undefined ? null : JSON.stringify(goal.mission);
-      if (before !== after) return false;
-      const outcomeBefore = existing.outcome === undefined ? null : JSON.stringify(existing.outcome);
-      const outcomeAfter = goal.outcome === undefined ? null : JSON.stringify(goal.outcome);
-      if (outcomeBefore !== outcomeAfter) return false;
+      if (!sameSerializedField(existing.mission, goal.mission)) return false;
+      if (!sameSerializedField(existing.outcome, goal.outcome)) return false;
       if (existing.outcome !== undefined && (!isValidGoalRecord(goal) || existing.objective !== goal.objective ||
           existing.project !== goal.project || existing.milestones[0]?.id !== goal.milestones[0]?.id ||
           existing.milestones[0]?.title !== goal.milestones[0]?.title || existing.milestones[0]?.detail !== goal.milestones[0]?.detail)) return false;

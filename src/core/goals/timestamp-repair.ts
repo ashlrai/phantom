@@ -33,6 +33,18 @@ import {
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import {
+  GOAL_LOCK_WAIT_MS,
+  GOAL_MAX_DIRECTORY_ENTRIES,
+  GOAL_MAX_FILE_BYTES,
+  GOAL_MAX_LIST,
+  goalIdIdentity,
+  isGoalRecordObject,
+  isSha256Hex,
+  isValidGoalId,
+  isValidIsoTimestamp,
+} from './open-goals.js';
+import {
+  goalLockPath,
   goalsDir,
   goalSnapshotDigest,
   isValidGoalRecord,
@@ -40,10 +52,6 @@ import {
 } from './store.js';
 
 const SCHEMA_VERSION = 1 as const;
-const MAX_GOAL_FILES = 200;
-const MAX_DIRECTORY_ENTRIES = 512;
-const MAX_GOAL_FILE_BYTES = 256 * 1024;
-const LOCK_WAIT_MS = 2_000;
 const REPAIR_ROOT = '.timestamp-repair-artifacts';
 const MAX_ARTIFACT_BYTES = 512 * 1024;
 
@@ -91,7 +99,7 @@ interface GoalTimestampRepairPlanBody {
   entries: GoalTimestampRepairPlanEntry[];
 }
 
-export interface GoalTimestampRepairPlan extends GoalTimestampRepairPlanBody {
+interface GoalTimestampRepairPlan extends GoalTimestampRepairPlanBody {
   planId: string;
 }
 
@@ -250,7 +258,6 @@ function derivedGoalUpdatedAt(goal: Goal): string {
     if (!Number.isFinite(parsed)) throw new Error(`goal ${goal.id} contains an invalid domain timestamp`);
     maximum = Math.max(maximum, parsed);
   }
-  if (!Number.isFinite(maximum)) throw new Error(`goal ${goal.id} has no domain timestamp`);
   return new Date(maximum).toISOString();
 }
 
@@ -361,7 +368,7 @@ function canonicalGoalAfterRepair(goal: Goal, updatedAt: string): Goal {
 }
 
 function readStableGoal(path: string, fileName: string): StableGoalFile {
-  const raw = readStableFile(path, MAX_GOAL_FILE_BYTES);
+  const raw = readStableFile(path, GOAL_MAX_FILE_BYTES);
   const text = raw.toString('utf8');
   if (!raw.equals(Buffer.from(text, 'utf8'))) throw new Error(`goal file is not valid UTF-8: ${fileName}`);
   let parsed: unknown;
@@ -442,7 +449,7 @@ function directoryEntryNames(path: string): string[] {
       const entry = handle.readSync();
       if (entry === null) break;
       names.push(entry.name);
-      if (names.length > MAX_DIRECTORY_ENTRIES) throw new Error('goal source directory entry limit exceeded');
+      if (names.length > GOAL_MAX_DIRECTORY_ENTRIES) throw new Error('goal source directory entry limit exceeded');
     }
   } finally {
     handle.closeSync();
@@ -489,10 +496,10 @@ function readCompleteGoalSet(): StableGoalFile[] {
       const entry = handle.readSync();
       if (entry === null) break;
       entries += 1;
-      if (entries > MAX_DIRECTORY_ENTRIES) throw new Error('goal source directory entry limit exceeded');
+      if (entries > GOAL_MAX_DIRECTORY_ENTRIES) throw new Error('goal source directory entry limit exceeded');
       if (!entry.name.endsWith('.json') || entry.name.endsWith('.tmp')) continue;
       names.push(entry.name);
-      if (names.length > MAX_GOAL_FILES) throw new Error('goal source file limit exceeded');
+      if (names.length > GOAL_MAX_LIST) throw new Error('goal source file limit exceeded');
     }
   } finally {
     handle.closeSync();
@@ -501,13 +508,22 @@ function readCompleteGoalSet(): StableGoalFile[] {
   const identities = new Set<string>();
   const files = names.map((name) => {
     const goal = readStableGoal(join(dir, name), name);
-    const identity = process.platform === 'win32' ? goal.goal.id.toLowerCase() : goal.goal.id;
+    const identity = goalIdIdentity(goal.goal.id);
     if (identities.has(identity)) throw new Error(`duplicate goal identity: ${goal.goal.id}`);
     identities.add(identity);
     return goal;
   });
   verifySourceAncestry(ancestry);
   return files;
+}
+
+function computeSourceDigest(
+  entries: readonly Pick<GoalTimestampRepairPlanEntry, 'fileName' | 'beforeDigest'>[],
+): string {
+  return digest(JSON.stringify(entries.map((entry) => ({
+    fileName: entry.fileName,
+    beforeDigest: entry.beforeDigest,
+  }))));
 }
 
 function planBody(files: readonly StableGoalFile[]): GoalTimestampRepairPlanBody {
@@ -520,14 +536,10 @@ function planBody(files: readonly StableGoalFile[]): GoalTimestampRepairPlanBody
     derivedUpdatedAt: file.derivedUpdatedAt,
     repairRequired: file.goal.updatedAt !== file.derivedUpdatedAt,
   }));
-  const sourceDigest = digest(JSON.stringify(entries.map((entry) => ({
-    fileName: entry.fileName,
-    beforeDigest: entry.beforeDigest,
-  }))));
   return {
     schemaVersion: SCHEMA_VERSION,
     kind: 'goal-timestamp-repair',
-    sourceDigest,
+    sourceDigest: computeSourceDigest(entries),
     scannedGoals: entries.length,
     entries,
   };
@@ -539,10 +551,10 @@ function materializePlan(files: readonly StableGoalFile[]): GoalTimestampRepairP
 }
 
 function validatePlan(value: unknown, expectedPlanId: string): GoalTimestampRepairPlan {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isGoalRecordObject(value)) {
     throw new Error('stored timestamp-repair plan is malformed');
   }
-  const plan = value as GoalTimestampRepairPlan;
+  const plan = value as unknown as GoalTimestampRepairPlan;
   if (
     plan.schemaVersion !== SCHEMA_VERSION || plan.kind !== 'goal-timestamp-repair' ||
     plan.planId !== expectedPlanId || !Array.isArray(plan.entries) ||
@@ -553,13 +565,13 @@ function validatePlan(value: unknown, expectedPlanId: string): GoalTimestampRepa
   let previousFileName: string | undefined;
   for (const entry of plan.entries) {
     if (
-      typeof entry !== 'object' || entry === null ||
-      typeof entry.goalId !== 'string' || !/^[\w.-]+$/.test(entry.goalId) ||
+      !isGoalRecordObject(entry) ||
+      !isValidGoalId(entry.goalId) ||
       entry.fileName !== `${entry.goalId}.json` ||
-      typeof entry.beforeDigest !== 'string' || !/^[a-f0-9]{64}$/.test(entry.beforeDigest) ||
-      typeof entry.afterDigest !== 'string' || !/^[a-f0-9]{64}$/.test(entry.afterDigest) ||
-      typeof entry.previousUpdatedAt !== 'string' || !Number.isFinite(Date.parse(entry.previousUpdatedAt)) ||
-      typeof entry.derivedUpdatedAt !== 'string' || !Number.isFinite(Date.parse(entry.derivedUpdatedAt)) ||
+      !isSha256Hex(entry.beforeDigest) ||
+      !isSha256Hex(entry.afterDigest) ||
+      !isValidIsoTimestamp(entry.previousUpdatedAt) ||
+      !isValidIsoTimestamp(entry.derivedUpdatedAt) ||
       typeof entry.repairRequired !== 'boolean' ||
       (entry.repairRequired ? entry.beforeDigest === entry.afterDigest : entry.beforeDigest !== entry.afterDigest) ||
       seenFiles.has(entry.fileName) || seenGoals.has(entry.goalId) ||
@@ -569,11 +581,7 @@ function validatePlan(value: unknown, expectedPlanId: string): GoalTimestampRepa
     seenGoals.add(entry.goalId);
     previousFileName = entry.fileName;
   }
-  const expectedSourceDigest = digest(JSON.stringify(plan.entries.map((entry) => ({
-    fileName: entry.fileName,
-    beforeDigest: entry.beforeDigest,
-  }))));
-  if (plan.sourceDigest !== expectedSourceDigest) throw new Error('stored timestamp-repair source digest mismatch');
+  if (plan.sourceDigest !== computeSourceDigest(plan.entries)) throw new Error('stored timestamp-repair source digest mismatch');
   const { planId: _planId, ...body } = plan;
   if (digest(JSON.stringify(body)) !== expectedPlanId) throw new Error('stored timestamp-repair plan digest mismatch');
   return plan;
@@ -581,10 +589,6 @@ function validatePlan(value: unknown, expectedPlanId: string): GoalTimestampRepa
 
 function repairRoot(): string {
   return join(goalsDir(), REPAIR_ROOT);
-}
-
-function goalLockPath(goalId: string): string {
-  return join(goalsDir(), `.${digest(goalId)}.lock`);
 }
 
 function planArtifactId(planId: string): string {
@@ -605,17 +609,13 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function parseArtifact(value: unknown): TimestampRepairArtifact | null {
   try {
-    if (!isRecord(value) || value['schemaVersion'] !== SCHEMA_VERSION ||
+    if (!isGoalRecordObject(value) || value['schemaVersion'] !== SCHEMA_VERSION ||
       typeof value['kind'] !== 'string' || typeof value['artifactId'] !== 'string') return null;
     if (value['kind'] === 'goal-timestamp-repair-plan') {
       if (!exactKeys(value, ['schemaVersion', 'kind', 'artifactId', 'plan']) ||
-        typeof value['artifactId'] !== 'string' || !value['artifactId'].startsWith('plan-')) return null;
+        !value['artifactId'].startsWith('plan-')) return null;
       const planId = value['artifactId'].slice('plan-'.length);
       const plan = validatePlan(value['plan'], planId);
       return { schemaVersion: SCHEMA_VERSION, kind: value['kind'], artifactId: value['artifactId'], plan };
@@ -624,13 +624,13 @@ function parseArtifact(value: unknown): TimestampRepairArtifact | null {
       if (!exactKeys(value, [
         'schemaVersion', 'kind', 'artifactId', 'planId', 'goalId', 'rawDigest', 'rawBase64',
       ]) ||
-        typeof value['planId'] !== 'string' || !/^[a-f0-9]{64}$/.test(value['planId']) ||
-        typeof value['goalId'] !== 'string' || !/^[\w.-]+$/.test(value['goalId']) ||
-        typeof value['rawDigest'] !== 'string' || !/^[a-f0-9]{64}$/.test(value['rawDigest']) ||
+        !isSha256Hex(value['planId']) ||
+        !isValidGoalId(value['goalId']) ||
+        !isSha256Hex(value['rawDigest']) ||
         typeof value['rawBase64'] !== 'string' ||
         value['artifactId'] !== backupArtifactId(value['planId'], value['goalId'])) return null;
       const raw = Buffer.from(value['rawBase64'], 'base64');
-      if (raw.length < 1 || raw.length > MAX_GOAL_FILE_BYTES ||
+      if (raw.length < 1 || raw.length > GOAL_MAX_FILE_BYTES ||
         raw.toString('base64') !== value['rawBase64'] || digest(raw) !== value['rawDigest']) return null;
       return value as unknown as StoredRawBackup;
     }
@@ -639,12 +639,11 @@ function parseArtifact(value: unknown): TimestampRepairArtifact | null {
         'schemaVersion', 'kind', 'artifactId', 'planId', 'goalId', 'beforeDigest', 'afterDigest',
         'derivedUpdatedAt',
       ]) ||
-        typeof value['planId'] !== 'string' || !/^[a-f0-9]{64}$/.test(value['planId']) ||
-        typeof value['goalId'] !== 'string' || !/^[\w.-]+$/.test(value['goalId']) ||
-        typeof value['beforeDigest'] !== 'string' || !/^[a-f0-9]{64}$/.test(value['beforeDigest']) ||
-        typeof value['afterDigest'] !== 'string' || !/^[a-f0-9]{64}$/.test(value['afterDigest']) ||
-        typeof value['derivedUpdatedAt'] !== 'string' ||
-        !Number.isFinite(Date.parse(value['derivedUpdatedAt'])) ||
+        !isSha256Hex(value['planId']) ||
+        !isValidGoalId(value['goalId']) ||
+        !isSha256Hex(value['beforeDigest']) ||
+        !isSha256Hex(value['afterDigest']) ||
+        !isValidIsoTimestamp(value['derivedUpdatedAt']) ||
         value['artifactId'] !== receiptArtifactId(value['planId'], value['goalId'])) return null;
       return value as unknown as StoredReceipt;
     }
@@ -756,6 +755,13 @@ function filesByName(files: readonly StableGoalFile[]): Map<string, StableGoalFi
   return new Map(files.map((file) => [file.fileName, file]));
 }
 
+function assertExactRawBackup(planId: string, goalId: string, beforeDigest: string): void {
+  const backup = readBackup(planId, goalId);
+  if (!backup || backup.rawDigest !== beforeDigest) {
+    throw new Error(`repaired goal lacks its exact raw backup: ${goalId}`);
+  }
+}
+
 function preflightStoredPlan(plan: GoalTimestampRepairPlan, files: readonly StableGoalFile[]): void {
   if (files.length !== plan.entries.length) throw new Error('goal source set changed after timestamp-repair planning');
   const current = filesByName(files);
@@ -768,12 +774,7 @@ function preflightStoredPlan(plan: GoalTimestampRepairPlan, files: readonly Stab
     const after = entry.repairRequired && file.rawDigest === entry.afterDigest;
     if (!before && !after) throw new Error(`goal changed outside repair plan: ${entry.goalId}`);
     if (!entry.repairRequired && !before) throw new Error(`non-target goal changed: ${entry.goalId}`);
-    if (after) {
-      const backup = readBackup(plan.planId, entry.goalId);
-      if (!backup || backup.rawDigest !== entry.beforeDigest) {
-        throw new Error(`repaired goal lacks its exact raw backup: ${entry.goalId}`);
-      }
-    }
+    if (after) assertExactRawBackup(plan.planId, entry.goalId, entry.beforeDigest);
   }
 }
 
@@ -807,12 +808,13 @@ export function dryRunGoalTimestampRepair(): GoalTimestampRepairDryRunResult {
 /** Apply or resume the exact plan identified by `planId`. */
 export function applyGoalTimestampRepair(planId: string): GoalTimestampRepairApplyResult {
   assertSupportedCustodyPlatform();
-  if (!/^[a-f0-9]{64}$/.test(planId)) throw new Error('timestamp-repair plan id must be 64 lowercase hex characters');
+  if (!isSha256Hex(planId)) throw new Error('timestamp-repair plan id must be 64 lowercase hex characters');
 
-  let files = readCompleteGoalSet();
+  // Verify source custody before touching the artifact store.
+  readCompleteGoalSet();
   if (existsSync(repairRoot())) recoverArtifactStore();
   let plan = storedPlan(planId);
-  files = readCompleteGoalSet();
+  let files = readCompleteGoalSet();
   if (!plan) {
     const candidate = materializePlan(files);
     if (candidate.planId !== planId) throw new Error('timestamp-repair plan id does not match the current complete goal set');
@@ -827,7 +829,7 @@ export function applyGoalTimestampRepair(planId: string): GoalTimestampRepairApp
   let alreadyAppliedGoals = 0;
   let receiptCount = 0;
   for (const entry of plan.entries.filter((candidate) => candidate.repairRequired)) {
-    const lock = acquireLocalStoreLock(goalLockPath(entry.goalId), LOCK_WAIT_MS);
+    const lock = acquireLocalStoreLock(goalLockPath(entry.goalId), GOAL_LOCK_WAIT_MS);
     if (!lock) throw new Error(`could not acquire goal repair lock: ${entry.goalId}`);
     let operationFailure: unknown;
     let released = false;
@@ -835,10 +837,7 @@ export function applyGoalTimestampRepair(planId: string): GoalTimestampRepairApp
       const target = join(goalsDir(), entry.fileName);
       const current = readStableGoal(target, entry.fileName);
       if (current.rawDigest === entry.afterDigest) {
-        const backup = readBackup(planId, entry.goalId);
-        if (!backup || backup.rawDigest !== entry.beforeDigest) {
-          throw new Error(`repaired goal lacks its exact raw backup: ${entry.goalId}`);
-        }
+        assertExactRawBackup(planId, entry.goalId, entry.beforeDigest);
         writeArtifact(receiptFor(plan, entry));
         alreadyAppliedGoals += 1;
         receiptCount += 1;

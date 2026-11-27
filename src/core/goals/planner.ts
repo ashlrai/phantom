@@ -27,6 +27,7 @@ import type {
 import { authorSpec } from '../spec/spec-store.js';
 import { getActiveClient } from '../run/provider-client.js';
 import { engineInstalled } from '../run/engines.js';
+import { isGoalRecordObject, slugifyGoalText } from './open-goals.js';
 
 /**
  * FIXED stable epoch for decomposed-but-not-yet-persisted milestones. Using a
@@ -36,18 +37,6 @@ import { engineInstalled } from '../run/engines.js';
  */
 const STABLE_EPOCH = '1970-01-01T00:00:00.000Z';
 
-/** Lowercase, hyphenated, alnum-only slug (mirrors the store/spec-store slug). */
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .slice(0, 32)
-    .replace(/-$/, '');
-}
-
 /**
  * Deterministic, unique-within-the-objective milestone id derived from the
  * order + title (+ a short content hash). Stable across runs; no clock, no
@@ -56,7 +45,7 @@ function slugify(text: string): string {
  */
 function stableMilestoneId(order: number, title: string): string {
   const hash = createHash('sha256').update(`${order}:${title}`).digest('hex').slice(0, 6);
-  const slug = slugify(title) || 'milestone';
+  const slug = slugifyGoalText(title, 32) || 'milestone';
   return `m${order}-${slug}-${hash}`;
 }
 
@@ -159,18 +148,16 @@ async function decomposeWithFrontier(
   const parts = parsed
     .filter(
       (x): x is { title: string; detail?: string; effort?: number; scope?: string } =>
-        typeof x === 'object' &&
-        x !== null &&
-        typeof (x as { title?: unknown }).title === 'string' &&
-        String((x as { title: string }).title).trim().length > 0,
+        isGoalRecordObject(x) &&
+        typeof x['title'] === 'string' &&
+        x['title'].trim().length > 0,
     )
     .filter((x) => {
       // M270: filter out trivial milestones (config tweaks, doc updates, etc.)
-      const scope = (x as { scope?: string }).scope;
-      return scope !== 'trivial';
+      return x.scope !== 'trivial';
     })
     .map((x) => ({
-      title: String(x.title).trim(),
+      title: x.title.trim(),
       detail: String(x.detail ?? '').trim(),
       effort: typeof x.effort === 'number' ? x.effort : undefined,
       scope: typeof x.scope === 'string' ? x.scope : undefined,
@@ -363,9 +350,9 @@ async function refineWithModel(
   const refined = parsed
     .filter(
       (x): x is { title: string; detail?: string } =>
-        typeof x === 'object' && x !== null && typeof (x as { title?: unknown }).title === 'string',
+        isGoalRecordObject(x) && typeof x['title'] === 'string',
     )
-    .map((x) => ({ title: String(x.title), detail: String(x.detail ?? '') }));
+    .map((x) => ({ title: x.title, detail: String(x.detail ?? '') }));
   if (refined.length === 0) throw new Error('model returned no usable milestones');
   return refined;
 }
