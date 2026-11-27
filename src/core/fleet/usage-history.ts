@@ -153,19 +153,20 @@ function prune(rows: UsageReading[], nowMs: number): UsageReading[] {
 /**
  * Append new readings. A reading is skipped when it is not newer than its
  * pool's last row, or when value and reset time are both unchanged.
+ * The retention cap keeps the newest observations across pools.
  */
 export function appendUsageReadings(rows: readonly UsageReading[], readings: readonly UsageReading[], nowMs: number): { rows: UsageReading[]; changed: boolean } {
-  const next = prune([...rows], nowMs);
-  let changed = next.length !== rows.length;
+  const previous = prune([...rows], nowMs);
+  const next = [...previous];
   for (const reading of readings) {
     if (!validRow(reading) || !inHistoryWindow(reading, nowMs)) continue;
     const last = lastFor(next, reading.pool);
     if (last && (ms(reading.observed_at) <= ms(last.observed_at)
       || (last.used_pct === reading.used_pct && last.reset_at === reading.reset_at))) continue;
     next.push(row(reading));
-    changed = true;
   }
-  return { rows: next.slice(-USAGE_HISTORY_MAX_ROWS), changed };
+  const retained = next.length === previous.length ? previous : prune(next, nowMs);
+  return { rows: retained, changed: retained.length !== rows.length || retained.some((reading, i) => reading !== previous[i]) };
 }
 
 /** The ledger's current per-pool readings. A pool without a measured share or a reading time is skipped. */

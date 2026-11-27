@@ -147,6 +147,8 @@ observed from the window start up to, but excluding, that reset. Pace and
 runway need at least two distinct observation times from that window. When
 multiple readings share an observation time, the first reading supplies the
 chart point and the evidence for reset detection and runway.
+The history row limit keeps the newest observations across pools by their
+observation timestamps, including when a pool reports a reading late.
 Reset detection and current window selection skip readings outside their own
 named quota window. If every reading falls outside its window, the latest
 reported reset is shown with an empty chart and unknown pace. A

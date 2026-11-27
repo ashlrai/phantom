@@ -6,7 +6,7 @@ import { cmdFleetUsageHistory } from '../src/cli/fleet-usage-history.js';
 import { readResourceLedger } from '../src/core/fleet/runs-resource-ledger.js';
 import {
   appendUsageReadings, parseUsageHistory, poolUsageSeries, projectUsageHistory, readUsageHistory,
-  USAGE_HISTORY_MAX_AGE_MS, USAGE_HISTORY_SCHEMA, USAGE_WINDOW_MS, usageHistoryPath, usageRunway, type UsageHistoryV1, type UsageReading,
+  USAGE_HISTORY_MAX_AGE_MS, USAGE_HISTORY_MAX_ROWS, USAGE_HISTORY_SCHEMA, USAGE_WINDOW_MS, usageHistoryPath, usageRunway, type UsageHistoryV1, type UsageReading,
 } from '../src/core/fleet/usage-history.js';
 
 const NOW = Date.parse('2026-11-18T12:00:00.000Z');
@@ -43,6 +43,20 @@ describe('append-only history', () => {
     expect(next.rows).toEqual([edge, read(1, 20)]);
     expect(appendUsageReadings([old], [], NOW)).toEqual({ rows: [], changed: true });
     expect(appendUsageReadings([], [read(USAGE_HISTORY_MAX_AGE_MS / H + 1, 5)], NOW).rows).toEqual([]);
+  });
+
+  it('applies the row cap by observation time across pools', () => {
+    const history = Array.from({ length: USAGE_HISTORY_MAX_ROWS }, (_, i) => ({
+      ...read(0, i % 100), observed_at: iso(NOW - USAGE_HISTORY_MAX_ROWS + i),
+    }));
+    const tooOld = read(1, 20, RESET, 'codex-personal');
+    expect(appendUsageReadings(history, [tooOld], NOW)).toEqual({ rows: history, changed: false });
+
+    const oldest = history[0]!;
+    const delayed = { ...tooOld, observed_at: iso(Date.parse(oldest.observed_at) + 5) };
+    const retained = appendUsageReadings(history, [delayed], NOW);
+    expect(retained.changed).toBe(true);
+    expect(retained.rows).toEqual([...history.slice(1, 6), delayed, ...history.slice(6)]);
   });
 
   it('drops malformed rows and reads a wrong schema as empty', () => {
