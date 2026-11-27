@@ -62,11 +62,11 @@
  */
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 
-import { scrubSecrets } from '../util/scrub.js';
 import { findGithubPrUrls, recordDevinCliPrs, type DevinCliPr } from './cli-prs.js';
 import type { DevinTurnLine, DevinTurnPayload } from './turn-protocol.js';
-import { DEVIN_TURN_EXIT, type DevinTurnIo } from './chat-runner.js';
+import { cleanDevinTurnText as clean, DEVIN_TURN_EXIT, type DevinTurnIo } from './chat-runner.js';
 import { acpMcpServers, createAcpTerminalRouter } from './acp-terminal.js';
+import { isDevinRecord as isRecord } from './types.js';
 
 export interface DevinAcpDeps {
   spawn?: typeof nodeSpawn;
@@ -87,18 +87,11 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_CANCEL_GRACE_MS = 3_000;
 const MAX_LINE_CHARS = 4 * 1024 * 1024;
 const MAX_TOOL_OUTPUT = 8_000;
-const MAX_TEXT = 60_000;
 
 /** ACP tool kinds that only read (https://agentclientprotocol.com — ToolKind). */
 const READ_ONLY_KINDS = new Set(['read', 'search', 'think', 'fetch']);
 
 type Json = Record<string, unknown>;
-const isRecord = (value: unknown): value is Json => value !== null && typeof value === 'object' && !Array.isArray(value);
-
-function clean(text: string, max = MAX_TEXT): string {
-  const scrubbed = scrubSecrets(text).replace(/\bcog_[A-Za-z0-9_-]+/g, '[REDACTED]');
-  return scrubbed.length > max ? `${scrubbed.slice(0, max - 1)}…` : scrubbed;
-}
 
 /** The CLI's root flags for this chat (before `acp`). Exported for tests. */
 export function devinAcpArgs(payload: Pick<DevinTurnPayload, 'permissionMode' | 'model'>): string[] {

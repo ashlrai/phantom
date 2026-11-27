@@ -79,6 +79,36 @@ export const DEVIN_ORG_ID_PATTERN = /^org-[A-Za-z0-9_-]{1,120}$/;
 export const DEVIN_PLAYBOOK_ID_PATTERN = /^playbook-[A-Za-z0-9_-]{1,120}$/;
 /** v3 credentials: "All API credentials use the `cog_` prefix format." */
 export const DEVIN_KEY_PATTERN = /^cog_[A-Za-z0-9_-]{8,512}$/;
+/** Canonical GitHub pull request URL (owner/repo + pull number). */
+export const DEVIN_GITHUB_PR_URL_PATTERN = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+$/;
+
+const DEVIN_KEY_TOKEN_PATTERN = /\bcog_[A-Za-z0-9_-]+/g;
+
+/** Non-null, non-array object guard shared across Devin parsers and stores. */
+export function isDevinRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Valid non-negative finite ACU reading (unknown / negative / NaN fails closed). */
+export function isValidDevinAcu(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+/** Round an ACU or USD estimate to 2 decimal places. */
+export function roundDevinAcu(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** Format an ACU amount for human-readable status and budget refusal lines. */
+export function formatDevinAcu(value: number): string {
+  const rounded = roundDevinAcu(value);
+  return `${rounded} ACU${rounded === 1 ? '' : 's'}`;
+}
+
+/** Strip any `cog_` API key-shaped token from diagnostic or transcript text. */
+export function redactDevinKeys(text: string, replacement = '[REDACTED]'): string {
+  return text.replace(DEVIN_KEY_TOKEN_PATTERN, replacement);
+}
 
 export type DevinTaskOrigin = 'chat' | 'operator' | 'cli' | 'fleet';
 
@@ -313,8 +343,8 @@ export function isDevinOpaqueSelfId(value: unknown): value is string {
     !/%(?:2f|5c)/i.test(value) && !/^(?:cog_|apk_|sk[-_]|gh[pousr]_|github_pat_|Bearer|eyJ)/i.test(value);
 }
 export function isDevinSelfIdentity(value: unknown): value is DevinSelfIdentity {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const row = value as Record<string, unknown>;
+  if (!isDevinRecord(value)) return false;
+  const row = value;
   const org = (id: unknown) => id === null || typeof id === 'string' && DEVIN_ORG_ID_PATTERN.test(id);
   if (!org(row['orgId']) || !org(row['devinSessionsOrgId'])) return false;
   return row['principal'] === 'service_user'
