@@ -59,6 +59,9 @@ between the current phase start and report time, inclusive.
 Fleet lane cards select the latest usage journal reading at or before report
 time. Future readings cannot hide measured quota or mark a lane as drained.
 When the usage journal has only future readings, it supplies no credit evidence.
+At or after a reading's recorded quota reset, its remaining credit, burn rate
+and projected exhaustion become unknown. The expired reading cannot mark a
+lane as drained, even while its freshness interval is still open.
 
 `phm fleet lane-truth --json` compares dated quota readings within each
 provider window. Ordering and reset detection use readable observation times
