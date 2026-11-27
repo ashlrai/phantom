@@ -492,7 +492,7 @@ const laneField = (value: unknown): string | null =>
  * well-formed lane/code pairs survive — a malformed entry or code is
  * skipped, never guessed, matching the override and claim folds' strictness.
  */
-const rejectedLanes = (value: unknown): { lane: string; codes: string[] }[] => {
+const rejectedLanes = (value: unknown, chosen: string | null): { lane: string; codes: string[] }[] => {
   if (!Array.isArray(value)) return [];
   const out: { lane: string; codes: string[] }[] = [];
   const seenLanes = new Set<string>();
@@ -500,8 +500,7 @@ const rejectedLanes = (value: unknown): { lane: string; codes: string[] }[] => {
     if (out.length >= MAX_CODES || !isRecord(entry)) continue;
     const lane = laneField(entry['lane']);
     const rawCodes = entry['reason_codes'];
-    if (lane === null || seenLanes.has(lane) || !Array.isArray(rawCodes)) continue;
-    seenLanes.add(lane);
+    if (lane === null || lane === chosen || seenLanes.has(lane) || !Array.isArray(rawCodes)) continue;
     const seen = new Set<string>();
     const codes: string[] = [];
     for (const code of rawCodes) {
@@ -511,6 +510,8 @@ const rejectedLanes = (value: unknown): { lane: string; codes: string[] }[] => {
         codes.push(code);
       }
     }
+    if (codes.length === 0) continue;
+    seenLanes.add(lane);
     out.push({ lane, codes });
   }
   return out;
@@ -566,7 +567,7 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
       chosen,
       globallyBlocked,
       workClass,
-      rejected: globallyBlocked ? [] : rejectedLanes(row.rejected_lanes),
+      rejected: globallyBlocked ? [] : rejectedLanes(row.rejected_lanes, chosen),
     });
   }
   return latest;
