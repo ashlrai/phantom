@@ -137,6 +137,34 @@ reaches this node. To share one queue across computers you control — or to
 join a team's pool — set up the SSH pool: [NODES.md](NODES.md) covers the
 design and [AGENT-NETWORK.md](AGENT-NETWORK.md) the join commands.
 
+## Send a job with real work
+
+The `hello-1` job above carries no task — a pull hands the node an empty claim
+and the operator decides what "done" means. To send work the node should
+actually do, embed the task text in the job. On this standalone registry the
+node works the printed task itself and answers with `complete --result`, so
+`--requires` names only the lane capabilities the work needs — do not add
+`pack:*` entries: a `pack:<name>` capability advertises an automated runner,
+which only the SSH pool's `phm node worker` has (see
+[NODE-ROUTER.md](NODE-ROUTER.md#capabilities-come-from-a-local-probe)).
+
+```sh
+TASK='Summarize README.md in one sentence.'
+DIGEST=$(printf %s "$TASK" | shasum -a 256 | cut -d' ' -f1)  # sha256sum on Linux
+phm node enqueue --job readme-1 --owner acme --pack codex-file \
+  --task-part "$TASK" --task-sha256 "sha256:$DIGEST" --json
+phm node plan --owner acme
+phm node pull --node <nodeId> --session 1
+```
+
+`--task-part` repeats for long text — the parts join in order, each at most
+4000 characters and 16 KiB joined — and `--task-sha256` is `sha256:` plus the
+lowercase hex sha256 of the exact joined text; the store refuses a mismatch.
+An embedded task requires `--pack codex-file`, and the two flags together or
+neither. `pull` prints the task text with the lease commands; do the work and
+run the printed `complete` command with your result text before the 30-second
+claim lapses — `phm node renew --watch` keeps a longer job's lease alive.
+
 ## Read the same fleet as the leader
 
 On an enrolled worker, use the existing approved SSH alias for your fleet

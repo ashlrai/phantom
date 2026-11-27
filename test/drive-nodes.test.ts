@@ -913,6 +913,10 @@ describe('result: read-only owner-scoped outcome', () => {
       const out = lines.at(-1)!;
       const claim = store.state.jobs[0]!.claim!;
       expect(out).toContain('Claimed task-job (owner o; requires build; pack codex-file; secrets DEPLOY_KEY).');
+      // A pack is jargon a first-time node has not met: the pull names what an
+      // automated runner executes and that this manual node completes with its
+      // own result text, so "pack codex-file" never reads as a missing runner.
+      expect(out).toContain('Pack codex-file is what an automated runner executes; this node works the job itself — complete --result takes your own text.');
       expect(out).toContain(`Lease token ${claim.token}, leader-token ${claim.leaderToken};`);
       expect(out).toContain('Task:');
       expect(out).toContain(taskText);
