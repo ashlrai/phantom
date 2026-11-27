@@ -2731,7 +2731,22 @@ opaque to it. The value is bounded free text, up to 512 characters. On
 `bus-follow` filtered rows still advance checkpoints exactly like every
 other filter, and a `comms bus --checkpoint` consumer binds the raw
 `--contains` spelling into its filter identity, so a changed needle fails
-closed.
+closed. `--body-kind <kind>` and `--result
+<reserved|admitted|complete|failed>` round out the `comms bus read|watch`
+filter set: the first keeps only envelopes whose body carries that exact
+kind discriminator through the shared `busBodyKind` own-field match — the
+v2 `kind` field, else a `protocol.kind`, else the `type`/`schema` a
+kindless notice keys on, exact and case-sensitive — and the second keeps
+only `work.result` bodies whose own `outcome` strictly equals the code,
+the same `busBodyResultOutcome` match and `WORK_RESULT_OUTCOMES`
+vocabulary every other bus read shares; both validate exactly like the
+`fleet_bus_inbox` and verse raw-page params, bind into the checkpoint
+filter identity like every other flag, and narrow watch pages the same
+way, so "stream only this room's failed result receipts" is one filtered
+`comms bus watch`. The whole set runs through `bus-page-filters.ts` — the
+one `BusPageFilters`/`filterBusInboxPage` rule `fleet_bus_inbox` and
+`GET /api/verse/agent-bus` already applied — so a CLI read, an MCP read
+and an HTTP read can never disagree about what a filter keeps.
 
 ### 4. Work feed
 
