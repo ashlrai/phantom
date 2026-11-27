@@ -958,7 +958,10 @@ becomes eligible 60 seconds after launch. For a partial probe, the recorded
 sampling duration sets the earliest possible completion because attachment
 can occur after launch. Probes that could only complete after the report
 began leave earlier eligible evidence available. The cutoff is inclusive,
-and receipts with no recorded start remain eligible. Rows resolving
+and receipts with no recorded start remain eligible. When the selected
+probe's lane differs from the outcome's recorded lane, all launch-cost
+fields stay null, even if an older probe matches. An outcome with no
+recorded lane can still display its probe without lane attribution. Rows resolving
 outside the jobs window join nothing and
 never create outcomes. The report's `launch_cost_state` mirrors the
 jobs `state` vocabulary and `launch_cost_truncated` marks a cut

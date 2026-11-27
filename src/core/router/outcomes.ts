@@ -3721,11 +3721,11 @@ export async function readRouterOutcomes(opts: {
     }
   }
   if (launchCostRead.state === 'read') {
-    const byJob = new Map<string, LaunchCostEvidence>();
+    const byJob = new Map<string, { lane: string; evidence: LaunchCostEvidence }>();
     const latestStartByJob = new Map<string, number>();
     const seen = new Set<string>();
     for (const receipt of launchCostReceipts(launchCostRead.text)) {
-      const { launchId, startedAtMs, sampledSeconds, evidence } = receipt;
+      const { launchId, startedAtMs, sampledSeconds, lane, evidence } = receipt;
       // Resolve before folding so a bare job ID and a claim ID can coexist.
       const job = startedAtMs !== null ? launchId.replace(LAUNCH_ATTEMPT_SUFFIX, '') : launchId;
       if (startedAtMs !== null) {
@@ -3740,11 +3740,12 @@ export async function readRouterOutcomes(opts: {
         seen.add(key);
         latestStartByJob.set(job, startedAtMs);
       }
-      byJob.set(job, evidence);
+      byJob.set(job, { lane, evidence });
     }
     for (const o of folded.outcomes) {
-      const ev = byJob.get(o.job_id);
-      if (ev === undefined) continue;
+      const probe = byJob.get(o.job_id);
+      if (probe === undefined || (o.lane !== null && o.lane !== probe.lane)) continue;
+      const ev = probe.evidence;
       o.launch_cost_status = ev.status;
       o.launch_peak_processes = ev.peakProcesses;
       o.launch_mean_cpu_pct = ev.meanCpuPct;

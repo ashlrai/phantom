@@ -3360,7 +3360,7 @@ describe('router outcome launch-cost join', () => {
       launchCostRow('J1-aaaabbbbcccc', 'measured'),
       launchCostRow('J2-ddddeeeeffff', 'partial', { peakProcesses: 7, meanCpuPercentOneCore: 20, peakCpuPercentOneCore: 55 }),
       // Unknown probes key the bare job id.
-      launchCostRow('J3', 'unknown'),
+      launchCostRow('J3', 'unknown', { lane: 'beta' }),
       launchCostRow('JX-999988887777', 'measured'),
       // Malformed rows never join.
       launchCostRow('J1-ffffeeee1111', 'measured', { samples: 'lots' }),
@@ -3383,6 +3383,21 @@ describe('router outcome launch-cost join', () => {
     });
     expect(byId.has('JX')).toBe(false);
     expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
+  });
+
+  it('withholds launch-cost evidence when the selected probe belongs to a different lane', async () => {
+    const root = runsDir([
+      '{"job":"J1","event":"launch","lane":"alpha","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J1","event":"launch","lane":"beta","ts":"2026-11-01T00:02:00Z"}',
+      '{"job":"J1","phase":"MERGED","lane":"beta","ts":"2026-11-01T00:05:00Z"}',
+    ].join('\n'));
+    writeLaunchCosts(root, [launchCostRow('J1-aaaabbbbcccc', 'measured')]);
+
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result.outcomes[0]).toMatchObject({
+      lane: 'beta', launch_cost_status: null, launch_peak_processes: null,
+      launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
+    });
   });
 
   it('keeps a job id ending in a 12-hex segment from being stripped into a different job', async () => {
