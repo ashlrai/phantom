@@ -34,12 +34,7 @@
  * counts, job ids and timestamps only — never paths, hold reasons or error
  * text.
  */
-import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { dispatchEventsCandidates } from '../fleet/dispatch-events-path.js';
 import { sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 import {
@@ -64,6 +59,7 @@ import {
   LANE_STREAKS_MIN_MINUTES,
 } from '../fleet/lane-empty-streak.js';
 import { readFleetMainHealth } from '../fleet/main-health.js';
+import { readDispatchEventsLog } from '../fleet/dispatch-events-read.js';
 import { readStuckFixes } from '../fleet/stuck-fixes.js';
 
 export const VERSE_RUNS_HISTORY_PATH = '/api/verse/runs-history';
@@ -79,42 +75,10 @@ export interface RunsHistoryApiDeps {
   readHistory?: (hours: number) => Promise<RunsHistory>;
   /** Defaults to defaultLaneTruthReaders() built per request. */
   laneTruth?: LaneTruthReaders;
-  /** Defaults to the dispatch-events.log tail under ~/.ashlr-runs (null when absent). */
+  /** Defaults to the shared dispatch-events.log tail reader (null when absent). */
   readDispatchEvents?: () => Promise<string | null>;
   /** Runs dir holding supervisor/status-main-guardian.md; defaults to ~/.ashlr-runs. */
   runsDir?: string;
-}
-
-/** Descriptor-bound tail read of the runs-dir event log, like runs-dir-state. */
-const DISPATCH_EVENTS_TAIL = 8 * 1024 * 1024;
-async function readDispatchEventsLog(): Promise<string | null> {
-  for (const path of dispatchEventsCandidates(join(homedir(), '.ashlr-runs'))) {
-    const text = await readEventsTail(path);
-    if (text !== undefined) return text;
-  }
-  return null;
-}
-
-/** Tail of one candidate; undefined when it is not a readable regular file (try the next). */
-async function readEventsTail(path: string): Promise<string | null | undefined> {
-  try {
-    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    try {
-      const info = await file.stat();
-      if (!info.isFile()) return undefined;
-      if (info.size <= 0) return null;
-      const start = Math.max(0, info.size - DISPATCH_EVENTS_TAIL);
-      const bytes = Buffer.alloc(Math.min(info.size, DISPATCH_EVENTS_TAIL));
-      let offset = 0;
-      while (offset < bytes.length) {
-        const { bytesRead } = await file.read(bytes, offset, bytes.length - offset, start + offset);
-        if (!bytesRead) break;
-        offset += bytesRead;
-      }
-      const text = bytes.subarray(0, offset).toString('utf8');
-      return start ? text.slice(text.indexOf('\n') < 0 ? text.length : text.indexOf('\n') + 1) : text;
-    } finally { await file.close(); }
-  } catch { return undefined; }
 }
 
 export function createRunsHistoryApi(deps: RunsHistoryApiDeps = {}): ApiModule {

@@ -117,4 +117,26 @@ describe('lane-streaks route with real files', () => {
     await writeFile(join(runsDir, 'queue', 'dispatch-events.log'), log('queue-fx-lane'));
     expect(await readDispatchEventsLog(runsDir)).toContain('queue-fx-lane');
   });
+
+  it('the default reader and the route honor ASHLR_RUNS_DIR outside the stubbed home', async () => {
+    const runsDir = await mkdtemp(join(tmpdir(), 'runs-env-'));
+    const previous = process.env.ASHLR_RUNS_DIR;
+    try {
+      await relocate();
+      await mkdir(join(runsDir, 'queue'), { recursive: true });
+      await writeFile(join(runsDir, 'queue', 'dispatch-events.log'), log('env-fx-lane'));
+      process.env.ASHLR_RUNS_DIR = runsDir;
+      expect(await readDispatchEventsLog()).toContain('env-fx-lane');
+      const result = await call();
+      expect(result.handled).toBe(true);
+      expect(result.json).toMatchObject({ v: 1, source: 'ok', windowMinutes: 60 });
+      expect(result.json.lanes).toEqual([
+        expect.objectContaining({ lane: 'env-fx-lane', launches: 1 }),
+      ]);
+    } finally {
+      if (previous === undefined) delete process.env.ASHLR_RUNS_DIR;
+      else process.env.ASHLR_RUNS_DIR = previous;
+      await rm(runsDir, { recursive: true, force: true });
+    }
+  });
 });
