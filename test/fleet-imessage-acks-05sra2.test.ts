@@ -66,11 +66,21 @@ describe('fleet imessage-acks', () => {
   });
   it('rejects invalid flags before filesystem reads', async () => {
     const { dir } = fixture();
-    for (const args of [['--limit', '0'], ['--limit', '101'], ['--limit', '1.5'], ['--limit'], ['--json', '--json'], ['--wat'], ['--limit', '1', '--limit', '2']]) {
+    for (const args of [['--limit', '0'], ['--limit', '101'], ['--limit', '1.5'], ['--limit'], ['--json', '--json'], ['--wat'], ['--limit', '1', '--limit', '2'], ['--rowid'], ['--rowid', '0'], ['--rowid', '1', '--rowid', '2']]) {
       const result = await run(dir, args);
       expect(result.code).toBe(2);
       expect(result.out).toBe('');
-      expect(result.errors).toBe('Usage: phm fleet imessage-acks [--limit N] [--json]');
+      expect(result.errors).toBe('Usage: phm fleet imessage-acks [--limit N] [--rowid N] [--json]');
+    }
+  });
+  it('answers --help and -h with usage and no store read', async () => {
+    const { dir } = fixture();
+    rmSync(join(dir, 'imessage'), { recursive: true, force: true });
+    for (const flag of ['--help', '-h']) {
+      const result = await run(dir, [flag]);
+      expect(result.code).toBe(0);
+      expect(result.out).toBe('Usage: phm fleet imessage-acks [--limit N] [--rowid N] [--json]');
+      expect(result.errors).toBe('');
     }
   });
 });

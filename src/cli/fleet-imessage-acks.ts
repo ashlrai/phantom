@@ -1,6 +1,6 @@
 import { readImessageAckEvidence } from '../core/comms/imessage-ack-evidence.js';
 
-const USAGE = 'Usage: phm fleet imessage-acks [--limit N] [--json]';
+const USAGE = 'Usage: phm fleet imessage-acks [--limit N] [--rowid N] [--json]';
 export interface FleetImessageAcksDeps {
   runsDir?: string;
   output?: (line: string) => void;
@@ -10,6 +10,10 @@ export interface FleetImessageAcksDeps {
 export async function cmdFleetImessageAcks(args: string[], deps: FleetImessageAcksDeps = {}): Promise<number> {
   const output = deps.output ?? console.log;
   const error = deps.error ?? console.error;
+  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
+    output(USAGE);
+    return 0;
+  }
   let limit = 20;
   let json = false;
   let seenLimit = false;
@@ -23,9 +27,9 @@ export async function cmdFleetImessageAcks(args: string[], deps: FleetImessageAc
       limit = Number(value);
     } else if (args[i] === '--rowid' && rowid === undefined) {
       const value = args[++i];
-      if (!value || !/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value))) { error(`${USAGE} [--rowid N]`); return 2; }
+      if (!value || !/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value))) { error(USAGE); return 2; }
       rowid = Number(value);
-    } else { error(args.includes('--rowid') ? `${USAGE} [--rowid N]` : USAGE); return 2; }
+    } else { error(USAGE); return 2; }
   }
   const report = await readImessageAckEvidence(limit, deps.runsDir, rowid);
   if (json) output(JSON.stringify(report));

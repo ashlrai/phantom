@@ -93,4 +93,13 @@ describe('cos CLI round-trip (isolated temp home)', () => {
     const usage = output.mock.calls.at(-1)![0] as string;
     expect(usage).toContain('cos ask');
   });
+
+  it('-h returns 0 with the same usage as --help', async () => {
+    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdCos(['-h'])).toBe(0);
+    const short = output.mock.calls.at(-1)![0] as string;
+    expect(short).toContain('cos ask');
+    expect(await cmdCos(['--help'])).toBe(0);
+    expect(output.mock.calls.at(-1)![0] as string).toBe(short);
+  });
 });

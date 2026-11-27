@@ -158,11 +158,11 @@ const DOCS = [
   'docs/WORKER.md',
   'docs/WORKTREE-PRUNE.md',
   'docs/WORLD.md',
-  // Fleet operating guides, held out until completion offered the fleet verbs
-  // they document. COS.md and IMESSAGE.md wait on `fleet cos` and
-  // `fleet imessage-acks`, whose --help does not yet pass
-  // test/cli-help-no-side-effects.
+  // Fleet operating guides. Each documented fleet verb is in completions
+  // SUBCOMMANDS and answers --help/-h with usage and exit 0, which is what
+  // test/cli-help-no-side-effects enumerates once the verb is offered.
   'docs/BRIEF-SEND.md',
+  'docs/COS.md',
   'docs/DISK-MAINT.md',
   'docs/FLEET-EMPTIES.md',
   'docs/FLEET-PROFILE.md',
@@ -171,6 +171,7 @@ const DOCS = [
   'docs/FLEET-REBASE-PLAN.md',
   'docs/FLEET-REBASE-STATUS.md',
   'docs/GROK-ULTRA-RUNWAY.md',
+  'docs/IMESSAGE.md',
   'docs/MACHINERY-MIGRATION.md',
   'docs/REBASE-ORDERING.md',
   'docs/RESOURCE-EVIDENCE.md',
