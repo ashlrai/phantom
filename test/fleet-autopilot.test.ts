@@ -462,6 +462,42 @@ describe('readFleetAutopilotState', () => {
     expect(report.action.kind).toBe(action);
   });
 
+  it.each([
+    { ready: 2, critical: false, timestamped: true, gap: null },
+    { ready: 0, critical: false, timestamped: true, gap: null },
+    { ready: 2, critical: true, timestamped: true, gap: 'starved-lane' },
+    { ready: 0, critical: undefined, timestamped: true, gap: 'missing-restock' },
+    { ready: 0, critical: false, timestamped: false, gap: 'missing-restock' },
+  ])('uses fresh quota evidence for $ready ready jobs, critical=$critical, timestamped=$timestamped',
+    async ({ ready, critical, timestamped, gap }) => {
+      const dir = await mkdtemp(join(tmpdir(), 'fleet-autopilot-'));
+      dirs.push(dir);
+      const lastTick = '2026-11-07T00:00:00Z';
+      const assembled = await readFleetAutopilotState({
+        runsDir: dir,
+        now: () => new Date(lastTick),
+        statusText: async () => JSON.stringify({
+          last_tick: lastTick,
+          admission: {
+            ts: timestamped ? lastTick : undefined,
+            cap: 4, running: 0, load1: 1,
+            lanes: { devin: { routine: { admit: false }, critical: { admit: critical } } },
+          },
+          lanes: { devin: { running: 0, target: 2, queued: ready, held: false } },
+        }),
+        queue: async () => queueView({ ready, byLane: [{ lane: 'devin', ready, parked: 0 }] }),
+        slots: async () => slotsView([slotLane('devin', 2)]),
+      });
+      const report = planFleetAutopilot(assembled);
+      expect(report.lanes[0]).toMatchObject({ running: 0, ready, freeSlots: 2, held: false });
+      if (gap === null) {
+        expect(report.gaps).toEqual([]);
+        expect(report.action).toMatchObject({ kind: 'no-op', detail: expect.stringContaining('quota deferrals') });
+      } else {
+        expect(report.topGap?.kind).toBe(gap);
+      }
+    });
+
   it('reports missing status and skips rebase reads without --repo', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fleet-autopilot-'));
     dirs.push(dir);

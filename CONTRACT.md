@@ -5365,6 +5365,11 @@ combines positive matches with dispatcher and slots holds when computing
 lane eligibility for its recommendations. Missing or unreadable files supply
 no additional hold evidence. The `fleet.autopilot.v1` report shape is unchanged.
 
+`FleetAutopilotState.quotaDeferredLanes` is an optional read-only set of lanes
+whose fresh, tick-matched admission record explicitly defers both routine
+and critical work. `planFleetAutopilot` omits starvation and restock gaps for
+these lanes while retaining their measured utilization and queue counts.
+
 ## Fleet eval report
 
 `buildFleetEvalReport` returns `fleet.eval-report.v1`. Group `revertRate` and

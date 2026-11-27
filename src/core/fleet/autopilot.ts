@@ -61,6 +61,8 @@ export interface FleetAutopilotState {
   generatedAt: string;
   sources: AutopilotSources;
   admission: FleetAdmissionReport | null;
+  /** Fresh dispatcher verdicts that defer both routine and critical work. */
+  quotaDeferredLanes?: ReadonlySet<string>;
   queue: FleetQueueV1 | null;
   slots: LaneTargetsV1 | null;
   /** Lane names from a readable operator HOLD file, if available. */
@@ -89,7 +91,7 @@ export async function readFleetAutopilotState(
   const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const now = opts.now ?? (() => new Date());
   const [status, queue, slots, rebase, localWorkers, holds] = await Promise.all([
-    (async (): Promise<{ source: Source; report: FleetAdmissionReport | null; tick?: number }> => {
+    (async (): Promise<{ source: Source; report: FleetAdmissionReport | null; tick?: number; quotaDeferredLanes?: Set<string> }> => {
       try {
         const text = await (opts.statusText ?? ((path) => readFile(path, 'utf8')))(join(runsDir, 'queue', 'status.json'));
         const snapshot = JSON.parse(text);
@@ -98,7 +100,15 @@ export async function readFleetAutopilotState(
         if (admissionTick !== undefined && admissionTick !== snapshot.last_tick) {
           return { source: 'degraded', report: null };
         }
-        return { source: 'healthy', report: explainFleetAdmission(snapshot), tick };
+        const report = explainFleetAdmission(snapshot);
+        const quotaDeferredLanes = new Set<string>();
+        if (typeof admissionTick === 'string') {
+          for (const { lane } of report.lanes) {
+            const quota = snapshot.admission.lanes?.[lane];
+            if (quota?.routine?.admit === false && quota?.critical?.admit === false) quotaDeferredLanes.add(lane);
+          }
+        }
+        return { source: 'healthy', report, tick, quotaDeferredLanes };
       } catch (error) {
         return { source: (error as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'missing' : 'degraded', report: null };
       }
@@ -141,6 +151,7 @@ export async function readFleetAutopilotState(
     generatedAt: generatedAt.toISOString(),
     sources: { status: status.source === 'healthy' && !fresh ? 'degraded' : status.source, queue: queue.source, slots: slots.source, rebase: rebase.source },
     admission: fresh ? status.report : null, queue: queue.view, slots: slots.view, rebase: rebase.repos,
+    ...(fresh && status.quotaDeferredLanes?.size ? { quotaDeferredLanes: status.quotaDeferredLanes } : {}),
     ...(holds.state === 'healthy' ? { operatorHolds: new Set(holds.text.split(/\s+/u).filter(Boolean)) } : {}),
     ...(opts.localWorkers ? { localWorkers: localWorkers ?? null } : {}),
   };
@@ -317,6 +328,7 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
 
   // starved-lane: launchable work queued while running under target (not held).
   for (const lane of lanes) {
+    if (state.quotaDeferredLanes?.has(lane.lane)) continue;
     const waiting = lane.ready;
     if (lane.held || lane.running === null || lane.target === null || lane.running >= lane.target || !waiting || waiting <= 0) continue;
     gaps.push({
@@ -346,6 +358,7 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
   // positive unhinted count keeps a free lane from reading as missing restock.
   const openSupply = state.queue?.unhinted ?? 0;
   for (const lane of lanes) {
+    if (state.quotaDeferredLanes?.has(lane.lane)) continue;
     const waiting = lane.ready;
     if (lane.held || lane.freeSlots === null || lane.freeSlots <= 0 || waiting !== 0 || openSupply > 0) continue;
     gaps.push({
@@ -367,7 +380,9 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
     action = { kind: 'no-op', reason: 'fleet-healthy', detail: state.sources.queue === 'healthy'
       ? admission === null
         ? 'No gap measured with the available evidence; current dispatcher capacity is unknown.'
-        : 'No gap measured: every lane is held, at target, or fed to its queue.'
+        : state.quotaDeferredLanes?.size
+          ? 'No gap measured among lanes outside the dispatcher quota deferrals.'
+          : 'No gap measured: every lane is held, at target, or fed to its queue.'
       : 'No gap measured with the available evidence; ready queue supply is unknown.' };
   } else {
     switch (topGap.kind) {
