@@ -573,6 +573,16 @@ describe('phm node CLI', () => {
     const lanes = await cli('lanes', '--help');
     expect(lanes.out).toContain('phm node lanes [--json]');
 
+    // `replica` rides the pool dispatch but needs no pool enrollment, so its
+    // help is its own two usage lines — not the pool cluster or the full list.
+    const replica = await cli('replica', '--help');
+    expect(replica.code).toBe(0);
+    expect(replica.out).toContain('Usage: phm node replica status [--json]');
+    expect(replica.out).toContain('phm node replica sync [--leader <alias>]');
+    expect(replica.out).toContain('All node commands: phm node --help');
+    expect(replica.out).not.toContain('Usage: phm node bootstrap');
+    expect(replica.out).not.toContain('phm node pool --role');
+
     // Pool enrollment is `join --primary`, not the standalone fleet join.
     const joinPrimary = await cli('join', '--primary', 'mbp', '--help');
     expect(joinPrimary.out).toContain('phm node pool --role primary|backup');

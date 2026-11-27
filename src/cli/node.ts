@@ -1,4 +1,4 @@
-import { NODE_FLEET_USAGE, NODE_FLEET_VERBS, nodeFleetVerbUsage } from './node-fleet-usage.js';
+import { NODE_FLEET_USAGE, NODE_FLEET_VERBS, nodeFleetVerbUsage, nodeReplicaUsage } from './node-fleet-usage.js';
 
 /** `bootstrap` is planning only: no provisioning, host inspection, credentials, or registry I/O.
  * The other verbs (see node-fleet.ts) are the local node registry, router and job leases.
@@ -97,6 +97,15 @@ async function scopedNodeHelp(
     case 'run-once':
     case 'rpc':
       return `${NODE_POOL_USAGE}${pointer}`;
+    case 'replica': {
+      // Not a pool-enrollment verb: it reads or refreshes this computer's
+      // read-only copy of the fleet leader's state, so it gets its own two
+      // usage lines rather than the whole pool cluster. If those lines ever
+      // leave the fleet block, fall back to the full command list.
+      const usage = nodeReplicaUsage();
+      if (!usage) return null;
+      return `${usage}\nstatus reports the snapshot's source and freshness; sync refreshes it from the leader over SSH (--leader saves the alias). It never imports authority or changes node admission.${pointer}`;
+    }
     case 'light':
     case 'lanes':
       return `${extraUsageLines(verb)}${pointer}`;

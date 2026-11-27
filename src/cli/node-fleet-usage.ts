@@ -69,3 +69,17 @@ export function nodeFleetVerbUsage(verb: string): string | null {
   const text = line.trimStart();
   return `${text.startsWith('Usage:') ? text : `Usage: ${text}`}\n\n${prose.join('\n\n')}`;
 }
+
+/**
+ * `replica` rides the pool dispatch (`cmdNodePool`) but is documented beside
+ * the fleet verbs, and it needs no pool enrollment — `--leader` or the saved
+ * fleet leader names the source. Its scoped help is the two usage lines it
+ * already carries in the fleet block, derived here so the full list and this
+ * help can never drift apart.
+ */
+export function nodeReplicaUsage(): string {
+  const [usageBlock] = NODE_FLEET_USAGE.split('\n\n');
+  const lines = usageBlock!.split('\n').filter(line => line.includes('phm node replica '));
+  if (lines.length === 0) return '';
+  return `Usage: ${lines.map(line => line.trim()).join('\n       ')}`;
+}
