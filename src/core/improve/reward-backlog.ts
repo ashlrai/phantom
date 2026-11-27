@@ -74,8 +74,6 @@ export const REWARD_BACKLOG_MAX_ITEMS = 8;
 const REWARD_BACKLOG_ITEM_HARD_MAX = 25;
 /** Evidence window: seven days, the same convention the sibling feeds anchor on. */
 export const REWARD_BACKLOG_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-/** Future-skew allowance on row timestamps, same convention the sibling folds apply. */
-const REWARD_BACKLOG_FUTURE_SKEW_MS = 60_000;
 /**
  * Resolved rows one pool needs inside the window before its outcomes
  * count as recurring — the same order the sibling per-cell bars use. A
@@ -158,7 +156,6 @@ export function foldRewardJournal(text: string, nowMs: number, windowMs: number)
   const fold: RewardJournalFold = { records: 0, invalidRows: 0, pools: new Map() };
   const seenJobs = new Set<string>();
   const since = nowMs - windowMs;
-  const until = nowMs + REWARD_BACKLOG_FUTURE_SKEW_MS;
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
     if (trimmed === '') continue;
@@ -168,7 +165,7 @@ export function foldRewardJournal(text: string, nowMs: number, windowMs: number)
     if (seenJobs.has(row.jobId)) continue;
     seenJobs.add(row.jobId);
     const atMs = Date.parse(row.recordedAt);
-    if (!Number.isFinite(atMs) || atMs < since || atMs > until) continue;
+    if (!Number.isFinite(atMs) || atMs < since || atMs > nowMs) continue;
     fold.records += 1;
     const key = row.pool ?? UNATTRIBUTED_KEY;
     let tally = fold.pools.get(key);

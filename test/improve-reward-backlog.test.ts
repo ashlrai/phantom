@@ -90,7 +90,7 @@ describe('foldRewardJournal', () => {
       rewardRow({ jobId: 'job-10', repo: 'not a repo', recordedAtMs: NOW_MS }),
       // Cost shape drift.
       J({ ...JSON.parse(held('job-11', NOW_MS)), cost: { pool: null } }),
-      // Outside the window and beyond the skew allowance.
+      // Outside the window.
       held('job-12', NOW_MS - REWARD_BACKLOG_WINDOW_MS - 10),
       held('job-13', NOW_MS + 120_000),
       'not json',
@@ -319,6 +319,22 @@ describe('rewardBacklogItems', () => {
     const heldRows = poolSeries('claude', 3, 2, (d, i) => held(`h${d}-${i}`, NOW_MS - d * DAY));
     const path = await ledger('led-trunc', [heldRows.join('\n'), ' '.repeat(17 * 1024 * 1024), ...notHeldRows]);
     expect(await rewardBacklogItems({ repo: 'ashlrai/phantom', ledgerPath: path, now: NOW_MS })).toEqual([]);
+  });
+
+  it('waits until a future receipt enters the evidence window before emitting a brief', async () => {
+    const path = await ledger('led-future', [
+      notHeld('n1', NOW_MS - DAY),
+      notHeld('n2', NOW_MS - DAY),
+      notHeld('n3', NOW_MS),
+      held('h1', NOW_MS),
+      held('h2', NOW_MS),
+      notHeld('n4', NOW_MS + 1),
+    ]);
+    const opts = { repo: 'ashlrai/phantom', ledgerPath: path };
+    expect(await rewardBacklogItems({ ...opts, now: NOW_MS })).toEqual([]);
+    const items = await rewardBacklogItems({ ...opts, now: NOW_MS + 1 });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.prompt).toContain('4 of 6');
   });
 
   it('derives stable ids so a refresh re-adds nothing and honours the limit', async () => {
