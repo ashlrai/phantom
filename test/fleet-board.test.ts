@@ -167,6 +167,16 @@ describe('the conflict proxy and tier counts are pure', () => {
     ].join('\n');
     expect(queueDepthByTier(readyRowsForDepth(text))).toEqual({ frontier: 1, work: 1, mid: 1 });
   });
+
+  it('groups unsupported READY tiers under unknown across hinted and open rows', () => {
+    const text = [
+      row('READY', 'RQ-ALIAS', 'devin', 'standard'),
+      row('READY', 'RQ-PROTOTYPE', 'devin', 'constructor'),
+      'RQ-OPEN\tphantom\t\turgent\tprompt.md',
+      'RQ-FAST\tphantom\t\tfast\tprompt.md',
+    ].join('\n');
+    expect(queueDepthByTier(readyRowsForDepth(text))).toEqual({ fast: 1, unknown: 3 });
+  });
 });
 
 describe('phm fleet board --leader', () => {
