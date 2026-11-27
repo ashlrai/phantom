@@ -233,7 +233,12 @@ row recording `empty: true` — the diff check found nothing publishable —
 closes the attempt the same way and charges the row's recorded `tokens_total`,
 so empty runs count as failed attempts with their real spend instead of
 waiting out the censor horizon; `empty` absent, `false` or `null` stays open
-for the reconciler. Batch
+for the reconciler. The cell names the cause behind both: `launchDeaths`
+counts dead-launch closes and `emptyFailures` counts only infra-class empty
+finishes (`empty_class: 'error'`, or `exit_code`/`pool_error` re-deriving it
+on rows that predate the field — `no_diff` no-ops and `unknown` capture gaps
+never count), and recurring counts feed the `launch-death` and
+`empty-failure` improvement patterns alongside the blunt low-merge one. Batch
 sessions count per member: a `batch_claim` row is the member's dispatch
 record and the session's `launch` row (under its `RQ-BATCH-*` id) opens one
 attempt per member; a requeue-word `task_outcome` or a session-id

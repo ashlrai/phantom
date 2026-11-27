@@ -23,7 +23,7 @@ export const OUTCOME_LEARNING_SCHEMA = 'routing.outcome-learning.v1' as const;
 /** Three failures is the smallest run that is more than a pair of coincidences. */
 const RECURRING_FAILURES = 3;
 
-export type ImprovementPattern = 'breakage' | 'revert' | 'dirty' | 'fixup' | 'low-merge';
+export type ImprovementPattern = 'breakage' | 'revert' | 'dirty' | 'fixup' | 'empty-failure' | 'launch-death' | 'low-merge';
 export type LearnedPriority = 'critical' | 'normal';
 export type LearnedAction = 'dispatch' | 'wait' | 'nowhere';
 
@@ -60,6 +60,28 @@ export interface OutcomeCellView {
    * required-check failures or failed retries (`mergeFixup`).
    */
   fixups: number;
+  /**
+   * Attempts whose jobs-ledger finish recorded `empty: true` with an
+   * infrastructure failure class — dispatchd's `classify_empty` verdict
+   * `error` (a pool error or a nonzero exit), re-derived from the row's own
+   * `exit_code`/`pool_error` when `empty_class` predates the field. The run
+   * produced nothing publishable and still spent its recorded usage, so the
+   * attempt is a named dead finish rather than an unexplained `closed`.
+   * `no_diff` finishes are healthy no-ops and `unknown` finishes are
+   * capture gaps — neither counts here, matching the lane penalty's rule
+   * that only infra-failed empties are evidence. Jobs-ledger only.
+   */
+  emptyFailures: number;
+  /**
+   * Attempts resolved by a `launch_failed`/`launch_terminal` jobs-ledger
+   * row — the launch died before a run could produce anything (spawn
+   * failure, launcher exit, bounded give-up, or a dead batch session
+   * closing its member attempts). Retry-action rows count too: the attempt
+   * is dead even when the job requeues as a fresh assign. Batch-member
+   * `task_outcome` requeues and reverted closes are not launch deaths.
+   * Jobs-ledger only.
+   */
+  launchDeaths: number;
   usage: number;
   /**
    * Sum of the measured usage readings in the dispatch log's allowance unit
@@ -76,6 +98,10 @@ export interface OutcomeCellView {
   breakageRate: number;
   dirtyRate: number;
   fixupRate: number;
+  /** emptyFailures over attempts; 0 when no attempt recorded one. */
+  emptyFailureRate: number;
+  /** launchDeaths over attempts; 0 when no attempt recorded one. */
+  launchDeathRate: number;
   meanUsage: number;
   meanMinutesToMerge: number | null;
 }
@@ -208,6 +234,19 @@ interface OutcomeEvent {
    */
   mergeDirty?: boolean;
   mergeFixup?: boolean;
+  /**
+   * The attempt's finish recorded `empty: true` classified 'error' — an
+   * infrastructure-dead empty diff (pool error or nonzero exit), never a
+   * `no_diff` no-op or an `unknown` capture gap. Jobs-ledger only; counted
+   * in the cell's `emptyFailures` like the friction flags.
+   */
+  emptyFailure?: boolean;
+  /**
+   * The attempt resolved on a `launch_failed`/`launch_terminal` row — the
+   * launch died before producing anything. Jobs-ledger only; counted in
+   * the cell's `launchDeaths`.
+   */
+  launchDeath?: boolean;
 }
 
 type ParsedEvent = AssignEvent | OutcomeEvent;
@@ -247,7 +286,9 @@ const PATTERN_ORDER: Readonly<Record<ImprovementPattern, number>> = {
   revert: 1,
   dirty: 2,
   fixup: 3,
-  'low-merge': 4,
+  'empty-failure': 4,
+  'launch-death': 5,
+  'low-merge': 6,
 };
 
 function ident(value: unknown): value is string {
@@ -414,8 +455,10 @@ function blankCell(resource: string, model: string, jobType: string, repo: strin
   return {
     resource, model, jobType, repo,
     attempts: 0, censored: 0, reverted: 0, merges: 0, goodMerges: 0, breakages: 0, dirty: 0, fixups: 0,
+    emptyFailures: 0, launchDeaths: 0,
     usage: 0, usageAllowance: 0, usageAllowanceKnown: 0, mergeMinutes: 0, timedMerges: 0, usageAttempts: 0,
     mergeRate: 0, goodMergeRate: 0, breakageRate: 0, dirtyRate: 0, fixupRate: 0,
+    emptyFailureRate: 0, launchDeathRate: 0,
     meanUsage: 0, meanMinutesToMerge: null,
   };
 }
@@ -434,6 +477,8 @@ function publish(cell: Cell): OutcomeCellView {
     breakageRate: attempts > 0 ? cell.breakages / attempts : 0,
     dirtyRate: attempts > 0 ? cell.dirty / attempts : 0,
     fixupRate: attempts > 0 ? cell.fixups / attempts : 0,
+    emptyFailureRate: attempts > 0 ? cell.emptyFailures / attempts : 0,
+    launchDeathRate: attempts > 0 ? cell.launchDeaths / attempts : 0,
     meanUsage: attempts > 0 ? cell.usage / attempts : 0,
     meanMinutesToMerge: timedMerges > 0 ? mergeMinutes / timedMerges : null,
   };
@@ -525,6 +570,11 @@ function fold(events: readonly ParsedEvent[], malformed: number, censor?: Censor
     // friction, exactly like a breakage=1 merge counts both.
     if (event.mergeDirty === true) cell.dirty += 1;
     if (event.mergeFixup === true) cell.fixups += 1;
+    // Dead-attempt evidence is additive like the friction flags: the
+    // attempt keeps its closed state while the cell's named-cause counts
+    // record why it produced nothing.
+    if (event.emptyFailure === true) cell.emptyFailures += 1;
+    if (event.launchDeath === true) cell.launchDeaths += 1;
     if (!Number.isSafeInteger(cell.attempts) || !Number.isFinite(cell.usage)) {
       malformed += 1;
       continue;
@@ -774,6 +824,28 @@ function ledgerAssign(row: Record<string, unknown>): AssignEvent | null {
   return { kind: 'assign', job, repo, resource, model, jobType, atMs };
 }
 
+/**
+ * The finish row's empty-failure class, mirroring dispatchd's
+ * `classify_empty` (contrib/mac/launch_precheck.py): the recorded
+ * `empty_class` wins when it carries the closed vocabulary; rows written
+ * before the field existed re-derive it from the same `exit_code`/
+ * `pool_error` evidence — a pool error or nonzero exit is `error`, a
+ * clean zero exit is the healthy `no_diff` no-op, and anything else is
+ * `unknown`. Null when the row's `empty` flag is not the explicit true —
+ * absent, false and null are unmeasured or non-empty, never a class.
+ */
+function ledgerEmptyFailureKind(row: Record<string, unknown>): 'error' | 'no_diff' | 'unknown' | null {
+  if (row['empty'] !== true) return null;
+  const recorded = row['empty_class'];
+  if (recorded === 'error' || recorded === 'no_diff' || recorded === 'unknown') return recorded;
+  const poolError = row['pool_error'];
+  const exitCode = row['exit_code'];
+  const exitIsInt = typeof exitCode === 'number' && Number.isInteger(exitCode);
+  if (poolError || (exitIsInt && exitCode !== 0)) return 'error';
+  if (exitIsInt && exitCode === 0) return 'no_diff';
+  return 'unknown';
+}
+
 function parseJobsLedgerEvents(
   text: string,
   revertedPrKeys?: ReadonlySet<string> | null,
@@ -814,9 +886,13 @@ function parseJobsLedgerEvents(
     if (job === null || !ident(job) || !hasRevertEvidence(row)) continue;
     maxRevertLine.set(job, i);
   }
-  const closeAttempt = (job: string, state: 'closed' | 'reverted' = 'closed'): void => {
+  const closeAttempt = (job: string, state: 'closed' | 'reverted' = 'closed', launchDeath = false): void => {
     openJobs.delete(job);
-    events.push({ kind: 'outcome', job, state, usage: usageByJob.get(job) ?? null, usageUnit: 'tokens', minutes: null, breakage: 0 });
+    events.push({
+      kind: 'outcome', job, state,
+      usage: usageByJob.get(job) ?? null, usageUnit: 'tokens', minutes: null, breakage: 0,
+      ...(launchDeath ? { launchDeath: true } : {}),
+    });
   };
   for (const [lineNo, line] of lines.entries()) {
     const trimmed = line.trim();
@@ -895,7 +971,16 @@ function parseJobsLedgerEvents(
         // finish whose diff still publishes.
         if (row['empty'] === true && openJobs.has(job)) {
           openJobs.delete(job);
-          events.push({ kind: 'outcome', job, state: 'closed', usage, usageUnit: 'tokens', minutes: null, breakage: 0 });
+          // Only the infrastructure failure class names a dead finish:
+          // no_diff is a healthy no-op and unknown is a capture gap, so
+          // neither earns the emptyFailures count (classify_empty's own
+          // lane-penalty rule).
+          const emptyFailure = ledgerEmptyFailureKind(row) === 'error';
+          events.push({
+            kind: 'outcome', job, state: 'closed',
+            usage, usageUnit: 'tokens', minutes: null, breakage: 0,
+            ...(emptyFailure ? { emptyFailure: true } : {}),
+          });
         }
       }
       continue;
@@ -913,11 +998,14 @@ function parseJobsLedgerEvents(
     if (eventName === 'launch_failed' || eventName === 'launch_terminal') {
       const job = ledgerJobId(row);
       if (job !== null) {
-        if (ident(job) && openJobs.has(job)) closeAttempt(job);
+        // Every recorded dead launch is launch-death evidence — retry and
+        // give_up actions alike: the attempt died before producing
+        // anything, and a requeued relaunch counts as a fresh attempt.
+        if (ident(job) && openJobs.has(job)) closeAttempt(job, 'closed', true);
         // A dead session id closes every member attempt it launched.
         const members = batchMembers.get(job);
         if (members !== undefined) {
-          for (const member of members) if (openJobs.has(member)) closeAttempt(member);
+          for (const member of members) if (openJobs.has(member)) closeAttempt(member, 'closed', true);
         }
       }
       continue;
@@ -1045,6 +1133,8 @@ function patternRate(cell: OutcomeCellView, pattern: ImprovementPattern): number
     case 'revert': return cell.attempts > 0 ? cell.reverted / cell.attempts : 0;
     case 'dirty': return cell.dirtyRate;
     case 'fixup': return cell.fixupRate;
+    case 'empty-failure': return cell.emptyFailureRate;
+    case 'launch-death': return cell.launchDeathRate;
     case 'low-merge': return 1 - cell.goodMergeRate;
     default: {
       const neverPattern: never = pattern;
@@ -1077,6 +1167,16 @@ function patternCopy(cell: OutcomeCellView, pattern: ImprovementPattern): { titl
         title: `Catch the fix-ups ${who} needs on ${where}`,
         task: `${who} needed a fix-up on ${cell.fixups} of ${cell.attempts} ${where}. Add the check that should have caught that before the pull request opened.`,
       };
+    case 'empty-failure':
+      return {
+        title: `Stop the empty finishes from ${who} on ${where}`,
+        task: `${who} finished ${cell.emptyFailures} of ${cell.attempts} ${where} on an infrastructure failure with an empty diff — the run produced nothing publishable. Find what those jobs hit and fix the launch path or prompt that sends them there.`,
+      };
+    case 'launch-death':
+      return {
+        title: `Stop the dead launches from ${who} on ${where}`,
+        task: `${who} lost ${cell.launchDeaths} of ${cell.attempts} ${where} launches before a run could produce anything. Find why those launches died and fix the spawn path or retry policy that keeps losing them.`,
+      };
     case 'low-merge':
       return {
         title: `Raise the merge rate of ${who} on ${where}`,
@@ -1096,6 +1196,8 @@ function recurringPatterns(cell: OutcomeCellView): ImprovementPattern[] {
   if (cell.reverted >= RECURRING_FAILURES) patterns.push('revert');
   if (cell.dirty >= RECURRING_FAILURES) patterns.push('dirty');
   if (cell.fixups >= RECURRING_FAILURES) patterns.push('fixup');
+  if (cell.emptyFailures >= RECURRING_FAILURES) patterns.push('empty-failure');
+  if (cell.launchDeaths >= RECURRING_FAILURES) patterns.push('launch-death');
   if (failures >= RECURRING_FAILURES && cell.goodMerges * 2 < cell.attempts) patterns.push('low-merge');
   return patterns;
 }
@@ -1149,6 +1251,8 @@ function evidenceFor(learning: OutcomeLearning, resource: string, model: string,
     sum.breakages += cell.breakages;
     sum.dirty += cell.dirty;
     sum.fixups += cell.fixups;
+    sum.emptyFailures += cell.emptyFailures;
+    sum.launchDeaths += cell.launchDeaths;
     sum.usage += cell.usage;
     sum.usageAllowance += cell.usageAllowance;
     sum.usageAllowanceKnown += cell.usageAllowanceKnown;
