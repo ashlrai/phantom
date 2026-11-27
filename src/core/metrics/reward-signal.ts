@@ -195,32 +195,46 @@ export function isRewardSignalV1(value: unknown): value is RewardSignalV1 {
     'ciWallMs,cost,dispatchedAt,jobId,merged,mergedAt,pool,recordedAt,repo,timeToMergeMs,v';
 }
 
+interface UsageEndpoint {
+  at: number;
+  reading: { pctUsed: number | null; resetAt: string | null } | null;
+}
+
+function latestUsageEndpoint(current: UsageEndpoint | undefined, row: UsageReading, at: number): UsageEndpoint {
+  if (current && at < current.at) return current;
+  const pctUsed = isPercent(row.pctUsed) ? row.pctUsed : null;
+  const resetAt = canonicalTimestamp(row.resetAt);
+  if (!current || at > current.at) return { at, reading: { pctUsed, resetAt } };
+  if (current.reading?.pctUsed === pctUsed && current.reading.resetAt === resetAt) return current;
+  return { at, reading: null };
+}
+
 /**
  * Pool cost across [windowStartMs, windowEndMs] from usage-reader readings.
  * The baseline is the last reading at/before dispatch; the end is the last
  * reading after dispatch and at/before recording, so pctUsedDelta estimates pool consumption
  * over the job window (pool-level attribution, not per-job metering).
  * pctUsedDelta is null when the pool window reset inside the job (resetAt
- * moved or usage went backwards) or either bracketing reading is missing.
+ * moved or usage went backwards) or either bracketing reading is missing or disputed.
  */
 export function usageCostFromReadings(
   readings: readonly UsageReading[], pool: string,
   windowStartMs: number, windowEndMs: number, costUsd: number | null = null,
 ): RewardSignalCost {
-  const rows = readings
-    .filter((r) => r && r.pool === pool && isTimestamp(r.writtenAt))
-    .sort((a, b) => Date.parse(a.writtenAt) - Date.parse(b.writtenAt));
-  let start: UsageReading | undefined;
-  let end: UsageReading | undefined;
-  for (const row of rows) {
+  let startEndpoint: UsageEndpoint | undefined;
+  let endEndpoint: UsageEndpoint | undefined;
+  for (const row of readings) {
+    if (!row || row.pool !== pool || !isTimestamp(row.writtenAt)) continue;
     const at = Date.parse(row.writtenAt);
-    if (at <= windowStartMs) start = row;
-    if (at > windowStartMs && at <= windowEndMs) end = row;
+    if (at <= windowStartMs) startEndpoint = latestUsageEndpoint(startEndpoint, row, at);
+    else if (at <= windowEndMs) endEndpoint = latestUsageEndpoint(endEndpoint, row, at);
   }
+  const start = startEndpoint?.reading;
+  const end = endEndpoint?.reading;
   const pctUsedStart = start?.pctUsed ?? null;
   const pctUsedEnd = end?.pctUsed ?? null;
-  const delta = start !== undefined && end !== undefined && pctUsedStart !== null && pctUsedEnd !== null &&
-    start.resetAt !== null && start.resetAt === end.resetAt && pctUsedEnd >= pctUsedStart
+  const delta = pctUsedStart !== null && pctUsedEnd !== null &&
+    start?.resetAt != null && start.resetAt === end?.resetAt && pctUsedEnd >= pctUsedStart
     ? pctUsedEnd - pctUsedStart : null;
   return { pool, pctUsedStart, pctUsedEnd, pctUsedDelta: delta, costUsd };
 }

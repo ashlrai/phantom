@@ -803,8 +803,11 @@ pool readings). The router uses the first usable receipt per job in the
 retained ledger, so duplicate receipts cannot replace its verdict or
 measurements. The quota delta requires a pool reading at or before dispatch
 and another after dispatch and at or before recording, both in the same
-quota reset window. A missing endpoint leaves the delta unknown. Equal
-readings across both endpoints record a measured zero.
+quota reset window. Each endpoint uses the latest eligible timestamp. If
+readings at that timestamp disagree on usage or the reset time, the endpoint
+and delta stay unknown. A missing endpoint or an unparseable reset time also
+leaves the delta unknown. Equal usage at both endpoints in the same observed
+reset window records a measured zero.
 The daemon excludes batch session wrappers (`RQ-BATCH-*`)
 and node-pool attempt telemetry from the reward fold. Receipts marked
 `launched: false` supply no dispatch, PR claim, verdict or timing evidence.
