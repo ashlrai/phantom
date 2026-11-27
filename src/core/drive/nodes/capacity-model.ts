@@ -80,6 +80,7 @@ export interface NodeCapacityDoc {
 }
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+const nullableNonnegative = (n: unknown): boolean => n === null || (finite(n) && n >= 0);
 const round = (n: number, places = 2) => Math.round(n * 10 ** places) / 10 ** places;
 
 function median(values: number[]): number {
@@ -97,7 +98,7 @@ function rates(s: NodeSnapshot, prev: NodeCapacityDoc | null): { swapoutsPerMin:
   const minutes = elapsed / 60_000;
   const outs = s.swap.swapoutsTotal, prevOuts = prev.swap.swapouts_total;
   // A counter that went backwards means a reboot: no rate rather than a negative one.
-  const swapoutsPerMin = finite(outs) && finite(prevOuts) && outs >= prevOuts ? round((outs - prevOuts) / minutes) : null;
+  const swapoutsPerMin = finite(outs) && finite(prevOuts) && outs >= prevOuts ? (outs - prevOuts) * 60_000 / elapsed : null;
   const used = s.swap.usedBytes, prevUsed = prev.swap.used_bytes;
   const growthPerMin = finite(used) && finite(prevUsed) ? Math.round((used - prevUsed) / minutes) : null;
   return { swapoutsPerMin, growthPerMin };
@@ -107,28 +108,33 @@ function footprints(s: NodeSnapshot, prev: NodeCapacityDoc | null, notes: string
   const out: Record<string, HarnessFootprint> = {};
   const busyCores = finite(s.cpu.busyPercent) ? s.cpu.cores * s.cpu.busyPercent / 100 : null;
   const live = s.sessions ?? [];
+  const previousAt = prev?.node === s.node ? Date.parse(prev.measured_at) : NaN;
+  const previousFootprints = previousAt < s.measuredAtMs ? prev?.per_harness_footprint : undefined;
   let cpuFromHost = false;
   for (const adapter of HARNESS_ADAPTERS) {
     const sessions = live.filter(x => x.harness === adapter.id);
-    const mems = sessions.map(x => x.memBytes).filter(finite);
+    // A zero RSS total supplies no usable session cost.
+    const mems = sessions.map(x => x.memBytes).filter((bytes): bytes is number => finite(bytes) && bytes > 0);
     if (sessions.length && mems.length === sessions.length) {
       const cpus = sessions.map(x => x.cpuPercent).filter(finite);
-      let cpu: number | null = cpus.length === sessions.length ? round(cpus.reduce((a, b) => a + b, 0) / cpus.length / 100, 3) : null;
-      // Without per-process CPU, charge every live session an equal share of all busy cores:
-      // an upper bound per session, so the CPU rule errs toward fewer launches.
-      if (cpu === null && busyCores !== null && live.length) { cpu = round(busyCores / live.length, 3); cpuFromHost = true; }
+      let cpu: number | null = cpus.length === sessions.length ? cpus.reduce((a, b) => a + b, 0) / cpus.length / 100 : null;
+      // Without complete per-process CPU, the harness could account for all
+      // busy cores. Bound its mean using only that harness's session count.
+      if (cpu === null && busyCores !== null) { cpu = busyCores / sessions.length; cpuFromHost = true; }
       out[adapter.id] = { sessions: sessions.length, mem_bytes_max: Math.max(...mems), mem_bytes_median: median(mems),
         cpu_cores_per_session: cpu, source: 'measured', learned_at: null };
       continue;
     }
-    const old = prev?.node === s.node ? prev.per_harness_footprint?.[adapter.id] : undefined;
-    const learnedAt = old ? Date.parse(old.learned_at ?? prev!.measured_at) : NaN;
-    if (old && finite(old.mem_bytes_max) && old.mem_bytes_max > 0 && finite(learnedAt) &&
+    const old = previousFootprints?.[adapter.id];
+    const learnedAt = old?.source === 'learned'
+      ? Date.parse(old.learned_at ?? '')
+      : previousAt;
+    if (old && finite(old.mem_bytes_max) && old.mem_bytes_max > 0 && finite(learnedAt) && learnedAt <= previousAt &&
         s.measuredAtMs - learnedAt >= 0 && s.measuredAtMs - learnedAt <= CAPACITY_POLICY.learnedFootprintTtlMs) {
       out[adapter.id] = { ...old, sessions: 0, source: 'learned', learned_at: new Date(learnedAt).toISOString() };
     }
   }
-  if (cpuFromHost) notes.push('cpu_cores_per_session = host busy cores / live harness sessions (process source reports no per-process CPU; upper bound)');
+  if (cpuFromHost) notes.push('cpu_cores_per_session = host busy cores / live sessions of the same harness (incomplete per-process CPU; upper bound on the harness mean)');
   return out;
 }
 
@@ -147,7 +153,7 @@ export function computeNodeCapacity(s: NodeSnapshot, prev: NodeCapacityDoc | nul
 
   const busy = s.cpu.busyPercent;
   const headroomCores = finite(busy) && s.cpu.cores > 0
-    ? round(Math.max(0, s.cpu.cores * CAPACITY_POLICY.cpuTargetFraction - s.cpu.cores * busy / 100)) : null;
+    ? Math.max(0, s.cpu.cores * (CAPACITY_POLICY.cpuTargetFraction * 100 - busy) / 100) : null;
 
   const per = footprints(s, prev, notes);
   const runnable: Record<string, number | null> = {};
@@ -166,9 +172,15 @@ export function computeNodeCapacity(s: NodeSnapshot, prev: NodeCapacityDoc | nul
     if (s.mem.pressureLevel === null || headroomBytes === null || !fp) { runnable[id] = null; limiting[id] = 'unmeasured'; continue; }
     if (headroomCores === 0) { runnable[id] = 0; limiting[id] = 'cpu'; continue; }
     const byMem = Math.floor(headroomBytes / fp.mem_bytes_max);
-    const byCpu = fp.cpu_cores_per_session !== null && headroomCores !== null
-      ? fp.cpu_cores_per_session > 0 ? Math.floor(headroomCores / fp.cpu_cores_per_session) : byMem
-      : null;
+    let byCpu: number | null = null;
+    if (headroomCores !== null && fp.cpu_cores_per_session !== null) {
+      if (fp.cpu_cores_per_session === 0) byCpu = byMem;
+      else {
+        // Undo division roundoff at exact decimal boundaries (e.g. 0.30 / 0.10).
+        const ratio = headroomCores / fp.cpu_cores_per_session;
+        byCpu = Math.floor(ratio + ratio * Number.EPSILON);
+      }
+    }
     if (byCpu === null) { runnable[id] = byMem; limiting[id] = 'memory'; notes.push(`${id}: cpu per session unknown, memory-only`); continue; }
     runnable[id] = Math.min(byMem, byCpu);
     limiting[id] = byCpu < byMem ? 'cpu' : 'memory';
@@ -198,6 +210,9 @@ export function parseNodeCapacityDoc(value: unknown): NodeCapacityDoc | null {
       !d.mem_free || typeof d.mem_free !== 'object' || !d.swap || typeof d.swap !== 'object' || !d.cpu || typeof d.cpu !== 'object' ||
       !d.per_harness_footprint || typeof d.per_harness_footprint !== 'object' || Array.isArray(d.per_harness_footprint) ||
       !d.agents_runnable_now || typeof d.agents_runnable_now !== 'object' || Array.isArray(d.agents_runnable_now)) return null;
+  if (!nullableNonnegative(d.cpu.headroom_cores) || !nullableNonnegative(d.mem_free.headroom_bytes) ||
+      ![null, 1, 2, 4].includes(d.mem_free.pressure_level) ||
+      !(d.swap.growing === null || typeof d.swap.growing === 'boolean')) return null;
   for (const fp of Object.values(d.per_harness_footprint)) {
     if (!fp || typeof fp !== 'object' || !finite(fp.mem_bytes_max) || fp.mem_bytes_max <= 0 ||
         !(fp.cpu_cores_per_session === null || (finite(fp.cpu_cores_per_session) && fp.cpu_cores_per_session >= 0))) return null;

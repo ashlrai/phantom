@@ -11,12 +11,20 @@
  * standing revert set (improve/revert-ledger.ts) so a merged-then-reverted
  * community change is visible evidence instead of silence.
  *
- * Honesty rules: gh exposes only the PR author login — the agent or model
- * that produced the change is never recorded, so `agent`/`model` stay null,
- * never guessed. An absent `gh` reports sourceState 'missing'; an unreadable
- * revert ledger marks every revert verdict 'unknown' rather than implying
- * "not reverted"; a missing ledger is a genuine empty evidence set. Never
- * throws; malformed gh rows are dropped, not defaulted.
+ * Honesty rules: gh exposes only the PR author login and head branch —
+ * it never records which agent or model produced the change. `agent` is
+ * therefore convention attribution only: the head branch's first path
+ * segment against the agent products' own branch namespaces
+ * (`devin/…`, `cursor/…-hash`, `claude/…`, `copilot/…`), then a known
+ * agent-bot author login (`devin-ai-integration[bot]`, …). A match is
+ * recorded evidence the change came through that tool's convention —
+ * never a claim about which model or runtime produced the diff — and
+ * anything unmatched stays null, an honest unknown rather than a guess.
+ * `model` is always null: no gh field records it. An absent `gh` reports
+ * sourceState 'missing'; an unreadable revert ledger marks every revert
+ * verdict 'unknown' rather than implying "not reverted"; a missing ledger
+ * is a genuine empty evidence set. Never throws; malformed gh rows are
+ * dropped, not defaulted.
  */
 import { credentialExecFile as execFile } from '../integrations/secrets.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -40,12 +48,106 @@ const DEFAULT_WINDOW_DAYS = 30;
 const MAX_WINDOW_DAYS = 365;
 const MERGED_PR_FIELDS = 'number,title,author,mergedAt,headRefName';
 
+/**
+ * Agent products whose default pushed-branch namespace is `<product>/…`
+ * (lowercase first path segment → product name). Deliberately a curated
+ * table of agentic coding tools, not a prefix match on any word: `fix/`,
+ * `docs/`, `feat/` and friends are human conventions and stay
+ * unattributed. `ashlr-devin/` is the fleet's own Devin delivery branch
+ * (src/core/devin/types.ts DEVIN_BRANCH_PREFIX) — same agent product, so
+ * it attributes to 'devin' like the public `devin/` namespace.
+ */
+const AGENT_BRANCH_PREFIXES: Readonly<Record<string, string>> = {
+  'devin': 'devin',
+  'ashlr-devin': 'devin',
+  'cursor': 'cursor',
+  'claude': 'claude',
+  'codex': 'codex',
+  'copilot': 'copilot',
+  'gemini': 'gemini',
+  'jules': 'jules',
+  'droid': 'droid',
+  'windsurf': 'windsurf',
+  'augment': 'augment',
+  'aider': 'aider',
+  'opencode': 'opencode',
+  'amp': 'amp',
+  'goose': 'goose',
+  'crush': 'crush',
+  'kimi': 'kimi',
+  'grok': 'grok',
+  'qwen': 'qwen',
+  'junie': 'junie',
+  'kiro': 'kiro',
+  'cline': 'cline',
+  'trae': 'trae',
+  'dependabot': 'dependabot',
+  'renovate': 'renovate',
+};
+
+/**
+ * Agent-bot author logins (lowercased `login` or `app/<slug>` spelling)
+ * whose account IS the agent product — the strongest recorded signal,
+ * since the app identity is what opened the PR. Human logins never
+ * appear here: `masonwyatt23`-style accounts push agent work under their
+ * own name, so a login alone cannot attribute them (the branch can).
+ */
+const AGENT_AUTHOR_LOGINS: Readonly<Record<string, string>> = {
+  'devin-ai-integration[bot]': 'devin',
+  'app/devin-ai-integration': 'devin',
+  'chatgpt-codex-connector[bot]': 'codex',
+  'app/chatgpt-codex-connector': 'codex',
+  'claude[bot]': 'claude',
+  'copilot-swe-agent[bot]': 'copilot',
+  'app/copilot-swe-agent': 'copilot',
+  'app/dependabot': 'dependabot',
+  'dependabot[bot]': 'dependabot',
+  'app/renovate': 'renovate',
+  'renovate[bot]': 'renovate',
+};
+
+/**
+ * The agent product an outside PR is attributed to, or null.
+ *
+ * Convention attribution only, in evidence order: the head branch's first
+ * path segment against AGENT_BRANCH_PREFIXES (the tool's own namespace is
+ * the stronger recorded signal — fleet data shows agent sessions push
+ * `devin/<ts>-<slug>` and `cursor/<slug>-<hash>` under the operator's own
+ * login), then a known agent-bot author login. Anything else — human
+ * logins, unmatched branches, ghost authors — stays null: gh records no
+ * agent field, so an unrecognized convention is an honest unknown, never
+ * a guess. Pure; never throws.
+ */
+export function outsidePrAgentAttribution(head: string, author: string | null): string | null {
+  try {
+    const slash = head.indexOf('/');
+    if (slash > 0) {
+      const byBranch = AGENT_BRANCH_PREFIXES[head.slice(0, slash).trim().toLowerCase()];
+      if (byBranch !== undefined) return byBranch;
+    }
+    if (author !== null) {
+      const login = author.trim().toLowerCase();
+      if (login !== '') {
+        const byAuthor = AGENT_AUTHOR_LOGINS[login];
+        if (byAuthor !== undefined) return byAuthor;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export type OutsidePrRevertVerdict = 'yes' | 'no' | 'unknown';
 
 export interface OutsidePrOutcomeV1 {
   repo: string; number: number; title: string;
   /** gh author login, or null when gh recorded none (ghost author). */
   author: string | null; head: string; mergedAt: string;
+  /** Agent product attributed by recorded branch/login convention; null = no known convention matched. */
+  agent: string | null;
+  /** gh never records which model produced a change — always null. */
+  model: null;
   reverted: OutsidePrRevertVerdict;
 }
 
@@ -61,8 +163,26 @@ export interface OutsidePrOutcomeRepoV1 {
 export interface OutsidePrAuthorOutcomeV1 {
   /** gh login, or null when gh recorded no author. */
   author: string | null;
-  /** gh never records which agent/model produced a change — null, never guessed. */
+  /**
+   * Always null on the per-login rollup: one login pushes work for many
+   * agents (fleet data: the operator's own account authors `devin/`,
+   * `cursor/` and human branches alike), so a login alone cannot
+   * attribute — the per-PR `agent` field and the `agents` rollup carry
+   * the convention attribution instead.
+   */
   agent: null; model: null;
+  prs: number; reverted: number;
+}
+
+export interface OutsidePrAgentOutcomeV1 {
+  /**
+   * Agent product the recorded branch/login convention attributes the
+   * PRs to; null is the unattributed bucket — no known convention
+   * matched, an honest unknown rather than a guess.
+   */
+  agent: string | null;
+  /** gh never records which model produced a change — always null. */
+  model: null;
   prs: number; reverted: number;
 }
 
@@ -74,6 +194,8 @@ export interface OutsidePrOutcomesV1 {
   revertLedger: 'read' | 'missing' | 'unreadable';
   repos: OutsidePrOutcomeRepoV1[];
   authors: OutsidePrAuthorOutcomeV1[];
+  /** Per attributed-agent rollup — the community-seat outcome evidence. */
+  agents: OutsidePrAgentOutcomeV1[];
 }
 
 export interface ListOutsidePrOutcomesOptions extends FleetRepoDiscoveryOptions {
@@ -173,7 +295,7 @@ async function computeOutsidePrOutcomes(opts: ListOutsidePrOutcomesOptions): Pro
   const result: OutsidePrOutcomesV1 = {
     v: 1, generatedAt: generatedAt.toISOString(), sourceState: 'healthy',
     windowDays: days, since: new Date(sinceMs).toISOString(),
-    revertLedger: 'missing', repos: [], authors: [],
+    revertLedger: 'missing', repos: [], authors: [], agents: [],
   };
   const degrade = () => { if (result.sourceState === 'healthy') result.sourceState = 'degraded'; };
 
@@ -196,6 +318,7 @@ async function computeOutsidePrOutcomes(opts: ListOutsidePrOutcomesOptions): Pro
   if (discovery.degraded) degrade();
 
   const authorCounts = new Map<string | null, { prs: number; reverted: number }>();
+  const agentCounts = new Map<string | null, { prs: number; reverted: number }>();
   result.repos = await mapConcurrent([...discovery.repoCwds.entries()].slice(0, MAX_REPOS), 4, async ([repo, cwd]) => {
     const listed = safeJson(await gh(cwd, ['pr', 'list', '--state', 'merged', '--limit', String(limit), '--json', MERGED_PR_FIELDS]));
     if (!Array.isArray(listed)) return { repo, state: 'degraded' as const, listed: 0, hitLimit: false, prs: [] };
@@ -207,11 +330,16 @@ async function computeOutsidePrOutcomes(opts: ListOutsidePrOutcomesOptions): Pro
       .sort((a, b) => Date.parse(b.mergedAt) - Date.parse(a.mergedAt) || b.number - a.number)
       .map((pr) => {
         const reverted: OutsidePrRevertVerdict = !revertKnown ? 'unknown' : revertedKeys.has(prKey(repo, pr.number)) ? 'yes' : 'no';
+        const agent = outsidePrAgentAttribution(pr.head, pr.author);
         const cell = authorCounts.get(pr.author) ?? { prs: 0, reverted: 0 };
         cell.prs += 1;
         if (reverted === 'yes') cell.reverted += 1;
         authorCounts.set(pr.author, cell);
-        return { repo, number: pr.number, title: pr.title, author: pr.author, head: pr.head, mergedAt: pr.mergedAt, reverted };
+        const agentCell = agentCounts.get(agent) ?? { prs: 0, reverted: 0 };
+        agentCell.prs += 1;
+        if (reverted === 'yes') agentCell.reverted += 1;
+        agentCounts.set(agent, agentCell);
+        return { repo, number: pr.number, title: pr.title, author: pr.author, head: pr.head, mergedAt: pr.mergedAt, agent, model: null, reverted };
       });
     return { repo, state: 'healthy' as const, listed: rows.length, hitLimit: rows.length >= limit, prs };
   });
@@ -220,6 +348,9 @@ async function computeOutsidePrOutcomes(opts: ListOutsidePrOutcomesOptions): Pro
   result.authors = [...authorCounts.entries()]
     .map(([author, c]) => ({ author, agent: null, model: null, prs: c.prs, reverted: c.reverted }))
     .sort((a, b) => b.prs - a.prs || (a.author ?? '').localeCompare(b.author ?? ''));
+  result.agents = [...agentCounts.entries()]
+    .map(([agent, c]) => ({ agent, model: null, prs: c.prs, reverted: c.reverted }))
+    .sort((a, b) => b.prs - a.prs || (a.agent ?? '').localeCompare(b.agent ?? ''));
   return result;
 }
 

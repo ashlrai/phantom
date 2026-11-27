@@ -34,6 +34,7 @@ import type {
   EvidenceOutcomeSummary,
   LabelBasis,
   LearningSource,
+  ProtectedPrObservedBypass,
   RouteSnapshot,
   RunEventSummary,
   Proposal,
@@ -60,11 +61,14 @@ import {
   type PrivateStorageMode,
 } from '../util/private-storage.js';
 
-import { protectedPrOperationShape } from './protected-pr-handoff.js';
-import type { ProtectedPrObservedBypass } from '../types.js';
+import {
+  isCanonicalIsoTimestamp as canonicalTimestamp,
+  isFiniteNumber as finiteNumber,
+  protectedPrOperationShape,
+} from './protected-pr-handoff.js';
 
-export const READY_EVIDENCE_MAX_AGE_MS = 60 * 60 * 1000;
-export const READY_EVIDENCE_MAX_FUTURE_SKEW_MS = 60 * 1000;
+const READY_EVIDENCE_MAX_AGE_MS = 60 * 60 * 1000;
+const READY_EVIDENCE_MAX_FUTURE_SKEW_MS = 60 * 1000;
 
 const MAX_EVIDENCE_FILES = 2_048;
 const MAX_EVIDENCE_BYTES = 32 * 1024 * 1024;
@@ -236,7 +240,7 @@ export function evidencePath(proposalId: string): string {
   return join(evidenceDir(), `${proposalId}.json`);
 }
 
-export function summarizeDiff(diff: string | undefined): AutonomyDiffEvidence {
+function summarizeDiff(diff: string | undefined): AutonomyDiffEvidence {
   const body = diff ?? '';
   const files = new Set<string>();
   let changedLines = 0;
@@ -431,10 +435,6 @@ function hasOnlyKeys(record: JsonRecord, allowed: readonly string[]): boolean {
   return Object.keys(record).every((key) => allowedSet.has(key));
 }
 
-function finiteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
 function nonNegativeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
@@ -480,12 +480,6 @@ function boundedNonEmptyString(value: unknown, maxBytes: number): value is strin
 
 function boundedTrimmedString(value: unknown, maxBytes: number): value is string {
   return boundedNonEmptyString(value, maxBytes) && value === value.trim() && !value.includes('\0');
-}
-
-function canonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) && new Date(ms).toISOString() === value;
 }
 
 function uniqueBoundedStrings(value: unknown, maxItems: number, maxBytes: number): value is string[] {
@@ -1459,14 +1453,34 @@ function isAutonomyEvidencePack(value: unknown): value is AutonomyEvidencePack {
   return isAutonomyEvidencePackLegacy(value) || verifyAutonomyEvidencePackV3(value).ok;
 }
 
-function timestampsAreFresh(pack: AutonomyEvidencePack, nowMs: number, maxAgeMs: number): boolean {
-  const generatedMs = Date.parse(pack.generatedAt);
-  const verifiedMs = Date.parse(pack.verification.verifiedAt ?? '');
+export function areEvidenceTimestampsFresh(
+  generatedAt: string | undefined,
+  verifiedAt: string | undefined,
+  nowMs: number,
+  maxAgeMs = READY_EVIDENCE_MAX_AGE_MS,
+): boolean {
+  const generatedMs = Date.parse(generatedAt ?? '');
+  const verifiedMs = Date.parse(verifiedAt ?? '');
   if (!Number.isFinite(generatedMs) || !Number.isFinite(verifiedMs)) return false;
   if (generatedMs > nowMs + READY_EVIDENCE_MAX_FUTURE_SKEW_MS) return false;
   if (verifiedMs > nowMs + READY_EVIDENCE_MAX_FUTURE_SKEW_MS) return false;
   if (generatedMs < nowMs - maxAgeMs || verifiedMs < nowMs - maxAgeMs) return false;
   return generatedMs + READY_EVIDENCE_MAX_FUTURE_SKEW_MS >= verifiedMs;
+}
+
+export function allEvidenceGatesOk(gates: AutonomyEvidencePack['gates']): boolean {
+  const present = [
+    gates.authority,
+    gates.provenance,
+    gates.verification,
+    gates.risk,
+    gates.scope,
+    gates.manager,
+    gates.selfTarget,
+    gates.edv,
+    gates.remoteProtection,
+  ].filter((gate): gate is AutonomyGateEvidence => gate !== undefined);
+  return present.every((gate) => gate.ok);
 }
 
 export function hasRequiredVerifierManifestBinding(pack: AutonomyEvidencePack): boolean {
@@ -1511,17 +1525,6 @@ export function evidencePackMatchesLiveProposal(
   const maxAgeMs = typeof opts.maxAgeMs === 'number' && Number.isFinite(opts.maxAgeMs) && opts.maxAgeMs > 0
     ? opts.maxAgeMs
     : READY_EVIDENCE_MAX_AGE_MS;
-  const requiredGates = [
-    pack.gates.authority,
-    pack.gates.provenance,
-    pack.gates.verification,
-    pack.gates.risk,
-    pack.gates.scope,
-    pack.gates.manager,
-    pack.gates.selfTarget,
-    pack.gates.edv,
-    pack.gates.remoteProtection,
-  ].filter((gate): gate is AutonomyGateEvidence => gate !== undefined);
 
   return (
     proposal.status === 'pending' &&
@@ -1541,8 +1544,8 @@ export function evidencePackMatchesLiveProposal(
     pack.verification.passed === true &&
     pack.verification.commandKinds.length > 0 &&
     evidenceVerifierManifestMatchesProposal(pack, proposal) &&
-    (pack.trustBasis !== 'evidence' || isLiveRemoteProtectionEvidence(pack.gates.remoteProtection)) &&
-    requiredGates.every((gate) => gate.ok) &&
+    isLiveRemoteProtectionEvidence(pack.gates.remoteProtection) &&
+    allEvidenceGatesOk(pack.gates) &&
     typeof proposal.diffHash === 'string' &&
     proposal.diffHash === currentDiffHash &&
     pack.diff.hash === currentDiffHash &&
@@ -1559,7 +1562,7 @@ export function evidencePackMatchesLiveProposal(
     verify.source.length > 0 &&
     pack.verification.source === verify.source &&
     pack.verification.verifiedAt === verify.verifiedAt &&
-    timestampsAreFresh(pack, nowMs, maxAgeMs)
+    areEvidenceTimestampsFresh(pack.generatedAt, pack.verification.verifiedAt, nowMs, maxAgeMs)
   );
 }
 

@@ -97,6 +97,8 @@ export interface ReadDispatchProductionEventsOptions {
   /** Recorded feedback requires exact writer ISO timestamps, before window filtering. */
   canonicalTimestamps?: boolean;
   sinceMs?: number;
+  /** Inclusive upper timestamp bound for the dispatch snapshot. */
+  asOfMs?: number;
   limit?: number;
   /** Maximum dated partitions. Loose legacy partitions retain their separate fixed cap. */
   maxFiles?: number;

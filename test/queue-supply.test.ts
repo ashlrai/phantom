@@ -1,13 +1,21 @@
 /** Fixture tests for queue.supply.v1 (`phm queue supply`) and the digest's supply_low line: synthetic ledger, ready rows and launch log, no real home. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { cmdQueueSupply } from '../src/cli/queue-supply.js';
 import { buildPoolsView } from '../src/core/fleet/pools-view.js';
-import { buildQueueSupply, countReady, countStarts, formatQueueSupplyText, QUEUE_SUPPLY_SCHEMA, supplyLowLine } from '../src/core/fleet/queue-supply.js';
+import { buildQueueSupply, countReady, countStarts, formatQueueSupplyText, QUEUE_SUPPLY_SCHEMA, readQueueSupply, supplyLowLine } from '../src/core/fleet/queue-supply.js';
 import type { ResourceLaneRow, ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
 import { buildStatusDigest, type StatusDigestInput } from '../src/core/leader/status-digest.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00.000Z');
 const at = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
+const localTime = (hoursAgo: number) => {
+  const d = new Date(NOW - hoursAgo * 3_600_000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
 const lane = (name: string, patch: Partial<ResourceLaneRow> = {}): ResourceLaneRow => ({
   lane: name, running: 1, target: 2, held: false, window: 'weekly', usedPct: 50, creditsRemaining: null, resetAt: at(84),
   burnPctPerHour: null, tokensPerHour6h: null, projectedExhaustion: null, source: null, deadSignal: null,
@@ -57,8 +65,16 @@ describe('buildQueueSupply', () => {
     expect(row(noQueue, 'claude')).toMatchObject({ state: 'unknown', ready: null, hours_queued: null, supply_low: false });
     expect(noQueue.gaps[0]).toBe('The ready queue could not be read.');
     const noLog = supply([lane('claude')], { claude: 4 }, null);
-    expect(row(noLog, 'claude')).toMatchObject({ state: 'healthy', ready: 4, starts_per_hour: null, hours_queued: null });
-    expect(row(noLog, 'claude').reason).toBe('launch log not readable');
+    expect(row(noLog, 'claude')).toMatchObject({ state: 'unknown', ready: 4, starts_per_hour: null, hours_queued: null, supply_low: false });
+    expect(row(noLog, 'claude').reason).toBe('launch window unavailable');
+  });
+
+  it('keeps observed zero starts distinct from an unknown queue duration', () => {
+    const data = supply([lane('claude', { usedPct: 72, resetAt: at(31), burnPctPerHour: 0.3 })], { claude: 4 }, {});
+    expect(row(data, 'claude')).toMatchObject({
+      state: 'unknown', at_risk: true, ready: 4, starts_per_hour: 0, hours_queued: null, supply_low: false,
+    });
+    expect(supplyLowLine(data)).toBeNull();
   });
 
   it('under an hour of work on a pool that is behind is supply_low and named in the digest line', () => {
@@ -72,6 +88,22 @@ describe('buildQueueSupply', () => {
     expect(row(data, 'grok')).toMatchObject({ state: 'empty', at_risk: false, supply_low: false });
   });
 
+  it('uses observed counts for queue coverage on both sides of the one-hour threshold', () => {
+    const pools = [lane('claude', { usedPct: 72, resetAt: at(31), burnPctPerHour: 0.3 })];
+    const short = supply(pools, { claude: 6 }, { claude: 37 });
+    expect(row(short, 'claude')).toMatchObject({
+      state: 'low', supply_low: true, starts_per_hour: 37 / 6, hours_queued: 36 / 37,
+    });
+    expect(supplyLowLine(short)).toBe('supply_low: Claude (6 queued, about 58 min of work, 28% left): add work');
+
+    const exact = supply(pools, { claude: 6 }, { claude: 36 });
+    expect(row(exact, 'claude')).toMatchObject({ state: 'healthy', supply_low: false, hours_queued: 1 });
+    expect(supplyLowLine(exact)).toBeNull();
+
+    const above = supply(pools, { claude: 6 }, { claude: 35 });
+    expect(row(above, 'claude')).toMatchObject({ state: 'healthy', supply_low: false, hours_queued: 36 / 35 });
+  });
+
   it('puts pools that need work first and renders one line each', () => {
     const data = supply([lane('a-healthy', { usedPct: 40, burnPctPerHour: 0.6 }), lane('b-empty', { usedPct: 72, resetAt: at(31), burnPctPerHour: 0.3 })],
       { 'a-healthy': 8, 'b-empty': 0 }, { 'a-healthy': 6, 'b-empty': 6 });
@@ -82,14 +114,109 @@ describe('buildQueueSupply', () => {
 });
 
 describe('readers', () => {
+  it('raises a supply alert only after observing an empty ready queue', async () => {
+    const runsDir = await mkdtemp(join(tmpdir(), 'phantom-queue-supply-'));
+    try {
+      const queue = join(runsDir, 'queue');
+      const pool = 'codex-supply-test';
+      await mkdir(queue);
+      await writeFile(join(queue, 'status.json'), JSON.stringify({
+        last_tick: at(0), lanes: { [pool]: { running: 0, target: 2 } },
+        budget: { [pool]: { weekly_used_pct: 72, observed_at: at(-0.01), reset_at: at(31), burn_pct_per_hour: 0.3 } },
+      }));
+      await writeFile(join(runsDir, 'dispatch-events.log'), '');
+      const opts = { runsDir, now: () => NOW };
+
+      const missing = await readQueueSupply(opts);
+      expect(row(missing, pool)).toMatchObject({ state: 'unknown', at_risk: true, ready: null, hours_queued: null, supply_low: false });
+      expect(supplyLowLine(missing)).toBeNull();
+
+      await writeFile(join(queue, 'ready.tsv'), '');
+      const empty = await readQueueSupply(opts);
+      expect(row(empty, pool)).toMatchObject({ state: 'empty', ready: 0, starts_per_hour: 0, hours_queued: 0, supply_low: true });
+      expect(supplyLowLine(empty)).toContain('0 queued');
+    } finally {
+      await rm(runsDir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses a truncated dispatch log only when its retained events cover the launch window', async () => {
+    const runsDir = await mkdtemp(join(tmpdir(), 'phantom-queue-supply-'));
+    try {
+      const queue = join(runsDir, 'queue');
+      const pool = 'codex-supply-test';
+      await mkdir(queue);
+      await writeFile(join(queue, 'status.json'), JSON.stringify({
+        last_tick: at(0), lanes: { [pool]: { running: 0, target: 2 } },
+        budget: { [pool]: { weekly_used_pct: 72, observed_at: at(-0.01), reset_at: at(31), burn_pct_per_hour: 0.3 } },
+      }));
+      await writeFile(join(queue, 'ready.tsv'), `RQ-A\tphantom\t${pool}\twork\t/p/a\n`);
+      const log = join(runsDir, 'dispatch-events.log');
+      const launch = `${localTime(1)} LAUNCH RQ-B phantom ${pool} work\n`;
+      const padding = 'x'.repeat(2 * 1024 * 1024);
+      const opts = { runsDir, now: () => NOW };
+
+      await writeFile(log, `${localTime(6)} EVENT ${padding}\n${localTime(6)} DONE RQ-C\n${launch}`);
+      expect(row(await readQueueSupply(opts), pool)).toMatchObject({
+        ready: 1, starts_per_hour: null, hours_queued: null, supply_low: false,
+        reason: 'launch window unavailable',
+      });
+
+      await writeFile(log, `${localTime(7)} EVENT ${padding}\n${localTime(7)} DONE RQ-C\n${launch}`);
+      expect(row(await readQueueSupply(opts), pool)).toMatchObject({
+        ready: 1, starts_per_hour: 1 / 6, hours_queued: 6,
+      });
+    } finally {
+      await rm(runsDir, { recursive: true, force: true });
+    }
+  });
+
   it('counts ready jobs by lane and leaves parked rows out', () => {
     const tsv = ['RQ-A\tphantom\tclaude\twork\t/p/a', 'RQ-B\tphantom\tclaude\twork\t/p/b', 'RQ-C\tphantom\tPARKED-BYHAND.codex-local\twork\t/p/c', ''].join('\n');
     expect(countReady(tsv)).toEqual({ claude: 2 });
   });
 
+  it('counts ready jobs by the lane the market resolves, not the lane column', () => {
+    const spec = (lane: string | null) => JSON.stringify({ preferred_lane: lane });
+    const tsv = [
+      'RQ-A\tphantom\tcodex\twork\t/p/a\t' + spec('claude'),                    // spec preferred_lane wins over the column
+      'RQ-B\tphantom\tclaude\twork\t/p/b\t' + spec(null),                       // open hint: the market places it anywhere
+      'RQ-C\tphantom\tclaude\twork\t/p/c\t' + spec('claude'),
+      'RQ-D\tphantom\tclaude\twork\t/p/d\t{"preferred_lane":"Not A Lane"}',    // invalid spec: the market drops the row
+      'PARKED-DEP.after\tRQ-E\tclaude\twork\tphantom\t/p/e\t' + spec('claude'), // status-first parked row
+      'READY\tRQ-F\tclaude\twork\tphantom\t/p/f',                              // status-first ready: not a dispatcher job
+      'READY\tRQ-G\tclaude\twork\tphantom',                                    // five-cell status-first: still not a job
+    ].join('\n');
+    expect(countReady(tsv)).toEqual({ claude: 2 });
+  });
+
+  it('resolves spec-less ready rows through their router-queue.md envelope', () => {
+    const tsv = 'RQ-H\tphantom\tcodex\twork\t/p/h\nRQ-I\tphantom\tclaude\twork\t/p/i';
+    const routerQueue = '- READY RQ-H (P1, preferred_lane=claude): hinted work\n- READY RQ-I (P2): no lane in attrs';
+    // RQ-H takes the envelope's preferred_lane; RQ-I's envelope names no lane, so the row is open.
+    expect(countReady(tsv, routerQueue)).toEqual({ claude: 1 });
+    // Without the queue text the lane column stands, exactly like the market's fallback.
+    expect(countReady(tsv)).toEqual({ codex: 1, claude: 1 });
+  });
+
+  it('counts each job once using its first valid row and preserves low-supply alerts', () => {
+    const tsv = [
+      'RQ-A\tphantom\tclaude\twork\t/p/a',
+      'RQ-A\tphantom\tclaude\twork\t/p/a',
+      'RQ-A\tphantom\tcodex\twork\t/p/a',
+      'RQ-B\tphantom\t\twork\t/p/b',
+      'RQ-B\tphantom\tclaude\twork\t/p/b',
+      'RQ-C\tphantom\tclaude\tinvalid\t/p/c',
+      'RQ-C\tphantom\tclaude\twork\t/p/c',
+    ].join('\n');
+    const ready = countReady(tsv);
+    expect(ready).toEqual({ claude: 2 });
+    const data = supply([lane('claude', { usedPct: 72, resetAt: at(31), burnPctPerHour: 0.3 })], ready, { claude: 18 });
+    expect(row(data, 'claude')).toMatchObject({ state: 'low', ready: 2, supply_low: true });
+  });
+
   it('counts LAUNCH lines per lane inside the window only', () => {
-    const local = (hoursAgo: number) => { const d = new Date(NOW - hoursAgo * 3_600_000); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
-    const log = [`${local(1)} LAUNCH RQ-A phantom claude mid`, `${local(5)} LAUNCH RQ-B phantom claude mid`, `${local(7)} LAUNCH RQ-C phantom claude mid`, `${local(2)} DONE RQ-A`].join('\n');
+    const log = [`${localTime(1)} LAUNCH RQ-A phantom claude mid`, `${localTime(5)} LAUNCH RQ-B phantom claude mid`, `${localTime(7)} LAUNCH RQ-C phantom claude mid`, `${localTime(2)} DONE RQ-A`].join('\n');
     expect(countStarts(log, NOW)).toEqual({ claude: 2 });
   });
 });

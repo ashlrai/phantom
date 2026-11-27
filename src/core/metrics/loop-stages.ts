@@ -10,7 +10,7 @@ import { jobTimelines, percentile, type JobTimeline, type ReleaseRef } from './l
 
 export const LOOP_STAGES_SCHEMA = 'metrics.loop-stages.v1' as const;
 export const LOOP_STAGES_DEFAULT_SINCE_MS = 24 * 3_600_000;
-export const LOOP_STAGES_MAX_SINCE_MS = 30 * 24 * 3_600_000;
+const LOOP_STAGES_MAX_SINCE_MS = 30 * 24 * 3_600_000;
 
 export const STAGE_NAMES = ['queued_to_launched', 'launched_to_finished', 'finished_to_pr', 'pr_to_merged', 'merged_to_released'] as const;
 export type StageName = (typeof STAGE_NAMES)[number];
@@ -69,13 +69,12 @@ const gap = (from: number | null, to: number | null): number | null => from === 
 
 /**
  * First release containing a merge: the earliest release cut at or after it (squash merges on a linear default
- * branch). Releases are the newest N, so a merge older than the oldest one fetched cannot be placed: unknown.
+ * branch). Releases are the newest N (sorted ascending), so a merge older than the oldest one fetched cannot be placed: unknown.
  */
-function releaseGap(job: JobTimeline, releases: readonly ReleaseRef[] | null): { minutes: number | null; pending: boolean } {
-  if (job.mergedAt === null || !releases?.length) return { minutes: null, pending: false };
-  const sorted = [...releases].sort((a, b) => a.createdAt - b.createdAt);
-  if (job.mergedAt < sorted[0]!.createdAt) return { minutes: null, pending: false };
-  const first = sorted.find(release => release.createdAt >= job.mergedAt!);
+function releaseGap(job: JobTimeline, sortedReleases: readonly ReleaseRef[] | null): { minutes: number | null; pending: boolean } {
+  if (job.mergedAt === null || !sortedReleases?.length) return { minutes: null, pending: false };
+  if (job.mergedAt < sortedReleases[0]!.createdAt) return { minutes: null, pending: false };
+  const first = sortedReleases.find(release => release.createdAt >= job.mergedAt!);
   return first ? { minutes: gap(job.mergedAt, first.createdAt), pending: false } : { minutes: null, pending: true };
 }
 
@@ -83,10 +82,11 @@ const round = (n: number): number => Math.round(n * 10) / 10;
 
 export function buildLoopStages(ledger: string | null, releases: readonly ReleaseRef[] | null, now: number, sinceMs = LOOP_STAGES_DEFAULT_SINCE_MS, releasesReason: string | null = null, jobsTruncated?: boolean): LoopStagesReport {
   const finished = [...jobTimelines(ledger, now).values()].filter(job => job.finishedAt !== null && job.finishedAt > now - sinceMs);
+  const sortedReleases = releases?.length ? [...releases].sort((a, b) => a.createdAt - b.createdAt) : null;
   const samples = new Map<StageName, number[]>(STAGE_NAMES.map(name => [name, []]));
   const counts = new Map<StageName, { unknown: number; pending: number }>(STAGE_NAMES.map(name => [name, { unknown: 0, pending: 0 }]));
   for (const job of finished) {
-    const rel = releaseGap(job, releases);
+    const rel = releaseGap(job, sortedReleases);
     const values: Record<StageName, number | null> = {
       queued_to_launched: gap(job.enqueuedAt, job.launchedAt), launched_to_finished: gap(job.launchedAt, job.finishedAt),
       finished_to_pr: gap(job.finishedAt, job.openedAt), pr_to_merged: gap(job.openedAt, job.mergedAt), merged_to_released: rel.minutes,

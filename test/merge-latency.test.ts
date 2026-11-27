@@ -63,6 +63,19 @@ describe('merge latency', () => {
     expect(mergeLatencyText(r).join('\n')).toContain('Open to merge (true): median unknown, p90 unknown, 0% known (0 of 1)');
   });
 
+  it('uses terminal receipts only as outcomes when measuring publication to observation', () => {
+    const ledger = [
+      row('publish', 20, { url: pr(10), outcome: 'MERGED', source: 'metrics-outcomes-reconciler', createdAt: at(30), mergedAt: at(21) }),
+      row('publish', 40, { url: pr(11), outcome: 'CLOSED', source: 'metrics-outcomes-reconciler' }),
+      JSON.stringify({ timestamp: at(30), prUrl: pr(11), status: 'PUBLISHED' }),
+      JSON.stringify({ timestamp: at(20), prUrl: pr(11), status: 'MERGED', createdAt: at(31), mergedAt: at(21) }),
+    ].join('\n');
+    const r = report('lane', ledger);
+    expect(r.merged).toBe(2);
+    expect(r.open_to_merge).toMatchObject({ known: 2, unknown: 0 });
+    expect(r.publish_to_observed).toEqual({ known: 1, unknown: 1, coverage_pct: 50, p50_s: 600, p90_s: 600 });
+  });
+
   it('rolls up per lane and per repo', () => {
     const lanes = report('lane').groups;
     expect(lanes.map(g => [g.name, g.merged])).toEqual([['claude', 4], ['grok', 1]]);

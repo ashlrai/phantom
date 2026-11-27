@@ -49,7 +49,7 @@ describe('readNodesView', () => {
       nodes: [{
         name: 'node-a', isSelf: true, reachable: true, lastSeen: '2026-11-17T12:00:00.000Z', phantom: 'not-running',
         heartbeatAgeSeconds: 'unknown', freeMemoryBytes: 12 * GIB, freeMemoryPercent: 38, load: 2, cpuHeadroomPercent: 75, lanes: 'unknown', jobsRunning: 'unknown', freeSlots: 'unknown',
-        stateCode: 'not-running', state: 'reachable but Phantom not running: run `phm node join --owner <scope>` here',
+        stateCode: 'not-running', state: 'reachable but Phantom not running: run `phm node join --owner <scope> --watch` here',
         joined: true, joinCommand: null,
       }],
       reasons: ['no node pool on this computer: other computers cannot join its list (docs/NODES.md)'],
@@ -142,7 +142,7 @@ describe('readNodesView', () => {
     // the same command a session-expired fix prints, so the suggested rejoin
     // never silently downgrades the node's capabilities.
     expect(view.nodes[0]).toMatchObject({ isSelf: true, phantom: 'not-running', stateCode: 'not-running',
-      state: 'reachable but Phantom not running: run `phm node join --node laptop --owner acme --caps claude,codex --slots 2` here' });
+      state: 'reachable but Phantom not running: run `phm node join --node laptop --owner acme --caps claude,codex --slots 2 --watch` here' });
   });
 
   it('standalone registry: a record with no advertised profile gets placeholders, not invented flags', () => {
@@ -150,7 +150,7 @@ describe('readNodesView', () => {
       version: 'drive.nodes.v1', sequence: 3, observedAt: NOW - 1_000,
       nodes: [node('laptop', { expiresAt: NOW - 1, owners: undefined, caps: undefined, slots: undefined })], leader: null, jobs: [] } }));
     expect(view.nodes[0]).toMatchObject({ isSelf: true, stateCode: 'not-running',
-      state: 'reachable but Phantom not running: run `phm node join --node laptop --owner <scope>` here' });
+      state: 'reachable but Phantom not running: run `phm node join --node laptop --owner <scope> --watch` here' });
   });
 
   it('missing tailscale: reachability is unknown with the reason, registry facts still shown', () => {
@@ -241,6 +241,36 @@ describe('chooseNodeForLane', () => {
     ])));
     expect(view.nodes[1]?.lanes).toEqual(['claude', 'codex']);
     expect(chooseNodeForLane(view, 'gemini')).toMatchObject({ node: null, reason: 'no-ready-node' });
+  });
+
+  it('keeps the phm-<version> build marker out of lanes while caps keep it', () => {
+    // Every join advertises `phm-<version>` for self-update drift; it is build
+    // metadata, not a lane a job can name, so the lanes projection drops it —
+    // `--can-take` and the plain-words row must not offer it as work.
+    const view = readNodesView(deps(tailnet([peer('node-b', true)]), registry([
+      node('node-a', { caps: ['claude', 'phm-3.30.77', 'pack:codex-file'] }),
+      node('node-b', { caps: ['phm-3.30.40'] }),
+    ])));
+    expect(view.nodes[0]?.lanes).toEqual(['claude', 'pack:codex-file']);
+    expect(view.nodes[1]?.lanes).toEqual([]);
+    expect(nodesThatCanTake(view, 'claude').map(row => row.name)).toEqual(['node-a']);
+    expect(nodesThatCanTake(view, 'phm-3.30.77')).toEqual([]);
+    expect(chooseNodeForLane(view, 'phm-3.30.77')).toMatchObject({ node: null, reason: 'no-ready-node' });
+  });
+
+  it('local-model is the oMLX cap family: omlx caps serve it, pack caps do not', () => {
+    // Workers advertise `omlx`/`omlx-<tier>` and the queue routes lane `omlx`;
+    // `local-model` is only the report name. A `pack:omlx-chat` runner cap is
+    // not a model lane and must not count.
+    const view = readNodesView(deps(tailnet([peer('node-b', true), peer('node-c', true)]), registry([
+      node('node-a'),
+      node('node-b', { caps: ['omlx', 'omlx-work', 'pack:omlx-chat'] }),
+      node('node-c', { caps: ['pack:omlx-chat'] }),
+    ])));
+    expect(nodesThatCanTake(view, 'local-model').map(row => row.name)).toEqual(['node-b']);
+    expect(nodesThatCanTake(view, 'omlx').map(row => row.name)).toEqual(['node-b']);
+    expect(nodesThatCanTake(view, 'omlx-work').map(row => row.name)).toEqual(['node-b']);
+    expect(chooseNodeForLane(view, 'local-model')).toMatchObject({ node: 'node-b', target: 'remote', reason: 'remote-ready' });
   });
 });
 

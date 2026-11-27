@@ -1,4 +1,3 @@
-import { isAbsolute, parse as parsePath, resolve } from 'node:path';
 import {
   deliverUniverseIntegration, evaluateUniverseIntegration, handoffUniverseIntegration,
   readUniverseIntegrationDelivery, readUniverseIntegrationEvaluation,
@@ -7,6 +6,7 @@ import {
   type UniverseIntegrationDeliveryRequest, type UniverseIntegrationEvaluationResult, type UniverseIntegrationEvaluationRequest,
   type UniverseIntegrationPlan,
 } from '../core/universe/index.js';
+import { containsControlChars as containsControls, isCanonicalAbsolutePath as canonicalAbsolutePath } from '../core/universe/input-guards.js';
 
 const MAX_MANIFEST_BYTES = 256 * 1024;
 const USAGE = `usage: ashlr universe integration <command> --manifest <private absolute JSON>
@@ -54,18 +54,6 @@ interface Options {
   manifest?: string;
   root?: string;
   json: boolean;
-}
-
-function containsControls(value: string): boolean {
-  return [...value].some((character) => {
-    const code = character.charCodeAt(0);
-    return code < 32 || (code >= 127 && code <= 159);
-  });
-}
-
-function canonicalAbsolutePath(value: string): boolean {
-  return isAbsolute(value) && resolve(value) === value && parsePath(value).root !== value &&
-    Buffer.byteLength(value, 'utf8') <= 4_096 && !containsControls(value);
 }
 
 function isActionCommand(value: string | undefined): value is Exclude<Options['command'], 'help'> {

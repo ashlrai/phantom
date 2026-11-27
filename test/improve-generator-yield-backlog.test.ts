@@ -129,6 +129,24 @@ describe('generatorYieldBacklogItems', () => {
     expect(await generatorYieldBacklogItems({ repo: REPO, now: NOW, ledgerText: draftsOnly })).toEqual([]);
   });
 
+  it('waits for future decisions before counting them toward recurrence or refusal share', async () => {
+    const src = 'autofill:bet';
+    const midnight = Date.parse('2026-11-24T00:00:00.000Z');
+    const ledgerText = [
+      ...recurringRows(src, 'duplicate', 3, [0], 'previous-day'),
+      rej('second-day', src, 'duplicate', new Date(midnight).toISOString()),
+      draft('later-draft', src, new Date(midnight + 1).toISOString()),
+    ].join('\n');
+    const opts = { repo: REPO, ledgerText };
+
+    expect(await generatorYieldBacklogItems({ ...opts, now: midnight - 1 })).toEqual([]);
+    const atMidnight = await generatorYieldBacklogItems({ ...opts, now: midnight });
+    expect(atMidnight).toHaveLength(1);
+    expect(atMidnight[0]?.prompt).toContain('4 of 4 recorded autofill:bet decisions');
+    const afterMidnight = await generatorYieldBacklogItems({ ...opts, now: midnight + 1 });
+    expect(afterMidnight[0]?.prompt).toContain('4 of 5 recorded autofill:bet decisions');
+  });
+
   it('counts replayed decisions once and preserves later observations of the same job', async () => {
     const src = 'autofill:bet';
     const first = rej('job-1', src, 'duplicate', at(4));
@@ -189,6 +207,10 @@ describe('generatorYieldBacklogItems', () => {
     expect(await generatorYieldBacklogItems({ repo: REPO, now: NOW, ledgerText: '   \n  \n' })).toEqual([]);
     const text = recurringRows('autofill:bet', 'stopped_family', 4, [4, 3, 4, 3], 'bet-z').join('\n');
     expect(await generatorYieldBacklogItems({ repo: 'ashlrai/other-repo', now: NOW, ledgerText: text })).toEqual([]);
+    expect(await generatorYieldBacklogItems({ repo: 'another-owner/phantom', now: NOW, ledgerText: text })).toEqual([]);
+    const mixedCase = await generatorYieldBacklogItems({ repo: ' AshlrAI/Phantom ', now: NOW, ledgerText: text });
+    expect(mixedCase).toHaveLength(1);
+    expect(mixedCase[0]!.repo).toBe('AshlrAI/Phantom');
     // A bare repository name still matches the fleet gate but carries no owner/repo field.
     const bare = await generatorYieldBacklogItems({ repo: 'phantom', now: NOW, ledgerText: text });
     expect(bare).toHaveLength(1);
@@ -224,6 +246,28 @@ describe('generatorYieldBacklogItems', () => {
     expect(all).toHaveLength(3);
     expect(all.length).toBeLessThanOrEqual(GENERATOR_YIELD_MAX_ITEMS);
     expect(all.every((item) => validBacklogItem(item) !== null)).toBe(true);
+  });
+
+  it('keeps recurrence but withholds the refusal share for a clipped ledger', async () => {
+    const source = 'autofill:bet';
+    const rows = [
+      draft('older-draft', source, at(5)),
+      ...recurringRows(source, 'duplicate', 4, [4, 3], 'clipped'),
+    ];
+    mkdirSync(join(runsDir, 'metrics'), { recursive: true });
+    const ledger = join(runsDir, 'metrics', 'generation.jsonl');
+
+    writeFileSync(ledger, rows.join('\n'));
+    const [complete] = await generatorYieldBacklogItems({ repo: REPO, now: NOW });
+    expect(complete?.prompt).toContain('4 of 5 recorded autofill:bet decisions');
+
+    const [olderDraft, ...rejections] = rows;
+    writeFileSync(ledger, [olderDraft, ' '.repeat(4 * 1024 * 1024), ...rejections].join('\n'));
+    const [clipped] = await generatorYieldBacklogItems({ repo: REPO, now: NOW });
+    expect(clipped?.id).toBe(complete?.id);
+    expect(clipped?.title).toContain('4 retained in 7d');
+    expect(clipped?.prompt).toContain('counts cover only the retained decisions');
+    expect(clipped?.prompt).not.toMatch(/4 of \d+ recorded/);
   });
 
   it('reads the real ledger under a runs dir', async () => {

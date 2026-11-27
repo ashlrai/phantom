@@ -196,3 +196,12 @@ the verdict belongs to an earlier merge era and leaves the merge a fresh
 held merge, absent or unmatched keys change nothing, a contested or
 foreign claim never resolves, and a verdict with no job id stays unmarked
 rather than guessed.
+
+## Skill-use report window
+
+`ReadSkillRecordsOptions.asOfMs` is an optional inclusive upper bound in
+Unix milliseconds for bounded ledger reads. The reader excludes UTC
+partitions starting after that bound and rows timestamped after it before
+applying file and row limits or checking skill-use event-ID conflicts.
+Complete corpus reads ignore the window options. Fleet status and skill
+outcome reports supply their report timestamp as the upper bound.

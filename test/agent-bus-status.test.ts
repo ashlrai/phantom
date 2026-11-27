@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,11 +9,13 @@ import { readUnifiedBusStatus, type UnifiedBusStatusOptions } from '../src/core/
 import { announceWork, sendDirectMessage, sendWakeRequest, type UnifiedBusOptions } from '../src/core/agents/bus-unified.js';
 import { writeOwnerChatReceipts, type OwnerChatReceipt } from '../src/core/agents/chat-owner-receipts.js';
 import { acquireCoordination, releaseLiveClaimByOwner } from '../src/core/agents/claim-store.js';
-import { appendBusInbox, BUS_INBOX_MAX_MESSAGES } from '../src/core/fleet/bus-inbox.js';
+import { appendBusInbox, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES } from '../src/core/fleet/bus-inbox.js';
 import { BusBoard } from '../src/core/fleet/bus-board.js';
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
 import { SharedStore } from '../src/core/fleet/shared-store.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
+import { appendBusHop } from '../src/core/fleet/bus-hoplog.js';
+import { claimFleetWork, concludeFleetClaim, postFleetMessage, proposeFleetAssignment } from '../src/core/fleet/coordination.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import type { AshlrConfig } from '../src/core/types.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
@@ -25,7 +28,11 @@ function setup(at = 1_000): UnifiedBusStatusOptions & { clock: { now: number } }
   dirs.push(base);
   const clock = { now: at };
   return { root: join(base, 'fleet'), runsRoot: join(base, 'runs'), now: () => clock.now, clock,
-    seats: { home: join(base, 'seat-home') } };
+    seats: { home: join(base, 'seat-home') },
+    // The fleet coordination ledger never derives from `root` — its own
+    // locator or this override — so every test gets a per-test ledger path
+    // instead of sharing the worker home's default one.
+    coordination: { path: join(base, 'coordination.jsonl') } };
 }
 
 describe('readUnifiedBusStatus', () => {
@@ -38,6 +45,9 @@ describe('readUnifiedBusStatus', () => {
     // A verifiably absent queue holds no hints: 0 is the real count, and
     // nothing can be truncated out of a queue that does not exist.
     expect(status.wakes).toEqual({ state: 'missing', hints: 0, truncated: false });
+    // A verifiably absent hop log holds no hops: 0 is the real count.
+    expect(status.hoplog).toEqual({ state: 'missing', bytes: 0, hops: 0,
+      skippedRows: 0, truncated: false });
     expect(status.coordination).toEqual({ source: 'missing', liveClaims: null, statuses: null });
     expect(status.workClaims).toEqual({ source: 'missing', claims: null });
     // Two verified-empty stores agree trivially: VERIFIED with real zeros.
@@ -59,9 +69,22 @@ describe('readUnifiedBusStatus', () => {
     expect(status.peerDispatch).toEqual({ source: 'missing', receipts: 0, unpublished: 0 });
     // A verifiably absent coordination ledger holds no live rows: 0 is proven.
     expect(status.peerLedger).toEqual({ source: 'missing', liveRows: 0 });
+    // A verifiably absent bindings file enrolls no peers: 0 is the real
+    // count, and no session can authenticate — active is a real 0 too.
+    expect(status.peerBindings).toEqual({ source: 'missing', peers: 0, active: 0 });
+    // A verifiably absent dispatch policy allows no peers or repos: real zeros.
+    expect(status.peerDispatchPolicy).toEqual({ source: 'missing', peers: 0, repositories: 0 });
+    // No enrolled callsign can hold admitted peer mail: 0 is proven.
+    expect(status.peerInbox).toEqual({ source: 'missing', pending: 0, truncated: false });
+    // A verifiably absent bus store retains no dead letters: real zeros.
+    expect(status.deadLetters).toEqual({ source: 'missing', pending: 0,
+      reasons: { exhausted: 0, expired: 0, noRoute: 0, other: 0 }, truncated: false });
     // A verifiably absent handoff store holds no journals: 0 is the real count.
     expect(status.sessionHandoffs).toEqual({ source: 'missing', journals: 0, open: 0,
       awaitingFailover: 0, unreadable: 0, truncated: false });
+    // A verifiably absent fleet coordination ledger holds no pending
+    // surface: real zeros across all three classes.
+    expect(status.fleetCoordination).toEqual({ source: 'missing', messages: 0, proposals: 0, returns: 0 });
     expect(Number.isNaN(Date.parse(status.asOf))).toBe(false);
   });
 
@@ -90,6 +113,9 @@ describe('readUnifiedBusStatus', () => {
     expect(status.registry).toEqual({ source: 'available', identities: 2, channels: 0 });
     expect(status.wakes.state).toBe('ok');
     expect(status.wakes.hints).toBeGreaterThanOrEqual(1);
+    // The wake request above appended one hop to the send path's own log.
+    expect(status.hoplog).toMatchObject({ state: 'ok', hops: 1, skippedRows: 0, truncated: false });
+    expect(status.hoplog.bytes).toBeGreaterThan(0);
     expect(status.coordination.source).toBe('available');
     expect(status.coordination.liveClaims).toBe(1);
     expect(status.feed).toEqual({ status: 'ok', jobs: 1 });
@@ -583,6 +609,284 @@ describe('peerLedger section', () => {
   });
 });
 
+describe('peerBindings section', () => {
+  const agentnetDir = (options: UnifiedBusStatusOptions) => join(dirname(options.root!), 'agentnet');
+  const bindingsFile = (options: UnifiedBusStatusOptions) => join(agentnetDir(options), 'bindings.json');
+  const binding = (n: number, expiresAt: number) => ({ callsign: `agent${n}`, lane: `lane-${n}`,
+    sessionId: `session-${n}`, sessionHash: n.toString(16).padStart(64, 'a'),
+    expiresAt, teamId: 'TTEAM', userId: `UAGENT${n}`, botId: `BAGENT${n}`, topic: 'mesh' });
+  /** The bindings file `readPeerBindings` validates for every peers verb —
+   * mode 0600 under a private dir, the same custody `agentnetPaths()` files get. */
+  const writeBindings = (options: UnifiedBusStatusOptions, peers: unknown[]) => {
+    options.agentnetBindings = bindingsFile(options);
+    mkdirSync(agentnetDir(options), { recursive: true, mode: 0o700 });
+    writeFileSync(bindingsFile(options), JSON.stringify({ version: 1, peers }), { mode: 0o600 });
+  };
+
+  it('counts retained bindings and the sessions still inside their expiry', () => {
+    const options = setup();
+    const at = options.now();
+    writeBindings(options, [binding(0, at + 60_000), binding(1, at - 1)]);
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.peerBindings).toEqual({ source: 'available', peers: 2, active: 1 });
+    expect(status.store.source).toBe('missing');
+
+    // Read-only: a fresh probe over a never-written path reports missing.
+    const fresh = setup();
+    fresh.agentnetBindings = join(dirname(fresh.root!), 'agentnet', 'bindings.json');
+    expect(readUnifiedBusStatus(fresh).peerBindings).toEqual({ source: 'missing', peers: 0, active: 0 });
+    expect(existsSync(dirname(fresh.agentnetBindings!))).toBe(false);
+  });
+
+  it('keeps a corrupt bindings file unavailable with null counts while the rest of the bus stays readable', () => {
+    const options = setup();
+    mkdirSync(agentnetDir(options), { recursive: true, mode: 0o700 });
+    writeFileSync(bindingsFile(options), '{not json', { mode: 0o600 });
+    options.agentnetBindings = bindingsFile(options);
+
+    const status = readUnifiedBusStatus(options);
+    // The same corrupt file that makes readPeerBindings throw — and every
+    // peers verb refuse — is named here; nulls, never zeros.
+    expect(status.peerBindings).toEqual({ source: 'unavailable', peers: null, active: null });
+    expect(status.store.source).toBe('missing');
+    expect(status.feed.status).toBe('ok');
+    // The sibling dispatch policy is probed independently: still unprovisioned.
+    expect(status.peerDispatchPolicy).toEqual({ source: 'missing', peers: 0, repositories: 0 });
+  });
+});
+
+describe('peerDispatchPolicy section', () => {
+  const agentnetDir = (options: UnifiedBusStatusOptions) => join(dirname(options.root!), 'agentnet');
+  const bindingsFile = (options: UnifiedBusStatusOptions) => join(agentnetDir(options), 'bindings.json');
+  const policyFile = (options: UnifiedBusStatusOptions) => join(agentnetDir(options), 'dispatch.json');
+  const policy = (over: Record<string, unknown> = {}) => ({ version: 1, enabled: true,
+    peers: ['agent0', 'agent1'],
+    repositories: [{ repo: 'ashlrai/phantom', tierCeiling: 'mid', paths: ['docs/AGENT-BUS.md'] }],
+    ...over });
+  const provision = (options: UnifiedBusStatusOptions, value: unknown) => {
+    options.agentnetBindings = bindingsFile(options);
+    mkdirSync(agentnetDir(options), { recursive: true, mode: 0o700 });
+    writeFileSync(policyFile(options), JSON.stringify(value), { mode: 0o600 });
+  };
+
+  it('counts the peers and repositories a valid policy allows', () => {
+    const options = setup();
+    provision(options, policy());
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.peerDispatchPolicy).toEqual({ source: 'available', peers: 2, repositories: 1 });
+    expect(status.store.source).toBe('missing');
+    // No bindings file beside it: the auth probe stays honestly missing.
+    expect(status.peerBindings).toEqual({ source: 'missing', peers: 0, active: 0 });
+  });
+
+  it('reports a schema-invalid policy unavailable with null counts — the same refusal consumePeerWork hits', () => {
+    const options = setup();
+    // enabled must be literal true; a disabled or shapeless policy is not provisioned.
+    provision(options, policy({ enabled: false }));
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.peerDispatchPolicy).toEqual({ source: 'unavailable', peers: null, repositories: null });
+    expect(status.store.source).toBe('missing');
+    expect(status.feed.status).toBe('ok');
+  });
+
+  it('keeps a corrupt policy file unavailable with null counts', () => {
+    const options = setup();
+    options.agentnetBindings = bindingsFile(options);
+    mkdirSync(agentnetDir(options), { recursive: true, mode: 0o700 });
+    writeFileSync(policyFile(options), '{not json', { mode: 0o600 });
+
+    expect(readUnifiedBusStatus(options).peerDispatchPolicy)
+      .toEqual({ source: 'unavailable', peers: null, repositories: null });
+  });
+});
+
+describe('peerInbox section', () => {
+  const NOW = 1_800_000_000_000, HOUR = 3_600_000;
+  const agentnetDir = (options: UnifiedBusStatusOptions) => join(dirname(options.root!), 'agentnet');
+  const bindingsFile = (options: UnifiedBusStatusOptions) => join(agentnetDir(options), 'bindings.json');
+  const binding = (n: number, expiresAt: number) => ({ callsign: `agent${n}`, lane: `lane-${n}`,
+    sessionId: `session-${n}`, sessionHash: n.toString(16).padStart(64, 'a'),
+    expiresAt, teamId: 'TTEAM', userId: `UAGENT${n}`, botId: `BAGENT${n}`, topic: 'mesh' });
+  const writeBindings = (options: UnifiedBusStatusOptions, peers: unknown[]) => {
+    options.agentnetBindings = bindingsFile(options);
+    mkdirSync(agentnetDir(options), { recursive: true, mode: 0o700 });
+    writeFileSync(bindingsFile(options), JSON.stringify({ version: 1, peers }), { mode: 0o600 });
+  };
+  const peerId = (n: number) => `peer-123e4567-e89b-42d3-a456-4266141740${String(n).padStart(2, '0')}`;
+  const peerEnvelope = (id: string, to: string) => ({ id, from: 'agent0', to, priority: 'P2', ttl: 86_400_000,
+    body: { kind: 'peer.message', peer: { fromAgent: 'agent0', toAgent: to, kind: 'query',
+      text: 'ping', refs: [], threadId: id, origin: id, hopCount: 1 } } });
+  /** Post a peer-shaped envelope and return the stored original plus the
+   * digest `sendPeerMessage` would have written into the coordination
+   * ledger for it — the two halves of the ledger admission proof. */
+  const postPeerMail = (options: UnifiedBusStatusOptions, id: string, to: string, at = NOW) => {
+    expect(appendBusInbox(peerEnvelope(id, to), { root: options.root, now: () => at }).status).toBe('posted');
+    const page = listBusInboxAfter(0, 100, { root: options.root, now: () => at, includeOriginalEnvelope: true });
+    const original = page.status === 'ok' ? page.messages.find(m => m.envelope.id === id)?.originalEnvelope : undefined;
+    if (original === undefined) throw new Error('fixture envelope missing');
+    return { original, digest: createHash('sha256').update(JSON.stringify(original)).digest('hex') };
+  };
+  const writeLedger = (options: UnifiedBusStatusOptions, rows: unknown[]) => {
+    const dir = join(options.root!, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'coordination.json'), JSON.stringify(rows), { mode: 0o600 });
+  };
+  const ledgerRow = (id: string, target: string, at: number, digest: string) => ({
+    id, fromAgent: 'agent0', target, origin: id, digest, hopCount: 1, threadId: 'thread', at });
+
+  it('counts only mail the admission proofs accept for live-enrolled callsigns', () => {
+    const options = setup(NOW);
+    // agent0's binding expired: nothing it was sent can be read back now.
+    writeBindings(options, [binding(0, NOW - 1), binding(1, NOW + 60_000)]);
+    const admitted = postPeerMail(options, peerId(1), 'agent1');
+    const dead = postPeerMail(options, peerId(2), 'agent0');
+    const stranger = postPeerMail(options, peerId(3), 'agent9');
+    // Same peer shape but no ledger row: unproven mail never counts.
+    appendBusInbox(peerEnvelope(peerId(4), 'agent1'), { root: options.root, now: () => NOW });
+    const stale = postPeerMail(options, peerId(5), 'agent1', NOW - 25 * HOUR);
+    const forged = postPeerMail(options, peerId(6), 'agent1');
+    writeLedger(options, [
+      ledgerRow(admitted.original.id, 'agent1', NOW, admitted.digest),
+      ledgerRow(dead.original.id, 'agent0', NOW, dead.digest),
+      ledgerRow(stranger.original.id, 'agent9', NOW, stranger.digest),
+      ledgerRow(stale.original.id, 'agent1', NOW - 25 * HOUR, stale.digest),
+      // Right id, target and instant but a digest the stored body cannot match.
+      ledgerRow(forged.original.id, 'agent1', NOW, 'a'.repeat(64)),
+    ]);
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.peerInbox).toEqual({ source: 'available', pending: 1, truncated: false });
+    // The rest of the probe is untouched: the ledger itself still reports live rows.
+    expect(status.peerLedger).toEqual({ source: 'available', liveRows: 4 });
+  });
+
+  it('counts journal-proven work.result replies addressed to live callsigns', () => {
+    const options = setup(NOW);
+    writeBindings(options, [binding(1, NOW + 60_000)]);
+    const receiptId = `pw-${'a'.repeat(32)}`;
+    const body = { kind: 'work.result', jobId: 'RQ-PEER-1', claimKey: 'repo:ashlrai/phantom',
+      queueId: `peer-work-${'b'.repeat(32)}`, receiptId, outcome: 'complete' };
+    expect(appendBusInbox({ id: `${receiptId}-complete`, from: 'agent0', to: 'agent1', priority: 'P2',
+      ttl: 86_400_000, body }, { root: options.root, now: () => NOW }).status).toBe('posted');
+    const dir = join(options.root!, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'work-dispatch.json'), JSON.stringify({ version: 1, receipts: [{
+      ...body, peer: 'agent1', consumer: 'agent0', digest: 'c'.repeat(64), at: NOW,
+      sent: 'complete', outcome: 'complete' }] }), { mode: 0o600 });
+
+    expect(readUnifiedBusStatus(options).peerInbox).toEqual({ source: 'available', pending: 1, truncated: false });
+  });
+
+  it('reports verified-empty peer planes without touching the bus store', () => {
+    // Enrolled but every session expired: no callsign can authenticate, so 0 is proven.
+    const expired = setup(NOW);
+    writeBindings(expired, [binding(1, NOW - 1)]);
+    expect(readUnifiedBusStatus(expired).peerInbox).toEqual({ source: 'available', pending: 0, truncated: false });
+    // Enrolled with a live session but no bus store: no retained mail exists.
+    const empty = setup(NOW);
+    writeBindings(empty, [binding(1, NOW + 60_000)]);
+    expect(readUnifiedBusStatus(empty).peerInbox).toEqual({ source: 'missing', pending: 0, truncated: false });
+  });
+
+  it('degrades only the peerInbox section when an admission input cannot be read', () => {
+    const corruptBindings = setup(NOW);
+    writeBindings(corruptBindings, [binding(1, NOW + 60_000)]);
+    writeFileSync(bindingsFile(corruptBindings), '{not json', { mode: 0o600 });
+    expect(readUnifiedBusStatus(corruptBindings).peerInbox)
+      .toEqual({ source: 'unavailable', pending: null, truncated: null });
+
+    const corruptLedger = setup(NOW);
+    writeBindings(corruptLedger, [binding(1, NOW + 60_000)]);
+    postPeerMail(corruptLedger, peerId(1), 'agent1');
+    mkdirSync(join(corruptLedger.root!, 'agentnet'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(corruptLedger.root!, 'agentnet', 'coordination.json'), '{not json', { mode: 0o600 });
+    expect(readUnifiedBusStatus(corruptLedger).peerInbox)
+      .toEqual({ source: 'unavailable', pending: null, truncated: null });
+
+    const corruptJournal = setup(NOW);
+    writeBindings(corruptJournal, [binding(1, NOW + 60_000)]);
+    postPeerMail(corruptJournal, peerId(1), 'agent1');
+    mkdirSync(join(corruptJournal.root!, 'agentnet'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(corruptJournal.root!, 'agentnet', 'work-dispatch.json'), '{not json', { mode: 0o600 });
+    expect(readUnifiedBusStatus(corruptJournal).peerInbox)
+      .toEqual({ source: 'unavailable', pending: null, truncated: null });
+
+    const corruptStore = setup(NOW);
+    writeBindings(corruptStore, [binding(1, NOW + 60_000)]);
+    postPeerMail(corruptStore, peerId(1), 'agent1');
+    writeFileSync(join(corruptStore.root!, 'bus-inbox', 'messages.json'), '{not json', { mode: 0o600 });
+    const status = readUnifiedBusStatus(corruptStore);
+    expect(status.peerInbox).toEqual({ source: 'unavailable', pending: null, truncated: null });
+    expect(status.store.source).toBe('unavailable');
+  });
+});
+
+describe('deadLetters section', () => {
+  const NOW = 1_800_000_000_000;
+  // The sink's own TTL (bus-transport-file): a letter stays pending attention
+  // for seven days, then the inbox read stops listing it.
+  const LETTER_TTL = 7 * 24 * 60 * 60 * 1000;
+  /** The wire shape `createFileDeadLetterSink` stores: a `status` envelope
+   * addressed to `bus.dead-letter` whose `body.payload` carries the
+   * delivery-failure summary plus the dropped or retained original. */
+  const letter = (id: string, reason: unknown, ttl = LETTER_TTL) => ({
+    id, from: 'bus-router', to: 'bus.dead-letter', priority: 'P2', ttl,
+    body: { protocol: { version: 1, kind: 'status' }, correlation_id: `corr-${id}`,
+      payload: { deadLetter: { id: `orig-${id}`, from: 'agent0', to: 'agent1',
+        kind: 'dm', priority: 'P2', correlationId: `corr-${id}`, reason,
+        deadLetteredAt: NOW, attempts: [] }, payloadDropped: true, envelope: null } },
+  });
+  const post = (options: UnifiedBusStatusOptions, envelope: unknown, at = NOW) =>
+    expect(appendBusInbox(envelope, { root: options.root, now: () => at }).status).toBe('posted');
+
+  it('counts live letters by recorded reason and skips expired or unrelated mail', () => {
+    const options = setup(NOW);
+    post(options, letter('dl-1', 'exhausted'));
+    post(options, letter('dl-2', 'expired'));
+    post(options, letter('dl-3', 'no-route'));
+    // A reason outside the closed DeadLetterReason set still counts as a
+    // pending letter — it just cannot name its bucket, so it reads 'other'.
+    post(options, letter('dl-4', 'mystery'));
+    // A body without the deadLetter summary is unparseable: 'other', still pending.
+    post(options, { id: 'dl-5', from: 'bus-router', to: 'bus.dead-letter', priority: 'P2',
+      ttl: LETTER_TTL, body: { note: 'not a letter' } });
+    // Ordinary mail to a real recipient never counts, and a letter whose TTL
+    // lapsed before the read is expired retention, not pending attention.
+    post(options, { id: 'dm-1', from: 'agent0', to: 'agent1', priority: 'P2', ttl: 60_000,
+      body: { kind: 'dm', text: 'hi' } });
+    post(options, letter('dl-old', 'exhausted'), NOW - LETTER_TTL - 1);
+
+    expect(readUnifiedBusStatus(options).deadLetters).toEqual({
+      source: 'available', pending: 5,
+      reasons: { exhausted: 1, expired: 1, noRoute: 1, other: 2 }, truncated: false });
+  });
+
+  it('reports a verified-empty sink on a live store with no letters', () => {
+    const options = setup(NOW);
+    post(options, { id: 'dm-1', from: 'agent0', to: 'agent1', priority: 'P2', ttl: 60_000,
+      body: { kind: 'dm', text: 'hi' } });
+    expect(readUnifiedBusStatus(options).deadLetters).toEqual({
+      source: 'available', pending: 0,
+      reasons: { exhausted: 0, expired: 0, noRoute: 0, other: 0 }, truncated: false });
+  });
+
+  it('degrades only the deadLetters section when the bus store cannot be read', () => {
+    const options = setup(NOW);
+    post(options, letter('dl-1', 'exhausted'));
+    writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), '{not json', { mode: 0o600 });
+    const status = readUnifiedBusStatus(options);
+    expect(status.deadLetters)
+      .toEqual({ source: 'unavailable', pending: null, reasons: null, truncated: null });
+    expect(status.store.source).toBe('unavailable');
+    // peerInbox never reached the store — with no enrolled callsign its
+    // verified-empty verdict stands on its own inputs.
+    expect(status.peerInbox).toEqual({ source: 'missing', pending: 0, truncated: false });
+  });
+});
+
 describe('sendGate section', () => {
   // The gate reads realHome() — the worker's isolated HOME under the test
   // harness — never the probe's `root`, exactly like the send path.
@@ -707,6 +1011,124 @@ describe('sessionHandoffs section', () => {
   });
 });
 
+describe('fleetCoordination section', () => {
+  const ledgerPath = (options: UnifiedBusStatusOptions) => options.coordination!.path!;
+  const ledger = (options: UnifiedBusStatusOptions, now?: number) =>
+    ({ path: ledgerPath(options), now: now ?? options.now!() });
+  /** A claim concluded `intended` whose receipt publish never ran — the
+   * unpublished RESULT intent class only this projection names. */
+  function pendingReturn(options: UnifiedBusStatusOptions, agent: string, now?: number): void {
+    const at = ledger(options, now);
+    const claim = claimFleetWork({ repo: 'ashlrai/phantom', task: 'claimed work', agent }, at);
+    if (!claim.ok) throw new Error('fixture claim failed');
+    const concluded = concludeFleetClaim({
+      id: claim.value.claim.id, agent, lease: claim.value.lease,
+      message: { id: `return-${claim.value.claim.id}`, from: agent, to: 'all',
+        body: `RESULT VERIFIED ashlrai/phantom claim ${claim.value.claim.id} task "claimed work": tests passed`,
+        ttlMs: 86_400_000 },
+    }, at);
+    if (!concluded.ok || concluded.value.outcome !== 'intended') throw new Error('fixture return failed');
+  }
+
+  it('reports a verified-absent ledger as missing with real zeros and never creates it', () => {
+    const options = setup();
+    const status = readUnifiedBusStatus(options);
+    expect(status.fleetCoordination).toEqual({ source: 'missing', messages: 0, proposals: 0, returns: 0 });
+    // Read-only: the pure replay takes no lock and writes nothing — neither
+    // the ledger nor its lock file may appear.
+    expect(existsSync(ledgerPath(options))).toBe(false);
+    expect(existsSync(`${ledgerPath(options)}.lock`)).toBe(false);
+    expect(status.store.source).toBe('missing');
+  });
+
+  it('counts the live pending surface — messages, proposals and unposted returns', () => {
+    const options = setup();
+    const at = options.now!();
+    expect(postFleetMessage({ id: 'cm-1', from: 'agent:nova', to: 'atlas', body: 'coordination ping' },
+      ledger(options, at)).ok).toBe(true);
+    expect(postFleetMessage({ id: 'cm-2', from: 'agent:nova', to: 'agent:nova', body: 'expired note', ttlMs: 500 },
+      ledger(options, at)).ok).toBe(true);
+    expect(proposeFleetAssignment({ repo: 'ashlrai/phantom', task: 'advisory review', to: 'atlas' },
+      ledger(options, at)).ok).toBe(true);
+    pendingReturn(options, 'atlas', at);
+    // One message already past its TTL: the count is the pending surface,
+    // never raw retained records.
+    options.clock.now += 1_000;
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.fleetCoordination).toEqual({ source: 'available', messages: 1, proposals: 1, returns: 1 });
+    expect(status.store.source).toBe('missing');
+  });
+
+  it('keeps a parsed ledger available with real zeros once every record expires', () => {
+    const options = setup();
+    expect(postFleetMessage({ id: 'cm-short', from: 'agent:nova', to: 'atlas', body: 'short lived', ttlMs: 500 },
+      ledger(options)).ok).toBe(true);
+    expect(readUnifiedBusStatus(options).fleetCoordination)
+      .toEqual({ source: 'available', messages: 1, proposals: 0, returns: 0 });
+    options.clock.now += 1_000;
+    // The file exists and parses — available — but nothing sits inside its
+    // TTL, so 0 is the proven pending count, not a missing-store placeholder.
+    expect(readUnifiedBusStatus(options).fleetCoordination)
+      .toEqual({ source: 'available', messages: 0, proposals: 0, returns: 0 });
+  });
+
+  it('keeps an unreadable ledger unavailable with null counts while the rest of the bus stays readable', () => {
+    const options = setup();
+    const path = ledgerPath(options);
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    writeFileSync(path, '{not json\n', { mode: 0o600 });
+
+    const status = readUnifiedBusStatus(options);
+    // The same corrupt ledger that makes `phm fleet coordination` and the
+    // unified inbox report unavailable is named here; nulls, never zeros.
+    expect(status.fleetCoordination).toEqual({ source: 'unavailable', messages: null, proposals: null, returns: null });
+    expect(status.store.source).toBe('missing');
+    expect(status.feed.status).toBe('ok');
+
+    // Custody failure is the same verdict: a group/other-readable ledger
+    // fails the reader's privateFile check exactly like the write-side
+    // open does.
+    unlinkSync(path);
+    expect(postFleetMessage({ id: 'cm-custody', from: 'agent:nova', to: 'atlas', body: 'custody' },
+      ledger(options)).ok).toBe(true);
+    chmodSync(path, 0o644);
+    try {
+      expect(readUnifiedBusStatus(options).fleetCoordination)
+        .toEqual({ source: 'unavailable', messages: null, proposals: null, returns: null });
+    } finally { chmodSync(path, 0o600); }
+  });
+});
+
+describe('hoplog section', () => {
+  const hoplogFile = (options: UnifiedBusStatusOptions) => join(options.root!, 'bus', 'hops.jsonl');
+
+  it('counts valid hops and reports malformed rows as skipped evidence', () => {
+    const options = setup();
+    const file = hoplogFile(options);
+    expect(appendBusHop({ id: 'hop-1', from: 'agent:atlas', to: 'agent:nova' }, file)).toBe(true);
+    expect(appendBusHop({ id: 'hop-2', from: 'agent:atlas', to: 'agent:nova' }, file)).toBe(true);
+    appendFileSync(file, 'not json\n');
+    const status = readUnifiedBusStatus(options);
+    expect(status.hoplog).toMatchObject({ state: 'ok', hops: 2, skippedRows: 1, truncated: false });
+    expect(status.hoplog.bytes).toBeGreaterThan(0);
+    // A sick log degrades only its own section; the rest of the bus stays readable.
+    expect(status.wakes.state).toBe('missing');
+    expect(status.store.source).toBe('missing');
+  });
+
+  it('reports unreadable with null counts when the log fails custody', () => {
+    const options = setup();
+    const file = hoplogFile(options);
+    expect(appendBusHop({ id: 'hop-1', from: 'agent:a', to: 'agent:b' }, file)).toBe(true);
+    chmodSync(file, 0o644);
+    try {
+      expect(readUnifiedBusStatus(options).hoplog).toEqual({ state: 'unreadable',
+        bytes: null, hops: null, skippedRows: null, truncated: null });
+    } finally { chmodSync(file, 0o600); }
+  });
+});
+
 describe('phm agents bus status', () => {
   it('prints one honest line per section in human mode and the object as JSON', async () => {
     const options = setup();
@@ -718,6 +1140,8 @@ describe('phm agents bus status', () => {
     expect(json.store.source).toBe('missing');
     expect(json.registry.identities).toBe(0);
     expect(json.wakes.state).toBe('missing');
+    expect(json.hoplog).toEqual({ state: 'missing', bytes: 0, hops: 0,
+      skippedRows: 0, truncated: false });
     expect(json.workClaims).toEqual({ source: 'missing', claims: null });
     expect(json.claimDrift).toEqual({ state: 'VERIFIED', matched: 0, busOnly: 0,
       coordOnly: 0, ownerMismatch: 0 });
@@ -729,8 +1153,16 @@ describe('phm agents bus status', () => {
     expect(json.seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0, notices: 0 });
     expect(json.peerDispatch).toEqual({ source: 'missing', receipts: 0, unpublished: 0 });
     expect(json.peerLedger).toEqual({ source: 'missing', liveRows: 0 });
+    expect(json.peerBindings).toEqual({ source: 'missing', peers: 0, active: 0 });
+    expect(json.peerDispatchPolicy).toEqual({ source: 'missing', peers: 0, repositories: 0 });
+    expect(json.peerInbox).toEqual({ source: 'missing', pending: 0, truncated: false });
+    expect(json.deadLetters).toEqual({ source: 'missing', pending: 0,
+      reasons: { exhausted: 0, expired: 0, noRoute: 0, other: 0 }, truncated: false });
     expect(json.sessionHandoffs).toEqual({ source: 'missing', journals: 0, open: 0,
       awaitingFailover: 0, unreadable: 0, truncated: false });
+    // The CLI forwards only --root, so the ledger resolves its own locator
+    // under the isolated worker home — verified absent there too.
+    expect(json.fleetCoordination).toEqual({ source: 'missing', messages: 0, proposals: 0, returns: 0 });
     expect(json.sendGate).toEqual({ state: 'open',
       kill: { state: 'inactive', reason: 'missing' },
       pause: { state: 'clear', since: null, reason: null } });
@@ -748,8 +1180,14 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('seats missing seats=0 states=0 handoffs=0');
     expect(lines.join('\n')).toContain('peerDispatch missing receipts=0 unpublished=0');
     expect(lines.join('\n')).toContain('peerLedger missing liveRows=0');
+    expect(lines.join('\n')).toContain('peerBindings missing peers=0 active=0');
+    expect(lines.join('\n')).toContain('peerDispatchPolicy missing peers=0 repositories=0');
+    expect(lines.join('\n')).toContain('peerInbox missing pending=0 truncated=false');
+    expect(lines.join('\n')).toContain('deadLetters missing pending=0 exhausted=0 expired=0 noRoute=0 other=0 truncated=false');
     expect(lines.join('\n')).toContain('sessionHandoffs missing journals=0 open=0 awaitingFailover=0 unreadable=0 truncated=false');
+    expect(lines.join('\n')).toContain('fleetCoordination missing messages=0 proposals=0 returns=0');
     expect(lines.join('\n')).toContain('sendGate open kill=inactive:missing pause=clear');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
+    expect(lines.join('\n')).toContain('hoplog missing bytes=0 hops=0 skipped=0 truncated=false');
   });
 });

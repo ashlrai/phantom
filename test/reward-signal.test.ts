@@ -127,6 +127,16 @@ describe('writeRewardSignal', () => {
     const result = run(fixture(), { usageReadings: readings, usagePool: 'codex-cmp' });
     expect(result.row.cost).toMatchObject({ pctUsedStart: 90, pctUsedEnd: 5, pctUsedDelta: null });
   });
+
+  it('persists an unknown quota delta when the first reading follows dispatch', () => {
+    const result = run(fixture(), {
+      usagePool: 'codex-cmp',
+      usageReadings: [reading('codex-cmp', 12, '2026-10-28T10:30:00.000Z')],
+    });
+    expect(result.row.cost).toEqual({
+      pool: 'codex-cmp', pctUsedStart: null, pctUsedEnd: 12, pctUsedDelta: null, costUsd: 1.85,
+    });
+  });
 });
 
 describe('usageCostFromReadings', () => {
@@ -142,6 +152,24 @@ describe('usageCostFromReadings', () => {
   it('ignores other pools and stays unknown without readings', () => {
     expect(usageCostFromReadings([reading('terra', 5, '2026-10-28T11:00:00.000Z')], 'codex-cmp', window.start, window.end))
       .toMatchObject({ pool: 'codex-cmp', pctUsedStart: null, pctUsedEnd: null, pctUsedDelta: null });
+  });
+  it('leaves the endpoint unknown when readings reach only dispatch or arrive after recording', () => {
+    const cost = usageCostFromReadings(
+      [reading('codex-cmp', 40, DISPATCHED), reading('codex-cmp', 55, '2026-10-28T13:00:00.000Z')],
+      'codex-cmp', window.start, window.end);
+    expect(cost).toMatchObject({ pctUsedStart: 40, pctUsedEnd: null, pctUsedDelta: null });
+  });
+  it('keeps a measured zero when readings on both sides of dispatch agree', () => {
+    const cost = usageCostFromReadings(
+      [reading('codex-cmp', 40, DISPATCHED), reading('codex-cmp', 40, START)],
+      'codex-cmp', window.start, window.end);
+    expect(cost).toMatchObject({ pctUsedStart: 40, pctUsedEnd: 40, pctUsedDelta: 0 });
+  });
+  it('ignores readings entirely after the recording cutoff', () => {
+    const cost = usageCostFromReadings(
+      [reading('codex-cmp', 55, '2026-10-28T13:00:00.000Z')],
+      'codex-cmp', window.start, window.end);
+    expect(cost).toMatchObject({ pctUsedStart: null, pctUsedEnd: null, pctUsedDelta: null });
   });
 });
 
@@ -188,6 +216,20 @@ describe('router consumption', () => {
     expect(report.arms[0]!.brier).toBeCloseTo(0.36, 5);
   });
 
+  it.each([false, true])('uses the reverted reward verdict with reward row first: %s', (rewardFirst) => {
+    const input = fixture({ merged: false, mergedAt: null });
+    run(input);
+    const reward = readFileSync(path, 'utf8').trim();
+    const launch = JSON.stringify({ event: 'launch', job: input.jobId, lane: input.pool,
+      predicted_merge_rate: 0.4 });
+    const merge = JSON.stringify({ job: input.jobId, outcome: 'MERGED' });
+    const rows = rewardFirst ? [reward, launch, merge] : [launch, merge, reward];
+    const report = calibrateRouting(rows.join('\n'));
+    expect(report.arms[0]).toMatchObject({ jobs: 1, resolved: 1, observedMergeRate: 0,
+      mergeRate: { predicted: 0.4, actual: 0, paired: 1 } });
+    expect(report.arms[0]!.brier).toBeCloseTo(0.16);
+  });
+
   it.each([null, 600_000])('leaves execution wall time unknown with reward CI time %s', (ciWallMs) => {
     const input = fixture({ ciWallMs });
     run(input);
@@ -222,6 +264,18 @@ describe('router consumption', () => {
     const report = calibrateRouting(readFileSync(path, 'utf8'));
     expect(report.arms).toHaveLength(1);
     expect(report.arms[0]).toMatchObject({ arm: 'unknown', jobs: 1, resolved: 1 });
+  });
+
+  it.each([false, true])('uses a recorded reward pool with an unknown launch arm (reward first: %s)', (rewardFirst) => {
+    const input = fixture();
+    run(input);
+    const reward = readFileSync(path, 'utf8').trim();
+    const launch = JSON.stringify({ event: 'launch', job: input.jobId, arm: 'unknown',
+      predicted_merge_rate: 0.4 });
+    const rows = rewardFirst ? [reward, launch] : [launch, reward];
+    expect(calibrateRouting(rows.join('\n')).arms).toMatchObject([
+      { arm: input.pool, jobs: 1, resolved: 1, mergeRate: { predicted: 0.4, actual: 1, paired: 1 } },
+    ]);
   });
 
   it('fails closed when a reward outcome conflicts with a recorded launch', () => {

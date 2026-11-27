@@ -11,11 +11,19 @@ export interface RatingInput { pr: PrRef; title: string; summary: string }
 export interface RatingResult { rating: number /* 1..5 */; confidence?: number; rubric: string }
 export interface Rater { id: string; rate(input: RatingInput): Promise<RatingResult> }
 
-export const RUBRIC = 'Upside-weighted: leverage and user impact first; ambition is rewarded; only regressions count against.';
+const RUBRIC = 'Upside-weighted: leverage and user impact first; ambition is rewarded; only regressions count against.';
+
+function isUnitInterval(value: number): boolean {
+  return Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function assertSampleRate(rate: number): void {
+  if (!isUnitInterval(rate)) throw new Error('Sample rate must be between 0 and 1.');
+}
 
 /** Deterministic sampling by PR identity so every machine samples the same PRs. */
 export function sampled(pr: PrRef, rate: number): boolean {
-  if (!Number.isFinite(rate) || rate < 0 || rate > 1) throw new Error('Sample rate must be between 0 and 1.');
+  assertSampleRate(rate);
   if (rate >= 1) return true;
   if (rate <= 0) return false;
   const h = parseInt(createHash('sha256').update(`${pr.repo}#${pr.number}`).digest('hex').slice(0, 8), 16);
@@ -48,7 +56,7 @@ export function jevRater(ask: JevAsk): Rater {
     id: 'jev',
     async rate({ title, summary }) {
       const r = await ask(`${RUBRIC}\n${title}\n${summary.slice(0, 4000)}`, ['1', '2', '3', '4', '5']);
-      if (!/^[1-5]$/.test(r.label) || !Number.isFinite(r.confidence) || r.confidence < 0 || r.confidence > 1) throw new Error('The Jev rater returned an invalid rating.');
+      if (!/^[1-5]$/.test(r.label) || !isUnitInterval(r.confidence)) throw new Error('The Jev rater returned an invalid rating.');
       return { rating: Number(r.label), confidence: r.confidence, rubric: RUBRIC };
     },
   };
@@ -63,7 +71,7 @@ export async function gradeBatch(items: RatingInput[], rater: Rater, opts: { sam
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw new Error('Concurrency must be a positive integer.');
   const sampleRate = opts.sampleRate ?? 1;
   // Validate options even for an empty batch, before contacting a grader.
-  if (!Number.isFinite(sampleRate) || sampleRate < 0 || sampleRate > 1) throw new Error('Sample rate must be between 0 and 1.');
+  assertSampleRate(sampleRate);
   const queue = items.filter((i) => sampled(i.pr, sampleRate));
   const out: { input: RatingInput; result: RatingResult; rater: string }[] = [];
   const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
@@ -71,7 +79,7 @@ export async function gradeBatch(items: RatingInput[], rater: Rater, opts: { sam
       try {
         const result = await rater.rate(it);
         if (!Number.isInteger(result.rating) || result.rating < 1 || result.rating > 5 || typeof result.rubric !== 'string'
-          || (result.confidence !== undefined && (!Number.isFinite(result.confidence) || result.confidence < 0 || result.confidence > 1))) continue;
+          || (result.confidence !== undefined && !isUnitInterval(result.confidence))) continue;
         out.push({ input: it, result, rater: rater.id });
       } catch { /* best effort */ }
     }

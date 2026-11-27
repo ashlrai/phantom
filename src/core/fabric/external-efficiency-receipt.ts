@@ -14,6 +14,7 @@ import {
   isSafeIntegerInRange,
   sha256Hex,
   strictPlainRecord,
+  timingSafeUtf8Equal,
 } from './external-contract-codec.js';
 
 export const EXTERNAL_EFFICIENCY_RECEIPT_PROTOCOL =
@@ -280,8 +281,7 @@ export function canonicalExternalEfficiencyReceiptBytesV1(value: unknown): Buffe
 }
 
 function sameDigest(left: string, right: string): boolean {
-  if (!DIGEST.test(left) || !DIGEST.test(right)) return false;
-  return timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
+  return DIGEST.test(left) && DIGEST.test(right) && timingSafeUtf8Equal(left, right);
 }
 
 function boundary(): ObservationBoundary {

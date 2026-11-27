@@ -78,11 +78,31 @@ computer's sanitized hostname — the same default a pool join applies — so
 `phm node join --owner <scope>` is the shortest first join. A job with no
 live node prints a `phm node join --owner` fix that names the caps it needs.
 
+To send real work instead of an empty claim, embed the task text in the job:
+
+```sh
+phm node enqueue --job review-1 --owner acme --requires codex,pack:codex-file \
+  --pack codex-file --task-part "Review this diff: ..." --task-sha256 sha256:<hex> --json
+```
+
+`--task-part` repeats for long text — the parts join in order, each at most
+4000 characters and 16 KiB joined — and `--task-sha256` is `sha256:` plus the
+lowercase hex sha256 of the exact joined text (`printf %s "$TASK" |
+sha256sum`, or `shasum -a 256` on macOS). An embedded task requires
+`--pack codex-file`, and the two flags together or neither. The claiming
+node's `pull` prints the task text; the `codex-file` pack runs it through
+`codex exec` in a fresh scratch directory, so `codex,pack:codex-file` in
+`--requires` routes only to nodes with codex signed in and the pack
+advertised. A manual runner can also read the printed task, do the work and
+`complete --result` with its own result text — the pack is what an automated
+runner executes, not a requirement on the result.
+
 `phm node result --job <id> --owner <scope>` is the read-only way back to a
-job's outcome: `pending`, `running` (naming the node whose live claim can act),
-`completed` with the accepted `--result` text, executor and completion time, or
-`absent` for an unknown id or another owner's job. It never mutates state —
-`withdraw` stays the only fence, and a producer withdrawal reads back as
+job's outcome: `pending`, `running` (naming the node whose live claim can act,
+or `no live claim` once the claim lapsed or was fenced — the same words
+`status` prints), `completed` with the accepted `--result` text, executor and
+completion time, or `absent` for an unknown id or another owner's job. It never
+mutates state — `withdraw` stays the only fence, and a producer withdrawal reads back as
 `completed` with `producerWithdrawn` set, not as node work.
 
 A text `pull` (no `--json`) prints the same claim for a person: the job's
@@ -91,18 +111,41 @@ job carries one, the lease token pair and expiry, and paste-ready `renew`,
 `complete` and `release` commands — the last names `--decline` for a job this
 node can never run.
 
+`phm node plan` prints one `job -> node` line per routable job, or `nobody`
+with the fix when no live node can take it. An empty route set is not the
+same as an empty queue, so the text answer reads the scope once more: with no
+jobs queued it names the `phm node enqueue` command, and otherwise it counts
+the scope's jobs by state (`pending`, `running`, `completed`) — claimed or
+finished work is not routable, and the note says so instead of implying the
+queue is empty.
+
 The other verbs print plain-words outcomes too: `join` answers in a sentence
 naming the node, session, owner scopes and caps, states the 30-second session
-expiry, prints the keep-alive `beat --watch` command and says the registry is
+expiry, prints the keep-alive `beat --watch` command (or, with `--watch` on the
+join itself, already holds the new session live — standalone only, refused on a
+pool-configured Mac) and says the registry is
 local to this machine — only jobs enqueued on this computer reach the node
-(`"registry":"local"` in `--json`); `status`/`list` name
+(`"registry":"local"` in `--json`); a re-join that replaces an expired profile
+narrower than the last one names the owner scopes, caps and `--slots` bound it
+drops — `dropped` in `--json` plus a `restore` rejoin command that keeps this
+join's profile and adds them back, or a plain-words note and the same command
+in text — so a forgotten flag cannot silently shrink what the node advertises
+(the join-managed `phm-<version>` marker never counts); `beat` answers one line —
+`Heartbeat recorded for <node>` with `(leader)` while the node holds the
+leader lease and `; auth <state>` when the beat carried `--probe-auth` or
+`--auth` — so the `beat --watch` keep-alive stays readable; `status`/`list` name
 the node holding each running claim (`claimed by`, or `no live claim` once the
 claim lapsed or was fenced), show each node's advertised slot bound (`slots=N`,
 or `slots=unbounded` when no bound was ever reported — an absent bound is
 legacy routing, not a measured zero) and its last measured hold as
-`held=<reason>` while one is reported, name the `phm node join` command that
-restores each expired node's last advertised profile (the same hint a
-session-expired error prints), mark producer withdrawals, carry the
+`held=<reason>` while one is reported, name the `phm node join … --watch`
+command that restores each expired node's last advertised profile and keeps it
+live (the same hint a session-expired error prints; the join-managed
+`phm-<version>` build marker is left out because join re-derives it), annotate each node whose advertised
+`phm-<version>` cap is not this build (`phm=behind`, `phm=ahead` or
+`phm=unreported` — beats never re-stamp caps, so a node that outlived an
+upgrade reads as behind) and point at `phm node self-update --owner <scope>`
+when any node drifted, mark producer withdrawals, carry the
 same fix `phm node plan` prints on a job that still has no taker, and an
 empty scope says so with the join command; `enqueue` says when the job id already
 exists;
@@ -138,8 +181,9 @@ machine — macOS kernel telemetry or Linux /proc — and a platform with no rea
 reports `memory-unmeasured`. `held` is `null` or `memory-unmeasured`,
 `memory-pressure`, `disk-unmeasured` or `disk-pressure`, and a held node reports
 `"slots":0`. A node held for a reason the sample cannot express (`cpu-*`,
-`host-slots-*`) makes `measure` exit 1; omit `--capacity` on that beat, as the
-worker does, so the node reads unknown rather than wrongly ready. A `--capacity`
+`host-slots-*`) makes `measure` exit 1; on that beat omit `--capacity` and pass
+`--slots 0`, as the worker does, so the node holds admission rather than
+reading wrongly ready. A `--capacity`
 value that is not one JSON object in that shape is refused as `bad-capacity`
 (exit 2) before the beat is recorded; its fix prints the `measure` command.
 
@@ -147,12 +191,29 @@ A standalone session expires 30 seconds after its last beat, so
 `phm node beat --watch [--every <seconds>]` keeps one alive in the foreground:
 each pass is the ordinary `beat` through the same dispatch (a pooled Mac still
 delegates to the primary), re-measuring the `--capacity` sample and host stats
-on this machine unless the caller passed those flags explicitly. The interval
-defaults to 10 seconds and is capped at 25, inside the expiry window. Ctrl-C or
-SIGTERM stops the loop and prints a confirmation; a beat that exits non-zero —
-a lapsed session, a refused flag — stops it at once with that beat's error. The
-watch flags are consumed by the dispatcher and never reach the beat parser, so
-older stores and pool primaries see only the usual beat arguments.
+on this machine unless the caller passed those flags explicitly. A pass whose
+measurement reports a hold the sample cannot express (`cpu-*`, `host-slots-*`)
+omits `--capacity` but still advertises `--slots 0` — the same zero bound the
+pool worker sends — so the node holds admission instead of keeping its last
+reported slots; a caller-supplied `--slots` wins, and a measurement that fails
+stays unknown rather than held. The interval
+defaults to 10 seconds and must be between 1 and 25 seconds, inside the expiry
+window. Ctrl-C or SIGTERM stops the loop and prints a confirmation; a beat that
+exits non-zero — a lapsed session, a refused flag — stops it at once with that
+beat's error. The watch flags are consumed by the dispatcher and never reach the
+beat parser, so older stores and pool primaries see only the usual beat
+arguments.
+
+`phm node join --watch [--every <seconds>]` is the one-command first run on
+the standalone registry: it performs the ordinary join — same flags, same
+session answer, `--probe-auth` on the beats when `gh` was advertised — then
+holds the new session with exactly the beat watch above, re-measuring capacity
+and host stats each pass. The watch flags are stripped before the join parser,
+so the fleet flag table is unchanged; `--json` prints the join envelope once,
+then one beat envelope per pass. On a pool-configured Mac it is refused with a
+usage error: a pool join releases its probe session on purpose and
+`phm node worker` holds the live sessions, so there is nothing for the watch
+to keep alive.
 
 `phm node renew --watch [--every <seconds>]` is the claim-side counterpart: a
 pull's lease expires 30 seconds after the last renew, so a job that takes
@@ -171,13 +232,16 @@ before the lease lapses.
 Every error ends with a fix. A job with no taker is shown by `phm node plan`
 with the reason: no live node in that owner (join one), no node advertising the
 caps (rejoin with them), or no node with a local `gh` login (`gh auth login`,
-then `phm node beat --probe-auth`). A `session-expired` error — from `beat` or
-`pull` — means the node's heartbeat lapsed: its `fix` prints the rejoin command,
+then `phm node beat --probe-auth`). A `session-expired` error — from `beat`,
+`pull` or a claim verb (`renew`, `complete`, `release`) — means the node's
+session lapsed: its `fix` prints the rejoin command,
 carrying the node's last advertised owner scopes, caps and slots while the
-registry still holds the record (placeholders when it does not). If the node
-already rejoined under a newer session, the fix names that session and the
-exact `leave` command instead, so an operator who lost track of the number can
-resume without re-joining again. A `node-live` error from a standalone `join`
+registry still holds the record (placeholders when it does not). For `beat`
+and `pull`, if the node already rejoined under a newer session the fix names
+that session and the exact `leave` command instead, so an operator who lost
+track of the number can resume without re-joining again; a claim verb's fix
+instead ends at re-pull — the claim's tokens died with the old session — and
+names the live session when one exists. A `node-live` error from a standalone `join`
 names the live session the same way; a pool `join` reports `node-live` when
 this computer's node id already holds a live session (a running worker or an
 unexpired join) and its fix points at `phm node status --json`. `leave` under
@@ -185,9 +249,11 @@ a stale session answers `"left":false` with
 `liveSession` and a ready `next` command; use the current session number.
 `pull` answers `{"pulled":false}` only while the session is live, so "no job"
 never masks a dead session. The same answer carries this node's own admission
-facts when it has them — `slots` (the advertised bound, absent when unbounded)
-and `held` (the last measured capacity hold) — so an idle node can tell an
-empty queue from held capacity; text mode says so in plain words. A
+facts when it has them — `slots` (the advertised bound, absent when unbounded),
+`held` (the last measured capacity hold) and `open` (routable jobs in this
+node's owner scopes that pass its capability fences but routed to other nodes
+or wait on a free slot) — so an idle node can tell an empty queue from held
+capacity or work that went elsewhere; text mode says so in plain words. A
 `lease-lost` error means stop work on that job
 and pull again. A flag value outside its documented range — `--usage` above
 1000 permille or `--slots` above 64 on `join` or `beat` — is refused as usage
@@ -239,10 +305,15 @@ reported as zero. Owner, capability, local-auth and fencing checks still apply.
 and queued counts from dispatcher status. Lane `available` counts slots against
 the launch target — the configured target tightened by the controller's
 `effective_target` load-shed ceiling (`effectiveTarget`, null when unpublished)
-— so a shed lane never reports phantom room. A fresh dispatcher pause or
+— and is bounded by the shared remaining fleet slots when the same tick
+reports valid admission `cap` and `running` counts. Each lane shares this
+ceiling, so adding lane availability can overstate fleet capacity. Without
+usable fleet counts, availability describes lane-local headroom. A fresh dispatcher pause or
 explicit fleet admission stop sets every lane's `available` to zero, including
 when the fleet-wide cap is reached. Four local reads run concurrently,
 each capped at 2 MiB and 250 ms, with phase status; no SSH probes or writes.
+Fleet awareness also reports zero available slots for a fresh explicit lane
+hold when running or target counts are missing. The missing counts stay null.
 Lane availability expires after two 30-second dispatcher intervals.
 
 This connects the existing node-pool dispatch path. The `ready.tsv` to node
@@ -298,6 +369,21 @@ lane cell carries the dispatcher's `PARKED-` hold marker (either ready.tsv
 dialect) stays local with `parked_row`, whatever its requirements spec says —
 held work is never offloaded.
 
+A malformed row leaves a later usable copy of the same job eligible for
+offload. The first parseable row still determines eligibility for its job ID,
+and an earlier parked row blocks later copies. Apply leases the selected row
+and recovery restores it when only malformed copies remain.
+
+A five-column row without a requirements spec inherits one from the matching
+`(attrs)` envelope in `queue/router-queue.md`, resolved like dispatchd's
+`work_market.from_envelope`: the envelope's `preferred_lane`/`lane`/`pool`,
+`needs`, `data_class`, `exclusive` and tier or cost bounds replace the lane
+cell's defaults, so declared constraints reach the offload decision instead of
+the raw lane cell standing in for them — the lane cell is never consulted
+once an envelope matches. A spec-less row whose envelope is malformed, or
+whose lane cell is not a lane id with no matching envelope, stays local with
+`invalid_requirements`; with no matching envelope the lane cell stands.
+
 The bridge does nothing and reports `inert` with one of these reason codes:
 `bridge-owner-unset`, `bridge-disabled` (when `--apply` is used without
 config), `bridge-config-invalid`, `stopped` (`KILL`, `PAUSE` or
@@ -316,13 +402,20 @@ A row stays local with one of these reasons: `invalid_row`,
 work_market gives remote built-ins), `requirement_unverifiable` (`min_tier`,
 `max_tier` or `max_cost_class`, which no node reports), `need_not_routable`,
 `no_live_node`, `lane_mismatch`, `pack_inert`, `node_pack_unsupported`,
-`caps_missing`, `slots_unknown` (a node sent no slot telemetry, which is
-unknown, not zero), `pass_limit` or `no_free_slot`. Free slots are a node's
-`slots` minus its running claims, after router jobs that are still waiting have
-been placed. Nodes that report a capacity sample share one physical host's
-measured slots, so their free capacity is counted once per host — the smallest
-advertisement minus every claim on it — the same grouping the router's
-`nodeCapacityView` uses; a node without a sample is its own host.
+`caps_missing`, `auth_missing` (the row needs `gh` and no capable node reports
+working GitHub auth), `slots_unknown` (every eligible node lacks a measured
+node or shared host slot budget), `pass_limit` or `no_free_slot`. Free slots are a node's
+`slots` minus its running claims and the reservations in the router's placement
+plan. A waiting router job with no assignment, for example because it needs
+local GitHub auth, uses no slot. Older router views without a placement plan
+use capability and auth matching to estimate reservations. Nodes with a capacity
+sample share one physical host's slots. The bridge uses the lowest advertised or
+measured bound across the host, then subtracts its running claims. A fresh host
+pressure hold makes every sibling's host budget zero. Samples older than two
+heartbeat intervals or dated after the planning time leave the shared budget
+unknown unless a fresh hold already establishes zero. Each node's reported free slots are capped by its
+host's remaining slots after router reservations. These per-node figures can
+refer to the same slots on a shared host. A node without a sample is its own host.
 
 ### Capabilities come from a local probe
 
@@ -361,6 +454,14 @@ primary's publisher. Until that pack is reviewed and a node advertises
 `pack:codex-worktree`, `NODE_BRIDGE_WORKTREE_PACK_ENABLED` stays false and
 code-writing rows stay local.
 
+The read-only planners resolve a queued job's market lane through the same
+`remoteLaneCap` map: `phm nodes plan`, `phm nodes offload` and the fleet
+resource plan's machine eligibility count a `codex-personal` job against
+`codex`-capable computers and a `claude-*` job against `claude` ones, while a
+lane that only runs on this host or on an API key (`codex-local`, `omlx`,
+`claude-api`, `devin`, …) never counts a remote node — this computer alone can
+take it when it advertises a serving cap.
+
 ## Measured capacity and (node, provider, model) routing
 
 Nodes have no per-node lane configuration. Each node measures itself and reports
@@ -374,34 +475,80 @@ The document (`phantom.node-capacity.v1`) carries `node`, `measured_at`, `cpu`,
 `mem_free`, `swap`, `per_harness_footprint`, `agents_runnable_now` and `basis`.
 A harness session is the vendor CLI plus every child it spawns (MCP servers,
 tool runners), measured with `ps`, or with `pgrep` and `footprint` where `ps` is
-denied. Memory headroom is the memory above memguard's raise line (30% free).
+denied. macOS reads `vm_stat`, `memory_pressure` and `sysctl`; Linux reads
+`/proc/meminfo` (MemAvailable and swap), `/proc/pressure/memory` PSI `some
+avg10` — the same bands host admission applies — and `/proc/vmstat` `pswpout`.
+A platform or file with no reader reports unknown, never normal. Memory
+headroom is the memory above memguard's raise line (30% free).
 CPU headroom is 85% of cores minus busy cores. Measured zero CPU headroom
 blocks placements even when CPU cost per session is unknown or recorded as zero.
+When a harness has incomplete per-process CPU readings, its fallback cost
+divides measured host busy cores by the number of live sessions of that same
+harness. This bounds the harness's mean CPU cost without assuming that other
+harnesses share the load equally.
+The runnable count and route planner use CPU headroom and per-session cost
+without rounding either to a fixed number of decimal places.
+The runnable count and placement planner allow for arithmetic roundoff at
+exact CPU fits, so 0.30 cores of headroom can fit three 0.10-core sessions.
 It also reduces measured runnable counts to zero, including in fleet totals
 that read older capacity documents. Unmeasured harness counts remain null.
 Kernel pressure above normal or swap growth stop placements and reduce
 measured runnable counts to zero in fleet totals. Both reads honor direct
-measurements and recorded limiter labels. A cloud
+measurements and recorded limiter labels. The capacity sample computes and
+reports the swapout rate without rounding before applying the growth threshold.
+Without a known stop, a node needs
+measured normal pressure and measured memory headroom to accept placements
+or contribute runnable counts to fleet totals. Missing memory evidence
+produces `node-unmeasured` in the placement plan. A cloud
 CLI therefore costs a node only its own measured footprint. A whole-host
 backoff only happens when one of those gates is hit. A harness never seen on
 the node reports `null` (unknown), never a guess. The previous document supplies swap growth and footprints
 learned in the last 7 days.
+Routing and fleet runnable totals enforce the seven-day limit at report time,
+even when the enclosing capacity snapshot is still fresh. A learned footprint
+needs a readable learning timestamp at or before the snapshot that carries it.
+Resampling preserves that timestamp and discards learned footprints with
+missing or impossible timestamps. Expired or invalid learned evidence cannot
+supply a local or borrowed cost, and a runnable count based on it becomes unknown.
+A baseline must be strictly older than the current sample to carry its
+footprints forward, even if the original learning timestamp predates both.
+A measured host-wide stop can still establish zero for a reported count.
+Each live session of a harness needs a positive memory reading to refresh its
+footprint. A zero RSS total leaves that harness on its eligible learned
+footprint, or leaves its footprint and runnable count unknown if no usable
+measurement exists and no host-wide stop applies. Other harnesses keep their
+own measurements.
 
 `phm node route` scores each job's feasible placements by learned lane merge
 rate per token and per minute, using one or more capacity documents, a
 cost/latency file (`[{provider, model, harness, tokensPerJob, minutesPerJob}]`)
 and lane outcomes (`{provider: {attempts, merged}}`). It prints a plan only; it
 never launches work. Providers passed with `--exhausted` are never routed.
+Among placements within 1e-12 of the highest normalized score, the planner
+prefers the one that needs fewer bytes of new model weights. If the load is
+also equal, it keeps provider, model and node order.
+When a placement reserves memory to load a local model, later placements on
+that node reuse the reservation only for the same provider, model and harness.
+Capacity files must record CPU and memory headroom, kernel pressure, and
+swap growth using the snapshot schema's types. Use `null` for an unknown
+reading. Missing or malformed values in these fields make the file invalid;
+the command returns an input error before planning.
 Input can contain several snapshots for one node ID. Routing and fleet-wide
-runnable totals use the newest timestamp per node, so copying a snapshot
-cannot increase capacity and a newer hold takes precedence. Conflicting
-inputs at the same newest timestamp leave that node's capacity unknown.
+runnable totals use the newest plausible timestamp per node, so copying a
+snapshot cannot increase capacity and a newer hold takes precedence. A
+timestamp more than 60 seconds ahead of report time cannot supersede another
+observation. A node with only unusable timestamps reports stale capacity.
+Conflicting inputs at the same newest plausible timestamp leave that node's
+capacity unknown.
 For a node without its own harness footprint, routing can borrow measurements
 from other nodes whose latest snapshots pass the same freshness check.
 A borrowed footprint uses the largest observed memory and CPU costs for the
 harness independently. CPU cost stays `null` when no donor measured it.
-A fresh snapshot from a node under pressure or swap growth can still supply
-a footprint. If no eligible measurement exists, the router reports
+A node with its own memory footprint but an unknown CPU cost keeps its
+memory measurement and uses the largest eligible peer CPU cost, if available.
+The placement's `footprint` field identifies the source of the memory cost.
+A fresh snapshot can still supply a measured footprint when the node is held
+or its memory evidence is incomplete. If no eligible measurement exists, the router reports
 `footprint-unmeasured` for that candidate.
 
 An unplaced job's `rejected` counts name why: `provider-not-in-job` and
@@ -416,7 +563,9 @@ the same `{provider: {attempts, merged}}` tallies from
 `<runs-dir>/metrics/jobs.jsonl` (default `ASHLR_RUNS_DIR`, then
 `~/.ashlr-runs`; `--runs-dir` requires the flag). A job counts as an attempt
 only when its merge verdict is known — MERGED or CLOSED — so in-flight and
-aborted work never deflates a lane's rate; a merge recorded as reverted
+aborted work never deflates a lane's rate. A standing terminal no-op
+excludes the job even if a PR verdict is present. A later launch clears
+the no-op, allowing a known verdict to contribute again. A merge recorded as reverted
 counts as an attempt but not as a held merge; an absent ledger means no
 recorded outcomes, while an unreadable one refuses the route. Explicit `--outcomes`
 entries win per provider over ledger tallies, and the JSON plan reports the

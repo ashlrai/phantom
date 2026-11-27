@@ -87,6 +87,30 @@ describe('fleet_bus_thread argument parsing', () => {
       { id: 'm-1', limit: 5 }, { id: 'm-1', after: 0 },
     ]) expect(parseFleetBusThreadArgs(bad)).toBeNull();
   });
+
+  it('accepts the shared bus-read filters and resolves since/before/contains', () => {
+    expect(parseFleetBusThreadArgs({ id: 'm-1', from: 'agent:a', to: 'agent:b',
+      excludeFrom: 'agent:c', channel: 'ops', job: 'RQ-1', priority: 'P1', thread: 'rq-1',
+      inReplyTo: 'm-0', bodyKind: 'note', result: 'failed',
+      since: '1700000000000', before: '2h', contains: '  Hello   World ' }))
+      .toEqual({ id: 'm-1', filters: {
+        from: 'agent:a', to: 'agent:b', excludeFrom: 'agent:c', channel: 'ops', job: 'RQ-1',
+        priority: 'P1', thread: 'rq-1', inReplyTo: 'm-0', bodyKind: 'note', result: 'failed',
+        since: 1_700_000_000_000, before: expect.any(Number), contains: 'hello world',
+      } });
+  });
+
+  it('rejects malformed filter values before any read', () => {
+    for (const bad of [
+      { id: 'm-1', priority: 'P9' }, { id: 'm-1', priority: 1 }, { id: 'm-1', result: 'lost' },
+      { id: 'm-1', result: 'released' }, { id: 'm-1', channel: 'Bad Name' }, { id: 'm-1', channel: '' },
+      { id: 'm-1', since: 'whenever' }, { id: 'm-1', since: 5 }, { id: 'm-1', before: 'soon' },
+      { id: 'm-1', contains: '' }, { id: 'm-1', contains: 'x'.repeat(600) }, { id: 'm-1', contains: 5 },
+      { id: 'm-1', from: 'has space' }, { id: 'm-1', to: '' }, { id: 'm-1', excludeFrom: null },
+      { id: 'm-1', job: 'has space' }, { id: 'm-1', thread: 'has space' },
+      { id: 'm-1', inReplyTo: 'has space' }, { id: 'm-1', bodyKind: 'has space' },
+    ]) expect(parseFleetBusThreadArgs(bad), JSON.stringify(bad)).toBeNull();
+  });
 });
 
 describe('fleet_bus_thread reader', () => {
@@ -123,6 +147,19 @@ describe('fleet_bus_thread reader', () => {
     const result = await readFleetBusThread(parseFleetBusThreadArgs({ id: 'm-1' })!, { read });
     expect(result).toMatchObject({ complete: false, sourceFailure: 'unavailable' });
   });
+
+  it('forwards the parsed filters to the shared read with live evidence', async () => {
+    const seen: Array<{ id: string; options: unknown }> = [];
+    const read: typeof readBusThread = (id, options) => {
+      seen.push({ id, options });
+      return okThread();
+    };
+    const args = parseFleetBusThreadArgs({ id: 'm-1', from: 'agent:a', priority: 'P1',
+      since: '1700000000000', contains: 'hello' })!;
+    await readFleetBusThread(args, { read });
+    expect(seen).toEqual([{ id: 'm-1', options: { liveEvidence: true, filters: {
+      from: 'agent:a', priority: 'P1', since: 1_700_000_000_000, contains: 'hello' } } }]);
+  });
 });
 
 describe('fleet_bus_thread MCP tool', () => {
@@ -138,6 +175,12 @@ describe('fleet_bus_thread MCP tool', () => {
     expect(tool?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false, required: ['id'] });
     expect(tool?.inputSchema.properties?.['id'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    for (const key of ['to', 'from', 'excludeFrom', 'channel', 'job', 'priority', 'thread',
+      'inReplyTo', 'bodyKind', 'result', 'since', 'before', 'contains']) {
+      expect(tool?.inputSchema.properties?.[key], key).toBeDefined();
+    }
+    expect(tool?.inputSchema.properties?.['priority']).toMatchObject({ enum: ['P0', 'P1', 'P2', 'P3'] });
+    expect(tool?.inputSchema.properties?.['result']).toMatchObject({ enum: ['reserved', 'admitted', 'complete', 'failed'] });
   });
 
   it.each([
@@ -168,5 +211,28 @@ describe('fleet_bus_thread MCP tool', () => {
     const { parsed } = await callThread(client, { id: 'm-1' });
     expect(busThread).toHaveBeenCalledWith({ id: 'm-1' });
     expect(parsed).toEqual(payload);
+  });
+
+  it('passes validated filters through to the injected reader', async () => {
+    const payload = { ...okThread(), schemaVersion: 1, snapshotKind: 'local-persisted',
+      authority: 'none', generatedAt: '2026-01-01T00:00:00.000Z' };
+    const busThread = vi.fn(async () => payload);
+    const client = await connect({ status: async () => ({}), loop: async () => ({}), busThread });
+    await callThread(client, { id: 'm-1', from: 'agent:a', priority: 'P1',
+      since: '1700000000000', contains: 'hello' });
+    expect(busThread).toHaveBeenCalledWith({ id: 'm-1', filters: {
+      from: 'agent:a', priority: 'P1', since: 1_700_000_000_000, contains: 'hello' } });
+  });
+
+  it.each([
+    [{ id: 'm-1', priority: 'P9' }], [{ id: 'm-1', result: 'lost' }], [{ id: 'm-1', channel: 'Bad Name' }],
+    [{ id: 'm-1', since: 'whenever' }], [{ id: 'm-1', contains: '' }], [{ id: 'm-1', from: 'has space' }],
+    [{ id: 'm-1', kind: 'note' }], [{ id: 'm-1', topic: 'fleet.*' }], [{ id: 'm-1', id2: 'x' }],
+  ])('rejects invalid filter arguments before invoking the reader: %j', async args => {
+    const busThread = vi.fn();
+    const client = await connect({ status: async () => ({}), loop: async () => ({}), busThread });
+    await expect(client.callTool({ name: 'fleet_bus_thread', arguments: args }))
+      .rejects.toMatchObject({ code: -32602 });
+    expect(busThread).not.toHaveBeenCalled();
   });
 });

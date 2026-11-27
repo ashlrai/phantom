@@ -6,7 +6,7 @@
  * process, provider, or network access.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 export const SHA256_PREFIXED_DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
 export const GIT_COMMIT_RE = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
@@ -99,9 +99,19 @@ function canonicalizeJsonValue(
   }
 }
 
+export function canonicalJsonString(
+  value: unknown,
+  bounds: Partial<Pick<CanonicalJsonBounds, 'maxDepth' | 'maxNodes'>> = {},
+): string {
+  return JSON.stringify(canonicalizeJsonValue(value, {
+    maxDepth: bounds.maxDepth ?? Number.POSITIVE_INFINITY,
+    maxNodes: bounds.maxNodes ?? Number.POSITIVE_INFINITY,
+  }));
+}
+
 export function canonicalJsonBytes(value: unknown, bounds: CanonicalJsonBounds): Buffer | null {
   try {
-    const bytes = Buffer.from(JSON.stringify(canonicalizeJsonValue(value, bounds)), 'utf8');
+    const bytes = Buffer.from(canonicalJsonString(value, bounds), 'utf8');
     return bytes.length <= bounds.maxBytes ? bytes : null;
   } catch {
     return null;
@@ -118,6 +128,13 @@ export function sha256Hex(domain: string, value: string | Uint8Array): string {
 /** Domain-separated `sha256:<hex>` digest. Appends a NUL separator unless `domain` ends with one. */
 export function sha256Prefixed(domain: string, value: string | Uint8Array): string {
   return `sha256:${sha256Hex(domain, value)}`;
+}
+
+/** Domain-separated HMAC-SHA-256 hex digest. Appends a NUL separator unless `domain` ends with one. */
+export function hmacSha256Hex(key: Buffer, domain: string, value: string | Uint8Array): string {
+  const mac = createHmac('sha256', key).update(domain, 'utf8');
+  if (!domain.endsWith('\0')) mac.update('\0');
+  return mac.update(value).digest('hex');
 }
 
 export function timingSafeUtf8Equal(left: unknown, right: unknown): boolean {

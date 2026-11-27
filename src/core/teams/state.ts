@@ -3,14 +3,15 @@
  * approvals) that need a consistent read-then-append under the team lock.
  */
 import {
-  CONSEQUENTIAL_ACTIONS, claimsOverlap, parseAccessRequestAction, validId,
+  CONSEQUENTIAL_ACTIONS, REPO_NAME_RE, claimsOverlap, isAdminRole, isHumanRole,
+  parseAccessRequestAction, stringList, validId,
   type AccessRequestAction, type ClaimTarget, type ConsequentialAction, type TeamActor, type TeamEvent, type TeamRole,
 } from './protocol.js';
 import { appendUnlocked, readEvents, withTeamLock } from './store.js';
 import { acquireCoordination, releaseCoordinationBySource, teamClaimKey } from '../agents/claim-store.js';
 
 export const PRESENCE_WINDOW_MS = 5 * 60_000;
-export const DEFAULT_CLAIM_TTL_MS = 2 * 60 * 60_000;
+const DEFAULT_CLAIM_TTL_MS = 2 * 60 * 60_000;
 
 export interface Member { id: string; kind: TeamActor['kind']; role: TeamRole; provider?: string; onBehalfOf?: string; capabilities: string[]; lastSeen: string; online: boolean; status?: string }
 export interface Claim { id: string; target: ClaimTarget; holder: string; reason: string; acquiredAt: string; expiresAt: string }
@@ -20,6 +21,20 @@ export interface Approval { id: string; handoffId: string | null; action: Conseq
 export interface TeamState { team: string; repos: string[]; members: Member[]; claims: Claim[]; handoffs: Handoff[]; approvals: Approval[]; messages: { id: string; from: string; channel: string; text: string; ts: string }[]; eventCount: number }
 
 const str = (v: unknown, d = ''): string => (typeof v === 'string' ? v : d);
+
+export function isHumanAdmin(member: Pick<Member, 'kind' | 'role'> | undefined): boolean {
+  return member?.kind === 'human' && isAdminRole(member.role);
+}
+
+export function isTeamAdmin(members: readonly Member[], actorId: string): boolean {
+  return isHumanAdmin(members.find((m) => m.id === actorId));
+}
+
+export function isOpenHandoff<T extends Pick<Handoff, 'state'>>(
+  handoff: T,
+): handoff is T & { state: 'awaiting-approval' | 'open' | 'accepted' } {
+  return handoff.state !== 'completed' && handoff.state !== 'declined';
+}
 
 /** Access requests and consequential handoffs are human-required. Neither field means the decision may be recorded as an agent. */
 export function approvalRequiresHuman(approval: Pick<Approval, 'action' | 'access'>): boolean {
@@ -59,12 +74,12 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
         // The CLI derives the joining human locally; raw logs retain their
         // documented same-OS-user trust boundary.
         if (ev.actor.kind === 'human' && m.kind === 'human' && target === ev.actor.id && ev.type === 'member.joined' && !foundingHumanJoined) {
-          if (![...members.values()].some(member => member.kind === 'human' && ['owner', 'admin'].includes(member.role))) m.role = 'owner';
+          if (![...members.values()].some(isHumanAdmin)) m.role = 'owner';
           foundingHumanJoined = true;
         }
         const existing = members.get(target);
-        const humanRole = role && ['owner', 'admin', 'member'].includes(role);
-        const humanRoleGrant = ev.actor.kind === 'human' && m.kind === 'human' && ['owner', 'admin'].includes(m.role);
+        const humanRole = isHumanRole(role);
+        const humanRoleGrant = ev.actor.kind === 'human' && isHumanAdmin(m);
         if (existing?.kind === 'human' && humanRole && (ev.actor.id === target ? existing.role === role : humanRoleGrant)) existing.role = role;
         else if (!existing && target.startsWith('human:') && humanRole && humanRoleGrant) { removed.delete(target); members.set(target, { id: target, kind: 'human', role, capabilities: [], lastSeen: ev.ts, online: false }); }
         break;
@@ -73,7 +88,7 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
         // Removal drains the node: its claims vanish and accepted handoffs reopen for someone else.
         const target = str(p.memberId);
         const victim = members.get(target);
-        if (ev.actor.kind === 'human' && ['owner', 'admin'].includes(m.role) && victim?.kind === 'human' && victim.role !== 'owner' && target !== ev.actor.id) {
+        if (ev.actor.kind === 'human' && isAdminRole(m.role) && victim?.kind === 'human' && victim.role !== 'owner' && target !== ev.actor.id) {
           members.delete(target); removed.add(target);
           for (const c of [...claims.values()]) if (c.holder === target) claims.delete(c.id);
           for (const h of handoffs.values()) if (h.state === 'accepted' && h.assignee === target) { h.state = 'open'; h.assignee = null; h.updatedAt = ev.ts; }
@@ -81,18 +96,18 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
         break;
       }
       case 'repo.linked':
-        if (ev.actor.kind === 'human' && ['owner', 'admin'].includes(m.role) && /^[\w.-]+\/[\w.-]+$/.test(str(p.repo))) repos.add(str(p.repo));
+        if (ev.actor.kind === 'human' && isAdminRole(m.role) && REPO_NAME_RE.test(str(p.repo))) repos.add(str(p.repo));
         break;
       case 'agent.registered':
-        m.capabilities = Array.isArray(p.capabilities) ? (p.capabilities as unknown[]).filter((c): c is string => typeof c === 'string').slice(0, 32) : [];
+        m.capabilities = stringList(p.capabilities, 32);
         break;
       case 'presence.heartbeat': m.status = str(p.status) || undefined; break;
       case 'message.posted': messages.push({ id: ev.id, from: ev.actor.id, channel: str(p.channel, 'general'), text: str(p.text), ts: ev.ts }); break;
       case 'claim.acquired': claims.set(ev.id, { id: ev.id, target: p.target as ClaimTarget, holder: ev.actor.id, reason: str(p.reason), acquiredAt: ev.ts, expiresAt: str(p.expiresAt) }); break;
-      case 'claim.released': { const c = claims.get(str(p.claimId)); if (c && (c.holder === ev.actor.id || ['owner', 'admin'].includes(m.role))) claims.delete(c.id); break; }
+      case 'claim.released': { const c = claims.get(str(p.claimId)); if (c && (c.holder === ev.actor.id || isAdminRole(m.role))) claims.delete(c.id); break; }
       case 'handoff.requested': {
         const action = (CONSEQUENTIAL_ACTIONS as readonly string[]).includes(str(p.action)) ? p.action as ConsequentialAction : null;
-        handoffs.set(ev.id, { id: ev.id, from: ev.actor.id, to: str(p.to) || null, title: str(p.title), detail: str(p.detail), action, contextRefs: Array.isArray(p.contextRefs) ? (p.contextRefs as string[]).slice(0, 20) : [], state: action ? 'awaiting-approval' : 'open', approvalId: null, assignee: null, result: null, updatedAt: ev.ts });
+        handoffs.set(ev.id, { id: ev.id, from: ev.actor.id, to: str(p.to) || null, title: str(p.title), detail: str(p.detail), action, contextRefs: stringList(p.contextRefs, 20), state: action ? 'awaiting-approval' : 'open', approvalId: null, assignee: null, result: null, updatedAt: ev.ts });
         break;
       }
       case 'approval.requested': {
@@ -116,7 +131,7 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
       }
       case 'approval.decided': {
         const a = approvals.get(str(p.approvalId));
-        const humanDecider = !!a && ev.actor.kind === 'human' && m.kind === 'human' && ['owner', 'admin'].includes(m.role);
+        const humanDecider = !!a && ev.actor.kind === 'human' && isHumanAdmin(m);
         // Agents record only approvals that are not human-required. They do not move the handoff.
         const agentDecider = !!a && ev.actor.kind === 'agent' && !approvalRequiresHuman(a);
         if (a && a.state === 'pending' && (humanDecider || agentDecider)) {
@@ -143,7 +158,7 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
 export function teamState(team: string): TeamState { return foldTeam(team, readEvents(team)); }
 
 export function acquireClaim(team: string, actor: TeamActor, target: ClaimTarget, reason: string, ttlMs = DEFAULT_CLAIM_TTL_MS) {
-  if (!target || typeof target.repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(target.repo)) throw new Error('target.repo must be owner/name.');
+  if (!target || typeof target.repo !== 'string' || !REPO_NAME_RE.test(target.repo)) throw new Error('target.repo must be owner/name.');
   const ttl = Math.min(Math.max(ttlMs, 60_000), 24 * 60 * 60_000);
   return withTeamLock(team, () => {
     const state = teamState(team);

@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { AshlrConfig } from '../types.js';
-import { validOwnerScope, type OwnerScope, type TeamActor } from './protocol.js';
+import { stringList, validOwnerScope, type OwnerScope, type TeamActor } from './protocol.js';
 import { appendEvent, readEvents } from './store.js';
 
 export interface ContextScope { project?: string; person?: string; owner: OwnerScope }
@@ -42,14 +42,14 @@ export function addContext(team: string, actor: TeamActor, input: { title: strin
 
 export function listContext(team: string): ContextEntry[] {
   return readEvents(team).filter((e) => e.type === 'context.added').map((e) => ({
-    id: e.id, scope: e.payload.scope as ContextScope, title: String(e.payload.title), text: String(e.payload.text), source: String(e.payload.source), author: e.actor.id, ts: e.ts, tags: (e.payload.tags as string[]) ?? [],
+    id: e.id, scope: e.payload.scope as ContextScope, title: String(e.payload.title), text: String(e.payload.text), source: String(e.payload.source), author: e.actor.id, ts: e.ts, tags: stringList(e.payload.tags),
     importance: typeof e.payload.importance === 'number' ? e.payload.importance : 0.5,
-    supersedes: Array.isArray(e.payload.supersedes) ? e.payload.supersedes as string[] : [],
+    supersedes: stringList(e.payload.supersedes),
     observedAt: typeof e.payload.observedAt === 'string' ? e.payload.observedAt : e.ts,
   }));
 }
 
-export function compressText(text: string, query: string[], budgetTokens: number, seen: Set<string>): string {
+function compressText(text: string, query: string[], budgetTokens: number, seen: Set<string>): string {
   const sentences = text.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
   const q = new Set(query);
   const scored = sentences.map((s, i) => {
@@ -115,6 +115,10 @@ export function retrieveContext(team: string, req: { query: string; scope: Conte
   return { query: req.query, budgetTokens: budget, usedTokens: used, items, omitted: Math.max(0, ranked.length - items.length), rawTokens: raw, compressionRatio: raw ? Math.round((used / raw) * 100) / 100 : 1 };
 }
 
+function formatContextEvidence(items: ContextPack['items']): string {
+  return items.map((i) => `- ${i.title} [${i.source}, ${i.ts.slice(0, 10)}]: ${i.excerpt}`).join('\n');
+}
+
 /**
  * Task-scoped context compilation: constitution header (stable, cacheable
  * prefix) + evidence pack compiled for this task, rebuilt per task.
@@ -125,7 +129,7 @@ export function compileTaskContext(team: string, task: { title: string; detail?:
   const version = constitution.match(/^version:\s*(\d+)/m)?.[1] ?? '?';
   const prefix = `Phantom constitution v${version} applies. Always ask before:\n${alwaysAsk}`;
   const pack = retrieveContext(team, { query: `${task.title} ${task.detail ?? ''}`, scope: task.scope, budgetTokens: Math.max(100, budget - estimateTokens(prefix)) });
-  const body = pack.items.map((i) => `- ${i.title} [${i.source}, ${i.ts.slice(0, 10)}]: ${i.excerpt}`).join('\n');
+  const body = formatContextEvidence(pack.items);
   const text = `${prefix}\n\nTask: ${task.title}\n\nEvidence:\n${body || '(none)'}`;
   return { prefix, pack, text, tokens: estimateTokens(text) };
 }
@@ -158,7 +162,7 @@ export interface TaskBriefOptions {
   budgetTokens?: number;
 }
 
-export function taskContextEnabled(cfg: AshlrConfig | undefined): boolean {
+function taskContextEnabled(cfg: AshlrConfig | undefined): boolean {
   return (cfg?.foundry as Record<string, unknown> | undefined)?.['taskContext'] !== false;
 }
 
@@ -175,7 +179,7 @@ function readConstitution(repo: string | undefined): string | null {
 }
 
 /** `owner/name` from the origin remote, else the directory name. Team context is keyed by project. */
-export function repoProjectSlug(repo: string): string {
+function repoProjectSlug(repo: string): string {
   try {
     const url = execFileSync('git', ['remote', 'get-url', 'origin'], {
       cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000,
@@ -204,8 +208,7 @@ export function buildTaskBrief(opts: TaskBriefOptions): string {
     }
     const pack = retrieveContext(team, { query: `${opts.title} ${opts.detail ?? ''}`, scope, budgetTokens });
     if (pack.items.length === 0) return '';
-    const body = pack.items.map(i => `- ${i.title} [${i.source}, ${i.ts.slice(0, 10)}]: ${i.excerpt}`).join('\n');
-    return `\n\n---\n## Task context (compiled by Phantom)\n\nEvidence:\n${body}\n`;
+    return `\n\n---\n## Task context (compiled by Phantom)\n\nEvidence:\n${formatContextEvidence(pack.items)}\n`;
   } catch {
     return '';
   }

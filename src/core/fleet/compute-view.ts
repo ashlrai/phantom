@@ -34,6 +34,7 @@ export interface FleetCompute {
 const obj = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const clean = (s: string) => scrubSecrets(s).slice(0, 200);
 const count = (v: unknown): number | null => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null;
+const DISPATCHER_MAX_AGE_MS = 60_000; // Two 30-second dispatcher ticks.
 
 export async function readFleetCompute(options: {
   home?: string; runsDir?: string; now?: number; sample?: () => HostStats;
@@ -94,23 +95,27 @@ export async function readFleetCompute(options: {
     caps: existing?.caps ?? null, jobs: existing?.jobs ?? [], stats: sample, ramSlots: sample ? nodeRamSlots(sample.ramTotal) : null,
     pressure: freshMachine && ['normal', 'warning', 'critical'].includes(String(pressure)) ? String(pressure) : null,
     memguardPaused: freshMachine && typeof machine.memguardPaused === 'boolean' ? machine.memguardPaused : null });
+  const dispatcher = obj(status);
+  const tick = dispatcher.last_tick;
+  const tickMs = typeof tick === 'string' ? Date.parse(tick) : NaN;
+  const freshDispatcher = tickMs <= now && now - tickMs <= DISPATCHER_MAX_AGE_MS;
   const lanes: FleetCompute['lanes'] = {};
-  for (const [lane, row] of Object.entries(obj(obj(status).lanes)).slice(0, 128)) {
+  for (const [lane, value] of Object.entries(obj(dispatcher.lanes)).slice(0, 128)) {
     if (!/^[a-z][a-z0-9-]{1,30}$/.test(lane)) continue;
-    lanes[lane] = { hardCap: count(obj(row).hard_cap), quotaOk: typeof obj(row).quota_ok === 'boolean' ? obj(row).quota_ok as boolean : null };
+    const row = obj(value);
+    lanes[lane] = { hardCap: count(row.hard_cap), quotaOk: freshDispatcher && typeof row.quota_ok === 'boolean' ? row.quota_ok : null };
   }
-  const tick = obj(status).last_tick;
-  const admission = obj(obj(status).admission);
-  const stamp = admission.ts;
+  const embedded = obj(dispatcher.admission);
+  const admission = freshDispatcher && (embedded.ts === undefined || embedded.ts === tick) ? embedded : {};
   const operations: NonNullable<FleetCompute['operations']> = {
-    publishes24h: count(obj(status).publishes_24h),
+    publishes24h: freshDispatcher ? count(dispatcher.publishes_24h) : null,
     admission: { admit: typeof admission.admit === 'boolean' ? admission.admit : null,
       gateReason: typeof admission.gate_reason === 'string' ? clean(admission.gate_reason) : null,
       warnings: Array.isArray(admission.warnings) ? admission.warnings.filter((v): v is string => typeof v === 'string').slice(0, 32).map(clean) : null,
-      observedAt: typeof stamp === 'string' && Number.isFinite(Date.parse(stamp)) ? stamp : null },
+      observedAt: typeof admission.ts === 'string' ? admission.ts : null },
   };
   const [launchVitals, awareness] = await Promise.all([readLaunchVitals(runs), readFleetAwareness({ home, runsDir: runs, now })]);
   const all = [...nodes.values()], { hosts, totals } = summarizeHosts(all);
   return { launchVitals, awareness, schema: 'fleet.compute.v1', generatedAt: new Date(now).toISOString(), localNodeId, truncated,
-    nodes: all, hosts, pool: totals, sources, operations, dispatcherAt: typeof tick === 'string' && Number.isFinite(Date.parse(tick)) ? tick : null, lanes };
+    nodes: all, hosts, pool: totals, sources, operations, dispatcherAt: typeof tick === 'string' && Number.isFinite(tickMs) ? tick : null, lanes };
 }

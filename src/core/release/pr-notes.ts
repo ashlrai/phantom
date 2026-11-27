@@ -137,6 +137,8 @@ const REPO = /^(?:[A-Za-z0-9][A-Za-z0-9-]*\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const TAG = /^[\w][\w./-]*$/;
 const DEFAULT_OWNER = 'ashlrai';
 const PAGE = 200;
+/** Per-PR file resolution makes the merged-PR list read take ~8 s at the page cap. */
+const PR_LIST_TIMEOUT_MS = 60_000;
 
 /** `phantom` means `ashlrai/phantom`; `owner/name` is used as given. */
 export function resolveRepo(name: string): string {
@@ -151,8 +153,19 @@ export const ghPrSource: PrSource = {
     const cwd = process.cwd();
     const slug = repo ?? '{owner}/{repo}';
     const stamp = await runGhAsync(cwd, ['api', `repos/${slug}/commits/${since}`, '--jq', '.commit.committer.date']);
-    if (!stamp || Number.isNaN(Date.parse(stamp))) throw new Error('Cannot read the release tag from GitHub; check the repo and tag');
-    const raw = await runGhAsync(cwd, ['pr', 'list', ...(repo ? ['--repo', repo] : []), '--state', 'merged', '--search', `merged:>=${stamp.slice(0, 10)}`, '--limit', String(PAGE), '--json', 'number,title,body,mergedAt,files']);
+    if (!stamp || Number.isNaN(Date.parse(stamp))) {
+      // A null answer conflates "gh cannot run or read" with "the ref is
+      // missing". Probe the repo itself: an unreadable repo means the gh
+      // transport failed (missing binary, sign-in, network), while a readable
+      // repo with an unreadable commit means the tag is the problem.
+      const repoProbe = await runGhAsync(cwd, ['api', `repos/${slug}`, '--jq', '.full_name']);
+      if (repoProbe === null) throw new Error('Cannot reach the repo through gh; check that gh is installed, signed in (`gh auth status`) and the repo is readable');
+      throw new Error('Cannot read the release tag from GitHub; check the repo and tag');
+    }
+    // `gh pr list --json files` resolves changed files per PR; for a release
+    // window of hundreds of merges that legitimately runs past the default
+    // 8 s read timeout, so this one call opts into a longer budget.
+    const raw = await runGhAsync(cwd, ['pr', 'list', ...(repo ? ['--repo', repo] : []), '--state', 'merged', '--search', `merged:>=${stamp.slice(0, 10)}`, '--limit', String(PAGE), '--json', 'number,title,body,mergedAt,files'], undefined, PR_LIST_TIMEOUT_MS);
     let list: unknown;
     try { list = raw === null ? null : JSON.parse(raw); } catch { list = null; }
     if (!Array.isArray(list)) throw new Error('Cannot read merged PRs from GitHub');

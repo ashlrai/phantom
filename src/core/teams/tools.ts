@@ -1,5 +1,5 @@
 /** MCP tool handlers for the team protocol (registered in mcp-native.ts). */
-import { CONSEQUENTIAL_ACTIONS, validId, type TeamActor } from './protocol.js';
+import { CONSEQUENTIAL_ACTIONS, stringList, validId, type TeamActor } from './protocol.js';
 import { appendEvent } from './store.js';
 import { acquireClaim, releaseClaim, requestHandoff, teamState, transitionHandoff } from './state.js';
 import { requestAccess } from './workspace.js';
@@ -9,23 +9,25 @@ export const DEFAULT_TEAM = 'default';
 const s = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
 
 /** MCP callers are always agents; humans act through the CLI/UI. */
-export function agentActor(args: Record<string, unknown>): TeamActor {
+function agentActor(args: Record<string, unknown>): TeamActor {
   const id = s(args.agentId);
   if (!validId(id)) throw new Error('agentId is required (e.g. "agent:claude-code/mason").');
   const actorId = id.startsWith('agent:') ? id : `agent:${id}`;
-  return { kind: 'agent', id: actorId, ...(s(args.provider) ? { provider: s(args.provider) } : {}), ...(s(args.onBehalfOf) ? { onBehalfOf: s(args.onBehalfOf) } : {}) };
+  const provider = s(args.provider);
+  const onBehalfOf = s(args.onBehalfOf);
+  return { kind: 'agent', id: actorId, ...(provider ? { provider } : {}), ...(onBehalfOf ? { onBehalfOf } : {}) };
 }
 const team = (args: Record<string, unknown>): string => s(args.team) ?? DEFAULT_TEAM;
 
 export async function teamRegister(args: Record<string, unknown>) {
   const actor = agentActor(args);
-  const caps = Array.isArray(args.capabilities) ? args.capabilities.filter((c): c is string => typeof c === 'string') : [];
-  const ev = appendEvent(team(args), actor, 'agent.registered', { capabilities: caps.slice(0, 32) });
+  const ev = appendEvent(team(args), actor, 'agent.registered', { capabilities: stringList(args.capabilities, 32) });
   return { registered: actor.id, eventId: ev.id };
 }
 export async function teamPublish(args: Record<string, unknown>) {
   const actor = agentActor(args);
-  if (s(args.status)) return { eventId: appendEvent(team(args), actor, 'presence.heartbeat', { status: s(args.status)!.slice(0, 200) }).id };
+  const status = s(args.status);
+  if (status) return { eventId: appendEvent(team(args), actor, 'presence.heartbeat', { status: status.slice(0, 200) }).id };
   const text = s(args.text);
   if (!text) throw new Error('text or status is required.');
   return { eventId: appendEvent(team(args), actor, 'message.posted', { channel: s(args.channel) ?? 'general', text: text.slice(0, 4000) }).id };
@@ -43,7 +45,7 @@ export async function teamClaim(args: Record<string, unknown>) {
 export async function teamHandoff(args: Record<string, unknown>) {
   const actor = agentActor(args);
   const op = s(args.op) ?? 'request';
-  if (op === 'request') return requestHandoff(team(args), actor, { to: s(args.to), title: s(args.title) ?? '', detail: s(args.detail), action: s(args.action), contextRefs: Array.isArray(args.contextRefs) ? args.contextRefs.filter((x): x is string => typeof x === 'string') : [] });
+  if (op === 'request') return requestHandoff(team(args), actor, { to: s(args.to), title: s(args.title) ?? '', detail: s(args.detail), action: s(args.action), contextRefs: stringList(args.contextRefs) });
   if (op === 'accept' || op === 'complete' || op === 'decline') return transitionHandoff(team(args), actor, s(args.handoffId) ?? '', op, s(args.result));
   throw new Error('op must be request, accept, complete or decline.');
 }
@@ -60,7 +62,7 @@ export async function teamAccessRequest(args: Record<string, unknown>) {
 }
 const scopeOf = (args: Record<string, unknown>): ContextScope => ({ owner: (s(args.owner) ?? 'company') as ContextScope['owner'], project: s(args.project), person: s(args.person) });
 export async function teamContextAdd(args: Record<string, unknown>) {
-  return addContext(team(args), agentActor(args), { title: s(args.title) ?? '', text: s(args.text) ?? '', source: s(args.source) ?? '', scope: scopeOf(args), tags: Array.isArray(args.tags) ? args.tags.filter((x): x is string => typeof x === 'string') : [], importance: typeof args.importance === 'number' ? args.importance : undefined, supersedes: Array.isArray(args.supersedes) ? args.supersedes.filter((x): x is string => typeof x === 'string') : [], observedAt: s(args.observedAt) });
+  return addContext(team(args), agentActor(args), { title: s(args.title) ?? '', text: s(args.text) ?? '', source: s(args.source) ?? '', scope: scopeOf(args), tags: stringList(args.tags), importance: typeof args.importance === 'number' ? args.importance : undefined, supersedes: stringList(args.supersedes), observedAt: s(args.observedAt) });
 }
 export async function teamContextGet(args: Record<string, unknown>) {
   return retrieveContext(team(args), { query: s(args.query) ?? '', scope: scopeOf(args), budgetTokens: typeof args.budgetTokens === 'number' ? args.budgetTokens : undefined, limit: typeof args.limit === 'number' ? args.limit : undefined });

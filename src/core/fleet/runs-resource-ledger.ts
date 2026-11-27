@@ -16,7 +16,7 @@ export interface ResourceLaneRow {
   usedPct: number | null; creditsRemaining: number | null; resetAt: string | null;
   /** Set when `creditsRemaining` is a gift credit in US dollars (status `budget.<lane>.gift` or `.pools.gift`). */
   creditUnit?: 'usd';
-  /** Gift credit only: when the balance was last read (null when never dated) and whether the lane's grant is closed. */
+  /** For gift credit, the last balance reading time (null when never dated) and whether the lane's grant is closed. */
   creditAsOf?: string | null;
   creditClosed?: boolean;
   burnPctPerHour: number | null; tokensPerHour6h: number | null; projectedExhaustion: string | null;
@@ -217,12 +217,16 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
     const personal = report.resources[0];
     const observed = personal?.observedAt ? Date.parse(personal.observedAt) : NaN;
     let lane = result.lanes.find(row => row.lane === 'codex-personal');
-    const quotaAt = statusMeasurements.get('codex-personal')?.observedAt;
+    const statusQuota = statusMeasurements.get('codex-personal') ?? null;
+    const quotaAt = statusQuota?.observedAt;
     const statusAt = quotaAt ? Date.parse(quotaAt) : NaN;
+    const statusHasDatedReading = statusQuota?.usedPct != null && statusAt <= now &&
+      (statusQuota.resetAt === null || Date.parse(statusQuota.resetAt) > now);
     if (personal?.weekly?.usedPct != null &&
         (personal.weekly.windowMinutes === null || personal.weekly.windowMinutes > 315) &&
+        (personal.weekly.resetsAt === null || Date.parse(personal.weekly.resetsAt) > now) &&
         Number.isFinite(observed) && observed <= now &&
-        (!lane || !Number.isFinite(statusAt) || statusAt > now || observed > statusAt)) {
+        (!statusHasDatedReading || observed > statusAt)) {
       if (!lane) {
         lane = { lane: 'codex-personal', running: null, target: null, held: null,
           window: 'weekly', usedPct: null, creditsRemaining: null, resetAt: null,
@@ -233,7 +237,7 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
       const measured: QuotaMeasurement = { lane: lane.lane, window: 'weekly',
         usedPct: personal.weekly.usedPct, resetAt: personal.weekly.resetsAt,
         source: 'codex-personal-sessions', observedAt: personal.observedAt };
-      lane.quotaEvidence = quotaEvidence(statusMeasurements.get(lane.lane) ?? null, measured, lane.held, now);
+      lane.quotaEvidence = quotaEvidence(statusQuota, measured, lane.held, now);
       lane.usedPct = personal.weekly.usedPct;
       lane.resetAt = personal.weekly.resetsAt;
       lane.burnPctPerHour = personal.weekly.burnPctPerHour;
@@ -243,10 +247,14 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
       lane.observation = { source: 'codex-personal-sessions', asOf: personal.observedAt! };
     }
   }
-  // Native Claude weekly usage. The status value is hand-typed and ticks never refresh it,
-  // so a fresh bounded reading wins without a last_tick comparison. Invalid input changes nothing.
+  // A newer dispatcher capture wins only while its weekly window is current.
   const claude = usableClaudeWeekly(await readClaudeQuotaReading(root), now);
-  if (claude) {
+  const claudeStatus = statusMeasurements.get('claude');
+  const claudeStatusAt = Date.parse(claudeStatus?.observedAt ?? '');
+  const newerClaudeStatus = claude && claudeStatus?.usedPct != null &&
+    (claudeStatus.resetAt === null || Date.parse(claudeStatus.resetAt) > now) &&
+    claudeStatusAt <= now && claudeStatusAt > Date.parse(claude.observedAt);
+  if (claude && !newerClaudeStatus) {
     let lane = result.lanes.find(row => row.lane === 'claude');
     if (!lane) {
       lane = { lane: 'claude', running: null, target: null, held: null,
@@ -257,7 +265,7 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
     }
     const measured: QuotaMeasurement = { lane: 'claude', window: 'weekly', usedPct: claude.weekly.usedPct,
       resetAt: claude.weekly.resetAt, source: 'claude-native-usage', observedAt: claude.observedAt };
-    lane.quotaEvidence = quotaEvidence(statusMeasurements.get('claude') ?? null, measured, lane.held, now);
+    lane.quotaEvidence = quotaEvidence(claudeStatus ?? null, measured, lane.held, now);
     lane.usedPct = claude.weekly.usedPct;
     lane.resetAt = claude.weekly.resetAt;
     lane.source = 'claude-native-usage';

@@ -7,6 +7,7 @@
 import type { NodeResultsSummary } from '../drive/nodes/results-read.js';
 import type { DigestBlocker } from '../fleet/digest-blocker.js';
 import { spanText } from '../fleet/merge-latency.js';
+import { ownerDisplayName } from '../owner-display.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export type Fact<T> = { ok: true; value: T } | { ok: false; reason: string };
@@ -80,7 +81,7 @@ export function truncateP0(text: string): string {
 /** Same HH:MM Eastern wall clock the reply heading stamps. */
 const claimsClock = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
-export function buildStatusDigest(input: StatusDigestInput): string[] {
+export function buildStatusDigest(input: StatusDigestInput, ownerName?: string): string[] {
   const pending = input.updatePending === null ? '' : input.updatePending ? ' · update pending' : ' · up to date';
   const lanes = show(input.lanes, rows => {
     const live = rows.filter(row => !row.held && row.target > 0).map(row => `${row.lane} ${row.running}/${row.target}`);
@@ -97,7 +98,7 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
     `Merges: ${show(input.mergesLastHour, n => `${n} in the last hour`)} · ${show(input.mergesLast24h, n => `${n} in the last 24h`)}`,
     ...(input.mergeTime ? [`Time to merge: ${show(input.mergeTime, t => t.medianSeconds === null ? `unknown (${t.merged} merged, none with GitHub's own created and merged times recorded)` : `median ${spanText(t.medianSeconds)} open to merge (${t.known} of ${t.merged} PRs known)`)}`] : []),
     `Lanes: ${lanes}`,
-    `Needs Mason: ${show(input.needsMason, n => n === 0 ? 'none waiting' : `${n} hard-limit ask${n === 1 ? '' : 's'} waiting`)}`,
+    `Needs ${ownerDisplayName(ownerName)}: ${show(input.needsMason, n => n === 0 ? 'none waiting' : `${n} hard-limit ask${n === 1 ? '' : 's'} waiting`)}`,
     `Top P0: ${show(input.topP0, p0 => p0 ? `${truncateP0(p0.text)} (${age(p0.ageMs)})` : 'none in the inbox')}`,
   ];
   if (input.workClaims !== undefined) {

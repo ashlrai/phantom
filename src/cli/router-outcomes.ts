@@ -125,7 +125,7 @@ export interface RouterOutcomesReport {
   eval_state: RouterOutcomeRead['eval_state'];
   /** Health of the api-spend.jsonl tail behind spend-derived cost_usd. */
   spend_state: RouterOutcomeRead['spend_state'];
-  /** True when the spend tail was cut; joined per-job costs are lower bounds. */
+  /** True when the spend tail was cut and spend-derived costs were withheld. */
   spend_truncated: boolean;
   /** Health of the work-market.jsonl tail behind work_class joins. */
   market_state: RouterOutcomeRead['market_state'];
@@ -247,7 +247,7 @@ export function routerOutcomeLines(report: RouterOutcomesReport): string[] {
     `router outcomes state=${report.state} eval=${report.eval_state} spend=${report.spend_state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} revert_ledger=${report.revert_ledger_state} reward=${report.reward_state} launch_cost=${report.launch_cost_state} cross_review=${report.cross_review_state} jobs=${report.total} shown=${report.returned} truncated=${report.truncated} malformed=${report.malformed_rows} unattached=${report.unattached_rows} ambiguous_urls=${report.ambiguous_urls} session_rows=${report.session_rows}`,
     `ledger ${report.path}`,
     ...(report.truncated ? ['coverage: retained tail only; older ledger rows were not read'] : []),
-    ...(report.spend_truncated ? ['spend coverage: retained tail only; per-job costs are lower bounds'] : []),
+    ...(report.spend_truncated ? ['spend coverage: truncated ledger, spend-derived job costs withheld'] : []),
     ...(report.market_truncated ? ['market coverage: retained tail only; work_class joins cover the newest bytes'] : []),
     ...(report.empty_tag_truncated ? ['empty-tag coverage: retained tail only; empty_tag joins cover the newest bytes'] : []),
     ...(report.merge_events_truncated ? ['merge-event coverage: retained tail only; merge_queue joins cover the newest bytes'] : []),

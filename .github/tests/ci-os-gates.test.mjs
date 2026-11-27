@@ -5,12 +5,41 @@ import { diffNeedsOsLegs, pathIsOsSensitive } from '../scripts/ci-os-paths.mjs';
 import { osGateDecision } from '../scripts/ci-os-gate.mjs';
 import { typecheckArgs } from '../scripts/ci-os-typecheck.mjs';
 import { Buffer } from 'node:buffer';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath, URL } from 'node:url';
 import { PACKAGE, assertReleaseChecksum, assertVersion, phmCandidates, releaseChecksumFields } from '../scripts/ci-install-smoke.mjs';
 import { failureAnnotation, firstFailureLocation } from '../scripts/ci-fast-run.mjs';
+
+test('the quiet fast gate prints the failing subprocess tail before its annotation and still bails', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'ci-fast-failure-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'scripts'));
+  writeFileSync(join(root, 'scripts', 'test-ci.mjs'), `
+    console.log('old noise');
+    for (let i = 0; i < 200; i++) console.log('progress');
+    console.log('FAIL unit test/fixture.test.ts > fixture');
+    console.error('TypeError: fixture failed');
+    console.error('    at test/fixture.test.ts:23:4');
+    process.exitCode = 1;
+  `);
+  writeFileSync(join(root, 'next.test.mjs'), "console.error('should not run');");
+  writeFileSync(join(root, 'fast-gate-plan.json'), JSON.stringify({
+    tests: ['test/fixture.test.ts'], node: ['next.test.mjs'],
+  }));
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/ci-fast-run.mjs', import.meta.url))], {
+    cwd: root, env: { ...process.env, RUNNER_TEMP: root, CI_FAST_BAIL: '1', CI_GREEN_RECEIPT: '' }, encoding: 'utf8',
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /TypeError: fixture failed\r?\n {4}at test\/fixture\.test\.ts:23:4[\s\S]*::error file=test\/fixture\.test\.ts,line=23::/);
+  assert.doesNotMatch(result.stderr, /old noise|should not run/);
+  assert.deepEqual(JSON.parse(readFileSync(join(root, 'fast-gate-failures.json'), 'utf8')), {
+    failed: ['test/fixture.test.ts'], ok: false,
+  });
+});
 
 test('docs and unrelated source skip the OS legs; scripts, manifests, workflows, installers and path code do not', () => {
   assert.equal(diffNeedsOsLegs(['docs/README.md', 'README.md']), false);

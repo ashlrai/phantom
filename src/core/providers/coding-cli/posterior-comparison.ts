@@ -21,6 +21,12 @@
  *   - Invalid or non-finite numbers throw. The source would emit NaN.
  */
 
+import { armExpectedValue as posteriorExpectedValue } from './regret-report.js';
+import {
+  requireNullableNulFreeIdentifier as consumerOf,
+  requireNulFreeIdentifier as identifier,
+} from './validation.js';
+
 /** The posterior fields the formula reads. A source ArmState is structurally compatible. */
 export interface PosteriorArmState {
   alpha: number;
@@ -118,16 +124,6 @@ export function posteriorArmKey(jobType: string, poolId: string, consumer: strin
   return `${jobType}\u0000${poolId}\u0000${consumer ?? ''}`;
 }
 
-/** Same expression order as the source expectedValue(), so the floats match. */
-function posteriorExpectedValue(arm: PosteriorArmState, formula: PosteriorFormulaParams): number {
-  const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
-  const success = arm.alpha / (arm.alpha + arm.beta);
-  const quality = arm.observations === 0 ? 1 : clamp01(arm.qualityMean);
-  const latency = arm.observations === 0 ? 0 : Math.min(1, Math.max(0, arm.latencyMean) / formula.latencyReferenceMs);
-  const tokens = arm.tokenObservations === 0 ? 0 : Math.min(1, Math.max(0, arm.tokenMean) / formula.tokenReference);
-  return success * quality - formula.latencyWeight * latency - formula.tokenWeight * tokens;
-}
-
 function num(value: unknown, name: string, ok: (n: number) => boolean, rule: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || !ok(value)) {
     throw new RangeError(`${name} must be a finite number ${rule}`);
@@ -137,17 +133,6 @@ function num(value: unknown, name: string, ok: (n: number) => boolean, rule: str
 
 const nonNegative = (value: unknown, name: string) => num(value, name, (n) => n >= 0, '>= 0');
 const positive = (value: unknown, name: string) => num(value, name, (n) => n > 0, '> 0');
-
-function identifier(value: unknown, name: string): string {
-  if (typeof value !== 'string' || value === '' || value.includes('\u0000')) {
-    throw new TypeError(`${name} must be a non-empty string without NUL`);
-  }
-  return value;
-}
-
-function consumerOf(value: unknown, name: string): string | null {
-  return value === null ? null : identifier(value, name);
-}
 
 function validateArm(arm: PosteriorArmState, key: string): void {
   positive(arm.alpha, `arms[${key}].alpha`);

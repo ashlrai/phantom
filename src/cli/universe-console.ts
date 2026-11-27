@@ -1,4 +1,5 @@
 import { isAbsolute, parse as parsePath, resolve } from 'node:path';
+import { containsControlChars as controls } from '../core/universe/input-guards.js';
 
 const USAGE = `usage: ashlr universe console --root <absolute> [--port N] [--json]
 
@@ -17,11 +18,6 @@ Exit codes: 0 clean shutdown/help, 1 startup/shutdown failure, 2 invalid argumen
 
 class UsageError extends Error {}
 type Options = { help: true } | { help: false; root: string; port: number; json: boolean };
-
-function controls(value: string): boolean {
-  return [...value].some((character) => character.charCodeAt(0) < 32 ||
-    character.charCodeAt(0) >= 127 && character.charCodeAt(0) <= 159);
-}
 
 function parse(args: string[]): Options {
   if (args.length > 16 || args.some((arg) => typeof arg !== 'string' || arg.length > 4_096 || controls(arg)) ||

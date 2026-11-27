@@ -1,6 +1,6 @@
 /** `phm fleet stuck`: read-only list of queued jobs that can never launch. Logic: core/fleet/stuck-jobs.ts. */
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { defaultDispatchEventsPath } from '../core/fabric/dispatch-events.js';
 import { parseReadyTsv } from '../core/fleet/lane-console.js';
 import { readSource, type Source } from '../core/fleet/runs-parked-queue.js';
@@ -10,6 +10,8 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 /** Only the end of the event log is read: it grows without bound. About 50,000 lines. */
 const EVENTS_TAIL_BYTES = 4 * 1024 * 1024;
 const READY_MAX_BYTES = 8 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; same 32 MiB bound the other market readers use. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 export interface StuckJobsRead extends StuckJobsReport {
   /** State of each file read. A ready list that is not healthy leaves lanes to the refusing lane or unknown. */
@@ -21,14 +23,16 @@ export interface StuckJobsPaths { runsDir?: string; events?: string; ready?: str
 /** Read the event log tail and the ready list. An unreadable log gives count null (unknown), never zero. */
 export async function readStuckJobs(paths: StuckJobsPaths = {}, now = Date.now()): Promise<StuckJobsRead> {
   const runs = paths.runsDir ?? (process.env.ASHLR_RUNS_DIR || join(homedir(), '.ashlr-runs'));
-  const [events, ready] = await Promise.all([
+  const readyPath = paths.ready ?? join(runs, 'queue', 'ready.tsv');
+  const [events, ready, router] = await Promise.all([
     readSource(paths.events ?? await defaultDispatchEventsPath(runs), EVENTS_TAIL_BYTES, true),
-    readSource(paths.ready ?? join(runs, 'queue', 'ready.tsv'), READY_MAX_BYTES, false),
+    readSource(readyPath, READY_MAX_BYTES, false),
+    readSource(join(dirname(readyPath), 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
   ]);
   const sources = { events: events.state, ready: ready.state };
   if (events.state !== 'healthy') return { schema: 'fleet.stuck.v1', count: null, oldestAgeSeconds: null, jobs: [], sources };
   const lanes = new Map<string, string>();
-  for (const row of parseReadyTsv(ready.text).rows) if (row.id && row.pool) lanes.set(row.id, row.pool);
+  for (const row of parseReadyTsv(ready.text, router.state === 'healthy' ? router.text : null).rows) if (row.id && row.pool) lanes.set(row.id, row.pool);
   return { ...findStuckJobs(events.text, lanes, now), sources };
 }
 

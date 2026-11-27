@@ -29,6 +29,8 @@ import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vite
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { PRIVATE_STORAGE_TEST_CONTROL, _setPrivateStorageTestControlForTest } from '../src/core/util/private-storage.js';
+import { createSemanticPrivateStorageHarness, trustedWindowsSystemRootForTest } from './helpers/semantic-private-storage.js';
 
 // ---------------------------------------------------------------------------
 // HOME isolation (must happen before any module import resolves homedir())
@@ -159,6 +161,10 @@ beforeEach(() => {
   tmpHome = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m22-backlog-home-')));
   tmpRepo = makePhysicalTmpRepo('ashlr-m22-backlog-repo-');
   setFixtureHome(tmpHome);
+  if (process.platform === 'win32') {
+    const { runner } = createSemanticPrivateStorageHarness({ systemRoot: trustedWindowsSystemRootForTest() });
+    _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, { runner });
+  }
 
   // Safe baseline — all execFile calls error so no real subprocesses run
   _execFileImpl = makeErrorStub();
@@ -184,6 +190,7 @@ afterEach(() => {
       }
     }
   } finally {
+    _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, undefined);
     restoreFixtureHome();
     vi.clearAllMocks();
   }
@@ -508,7 +515,7 @@ describe('M22 buildBacklog — ENROLLMENT-SCOPED: empty enrollment = empty backl
 describe('M22 buildBacklog — over an enrolled tmp repo', () => {
   beforeEach(() => {
     // Enroll the tmp repo for each test in this suite
-    enroll(tmpRepo);
+    expect(enroll(tmpRepo)).toMatchObject({ ok: true, quiesced: true });
   });
 
   it('includes the enrolled repo in backlog.repos', async () => {

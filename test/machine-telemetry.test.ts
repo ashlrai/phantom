@@ -87,7 +87,7 @@ describe('machine telemetry fixture parsers', () => {
   });
 
   it('uses Linux MemAvailable instead of MemFree and derives swap consumption', () => {
-    expect(parseLinuxMemory(LINUX_MEMORY)).toEqual({ totalBytes: 1024 * MiB, freeBytes: 512 * MiB, swapUsedBytes: 64 * MiB });
+    expect(parseLinuxMemory(LINUX_MEMORY)).toEqual({ totalBytes: 1024 * MiB, freeBytes: 512 * MiB, swapUsedBytes: 64 * MiB, swapTotalBytes: 256 * MiB });
     expect(parseLinuxMemory(LINUX_MEMORY.replace('524288', '2097152'))).toBeNull();
     expect(parseLinuxMemory('MemTotal: 1 kB')).toBeNull();
   });

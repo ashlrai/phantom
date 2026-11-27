@@ -8,8 +8,13 @@ reset_at, source}`; a reading with the same value and reset time as the pool's l
 14 days are dropped. `phm fleet usage-history [--pool <name>] [--json]` and
 `GET /api/verse/leader/resources/usage-history[?pool=<name>]` return each pool's current window against the straight
 line from 0% at window start (reset minus 7 days) to 100% at reset, with a pace word: `ahead`, `on pace`, `behind`
-(within 5 points of the line is on pace) or `unknown` (fewer than two readings, no reset time, or the reset passed).
+(within 5 points of the line is on pace) or `unknown` (fewer than two readings, no reset time, the reset passed,
+or the newest reading is more than three hours old). Older measurements remain visible in the history.
 A drop in `used_pct` with the same or a later reset time starts a new window and is listed in `resets`.
+The runway forecast uses the first reading at the latest used share to date
+the most recent change. When that change is more than three hours old, the
+runway verdict and burn rate are unknown and advice is withheld, even if a
+newer reading confirms the same used share.
 
 ## Interface: `ResourceLedgerV1`
 
@@ -45,6 +50,12 @@ Each element in `lanes`.
 | `source` | `string \| null` | Free-text note from the dispatcher (scrubbed, max 160 chars). May be a person's note and may be days old. | When no note was attached. |
 | `deadSignal` | `LaneDeadSignal \| null` | Health from the last jobs: `state` is `'ok'`, `'suspect'`, or `'dead'`; `lastFinishes` counts the latest valid runs per lane and `emptyFailures` counts empty-failure runs. | When no job data exists for the lane. |
 | `observation` | `{ source: 'codex-personal-sessions'; asOf: string }` | Present only when this reading originated from personal Codex session files; `asOf` is the session snapshot time. | On all non-codex-personal readings. |
+
+For personal Codex, dispatcher status takes precedence over an eligible session
+reading when it contains a valid weekly usage percentage, including zero, and
+its capture time is at least as recent as the session reading and no later than
+report time. A timestamped status entry with missing or invalid weekly usage
+leaves the session reading visible.
 
 ## Interface: `ApiSpendSummary`
 

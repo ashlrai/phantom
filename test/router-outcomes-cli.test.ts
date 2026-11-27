@@ -226,7 +226,7 @@ describe('phm router outcomes', () => {
     expect(report).toMatchObject({ spend_state: 'read', spend_truncated: true });
     const lines = routerOutcomeLines(report);
     expect(lines[0]).toContain('spend=read');
-    expect(lines).toContain('spend coverage: retained tail only; per-job costs are lower bounds');
+    expect(lines).toContain('spend coverage: truncated ledger, spend-derived job costs withheld');
 
     const h = harness(canned(read({ outcomes: [outcome('A')], spend_state: 'unreadable' })));
     expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(0);
@@ -350,6 +350,7 @@ describe('phm router outcomes', () => {
       '{"schema":"work-market.v1","event":"route_decision","job":"waiting","ts":1,"work_class":"repair"}',
       '{"schema":"work-market.v1","event":"route_decision","job":"waiting","ts":2,"work_class":"feature"}',
       '{"schema":"work-market.v1","event":"route_decision","job":"unknown","ts":2}',
+      '{"schema":"work-market.v1","event":"route_decision","job":"waiting","ts":4102444800,"work_class":"repair"}',
     ].join('\n'));
     const onRecordedWorkClasses = vi.fn();
     const report = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null, onRecordedWorkClasses });

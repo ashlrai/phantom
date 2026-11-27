@@ -1,8 +1,9 @@
 /**
  * lane-supply.ts — one glance: does every lane have work, and does it have usage left?
  *
- * The alarm is "idle with usage left": a lane with free slots, nothing queued and pool usage still
- * available. The Leader card, the phone and `phm fleet lane-supply` all read this one typed report.
+ * The alarm is "idle with usage left": a lane with free slots, nothing queued, no lane-open
+ * supply the market could place on it, and pool usage still available. The Leader card, the
+ * phone and `phm fleet lane-supply` all read this one typed report.
  *
  * Built from the lane console snapshot (queue depth, running, target, hold, pool credit) plus the
  * last self-tick record (planner pass time and the autofill decision). Pure: no I/O, no clock.
@@ -18,6 +19,7 @@ export type LaneSupplyVerdict =
   | 'busy'
   | 'idle-with-usage-left'
   | 'idle-usage-unknown'
+  | 'open-supply'
   | 'out-of-usage'
   | 'held'
   | 'unknown';
@@ -27,7 +29,7 @@ export interface LaneSupplyLane {
   running: number | null;
   /** Null when the lane has no target row (a null ceiling): the lane cannot be called idle. */
   target: number | null;
-  /** target - running, never below 0; 0 while held; null when running or target is unknown. */
+  /** Lane headroom bounded by confirmed dispatcher admission. Null when headroom is unknown. */
   freeSlots: number | null;
   queued: number | null;
   /** 0..100 of the pool used; null when unmeasured or stale. */
@@ -36,7 +38,7 @@ export interface LaneSupplyLane {
   resetAt: string | null;
   hoursToReset: number | null;
   verdict: LaneSupplyVerdict;
-  /** The hold reason or "until <time>" for a held or out-of-usage lane; else null. */
+  /** The hold reason, reset timing, or missing lane-open supply explanation when applicable. */
   detail: string | null;
   /** One plain sentence, e.g. "claude idle: 6 free slots, 68% left". */
   text: string;
@@ -77,8 +79,8 @@ function resetWords(resetAt: string | null): string {
   return Number.isFinite(at) ? new Date(at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'its next reset (time unknown)';
 }
 
-/** The verdict and plain sentence for one lane. */
-export function laneSupplyLane(view: FleetLaneView, nowMs: number): LaneSupplyLane {
+/** The verdict and plain sentence for one lane. `openRows` is the snapshot's lane-open READY count: supply the market may place on any lane, so a positive count keeps a free lane from reading as idle. */
+export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: number | null = null, launchHeadroom?: number | null): LaneSupplyLane {
   const running = view.liveJobs;
   const target = view.slotTarget;
   const held = view.hold?.held === true;
@@ -86,22 +88,30 @@ export function laneSupplyLane(view: FleetLaneView, nowMs: number): LaneSupplyLa
   const leftPct = left === null ? null : Math.max(0, Math.min(100, left));
   const resetMs = view.credit.resetAt === null ? NaN : Date.parse(view.credit.resetAt);
   const hoursToReset = Number.isFinite(resetMs) ? Math.max(0, Math.round(((resetMs - nowMs) / HOUR_MS) * 10) / 10) : null;
-  const free = held ? 0 : running === null || target === null ? null : Math.max(0, target - running);
+  const free = held ? 0 : launchHeadroom !== undefined ? launchHeadroom
+    : running === null || target === null ? null : Math.max(0, target - running);
   const row = {
     lane: view.lane, running, target, freeSlots: free, queued: view.queueDepth,
     usedPct: leftPct === null ? null : pct(100 - leftPct), leftPct: leftPct === null ? null : pct(leftPct),
     resetAt: view.credit.resetAt, hoursToReset,
   };
   const idle = free !== null && free > 0 && view.queueDepth === 0;
+  const openSupply = typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows > 0;
   let verdict: LaneSupplyVerdict;
   let text: string;
   let detail: string | null = null;
   if (held) { verdict = 'held'; detail = view.hold?.reason ?? null; text = `${view.lane} held${detail ? `: ${detail}` : ''}`; }
   else if (leftPct !== null && leftPct <= 0) { verdict = 'out-of-usage'; detail = `until ${resetWords(view.credit.resetAt)}`; text = `${view.lane} out of usage ${detail}`; }
+  else if (idle && openRows === null) { verdict = 'unknown'; detail = 'lane-open supply unknown'; text = `${view.lane}: ${detail}`; }
+  else if (idle && leftPct !== null && openSupply) { verdict = 'open-supply'; text = `${view.lane} open supply: ${plural(free, 'free slot')}, ${pct(leftPct)}% left, ${plural(openRows, 'open row')} wait`; }
   else if (idle && leftPct !== null) { verdict = 'idle-with-usage-left'; text = `${view.lane} idle: ${plural(free, 'free slot')}, ${pct(leftPct)}% left`; }
   else if (idle) { verdict = 'idle-usage-unknown'; text = `${view.lane} idle: ${plural(free, 'free slot')}, usage unknown`; }
-  else if (free === null) { verdict = 'unknown'; text = `${view.lane}: running or target unknown`; }
-  else { verdict = 'busy'; text = `${view.lane} busy: ${running} of ${target} running, ${view.queueDepth ?? 0} queued`; }
+  else if (free === 0 && (running === null || target === null || running < target)) { verdict = 'busy'; text = `${view.lane}: no launch slots available`; }
+  else if (free === null) { verdict = 'unknown'; text = `${view.lane}: ${launchHeadroom === null ? 'launch headroom unknown' : 'running or target unknown'}`; }
+  // Free slots with an unreadable queue can be starved or busy — never call
+  // it either. A lane already at target is busy whatever the queue read says.
+  else if (view.queueDepth === null && free > 0) { verdict = 'unknown'; text = `${view.lane}: ${running} of ${target} running, queue depth unknown`; }
+  else { verdict = 'busy'; text = `${view.lane} busy: ${running} of ${target} running, ${view.queueDepth ?? 'unknown'} queued`; }
   return { ...row, verdict, detail, text };
 }
 
@@ -125,7 +135,9 @@ export function readPlannerFacts(recordJson: string | null, nowMs: number): Pick
 }
 
 export function buildLaneSupply(snapshot: FleetLaneSnapshot, selfTickRecord: string | null, nowMs: number): LaneSupplyReport {
-  const lanes = snapshot.lanes.map(view => laneSupplyLane(view, nowMs)).sort((a, b) => a.lane.localeCompare(b.lane));
+  const openRows = snapshot.starved?.open_rows ?? null;
+  const lanes = snapshot.lanes.map(view => laneSupplyLane(view, nowMs, openRows, snapshot.starved?.lanes[view.lane]?.free_slots))
+    .sort((a, b) => a.lane.localeCompare(b.lane));
   const idle = lanes.filter(l => l.verdict === 'idle-with-usage-left').sort((a, b) => (b.freeSlots ?? 0) - (a.freeSlots ?? 0));
   return {
     schema: LANE_SUPPLY_SCHEMA,
@@ -151,7 +163,7 @@ function ageWords(seconds: number): string {
 
 const VERDICT_WORDS: Record<LaneSupplyVerdict, string> = {
   busy: 'busy', 'idle-with-usage-left': 'IDLE WITH USAGE LEFT', 'idle-usage-unknown': 'idle, usage unknown',
-  'out-of-usage': 'out of usage', held: 'held', unknown: 'unknown',
+  'open-supply': 'open supply', 'out-of-usage': 'out of usage', held: 'held', unknown: 'unknown',
 };
 
 /** The plain-text table `phm fleet lane-supply` prints. */

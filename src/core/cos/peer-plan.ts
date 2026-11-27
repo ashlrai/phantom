@@ -17,7 +17,7 @@ import {
 import { readSpecialistFile, specialistRosterDirectory, withSpecialistRosterLock } from '../fleet/roster.js';
 import { writePrivateFileAtomic } from '../verse/preferences.js';
 
-export const COS_PEER_PLAN_MAX_DEADLINE_MS = 7 * 24 * 60 * 60 * 1000;
+const COS_PEER_PLAN_MAX_DEADLINE_MS = 7 * 24 * 60 * 60 * 1000;
 export const cosPeerPlanSchema = z.object({ reply: z.string().min(1).max(16_000),
   peers: z.array(peerRequestSchema).max(8),
   /** Optional ISO time by which the requested coordination is wanted; stated in each message. */

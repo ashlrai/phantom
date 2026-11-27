@@ -54,6 +54,33 @@ describe('fleet lane-truth incident gate', () => {
     expect(out.output()).not.toContain('fake-secret-path');
   });
 
+  it('distinguishes a zero lane target from an unknown target when work is queued', async () => {
+    const { lane, sample } = fixture();
+    const out = capture();
+    const readers = { lanes: async () => [{ ...lane, running: 0, target: 0 }], meters: async () => [sample] };
+    expect(await cmdFleetLaneTruth(['--check', '--json'], readers)).toBe(0);
+    expect(out.json()).toMatchObject({ lanes: [{ target: 0, running: 0, queued: lane.queued, verdict: 'ok' }], check: { passed: true, entries: [] } });
+    expect(await cmdFleetLaneTruth(['--check', '--json'], { ...readers, lanes: async () => [{ ...lane, running: 0, target: null }] })).toBe(1);
+    expect(out.json()).toMatchObject({ lanes: [{ target: null, verdict: 'unknown' }], check: { passed: false } });
+  });
+
+  it('reports a stall only when every observed quota window has room', async () => {
+    const { lane, sample } = fixture();
+    const out = capture();
+    const idle = { ...lane, running: 0 };
+    const session = { ...sample, window: 'session' };
+    const readers = {
+      lanes: async () => [idle],
+      meters: async () => [sample, { ...session, usedPercent: 100 }],
+    };
+    expect(await cmdFleetLaneTruth(['--check', '--json'], readers)).toBe(0);
+    expect(out.json()).toMatchObject({ lanes: [{ verdict: 'ok' }], check: { passed: true } });
+    expect(await cmdFleetLaneTruth(['--check', '--json'], {
+      ...readers, meters: async () => [sample, { ...session, usedPercent: 99.9 }],
+    })).toBe(1);
+    expect(out.json().check.entries).toEqual([{ lane: lane.lane, reason: 'idle_with_work' }]);
+  });
+
   it('fails empty and missing selections even with a healthy different lane', async () => {
     const { lane, sample } = fixture();
     const out = capture();

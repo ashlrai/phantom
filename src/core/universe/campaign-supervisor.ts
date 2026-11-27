@@ -1,6 +1,6 @@
-import { isAbsolute, parse, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { canonical, digest, isSafeIntegerInRange as integer } from './artifacts.js';
+import { canonical, digest, isSafeIntegerInRange as integer, isUniverseId } from './artifacts.js';
+import { isCanonicalAbsolutePath } from './input-guards.js';
 import { runUniverseCampaign } from './campaign.js';
 import { deliverCompletedUniverseCampaign, preflightUniverseCampaignDelivery, validateUniverseCampaignDeliveryPlan,
   type UniverseCampaignDeliveryPlan, type UniverseCampaignDeliveryResult } from './campaign-delivery.js';
@@ -51,11 +51,6 @@ export interface UniverseCampaignSupervisorResult {
   transitions: UniverseCampaignSupervisorTransition[];
 }
 
-function path(value: unknown): value is string {
-  return typeof value === 'string' && Buffer.byteLength(value, 'utf8') <= 4_096 &&
-    ![...value].some((character) => { const code = character.charCodeAt(0); return code < 32 || code >= 127 && code <= 159; }) &&
-    isAbsolute(value) && resolve(value) === value && parse(value).root !== value;
-}
 function snapshot(input: string[], options: UniverseCampaignSupervisorOptions) {
   const keys = ['root', 'maxDurationMs', 'maxConcurrent', 'pollIntervalMs', 'resourceRuntime', 'deliveryPlan', 'signal', 'onTransition'];
   if (!options || ![Object.prototype, null].includes(Object.getPrototypeOf(options)) ||
@@ -67,9 +62,9 @@ function snapshot(input: string[], options: UniverseCampaignSupervisorOptions) {
       .some((property) => !property || !Object.hasOwn(property, 'value'))) throw new Error('Invalid Universe supervisor options');
   const { root, maxDurationMs, maxConcurrent = 1, pollIntervalMs = 500, resourceRuntime, deliveryPlan, signal, onTransition } = options;
   const ids = [...input];
-  if (ids.some((id) => typeof id !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)) || new Set(ids).size !== ids.length ||
-    !path(root) || !integer(maxDurationMs, 1, 86_400_000) || !integer(maxConcurrent, 1, 4) || !integer(pollIntervalMs, 50, 60_000) ||
-    resourceRuntime !== undefined && !path(resourceRuntime) || signal !== undefined && !(signal instanceof AbortSignal) ||
+  if (ids.some((id) => !isUniverseId(id)) || new Set(ids).size !== ids.length ||
+    !isCanonicalAbsolutePath(root) || !integer(maxDurationMs, 1, 86_400_000) || !integer(maxConcurrent, 1, 4) || !integer(pollIntervalMs, 50, 60_000) ||
+    resourceRuntime !== undefined && !isCanonicalAbsolutePath(resourceRuntime) || signal !== undefined && !(signal instanceof AbortSignal) ||
     onTransition !== undefined && typeof onTransition !== 'function') throw new Error('Invalid Universe supervisor options');
   return { ids, root, maxDurationMs, maxConcurrent, pollIntervalMs, resourceRuntime, signal, onTransition,
     deliveryPlan: deliveryPlan === undefined ? undefined : validateUniverseCampaignDeliveryPlan(deliveryPlan, ids) };

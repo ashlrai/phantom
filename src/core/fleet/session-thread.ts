@@ -17,6 +17,7 @@
  * session-thread-read.ts.
  */
 import type { AgentMessage, AgentMessages } from './agent-messages.js';
+import { ownerDisplayName } from '../owner-display.js';
 import { jobControlRecordLabel, type JobControlAction, type JobControlLedgerRow } from './job-control-types.js';
 import { flatTree, sessionAge, spoke, type LiveSessionRow, type LiveSessionsV1 } from './live-sessions.js';
 import type { InboxEntry } from './mason-inbox.js';
@@ -151,6 +152,7 @@ export interface SessionThreadV1 {
 
 /** What the reader hands the builder. `undefined` means "not asked for" (the session has no job, or is not the leader). */
 export interface SessionThreadParts {
+  ownerName?: string;
   /** False when the session list itself could not be read. */
   sessionsRead: boolean;
   /** Null when the read failed. */
@@ -199,7 +201,7 @@ export function sessionWork(activity: FleetJobActivityV1 | null | undefined): Se
   };
 }
 
-function summaryOf(session: SessionThreadSession, node: SessionNode, row: LiveSessionRow | undefined, activity: FleetJobActivityV1 | null | undefined, aimed: readonly InboxEntry[], routed: readonly string[]): string[] {
+function summaryOf(session: SessionThreadSession, node: SessionNode, row: LiveSessionRow | undefined, activity: FleetJobActivityV1 | null | undefined, aimed: readonly InboxEntry[], routed: readonly string[], ownerLabel: string): string[] {
   const kind = session.kind === 'subagent' ? 'Helper' : session.kind === 'leader' ? 'Leader' : 'Worker';
   const lines = [`${kind} on ${named('lane', session.lane)}, ${named('model', session.model)}, in ${named('repo', session.repo)}.`, ...routed];
   const said = spoke(node), { state } = session;
@@ -222,7 +224,7 @@ function summaryOf(session: SessionThreadSession, node: SessionNode, row: LiveSe
   // The inbox is the Leader's: an aimed message is on record there, and nothing records the worker reading it.
   if (session.kind === 'worker' && aimed.length > 0) {
     const newest = ownerAt(aimed.at(-1)!);
-    lines.push(`Mason aimed ${plural(aimed.length, 'message')} at it through the Leader inbox${newest ? `, the newest at ${newest}` : ''}.`);
+    lines.push(`${ownerLabel} aimed ${plural(aimed.length, 'message')} at it through the Leader inbox${newest ? `, the newest at ${newest}` : ''}.`);
   }
   return lines;
 }
@@ -327,6 +329,8 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   }
   const row = node.jobId === null ? undefined : list.sessions.find(entry => entry.job === node.jobId);
   const session = sessionOf(node, row), leader = session.kind === 'leader';
+  const ownerName = ownerDisplayName(parts.ownerName);
+  const ownerLabel = ownerName === 'the owner' ? 'The owner' : ownerName;
   const gaps: string[] = [], messages: SessionThreadMessage[] = [];
   const limits = THREAD_LIMITS[depth];
   // Set wherever a limit leaves something out, so a `recent` read can say a deeper one holds more.
@@ -357,16 +361,16 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   // Mason's side of the conversation. A missing inbox file is an inbox nobody has written to yet.
   let owner: SessionThreadSource = 'none', aimed: InboxEntry[] = [];
   const said: SessionThreadMessage[] = [];
-  if (parts.owner === null || parts.owner?.sourceState === 'degraded') { owner = 'unavailable'; gaps.push('Messages from Mason unknown: the Leader inbox could not be read.'); }
+  if (parts.owner === null || parts.owner?.sourceState === 'degraded') { owner = 'unavailable'; gaps.push(`Messages from ${ownerName} unknown: the Leader inbox could not be read.`); }
   else if (parts.owner) {
     aimed = sessionOwnerMessages(session, parts.owner.entries);
     if (aimed.length > limits.owner) {
       cut = true;
-      gaps.push(leader ? 'Earlier messages from Mason are not shown here; the Leader chat holds them.' : `${plural(aimed.length - limits.owner, 'earlier message')} from Mason not shown.`);
+      gaps.push(leader ? `Earlier messages from ${ownerName} are not shown here; the Leader chat holds them.` : `${plural(aimed.length - limits.owner, 'earlier message')} from ${ownerName} not shown.`);
     }
     aimed.slice(-limits.owner).forEach((entry, index) => said.push({
       key: `owner:${entry.id ?? `${entry.at}#${index}`}`, kind: 'owner', side: 'other', at: ownerAt(entry), text: entry.text, format: 'plain',
-      label: `${leader ? 'Mason to Leader' : `Mason to the Leader, aimed at ${session.jobId}`}${entry.channel ? `, from ${entry.channel}` : ''}`,
+      label: `${leader ? `${ownerLabel} to Leader` : `${ownerLabel} to the Leader, aimed at ${session.jobId}`}${entry.channel ? `, from ${entry.channel}` : ''}`,
     }));
     if (aimed.length > 0) owner = 'available';
   }
@@ -379,7 +383,7 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
       // Newest first in the read; a conversation reads oldest first.
       if (parts.replies.replies.length > limits.replies) cut = true;
       [...parts.replies.replies.slice(0, limits.replies)].reverse().forEach((reply, index) => answered.push({
-        key: `reply:${index}`, kind: 'reply', side: 'session', label: 'Leader to Mason', at: reply.at === 'unknown' || reply.at === '' ? null : reply.at, text: reply.text, format: 'plain',
+        key: `reply:${index}`, kind: 'reply', side: 'session', label: `Leader to ${ownerName}`, at: reply.at === 'unknown' || reply.at === '' ? null : reply.at, text: reply.text, format: 'plain',
       }));
       if (parts.replies.replies.length > 0) replies = 'available';
     }
@@ -401,26 +405,26 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
       });
       if (routedAfter.size > 0) {
         const states = ORDER_STATES.map(state => [state, [...jobs.values()].filter(job => job.state === state).length] as const).filter(([, count]) => count > 0);
-        routed.push(`Routed ${routedAfter.size} of the ${plural(said.length, 'message')} shown from Mason to ${plural(jobs.size, 'job')}: ${states.map(([state, count]) => `${count} ${state}`).join(', ')}.`);
+        routed.push(`Routed ${routedAfter.size} of the ${plural(said.length, 'message')} shown from ${ownerName} to ${plural(jobs.size, 'job')}: ${states.map(([state, count]) => `${count} ${state}`).join(', ')}.`);
       }
     } else if (session.jobId !== null) {
       // Newest first in the trace, like the inbox it is built from.
       const serves = trace.orders.filter(order => order.jobs.some(job => job.id === session.jobId)).reverse();
-      if (serves.length > limits.orders) { cut = true; gaps.push(`${plural(serves.length - limits.orders, 'earlier message')} from Mason that this session serves not shown.`); }
+      if (serves.length > limits.orders) { cut = true; gaps.push(`${plural(serves.length - limits.orders, 'earlier message')} from ${ownerName} that this session serves not shown.`); }
       for (const order of serves.slice(-limits.orders)) {
         const entry = parts.owner?.entries.find(candidate => orderOf([order], candidate) !== undefined);
         const key = entry?.id ?? `${order.at}#${order.source}`, from = entry?.channel ?? order.source;
         origin.push(entry
-          ? { key: `order:${key}`, kind: 'order', side: 'other', label: `Mason to the Leader, served by ${session.jobId}${from ? `, from ${from}` : ''}`, at: ownerAt(entry), text: entry.text, format: 'plain' }
-          : { key: `order:${key}`, kind: 'order', side: 'record', label: `Serves Mason's message of ${orderTime(order)}${from ? `, from ${from}` : ''}`, at: ownerAt(order),
+          ? { key: `order:${key}`, kind: 'order', side: 'other', label: `${ownerLabel} to the Leader, served by ${session.jobId}${from ? `, from ${from}` : ''}`, at: ownerAt(entry), text: entry.text, format: 'plain' }
+          : { key: `order:${key}`, kind: 'order', side: 'record', label: `Serves ${ownerName}'s message of ${orderTime(order)}${from ? `, from ${from}` : ''}`, at: ownerAt(order),
             text: 'Its text is not among the inbox messages this thread read.', format: 'plain' });
         if (order.jobs.length > 1) origin.push(routingMessage(key, order, session.jobId));
       }
       const newest = serves.at(-1);
       if (newest) {
         const others = newest.jobs.length - 1;
-        routed.push(serves.length > 1 ? `Serves ${serves.length} of Mason's messages, the newest of ${orderTime(newest)}.`
-          : `Serves Mason's message of ${orderTime(newest)}${others > 0 ? `, with ${plural(others, 'other job')}` : ''}.`);
+        routed.push(serves.length > 1 ? `Serves ${serves.length} of ${ownerName}'s messages, the newest of ${orderTime(newest)}.`
+          : `Serves ${ownerName}'s message of ${orderTime(newest)}${others > 0 ? `, with ${plural(others, 'other job')}` : ''}.`);
       }
     }
     if (routedAfter.size > 0 || origin.length > 0) orders = 'available';
@@ -472,7 +476,7 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   const repeated = node.lastMessage !== null && wrote.length > 0 && wrote.at(-1)!.startsWith(node.lastMessage.replace(/…$/, ''));
   if (node.lastMessage !== null && !repeated) messages.push({ key: 'latest', kind: 'latest', side: 'session', label: 'Latest', at: when(node.lastMessageAt), text: node.lastMessage, format: 'plain' });
   if (session.jobId === null && !leader) gaps.push('This session has no job record: its steps, commands and changed files are not recorded.');
-  return { ...base, session, summary: [...summaryOf(session, node, row, parts.activity, aimed, routed), ...steered],
+  return { ...base, session, summary: [...summaryOf(session, node, row, parts.activity, aimed, routed, ownerLabel), ...steered],
     task: session.jobId !== null ? sessionTask(parts.activity, session.jobId) : null, messages,
     sources: { sessions: 'available', activity, bus, owner, replies, orders, output, controls }, gaps,
     work: session.jobId !== null ? sessionWork(parts.activity) : null, reply: sessionReply(session), control, depth, deeper: depth === 'recent' && cut };

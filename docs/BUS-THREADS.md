@@ -159,16 +159,19 @@ for the fleet-wide `pendingAll` digest — every thread member as the label set,
 reported under `peers` with the stored untrusted text rather than the
 display frame — the same read `fleet_bus_board` and `comms inbox`'s board
 source project, and it cannot be combined with `--peer`. `--job`,
-`--contains`, `--since`, `--before`, `--from` and `--exclude-from` are the
+`--id`, `--contains`, `--since`, `--before`, `--from` and `--exclude-from` are the
 same optional filters `pendingFor` and `pendingAll` take, applied under
 identical rules: `--job`
 keeps only threads
-carrying a task whose fleet `itemId` cites it, `--contains` the normalized
+carrying a task whose fleet `itemId` cites it, `--id` keeps only the
+unacknowledged delivery whose stored envelope id — the id `thread ack` and
+`hops` report — strictly equals it, `--contains` the normalized
 needle over the same scrubbed display text, `--since` (15m, 2h, 1d,
 epoch ms or an ISO time) the inclusive cutoff deliveries must reach, and
 `--before` the exclusive upper bound on the same `createdAt` field so the
 pair reads one `[since, before)` window — while tasks, which the board
-records without a timestamp, never match under either bound. `--from` and
+records without a timestamp or an envelope id, never match under a time
+bound or `--id`. `--from` and
 `--exclude-from` take agent refs — a handle, `agent:<handle>`, stable id
 or alias — resolved through the identity registry under the same
 `agentRefAddressMatcher` rule every other bus read's sender filter
@@ -194,16 +197,18 @@ mine` carries the same digest as its `board` section — one locked snapshot
 under every routing label the agent's identity answers to, with the same
 hold-state honesty — so an agent on the board finds its pending deliveries
 and tasks without a separate `board pending --peer` read per label.
-`BusBoard.pendingAll(now?, jobId?, contains?, sinceMs?, beforeMs?, sender?)` is the fleet-wide
+`BusBoard.pendingAll(now?, jobId?, contains?, sinceMs?, beforeMs?, sender?, id?)` is the fleet-wide
 form — every thread member as the label set in the same locked snapshot
 and queue read, with the same optional filters `pendingFor` takes: `jobId`
 keeps only threads carrying a task whose `itemId` cites it (and `peers`
-then reports only that job's thread members), `contains` the normalized
+then reports only that job's thread members), `id` the exact
+retained-envelope match deliveries alone answer, `contains` the normalized
 `--contains` needle over the same scrubbed display text, `sinceMs` the
 epoch-ms cutoff deliveries must reach, `beforeMs` the exclusive
 epoch-ms upper bound on the same `createdAt` field composing with
 `sinceMs` into one `[since, before)` window — while tasks, which the
-board records without any timestamp, never match under a time bound — and
+board records without any timestamp or envelope id, never match under a
+time bound or `id` — and
 `sender` the `BusBoardSenderFilter` slice deliveries alone answer, tasks
 recording no author. `phm comms inbox`'s `board`
 source and the `fleet_bus_board` fleet MCP tool project it: every

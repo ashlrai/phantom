@@ -1,11 +1,16 @@
-/* global AbortController, Buffer, DOMException, URL, setTimeout */
+/* global AbortController, Buffer, DOMException, URL, process, setTimeout */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { cadenceMinutes, nextPatch, planReleaseCadence, planReleaseCadenceWhenAvailable, createPublicMetadataReader, peeledCommit, GREEN_EVIDENCE_MAX_AHEAD, CADENCE_MAX_ATTEMPTS } from '../scripts/release-cadence.mjs';
 import { peelReleaseTag } from '../scripts/peel-release-tag.mjs';
 import { reconcileTaggedReleasePrs } from '../scripts/release-pr-labels.mjs';
+import { checkReleasePrBudget } from '../scripts/release-pr-budget.mjs';
 import { normalizeReleaseNotes } from '../../scripts/sync-release-notes.mjs';
 
 const revision = 'a'.repeat(40), tagged = 'b'.repeat(40);
@@ -771,15 +776,105 @@ test('generated notes normalize below Unreleased without losing previous text', 
   assert.throws(() => normalizeReleaseNotes(source.replace(body, 'tiny\n'), '3.30.1'), /too short/);
 });
 
+test('release PR budget checks both authenticated resources before admitting work', async () => {
+  const resources = { core: { limit: 1000, remaining: 100, reset: 1795683600 },
+    graphql: { limit: 1000, remaining: 100, reset: 1795683600 } };
+  const input = { token: 'test-only', fetchImpl: async (url, options) => {
+    assert.equal(url, 'https://api.github.com/rate_limit');
+    assert.equal(options.method, 'GET');
+    assert.equal(options.redirect, 'error');
+    assert.equal(options.headers.Authorization, 'Bearer test-only');
+    assert.equal(options.signal.aborted, false);
+    return { status: 200, json: async () => ({ resources }) };
+  } };
+  assert.deepEqual(await checkReleasePrBudget(input), { ready: true, reason: 'github-api-budget-available' });
+  for (const resource of ['core', 'graphql']) {
+    for (const remaining of [0, 99]) {
+      resources[resource].remaining = remaining;
+      assert.deepEqual(await checkReleasePrBudget(input), {
+        ready: false, reason: 'github-api-budget-low', resource, remaining, reset: resources[resource].reset,
+      });
+    }
+    resources[resource].remaining = 100;
+  }
+  // The next invocation can proceed after the token's budget recovers.
+  assert.equal((await checkReleasePrBudget(input)).ready, true);
+});
+
+test('release PR budget refuses malformed evidence and real API errors', async () => {
+  const valid = { limit: 1000, remaining: 100, reset: 1795683600 };
+  for (const resource of ['core', 'graphql']) {
+    for (const budget of [undefined, null, {}, { ...valid, remaining: '100' },
+      { ...valid, remaining: -1 }, { ...valid, remaining: 1001 }, { ...valid, limit: 0 },
+      { ...valid, limit: Number.MAX_SAFE_INTEGER + 1 }, { ...valid, reset: 0 }]) {
+      const resources = { core: { ...valid, remaining: 0 }, graphql: valid, [resource]: budget };
+      await assert.rejects(checkReleasePrBudget({ token: 'test-only', fetchImpl: async () => ({
+        status: 200, json: async () => ({ resources }),
+      }) }), /invalid GitHub rate-limit data/);
+    }
+  }
+  for (const status of [401, 403, 429, 500]) {
+    await assert.rejects(checkReleasePrBudget({ token: 'test-only', fetchImpl: async () => ({ status }) }),
+      /GitHub rate-limit read failed/);
+  }
+  await assert.rejects(checkReleasePrBudget({ token: 'test-only', fetchImpl: async () => {
+    throw new Error('transport failed');
+  } }), /transport failed/);
+  await assert.rejects(checkReleasePrBudget({ token: 'test-only', fetchImpl: async () => ({
+    status: 200, json: async () => { throw new Error('untrusted response body'); },
+  }) }), { message: 'invalid GitHub rate-limit response' });
+  await assert.rejects(checkReleasePrBudget({ token: '', fetchImpl: async () => assert.fail('unexpected read') }),
+    /missing GitHub token/);
+});
+
+test('release PR budget CLI emits readiness only after a successful quota read', () => {
+  const root = mkdtempSync(join(tmpdir(), 'release-pr-budget-'));
+  try {
+    for (const [remaining, status, ready] of [[100, 200, true], [99, 200, false], [100, 401, null]]) {
+      const output = join(root, `output-${remaining}-${status}`);
+      const preload = join(root, 'fetch.mjs');
+      const budget = { limit: 1000, remaining, reset: 1795683600 };
+      const data = { resources: { core: budget, graphql: budget } };
+      writeFileSync(preload, `globalThis.fetch = async () => ({ status: ${status}, json: async () => (${JSON.stringify(data)}) });`);
+      const result = spawnSync(process.execPath, ['--import', preload,
+        fileURLToPath(new URL('../scripts/release-pr-budget.mjs', import.meta.url))], {
+        env: { ...process.env, HOME: root, GH_TOKEN: 'test-only', GITHUB_REF: 'refs/heads/master', GITHUB_OUTPUT: output },
+        encoding: 'utf8', timeout: 10_000,
+      });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, ready === null ? 1 : 0, result.stderr);
+      assert.ok(!`${result.stdout}${result.stderr}`.includes('test-only'));
+      if (ready === null) assert.throws(() => readFileSync(output), { code: 'ENOENT' });
+      else {
+        assert.equal(readFileSync(output, 'utf8'), `ready=${ready}\n`);
+        assert.equal(JSON.parse(result.stdout).ready, ready);
+      }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('timer cadence keeps the existing permissions and guarded merge route', () => {
   const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
   const workflow = parse(read('../workflows/release-please.yml'));
   assert.deepEqual(workflow.permissions, {});
   assert.deepEqual(workflow.jobs['release-please'].permissions, { contents: 'write', 'pull-requests': 'write' });
   assert.deepEqual(workflow.on.schedule, [{ cron: '*/5 * * * *' }]);
+  assert.deepEqual(workflow.on.push, { branches: ['master'] });
+  assert.ok(Object.hasOwn(workflow.on, 'workflow_dispatch'));
   assert.equal(workflow.on.workflow_run, undefined);
   const steps = workflow.jobs['release-please'].steps;
-  assert.equal(steps.find(s => s.id === 'rp').if, "steps.cadence.outputs.due == 'true'");
+  const budget = steps.find(s => s.id === 'budget');
+  const labels = steps.find(s => s.run?.includes('release-pr-labels.mjs'));
+  const rp = steps.find(s => s.id === 'rp');
+  assert.equal(budget.if, "steps.cadence.outputs.due == 'true'");
+  assert.equal(budget.run, 'node .github/scripts/release-pr-budget.mjs');
+  assert.deepEqual(budget.env, { GH_TOKEN: '${{ github.token }}' });
+  assert.equal(rp.with.token, budget.env.GH_TOKEN);
+  assert.ok(steps.indexOf(budget) < steps.indexOf(labels) && steps.indexOf(labels) < steps.indexOf(rp));
+  for (const step of [labels, rp]) {
+    assert.equal(step.if, "steps.cadence.outputs.due == 'true' && steps.budget.outputs.ready == 'true'");
+    assert.equal(step['continue-on-error'], undefined);
+  }
   assert.match(steps.find(s => s.id === 'cadence').env.RELEASE_CADENCE_MINUTES, /vars.RELEASE_CADENCE_MINUTES/);
   assert.match(read('../scripts/release-cadence.mjs'), /cadenceMinutes\(process\.env\.RELEASE_CADENCE_MINUTES \|\| '5'\)/);
   assert.equal(read('../scripts/release-cadence.mjs').includes('Math.max(60, cadenceMinutes'), false);

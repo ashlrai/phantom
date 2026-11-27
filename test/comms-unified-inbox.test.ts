@@ -16,7 +16,7 @@ import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/co
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
@@ -33,6 +33,18 @@ import { SharedStore } from '../src/core/fleet/shared-store.js';
 import type { AshlrConfig } from '../src/core/types.js';
 import type { AgentConversations } from '../src/core/fleet/agent-conversations.js';
 import type { SlackJournalRead, SlackObservation } from '../src/core/agents/slack-journal.js';
+import type { SlackSendReceiptRead } from '../src/core/agents/slack-send-receipts.js';
+import type { SentReceipt } from '../src/core/agents/slack-reply-binding.js';
+import type { LeaderThreadUndeliveredItem, LeaderThreadUndeliveredRead } from '../src/core/vision/leader-thread.js';
+import type { LeaderNetworkDigestFact, LeaderNetworkRequestFact, LeaderNetworkStateRead } from '../src/core/agents/leader-network-read.js';
+import type { LeaderReplyPending, LeaderRepliesLedgerRead } from '../src/core/comms/leader-replies-ledger.js';
+import { replyTextHash } from '../src/core/fleet/mason-outbox.js';
+import type { FleetAssignment, FleetCoordinationPending, FleetMessage, FleetPendingReturn } from '../src/core/fleet/coordination.js';
+import type { ClaimDriftRow, ClaimStoreDrift } from '../src/core/fleet/claim-store-drift.js';
+import type { SessionHandoffList, SessionHandoffListEntry } from '../src/core/agents/session-handoff.js';
+import type { WorkBoardItem, WorkBoardResult } from '../src/core/comms/work-board.js';
+import type { WorkItemState } from '../src/core/comms/work-item-state.js';
+import type { ChannelHealth, ChannelHealthReport } from '../src/core/fleet/channel-health.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import type { AgentWakeRow, AllWakesPage } from '../src/core/agents/bus-unified.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
@@ -61,6 +73,10 @@ afterEach(() => { vi.restoreAllMocks(); roots.splice(0).forEach(r => rmSync(r, {
 const read = (extra: Partial<UnifiedInboxOptions> = {}): Promise<UnifiedInbox> => readUnifiedInbox({
   runsDir, busRoot, now: () => now,
   readRequests: () => ({ status: 'missing', requests: [] }),
+  // The work board classifies every durable bus envelope as a request, so the
+  // fixtures this suite posts would all list as RECEIVED; pin a verified-empty
+  // board so only the dedicated describe block exercises the real projection.
+  readWorkBoard: () => ({ items: [], inbox: 'ok', truncated: false, claims: 'available', coordination: 'available' }),
   ...extra,
 });
 
@@ -129,6 +145,8 @@ describe('readUnifiedInbox sources', () => {
         wakes: { state: 'healthy', pending: 0 },
         seats: { state: 'missing', pending: 0 },
         'peer-dispatch': { state: 'missing', pending: 0 },
+        'session-handoff': { state: 'missing', pending: 0 },
+        'org-outbox': { state: 'missing', pending: 0 },
         'email-inbox': { state: 'missing', pending: 0 },
         'email-outbox': { state: 'missing', pending: 0 },
         'team-approvals': { state: 'healthy', pending: 0 },
@@ -2065,6 +2083,368 @@ describe('readUnifiedInbox slack requests', () => {
   });
 });
 
+describe('readUnifiedInbox slack sends', () => {
+  const KEY_A = 'a'.repeat(64);
+  const KEY_B = 'b'.repeat(64);
+  const receipt = (over: Partial<SentReceipt> = {}): SentReceipt => ({
+    key: KEY_A, channel: 'C0123ABCD', state: 'attempted',
+    thread: '1762000000.000100', ...over,
+  });
+  const sends = (receipts: SentReceipt[], state: 'ok' | 'missing' | 'degraded' = 'ok'): SlackSendReceiptRead => ({ state, receipts });
+  const pinned = {
+    readRequests: () => ({ status: 'missing' as const, requests: [] }),
+  };
+  const readWith = (readSlackSends: () => SlackSendReceiptRead) =>
+    readUnifiedInbox({ runsDir, busRoot, now: () => now, ...pinned, readSlackSends });
+
+  it('lists attempted sends as warn items and keeps proved sends out', async () => {
+    const inbox = await readWith(() => sends([
+      receipt(),
+      // A sent receipt is a proved delivery — history, never pending.
+      receipt({ key: KEY_B, state: 'sent', ts: '1762000001.000100' }),
+    ]));
+    expect(inbox.sources['slack-sends']).toEqual({ state: 'healthy', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'slack-sends');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: `slack-sends:${KEY_A}`,
+      kind: 'slack-send-unconfirmed', severity: 'warn', blocking: false,
+      title: 'Slack send unconfirmed',
+      detail: 'channel C0123ABCD · thread 1762000000.000100',
+      since: null, expiresAt: null,
+      act: [
+        'phm channels slack status --json',
+        'phm fleet slack-trace --channel C0123ABCD --thread 1762000000.000100 --json',
+        'phm channels slack run --seconds 60 --json',
+      ],
+    });
+    // Receipts carry channel/thread/key evidence only — never send text,
+    // digests or client ids.
+    expect(JSON.stringify(items[0])).not.toContain('digest');
+    expect(JSON.stringify(items[0])).not.toContain('clientId');
+  });
+
+  it('scopes the trace link to the channel alone when the send carried no thread', async () => {
+    const inbox = await readWith(() => sends([receipt({ thread: undefined })]));
+    const item = inbox.items.find(i => i.source === 'slack-sends')!;
+    expect(item.detail).toBe('channel C0123ABCD');
+    expect(item.act).toEqual([
+      'phm channels slack status --json',
+      'phm fleet slack-trace --channel C0123ABCD --json',
+      'phm channels slack run --seconds 60 --json',
+    ]);
+  });
+
+  it('keeps only the bare reads when receipt ids fail the shape guard', async () => {
+    const inbox = await readWith(() => sends([receipt({ channel: 'bad id; touch /tmp/x', thread: 'also bad' })]));
+    const item = inbox.items.find(i => i.source === 'slack-sends')!;
+    expect(item.act).toEqual([
+      'phm channels slack status --json',
+      'phm fleet slack-trace --json',
+      'phm channels slack run --seconds 60 --json',
+    ]);
+    expect(item.detail).toBe('channel bad id; touch /tmp/x');
+  });
+
+  it('collapses duplicate keys and identical unkeyed rows to one item each', async () => {
+    const inbox = await readWith(() => sends([
+      receipt(),
+      receipt(),
+      // A seam row without a store key still lists under a content hash.
+      receipt({ key: undefined }),
+      receipt({ key: undefined }),
+      receipt({ key: undefined, thread: '1762000000.000999' }),
+    ]));
+    const items = inbox.items.filter(i => i.source === 'slack-sends');
+    expect(items).toHaveLength(3);
+    expect(items.filter(i => i.id === `slack-sends:${KEY_A}`)).toHaveLength(1);
+    expect(new Set(items.map(i => i.id)).size).toBe(3);
+  });
+
+  it('reports the send-store state as the source state, never a fabricated healthy', async () => {
+    const missing = await readWith(() => sends([], 'missing'));
+    expect(missing.sources['slack-sends']).toEqual({ state: 'missing', pending: 0 });
+    const degraded = await readWith(() => sends([receipt()], 'degraded'));
+    expect(degraded.sources['slack-sends']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'slack-sends')).toHaveLength(1);
+  });
+
+  it('reports unavailable on a throwing seam while other sources still list', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readSlackSends: () => { throw new Error('boom'); },
+    });
+    expect(inbox.sources['slack-sends']).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'slack-sends')).toHaveLength(0);
+    expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('filters by its own source and kind like every other source', async () => {
+    const inbox = await readWith(() => sends([receipt()]));
+    const bySource = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readSlackSends: () => sends([receipt()]),
+      filter: { source: 'slack-sends' },
+    });
+    expect(bySource.items.map(i => i.id)).toEqual([`slack-sends:${KEY_A}`]);
+    expect(bySource.filter).toEqual({ source: 'slack-sends' });
+    const byKind = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readSlackSends: () => sends([receipt()]),
+      filter: { kind: 'slack-send-unconfirmed' },
+    });
+    expect(byKind.items.map(i => i.id)).toEqual([`slack-sends:${KEY_A}`]);
+    expect(inbox.items.filter(i => i.kind === 'slack-send-unconfirmed')).toHaveLength(1);
+  });
+});
+
+describe('readUnifiedInbox leader deliveries', () => {
+  const AT = '2026-11-07T06:00:00.000Z';
+  const entry = (over: Partial<LeaderThreadUndeliveredItem> = {}): LeaderThreadUndeliveredItem => ({
+    id: 'lt-20261107060000-abc123', at: AT, channel: 'system', kind: 'memo',
+    text: 'Memo lm-20261107060000-aaaaaa — Bottleneck: fake bottleneck', telegram: 'failed', attempts: 3, ...over,
+  });
+  const pinned = {
+    readRequests: () => ({ status: 'missing' as const, requests: [] }),
+  };
+  const readWith = (readLeaderUndelivered: NonNullable<UnifiedInboxOptions['readLeaderUndelivered']>) =>
+    readUnifiedInbox({ runsDir, busRoot, now: () => now, ...pinned, readLeaderUndelivered });
+  const ok = (items: LeaderThreadUndeliveredItem[]): LeaderThreadUndeliveredRead => ({ status: 'ok', items });
+
+  it('lists failed and stalled deliveries as warn items naming kind, state and acts', async () => {
+    const inbox = await readWith(() => ok([
+      entry(),
+      entry({ id: 'lt-20261107070000-def456', kind: 'question', channel: 'telegram', telegram: 'pending', attempts: 1, text: 'fake question text' }),
+      entry({ id: 'lt-20261107080000-ghi789', kind: 'update', telegram: 'failed', attempts: 1 }),
+    ]));
+    expect(inbox.sources['leader-delivery']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'leader-delivery');
+    expect(items).toHaveLength(3);
+    const failed = items.find(i => i.id === 'leader-delivery:lt-20261107060000-abc123')!;
+    expect(failed).toMatchObject({
+      kind: 'leader-message-undelivered', severity: 'warn', blocking: false,
+      title: 'Leader memo Telegram delivery failed',
+      detail: 'system · Telegram failed after 3 send attempts · "Memo lm-20261107060000-aaaaaa — Bottleneck: fake bottleneck"',
+      since: AT, expiresAt: null,
+      act: ['phm channels --json', 'phm comms cycle', 'phm comms send-owner --text "<same message text>"'],
+    });
+    const stalled = items.find(i => i.id === 'leader-delivery:lt-20261107070000-def456')!;
+    expect(stalled).toMatchObject({
+      title: 'Leader question Telegram delivery stalled',
+      detail: 'telegram · Telegram pending past the 72 h drain window — the comms drain no longer offers it · "fake question text"',
+    });
+    // Singular attempt count reads correctly.
+    expect(items.find(i => i.id === 'leader-delivery:lt-20261107080000-ghi789')!.detail).toContain('failed after 1 send attempt');
+  });
+
+  it('scrubs secret-shaped text out of the item detail', async () => {
+    const secret = `sk-ant-api03-${'x'.repeat(24)}`;
+    const inbox = await readWith(() => ok([entry({ text: `memo mentions ${secret} inline` })]));
+    const item = inbox.items.find(i => i.source === 'leader-delivery')!;
+    expect(JSON.stringify(item)).not.toContain(secret);
+    expect(item.detail).toContain('[REDACTED]');
+  });
+
+  it('reports the read state as the source state, never a fabricated healthy', async () => {
+    const missing = await readWith(() => ({ status: 'missing' as const, items: [] }));
+    expect(missing.sources['leader-delivery']).toEqual({ state: 'missing', pending: 0 });
+    const degraded = await readWith(() => ({ status: 'degraded' as const, items: [entry()] }));
+    expect(degraded.sources['leader-delivery']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'leader-delivery')).toHaveLength(1);
+    const unavailable = await readWith(() => ({ status: 'unavailable' as const, items: [] }));
+    expect(unavailable.sources['leader-delivery']).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('reports unavailable on a throwing seam while other sources still list', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readLeaderUndelivered: () => { throw new Error('boom'); },
+    });
+    expect(inbox.sources['leader-delivery']).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'leader-delivery')).toHaveLength(0);
+    expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('filters by its own source and kind like every other source', async () => {
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readLeaderUndelivered: () => ok([entry()]),
+      filter: { source: 'leader-delivery' },
+    });
+    expect(inbox.items.map(i => i.id)).toEqual(['leader-delivery:lt-20261107060000-abc123']);
+    expect(inbox.filter).toEqual({ source: 'leader-delivery' });
+    const byKind = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readLeaderUndelivered: () => ok([entry()]),
+      filter: { kind: 'leader-message-undelivered' },
+    });
+    expect(byKind.items.map(i => i.id)).toEqual(['leader-delivery:lt-20261107060000-abc123']);
+    expect(inbox.items.filter(i => i.kind === 'leader-message-undelivered')).toHaveLength(1);
+  });
+});
+
+describe('readUnifiedInbox leader network', () => {
+  const REQ_A = 'a'.repeat(64);
+  const REQ_B = 'b'.repeat(64);
+  const REQ_C = 'c'.repeat(64);
+  const DIGEST_A = 'd'.repeat(64);
+  const request = (over: Partial<LeaderNetworkRequestFact> = {}): LeaderNetworkRequestFact => ({
+    requestId: REQ_A, channel: 'telegram', to: 'leader',
+    receivedAt: now - 3_600_000, text: 'fake owner request',
+    inbox: true, bus: true, reply: null, jobIds: [], ...over,
+  });
+  const digest = (over: Partial<LeaderNetworkDigestFact> = {}): LeaderNetworkDigestFact => ({
+    key: DIGEST_A, channel: 'telegram', day: '2026-11-06',
+    at: now - 7_200_000, sent: false, attempted: true, ...over,
+  });
+  const ok = (requests: LeaderNetworkRequestFact[], digests: LeaderNetworkDigestFact[] = []): LeaderNetworkStateRead =>
+    ({ status: 'ok', requests, digests });
+  const pinned = {
+    readRequests: () => ({ status: 'missing' as const, requests: [] }),
+  };
+  const readWith = (readLeaderNetwork: NonNullable<UnifiedInboxOptions['readLeaderNetwork']>) =>
+    readUnifiedInbox({ runsDir, busRoot, now: () => now, ...pinned, readLeaderNetwork });
+
+  it('lists awaiting requests, incomplete ingests, unconfirmed replies and digests; proved routes stay out', async () => {
+    const inbox = await readWith(() => ok([
+      // Verified owner request fully ingested, unanswered — the leader's queue.
+      request(),
+      // Same shape but the bus mirror never landed — incomplete, not awaiting.
+      request({ requestId: REQ_B, inbox: true, bus: false, text: null }),
+      // Reply recorded, delivery attempt ambiguous — reconcile, never retry.
+      request({ requestId: REQ_C, reply: { delivered: false, attempted: true, at: now - 1_800_000 } }),
+      // Reply recorded but delivery failed non-ambiguously — still pending,
+      // the network retries it on the next reply pass.
+      request({ requestId: '9'.repeat(64), reply: { delivered: false, attempted: false, at: now - 600_000 } }),
+      // Delivered reply and a non-leader route with its bus publish — history.
+      request({ requestId: 'e'.repeat(64), reply: { delivered: true, attempted: true, at: now - 900_000 } }),
+      request({ requestId: 'f'.repeat(64), to: 'worker', inbox: false, bus: true }),
+    ], [digest()]));
+    expect(inbox.sources['leader-network']).toEqual({ state: 'healthy', pending: 5 });
+    const items = inbox.items.filter(i => i.source === 'leader-network');
+    expect(items).toHaveLength(5);
+    const awaiting = items.find(i => i.id === `leader-network:request-${REQ_A}`)!;
+    expect(awaiting).toMatchObject({
+      kind: 'leader-request', severity: 'warn', blocking: false,
+      title: 'fake owner request',
+      detail: `leader network · via telegram · awaiting reply · received ${new Date(now - 3_600_000).toISOString()}`,
+      since: new Date(now - 3_600_000).toISOString(), expiresAt: null,
+      act: ['phm leader inbox --json', 'phm comms thread'],
+    });
+    const incomplete = items.find(i => i.id === `leader-network:incomplete-${REQ_B}`)!;
+    expect(incomplete).toMatchObject({
+      kind: 'leader-request-incomplete', severity: 'warn', blocking: false,
+      title: 'Leader request delivery incomplete via telegram',
+      detail: expect.stringContaining('unproven: bus mirror'),
+    });
+    const unconfirmed = items.find(i => i.id === `leader-network:reply-${REQ_C}`)!;
+    expect(unconfirmed).toMatchObject({
+      kind: 'leader-reply-unconfirmed', severity: 'warn', blocking: false,
+      title: 'Leader reply delivery unconfirmed via telegram',
+      detail: expect.stringContaining('delivery outcome unknown — reconcile before retry'),
+      since: new Date(now - 1_800_000).toISOString(),
+    });
+    const retryable = items.find(i => i.id === `leader-network:request-${'9'.repeat(64)}`)!;
+    expect(retryable).toMatchObject({
+      kind: 'leader-request', severity: 'warn', blocking: false,
+      detail: expect.stringContaining('reply recorded'),
+    });
+    expect(retryable.detail).toContain('delivery incomplete — awaiting retry');
+    const digestItem = items.find(i => i.id === `leader-network:digest-${DIGEST_A}`)!;
+    expect(digestItem).toMatchObject({
+      kind: 'leader-digest-unconfirmed', severity: 'warn', blocking: false,
+      title: 'Leader away-digest delivery unconfirmed via telegram',
+      detail: expect.stringContaining('day 2026-11-06'),
+      act: ['phm leader inbox --json'],
+    });
+    // A sent digest and an attempted-then-cleared one are proved or retryable.
+    const clean = await readWith(() => ok([], [
+      digest({ key: '1'.repeat(64), sent: true }),
+      digest({ key: '2'.repeat(64), attempted: false }),
+    ]));
+    expect(clean.items.filter(i => i.source === 'leader-network')).toHaveLength(0);
+    expect(clean.sources['leader-network']).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('names the missing legs for non-leader routes and leader inbox gaps', async () => {
+    const inbox = await readWith(() => ok([
+      // Non-leader route: only the bus publish is a required leg.
+      request({ requestId: REQ_A, to: 'worker', inbox: false, bus: false }),
+      // Leader route missing both legs names both.
+      request({ requestId: REQ_B, inbox: false, bus: false, text: 'second fake request' }),
+      // Leader route missing only the inbox append.
+      request({ requestId: REQ_C, inbox: false, bus: true }),
+    ]));
+    const items = inbox.items.filter(i => i.source === 'leader-network');
+    expect(items).toHaveLength(3);
+    expect(items.find(i => i.id === `leader-network:incomplete-${REQ_A}`)!.detail).toContain('unproven: bus publish');
+    expect(items.find(i => i.id === `leader-network:incomplete-${REQ_B}`)!.detail).toContain('unproven: inbox append, bus mirror');
+    expect(items.find(i => i.id === `leader-network:incomplete-${REQ_C}`)!.detail).toContain('unproven: inbox append');
+  });
+
+  it('carries job citations from the request body and never owner identifiers', async () => {
+    const inbox = await readWith(() => ok([
+      request({ jobIds: ['RQ-LEADER-1', 'RQ-LEADER-2'] }),
+    ]));
+    const item = inbox.items.find(i => i.source === 'leader-network')!;
+    expect(item.jobIds).toEqual(['RQ-LEADER-1', 'RQ-LEADER-2']);
+    const serialized = JSON.stringify(item);
+    // Route keys are sha256 digests; recipient ids, channel refs and raw
+    // envelopes never reach an item.
+    expect(serialized).not.toContain('recipient');
+    expect(serialized).not.toContain('channelRef');
+    expect(serialized).not.toContain('fingerprint');
+  });
+
+  it('scrubs secret-shaped request text out of the item title', async () => {
+    const secret = `sk-ant-api03-${'x'.repeat(24)}`;
+    const inbox = await readWith(() => ok([request({ text: `please rotate ${secret} now` })]));
+    const item = inbox.items.find(i => i.source === 'leader-network')!;
+    expect(JSON.stringify(item)).not.toContain(secret);
+    expect(item.title).toContain('[REDACTED]');
+  });
+
+  it('reports the read state as the source state, never a fabricated healthy', async () => {
+    const missing = await readWith(() => ({ status: 'missing' as const }));
+    expect(missing.sources['leader-network']).toEqual({ state: 'missing', pending: 0 });
+    const unavailable = await readWith(() => ({ status: 'unavailable' as const }));
+    expect(unavailable.sources['leader-network']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'leader-network')).toHaveLength(0);
+  });
+
+  it('reports unavailable on a throwing seam while other sources still list', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readLeaderNetwork: () => { throw new Error('boom'); },
+    });
+    expect(inbox.sources['leader-network']).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'leader-network')).toHaveLength(0);
+    expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('filters by its own source and kind like every other source', async () => {
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readLeaderNetwork: () => ok([request(), request({ requestId: REQ_B, inbox: false, bus: true })]),
+      filter: { source: 'leader-network' },
+    });
+    expect(inbox.items.map(i => i.id).sort()).toEqual([
+      `leader-network:incomplete-${REQ_B}`, `leader-network:request-${REQ_A}`,
+    ]);
+    expect(inbox.filter).toEqual({ source: 'leader-network' });
+    const byKind = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readLeaderNetwork: () => ok([request()]),
+      filter: { kind: 'leader-request' },
+    });
+    expect(byKind.items.map(i => i.id)).toEqual([`leader-network:request-${REQ_A}`]);
+    expect(inbox.items.filter(i => i.kind === 'leader-request')).toHaveLength(1);
+  });
+});
+
 describe('readUnifiedInbox peer dispatch', () => {
   const queueId = (c: string) => `peer-work-${c.repeat(32)}`;
   const receiptId = (c: string) => `pw-${c.repeat(32)}`;
@@ -2160,6 +2540,284 @@ describe('readUnifiedInbox peer dispatch', () => {
     expect(byText.items).toEqual([]);
     const byPeer = await read({ filter: { contains: 'peer peer-a' } });
     expect(byPeer.items.map(i => i.id).sort()).toEqual([`peer-dispatch:${receiptId('4')}`, `peer-dispatch:${receiptId('b')}`].sort());
+  });
+});
+
+describe('readUnifiedInbox session handoffs', () => {
+  const AT = '2026-11-07T11:00:00.000Z';
+  /** A schema-valid `session-handoff.v1` record — the same shape session-handoff-list.test.ts writes. */
+  const record = (job: string, over: Record<string, unknown> = {}) => ({
+    schema: 'session-handoff.v1', revision: 1, at: AT,
+    signal: { kind: 'checkpoint' },
+    job, attempt: 'att-1', repo: 'test/fixture', lane: 'codex-personal', model: 'model-a',
+    minTier: 'work', needs: ['typescript'], goal: 'Do the fake thing',
+    plan: [{ action: 'step 1', state: 'pending' }], filesTouched: ['result'],
+    decisions: ['keep it'], evidence: ['e1'], nextAction: 'do step 1', contextDigest: 'ctx',
+    repoState: { root: '/fake/host/root', head: 'a'.repeat(40), digest: 'b'.repeat(64), entireCheckpoint: null },
+    ...over,
+  });
+  /** `<runsDir>/handoffs/<job>.jsonl` — the default reader's real path, private modes like the writer's. */
+  const writeJournal = (job: string, records: object[]) => {
+    const dir = join(runsDir, 'handoffs');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, `${job}.jsonl`), records.map(r => JSON.stringify(r)).join('\n') + '\n', { mode: 0o600 });
+  };
+  const entry = (over: Partial<SessionHandoffListEntry> = {}): SessionHandoffListEntry => ({
+    job: 'RQ-SESS-1', attempt: 'att-1', revision: 1, at: AT,
+    lane: 'codex-personal', model: 'model-a', minTier: 'work', repo: 'test/fixture',
+    signal: { kind: 'checkpoint' }, needs: ['typescript'], state: 'open', head: 'a'.repeat(40),
+    ...over,
+  });
+  const list = (over: Partial<SessionHandoffList> = {}): SessionHandoffList => ({
+    schema: 'session-handoff.list.v1', status: 'ok',
+    handoffs: [entry()], unreadable: [], truncated: false, ...over,
+  });
+
+  it('lists open checkpoints from real journals with their resume facts', async () => {
+    writeJournal('RQ-SESS-1', [record('RQ-SESS-1', { signal: { kind: 'rate-limit', status: 429 } })]);
+    writeJournal('RQ-SESS-2', [
+      record('RQ-SESS-2', { revision: 1, at: '2026-11-07T10:00:00.000Z' }),
+      record('RQ-SESS-2', { revision: 2, at: '2026-11-07T10:30:00.000Z' }),
+    ]);
+    // A completed journal is retained history, never pending work.
+    writeJournal('RQ-SESS-3', [
+      record('RQ-SESS-3', { revision: 1 }),
+      record('RQ-SESS-3', { revision: 2, signal: { kind: 'completed' },
+        plan: [{ action: 'step 1', state: 'done' }] }),
+    ]);
+    const inbox = await read();
+    expect(inbox.sources['session-handoff']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'session-handoff');
+    expect(items).toHaveLength(2);
+    const byId = new Map(items.map(i => [i.id, i]));
+    const failover = byId.get('session-handoff:RQ-SESS-1')!;
+    expect(failover).toMatchObject({
+      kind: 'session-handoff', severity: 'warn', blocking: false,
+      title: 'Session handoff RQ-SESS-1: rate-limit (failover)',
+      since: AT, expiresAt: '2026-11-08T11:00:00.000Z', jobIds: ['RQ-SESS-1'],
+    });
+    expect(failover.detail).toContain('codex-personal');
+    expect(failover.detail).toContain('model-a');
+    expect(failover.detail).toContain('test/fixture');
+    expect(failover.detail).toContain('attempt att-1 rev 1');
+    expect(failover.detail).toContain('typescript');
+    expect(failover.act[0]).toBe(`phm checkpoint handoff show ${runsDir} RQ-SESS-1`);
+    expect(failover.act[1]).toBe(`phm checkpoint handoff list ${runsDir} --state open`);
+    // The plain checkpoint lists without the failover marker; its `since`
+    // is the latest revision's time, not the first.
+    expect(byId.get('session-handoff:RQ-SESS-2')).toMatchObject({
+      title: 'Session handoff RQ-SESS-2: checkpoint',
+      since: '2026-11-07T10:30:00.000Z', expiresAt: '2026-11-08T10:30:00.000Z',
+    });
+    expect(byId.has('session-handoff:RQ-SESS-3')).toBe(false);
+  });
+
+  it('reports missing, degraded and unavailable honestly, never an empty pass-off', async () => {
+    const missing = await read();
+    expect(missing.sources['session-handoff']).toEqual({ state: 'missing', pending: 0 });
+
+    // A corrupt journal degrades the source but the readable one still lists.
+    writeJournal('RQ-SESS-1', [record('RQ-SESS-1')]);
+    const dir = join(runsDir, 'handoffs');
+    writeFileSync(join(dir, 'RQ-BAD.jsonl'), 'not json at all\n', { mode: 0o600 });
+    const degraded = await read();
+    expect(degraded.sources['session-handoff']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'session-handoff')).toHaveLength(1);
+
+    const throwing = await read({
+      readSessionHandoffs: () => { throw new Error('boom'); },
+    });
+    expect(throwing.sources['session-handoff']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'session-handoff')).toHaveLength(0);
+
+    const unavailable = await read({ readSessionHandoffs: () => ({ ...list(), status: 'unavailable' as const, handoffs: null, unreadable: null }) });
+    expect(unavailable.sources['session-handoff']).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('degrades on a truncated scan and on seam entries outside the open state', async () => {
+    const truncated = await read({ readSessionHandoffs: () => ({ ...list(), truncated: true }) });
+    expect(truncated.sources['session-handoff']).toEqual({ state: 'degraded', pending: 1 });
+
+    const mixed = await read({
+      readSessionHandoffs: () => list({ handoffs: [
+        entry(),
+        entry({ job: 'RQ-SESS-DONE', state: 'completed', signal: { kind: 'completed' } }),
+      ] }),
+    });
+    expect(mixed.sources['session-handoff']).toEqual({ state: 'healthy', pending: 1 });
+    expect(mixed.items.filter(i => i.source === 'session-handoff').map(i => i.id)).toEqual(['session-handoff:RQ-SESS-1']);
+  });
+
+  it('filters by source, kind, job citation, time window and contains like every other source', async () => {
+    writeJournal('RQ-SESS-1', [record('RQ-SESS-1', { signal: { kind: 'rate-limit', status: 429 } })]);
+    writeJournal('RQ-SESS-2', [record('RQ-SESS-2', { at: '2026-11-07T09:00:00.000Z' })]);
+    const inbox = await read({ filter: { source: 'session-handoff' } });
+    expect(inbox.total).toBe(2);
+    expect(inbox.items.every(i => i.source === 'session-handoff' && i.kind === 'session-handoff')).toBe(true);
+    expect(inbox.sources['session-handoff']).toEqual({ state: 'healthy', pending: 2 });
+
+    const byJob = await read({ filter: { job: 'RQ-SESS-1' } });
+    expect(byJob.items.map(i => i.id)).toEqual(['session-handoff:RQ-SESS-1']);
+
+    const byKind = await read({ filter: { kind: 'session-handoff' } });
+    expect(byKind.total).toBe(2);
+
+    const bySince = await read({ filter: { since: Date.parse('2026-11-07T10:00:00.000Z') } });
+    expect(bySince.items.map(i => i.id)).toEqual(['session-handoff:RQ-SESS-1']);
+    const byBefore = await read({ filter: { before: Date.parse('2026-11-07T10:00:00.000Z') } });
+    expect(byBefore.items.map(i => i.id)).toEqual(['session-handoff:RQ-SESS-2']);
+
+    const byLane = await read({ filter: { contains: 'codex-personal' } });
+    expect(byLane.items.map(i => i.id).sort()).toEqual(['session-handoff:RQ-SESS-1', 'session-handoff:RQ-SESS-2']);
+    const byFailover = await read({ filter: { contains: 'failover' } });
+    expect(byFailover.items.map(i => i.id)).toEqual(['session-handoff:RQ-SESS-1']);
+  });
+});
+
+describe('readUnifiedInbox org outbox', () => {
+  const STORE_ID = '123e4567-e89b-42d3-a456-426614174000';
+  const role = (id: string, over: Record<string, unknown> = {}) => ({
+    id, title: `fake role ${id}`, charter: 'fake charter',
+    tier: 'WORKER_SESSION', reportsTo: 'orch', status: 'active', scope: 'engineering',
+    needs: [], laneAffinities: [],
+    budget: { tokens: 100, sessions: 2, maxCostClass: 'local' },
+    sizing: { batchDepth: 10, fanOut: 2 },
+    sessionId: null, ...over,
+  });
+  // A chart `validateChart` accepts: one active leader, one orchestrator
+  // under it, workers under the orchestrator inside its budget ceiling.
+  const agents = [
+    role('leader', { tier: 'LEADER', reportsTo: null, budget: { tokens: 1000, sessions: 10, maxCostClass: 'local' }, sizing: { batchDepth: 10, fanOut: 8 } }),
+    role('orch', { tier: 'ORCHESTRATOR', reportsTo: 'leader', budget: { tokens: 500, sessions: 5, maxCostClass: 'local' }, sizing: { batchDepth: 10, fanOut: 4 } }),
+  ];
+  const entry = (revision: number, edits: unknown[], over: Record<string, unknown> = {}) => ({
+    revision, at: `2026-11-07T10:0${revision}:00.000Z`,
+    proposal: { actor: 'leader', reason: 'fake reason', expectedRevision: revision - 1,
+      change: { kind: 'upsert', role: role(`worker-${revision}`) } },
+    applied: true, edits, busDelivered: false, ...over,
+  });
+  const plane = (ledger: unknown[], over: Record<string, unknown> = {}) => ({
+    schema: 'org.agents.v1', storeId: STORE_ID, revision: ledger.length,
+    agents, ledger, ...over,
+  });
+  /** The store `readAgentPlane` reads — `<runsDir>/org/agents.json`, private-file gated. */
+  const writePlane = (value: unknown) => {
+    const dir = join(runsDir, 'org');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'agents.json'), typeof value === 'string' ? value : JSON.stringify(value), { mode: 0o600 });
+  };
+
+  it('lists ledger edits the bus never received and keeps delivered ones out', async () => {
+    writePlane(plane([
+      // Delivered — history, not pending.
+      entry(1, [{ before: null, after: role('worker-1') }], { busDelivered: true }),
+      // Undelivered upsert — one pending org.membership event.
+      entry(2, [{ before: null, after: role('worker-2') }]),
+      // Undelivered retire edit — after null means status retired, role is the before row.
+      entry(3, [{ before: role('worker-3'), after: null }], {
+        proposal: { actor: 'leader', reason: 'fake reason', expectedRevision: 2, change: { kind: 'retire', id: 'worker-3' } },
+      }),
+    ]));
+    const inbox = await read();
+    expect(inbox.sources['org-outbox']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'org-outbox');
+    expect(items).toHaveLength(2);
+    const byId = new Map(items.map(i => [i.id, i]));
+    expect(byId.get(`org-outbox:org-${STORE_ID}-2-worker-2`)).toMatchObject({
+      kind: 'org-membership', severity: 'warn', blocking: false,
+      title: 'org role worker-2 (WORKER_SESSION active) awaits bus delivery',
+      detail: `rev 2 · proposed by leader · event org-${STORE_ID}-2-worker-2`,
+      since: '2026-11-07T10:02:00.000Z', expiresAt: null,
+      act: ['phm fleet org-sync --apply', 'phm fleet org-board'],
+    });
+    expect(byId.get(`org-outbox:org-${STORE_ID}-3-worker-3`)).toMatchObject({
+      title: 'org role worker-3 (WORKER_SESSION retired) awaits bus delivery',
+      detail: `rev 3 · proposed by leader · event org-${STORE_ID}-3-worker-3`,
+      since: '2026-11-07T10:03:00.000Z',
+    });
+    // Ledger fields are callsigns, role ids and revisions — never charters or reasons.
+    expect(JSON.stringify(items)).not.toContain('fake charter');
+    expect(JSON.stringify(items)).not.toContain('fake reason');
+  });
+
+  it('keeps one item per (revision, role) event id even if edits repeat a role', async () => {
+    writePlane(plane([
+      entry(1, [
+        { before: null, after: role('worker-1') },
+        { before: role('worker-1'), after: role('worker-1', { status: 'retired' }) },
+      ]),
+      // Same role in a later revision is a different stable event id — still pending.
+      entry(2, [{ before: role('worker-1', { status: 'retired' }), after: null }], {
+        proposal: { actor: 'leader', reason: 'fake reason', expectedRevision: 1, change: { kind: 'retire', id: 'worker-1' } },
+      }),
+    ]));
+    const inbox = await read();
+    expect(inbox.sources['org-outbox']).toEqual({ state: 'healthy', pending: 2 });
+    expect(inbox.items.filter(i => i.source === 'org-outbox').map(i => i.id).sort())
+      .toEqual([`org-outbox:org-${STORE_ID}-1-worker-1`, `org-outbox:org-${STORE_ID}-2-worker-1`]);
+  });
+
+  it('reports the store state honestly: missing, unreadable, invalid, throwing seam', async () => {
+    const missing = await read();
+    expect(missing.sources['org-outbox']).toEqual({ state: 'missing', pending: 0 });
+
+    writePlane('{not json');
+    const degraded = await read();
+    expect(degraded.sources['org-outbox']).toEqual({ state: 'unavailable', pending: null });
+    expect(degraded.items.filter(i => i.source === 'org-outbox')).toHaveLength(0);
+
+    // A chart validateChart refuses — a second leader — is unavailable, never a partial backlog.
+    writePlane(plane([entry(1, [{ before: null, after: role('worker-1') }])], {
+      agents: [...agents, role('leader2', { tier: 'LEADER', reportsTo: null })],
+    }));
+    const badChart = await read();
+    expect(badChart.sources['org-outbox']).toEqual({ state: 'unavailable', pending: null });
+
+    // A non-contiguous ledger is refused exactly like readAgentPlane refuses it.
+    writePlane(plane([entry(2, [{ before: null, after: role('worker-2') }])]));
+    const badLedger = await read();
+    expect(badLedger.sources['org-outbox']).toEqual({ state: 'unavailable', pending: null });
+
+    // An undelivered edit with neither before nor after is one envelopes() cannot
+    // form — the apply pass would crash on it, so the read reports unavailable.
+    writePlane(plane([entry(1, [{ before: null, after: null }])]));
+    const noRole = await read();
+    expect(noRole.sources['org-outbox']).toEqual({ state: 'unavailable', pending: null });
+
+    // Secret-shaped content anywhere in the store trips the same assertMetadata gate.
+    writePlane(plane([entry(1, [{ before: null, after: role('worker-1') }])], {
+      agents: agents.map(a => a.id === 'orch' ? { ...a, charter: 'token sk-ant-api03-' + 'x'.repeat(30) } : a),
+    }));
+    const secret = await read();
+    expect(secret.sources['org-outbox']).toEqual({ state: 'unavailable', pending: null });
+
+    rmSync(join(runsDir, 'org', 'agents.json'));
+    const throwing = await read({
+      readOrgOutbox: () => { throw new Error('boom'); },
+    });
+    expect(throwing.sources['org-outbox']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'org-outbox')).toHaveLength(0);
+  });
+
+  it('filters by source, kind, contains and never matches --job (no job citation)', async () => {
+    writePlane(plane([
+      entry(1, [{ before: null, after: role('worker-1') }]),
+      entry(2, [{ before: null, after: role('worker-2') }]),
+    ]));
+    const bySource = await read({ filter: { source: 'org-outbox' } });
+    expect(bySource.total).toBe(2);
+    expect(bySource.items.every(i => i.source === 'org-outbox' && i.kind === 'org-membership')).toBe(true);
+    expect(bySource.sources['org-outbox']).toEqual({ state: 'healthy', pending: 2 });
+
+    const byKind = await read({ filter: { kind: 'org-membership', source: 'org-outbox' } });
+    expect(byKind.total).toBe(2);
+
+    const byText = await read({ filter: { contains: 'worker-2' } });
+    expect(byText.items.map(i => i.id)).toEqual([`org-outbox:org-${STORE_ID}-2-worker-2`]);
+
+    // Org events name no job — a --job filter never pulls one in.
+    const byJob = await read({ filter: { job: 'RQ-ANYTHING' } });
+    expect(byJob.items.filter(i => i.source === 'org-outbox')).toHaveLength(0);
   });
 });
 
@@ -2531,6 +3189,114 @@ describe('shared task board in the unified inbox', () => {
     const task = inbox.items.find(i => i.id === 'board:task:t-bad id')!;
     expect(task.title).toBe('[REDACTED] task');
     expect(task.act).toEqual(['phm bus board pending --peer <label>']);
+  });
+});
+
+describe('coordination work board in the unified inbox', () => {
+  const boardItem = (id: string, state: WorkItemState, over: Partial<WorkBoardItem> = {}): WorkBoardItem => ({
+    id, channel: 'bus', channelRef: null,
+    receivedAt: new Date(now - 60_000).toISOString(),
+    state, asOf: new Date(now).toISOString(), source: 'bus',
+    missing: [], owner: null, claimReceipt: null,
+    ...over,
+  });
+  const boardResult = (items: WorkBoardItem[], over: Partial<WorkBoardResult> = {}): WorkBoardResult => ({
+    items, inbox: 'ok', truncated: false, claims: 'available', coordination: 'available',
+    ...over,
+  });
+  const readBoard = (result: WorkBoardResult, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readWorkBoard: () => result, ...extra });
+
+  it('lists RECEIVED, ASSIGNED and BLOCKED requests with their classification, never RUNNING or VERIFIED', async () => {
+    const inbox = await readBoard(boardResult([
+      boardItem('env-received', 'RECEIVED', { missing: ['named owner', 'durable claim receipt'] }),
+      boardItem('env-assigned', 'ASSIGNED', {
+        owner: 'agent:peer', claimReceipt: 'bus-claim:env-assigned:4:1762619940000',
+        missing: ['fresh running evidence'], channelRef: 'team/ch/123.456',
+      }),
+      boardItem('env-blocked', 'BLOCKED', {
+        owner: 'agent:peer', claimReceipt: 'bus-claim:env-blocked:2:1762619940000',
+        result: { kind: 'blocked', dependency: 'env-dep' },
+      }),
+      boardItem('env-running', 'RUNNING', { owner: 'agent:peer', claimReceipt: 'bus-claim:env-running:1:x' }),
+      boardItem('env-verified', 'VERIFIED', { result: { kind: 'verified', pr: 12, head: 'abc', tests: null, artifact: null } }),
+    ]));
+    expect(inbox.sources['work-board']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'work-board');
+    expect(items.map(i => i.id).sort()).toEqual(['work-board:env-assigned', 'work-board:env-blocked', 'work-board:env-received']);
+
+    const received = items.find(i => i.id === 'work-board:env-received')!;
+    expect(received).toMatchObject({
+      kind: 'work-board-received', severity: 'warn', blocking: false,
+      title: 'Work board · RECEIVED · env-received',
+      since: new Date(now - 60_000).toISOString(), expiresAt: null,
+      act: ['phm fleet work-board --state RECEIVED', 'phm fleet work-trace --id env-received'],
+    });
+    expect(received.detail).toContain('unclaimed request');
+    expect(received.detail).toContain('missing named owner, durable claim receipt');
+    expect(received.jobIds).toBeUndefined();
+
+    const assigned = items.find(i => i.id === 'work-board:env-assigned')!;
+    expect(assigned).toMatchObject({ kind: 'work-board-assigned', severity: 'info', blocking: false });
+    expect(assigned.detail).toContain('assigned');
+    expect(assigned.detail).toContain('agent:peer');
+    expect(assigned.detail).toContain('team/ch/123.456');
+
+    const blocked = items.find(i => i.id === 'work-board:env-blocked')!;
+    expect(blocked).toMatchObject({ kind: 'work-board-blocked', severity: 'warn', blocking: false });
+    expect(blocked.detail).toContain('blocked');
+    expect(blocked.detail).toContain('waiting on env-dep');
+  });
+
+  it('leaves envelopes the bus source already represents under bus — one pending thing, one item', async () => {
+    postWork('wb-claimable');                    // a claimable work body → bus: item → covered.envelopes
+    const feedEnv = postJob('job-feed');         // a work.post announcement → covered.posts
+    const inbox = await readBoard(boardResult([
+      boardItem('wb-claimable', 'RECEIVED', { missing: ['named owner'] }),
+      boardItem(feedEnv, 'RECEIVED', { missing: ['named owner'] }),
+      boardItem('wb-unique', 'RECEIVED', { missing: ['named owner'] }),
+    ]));
+    const wb = inbox.items.filter(i => i.source === 'work-board');
+    expect(wb.map(i => i.id)).toEqual(['work-board:wb-unique']);
+    // Both covered envelopes still surface once, under the bus source.
+    expect(inbox.items.filter(i => i.id === 'bus:wb-claimable')).toHaveLength(1);
+    expect(inbox.items.some(i => i.id === 'bus-feed:job-feed')).toBe(true);
+  });
+
+  it('reports an unreadable board scan unavailable and partial evidence degraded', async () => {
+    const unavailable = await read({ readWorkBoard: () => ({ items: [], inbox: 'unavailable', truncated: false }) });
+    expect(unavailable.sources['work-board']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'work-board')).toHaveLength(0);
+
+    const throwing = await read({ readWorkBoard: () => { throw new Error('board boom'); } });
+    expect(throwing.sources['work-board']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'work-board')).toHaveLength(0);
+
+    for (const over of [
+      { truncated: true },
+      { claims: 'unavailable' as const },
+      { coordination: 'unavailable' as const },
+    ]) {
+      const degraded = await readBoard(boardResult([boardItem('env-1', 'RECEIVED', { missing: ['named owner'] })], over));
+      expect(degraded.sources['work-board']).toEqual({ state: 'degraded', pending: 1 });
+      expect(degraded.items.filter(i => i.source === 'work-board')).toHaveLength(1);
+    }
+  });
+
+  it('narrows under --source and --kind like every other source, and never matches --job', async () => {
+    const pending = boardResult([
+      boardItem('env-received', 'RECEIVED', { missing: ['named owner', 'durable claim receipt'] }),
+      boardItem('env-blocked', 'BLOCKED', { result: { kind: 'blocked', dependency: 'env-dep' } }),
+    ]);
+    const bySource = await readBoard(pending, { filter: { source: 'work-board' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'work-board')).toBe(true);
+    const byKind = await readBoard(pending, { filter: { kind: 'work-board-received' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['work-board:env-received']);
+    expect(byKind.sources['work-board']).toEqual({ state: 'healthy', pending: 2 });
+    // A board item provably names no job — --job never matches it.
+    const byJob = await readBoard(pending, { filter: { job: 'job-1' } });
+    expect(byJob.items.filter(i => i.source === 'work-board')).toHaveLength(0);
   });
 });
 
@@ -3417,5 +4183,834 @@ describe('phm comms inbox cli', () => {
       expect(await command(args), args.join(' ')).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
     }
+  });
+});
+
+describe('readUnifiedInbox coordination', () => {
+  const coordMessage = (over: Partial<FleetMessage> = {}): FleetMessage => ({
+    id: 'm-1', from: 'agent-a', to: 'agent-b', body: 'fake coordination mail',
+    at: now - 60_000, expiresAt: now + 3_600_000, ...over,
+  });
+  const coordProposal = (over: Partial<FleetAssignment> = {}): FleetAssignment => ({
+    id: 'p-1', repo: 'ashlrai/phantom', task: 'fake assignment', to: 'agent-c',
+    at: now - 120_000, expiresAt: now + 3_600_000, executionAuthorized: false, ...over,
+  });
+  const coordReturn = (over: Partial<FleetPendingReturn> = {}): FleetPendingReturn => ({
+    id: 'claim-1', agent: 'agent-d', at: now - 180_000,
+    message: {
+      id: 'return-claim-1', from: 'agent-d', to: 'all',
+      body: 'RESULT VERIFIED ashlrai/phantom claim claim-1 task "fake": tests passed',
+      at: now - 180_000, expiresAt: now + 86_400_000,
+    },
+    ...over,
+  });
+  const coordPending = (over: Partial<FleetCoordinationPending> = {}): FleetCoordinationPending => ({
+    schema: 'fleet.coordination.v1', state: 'known', messages: [], proposals: [], returns: [], ...over,
+  });
+  const readCoord = (pending: FleetCoordinationPending, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readFleetCoordination: () => pending, ...extra });
+
+  it('lists live messages, assignments and unposted returns with their own stamps and acts', async () => {
+    const inbox = await readCoord(coordPending({
+      messages: [coordMessage(), coordMessage({ id: 'm-2', to: 'all', body: 'fake broadcast' })],
+      proposals: [coordProposal()],
+      returns: [coordReturn()],
+    }));
+    expect(inbox.sources.coordination).toEqual({ state: 'healthy', pending: 4 });
+    const items = inbox.items.filter(i => i.source === 'coordination');
+    expect(items).toHaveLength(4);
+
+    const dm = items.find(i => i.id === 'coordination:message-m-1')!;
+    expect(dm).toMatchObject({
+      kind: 'coordination-message', severity: 'info', blocking: false,
+      title: 'fake coordination mail',
+      since: new Date(now - 60_000).toISOString(),
+      expiresAt: new Date(now + 3_600_000).toISOString(),
+    });
+    expect(dm.detail).toContain('from agent-a');
+    expect(dm.detail).toContain('to agent-b');
+    expect(dm.act).toEqual(['phm fleet coordination inbox --agent agent-b --json']);
+
+    const bcast = items.find(i => i.id === 'coordination:message-m-2')!;
+    expect(bcast.title).toBe('fake broadcast');
+    expect(bcast.act).toEqual(['phm fleet coordination board --json']);
+
+    const asg = items.find(i => i.id === 'coordination:assignment-p-1')!;
+    expect(asg).toMatchObject({
+      kind: 'coordination-assignment', severity: 'info', blocking: false, title: 'fake assignment',
+      since: new Date(now - 120_000).toISOString(),
+      expiresAt: new Date(now + 3_600_000).toISOString(),
+    });
+    expect(asg.detail).toContain('advisory');
+    expect(asg.detail).toContain('ashlrai/phantom');
+    expect(asg.detail).toContain('to agent-c');
+    expect(asg.act).toEqual(['phm fleet coordination inbox --agent agent-c --json']);
+
+    const ret = items.find(i => i.id === 'coordination:return-claim-1')!;
+    expect(ret).toMatchObject({
+      kind: 'coordination-return-unposted', severity: 'warn', blocking: false,
+      title: 'Unposted coordination RESULT · claim claim-1',
+      since: new Date(now - 180_000).toISOString(),
+      expiresAt: new Date(now + 86_400_000).toISOString(),
+    });
+    expect(ret.detail).toContain('agent-d');
+    expect(ret.detail).toContain('receipt publish never landed');
+    expect(ret.detail).toContain('coordination return claim-1');
+    expect(ret.act).toEqual(['phm fleet coordination board --json']);
+  });
+
+  it('reports missing, unknown and throwing reads honestly — never an invented backlog', async () => {
+    const missing = await readCoord(coordPending({ state: 'missing' }));
+    expect(missing.sources.coordination).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'coordination')).toHaveLength(0);
+
+    const unknown = await readCoord(coordPending({ state: 'unknown' }));
+    expect(unknown.sources.coordination).toEqual({ state: 'unavailable', pending: null });
+    expect(unknown.items.filter(i => i.source === 'coordination')).toHaveLength(0);
+
+    const throwing = await read({
+      readFleetCoordination: () => { throw new Error('ledger boom'); },
+    });
+    expect(throwing.sources.coordination).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    const pending = coordPending({ messages: [coordMessage()], returns: [coordReturn()] });
+    const bySource = await readCoord(pending, { filter: { source: 'coordination' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'coordination')).toBe(true);
+    const byKind = await readCoord(pending, { filter: { kind: 'coordination-return-unposted' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['coordination:return-claim-1']);
+    expect(byKind.sources.coordination).toEqual({ state: 'healthy', pending: 2 });
+  });
+});
+
+describe('readUnifiedInbox claim drift', () => {
+  const driftRow = (over: Partial<ClaimDriftRow> = {}): ClaimDriftRow => ({
+    id: 'env-1', cursor: 7,
+    receivedAt: new Date(now - 60_000).toISOString(),
+    owner: 'agent:peer', leaseUntil: new Date(now + 600_000).toISOString(),
+    ...over,
+  });
+  const drift = (over: Partial<ClaimStoreDrift> = {}): ClaimStoreDrift => ({
+    schema: 'fleet.claim-drift.v1', asOf: new Date(now).toISOString(),
+    bus: 'available', coordination: 'available', matched: 3,
+    busOnly: [], coordOnly: [], ownerMismatch: [], state: 'VERIFIED', missing: [],
+    ...over,
+  });
+  const readDrift = (d: ClaimStoreDrift, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readClaimDrift: () => d, ...extra });
+
+  it('lists each drift row class as a warn with its own kind, stamps and acts', async () => {
+    const inbox = await readDrift(drift({
+      state: 'DRIFT',
+      busOnly: [driftRow({ id: 'env-bus', cursor: 3, owner: 'agent:bus-owner' })],
+      coordOnly: [driftRow({
+        id: 'env-coord', cursor: 9, owner: 'agent:coord-owner',
+        sourceId: 'env-coord:9:1762619940000',
+      })],
+      ownerMismatch: [driftRow({
+        id: 'env-owner', cursor: 5, owner: 'agent:bus-side',
+        busOwner: 'agent:bus-side', coordOwner: 'agent:coord-side',
+      })],
+    }));
+    expect(inbox.sources['claim-drift']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'claim-drift');
+    expect(items).toHaveLength(3);
+
+    const busOnly = items.find(i => i.id.startsWith('claim-drift:bus:env-bus:3:'))!;
+    expect(busOnly).toMatchObject({
+      kind: 'claim-drift-bus', severity: 'warn', blocking: false,
+      title: 'Claim drift · bus-only lease on env-bus',
+      since: new Date(now - 60_000).toISOString(),
+      expiresAt: new Date(now + 600_000).toISOString(),
+    });
+    expect(busOnly.id).toContain('env-bus:3:');
+    expect(busOnly.detail).toContain('bus claims table');
+    expect(busOnly.detail).toContain('agent:bus-owner');
+    expect(busOnly.detail).toContain('cursor 3');
+    expect(busOnly.act).toEqual(['phm fleet claim-drift --json', 'phm agents bus show env-bus']);
+    expect(busOnly.jobIds).toBeUndefined();
+
+    const coordOnly = items.find(i => i.id.startsWith('claim-drift:coord:env-coord:9:'))!;
+    expect(coordOnly).toMatchObject({
+      kind: 'claim-drift-coordination', severity: 'warn', blocking: false,
+      title: 'Claim drift · coordination-only lease on env-coord',
+      since: new Date(now - 60_000).toISOString(),
+      expiresAt: new Date(now + 600_000).toISOString(),
+    });
+    expect(coordOnly.detail).toContain('queue:env-coord');
+    expect(coordOnly.detail).toContain('agent:coord-owner');
+    expect(coordOnly.act).toEqual(['phm fleet claim-drift --json', 'phm agents bus claim list --key queue:env-coord']);
+
+    const mismatch = items.find(i => i.id.startsWith('claim-drift:owner:env-owner:5:'))!;
+    expect(mismatch).toMatchObject({
+      kind: 'claim-drift-owner', severity: 'warn', blocking: false,
+      title: 'Claim drift · owner mismatch on env-owner',
+    });
+    expect(mismatch.detail).toContain('agent:bus-side');
+    expect(mismatch.detail).toContain('agent:coord-side');
+    expect(mismatch.act).toEqual([
+      'phm fleet claim-drift --json',
+      'phm agents bus show env-owner',
+      'phm agents bus claim list --key queue:env-owner',
+    ]);
+  });
+
+  it('reports VERIFIED healthy-empty, both-stores-missing as missing, and UNKNOWN or a throwing read as unavailable', async () => {
+    const verified = await readDrift(drift());
+    expect(verified.sources['claim-drift']).toEqual({ state: 'healthy', pending: 0 });
+    expect(verified.items.filter(i => i.source === 'claim-drift')).toHaveLength(0);
+
+    const absent = await readDrift(drift({ bus: 'missing', coordination: 'missing' }));
+    expect(absent.sources['claim-drift']).toEqual({ state: 'missing', pending: 0 });
+
+    // One store still present keeps VERIFIED healthy — an absent side is an
+    // empty claim set, not a missing source.
+    const half = await readDrift(drift({ bus: 'missing' }));
+    expect(half.sources['claim-drift']).toEqual({ state: 'healthy', pending: 0 });
+
+    const unknown = await readDrift(drift({
+      state: 'UNKNOWN', bus: 'unavailable', missing: ['bus'],
+      busOnly: [driftRow()], // a seam that still returns rows under UNKNOWN never lists them
+    }));
+    expect(unknown.sources['claim-drift']).toEqual({ state: 'unavailable', pending: null });
+    expect(unknown.items.filter(i => i.source === 'claim-drift')).toHaveLength(0);
+
+    const throwing = await read({
+      readClaimDrift: () => { throw new Error('drift boom'); },
+    });
+    expect(throwing.sources['claim-drift']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'claim-drift')).toHaveLength(0);
+  });
+
+  it('maps an unparseable coord receipt stamp to a null since — unknown stays unknown', async () => {
+    const inbox = await readDrift(drift({
+      state: 'DRIFT',
+      coordOnly: [driftRow({
+        id: 'env-old', cursor: 0, receivedAt: '1970-01-01T00:00:00.000Z',
+        sourceId: 'env-old:garbage',
+      })],
+    }));
+    const item = inbox.items.find(i => i.source === 'claim-drift')!;
+    expect(item.since).toBeNull();
+    expect(item.expiresAt).toBe(new Date(now + 600_000).toISOString());
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    const pending = drift({
+      state: 'DRIFT',
+      busOnly: [driftRow({ id: 'env-bus' })],
+      ownerMismatch: [driftRow({ id: 'env-owner', busOwner: 'a', coordOwner: 'b' })],
+    });
+    const bySource = await readDrift(pending, { filter: { source: 'claim-drift' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'claim-drift')).toBe(true);
+    const byKind = await readDrift(pending, { filter: { kind: 'claim-drift-owner' } });
+    expect(byKind.items.map(i => i.id)).toEqual([`claim-drift:owner:env-owner:7:${new Date(now - 60_000).toISOString()}`]);
+    expect(byKind.sources['claim-drift']).toEqual({ state: 'healthy', pending: 2 });
+    // A drift row provably names no job — --job never matches it.
+    const byJob = await readDrift(pending, { filter: { job: 'job-1' } });
+    expect(byJob.items.filter(i => i.source === 'claim-drift')).toHaveLength(0);
+  });
+});
+
+describe('readUnifiedInbox leader replies', () => {
+  const HASH_A = 'a'.repeat(64);
+  const HASH_B = 'b'.repeat(64);
+  const replyPending = (over: Partial<LeaderReplyPending> = {}): LeaderReplyPending => ({
+    hash: HASH_A, state: 'failed',
+    since: new Date(now - 30 * 60_000).toISOString(),
+    lastAt: new Date(now - 10 * 60_000).toISOString(),
+    failedAttempts: 2, claimedAt: null,
+    reply: null,
+    ...over,
+  });
+  const repliesLedger = (over: Partial<LeaderRepliesLedgerRead> = {}): LeaderRepliesLedgerRead => ({
+    state: 'healthy', items: [], ...over,
+  });
+  const readReplies = (r: LeaderRepliesLedgerRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readLeaderReplies: async () => r, ...extra });
+
+  it('lists failed and orphaned replies as warns with their own kinds, stamps and acts', async () => {
+    const inbox = await readReplies(repliesLedger({
+      items: [
+        replyPending({
+          hash: HASH_A, state: 'failed', failedAttempts: 3,
+          reply: { at: '2026-11-07 09:30', text: 'the deploy is green' },
+        }),
+        replyPending({
+          hash: HASH_B, state: 'orphaned', failedAttempts: 0,
+          claimedAt: new Date(now - 3 * 3_600_000).toISOString(),
+          since: new Date(now - 3 * 3_600_000).toISOString(),
+          reply: { at: '2026-11-07T09:00:00.000Z', text: 'standup moved to 9' },
+        }),
+      ],
+    }));
+    expect(inbox.sources['leader-replies']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'leader-replies');
+    expect(items).toHaveLength(2);
+
+    const failed = items.find(i => i.id === `leader-replies:${HASH_A}`)!;
+    expect(failed).toMatchObject({
+      kind: 'leader-reply-failed', severity: 'warn', blocking: false,
+      title: 'iMessage leader reply failed',
+      since: new Date(now - 30 * 60_000).toISOString(),
+      expiresAt: null,
+    });
+    expect(failed.detail).toContain('"the deploy is green"');
+    expect(failed.detail).toContain('outbox 2026-11-07 09:30');
+    expect(failed.detail).toContain('failed after 3 recorded send attempts');
+    expect(failed.act).toEqual(['phm imessage replies --json', 'phm leader replies --json']);
+    expect(failed.jobIds).toBeUndefined();
+
+    const orphaned = items.find(i => i.id === `leader-replies:${HASH_B}`)!;
+    expect(orphaned).toMatchObject({
+      kind: 'leader-reply-orphaned', severity: 'warn', blocking: false,
+      title: 'iMessage leader reply unconfirmed',
+      since: new Date(now - 3 * 3_600_000).toISOString(),
+    });
+    expect(orphaned.detail).toContain('"standup moved to 9"');
+    expect(orphaned.detail).toContain('no outcome ever recorded');
+    expect(orphaned.detail).toContain('no pass retries it');
+    expect(orphaned.act).toEqual([
+      'phm imessage replies --json',
+      'phm leader replies --json',
+      'phm comms send-owner --text "<same reply text>"',
+    ]);
+  });
+
+  it('says honestly when the reply text is not in the current outbox read', async () => {
+    const inbox = await readReplies(repliesLedger({
+      items: [replyPending({ hash: HASH_A, state: 'failed', failedAttempts: 1, reply: null })],
+    }));
+    const item = inbox.items.find(i => i.source === 'leader-replies')!;
+    expect(item.detail).toContain('reply text unresolved');
+    expect(item.detail).toContain('not in the current outbox read');
+    expect(item.detail).toContain('failed after 1 recorded send attempt');
+    expect(item.detail).toContain('awaiting the next live replies pass');
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readReplies(repliesLedger({ state: 'missing' }));
+    expect(missing.sources['leader-replies']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'leader-replies')).toHaveLength(0);
+
+    const unavailable = await readReplies(repliesLedger({
+      state: 'unavailable', items: [replyPending()],
+    }));
+    expect(unavailable.sources['leader-replies']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'leader-replies')).toHaveLength(0);
+
+    const degraded = await readReplies(repliesLedger({
+      state: 'degraded', items: [replyPending()],
+    }));
+    expect(degraded.sources['leader-replies']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'leader-replies')).toHaveLength(1);
+
+    const throwing = await read({
+      readLeaderReplies: () => { throw new Error('ledger boom'); },
+    });
+    expect(throwing.sources['leader-replies']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'leader-replies')).toHaveLength(0);
+  });
+
+  it('reads the real ledger and resolves reply text through the outbox journals', async () => {
+    const imessageDir = join(runsDir, 'imessage');
+    mkdirSync(imessageDir, { recursive: true, mode: 0o700 });
+    const hFail = replyTextHash('the deploy is green');
+    const hOrph = replyTextHash('standup moved to 9');
+    const hFresh = replyTextHash('fresh reply');
+    const hSent = replyTextHash('already sent');
+    const rows = [
+      { at: '2026-11-07T10:00:00.000Z', hash: 'start', status: 'baseline' },
+      { at: '2026-11-07T10:00:00.000Z', hash: hFail, status: 'pending' },
+      { at: '2026-11-07T10:05:00.000Z', hash: hFail, status: 'failed' },
+      { at: '2026-11-07T11:00:00.000Z', hash: hFail, status: 'failed' },
+      { at: '2026-11-07T09:00:00.000Z', hash: hOrph, status: 'pending' },
+      { at: '2026-11-07T11:59:00.000Z', hash: hFresh, status: 'pending' },
+      { at: '2026-11-07T10:00:00.000Z', hash: hSent, status: 'pending' },
+      { at: '2026-11-07T10:01:00.000Z', hash: hSent, status: 'sent' },
+      // A torn line is skipped, never guessed.
+      '{"at":"not-a-date","hash":"' + hFail + '","status":"failed"}',
+    ];
+    writeFileSync(join(imessageDir, 'leader-sent.jsonl'), rows.map(r => typeof r === 'string' ? r : JSON.stringify(r)).join('\n') + '\n', { mode: 0o600 });
+    mkdirSync(join(runsDir, 'leader'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(runsDir, 'leader', 'MASON-OUTBOX.md'), '## 2026-11-07T09:30:00Z\nstandup moved to 9\n', { mode: 0o600 });
+
+    const inbox = await read();
+    expect(inbox.sources['leader-replies']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'leader-replies');
+    expect(items).toHaveLength(2);
+
+    const orphaned = items.find(i => i.id === `leader-replies:${hOrph}`)!;
+    expect(orphaned).toMatchObject({
+      kind: 'leader-reply-orphaned', severity: 'warn', blocking: false,
+      since: '2026-11-07T09:00:00.000Z',
+    });
+    expect(orphaned.detail).toContain('"standup moved to 9"');
+    expect(orphaned.detail).toContain('outbox 2026-11-07T09:30:00Z');
+
+    const failed = items.find(i => i.id === `leader-replies:${hFail}`)!;
+    expect(failed).toMatchObject({
+      kind: 'leader-reply-failed', severity: 'warn', blocking: false,
+      since: '2026-11-07T10:00:00.000Z',
+    });
+    expect(failed.detail).toContain('reply text not in the current outbox read');
+    expect(failed.detail).toContain('failed after 2 recorded send attempts');
+  });
+
+  it('reports a missing ledger as missing and an unreadable one as unavailable', async () => {
+    const missing = await read();
+    expect(missing.sources['leader-replies']).toEqual({ state: 'missing', pending: 0 });
+
+    const imessageDir = join(runsDir, 'imessage');
+    mkdirSync(imessageDir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(imessageDir, 'leader-sent.jsonl'), 'not json at all\n', { mode: 0o600 });
+    chmodSync(join(imessageDir, 'leader-sent.jsonl'), 0o600);
+    const garbage = await read();
+    // On-contract rows: none — a readable ledger with no valid rows is healthy-empty.
+    expect(garbage.sources['leader-replies']).toEqual({ state: 'healthy', pending: 0 });
+
+    rmSync(join(imessageDir, 'leader-sent.jsonl'));
+    mkdirSync(join(imessageDir, 'leader-sent.jsonl'), { recursive: true });
+    const unavailable = await read();
+    expect(unavailable.sources['leader-replies']).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    const pending = repliesLedger({
+      items: [
+        replyPending({ hash: HASH_A, state: 'failed' }),
+        replyPending({ hash: HASH_B, state: 'orphaned', claimedAt: new Date(now - 3_600_000).toISOString() }),
+      ],
+    });
+    const bySource = await readReplies(pending, { filter: { source: 'leader-replies' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'leader-replies')).toBe(true);
+    const byKind = await readReplies(pending, { filter: { kind: 'leader-reply-orphaned' } });
+    expect(byKind.items.map(i => i.id)).toEqual([`leader-replies:${HASH_B}`]);
+    expect(byKind.sources['leader-replies']).toEqual({ state: 'healthy', pending: 2 });
+    // A send-ledger row provably names no job — --job never matches it.
+    const byJob = await readReplies(pending, { filter: { job: 'job-1' } });
+    expect(byJob.items.filter(i => i.source === 'leader-replies')).toHaveLength(0);
+  });
+});
+
+describe('readUnifiedInbox send gate', () => {
+  // Verdict shapes arrive through the option seams so this suite stays out of
+  // the sandbox-policy owner lane.
+  type KillRead = ReturnType<NonNullable<UnifiedInboxOptions['readKillSwitch']>>;
+  type PauseRead = ReturnType<NonNullable<UnifiedInboxOptions['probePause']>>;
+  const killInactive = { state: 'inactive', sourceState: 'healthy', reason: 'missing', path: '/k' } as const;
+  const killActive = { state: 'active', sourceState: 'healthy', reason: 'present', path: '/k' } as const;
+  const killUnknown = { state: 'unknown', sourceState: 'degraded', reason: 'uninspectable', path: '/k', errorCode: null } as const;
+  const pauseClear = { state: 'clear', since: null, reason: null } as const;
+  const pauseSet = (since: number | null) => ({ state: 'paused', since, reason: null }) as const;
+  const pauseUnknown = { state: 'unknown', since: null, reason: 'is not valid JSON' } as const;
+  const readGate = (kill: KillRead, pause: PauseRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readKillSwitch: () => kill, probePause: () => pause, ...extra });
+
+  it('reports a verified-open gate healthy with a real zero under the default reads', async () => {
+    const inbox = await read();
+    expect(inbox.sources['send-gate']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'send-gate')).toHaveLength(0);
+  });
+
+  it('lists an engaged kill switch as a high item with its release act', async () => {
+    const inbox = await readGate(killActive, pauseClear);
+    expect(inbox.sources['send-gate']).toEqual({ state: 'healthy', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'send-gate:kill')!;
+    expect(item).toMatchObject({
+      source: 'send-gate', kind: 'send-gate-kill', severity: 'high', blocking: false,
+      title: 'Kill switch engaged — bus writes held',
+      since: null, expiresAt: null,
+    });
+    expect(item.detail).toContain('claims, sends and every local bus write refuse');
+    expect(item.act).toEqual(['phm fleet resume', 'phm agents bus status --json', 'phm fleet status']);
+    expect(item.jobIds).toBeUndefined();
+  });
+
+  it('lists a set pause flag as a high item carrying its recorded start', async () => {
+    const pauseSince = now - 3_600_000;
+    const inbox = await readGate(killInactive, pauseSet(pauseSince));
+    expect(inbox.sources['send-gate']).toEqual({ state: 'healthy', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'send-gate:pause')!;
+    expect(item).toMatchObject({
+      source: 'send-gate', kind: 'send-gate-pause', severity: 'high', blocking: false,
+      title: 'Comms pause set — bus writes held',
+      since: new Date(pauseSince).toISOString(), expiresAt: null,
+    });
+    expect(item.detail).toContain(`since ${new Date(pauseSince).toISOString()}`);
+    expect(item.act).toEqual(['phm agents bus status --json', 'phm fleet status']);
+  });
+
+  it('keeps a paused flag without a recorded start honestly undated', async () => {
+    const inbox = await readGate(killInactive, pauseSet(null));
+    const item = inbox.items.find(i => i.id === 'send-gate:pause')!;
+    expect(item.since).toBeNull();
+    expect(item.detail).not.toContain('since ');
+  });
+
+  it('lists both engaged gates as two items', async () => {
+    const inbox = await readGate(killActive, pauseSet(now - 60_000));
+    expect(inbox.sources['send-gate']).toEqual({ state: 'healthy', pending: 2 });
+    expect(inbox.items.filter(i => i.source === 'send-gate').map(i => i.id).sort())
+      .toEqual(['send-gate:kill', 'send-gate:pause']);
+  });
+
+  it('reports an uninspectable gate warn at degraded — fail-closed, never called a decision', async () => {
+    const inbox = await readGate(killUnknown, pauseUnknown);
+    expect(inbox.sources['send-gate']).toEqual({ state: 'degraded', pending: 2 });
+    const kill = inbox.items.find(i => i.id === 'send-gate:kill')!;
+    expect(kill).toMatchObject({ kind: 'send-gate-kill', severity: 'warn' });
+    expect(kill.title).toBe('Kill switch state unknown — writes refused');
+    expect(kill.detail).toContain('uninspectable');
+    expect(kill.act).toEqual(['phm agents bus status --json', 'phm fleet status']);
+    const pause = inbox.items.find(i => i.id === 'send-gate:pause')!;
+    expect(pause).toMatchObject({ kind: 'send-gate-pause', severity: 'warn', since: null });
+    expect(pause.title).toBe('Comms pause state unknown — writes refused');
+    expect(pause.detail).toContain('is not valid JSON');
+  });
+
+  it('keeps the surviving verdict when one probe throws', async () => {
+    const inbox = await read({
+      readKillSwitch: () => { throw new Error('kill boom'); },
+      probePause: () => pauseSet(now - 60_000),
+    });
+    // The throw synthesizes the same unknown verdict the fail-closed send
+    // path applies; the pause verdict still lists on its own.
+    expect(inbox.sources['send-gate']).toEqual({ state: 'degraded', pending: 2 });
+    expect(inbox.items.find(i => i.id === 'send-gate:kill')).toMatchObject({ severity: 'warn' });
+    expect(inbox.items.find(i => i.id === 'send-gate:pause')).toMatchObject({ severity: 'high' });
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    const pending = { kill: killActive, pause: pauseSet(now - 60_000) };
+    const bySource = await readGate(pending.kill, pending.pause, { filter: { source: 'send-gate' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'send-gate')).toBe(true);
+    const byKind = await readGate(pending.kill, pending.pause, { filter: { kind: 'send-gate-kill' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['send-gate:kill']);
+    expect(byKind.sources['send-gate']).toEqual({ state: 'healthy', pending: 2 });
+    // A gate verdict names no job — --job never matches it.
+    const byJob = await readGate(pending.kill, pending.pause, { filter: { job: 'job-1' } });
+    expect(byJob.items.filter(i => i.source === 'send-gate')).toHaveLength(0);
+  });
+});
+
+describe('readUnifiedInbox router queue', () => {
+  const queueRead = (over: Partial<RouterQueueStuckRead> = {}): RouterQueueStuckRead => ({
+    state: 'healthy', jobs: [], ...over,
+  });
+  const readQueue = (q: RouterQueueStuckRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readRouterQueue: async () => q, ...extra });
+  /** dispatch-events.log stamps are local wall time; build them from `now` so the read is TZ-proof. */
+  const localStamp = (ms: number): string => {
+    const d = new Date(ms);
+    const p = (n: number): string => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  };
+  const writeQueue = (lines: string[]): void => {
+    const dir = join(runsDir, 'queue');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'router-queue.md'), `${lines.join('\n')}\n`, { mode: 0o600 });
+  };
+
+  it('lists each unlaunched READY job as a warn naming its id, wait and acts', async () => {
+    const inbox = await readQueue(queueRead({ jobs: [
+      { id: 'RQ-ALPHA', age_s: 7_200 },
+      { id: 'RQ-BETA', age: 'unknown' },
+    ] }));
+    expect(inbox.sources['router-queue']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'router-queue');
+    expect(items).toHaveLength(2);
+
+    const alpha = items.find(i => i.id === 'router-queue:RQ-ALPHA')!;
+    expect(alpha).toMatchObject({
+      kind: 'router-queue-job', severity: 'warn', blocking: false,
+      title: 'Router job RQ-ALPHA has no recorded launch',
+      since: new Date(now - 7_200_000).toISOString(), expiresAt: null,
+      jobIds: ['RQ-ALPHA'],
+    });
+    expect(alpha.detail).toContain('READY in queue/router-queue.md');
+    expect(alpha.detail).toContain('waiting 2h');
+    expect(alpha.act).toEqual(['phm queue stuck', 'phm fleet unfed --json', 'phm queue']);
+
+    // Neither an enqueue epoch nor a dispatch event — the wait stays unknown.
+    const beta = items.find(i => i.id === 'router-queue:RQ-BETA')!;
+    expect(beta.since).toBeNull();
+    expect(beta.detail).toContain('wait age unknown');
+    expect(beta.jobIds).toEqual(['RQ-BETA']);
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readQueue(queueRead({ state: 'missing', jobs: [{ id: 'RQ-X', age_s: 1 }] }));
+    expect(missing.sources['router-queue']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'router-queue')).toHaveLength(0);
+
+    const unavailable = await readQueue(queueRead({ state: 'unavailable', jobs: [{ id: 'RQ-X', age_s: 1 }] }));
+    expect(unavailable.sources['router-queue']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'router-queue')).toHaveLength(0);
+
+    const throwing = await read({ readRouterQueue: async () => { throw new Error('queue boom'); } });
+    expect(throwing.sources['router-queue']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'router-queue')).toHaveLength(0);
+  });
+
+  it('lists every READY row degraded when launch evidence is unavailable, saying so in the detail', async () => {
+    const inbox = await readQueue(queueRead({ state: 'degraded', jobs: [{ id: 'RQ-ALPHA', age_s: 600 }] }));
+    expect(inbox.sources['router-queue']).toEqual({ state: 'degraded', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'router-queue:RQ-ALPHA')!;
+    expect(item.detail).toContain('waiting 10m');
+    expect(item.detail).toContain('launch evidence unavailable');
+  });
+
+  it('reads the real queue file and events log under runsDir', async () => {
+    writeQueue([
+      `- READY RQ-ALPHA enq=${Math.floor((now - 7_200_000) / 1000)}`,
+      '- READY RQ-BETA',
+      `- READY RQ-GAMMA enq=${Math.floor((now - 600_000) / 1000)}`,
+      `- DONE RQ-OLD enq=${Math.floor((now - 7_200_000) / 1000)}`,
+    ]);
+    writeFileSync(join(runsDir, 'dispatch-events.log'),
+      `${localStamp(now - 300_000)} LAUNCH RQ-GAMMA\n${localStamp(now - 7_300_000)} NOTE RQ-BETA picked up\n`,
+      { mode: 0o600 });
+    const inbox = await read();
+    expect(inbox.sources['router-queue']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'router-queue');
+    expect(items.map(i => i.id).sort()).toEqual(['router-queue:RQ-ALPHA', 'router-queue:RQ-BETA']);
+    expect(items.find(i => i.id === 'router-queue:RQ-ALPHA')!.since).toBe(new Date(now - 7_200_000).toISOString());
+    // No enq= on the row: the first dispatch-event mention is the wait's start.
+    expect(items.find(i => i.id === 'router-queue:RQ-BETA')!.since).toBe(new Date(now - 7_300_000).toISOString());
+  });
+
+  it('degrades when the events log is missing but still lists READY rows, and reports a missing queue file as missing', async () => {
+    writeQueue([`- READY RQ-ALPHA enq=${Math.floor((now - 600_000) / 1000)}`]);
+    const degraded = await read();
+    expect(degraded.sources['router-queue']).toEqual({ state: 'degraded', pending: 1 });
+    const item = degraded.items.find(i => i.source === 'router-queue')!;
+    expect(item.detail).toContain('launch evidence unavailable');
+
+    rmSync(join(runsDir, 'queue', 'router-queue.md'));
+    const missing = await read();
+    expect(missing.sources['router-queue']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'router-queue')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = queueRead({ jobs: [{ id: 'RQ-ALPHA', age_s: 600 }, { id: 'RQ-BETA', age_s: 60 }] });
+    const bySource = await readQueue(pending, { filter: { source: 'router-queue' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'router-queue')).toBe(true);
+    const byKind = await readQueue(pending, { filter: { kind: 'router-queue-job' } });
+    expect(byKind.items.map(i => i.id).sort()).toEqual(['router-queue:RQ-ALPHA', 'router-queue:RQ-BETA']);
+    expect(byKind.sources['router-queue']).toEqual({ state: 'healthy', pending: 2 });
+    // The READY id is the item's own citation — --job names it directly.
+    const byJob = await readQueue(pending, { filter: { job: 'RQ-ALPHA' } });
+    expect(byJob.items.filter(i => i.source === 'router-queue').map(i => i.id)).toEqual(['router-queue:RQ-ALPHA']);
+  });
+});
+
+describe('readUnifiedInbox channel health', () => {
+  const bridge = (channel: 'slack' | 'imessage', over: Partial<ChannelHealth> = {}): ChannelHealth => ({
+    channel, configured: true, processAlive: true, runtimeHost: 'test-host',
+    lastInboundAt: null, lastReplyAt: null, unansweredCount: 0,
+    proof: { requestCoverage: 'idle', futureDatedCount: 0 },
+    state: 'LIVE', missing: [], asOf: new Date(now).toISOString(),
+    ...over,
+  });
+  const bridges = (slack: ChannelHealth, imessage: ChannelHealth = bridge('imessage')): ChannelHealthReport => ({
+    schemaVersion: 1, asOf: new Date(now).toISOString(), channels: [slack, imessage],
+  });
+  const liveBridges = () => bridges(bridge('slack'), bridge('imessage'));
+  const telegramCfg = { comms: { channel: 'telegram', enabled: true, telegram: { botToken: 'x', chatId: '12345' } } } as AshlrConfig;
+  // `now` is only assigned in beforeEach — build poll fixtures lazily.
+  const pollOk = () => ({
+    lastPoll: new Date(now - 60_000).toISOString(), lastSuccess: new Date(now - 120_000).toISOString(),
+    error: null, pollerAlive: true, lastUpdateId: 41, tokenPresent: true, leaderTick: 'completed' as const,
+  });
+  const readHealth = (report: ChannelHealthReport | (() => Promise<ChannelHealthReport>), extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({
+      readChannelHealth: typeof report === 'function' ? report : async () => report,
+      readChannelConfig: () => ({}) as AshlrConfig,
+      ...extra,
+    });
+
+  it('reports healthy with a real zero under the default reads — unconfigured channels are setup state, not pending work', async () => {
+    const inbox = await read();
+    expect(inbox.sources['channel-health']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'channel-health')).toHaveLength(0);
+  });
+
+  it('never lists LIVE bridges or BLOCKED-unconfigured (not-set-up) channels', async () => {
+    const inbox = await readHealth(bridges(
+      bridge('slack', { state: 'BLOCKED', configured: false, processAlive: false, missing: ['slack agent-network config not configured'] }),
+      bridge('imessage', { state: 'BLOCKED', configured: false, processAlive: 'unknown', missing: ['imessage comms configuration not configured'] }),
+    ));
+    expect(inbox.sources['channel-health']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'channel-health')).toHaveLength(0);
+  });
+
+  it('lists a configured bridge whose process is gone as a high channel-blocked item', async () => {
+    const inbox = await readHealth(bridges(
+      bridge('slack', { state: 'BLOCKED', processAlive: false, missing: ['slack bridge process not running'] }),
+    ));
+    expect(inbox.sources['channel-health']).toEqual({ state: 'healthy', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'channel-health:slack')!;
+    expect(item).toMatchObject({
+      source: 'channel-health', kind: 'channel-blocked', severity: 'high', blocking: false,
+      title: 'Slack channel blocked', since: null, expiresAt: null,
+      act: ['phm fleet channel-health', 'phm channels slack status', 'phm channels'],
+    });
+    expect(item.detail).toContain('slack bridge process not running');
+    expect(item.jobIds).toBeUndefined();
+  });
+
+  it('lists a degraded bridge as warn, carrying its reasons and the unanswered count', async () => {
+    const inbox = await readHealth(bridges(
+      bridge('imessage', {
+        state: 'DEGRADED', unansweredCount: 2,
+        missing: ['imessage reply correlation unavailable', 'imessage outbound send failed'],
+      }),
+    ));
+    const item = inbox.items.find(i => i.id === 'channel-health:imessage')!;
+    expect(item).toMatchObject({
+      kind: 'channel-degraded', severity: 'warn', title: 'iMessage channel degraded',
+      act: ['phm fleet channel-health', 'phm imessage doctor', 'phm channels'],
+    });
+    expect(item.detail).toContain('imessage reply correlation unavailable');
+    expect(item.detail).toContain('imessage outbound send failed');
+    expect(item.detail).toContain('2 inbound requests unanswered');
+  });
+
+  it('says why a degraded bridge degraded when the reason list is empty', async () => {
+    const inbox = await readHealth(bridges(
+      bridge('slack', { state: 'DEGRADED', unansweredCount: 1, missing: [] }),
+    ));
+    const item = inbox.items.find(i => i.id === 'channel-health:slack')!;
+    expect(item.detail).toBe('1 inbound request unanswered past the reply grace');
+  });
+
+  it('lists an UNKNOWN bridge — including unreadable config — as warn, never as verified-empty', async () => {
+    const inbox = await readHealth(bridges(
+      bridge('slack', { state: 'UNKNOWN', configured: false, processAlive: 'unknown', missing: ['slack configuration unreadable'] }),
+      bridge('imessage', { state: 'UNKNOWN', missing: ['imessage receipt source unreadable'] }),
+    ));
+    expect(inbox.sources['channel-health']).toEqual({ state: 'healthy', pending: 2 });
+    const slack = inbox.items.find(i => i.id === 'channel-health:slack')!;
+    expect(slack).toMatchObject({ kind: 'channel-unknown', severity: 'warn', title: 'Slack channel state unknown' });
+    expect(slack.detail).toContain('slack configuration unreadable');
+    expect(inbox.items.find(i => i.id === 'channel-health:imessage')).toMatchObject({ kind: 'channel-unknown', severity: 'warn' });
+  });
+
+  it('lists a stale telegram poller as one degraded item naming each failed check', async () => {
+    const inbox = await read({
+      readChannelHealth: async () => liveBridges(),
+      readChannelConfig: () => telegramCfg,
+      readTelegramPoll: () => ({
+        ...pollOk(), pollerAlive: false, error: 'poll failed; inspect value-free poll log',
+        lastPoll: new Date(now - 30 * 60_000).toISOString(),
+      }),
+    });
+    expect(inbox.sources['channel-health']).toEqual({ state: 'healthy', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'channel-health:telegram')!;
+    expect(item).toMatchObject({
+      kind: 'channel-degraded', severity: 'warn', title: 'Telegram channel degraded',
+      since: null, expiresAt: null,
+      act: ['phm comms health --json', 'phm comms cycle', 'phm channels'],
+    });
+    expect(item.detail).toContain('last recorded poll failed');
+    expect(item.detail).toContain('no poll within the last 7 minutes');
+    expect(item.detail).toContain(new Date(now - 30 * 60_000).toISOString());
+  });
+
+  it('keeps a never-polled telegram honest: no recorded start, no invented since', async () => {
+    const inbox = await read({
+      readChannelHealth: async () => liveBridges(),
+      readChannelConfig: () => telegramCfg,
+      readTelegramPoll: () => ({ ...pollOk(), lastPoll: null, lastSuccess: null, pollerAlive: false }),
+    });
+    const item = inbox.items.find(i => i.id === 'channel-health:telegram')!;
+    expect(item.since).toBeNull();
+    expect(item.detail).toContain('no poll recorded — the comms cycle has never run');
+    expect(item.detail).toContain('no successful poll recorded');
+    expect(item.detail).not.toContain('last recorded poll failed');
+  });
+
+  it('lists nothing for telegram when the channel is not enabled, and never consults the poll read', async () => {
+    const poll = vi.fn(() => pollOk());
+    const inbox = await read({
+      readChannelHealth: async () => liveBridges(),
+      readChannelConfig: () => ({}) as AshlrConfig,
+      readTelegramPoll: poll,
+    });
+    expect(inbox.sources['channel-health']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'channel-health')).toHaveLength(0);
+    expect(poll).not.toHaveBeenCalled();
+  });
+
+  it('reports an unreadable main config as a degraded source with a telegram channel-unknown item', async () => {
+    const inbox = await read({
+      readChannelHealth: async () => liveBridges(),
+      readChannelConfig: () => { throw new Error('config boom'); },
+    });
+    expect(inbox.sources['channel-health']).toEqual({ state: 'degraded', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'channel-health:telegram')!;
+    expect(item).toMatchObject({ kind: 'channel-unknown', severity: 'warn', title: 'Telegram channel state unknown' });
+    expect(item.detail).toContain('config could not be read');
+  });
+
+  it('reports a throwing poll read as channel-unknown and a throwing bridge read as degraded-or-unavailable', async () => {
+    const pollThrow = await read({
+      readChannelHealth: async () => liveBridges(),
+      readChannelConfig: () => telegramCfg,
+      readTelegramPoll: () => { throw new Error('poll boom'); },
+    });
+    expect(pollThrow.sources['channel-health']).toEqual({ state: 'degraded', pending: 1 });
+    expect(pollThrow.items.find(i => i.id === 'channel-health:telegram')).toMatchObject({ kind: 'channel-unknown', severity: 'warn' });
+
+    const bridgesOnly = await read({
+      readChannelHealth: async () => { throw new Error('health boom'); },
+      readChannelConfig: () => telegramCfg,
+      readTelegramPoll: () => ({ ...pollOk(), pollerAlive: false, lastPoll: null, lastSuccess: null }),
+    });
+    // The bridge leg is unreadable but the telegram verdict still lists —
+    // degraded, never unavailable, because one leg proved pending work.
+    expect(bridgesOnly.sources['channel-health']).toEqual({ state: 'degraded', pending: 1 });
+    expect(bridgesOnly.items.filter(i => i.source === 'channel-health').map(i => i.id)).toEqual(['channel-health:telegram']);
+
+    const both = await read({
+      readChannelHealth: async () => { throw new Error('health boom'); },
+      readChannelConfig: () => { throw new Error('config boom'); },
+    });
+    // Both legs failed: degraded with the telegram-unknown verdict still
+    // listed — a throwing config read IS the unknown evidence, and
+    // 'unavailable' never applies to a live probe that always resolves.
+    expect(both.sources['channel-health']).toEqual({ state: 'degraded', pending: 1 });
+    expect(both.items.filter(i => i.source === 'channel-health').map(i => i.id)).toEqual(['channel-health:telegram']);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const degraded = async () => bridges(
+      bridge('slack', { state: 'BLOCKED', processAlive: false, missing: ['slack bridge process not running'] }),
+      bridge('imessage', { state: 'DEGRADED', unansweredCount: 1, missing: [] }));
+    const bySource = await readHealth(degraded, { filter: { source: 'channel-health' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'channel-health')).toBe(true);
+    expect(bySource.sources['channel-health']).toEqual({ state: 'healthy', pending: 2 });
+    const byKind = await read({
+      readChannelHealth: async () => degraded(),
+      readChannelConfig: () => ({}) as AshlrConfig,
+      filter: { kind: 'channel-blocked' },
+    });
+    expect(byKind.items.filter(i => i.source === 'channel-health').map(i => i.id)).toEqual(['channel-health:slack']);
+    // A channel verdict names no job — --job never matches it.
+    const byJob = await read({
+      readChannelHealth: async () => degraded(),
+      readChannelConfig: () => ({}) as AshlrConfig,
+      filter: { job: 'job-1' },
+    });
+    expect(byJob.items.filter(i => i.source === 'channel-health')).toHaveLength(0);
   });
 });

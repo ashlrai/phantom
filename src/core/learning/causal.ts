@@ -14,6 +14,7 @@ import type {
   RunEventSummary,
 } from '../types.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { optionalBoolean } from './policy-assignment-identity.js';
 
 export const ROUTER_POLICY_VERSION = 'fleet-router-v1';
 
@@ -66,10 +67,6 @@ function boundedText(value: unknown, max: number): string | undefined {
 
 function finiteNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function optionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined;
 }
 
 function nonNegativeNumber(value: unknown): number | undefined {

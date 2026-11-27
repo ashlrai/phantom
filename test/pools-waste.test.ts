@@ -62,6 +62,13 @@ describe('buildPoolsWaste', () => {
     expect(formatPoolsWasteText(data)).toContain('No pool is about to waste usage');
   });
 
+  it('suggests checking a lane with queued work and unknown queue duration', () => {
+    const data = check([lane('gemini', { usedPct: 12 })], { gemini: 1 });
+    expect(data.top).toMatchObject({
+      fix_kind: 'check-lane', fix: 'Gemini has 1 job queued with unknown coverage: check the lane',
+    });
+  });
+
   it('does not alert on a wasteful pool that resets more than 12 hours out', () => {
     expect(check([lane('gemini', { usedPct: 12, held: true, resetAt: at(30) })], {}).alerts).toEqual([]);
   });

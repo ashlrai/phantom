@@ -69,7 +69,7 @@ function avatar(value: unknown): ProactiveProfile['avatar'] {
   if (typeof raw['color'] !== 'string' || !/^#[a-f0-9]{6}$/iu.test(raw['color'])) invalid('Use a six-digit avatar color.');
   return { color: raw['color'].toLowerCase(), variant: choice(raw['variant'], ['classic', 'round', 'pixel']) };
 }
-export function parseProactiveProfileInput(value: unknown): ProactiveProfileInput {
+function parseProactiveProfileInput(value: unknown): ProactiveProfileInput {
   const raw = object(value, ['identity', ...EDITABLE], 'profile');
   const identity = object(raw['identity'], ['provider', 'accountId', 'agentId'], 'profile.identity');
   const result: ProactiveProfileInput = {

@@ -39,6 +39,19 @@ beforeEach(() => {
 afterEach(() => rmSync(directory, { recursive: true, force: true }));
 
 describe('skillNudgeJobsFromLedger', () => {
+  it('keeps the standing merge evidence when an unknown event follows it', () => {
+    const job = 'RQ-RECOVERY';
+    const text = [
+      launch(job), launch(job, 'codex', '2026-10-28T10:30:00-0400'), outcome(job, 'MERGED'),
+      line({ event: 'constructor', job, lane: 'claude' }),
+      line({ event: '__proto__', job: 'RQ-UNRESOLVED', lane: 'codex' }),
+    ].join('\n');
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', retries: 1 },
+      { id: 'RQ-UNRESOLVED', lane: 'codex' },
+    ]);
+  });
+
   it('folds a retried merge into one job with retry and failure-class evidence', () => {
     const text = [
       enqueue('RQ-A'), claim('RQ-A'), launch('RQ-A'),
@@ -148,6 +161,25 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(skillNudgeJobsFromLedger(text)[0]).toMatchObject({ outcome: 'merged', reverted: true });
   });
 
+  it.each([
+    ['standalone event', { event: 'revert', reverted_at: '2026-10-28T17:00:00Z' }],
+    ['standalone phase', { phase: 'REVERTED', revertedAt: '2026-10-28T17:00:00Z' }],
+    ['merge metadata', { phase: 'MERGED', reverted: true, revertedAt: '2026-10-28T17:00:00Z' }],
+  ] as const)('honors the explicit revert time on %s', (kind, receipt) => {
+    const job = 'RQ-REVERT-TIME';
+    const text = [
+      launch(job), launch(job, 'codex', '2026-10-28T10:30:00-0400'),
+      ...(kind === 'merge metadata' ? [] : [outcome(job, 'MERGED')]),
+      line({ job, ts: '2026-10-28T16:00:00Z', ...receipt }),
+    ].join('\n');
+    expect(skillNudgeJobsFromLedger(text, null, Date.parse('2026-10-28T16:59:59Z'))).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', retries: 1 },
+    ]);
+    expect(skillNudgeJobsFromLedger(text, null, Date.parse('2026-10-28T17:00:00Z'))).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', retries: 1, reverted: true },
+    ]);
+  });
+
   it('marks a merged job reverted when its unambiguous PR claim stands in the revert set', () => {
     const merge = (job: string, pr: number) => outcome(job, 'MERGED',
       { pr_url: `https://github.com/ashlrai/phantom/pull/${pr}` });
@@ -166,12 +198,16 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#999']))[0]).not.toHaveProperty('reverted');
   });
 
-  it('never discounts a contested PR claim', () => {
+  it.each([
+    'https://github.com/ashlrai/phantom/pull/779',
+    'https://github.com/AshlrAI/Phantom/pull/779',
+    'https://github.com/ashlrai/phantom/pull/779/',
+  ])('never discounts a contested PR claim through %s', (competingUrl) => {
     const url = 'https://github.com/ashlrai/phantom/pull/779';
     const text = [
       launch('RQ-C1'), launch('RQ-C2'),
       outcome('RQ-C1', 'MERGED', { pr_url: url }),
-      line({ event: 'publish', job: 'RQ-C2', pr_url: url, ts: '2026-10-28T15:30:00.000Z' }),
+      line({ event: 'publish', job: 'RQ-C2', pr_url: competingUrl, ts: '2026-10-28T15:30:00.000Z' }),
     ].join('\n');
     const byId = new Map(skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#779']))
       .map(job => [job.id, job]));
@@ -226,6 +262,19 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(skillNudgeJobsFromLedger(text)[0]).toMatchObject({ lane: 'devin' });
   });
 
+  it('uses observed failure classifications through aliases and later unknown values', () => {
+    expect(skillNudgeJobsFromLedger([
+      finish('RQ-A', { failure_class: 'UNKNOWN', failure_reason: 'quota' }),
+      finish('RQ-A', { failure_class: 'unknown' }),
+      outcome('RQ-A', 'MERGED'),
+      finish('RQ-B', { failure_class: 'unknown' }),
+      outcome('RQ-B', 'CLOSED'),
+    ].join('\n'))).toEqual([
+      { id: 'RQ-A', lane: 'codex', outcome: 'merged', failureClass: 'quota' },
+      { id: 'RQ-B', lane: 'codex', outcome: 'failed' },
+    ]);
+  });
+
   it('uses eventless terminal lane evidence and preserves known lanes through unknown values', () => {
     const text = [
       enqueue('RQ-N1', 'fast'),
@@ -239,6 +288,22 @@ describe('skillNudgeJobsFromLedger', () => {
       { id: 'RQ-N1', lane: 'devin', outcome: 'merged' },
       { id: 'RQ-N2', lane: 'codex', outcome: 'merged' },
       { id: 'RQ-N3', lane: 'unknown', outcome: 'merged' },
+    ]);
+  });
+
+  it('ignores enqueued lane hints and uses the first observed execution lane alias', () => {
+    const text = [
+      line({ job: 'RQ-N4', event: 'launch', lane: 'UNKNOWN', pool: 'codex', arm: 'devin' }),
+      line({ job: 'RQ-N4', type: 'enqueued', lane: 'fast' }),
+      line({ job: 'RQ-N4', state: 'MERGED' }),
+      line({ job: 'RQ-N5', kind: 'enqueued', pool: 'fast' }),
+      line({ job: 'RQ-N5', state: 'MERGED' }),
+      line({ job: 'RQ-N6', state: 'MERGED', lane: 'unknown', pool: 'unknown', arm: 'devin' }),
+    ].join('\n');
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: 'RQ-N4', lane: 'codex', outcome: 'merged' },
+      { id: 'RQ-N5', lane: 'unknown', outcome: 'merged' },
+      { id: 'RQ-N6', lane: 'devin', outcome: 'merged' },
     ]);
   });
 
@@ -258,20 +323,21 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(byId.get('RQ-Q')).not.toHaveProperty('failureClass');
   });
 
-  it('counts batch claims and recut admissions as retry/recut evidence', () => {
+  it('counts dispatched recuts once despite repeated admission checks', () => {
+    const ready = line({ event: 'recut_admission', job: 'RQ-S', repo: 'phantom', action: 'ready', reason: 'recut-no-current-coverage', repeatOf: null, ts: '2026-10-28T11:00:00-0400' });
     const text = [
       line({ event: 'batch_claim', job: 'RQ-R', batch: 'B-3', repo: 'ashlrai/phantom', lane: 'claude', tier: 'fast', ts: '2026-10-28T10:00:00-0400' }),
       line({ event: 'batch_claim', job: 'RQ-R', batch: 'B-4', repo: 'ashlrai/phantom', lane: 'claude', tier: 'fast', ts: '2026-10-28T11:00:00-0400' }),
       line({ event: 'recut_admission', job: 'RQ-S', repo: 'phantom', action: 'defer', reason: 'recut-in-flight', repeatOf: 'RQ-PHX-RECUT1L1', ts: '2026-10-28T10:00:00-0400' }),
-      launch('RQ-S'),
-      line({ event: 'recut_admission', job: 'RQ-S', repo: 'phantom', action: 'ready', reason: 'recut-no-current-coverage', repeatOf: null, ts: '2026-10-28T11:00:00-0400' }),
+      ready, ready, claim('RQ-S', 'codex', '2026-10-28T11:01:00-0400'),
+      launch('RQ-S', 'codex', '2026-10-28T11:02:00-0400'),
       line({ event: 'recut_admission', job: 'RQ-T', repo: 'phantom', action: 'skip', reason: 'recut-already-merged', repeatOf: 'RQ-PHX-RECUT2L1', ts: '2026-10-28T10:00:00-0400' }),
       launch('RQ-T'),
       outcome('RQ-R', 'MERGED'), outcome('RQ-S', 'MERGED'), outcome('RQ-T', 'MERGED'),
     ].join('\n');
     const byId = new Map(skillNudgeJobsFromLedger(text).map(job => [job.id, job]));
     expect(byId.get('RQ-R')).toMatchObject({ outcome: 'merged', retries: 1 });
-    expect(byId.get('RQ-S')).toMatchObject({ outcome: 'merged', recuts: 2 });
+    expect(byId.get('RQ-S')).toEqual({ id: 'RQ-S', lane: 'codex', outcome: 'merged', recuts: 1 });
     expect(byId.get('RQ-T')).not.toHaveProperty('recuts');
   });
 
@@ -290,10 +356,126 @@ describe('skillNudgeJobsFromLedger', () => {
     // The launch's unparseable lane is rejected; the outcome row's valid lane wins.
     expect(jobs[2]).toMatchObject({ lane: 'codex', outcome: 'merged' });
   });
+
+  it('binds recovery evidence to the latest terminal row in ledger order', () => {
+    const retry = (job: string) => [
+      line({ job, event: 'recut_admission', action: 'ready' }),
+      launch(job, 'devin'),
+      finish(job, { failure_class: 'quota' }, 'devin'),
+    ];
+    const text = [
+      launch('RQ-MERGED'), outcome('RQ-MERGED', 'MERGED'), ...retry('RQ-MERGED'),
+      launch('RQ-RETRIED'), outcome('RQ-RETRIED', 'CLOSED'), ...retry('RQ-RETRIED'),
+      line({ job: 'RQ-RETRIED', state: 'MERGED' }),
+    ].join('\n');
+
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: 'RQ-MERGED', lane: 'codex', outcome: 'merged' },
+      { id: 'RQ-RETRIED', lane: 'devin', outcome: 'merged', retries: 1, recuts: 1, failureClass: 'quota' },
+    ]);
+  });
+
+  it('counts only distinct timestamped launch failure retries', () => {
+    const job = 'RQ-RETRY-REPLAY';
+    const retry = (ts: string) => line({ job, event: 'launch_failed', action: 'retry', reason: 'quota', ts });
+    const first = retry('2026-10-28T13:00:00Z');
+    const second = retry('2026-10-28T13:30:00Z');
+    const text = [first, second, first, outcome(job, 'MERGED')].join('\n');
+
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', retries: 2, failureClass: 'quota' },
+    ]);
+  });
+
+  it.each(['finish', 'launch_failed', 'launch_terminal'])('keeps the newer class and lane when a %s receipt replays', event => {
+    const job = 'RQ-CLASS-REPLAY';
+    const earlier = line({ job, event, lane: 'claude', failure_class: 'quota', reason: 'quota', ts: '2026-10-28T13:00:00Z' });
+    const latest = finish(job, { failure_class: 'timeout', ts: '2026-10-28T14:00:00Z' });
+    const text = [earlier, latest, earlier, line({ job, state: 'MERGED' })].join('\n');
+
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', failureClass: 'timeout' },
+    ]);
+  });
 });
 
 describe('syncSkillNudgesFromJobsLedger', () => {
   const NOW = () => new Date('2026-10-28T20:00:00.000Z');
+
+  it('drafts generic retry recovery when the failure class belongs to a previous lane', async () => {
+    const job = 'RQ-LANE-MOVE';
+    const text = [
+      launch(job, 'claude'),
+      finish(job, { failure_class: 'quota' }, 'claude'),
+      launch(job, 'devin', '2026-10-28T13:00:00-0400'),
+      outcome(job, 'MERGED', { lane: 'devin' }),
+    ].join('\n');
+
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: job, lane: 'devin', outcome: 'merged', retries: 1 },
+    ]);
+    const result = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+    expect(result.candidates).toBe(1);
+    expect(cards.map(card => card.trigger)).toEqual(['devin: recover after retry']);
+  });
+
+  it.each(['ready', 'defer', 'skip'])('keeps the latest recut admission when an earlier %s receipt replays', async action => {
+    const job = 'RQ-RECUT-REPLAY';
+    const admission = (action: string, ts: string) => line({ job, event: 'recut_admission', action, ts });
+    const earlier = admission(action, '2026-10-28T13:00:00Z');
+    const latest = admission(action === 'ready' ? 'defer' : 'ready', '2026-10-28T13:30:00Z');
+    const text = [earlier, latest, earlier, launch(job), outcome(job, 'MERGED')].join('\n');
+
+    const recut = action !== 'ready';
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', ...(recut ? { recuts: 1 } : {}) },
+    ]);
+    const result = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+    expect(result.candidates).toBe(recut ? 1 : 0);
+  });
+
+  it.each(['launch', 'claim', 'batch_claim'])('ignores a replayed %s after recut admission', async event => {
+    const job = 'RQ-REPLAY';
+    const receipt = line({ event, job, lane: 'codex', ts: '2026-10-28T14:00:00Z' });
+    const text = [
+      receipt,
+      line({ event: 'recut_admission', job, action: 'ready' }),
+      receipt,
+      outcome(job, 'MERGED'),
+    ].join('\n');
+
+    expect(skillNudgeJobsFromLedger(text)).toEqual([{ id: job, lane: 'codex', outcome: 'merged' }]);
+    const result = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+    expect(result.candidates).toBe(0);
+    expect(cards).toHaveLength(0);
+  });
+
+  it('does not learn a retry from a dispatch receipt reserialized with reordered fields', async () => {
+    const job = 'RQ-RESERIALIZED';
+    const ts = '2026-10-28T14:00:00Z';
+    const text = [
+      line({ event: 'launch', job, lane: 'codex', ts }),
+      JSON.stringify({ ts, lane: 'codex', job, event: 'launch' }, null, ' ').replaceAll('\n', ''),
+      outcome(job, 'MERGED'),
+    ].join('\n');
+
+    expect(skillNudgeJobsFromLedger(text)).toEqual([{ id: job, lane: 'codex', outcome: 'merged' }]);
+    const result = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+    expect(result.candidates).toBe(0);
+  });
+
+  it.each(['ts', 'mergedAt'])('waits for a merge with a future %s', async field => {
+    const job = 'RQ-REC';
+    const future = '2026-10-28T21:00:00.000Z';
+    const text = [launch(job), launch(job, 'codex', '2026-10-28T10:30:00-0400'), outcome(job, 'MERGED', { [field]: future })].join('\n');
+
+    const early = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+    expect(early.candidates).toBe(0);
+    expect(cards).toHaveLength(0);
+    const observed = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: () => new Date(future) });
+    expect(observed.candidates).toBe(1);
+    expect(cards[0]?.sourceJobIds).toEqual([job]);
+  });
 
   it.each([true, false])('uses terminal outcome order for recurrence (third failure before merge: %s)', async beforeMerge => {
     const firstFailures = ['RQ-F1', 'RQ-F2'].flatMap(id => [
@@ -306,6 +488,26 @@ describe('syncSkillNudgesFromJobsLedger', () => {
       launch('RQ-F3'), finish('RQ-F3', { failure_class: 'quota' }),
       launch('RQ-REC'), finish('RQ-REC', { failure_class: 'quota', exit_code: 0 }),
       ...(beforeMerge ? [thirdFailure, merge, enqueue('RQ-F3')] : [merge, thirdFailure, enqueue('RQ-REC')]),
+    ].join('\n');
+
+    await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+
+    expect(cards.map(card => card.sourceJobIds)).toEqual(beforeMerge ? [['RQ-F1', 'RQ-F2', 'RQ-F3', 'RQ-REC']] : []);
+  });
+
+  it.each([true, false])('preserves recurrence across a terminal replay (third failure before merge: %s)', async beforeMerge => {
+    const failures = ['RQ-F1', 'RQ-F2'].flatMap(id => [
+      launch(id), finish(id, { failure_class: 'quota' }), outcome(id, 'CLOSED'),
+    ]);
+    const thirdFailure = outcome('RQ-F3', 'CLOSED');
+    const merge = outcome('RQ-REC', 'MERGED', { ts: undefined, mergedAt: '2026-10-28T15:00:00Z' });
+    const [first, second] = beforeMerge ? [thirdFailure, merge] : [merge, thirdFailure];
+    const reserialized = line(Object.fromEntries(Object.entries(JSON.parse(first)).reverse()));
+    const text = [
+      ...failures,
+      launch('RQ-F3'), finish('RQ-F3', { failure_class: 'quota' }),
+      launch('RQ-REC'), finish('RQ-REC', { failure_class: 'quota', exit_code: 0 }),
+      first, second, first, reserialized,
     ].join('\n');
 
     await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
@@ -332,7 +534,7 @@ describe('syncSkillNudgesFromJobsLedger', () => {
   });
 
   it('is idempotent across repeated syncs', async () => {
-    const text = [launch('RQ-A'), launch('RQ-A'), outcome('RQ-A', 'MERGED')].join('\n');
+    const text = [launch('RQ-A'), launch('RQ-A', 'codex', '2026-10-28T10:30:00-0400'), outcome('RQ-A', 'MERGED')].join('\n');
     const first = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
     const second = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
     expect(first.candidates).toBe(1);
@@ -340,10 +542,25 @@ describe('syncSkillNudgesFromJobsLedger', () => {
     expect(cards).toHaveLength(1);
   });
 
+  it('does not persist recut drafts from admission receipts without a matching dispatch', async () => {
+    const admission = (job: string, action: string) => line({ job, event: 'recut_admission', action });
+    const text = [
+      admission('RQ-DEFER', 'defer'), launch('RQ-DEFER'), outcome('RQ-DEFER', 'MERGED'),
+      launch('RQ-LATE'), admission('RQ-LATE', 'ready'), outcome('RQ-LATE', 'MERGED'),
+      admission('RQ-STALE', 'ready'), outcome('RQ-STALE', 'CLOSED'),
+      launch('RQ-STALE'), outcome('RQ-STALE', 'MERGED'),
+      admission('RQ-BLOCKED', 'ready'), admission('RQ-BLOCKED', 'defer'),
+      launch('RQ-BLOCKED'), outcome('RQ-BLOCKED', 'MERGED'),
+    ].join('\n');
+    const result = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+    expect(result).toMatchObject({ state: 'read', folded: 4, candidates: 0 });
+    expect(cards).toEqual([]);
+  });
+
   it('reports degraded corpus as zero candidates without throwing', async () => {
     vi.mocked(readSkillCardCorpus).mockReturnValue({ cards: [], sourceState: 'degraded', sourcePresent: true,
       filesScanned: 0, unreadableFiles: 0, invalidRows: 0, bytesScanned: 0, limitExceeded: false });
-    const text = [launch('RQ-A'), launch('RQ-A'), outcome('RQ-A', 'MERGED')].join('\n');
+    const text = [launch('RQ-A'), launch('RQ-A', 'codex', '2026-10-28T10:30:00-0400'), outcome('RQ-A', 'MERGED')].join('\n');
     const result = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
     expect(result).toMatchObject({ state: 'read', folded: 1, candidates: 0 });
     expect(cards).toHaveLength(0);

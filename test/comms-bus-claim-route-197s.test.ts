@@ -136,6 +136,33 @@ it('filters next by the group-address topic', async () => {
   expect(last()).toEqual({ status: 'invalid' });
 });
 
+it('claims the named envelope under --id and keeps the addressed-to rules', async () => {
+  const { root, last } = setup();
+  const options = { root };
+  const task = (id: string, to: string, priority: string, body: unknown): string => postTask(root, {
+    id, from: 'fake-sender', to, priority, ttl: 600_000, body,
+  });
+  expect(await cmdCommsBus(['post', '--file', task('id-target', 'worker-a', 'P3', { kind: 'work' })], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('id-decoy', 'worker-a', 'P0', { kind: 'work' })], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('id-foreign', 'worker-b', 'P0', { kind: 'work' })], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('id-note', 'worker-a', 'P0', { kind: 'note' })], options)).toBe(0);
+
+  // --id claims the named P3 receipt even though a P0 claimable receipt exists.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--id', 'id-target'], options)).toBe(0);
+  expect(last()).toMatchObject({ status: 'acquired', receipt: { envelope: { id: 'id-target' } } });
+  // The held named receipt reports held work, not a dry well.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--id', 'id-target'], options)).toBe(0);
+  expect(last()).toEqual({ status: 'empty', candidates: 1, held: 1 });
+  // Foreign, non-work and absent ids are honest empty matches.
+  for (const id of ['id-foreign', 'id-note', 'id-missing']) {
+    expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--id', id], options), id).toBe(0);
+    expect(last(), id).toEqual({ status: 'empty', candidates: 0, held: 0 });
+  }
+  // A malformed id is invalid, never a widened claim.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--id', 'has space'], options)).toBe(2);
+  expect(last()).toEqual({ status: 'invalid' });
+});
+
 it('claims a protocol task envelope addressed to a topic', async () => {
   const { root, last } = setup();
   const options = { root };

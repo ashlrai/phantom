@@ -75,6 +75,22 @@ test.each([
   expect(projectFleetAwareness(null, now + 60_001, status).lanes[0]?.available).toBeNull();
 });
 
+test('a fresh lane hold establishes zero availability with missing counts', () => {
+  const now = 100_000;
+  const status = {
+    last_tick: new Date(now).toISOString(),
+    lanes: {
+      codex: { held: true },
+      claude: { held: false },
+    },
+  };
+  const [held, open] = projectFleetAwareness(null, now + 60_000, status).lanes;
+  expect(held).toMatchObject({ running: null, target: null, available: 0 });
+  expect(open).toMatchObject({ running: null, target: null, available: null });
+  expect(projectFleetAwareness(null, now + 60_001, status).lanes[0]?.available).toBeNull();
+  expect(projectFleetAwareness(null, now - 1, status).lanes[0]?.available).toBeNull();
+});
+
 test('a claim fenced by a rejoined session frees its host slots at once', () => {
   const f = fixture();
   const n = f.add('worker', { hostId: 'mac', slots: 2 });

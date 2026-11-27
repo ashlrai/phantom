@@ -4259,6 +4259,29 @@ describe('M342 dispatch production ledger', () => {
     });
   });
 
+  it('preserves the dispatch file and event budgets for the snapshot window', () => {
+    const cutoff = '2026-07-08T00:01:00.000Z';
+    recordDispatchProduction([
+      makeEvent({ itemId: 'before', ts: '2026-07-08T00:00:59.999Z' }),
+      makeEvent({ itemId: 'at-cutoff', ts: cutoff }),
+      makeEvent({ itemId: 'after', ts: '2026-07-08T00:01:00.001Z' }),
+      makeEvent({ itemId: 'next-day', ts: '2026-07-09T00:00:00.000Z' }),
+    ]);
+
+    expect(readDispatchProductionEventsDetailed({
+      sinceMs: Date.parse(cutoff),
+      asOfMs: Date.parse(cutoff),
+      limit: 1,
+      maxFiles: 1,
+    })).toMatchObject({
+      sourceState: 'healthy',
+      complete: true,
+      datedFilesRead: 1,
+      stopReasons: [],
+      events: [{ itemId: 'at-cutoff' }],
+    });
+  });
+
   it('normalizes invalid timestamps before writing', () => {
     recordDispatchProduction(makeEvent({ itemId: 'bad-ts', ts: 'not-a-date' }));
 
@@ -6269,6 +6292,22 @@ describe('M342 dispatch production ledger', () => {
       `${witness.repairGenerationId}-${witness.repairTreatmentAttemptHash}.json`,
     );
     expect(readFileSync(receiptPath, 'utf8')).toBe(`${JSON.stringify(canonical)}\n`);
+  });
+
+  it('applies the snapshot cutoff to immutable treatment receipts before the event cap', () => {
+    const witness = treatmentEvents().find((event) => event.basis === 'repair-lifecycle-outcome')!;
+    const cutoff = Date.parse(witness.ts) - 1;
+    const inWindow = makeEvent({ itemId: 'at-cutoff', ts: new Date(cutoff).toISOString() });
+    expect(recordDispatchProduction([inWindow, witness])).toEqual({ attempted: 2, recorded: 2, failed: 0 });
+
+    expect(readDispatchProductionEventsDetailed({ asOfMs: cutoff, limit: 1 })).toMatchObject({
+      sourceState: 'healthy',
+      complete: true,
+      events: [{ itemId: 'at-cutoff' }],
+    });
+    expect(readDispatchProductionEvents({ asOfMs: cutoff + 1 })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ basis: 'repair-lifecycle-outcome', ts: witness.ts })]),
+    );
   });
 
   it('rejects treatment receipt replay with the same filename but different canonical semantics', () => {

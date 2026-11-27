@@ -4,11 +4,11 @@ import { ashlrHome } from '../cloud/store.js';
 import { CompanionCoordinationStore, companionId, companionText, companionSafeText, companionToken,
   companionTaskScope, normalizeCompanionTaskInput, validCompanionIdentity, validCompanionReviewer, validCompanionTaskInput } from './coordination-store.js';
 import { COMPANION_LIMITS, companionDigest, companionIdentityEqual, companionTaskId, companionTextDigest,
+  isCanceledBeforeIntent, isTerminalAttemptContact,
   type CompanionAttempt, type CompanionCommand, type CompanionCoordinator, type CompanionEvent, type CompanionFailure,
   type CompanionHostHooks, type CompanionHostObservation, type CompanionLedger, type CompanionNotification,
   type CompanionTask, type CompanionWrite } from './coordination-types.js';
 import { canonicalJson, hasPlainDataKeys, isCanonicalIsoTimestamp, isSha256Hex } from './validation.js';
-export type * from './coordination-types.js';
 
 function refuse(reason: CompanionFailure): never { throw { reason }; }
 function failure(reason: CompanionFailure): CompanionWrite { return { ok: false, reason, dispatchAuthorized: false }; }
@@ -70,9 +70,7 @@ function apply(state: CompanionLedger, command: CompanionCommand, taskId: string
   switch (command.kind) {
     case 'assign': {
       const previous = task.attempts.at(-1);
-      const canceledBeforeIntent = previous?.contact === 'not-contacted' && previous.handoffAt === null &&
-        previous.cancelRequestedAt !== null && previous.providerRunId === null;
-      if (task.state === 'verified' || previous && !['proved-unstarted', 'cancel-confirmed'].includes(previous.contact) && !canceledBeforeIntent) refuse('held');
+      if (task.state === 'verified' || previous && !isTerminalAttemptContact(previous.contact) && !isCanceledBeforeIntent(previous)) refuse('held');
       if (task.attempts.length >= task.maxAttempts) refuse('capacity');
       const epoch = task.attempts.length + 1;
       const attempt: CompanionAttempt = { id: companionDigest([taskId, epoch, command.commandId]), epoch,
@@ -99,7 +97,7 @@ function apply(state: CompanionLedger, command: CompanionCommand, taskId: string
       if (task.reports.some(report => report.id === id)) return;
       if (task.reports.length >= COMPANION_LIMITS.reports) refuse('capacity');
       const stale = attempt !== task.attempts.at(-1) || command.packetDigest !== task.packetDigest ||
-        ['proved-unstarted', 'cancel-confirmed'].includes(attempt.contact) || task.state === 'verified';
+        isTerminalAttemptContact(attempt.contact) || task.state === 'verified';
       const report = { id, attemptId: attempt.id, epoch: attempt.epoch,
         packetDigest: command.packetDigest, producer: structuredClone(attempt.assignee), result: command.result, resultDigest: companionTextDigest(command.result),
         report: command.report, reportDigest: companionTextDigest(command.report), source: 'manual-unverified' as const,
@@ -124,7 +122,7 @@ function apply(state: CompanionLedger, command: CompanionCommand, taskId: string
       if (task.verifications.length >= COMPANION_LIMITS.verifications) refuse('capacity');
       const attempt = task.attempts.find(item => item.id === report.attemptId);
       const applied = command.acceptanceMet && !report.stale && attempt === task.attempts.at(-1) &&
-        attempt?.cancelRequestedAt === null && !['proved-unstarted', 'cancel-confirmed'].includes(attempt?.contact ?? '') && task.state !== 'verified';
+        attempt?.cancelRequestedAt === null && !isTerminalAttemptContact(attempt?.contact ?? '') && task.state !== 'verified';
       const beforeState = task.state;
       task.verifications.push({ id, reportId: report.id,
         checkedResultDigest: command.checkedResultDigest, reviewer: structuredClone(command.reviewer), acceptanceMet: command.acceptanceMet,
@@ -209,13 +207,12 @@ export function createCompanionCoordinator(options: { directory?: string; now?: 
           if (!currentTask || !currentAttempt || currentTask.id !== observation.taskId || currentAttempt.id !== observation.attemptId ||
             currentAttempt.epoch !== observation.epoch || !companionIdentityEqual(currentAttempt.assignee, observation.assignee) ||
             currentAttempt.packetDigest !== observation.packetDigest || at < currentTask.updatedAt) refuse('held');
-          const canceledBeforeIntent = currentAttempt.contact === 'not-contacted' && currentAttempt.handoffAt === null &&
-            currentAttempt.cancelRequestedAt !== null && currentAttempt.providerRunId === null && observation.providerRunId === null &&
-            ['proved-unstarted', 'cancel-confirmed'].includes(observation.state);
+          const canceledBeforeIntent = isCanceledBeforeIntent(currentAttempt) && observation.providerRunId === null &&
+            isTerminalAttemptContact(observation.state);
           if (!currentAttempt.handoffAt && !canceledBeforeIntent) refuse('held');
           if (observation.state === 'proved-unstarted' && (currentAttempt.providerRunId !== null || ['accepted', 'cancel-confirmed'].includes(currentAttempt.contact)) ||
             observation.state === 'cancel-confirmed' && currentAttempt.cancelRequestedAt === null ||
-            ['proved-unstarted', 'cancel-confirmed'].includes(currentAttempt.contact) && observation.state !== currentAttempt.contact ||
+            isTerminalAttemptContact(currentAttempt.contact) && observation.state !== currentAttempt.contact ||
             currentAttempt.providerRunId !== null && observation.providerRunId !== null && currentAttempt.providerRunId !== observation.providerRunId) refuse('held');
           if (currentAttempt.contact === observation.state && currentAttempt.observationReference === observation.evidenceReference &&
             (observation.providerRunId === null || currentAttempt.providerRunId === observation.providerRunId)) return;

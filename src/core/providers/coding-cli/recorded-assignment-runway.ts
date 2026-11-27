@@ -31,6 +31,8 @@
  * (null/undefined input) returns an explicit `unknown` result, never 0.
  */
 
+import { assertFiniteNumber } from './validation.js';
+
 export const RECORDED_ASSIGNMENT_RUNWAY_PROVENANCE = {
   sourcePr: 5952,
   sourceSha: '3d6c8fb7c7f7d52655fb3e0f13ef239686f7b886',
@@ -39,7 +41,7 @@ export const RECORDED_ASSIGNMENT_RUNWAY_PROVENANCE = {
 
 const HOUR_MS = 3_600_000;
 /** Spend at or below this is treated as no spend (source epsilon). */
-export const RECORDED_RUNWAY_SPEND_EPSILON = 1e-12;
+const RECORDED_RUNWAY_SPEND_EPSILON = 1e-12;
 
 /** One already-resolved assignment demand: fraction of `poolId`'s window. */
 export interface RecordedAssignmentDemand {
@@ -90,13 +92,6 @@ export interface RecordedAssignmentRunwayUnknown extends RunwayCommon {
 
 export type RecordedAssignmentRunway = RecordedAssignmentRunwayKnown | RecordedAssignmentRunwayUnknown;
 
-function finite(name: string, value: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new RangeError(`${name} must be a finite number`);
-  }
-  return value;
-}
-
 const absent = (v: unknown): boolean => v === null || v === undefined;
 
 export function recordedAssignmentRunway(input: RecordedAssignmentRunwayInput): RecordedAssignmentRunway {
@@ -105,20 +100,20 @@ export function recordedAssignmentRunway(input: RecordedAssignmentRunwayInput): 
 
   // Validate everything supplied before deciding anything is unknown, so bad
   // data is never masked by an unrelated missing field.
-  if (!absent(input.asOfMs)) finite('asOfMs', input.asOfMs as number);
-  if (!absent(input.resetAtMs)) finite('resetAtMs', input.resetAtMs as number);
+  if (!absent(input.asOfMs)) assertFiniteNumber(input.asOfMs, 'asOfMs');
+  if (!absent(input.resetAtMs)) assertFiniteNumber(input.resetAtMs, 'resetAtMs');
   if (!absent(input.remainingFraction)) {
-    const r = finite('remainingFraction', input.remainingFraction as number);
+    const r = assertFiniteNumber(input.remainingFraction, 'remainingFraction');
     if (r < 0 || r > 1) throw new RangeError('remainingFraction must be within [0,1]');
   }
   if (!absent(input.paceTickMs)) {
-    const p = finite('paceTickMs', input.paceTickMs as number);
+    const p = assertFiniteNumber(input.paceTickMs, 'paceTickMs');
     if (p <= 0) throw new RangeError('paceTickMs must be positive');
   }
   let spent = 0;
   if (!absent(input.demands)) {
     for (const row of input.demands as readonly RecordedAssignmentDemand[]) {
-      const d = finite('demand', row.demand);
+      const d = assertFiniteNumber(row.demand, 'demand');
       if (d < 0) throw new RangeError('demand must not be negative');
       if (row.poolId === poolId) spent += d;
     }

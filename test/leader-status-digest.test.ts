@@ -21,7 +21,7 @@ describe('buildStatusDigest', () => {
       'App: installed 3.29.15 · published 3.30.32 · update pending',
       'Merges: 3 in the last hour · 41 in the last 24h',
       'Lanes: claude 4/8 · held: codex-cmp (usage limit)',
-      'Needs Mason: 2 hard-limit asks waiting',
+      'Needs the owner: 2 hard-limit asks waiting',
       'Top P0: Phantom status (12m ago)',
     ]);
   });
@@ -36,7 +36,7 @@ describe('buildStatusDigest', () => {
       'App: installed unknown (plist unreadable) · published unknown (gh offline)',
       'Merges: unknown (merge count incomplete) · unknown (merge count incomplete)',
       'Lanes: unknown (runs dir missing)',
-      'Needs Mason: unknown (file unreadable)',
+      'Needs the owner: unknown (file unreadable)',
       'Top P0: unknown (inbox unreadable)',
     ]);
     expect(lines.join('\n')).not.toMatch(/\b0\b/);
@@ -47,7 +47,7 @@ describe('buildStatusDigest', () => {
     expect(lines[0]).toContain('up to date');
     expect(lines[1]).toBe('Merges: 0 in the last hour · 41 in the last 24h');
     expect(lines[2]).toBe('Lanes: no lane has a target');
-    expect(lines[3]).toBe('Needs Mason: none waiting');
+    expect(lines[3]).toBe('Needs the owner: none waiting');
     expect(lines[4]).toBe('Top P0: none in the inbox');
   });
 

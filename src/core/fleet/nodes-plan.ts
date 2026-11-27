@@ -13,7 +13,8 @@
  * counted in `unassigned` and grouped by lane in `unassigned_reasons` with
  * the plain reason, so a starving lane is visible instead of a bare count.
  */
-import { chooseNodeForLane, readNodesView, type NodeRow, type NodesView, type NodesViewDeps } from './nodes-view.js';
+import { remoteLaneCap } from './unfed-market.js';
+import { capServesLane, chooseNodeForLane, readNodesView, type NodeRow, type NodesView, type NodesViewDeps } from './nodes-view.js';
 import { UNKNOWN } from './runtime-identity.js';
 import type { QueueOrderJob, QueueOrderV1 } from '../queue/order-types.js';
 
@@ -65,10 +66,14 @@ export function planNode(node: NodeRow): PlanNode {
   return { name: node.name, online: node.reachable, free_mem_pct: node.freeMemoryPercent, load: node.load, lanes: node.lanes, suggested_slots: slots, why };
 }
 
-/** Plain words for why no computer could take a job for `lane` at this point in the plan. */
-function noReadyNodeWhy(pool: NodesView, lane: string): string {
-  const advertisers = pool.nodes.filter(node => node.lanes !== UNKNOWN && node.lanes.includes(lane));
-  if (advertisers.length === 0) return `no computer advertises the ${lane} lane`;
+/** Plain words for why no computer could take a job for `lane` at this point in the plan.
+ * `match` is the name the placement matched on — a node cap for a lane the
+ * bridge can send remote, the lane itself for a host-bound one — and `selfOnly`
+ * marks lanes no remote computer can ever take. */
+function noReadyNodeWhy(pool: NodesView, lane: string, match: string, selfOnly: boolean): string {
+  const advertisers = pool.nodes.filter(node => (!selfOnly || node.isSelf) && node.lanes !== UNKNOWN
+    && node.lanes.some(cap => capServesLane(cap, match)));
+  if (advertisers.length === 0) return selfOnly ? `the ${lane} lane cannot run on another computer` : `no computer can run ${lane} jobs`;
   const states = new Map<string, number>();
   for (const node of advertisers) {
     // A node the live view calls ready can still be full in this plan: earlier
@@ -76,7 +81,7 @@ function noReadyNodeWhy(pool: NodesView, lane: string): string {
     const state = node.stateCode === 'ready' && node.freeSlots === 0 ? 'no free slots left in this plan' : node.state;
     states.set(state, (states.get(state) ?? 0) + 1);
   }
-  return `computers advertising ${lane}: ${[...states].map(([state, count]) => (count === 1 ? state : `${count} × ${state}`)).join('; ')}`;
+  return `${selfOnly ? `only this computer can run ${lane}` : `computers that can run ${lane}`}: ${[...states].map(([state, count]) => (count === 1 ? state : `${count} × ${state}`)).join('; ')}`;
 }
 
 /** Pure: greedy launch-order assignment over the slots the plan suggests. */
@@ -93,14 +98,22 @@ export function buildNodesPlan(view: NodesView, queue: QueueOrderV1 | null, extr
     const jobs: QueueOrderJob[] = queue.jobs.slice(0, PLAN_JOB_LIMIT);
     if (queue.jobs.length > PLAN_JOB_LIMIT) reasons.push(`only the first ${PLAN_JOB_LIMIT} of ${queue.jobs.length} queued jobs were planned`);
     for (const job of jobs) {
+      // job.lane is a market lane; a computer advertises provider caps. The
+      // claim bridge resolves the lane to the cap a remote node needs
+      // (remoteLaneCap): codex-* lanes need `codex`, claude-* need `claude`,
+      // and lanes that only run on this host or on an API key never leave it —
+      // those match this computer's own caps only.
+      const remoteCap = remoteLaneCap(job.lane);
+      const selfOnly = remoteCap === null;
+      const match = remoteCap ?? job.lane;
       // Same rule as `phm nodes --can-take`, but over the slots this plan still has left.
       const pool: NodesView = { ...view, nodes: view.nodes.map(n => ({ ...n, freeSlots: remaining.get(n.name) ?? UNKNOWN })) };
-      const placement = chooseNodeForLane(pool, job.lane);
+      const placement = chooseNodeForLane(pool, match, { localOnly: selfOnly });
       if (!placement.node) {
         unassigned += 1;
         const entry = starved.get(job.lane) ?? { lane: job.lane, jobs: 0, why: '' };
         entry.jobs += 1;
-        entry.why = noReadyNodeWhy(pool, job.lane);
+        entry.why = noReadyNodeWhy(pool, job.lane, match, selfOnly);
         starved.set(job.lane, entry);
         continue;
       }

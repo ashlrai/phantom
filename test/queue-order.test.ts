@@ -61,6 +61,24 @@ describe('readQueueOrder', () => {
     await rm(ready);
     await expect(readQueueOrder(opts())).rejects.toMatchObject({ code: 'queue-missing', status: 503 });
   });
+  it('lists a spec-less row by its router-queue envelope lane, not the column', async () => {
+    // The market resolves a five-column row's spec from the matching
+    // router-queue.md envelope: its lane attr is the hint and the lane cell
+    // is never consulted, so the list names the envelope's lane.
+    const specLess = (id: string, lane: string) => `${id}\tphantom\t${lane}\tmid\t${queue}/prompts/${id}.md`;
+    await writeFile(join(queue, 'router-queue.md'), [
+      '- READY RQ-ENV (P1, preferred_lane=claude): pinned.',
+      '- READY RQ-OPEN (P2): open.',
+      '',
+    ].join('\n'));
+    await writeFile(ready, [specLess('RQ-ENV', 'codex-personal'), specLess('RQ-OPEN', 'devin'), specLess('RQ-BARE', 'claude')].join('\n') + '\n');
+    const order = await readQueueOrder(opts());
+    expect(order.jobs.map(job => [job.id, job.lane])).toEqual([
+      ['RQ-ENV', 'claude'],   // envelope pin beats the codex-personal column
+      ['RQ-OPEN', 'devin'],   // lane-open envelope: the column stands
+      ['RQ-BARE', 'claude'],  // no envelope: the column stands
+    ]);
+  });
 });
 
 describe('steerQueue', () => {
@@ -95,9 +113,45 @@ describe('steerQueue', () => {
     // explicit null is the open hint: steering pins the lane inside the spec too
     await steerQueue({ action: 'lane', id: 'RQ-OPEN', lane: 'devin' }, opts());
     expect(await read('ready.tsv')).toContain(`RQ-OPEN\tphantom\tdevin\tmid\t${queue}/prompts/RQ-OPEN.md\t${spec('devin')}`);
-    // a spec-less row has no requirements cell to sync: the column is the hint
+    // a spec-less row with no matching envelope has no requirements cell to
+    // sync: the column is the hint
     await steerQueue({ action: 'lane', id: 'RQ-BARE', lane: 'devin' }, opts());
     expect(await read('ready.tsv')).toContain(`RQ-BARE\tphantom\tdevin\tmid\t${queue}/prompts/RQ-BARE.md\n`);
+  });
+  it('lane moves the market hint on spec-less rows: the router-queue envelope spec materializes', async () => {
+    // A five-column row's requirements come from its router-queue.md
+    // envelope, which the market reads instead of the lane column; a
+    // column-only rewrite would leave the job on the envelope's lane —
+    // permanently for a local pin the market enforces.
+    const specLess = (id: string, lane: string) => `${id}\tphantom\t${lane}\tmid\t${queue}/prompts/${id}.md`;
+    await writeFile(join(queue, 'router-queue.md'), [
+      '# Router queue',
+      '- READY RQ-ENV (P1, preferred_lane=claude, repo=phantom): pinned.',
+      '- READY RQ-ALT (lane=codex-local): local pin.',
+      '- READY RQ-OPEN (P2, repo=phantom): open.',
+      '- READY RQ-BAD (exclusive=maybe): malformed.',
+      '',
+    ].join('\n'));
+    await writeFile(ready, [specLess('RQ-ENV', 'codex-personal'), specLess('RQ-ALT', 'devin'), specLess('RQ-OPEN', 'claude'), specLess('RQ-BAD', 'claude'), specLess('RQ-BARE2', 'claude')].join('\n') + '\n');
+    // The report names the lane the market prefers — the envelope's, not the column's.
+    const report = await steerQueue({ action: 'lane', id: 'RQ-ENV', lane: 'devin' }, opts());
+    expect(report).toMatchObject({ changed: true, verified: true, from: { lane: 'claude' }, to: { lane: 'devin' }, message: 'Moved RQ-ENV from claude to devin.' });
+    expect(await read('ready.tsv')).toContain(`RQ-ENV\tphantom\tdevin\tmid\t${queue}/prompts/RQ-ENV.md\t{"preferred_lane":"devin","priority":"P1"}\n`);
+    // A local pin moves too: the materialized spec overrides preferred_lane.
+    await steerQueue({ action: 'lane', id: 'RQ-ALT', lane: 'devin' }, opts());
+    expect(await read('ready.tsv')).toContain(`RQ-ALT\tphantom\tdevin\tmid\t${queue}/prompts/RQ-ALT.md\t{"preferred_lane":"devin"}\n`);
+    // An envelope naming no lane attr is lane-open: steering pins the lane.
+    await steerQueue({ action: 'lane', id: 'RQ-OPEN', lane: 'devin' }, opts());
+    expect(await read('ready.tsv')).toContain(`RQ-OPEN\tphantom\tdevin\tmid\t${queue}/prompts/RQ-OPEN.md\t{"preferred_lane":"devin","priority":"P2"}\n`);
+    // A malformed envelope leaves the row dead to the market either way:
+    // the steer rewrites the column only, as it always did.
+    await steerQueue({ action: 'lane', id: 'RQ-BAD', lane: 'devin' }, opts());
+    expect(await read('ready.tsv')).toContain(`RQ-BAD\tphantom\tdevin\tmid\t${queue}/prompts/RQ-BAD.md\n`);
+    // No matching envelope: the column is the hint, nothing materializes.
+    await steerQueue({ action: 'lane', id: 'RQ-BARE2', lane: 'devin' }, opts());
+    expect(await read('ready.tsv')).toContain(`RQ-BARE2\tphantom\tdevin\tmid\t${queue}/prompts/RQ-BARE2.md\n`);
+    // Once materialized the spec cell is authoritative: steering again is a no-op.
+    expect(await steerQueue({ action: 'lane', id: 'RQ-ENV', lane: 'devin' }, opts())).toMatchObject({ changed: false, message: 'RQ-ENV is already on devin.' });
   });
   it('lane is not a no-op when only the spec disagrees, and leaves a matching spec cell untouched', async () => {
     // The column already says devin but the spec still prefers claude: the

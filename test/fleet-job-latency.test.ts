@@ -85,6 +85,20 @@ it('reads the production ledger dialects: enqueue arrival, PUBLISHED/published p
   expect(merge.phases.find(p => p.phase === 'open_to_merge')).toMatchObject({ total_seconds: 150, measured_jobs: 1, missing_jobs: 1 });
 });
 
+it('uses terminal verdicts even when earlier fields carry publish or unknown states', () => {
+  const text = [
+    { job: 'RQ-M', event: 'publish', ts: '2026-01-01T00:01:00Z' },
+    { job: 'RQ-M', event: 'publish', state: 'PUBLISHED', status: 'MERGED', mergedAt: '2026-01-01T00:03:00Z' },
+    { job: 'RQ-C', event: 'finish', ts: '2026-01-01T00:01:00Z' },
+    { job: 'RQ-C', outcome: 'unknown', status: 'PUBLISHED', ts: '2026-01-01T00:02:00Z' },
+    { job: 'RQ-C', event: 'publish', outcome: 'unknown', status: 'CLOSED', closedAt: '2026-01-01T00:04:00Z' },
+  ].map(row => JSON.stringify(row)).join('\n');
+  expect(mergeQueueLatency(text).phases.find(p => p.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: 120, measured_jobs: 1, missing_jobs: 1 });
+  expect(jobLatency(text).phases.find(p => p.phase === 'publish_wait'))
+    .toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 1 });
+});
+
 it('keeps conflicting publish dialects ambiguous rather than picking one', () => {
   const text = [
     { job: 'RQ-C', event: 'enqueue', ts: '2026-01-01T00:00:00Z' },
@@ -95,6 +109,27 @@ it('keeps conflicting publish dialects ambiguous rather than picking one', () =>
   ].map(row => JSON.stringify(row)).join('\n');
   const report = jobLatency(text);
   expect(report.phases.find(p => p.phase === 'publish_wait')).toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+});
+
+it('measures job attempts without counting batch sessions or node-pool telemetry', () => {
+  const rows = [
+    { job: 'RQ-BATCH-1', event: 'launch', ts: '2026-01-01T00:00:00Z' },
+    { job: 'RQ-BATCH-1', event: 'finish', ts: '2026-01-01T00:10:00Z' },
+    { job: 'RQ-MEMBER', batch: 'RQ-BATCH-1', event: 'publish', ts: '2026-01-01T00:02:00Z' },
+    { job: 'RQ-MEMBER', outcome: 'MERGED', mergedAt: '2026-01-01T00:03:00Z' },
+    { schema: 'fleet.session-pool.v1', job: 'session:1', event: 'launch', ts: '2026-01-01T00:00:00Z' },
+    { schema: 'fleet.session-pool.v1', job: 'session:1', event: 'finish', ts: '2026-01-01T00:05:00Z' },
+    { schema: 'phm-node-runner.v1', job: 'node:1', event: 'launch', ts: '2026-01-01T00:00:00Z' },
+    { job: 'RQ-SOLO', event: 'launch', ts: '2026-01-01T00:00:00Z' },
+    { job: 'RQ-SOLO', event: 'finish', ts: '2026-01-01T00:01:00Z' },
+  ];
+  const text = rows.map(row => JSON.stringify(row)).join('\n');
+  const report = jobLatency(text);
+  expect(report).toMatchObject({ jobs: 2, ignored_events: 0 });
+  expect(report.phases.find(p => p.phase === 'worker')).toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 1 });
+  const merge = mergeQueueLatency(text);
+  expect(merge).toMatchObject({ jobs: 2, ignored_events: 0 });
+  expect(merge.phases.find(p => p.phase === 'open_to_merge')).toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 1 });
 });
 
 it('supports JSON, reports read errors, and is registered', async () => {
@@ -140,7 +175,107 @@ it('reports measured local Git operations and exact cross-lane overlaps only', a
 });
 
 const event = (event: string, ts: string | null) => ({ job: 'attempt-1', event, ts });
+it('counts exact dated Git-operation replays once in the contention report', async () => {
+  const lockFailure = JSON.stringify({ event: 'git_operation', machine: 'mac-a', lane: 'work',
+    operation: 'index.lock', ts: '2026-01-01T00:00:01Z', elapsed_ms: 110, failed: true });
+  const original = [(await readFile(gitFixture, 'utf8')).trimEnd(), lockFailure].join('\n');
+  const datedReceipts = original.split('\n').filter(line => line.includes('"git_operation"') && line.includes('"ts"'));
+  expect(datedReceipts).toHaveLength(6);
+
+  const replayed = [original, ...datedReceipts.map(line => `  ${line}  `)].join('\n');
+  expect(jobLatency(replayed)).toEqual(jobLatency(original));
+});
+
 const start = '2026-01-01T00:00:00Z', end = '2026-01-01T00:01:00Z';
+it('keeps phases that span a recorded relaunch unmeasured', () => {
+  const firstLaunch = event('launch', start);
+  const relaunch = event('launch', end);
+  const checkout = event('checkout_complete', '2026-01-01T00:00:30Z');
+  const finish = event('finish', end);
+  const merged = event('merged', '2026-01-01T00:02:00Z');
+  const text = [merged, relaunch, event('publish', checkout.ts), finish, firstLaunch, checkout]
+    .map(row => JSON.stringify(row)).join('\n');
+
+  expect(jobLatency(text).phases.find(p => p.phase === 'model'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+  expect(mergeQueueLatency(text).phases.find(p => p.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+});
+
+it('measures phases whose boundaries both follow the last launch', () => {
+  const text = [
+    event('launch', start), event('launch', end),
+    event('checkout_complete', '2026-01-01T00:01:10Z'),
+    event('finish', '2026-01-01T00:01:30Z'),
+    event('publish', '2026-01-01T00:02:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  expect(jobLatency(text).phases.find(p => p.phase === 'model'))
+    .toMatchObject({ total_seconds: 20, measured_jobs: 1, missing_jobs: 0 });
+  expect(jobLatency(text).phases.find(p => p.phase === 'publish_wait'))
+    .toMatchObject({ total_seconds: 30, measured_jobs: 1, missing_jobs: 0 });
+});
+
+it('withholds phase timings when a retry launch ties a non-launch start boundary', () => {
+  const text = [
+    event('launch', start),
+    event('checkout_complete', end),
+    event('publish', end),
+    event('launch', end),
+    event('finish', '2026-01-01T00:01:30Z'),
+    event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  expect(jobLatency(text).phases.find(phase => phase.phase === 'model'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+  expect(mergeQueueLatency(text).phases.find(phase => phase.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+});
+
+it.each([start, end, null])('withholds latency across a batch member claim at %s', timestamp => {
+  const text = [
+    event('publish', start),
+    { ...event('batch_claim', timestamp), batch: 'RQ-BATCH-2' },
+    event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  expect(mergeQueueLatency(text).phases.find(phase => phase.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+});
+
+it('uses batch claims to separate attempts while requiring a launch for worker timing', () => {
+  const text = [
+    event('enqueue', start), event('finish', start),
+    { ...event('batch_claim', end), batch: 'RQ-BATCH-2' },
+    event('publish', '2026-01-01T00:02:00Z'), event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  const report = jobLatency(text);
+  for (const name of ['queue_wait', 'worker', 'publish_wait']) {
+    expect(report.phases.find(phase => phase.phase === name))
+      .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+  }
+  expect(mergeQueueLatency(text).phases.find(phase => phase.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 0 });
+});
+
+it.each([null, 'bad-date'])('withholds phase timings when a launch timestamp is %s', timestamp => {
+  const text = [
+    event('enqueue', start),
+    event('launch', end),
+    event('checkout_complete', '2026-01-01T00:01:10Z'),
+    event('finish', '2026-01-01T00:01:30Z'),
+    event('publish', '2026-01-01T00:02:00Z'),
+    event('merged', '2026-01-01T00:03:00Z'),
+    event('launch', timestamp),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  for (const report of [jobLatency(text), mergeQueueLatency(text)]) {
+    expect(report).toMatchObject({ jobs: 1, ignored_events: 1, top_wastes: [] });
+    expect(report.phases.every(phase => phase.missing_jobs === 1 && phase.total_seconds === null)).toBe(true);
+  }
+});
+
 it.each([
   ['missing', [event('ci_start', start)]],
   ['reversed', [event('ci_start', end), event('ci_complete', start)]],
@@ -165,6 +300,81 @@ it('uses actual merge time, aliases and shuffled events without counting duplica
   expect(mergeQueueLatency([event('ci_start', start), event('ci_complete', start)].map(row => JSON.stringify(row)).join('\n')).phases[1]?.total_seconds).toBe(0);
 });
 
+it('withholds phases whose boundaries name different pull requests', () => {
+  const first = 'https://github.com/acme/phantom/pull/1';
+  const second = 'https://github.com/acme/phantom/pull/2';
+  const text = [
+    { ...event('publish', start), prUrl: first },
+    { ...event('ci_start', end), pr_url: 'https://github.com/Acme/Phantom/pull/1/' },
+    { ...event('ci_complete', '2026-01-01T00:02:00Z'), url: second },
+    { ...event('merged', '2026-01-01T00:03:00Z'), pr: second },
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  expect(mergeQueueLatency(text).phases.map(phase => [phase.phase, phase.total_seconds])).toEqual([
+    ['check_wait', 60], ['ci', null], ['merge', 60], ['open_to_merge', null],
+  ]);
+  expect(jobLatency(text).phases.find(phase => phase.phase === 'ci'))
+    .toMatchObject({ measured_jobs: 0, missing_jobs: 1, total_seconds: null });
+});
+
+it('retains conflicting PR claims on otherwise duplicate boundaries', () => {
+  const text = [
+    event('ci_start', start),
+    { ...event('ci_complete', end), url: 'https://github.com/acme/phantom/pull/1' },
+    { ...event('ci_complete', end), url: 'https://github.com/acme/phantom/pull/2' },
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  for (const report of [jobLatency(text), mergeQueueLatency(text)]) {
+    expect(report.phases.find(phase => phase.phase === 'ci'))
+      .toMatchObject({ measured_jobs: 0, missing_jobs: 1, total_seconds: null });
+  }
+});
+
+it.each([
+  ['matching CI identity', 'ci_start', end, 1, 180],
+  ['conflicting CI start', 'ci_start', end, 2, null],
+  ['conflicting CI completion', 'ci_complete', end, 2, null],
+  ['undated conflicting CI identity', 'ci_start', null, 2, null],
+  ['conflicting CI identity before publish', 'ci_start', '2025-12-31T23:59:59Z', 2, 180],
+  ['conflicting CI identity after merge', 'ci_complete', '2026-01-01T00:03:01Z', 2, 180],
+] as const)('checks the publish-to-merge span with %s', (_name, stage, at, pr, seconds) => {
+  const text = [
+    { ...event('publish', start), url: 'https://github.com/acme/phantom/pull/1' },
+    { ...event(stage, at), url: `https://github.com/acme/phantom/pull/${pr}` },
+    event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  expect(mergeQueueLatency(text).phases.find(phase => phase.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: seconds, measured_jobs: seconds === null ? 0 : 1 });
+});
+
+it.each([
+  ['check_wait', 'publish', 'ci_start', 'closed'],
+  ['ci', 'ci_start', 'ci_complete', 'publish'],
+  ['merge', 'ci_complete', 'merged', 'closed'],
+] as const)('checks intervening PR evidence for %s', (phase, from, to, intervening) => {
+  const first = 'https://github.com/acme/phantom/pull/1';
+  const second = 'https://github.com/acme/phantom/pull/2';
+  for (const [at, url, expected] of [
+    ['2026-01-01T00:00:30Z', second, null],
+    [null, second, null],
+    ['2026-01-01T00:00:30Z', first, 60],
+    ['2026-01-01T00:01:01Z', second, 60],
+  ] as const) {
+    const text = [
+      { ...event(from, start), url: first },
+      { ...event(intervening, at), url },
+      event(to, end),
+    ].map(row => JSON.stringify(row)).join('\n');
+    const reports = phase === 'check_wait' ? [mergeQueueLatency(text)] : [mergeQueueLatency(text), jobLatency(text)];
+    for (const report of reports) {
+      expect(report.phases.find(row => row.phase === phase)).toMatchObject({
+        total_seconds: expected, measured_jobs: expected === null ? 0 : 1,
+      });
+    }
+  }
+});
+
 it('reads the remaining timestamp aliases and the kind event key', () => {
   const rows = [
     { job: 'attempt-1', kind: 'enqueue', time: '2026-01-01T00:00:00Z' },
@@ -179,6 +389,24 @@ it('reads the remaining timestamp aliases and the kind event key', () => {
   expect(phase('queue_wait')).toMatchObject({ total_seconds: 10, measured_jobs: 1 });
   expect(phase('worker')).toMatchObject({ total_seconds: 50, measured_jobs: 1 });
   expect(phase('publish_wait')).toMatchObject({ total_seconds: 30, measured_jobs: 1 });
+});
+
+it('joins latency boundaries using the first usable lifecycle aliases', () => {
+  const text = [
+    { job: ' ', job_id: 'attempt-1', event: '', type: ' Enqueue ', ts: '2026-01-01T00:00:00Z' },
+    { job: 42, jobId: 'attempt-1', event: false, type: ' ', kind: 'Launch', at: '2026-01-01 01:00:10+0100' },
+    { id: ' attempt-1 ', event: ' Finish ', ts: '2026-01-01T00:01:00Z' },
+    { job: 'attempt-1', event: 'Published', ts: '2026-01-01T00:02:00Z' },
+    { job: 'attempt-1', outcome: 'MERGED', mergedAt: '2026-01-01T00:04:00Z' },
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  const report = jobLatency(text);
+  expect(report).toMatchObject({ jobs: 1, ignored_events: 0 });
+  expect(report.phases.find(p => p.phase === 'queue_wait')).toMatchObject({ total_seconds: 10, measured_jobs: 1 });
+  expect(report.phases.find(p => p.phase === 'worker')).toMatchObject({ total_seconds: 50, measured_jobs: 1 });
+  expect(report.phases.find(p => p.phase === 'publish_wait')).toMatchObject({ total_seconds: 60, measured_jobs: 1 });
+  expect(mergeQueueLatency(text).phases.find(p => p.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: 120, measured_jobs: 1 });
 });
 
 it('exposes versioned pulse JSON and plain text, including unreadable ledgers and usage errors', async () => {

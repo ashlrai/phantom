@@ -1,4 +1,4 @@
-import { isAbsolute, parse as parsePath, resolve } from 'node:path';
+import { containsControlChars, isCanonicalAbsolutePath } from '../core/universe/input-guards.js';
 import type { PreparationMeasurementCapture } from '../core/universe/preparation-measurement-capture-types.js';
 import { parsePreparationMeasurementReport, summarizePreparationMeasurementReport } from '../core/universe/preparation-measurement-report.js';
 import { validateFixedEvaluatorCustodyDiagnostics } from '../core/universe/fixed-evaluator-diagnostics.js';
@@ -23,7 +23,7 @@ interface Options { universeId: string; root: string; captureId: string; mode: '
 const safeId = (value: string) => /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value);
 function options(args: string[]): Options {
   if (args.length > 8 || args.some(arg => typeof arg !== 'string' || Buffer.byteLength(arg) > 4096 ||
-      [...arg].some(character => { const code = character.charCodeAt(0); return code < 32 || code >= 127 && code <= 159; }))) throw new Error();
+      containsControlChars(arg))) throw new Error();
   const universeId = args[0];
   if (!universeId || !safeId(universeId)) throw new Error();
   let root: string | undefined, captureId: string | undefined, mode: Options['mode'] = 'human';
@@ -31,7 +31,7 @@ function options(args: string[]): Options {
     const flag = args[index];
     if (flag === '--root' && root === undefined) {
       root = args[++index];
-      if (!root || !isAbsolute(root) || resolve(root) !== root || parsePath(root).root === root) throw new Error();
+      if (!isCanonicalAbsolutePath(root)) throw new Error();
     } else if (flag === '--capture' && captureId === undefined) {
       captureId = args[++index]; if (!captureId || !safeId(captureId)) throw new Error();
     } else if ((flag === '--json' || flag === '--report') && mode === 'human') mode = flag === '--json' ? 'json' : 'report';

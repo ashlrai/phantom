@@ -5,9 +5,8 @@
  * a draft that needs Mason's approval. Sends nothing. Callers that want a
  * loop invoke this verb once per tick; the pass itself is never recurring.
  */
-import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
-import { QueueStore } from '../core/queue/store.js';
+import { isAbsolute } from 'node:path';
+import { cosQueueStore, resolveCosRunsDir } from '../core/cos/intake.js';
 import { runCosWorkOnce, type CosWorkOptions, type CosWorkResult } from '../core/cos/worker.js';
 import { postCosBusNotice } from '../core/cos/bus-notice.js';
 
@@ -46,10 +45,10 @@ export async function cmdFleetCosWork(args: string[], deps: FleetCosWorkDeps = {
     error(`Invalid arguments. ${usage.split('\n')[0]}`);
     return 2;
   }
-  runsDir ??= process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  runsDir = resolveCosRunsDir(runsDir);
   try {
     if (!apply) {
-      const jobs = (await new QueueStore(join(runsDir, 'queue')).read()).jobs
+      const jobs = (await cosQueueStore(runsDir).read()).jobs
         .filter(job => job.status === 'READY' && job.id.startsWith('cos-'));
       const report = { v: 1, mode: 'dry-run', pending: jobs.length, next: jobs[0]?.id ?? null };
       output(json ? JSON.stringify(report) : `pending=${report.pending} next=${report.next ?? 'none'}`);

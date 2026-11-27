@@ -58,6 +58,44 @@ describe('claude native quota in the resource ledger', () => {
     await put(root, reading({}, 100));
     expect((await claudeLane(root)).lane.quotaEvidence?.state).toBe('exhausted');
   });
+  it.each([
+    ['newer', '2026-11-02T11:59:00Z', 100, 'exhausted'],
+    ['equal', '2026-11-02T11:55:00Z', 61, 'observed-headroom'],
+    ['older', '2026-11-02T11:54:00Z', 61, 'observed-headroom'],
+    ['future', '2026-11-02T12:01:00Z', 61, 'observed-headroom'],
+  ])('orders native usage against a %s status quota by capture time', async (_label, observedAt, usedPct, state) => {
+    const root = await setup();
+    const resetAt = '2026-11-07T16:02:00Z';
+    await writeFile(join(root, 'queue/status.json'), JSON.stringify({
+      last_tick: '2026-11-02T12:00:00Z', lanes: { claude: { held: true } },
+      budget: { claude: { weekly_used_pct: 100, observed_at: observedAt, reset_at: resetAt, source: 'dispatcher' } },
+    }));
+    await put(root, reading());
+    const { lane } = await claudeLane(root);
+    expect(lane).toMatchObject({ usedPct, resetAt, held: true, quotaEvidence: { state } });
+    if (usedPct === 100) {
+      expect(lane.source).toBe('dispatcher');
+      expect(lane.quotaEvidence).toMatchObject({ reason: 'status-quota', measuredQuota: null, holdConflict: null });
+    } else {
+      expect(lane.source).toBe('claude-native-usage');
+    }
+  });
+  it.each(['2026-11-02T11:59:30Z', '2026-11-02T12:00:00Z'])(
+    'prefers active native usage when a newer dispatcher sample resets at %s',
+    async resetAt => {
+      const root = await setup();
+      await writeFile(join(root, 'queue/status.json'), JSON.stringify({
+        last_tick: '2026-11-02T12:00:00Z', lanes: { claude: { held: true } },
+        budget: { claude: { weekly_used_pct: 100, observed_at: '2026-11-02T11:59:00Z', reset_at: resetAt, source: 'dispatcher' } },
+      }));
+      await put(root, reading());
+      const { lane } = await claudeLane(root);
+      expect(lane).toMatchObject({
+        usedPct: 61, resetAt: '2026-11-07T16:02:00Z', held: true, source: 'claude-native-usage',
+        quotaEvidence: { state: 'observed-headroom', statusQuota: { usedPct: 100, resetAt } },
+      });
+    },
+  );
   it('keeps the active weekly reading and omits only model scopes whose reset has arrived', async () => {
     const root = await setup();
     await put(root, reading({ windows: [

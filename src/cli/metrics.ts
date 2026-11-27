@@ -2,9 +2,10 @@ import { readTaskCheckJobs } from './fleet-task-check.js';
 import { mergeGraph } from '../core/fleet/merge-graph.js';
 import { MERGE_CLASSES, readLeverageReport } from '../core/metrics/leverage-class.js';
 import { readLeverageMix } from '../core/metrics/leverage-mix.js';
-export { runMetricsCli } from './metrics-impact.js';
+import { runMetricsCli } from './metrics-impact.js';
 import { cmdMetricsIdle } from './metrics-idle.js';
 import { cmdMetricsProd } from './metrics-prod.js';
+export { runMetricsCli };
 /** `phm metrics [summary|dashboard|record|recommend|ingest]` — local telemetry + value metrics. */
 import { join } from 'node:path';
 import { rejectUnknownOptions } from './args.js';
@@ -55,17 +56,20 @@ async function cmdGlance(argv: string[], io: CliIo): Promise<number> {
   return report.sources.jobs === 'ok' || report.sources.status !== 'missing' ? 0 : 1;
 }
 
+function parseFlagPairs(args: string[], allowed: readonly string[]): Map<string, string> | null {
+  const options = new Map<string, string>();
+  for (let i = 0; i < args.length; i += 2) {
+    const key = args[i], value = args[i + 1];
+    if (!key || !allowed.includes(key) || options.has(key) || !value || value.startsWith('-')) return null;
+    options.set(key, value);
+  }
+  return options;
+}
+
 function cmdIngest(args: string[], io: CliIo): number {
   const usage = (): number => { io.err(USAGE); return 2; };
-  const options = new Map<string, string>();
-  for (let i = 0; i < args.length; i++) {
-    const option = args[i];
-    if (!['--jobs', '--status'].includes(option) || options.has(option)) return usage();
-    const value = args[++i];
-    if (!value || value.startsWith('-')) return usage();
-    options.set(option, value);
-  }
-  const jobs = options.get('--jobs'), status = options.get('--status');
+  const options = parseFlagPairs(args, ['--jobs', '--status']);
+  const jobs = options?.get('--jobs'), status = options?.get('--status');
   if (!jobs || !status) return usage();
   try {
     io.out(JSON.stringify(ingestMetrics(jobs, status), null, 2));
@@ -77,7 +81,7 @@ function cmdIngest(args: string[], io: CliIo): number {
 }
 
 export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number> {
-  if (argv[0] === 'impact') return import('./metrics-impact.js').then(({ runMetricsCli }) => runMetricsCli(argv, io));
+  if (argv[0] === 'impact') return runMetricsCli(argv, io);
   if (argv[0] === 'prod') return cmdMetricsProd(argv, {}, io);
   if (argv[0] === 'idle') return cmdMetricsIdle(argv);
   if (argv[0] === 'loop') return import('./metrics-loop.js').then(({ cmdMetricsLoop }) => cmdMetricsLoop(argv.slice(1), io));
@@ -120,8 +124,9 @@ export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number>
     });
   }
   if (sub === 'leverage-mix') {
-    if (rest.length && (rest.length !== 2 || rest[0] !== '--prs' || !rest[1] || rest[1].startsWith('-'))) { io.err(USAGE); return 2; }
-    return readLeverageMix({ prsPath: rest[1] }).then(report => {
+    const options = parseFlagPairs(rest, ['--prs']);
+    if (!options) { io.err(USAGE); return 2; }
+    return readLeverageMix({ prsPath: options.get('--prs') }).then(report => {
       io.out(json ? JSON.stringify(report, null, 2) : `Product or fleet improvements: ${report.improvedShare === null ? 'unknown' : `${(report.improvedShare * 100).toFixed(1)}%`} of merges in the last 24 hours (known classifications; unknowns included in total)${report.sources.jobsTruncated ? '; jobs ledger truncated: newest window only' : ''}.`);
       return 0;
     });
@@ -137,12 +142,8 @@ export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number>
         return 0;
       }
       case 'dashboard': {
-        const options = new Map<string, string>();
-        for (let i = 0; i < rest.length; i += 2) {
-          const key = rest[i], value = rest[i + 1];
-          if (!key || !['--out', '--prs'].includes(key) || options.has(key) || !value || value.startsWith('-')) { io.err(USAGE); return 2; }
-          options.set(key, value);
-        }
+        const options = parseFlagPairs(rest, ['--out', '--prs']);
+        if (!options) { io.err(USAGE); return 2; }
         const out = options.get('--out') ?? join(ashlrHome(), 'metrics', 'dashboard.html');
         return readLeverageMix({ prsPath: options.get('--prs') }).then(leverage => {
           try {

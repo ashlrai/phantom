@@ -43,15 +43,27 @@ describe('lane ranking', () => {
     expect(ranked.map(l => l.pool)).toEqual(['grok-build', 'codex-personal']);
     expect(ranked[1]).toMatchObject({ spillRecommended: true, projectedExhaustion: '2026-10-30T12:30:00.000Z' });
   });
-  it('does not use stale or post-reset forecasts to recommend spill', () => {
+  it('excludes a lane when any observed bucket is older than two hours', () => {
+    const input = snapshot();
+    const buckets = input.budgets.pools['codex-personal'].buckets;
+    buckets.credits = { ...buckets.weeklyPct!, timestamp: '2026-10-30T10:00:00.000Z' };
+    expect(rankLanes('frontier', input, slots).map(l => l.pool)).toEqual(['codex-personal', 'grok-build']);
+    buckets.credits.timestamp = '2026-10-30T09:59:59.999Z';
+    expect(rankLanes('frontier', input, slots).map(l => l.pool)).toEqual(['grok-build']);
+  });
+  it('honors a manual reading through its declared reset and ignores stale or post-reset forecasts', () => {
     const input = snapshot();
     const bucket = input.budgets.pools['codex-personal'].buckets.weeklyPct!;
+    bucket.source = 'manual';
     bucket.timestamp = '2026-10-30T09:00:00.000Z';
     bucket.projectedExhaustion = '2026-10-30T12:30:00.000Z';
-    expect(rankLanes('frontier', input, slots)[0]?.spillRecommended).toBe(false);
+    expect(rankLanes('frontier', input, slots)[0]).toMatchObject({ pool: 'codex-personal', spillRecommended: false });
+    bucket.resetAt = null;
+    expect(rankLanes('frontier', input, slots).map(l => l.pool)).toEqual(['grok-build']);
+    bucket.resetAt = soon;
     bucket.timestamp = now;
     bucket.projectedExhaustion = later;
-    expect(rankLanes('frontier', input, slots)[0]?.spillRecommended).toBe(false);
+    expect(rankLanes('frontier', input, slots)[0]).toMatchObject({ pool: 'codex-personal', spillRecommended: false });
   });
   it('excludes exhausted, held, unknown and reset-pending budgets', () => {
     for (const state of ['exhausted', 'held', 'unknown', 'reset-pending'] as const) {

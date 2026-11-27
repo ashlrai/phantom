@@ -1,14 +1,22 @@
 /**
  * `phm fleet router-weights [--runs-dir <absolute dir>] [--json]` — advisory per-work-class router-weight
  * proposals from recorded outcomes (metrics/jobs.jsonl joined with the bounded side ledgers
- * api-spend/work-market/empty-tags/merge-events/launch-cost plus the reward-signal substrate and the
- * cross-review verdict journal under the ASHLR home root). Read-only: never writes weights.json and never
- * changes routing. Logic lives in src/core/router/weight-proposals.ts; this file parses argv and renders.
+ * api-spend/work-market/empty-tags/merge-events/launch-cost plus the reward-signal substrate, the
+ * cross-review verdict journal and the outside-PR outcome journal under the runs dir, and the fleet
+ * controller's recorded lane-quality verdicts under the ASHLR home root / runs queue). Read-only: never
+ * writes weights.json and never changes routing. Logic lives in src/core/router/weight-proposals.ts;
+ * this file parses argv and renders.
  * Exit: 0 for a bounded read (proposals or an insufficient-evidence refusal); 1 when the ledger is missing,
  * unreadable, not a file or oversized (reported as unavailable, never as an empty success); 2 for usage.
  */
 import { isAbsolute } from 'node:path';
 
+import {
+  COMMUNITY_SEATS_DEFAULT_WINDOW_DAYS,
+  readOutsidePrCommunitySeats,
+  type CommunitySeatOutcome,
+  type OutsidePrCommunitySeatsRead,
+} from '../core/router/community-seats.js';
 import { readControllerQuality, type ControllerQualityRead, type ControllerQualityReceipt } from '../core/router/controller-quality.js';
 import { readRouterOutcomes, type RouterOutcomeRead } from '../core/router/outcomes.js';
 import { buildRouterWeightProposalReport, type RouterWeightEvidence, type RouterWeightProposalReport } from '../core/router/weight-proposals.js';
@@ -17,9 +25,10 @@ export const FLEET_ROUTER_WEIGHTS_USAGE =
   'Usage: phm fleet router-weights [--runs-dir <absolute dir>] [--json]\n' +
   'Advisory only. Reads <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs) plus the bounded ' +
   'side ledgers (api-spend/work-market/empty-tags/merge-events/launch-cost) plus the reward-signal ledger ' +
-  '(<ashlr>/metrics/reward-signals.jsonl), the cross-review verdict journal (<ashlr>/fleet/cross-review.jsonl) ' +
-  'and the fleet controller\'s recorded lane-quality ' +
-  'verdicts in <runs-dir>/queue/fleet-controller.json. ' +
+  '(<ashlr>/metrics/reward-signals.jsonl), the cross-review verdict journal (<ashlr>/fleet/cross-review.jsonl), ' +
+  'the outside-PR outcome journal (<runs-dir>/metrics/outside-pr-outcomes.jsonl, folded into per-agent community-seat ' +
+  'tallies — outside PRs carry no lane/work_class and never enter the proposals) and the fleet controller\'s ' +
+  'recorded lane-quality verdicts in <runs-dir>/queue/fleet-controller.json. ' +
   'Proposes bounded weight shifts per work_class/lane from held-merge outcomes (20 known outcomes required, ' +
   'shifts capped at 0.1; merges recorded as reverted never count as held). Writes nothing and changes no ' +
   'live routing. Exit 0 for a read, 1 for an unavailable ledger, 2 for usage.';
@@ -132,11 +141,53 @@ function qualityReceiptLine(r: ControllerQualityReceipt): string {
   return `  ${r.lane}: ${parts.join(' ')}`;
 }
 
+/** One compact text rendering of a community-seat tally; agent null prints as the unattributed bucket. */
+function seatLine(s: CommunitySeatOutcome): string {
+  return `  ${s.agent ?? 'unattributed'}: prs=${s.prs} reverted=${s.reverted} kept=${s.kept} unknown=${s.unknown} repos=${s.repos}`;
+}
+
+/**
+ * The community-seat section: per attributed-agent outside-merge tallies
+ * when the journal read, a coverage line for degraded states, nothing when
+ * the caller supplied no read ('unreported').
+ */
+function communitySeatLines(report: RouterWeightProposalReport): string[] {
+  if (report.community_seats_state === 'unreported') return [];
+  if (report.community_seats_state !== 'read') {
+    return [`community-seat coverage: outside-pr-outcomes.jsonl ${report.community_seats_state}; no community-seat evidence joined`];
+  }
+  const lines = [
+    `community seats (outside-pr-outcomes.jsonl, ${report.community_seats_window_days}d window; advisory context — outside PRs carry no lane/work_class and never enter the (work_class, lane) proposals; agent is recorded branch/login convention attribution, model is never recorded):`,
+    ...(report.community_seats !== null && report.community_seats.length === 0
+      ? ['  no outside merges journaled inside the window']
+      : (report.community_seats ?? []).map(seatLine)),
+  ];
+  const coverage = report.community_seats_coverage;
+  if (report.community_seats_truncated) {
+    lines.push('  community-seat coverage: retained tail only; seat counts cover the newest bytes');
+  }
+  if ((report.community_seats_ignored ?? 0) > 0) {
+    lines.push(`  community-seat coverage: ${report.community_seats_ignored} journal lines failed validation and were not joined`);
+  }
+  if (coverage !== null) {
+    if (coverage.source_state !== 'healthy') {
+      lines.push(`  community-seat coverage: newest scan row reports sourceState '${coverage.source_state}'`);
+    }
+    if (coverage.revert_ledger !== 'read') {
+      lines.push(`  community-seat coverage: the standing revert ledger read as '${coverage.revert_ledger}' — 'unknown' verdicts never count toward kept or reverted`);
+    }
+    if (coverage.degraded_repos.length > 0) {
+      lines.push(`  community-seat coverage: partial repo reads: ${coverage.degraded_repos.join(', ')}`);
+    }
+  }
+  return lines;
+}
+
 function proposalLines(report: RouterWeightProposalReport): string[] {
-  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} reward=${report.reward_state} launch_cost=${report.launch_cost_state} cross_review=${report.cross_review_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
+  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} reward=${report.reward_state} launch_cost=${report.launch_cost_state} cross_review=${report.cross_review_state} controller_quality=${report.controller_quality_state} community_seats=${report.community_seats_state} truncated=${report.truncated} as_of=${report.as_of} ` +
     'advisory-only: not applied to routing or weights.json';
   if (report.status === 'unavailable') {
-    return [header, `unavailable: ledger state=${report.ledger.state}; no proposals were computed`, `ledger ${report.ledger.path}`];
+    return [header, `unavailable: ledger state=${report.ledger.state}; no proposals were computed`, `ledger ${report.ledger.path}`, ...communitySeatLines(report)];
   }
   const counts = `known=${report.known_outcomes} unknown=${report.unknown_outcomes} unclassified=${report.unclassified_outcomes} ` +
     `min_samples=${report.bounds.min_samples} max_shift=${report.bounds.max_shift}`;
@@ -272,7 +323,7 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
           : []),
       ]
     : [];
-  return [header, counts, ...resolution, `ledger ${report.ledger.path}`, ...usage, ...repoMix, ...coverage, ...quality, ...rows, ...none];
+  return [header, counts, ...resolution, `ledger ${report.ledger.path}`, ...usage, ...repoMix, ...coverage, ...quality, ...communitySeatLines(report), ...rows, ...none];
 }
 
 export async function cmdFleetRouterWeights(
@@ -298,11 +349,17 @@ export async function cmdFleetRouterWeights(
     console.error('Router weight proposals unavailable.');
     return 1;
   }
-  // The controller read is advisory context: a failure degrades to an
-  // 'unreadable' state on the report, never to a command failure.
+  // The controller and community-seat reads are advisory context: a
+  // failure degrades to an 'unreadable' state on the report, never to a
+  // command failure.
   const controller = await readController(runsOpts).catch(
     (): ControllerQualityRead => ({ state: 'unreadable', path: '', receipts: [], invalid_rows: null }));
-  const report = buildRouterWeightProposalReport(result, now(), { controllerQuality: controller });
+  const communitySeats = await readOutsidePrCommunitySeats(runsOpts).catch(
+    (): OutsidePrCommunitySeatsRead => ({
+      state: 'unreadable', path: '', truncated: false, ignored_rows: null,
+      window_days: COMMUNITY_SEATS_DEFAULT_WINDOW_DAYS, since: '', seats: [], coverage: null,
+    }));
+  const report = buildRouterWeightProposalReport(result, now(), { controllerQuality: controller, communitySeats });
   console.log(parsed.json ? JSON.stringify(report) : proposalLines(report).join('\n'));
   return result.state === 'read' ? 0 : 1;
 }

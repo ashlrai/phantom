@@ -117,6 +117,11 @@ describe('phm agents messages', () => {
     // only bodies carrying that exact discriminator — the kindless mail
     // never matches.
     expect(summaries({ channel: 'build' })).toEqual(['build notes here']);
+    // --topic keeps only the well-formed group:<room>:<topic> address's topic
+    // component; composing with --channel narrows to one room AND one topic.
+    expect(summaries({ topic: 'general' })).toEqual(['build notes here']);
+    expect(summaries({ channel: 'build', topic: 'general' })).toEqual(['build notes here']);
+    expect(summaries({ topic: 'gone' })).toEqual([]);
     expect(summaries({ inReplyTo: 'm1' })).toEqual(['answering you']);
     expect(summaries({ id: 'm1' })).toEqual(['on it?']);
     expect(summaries({ id: 'm-gone' })).toEqual([]);
@@ -140,6 +145,8 @@ describe('phm agents messages', () => {
       .toEqual({ ok: false, error: '--body-kind takes a body kind (printable, 1-128 chars).' });
     expect(readAgentsMessages({ result: 'released' }, { root, now: () => NOW }))
       .toEqual({ ok: false, error: '--result takes one of reserved, admitted, complete, failed.' });
+    expect(readAgentsMessages({ topic: 'BAD TOPIC' }, { root, now: () => NOW }))
+      .toEqual({ ok: false, error: '--topic takes a bus channel topic (a-z, 0-9, _ -; 1-32 chars).' });
   });
 
   it('the --result filter keeps only work.result receipts reporting that outcome', () => {

@@ -36,14 +36,14 @@
  *    precheck_skip/skipped_empty rows empty because the dispatcher never
  *    launched them; they are gate decisions, not jobs that ran and
  *    produced nothing, so they are tallied apart and never feed a tag
- *    bucket (the sync still tags them 'unknown' — their absent log — and
- *    this feed deliberately does not inherit that noise).
+ *    bucket, even if a historical tag already exists.
  *  - Only the actionable buckets emit. 'blocked' (missing file, tool or
  *    permission) and 'unknown' (the classifier's own could-not-classify
  *    bucket) recur as repo-fixable machinery gaps; 'untagged' — a
  *    finish with no tag row at all — emits only when untagged finishes
  *    are the majority of the window's empties, the signature of a dead or
  *    starved empty-tag-sync rather than its normal per-pass deferral.
+ *    A clipped jobs ledger cannot establish that majority.
  *    already_done, no_change_needed and pool_cap are explained healthy or
  *    owner-domain outcomes and never become work here.
  *  - The ledgers carry no repository dimension — they describe this
@@ -68,7 +68,7 @@ import { CLOUD_REPO_PATTERN } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
 import { EMPTY_TAG_LABELS, EMPTY_TAGS } from '../fleet/empty-tags.js';
 import { EMPTY_TAG_SYNC_HOURS, EMPTY_TAG_SYNC_MAX_CLASSIFY } from '../fleet/empty-tag-sync.js';
-import { ledgerFinishes, type EmptiesFinish } from '../fleet/empty-finishes.js';
+import { currentAttemptFinishes, type EmptiesFinish } from '../fleet/empty-finishes.js';
 import {
   foldEmptyTags,
   readLedgerFile,
@@ -91,7 +91,7 @@ export const EMPTY_TAG_WINDOW_HOURS = EMPTY_TAG_SYNC_HOURS;
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
 const MAX_TITLE_CHARS = 200;
 /** The fleet's own repository label: tag evidence is this repo's machinery, never another target's. */
-const FLEET_REPO_NAME = 'phantom';
+const FLEET_REPO = 'ashlrai/phantom';
 /** Example job ids quoted per bucket inside one prompt. */
 const MAX_EXAMPLES = 3;
 /** The buckets that can become work; the other recorded tags are explained outcomes. */
@@ -125,11 +125,6 @@ export interface EmptyTagWindowFold {
   counts: Record<string, number>;
   /** Up to MAX_EXAMPLES job ids per actionable bucket, in finish order. */
   examples: Record<ActionableBucket, string[]>;
-}
-
-/** The repository name both vocabularies record: the last path segment, lowercased. */
-function fleetRepoName(repo: string): string {
-  return (repo.split('/').pop() ?? repo).trim().toLowerCase();
 }
 
 const isTag = (value: string): boolean => (EMPTY_TAGS as readonly string[]).includes(value);
@@ -178,11 +173,12 @@ function examplesLine(bucket: ActionableBucket, fold: EmptyTagWindowFold): strin
 
 const NO_CHANGE = 'If the pattern no longer reproduces on the default branch — or the cause is owner-only (credentials, billing, a protected gate or sandbox profile) — report no-change and name the evidence.';
 
-function emptyTagPrompt(bucket: ActionableBucket, fold: EmptyTagWindowFold): string {
+function emptyTagPrompt(bucket: ActionableBucket, fold: EmptyTagWindowFold, truncated: boolean): string {
   const lead = [
     `Phantom's empty-job tag ledger shows '${bucket}' recurring across the fleet's own finished-empty jobs — the self-improvement work this backlog exists for.`,
     '',
     tallyLine(fold) + examplesLine(bucket, fold) + '.',
+    ...(truncated ? ['The jobs ledger was clipped. These counts cover only the retained receipts.'] : []),
     '',
   ];
   const tagClause = bucket === 'untagged' ? '' : ` The recorded tag label is '${EMPTY_TAG_LABELS[bucket as keyof typeof EMPTY_TAG_LABELS]}'.`;
@@ -206,7 +202,7 @@ function emptyTagPrompt(bucket: ActionableBucket, fold: EmptyTagWindowFold): str
   return [...lead, ...body[bucket]].join('\n');
 }
 
-function emptyTagItem(bucket: ActionableBucket, fold: EmptyTagWindowFold, repo: string): CloudBacklogItem {
+function emptyTagItem(bucket: ActionableBucket, fold: EmptyTagWindowFold, repo: string, truncated: boolean): CloudBacklogItem {
   const titles: Record<ActionableBucket, string> = {
     blocked: `Fleet empty jobs keep ending 'blocked'`,
     unknown: `Fleet empty finishes stay tagged 'unknown'`,
@@ -215,7 +211,7 @@ function emptyTagItem(bucket: ActionableBucket, fold: EmptyTagWindowFold, repo: 
   return {
     id: `fleet-empty-tag-${bucket}`,
     title: titles[bucket].slice(0, MAX_TITLE_CHARS),
-    prompt: emptyTagPrompt(bucket, fold),
+    prompt: emptyTagPrompt(bucket, fold, truncated),
     area: 'fleet-empty-tags',
     priority: 3,
     ...(CLOUD_REPO_PATTERN.test(repo) ? { repo } : {}),
@@ -230,9 +226,11 @@ function emptyTagItem(bucket: ActionableBucket, fold: EmptyTagWindowFold, repo: 
 export async function emptyTagBacklogItems(opts: EmptyTagItemsOptions): Promise<CloudBacklogItem[]> {
   try {
     const repo = opts.repo.trim();
-    if (repo === '' || fleetRepoName(repo) !== FLEET_REPO_NAME) return [];
+    const repoKey = repo.toLowerCase();
+    if (repoKey !== FLEET_REPO && repoKey !== 'phantom') return [];
     const home = opts.homeDir ?? homedir();
     const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(home, '.ashlr-runs');
+    const nowMs = (opts.now ?? new Date()).getTime();
     const [jobs, tags] = await Promise.all([
       opts.jobsText !== undefined
         ? Promise.resolve({ state: 'read' as const, text: opts.jobsText, truncated: false })
@@ -246,8 +244,8 @@ export async function emptyTagBacklogItems(opts: EmptyTagItemsOptions): Promise<
     // honestly untagged. Anything else means the job→tag join cannot be
     // trusted, so the source stays quiet rather than guessing tags.
     if (tags.state !== 'read' && tags.state !== 'missing') return [];
-    const tagMap = tags.state === 'read' ? foldEmptyTags(tags.text) : new Map<string, string>();
-    const { finishes } = ledgerFinishes(jobs.text, (opts.now ?? new Date()).getTime(), EMPTY_TAG_WINDOW_HOURS);
+    const tagMap = tags.state === 'read' ? foldEmptyTags(tags.text, nowMs) : new Map<string, string>();
+    const finishes = currentAttemptFinishes(jobs.text, nowMs, EMPTY_TAG_WINDOW_HOURS);
     const fold = foldEmptyTagWindow(finishes, tagMap);
     const limit = Math.max(1, Math.min(opts.limit ?? EMPTY_TAG_MAX_ITEMS, EMPTY_TAG_ITEM_HARD_MAX));
     const items: CloudBacklogItem[] = [];
@@ -258,8 +256,8 @@ export async function emptyTagBacklogItems(opts: EmptyTagItemsOptions): Promise<
       // Untagged only evidences a coverage gap when it is the majority of
       // the window's empties — a small untagged share is the sync's normal
       // per-pass deferral, not a broken ledger.
-      if (bucket === 'untagged' && count * 2 <= fold.empties) continue;
-      items.push(emptyTagItem(bucket, fold, repo));
+      if (bucket === 'untagged' && (jobs.truncated || count * 2 <= fold.empties)) continue;
+      items.push(emptyTagItem(bucket, fold, repo, jobs.truncated));
     }
     return items;
   } catch {

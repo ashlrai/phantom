@@ -646,6 +646,116 @@ describe('M355 skill records', () => {
     expectReadDenied(unreadable);
   });
 
+  it('marks a skill-use sample degraded when a partition exceeds the byte cap', () => {
+    const older = useEvent({ eventId: 'older-use' });
+    const newer = useEvent({ eventId: 'newer-use' });
+    recordSkillUseEvent([older, newer]);
+    const partition = join(skillUseEventsDir(), `${newer.ts.slice(0, 10)}.jsonl`);
+    const bytes = 4 * 1024 * 1024;
+    const rows = `${JSON.stringify(older)}\n${JSON.stringify(newer)}\n`;
+    const padding = ' '.repeat(bytes - Buffer.byteLength(rows));
+    writeFileSync(partition, padding + rows);
+
+    expect(readSkillUseEventsWithDiagnostics()).toMatchObject({
+      sourceState: 'healthy',
+      eventState: 'present',
+      events: [{ eventId: newer.eventId }, { eventId: older.eventId }],
+    });
+
+    writeFileSync(partition, ' ' + padding + rows);
+    expect(readSkillUseEventsWithDiagnostics()).toMatchObject({
+      sourceState: 'degraded',
+      eventState: 'degraded',
+      events: [{ eventId: newer.eventId }],
+    });
+  });
+
+  it('marks a skill-use sample degraded when its file cap omits an in-window partition', () => {
+    const older = useEvent({ eventId: 'older-use', ts: '2026-07-09T15:00:00.000Z' });
+    const newer = useEvent({ eventId: 'newer-use', ts: '2026-07-10T00:01:00.000Z' });
+    recordSkillUseEvent([older, newer]);
+
+    expect(readSkillUseEventsWithDiagnostics({
+      sinceMs: Date.parse('2026-07-09T12:00:00.000Z'),
+      maxFiles: 1,
+    })).toMatchObject({
+      sourceState: 'degraded',
+      eventState: 'degraded',
+      events: [{ eventId: newer.eventId }],
+    });
+    expect(readSkillUseEventsWithDiagnostics({
+      sinceMs: Date.parse('2026-07-10T00:00:00.000Z'),
+      maxFiles: 1,
+    })).toMatchObject({
+      sourceState: 'healthy',
+      eventState: 'present',
+      events: [{ eventId: newer.eventId }],
+    });
+  });
+
+  it('applies the inclusive report cutoff before skill-use row and conflict checks', () => {
+    const atCutoff = useEvent({ eventId: 'in-window', ts: '2026-07-10T12:00:00.000Z', score: 0.875 });
+    const later = useEvent({ ...atCutoff, ts: '2026-07-10T12:00:00.001Z' });
+    const futureRows = Array.from({ length: 5 }, (_, index) =>
+      useEvent({ ...later, eventId: `future-${index}` }));
+    recordSkillUseEvent([atCutoff, later, ...futureRows]);
+
+    const asOfMs = Date.parse(atCutoff.ts);
+    expect(readSkillUseEventsWithDiagnostics({ asOfMs })).toMatchObject({
+      eventState: 'present',
+      events: [atCutoff],
+    });
+    expect(readSkillUseEventsWithDiagnostics({ asOfMs, limit: 1 })).toMatchObject({
+      eventState: 'present',
+      events: [atCutoff],
+    });
+  });
+
+  it('leaves future partitions out of the skill-use file budget', () => {
+    const atCutoff = useEvent({ eventId: 'in-window', ts: '2026-07-10T23:59:59.999Z', score: 0.875 });
+    const nextDay = useEvent({ eventId: 'next-day', ts: '2026-07-11T00:00:00.000Z' });
+    recordSkillUseEvent([atCutoff, nextDay]);
+
+    expect(readSkillUseEventsWithDiagnostics({
+      sinceMs: Date.parse('2026-07-10T00:00:00.000Z'),
+      asOfMs: Date.parse(atCutoff.ts),
+      maxFiles: 1,
+    })).toMatchObject({
+      eventState: 'present',
+      events: [atCutoff],
+    });
+  });
+
+  it('marks a skill-use sample degraded when distinct events exceed the requested limit', () => {
+    const older = useEvent({ eventId: 'older-use' });
+    const newer = useEvent({ eventId: 'newer-use' });
+    recordSkillUseEvent([older, newer, newer]);
+
+    expect(readSkillUseEventsWithDiagnostics({ limit: 2 })).toMatchObject({
+      sourceState: 'healthy',
+      eventState: 'present',
+      events: [{ eventId: newer.eventId }, { eventId: older.eventId }],
+    });
+    expect(readSkillUseEventsWithDiagnostics({ limit: 1 })).toMatchObject({
+      sourceState: 'degraded',
+      eventState: 'degraded',
+      events: [{ eventId: newer.eventId }],
+    });
+  });
+
+  it('marks a skill-use sample degraded when replays exhaust the scan budget', () => {
+    const replay = useEvent({ eventId: 'recent-replay' });
+    recordSkillUseEvent(Array.from({ length: 4 }, () => replay));
+    expect(readSkillUseEventsWithDiagnostics({ limit: 1 }).eventState).toBe('present');
+
+    recordSkillUseEvent(replay);
+    expect(readSkillUseEventsWithDiagnostics({ limit: 1 })).toMatchObject({
+      sourceState: 'degraded',
+      eventState: 'degraded',
+      events: [{ eventId: replay.eventId }],
+    });
+  });
+
   it('deduplicates exact replays and quarantines conflicting event ids', () => {
     const replay = useEvent({ eventId: 'stable-replay' });
     recordSkillUseEvent([

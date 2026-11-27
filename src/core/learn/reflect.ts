@@ -23,10 +23,14 @@
  * WRITE-BACK ENTRYPOINT: buildReflection() itself stays pure/read-only per
  * invariant #1 above. runReflectionCycle() (bottom of this file) is the
  * separate, explicit periodic entrypoint that persists the computed snapshot
- * (learn/store.ts's saveReport, under ~/.ashlr/learn/ only) and distills
- * playbooks (playbooks.ts's distillAndPersist, genome hub only) — this is
- * what closes the loop from a manual `ashlr reflect` CLI command into
- * something the daemon tick can call on its own schedule. It is still
+ * (learn/store.ts's saveReport, under ~/.ashlr/learn/ only), distills
+ * playbooks (playbooks.ts's distillAndPersist, genome hub only), and records
+ * the report's recurring-failure tuning suggestions as OPEN harness
+ * hypotheses (tuning.ts's deriveTuning + harnessHypothesesFromTuning ->
+ * harness-registry.ts's recordHypotheses — DATA only; the paired held-out
+ * experiment and adoption gate remain the only road to a harness in force).
+ * This is what closes the loop from a manual `ashlr reflect` CLI command
+ * into something the daemon tick can call on its own schedule. It is still
  * LOCAL-FIRST/NO-LLM by default (distillAndPersist is called with
  * narrative:false, so it never calls getActiveClient / makes a network call
  * unless a future caller explicitly opts in).
@@ -506,12 +510,21 @@ export interface ReflectionCycleResult {
   /** Absolute path the snapshot was written to, or null on a save failure. */
   reportPath: string | null;
   playbooks: PlaybookResult;
+  /**
+   * Tuning derivation for this cycle's report: how many suggestions
+   * deriveTuning produced and which harness hypothesis ids recordHypotheses
+   * accepted. Hypothesis ids are deterministic, so a repeat cycle over an
+   * unchanged report accepts none ('already recorded'). Absent only when the
+   * derivation itself threw — the cycle never fails over it.
+   */
+  tuning?: { suggestions: number; hypothesesAccepted: string[] };
 }
 
 /**
  * Run one full reflection cycle: compute the report, persist the snapshot
- * (so the NEXT cycle can compute a week-over-week delta against it), and
- * distill+persist playbooks from recently-successful swarms.
+ * (so the NEXT cycle can compute a week-over-week delta against it), distill
+ * +persist playbooks from recently-successful swarms, and record the report's
+ * recurring-failure tuning suggestions as OPEN harness hypotheses.
  *
  * This was previously only reachable via the manual `ashlr reflect` /
  * `ashlr reflect playbooks --persist` CLI commands — nothing in a completed
@@ -579,5 +592,36 @@ export async function runReflectionCycle(
     // Keep the report even when playbook distillation fails.
   }
 
-  return { report, reportPath, playbooks };
+  // Reflect -> hypothesize: until now the periodic cycle persisted the
+  // report and playbooks but never derived tuning from it, so the autonomous
+  // loop observed and reflected without converting its own findings into
+  // testable hypotheses — only the manual `reflect propose` CLI and the
+  // daemon's cost-anomaly hold reached recordHypotheses. Feed this report's
+  // suggestions through the same path (deriveTuning ->
+  // harnessHypothesesFromTuning -> recordHypotheses) the anomaly hold uses.
+  // Hypothesis ids are deterministic (tuning-<hash of suggestion key +
+  // failure label>) and recordHypotheses refuses ids already open or
+  // tested, so every cycle is idempotent; hypotheses are DATA — the paired
+  // held-out experiment plus the adoption gate remain the only road to a
+  // harness in force. Inbox 'note' proposals deliberately stay a manual
+  // act: they carry no dedup identity and would flood the approval queue on
+  // every cycle. Best-effort like the playbook step — never fails the cycle.
+  let tuning: ReflectionCycleResult['tuning'];
+  try {
+    const [tuningModule, registry] = await Promise.all([
+      import('./tuning.js'),
+      import('./harness-registry.js'),
+    ]);
+    const suggestions = tuningModule.deriveTuning(report);
+    const hypotheses = tuningModule.harnessHypothesesFromTuning(
+      suggestions,
+      registry.activeHarnessConfig().prompts,
+    );
+    const recorded = registry.recordHypotheses(hypotheses);
+    tuning = { suggestions: suggestions.length, hypothesesAccepted: recorded.accepted };
+  } catch {
+    tuning = undefined;
+  }
+
+  return { report, reportPath, playbooks, ...(tuning ? { tuning } : {}) };
 }

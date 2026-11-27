@@ -131,6 +131,8 @@ function Diagram({ graph, githubUrl, navigate }: { graph: Graph; githubUrl: stri
 
 const EDGE_LABEL = {
   'npm-dependency': 'npm dependency', 'mcp-companion': 'MCP companion', 'package-import': 'Package import',
+  'cargo-dependency': 'Cargo dependency', 'python-dependency': 'Python dependency', 'git-submodule': 'Git submodule',
+  'github-action': 'GitHub Action', 'brew-formula': 'Homebrew formula',
 } as const;
 
 function ecosystemPath(from: number, to: number): string {

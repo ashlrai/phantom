@@ -314,6 +314,44 @@ describe('postrunBacklogItems', () => {
     expect(await postrunBacklogItems({ repo: REPO, logPath: writeLog(old), now: NOW })).toEqual([]);
   });
 
+  it('drops rows stamped past the evaluation-time future skew', async () => {
+    // Three pr-lookup-failed skips on future local days: corrupt or replayed
+    // evidence — no exhausted cell, no lookup-failed cell.
+    const future = await postrunBacklogItems({
+      repo: REPO, now: NOW,
+      logPath: writeLog([
+        postrun(-1, 'skip', JOB, 'pr-lookup-failed (nothing published)'),
+        postrun(-2, 'skip', JOB, 'pr-lookup-failed (nothing published)'),
+        postrun(-4, 'skip', JOB, 'pr-lookup-failed (nothing published)'),
+      ]),
+    });
+    expect(future).toEqual([]);
+    // Two in-window skips plus one beyond the skew stays below the bars:
+    // two consumed attempts cannot mint exhausted, two lookup rows cannot
+    // mint the global cell.
+    const stretched = await postrunBacklogItems({
+      repo: REPO, now: NOW,
+      logPath: writeLog([
+        postrun(1, 'skip', JOB, 'pr-lookup-failed (nothing published)'),
+        postrun(2, 'skip', JOB, 'pr-lookup-failed (nothing published)'),
+        postrun(-1, 'skip', JOB, 'pr-lookup-failed (nothing published)'),
+      ]),
+    });
+    expect(stretched).toEqual([]);
+    // A stamp inside the skew still counts as same-host clock drift:
+    // 1/120 h = 30 s ahead of NOW.
+    const drift = await postrunBacklogItems({
+      repo: REPO, now: NOW,
+      logPath: writeLog([
+        postrun(1, 'skip', JOB, 'pr-lookup-failed (nothing published)'),
+        postrun(2, 'skip', JOB, 'pr-lookup-failed (nothing published)'),
+        line(0, `POSTRUN_PR skip ${JOB} pr-lookup-failed (nothing published)`, 1 / 120),
+      ]),
+    });
+    expect(drift.filter((i) => i.id.startsWith('postrun-exhausted-'))).toHaveLength(1);
+    expect(drift.filter((i) => i.id.startsWith('postrun-lookup-failed-'))).toHaveLength(1);
+  });
+
   it('emits only for the fleet repository', async () => {
     const file = writeLog(lookupSkipRows());
     expect(await postrunBacklogItems({ repo: 'ashlrai/lexicon', logPath: file, now: NOW })).toEqual([]);

@@ -30,6 +30,8 @@
  *   reason, so a replay shows why capacity deferred a job.
  */
 
+import { isNonEmptyString } from './validation.js';
+
 export const RECORDED_GREEDY_PROVENANCE = {
   sourcePr: 5952,
   sourceSha: '3d6c8fb7c7f7d52655fb3e0f13ef239686f7b886',
@@ -37,7 +39,7 @@ export const RECORDED_GREEDY_PROVENANCE = {
 } as const;
 
 /** Source tolerance for quota and shared-limit comparisons. */
-export const RECORDED_GREEDY_TOLERANCE = 1e-9;
+const RECORDED_GREEDY_TOLERANCE = 1e-9;
 
 export type RecordedQuota = { known: true; room: number } | { known: false };
 
@@ -123,13 +125,13 @@ export interface RecordedGreedyResult {
   poolUsage: RecordedGreedyPoolUsage[];
 }
 
-const fail = (message: string): never => {
+const fail: (message: string) => never = (message) => {
   throw new Error(`recordedGreedyAssignment: ${message}`);
 };
 
 const requireId = (value: unknown, label: string): string => {
-  if (typeof value !== 'string' || value.trim().length === 0) fail(`${label} must be a non-empty string`);
-  return value as string;
+  if (!isNonEmptyString(value)) fail(`${label} must be a non-empty string`);
+  return value;
 };
 
 const requireFinite = (value: unknown, label: string): number => {

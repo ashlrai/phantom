@@ -1,4 +1,5 @@
 import { canonical, digest, inspectPrivateDirectory } from './artifacts.js';
+import { isCanonicalAbsolutePath } from './input-guards.js';
 import { readControlGraph, runControlGraph, type ControlGraphDefinition, type ControlGraphReport, type ControlGraphHandler } from './control-graph.js';
 import { verifyUniverseCold } from './cold-verifier.js';
 import { queryDecisionTracesV1, type DecisionTraceKeyOptions, type DecisionTraceV1 } from './decision-trace.js';
@@ -37,9 +38,7 @@ function optionsSnapshot(options: FirmDemoOptions): FirmDemoOptions {
         !['root', 'traceKeys', 'signal'].includes(key) || !Object.hasOwn(Object.getOwnPropertyDescriptor(options, key)!, 'value'))) {
     throw new Error('Invalid firm demo options');
   }
-  if (typeof options.root !== 'string' || !options.root.length || options.root.length > 4096 ||
-      Array.from(options.root).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) ||
-      !isAbsolute(options.root) || resolve(options.root) !== options.root) {
+  if (!isCanonicalAbsolutePath(options.root, { maxLength: 4_096, asciiControlsOnly: true, allowRoot: true })) {
     throw new Error('Invalid firm demo root');
   }
   const root = inspectPrivateDirectory(options.root);
@@ -157,4 +156,3 @@ export async function runFirmDemo(options: FirmDemoOptions): Promise<FirmDemoRep
   };
   return summarize(await runControlGraph(definition(), { ...config, handlers: { plan, implement, verify } }));
 }
-import { isAbsolute, resolve } from 'node:path';

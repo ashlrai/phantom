@@ -34,7 +34,7 @@ export interface StarvedInput {
 }
 
 export interface StarvedLane {
-  /** Target minus running; 0 for a held lane; null when target or running is unknown. */
+  /** Target minus running; 0 for a held lane or zero launch target; null without enough evidence. */
   free_slots: number | null;
   ready_rows: number | null;
   starved: boolean;
@@ -90,7 +90,8 @@ export function readStarved(
   // lane, so a positive count means no lane is out of work.
   const open = typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows > 0;
   for (const input of inputs) {
-    const free = input.target === null || input.running === null ? null : input.held ? 0 : Math.max(0, input.target - input.running);
+    const free = input.held || input.target === 0 ? 0
+      : input.target === null || input.running === null ? null : Math.max(0, input.target - input.running);
     const starved = free !== null && free > 0 && input.ready === 0 && !open && !input.held && !input.drained;
     const recorded = since[input.lane];
     const at = starved && recorded !== undefined && Date.parse(recorded) <= nowMs ? recorded : null;

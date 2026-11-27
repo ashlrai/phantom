@@ -6,8 +6,6 @@
  */
 import { cmdCos } from './cos.js';
 
-export const FLEET_COS_USAGE = 'Usage: ashlr fleet cos ask "<text>" --channel <cli|desktop|telegram|email|mobile|page> [--json]; ashlr fleet cos status <id> [--json]';
-
 export async function cmdFleetCos(args: string[]): Promise<number> {
   return cmdCos(args);
 }

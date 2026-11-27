@@ -213,21 +213,38 @@ export function deriveBusWorkItemEvidence(
   return { evidence, inbox: request ? 'found' : 'missing' };
 }
 
-export function collectBusWorkItemEvidence(id: string, opts: { root: string; now: number }): BusWorkItemEvidenceResult {
-  const sources: BusWorkItemSources = { inbox: 'unavailable', claims: 'missing', coordination: 'unavailable' };
+export interface BusWorkItemReaders {
+  inbox: typeof readBusInboxEvidence;
+  claims: typeof inspectBusWorkClaims;
+  coordination: typeof readBusClaimAuthority;
+}
+
+/** One observation per call; the three stores are not an atomic transaction. */
+export function collectBusWorkItemEvidenceBatch(
+  ids: readonly string[], opts: { root: string; now: number },
+  readers: BusWorkItemReaders = { inbox: readBusInboxEvidence, claims: inspectBusWorkClaims, coordination: readBusClaimAuthority },
+): BusWorkItemEvidenceResult[] {
   const now = Number.isSafeInteger(opts.now) && opts.now >= 0 ? opts.now : 0;
   let read: BusInboxEvidenceRead = { status: 'unavailable', receipts: [] };
-  try { read = readBusInboxEvidence(opts.root); } catch { /* stays unavailable */ }
+  try { read = readers.inbox(opts.root); } catch { /* stays unavailable */ }
   let claims: BusWorkClaimView[] = [];
+  let claimsSource: BusWorkItemSources['claims'] = 'unavailable';
   try {
-    const inspection = inspectBusWorkClaims(opts.root);
-    sources.claims = inspection.source;
+    const inspection = readers.claims(opts.root);
+    claimsSource = inspection.source;
     claims = inspection.claims;
-  } catch { sources.claims = 'unavailable'; }
-  const authority = readBusClaimAuthority(opts.root, now);
-  sources.coordination = authority.source;
-  const derived = deriveBusWorkItemEvidence(id, read.receipts, claims, now, authority);
-  sources.inbox = read.status === 'ok' ? derived.inbox : 'unavailable';
-  // Blockers come only from in-reply bus replies (replyBlockedEvidence), never invented.
-  return { evidence: derived.evidence, sources };
+  } catch { /* stays unavailable */ }
+  let authority: BusClaimAuthority = { source: 'unavailable', liveSourceIds: null };
+  try { authority = readers.coordination(opts.root, now); } catch { /* stays unavailable */ }
+  return ids.map(id => {
+    const derived = deriveBusWorkItemEvidence(id, read.receipts, claims, now, authority);
+    return { evidence: derived.evidence, sources: {
+      inbox: read.status === 'ok' ? derived.inbox : 'unavailable',
+      claims: claimsSource, coordination: authority.source,
+    } };
+  });
+}
+
+export function collectBusWorkItemEvidence(id: string, opts: { root: string; now: number }): BusWorkItemEvidenceResult {
+  return collectBusWorkItemEvidenceBatch([id], opts)[0]!;
 }

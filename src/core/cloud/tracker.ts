@@ -34,7 +34,19 @@ import { projectCloudBrainMerge, projectCloudBrainRejection } from '../knowledge
 import { defaultGitRunner } from '../verse/git-ops.js';
 import { parseCloudReport } from './delivery-contract.js';
 import { listCloudTasks, readCloudTask, writeCloudTask } from './store.js';
-import { CLOUD_LAUNCH_TIMEOUT_MS, CLOUD_TASK_EXPIRY_MS, type CloudDeliveryPin, type CloudTaskOutcome, type CloudTaskPr, type CloudTaskState, type CloudTaskV1 } from './types.js';
+import {
+  CLOUD_LAUNCH_TIMEOUT_MS,
+  CLOUD_SHA1_PATTERN,
+  CLOUD_TASK_EXPIRY_MS,
+  isCanonicalCloudPrUrl,
+  isCloudRecord,
+  sameCloudRepo,
+  type CloudDeliveryPin,
+  type CloudTaskOutcome,
+  type CloudTaskPr,
+  type CloudTaskState,
+  type CloudTaskV1,
+} from './types.js';
 
 export interface CloudTrackerDeps {
   gh?: (args: string[]) => Promise<{ ok: boolean; stdout: string; stderr: string }>;
@@ -87,6 +99,7 @@ export interface GhPr {
 
 /** The `gh pr list --json` fields every lane's tracker requests. */
 export const GH_PR_LIST_FIELDS = 'number,url,state,isDraft,title,body,headRefName,baseRefName,headRepository,headRepositoryOwner,isCrossRepository';
+const GH_PR_STATES = ['OPEN', 'MERGED', 'CLOSED'] as const;
 
 /** A malformed or full result is unknown, never evidence that a task has no PR. */
 export function parseGhPrList(stdout: string): GhPr[] | undefined {
@@ -99,22 +112,21 @@ export function parseGhPrList(stdout: string): GhPr[] | undefined {
   if (!Array.isArray(value) || value.length >= GH_PR_LIMIT) return undefined;
   const parsed: GhPr[] = [];
   for (const item of value) {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return undefined;
-    const pr = item as Record<string, unknown>;
-    const headRepository = pr['headRepository'];
-    const headRepositoryOwner = pr['headRepositoryOwner'];
-    if (!Number.isSafeInteger(pr['number']) || (pr['number'] as number) < 1
-      || typeof pr['url'] !== 'string'
-      || !['OPEN', 'MERGED', 'CLOSED'].includes(pr['state'] as string)
-      || typeof pr['isDraft'] !== 'boolean'
-      || typeof pr['title'] !== 'string'
-      || (pr['body'] !== null && typeof pr['body'] !== 'string')
-      || typeof pr['headRefName'] !== 'string'
-      || typeof pr['baseRefName'] !== 'string'
-      || !headRepository || typeof headRepository !== 'object' || typeof (headRepository as Record<string, unknown>)['name'] !== 'string'
-      || !headRepositoryOwner || typeof headRepositoryOwner !== 'object' || typeof (headRepositoryOwner as Record<string, unknown>)['login'] !== 'string'
-      || pr['isCrossRepository'] !== false) return undefined;
-    parsed.push(pr as unknown as GhPr);
+    if (!isCloudRecord(item)) return undefined;
+    const headRepository = item['headRepository'];
+    const headRepositoryOwner = item['headRepositoryOwner'];
+    if (!Number.isSafeInteger(item['number']) || (item['number'] as number) < 1
+      || typeof item['url'] !== 'string'
+      || !(GH_PR_STATES as readonly unknown[]).includes(item['state'])
+      || typeof item['isDraft'] !== 'boolean'
+      || typeof item['title'] !== 'string'
+      || (item['body'] !== null && typeof item['body'] !== 'string')
+      || typeof item['headRefName'] !== 'string'
+      || typeof item['baseRefName'] !== 'string'
+      || !isCloudRecord(headRepository) || typeof headRepository['name'] !== 'string'
+      || !isCloudRecord(headRepositoryOwner) || typeof headRepositoryOwner['login'] !== 'string'
+      || item['isCrossRepository'] !== false) return undefined;
+    parsed.push(item as unknown as GhPr);
   }
   return parsed;
 }
@@ -122,7 +134,7 @@ export function parseGhPrList(stdout: string): GhPr[] | undefined {
 /** The URL and both refs must be the task's, even if gh's branch filter returned it. */
 export function matchesTask(gh: GhPr, task: Pick<CloudTaskV1, 'repo' | 'branch' | 'baseBranch'>): boolean {
   const [owner, repo] = task.repo.split('/');
-  return gh.url.toLowerCase() === `https://github.com/${task.repo}/pull/${gh.number}`.toLowerCase()
+  return isCanonicalCloudPrUrl(gh.url, task.repo, gh.number)
     && gh.headRefName === task.branch
     && gh.baseRefName === task.baseBranch
     && gh.headRepositoryOwner.login.toLowerCase() === owner!.toLowerCase()
@@ -135,9 +147,8 @@ export function prFrom(gh: GhPr): CloudTaskPr {
 }
 
 /** The `gh pr view --json` fields `parseOutcome` reads. */
-export const GH_PR_OUTCOME_FIELDS = 'headRefOid,mergeCommit,statusCheckRollup,reviewDecision,reviews';
+const GH_PR_OUTCOME_FIELDS = 'headRefOid,mergeCommit,statusCheckRollup,reviewDecision,reviews';
 
-const SHA = /^[0-9a-f]{40}$/;
 const FAILED = new Set(['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'ERROR']);
 const REVIEW_DECISIONS = new Set(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']);
 
@@ -149,29 +160,27 @@ const REVIEW_DECISIONS = new Set(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUI
 export function parseOutcome(stdout: string, observedAt: string): CloudTaskOutcome | null {
   let v: unknown;
   try { v = JSON.parse(stdout); } catch { return null; }
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
-  const o = v as Record<string, unknown>;
-  const sha = (x: unknown) => (typeof x === 'string' && SHA.test(x) ? x : null);
-  const merge = o['mergeCommit'] && typeof o['mergeCommit'] === 'object' ? (o['mergeCommit'] as Record<string, unknown>)['oid'] : null;
+  if (!isCloudRecord(v)) return null;
+  const sha = (x: unknown) => (typeof x === 'string' && CLOUD_SHA1_PATTERN.test(x) ? x : null);
+  const merge = isCloudRecord(v['mergeCommit']) ? v['mergeCommit']['oid'] : null;
   let ci: CloudTaskOutcome['ci'] = null;
   const failedChecks: string[] = [];
-  const rollup = o['statusCheckRollup'];
+  const rollup = v['statusCheckRollup'];
   if (Array.isArray(rollup)) {
     let pending = false;
     for (const item of rollup) {
-      if (!item || typeof item !== 'object') continue;
-      const c = item as Record<string, unknown>;
-      const name = String(c['name'] ?? c['context'] ?? '').slice(0, 120);
-      const verdict = String(c['conclusion'] ?? c['state'] ?? '');
+      if (!isCloudRecord(item)) continue;
+      const name = String(item['name'] ?? item['context'] ?? '').slice(0, 120);
+      const verdict = String(item['conclusion'] ?? item['state'] ?? '');
       if (FAILED.has(verdict)) { if (name && failedChecks.length < 20 && !failedChecks.includes(name)) failedChecks.push(name); continue; }
-      if ((c['status'] !== undefined && c['status'] !== 'COMPLETED') || verdict === 'PENDING' || verdict === 'EXPECTED') pending = true;
+      if ((item['status'] !== undefined && item['status'] !== 'COMPLETED') || verdict === 'PENDING' || verdict === 'EXPECTED') pending = true;
     }
     ci = failedChecks.length > 0 ? 'failure' : pending ? 'pending' : rollup.length === 0 ? 'none' : 'success';
   }
-  const decision = typeof o['reviewDecision'] === 'string' && REVIEW_DECISIONS.has(o['reviewDecision']) ? o['reviewDecision'] as CloudTaskOutcome['reviewDecision'] : null;
-  const reviews = Array.isArray(o['reviews']) ? o['reviews'] : [];
-  const changesRequested = reviews.filter((r) => r && typeof r === 'object' && (r as Record<string, unknown>)['state'] === 'CHANGES_REQUESTED').length;
-  return { observedAt, headSha: sha(o['headRefOid']), mergeSha: sha(merge), ci, failedChecks, reviewDecision: decision, changesRequested };
+  const decision = typeof v['reviewDecision'] === 'string' && REVIEW_DECISIONS.has(v['reviewDecision']) ? v['reviewDecision'] as CloudTaskOutcome['reviewDecision'] : null;
+  const reviews = Array.isArray(v['reviews']) ? v['reviews'] : [];
+  const changesRequested = reviews.filter((r) => isCloudRecord(r) && r['state'] === 'CHANGES_REQUESTED').length;
+  return { observedAt, headSha: sha(v['headRefOid']), mergeSha: sha(merge), ci, failedChecks, reviewDecision: decision, changesRequested };
 }
 
 async function readOutcome(task: CloudTaskV1, number: number, gh: NonNullable<CloudTrackerDeps['gh']>, observedAt: string): Promise<CloudTaskOutcome | null> {
@@ -208,16 +217,11 @@ const PR_UNVERIFIED_REASON = 'Previously recorded pull request could not be veri
 const PR_LOOKUP_UNAVAILABLE_REASON = 'Pull request verification is unavailable; the previously verified delivery is hidden.';
 const PR_REPLACEMENT_REASON = 'A different pull request was found; the previously verified delivery is hidden.';
 
-function canonicalPrUrl(task: CloudTaskV1, number: number): string {
-  return `https://github.com/${task.repo}/pull/${number}`;
-}
-
 /** Old v1 records have no pin; carry their canonical previously shown PR forward. */
 function deliveryPin(task: CloudTaskV1): CloudDeliveryPin | null {
   if (task.deliveryPin) return task.deliveryPin;
   const pr = task.pr;
-  return pr && Number.isSafeInteger(pr.number) && pr.number > 0
-    && pr.url.toLowerCase() === canonicalPrUrl(task, pr.number).toLowerCase()
+  return pr && Number.isSafeInteger(pr.number) && pr.number > 0 && isCanonicalCloudPrUrl(pr.url, task.repo, pr.number)
     ? { number: pr.number, url: pr.url }
     : null;
 }
@@ -265,14 +269,13 @@ export async function readSupersedingState(
   } catch {
     return null;
   }
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const pr = raw as Record<string, unknown>;
-  if (pr['number'] !== by.number
-    || by.repo.toLowerCase() !== task.repo.toLowerCase()
-    || typeof pr['url'] !== 'string' || pr['url'].toLowerCase() !== `https://github.com/${task.repo}/pull/${by.number}`.toLowerCase()
-    || typeof pr['headRefName'] !== 'string' || !pr['headRefName'].startsWith(FLEET_BRANCH_PREFIX)
-    || !['OPEN', 'MERGED', 'CLOSED'].includes(pr['state'] as string)) return null;
-  return supersededStateFor(by.number, pr['state'] as 'OPEN' | 'MERGED' | 'CLOSED');
+  if (!isCloudRecord(raw)) return null;
+  if (raw['number'] !== by.number
+    || !sameCloudRepo(by.repo, task.repo)
+    || typeof raw['url'] !== 'string' || !isCanonicalCloudPrUrl(raw['url'], task.repo, by.number)
+    || typeof raw['headRefName'] !== 'string' || !raw['headRefName'].startsWith(FLEET_BRANCH_PREFIX)
+    || !(GH_PR_STATES as readonly unknown[]).includes(raw['state'])) return null;
+  return supersededStateFor(by.number, raw['state'] as 'OPEN' | 'MERGED' | 'CLOSED');
 }
 
 /**

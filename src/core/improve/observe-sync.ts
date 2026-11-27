@@ -24,6 +24,13 @@
  *     `relandedBy` is set is positive re-land evidence and supplies the
  *     commit; `relandedBy: null` is a standing revert.
  *
+ * Both delivery lanes feed this pass: Devin tasks (devin/types.ts
+ * DevinTaskV1) claim the same backlog items and share the PR/intake shapes,
+ * but carry no `outcome` block — the Devin tracker records no merge or
+ * revert SHAs — so a Devin task contributes evidence only through the fleet
+ * merge-state record and the revert journal, the same fallback sources a
+ * superseded cloud task uses.
+ *
  * When both sources cover a PR the revert journal wins: it is the dedicated,
  * append-only, scan-verified store, while `outcome.revertedBy` is a mutable
  * single field last written by a manual observe pass.
@@ -62,7 +69,9 @@ import { prKey } from './lesson-trial.js';
 import { readRevertOutcomeRecords, type RevertLedgerRead } from './revert-ledger.js';
 import type { RevertOutcomeRecord } from './reverted.js';
 import { listCloudTasks } from '../cloud/store.js';
-import type { CloudTaskV1 } from '../cloud/types.js';
+import type { CloudIntakeMemo, CloudSupersededBy, CloudTaskPr, CloudTaskState, CloudTaskV1 } from '../cloud/types.js';
+import { listDevinTasks } from '../devin/store.js';
+import type { DevinTaskV1 } from '../devin/types.js';
 import { proposalStateKey, readFleetMergeState, type FleetMergeStateRead } from '../fleet/fleet-merge-state.js';
 
 const SHA40 = /^[0-9a-f]{40}$/;
@@ -85,13 +94,28 @@ interface PrEvidence {
 const emptyEvidence = (): PrEvidence => ({ mergeSha: null, revertSha: null, relandSha: null, taskRevertSha: null, ledgerVerdict: false });
 
 /**
+ * The slice of a delivery-lane task the observation fold reads — a cloud
+ * CloudTaskV1 or a devin DevinTaskV1. Devin tasks have no `outcome` block
+ * (the tracker records no merge/revert SHAs), so their merge evidence comes
+ * only from the fleet merge-state record and the revert journal.
+ */
+export interface OutcomeObservationTask {
+  repo: string;
+  state: CloudTaskState | 'blocked';
+  pr: CloudTaskPr | null;
+  supersededBy?: CloudSupersededBy | null;
+  intake?: CloudIntakeMemo | null;
+  outcome?: { mergeSha?: unknown; revertedBy?: unknown } | null;
+}
+
+/**
  * Fold task outcomes and the revert journal into per-PR evidence. The
  * journal's newest record per PR is authoritative for revert state: a
  * `relandedBy` clears the revert and names the re-land commit. Task
  * `outcome.revertedBy` is the fallback for PRs the journal never scanned.
  */
 export function outcomeObservationEvidence(
-  tasks: readonly CloudTaskV1[],
+  tasks: readonly OutcomeObservationTask[],
   revertRecords: readonly RevertOutcomeRecord[],
   fleetState: (key: string) => FleetMergeStateRead = readFleetMergeState,
 ): Map<string, PrEvidence> {
@@ -192,6 +216,14 @@ export function observationEvents(
 export interface OutcomeObservationSyncDeps {
   /** Cloud task store read; defaults to every stored task. */
   tasks?: () => readonly CloudTaskV1[];
+  /**
+   * Devin-lane task store read; defaults to every stored Devin task. Devin
+   * sessions claim the same backlog items, so their merges and reverts are
+   * the same proposal evidence — via the fleet merge-state record and the
+   * revert journal, since Devin tasks carry no outcome block. Unreadable ⇒
+   * none, matching the claim fold.
+   */
+  devinTasks?: () => readonly DevinTaskV1[];
   /** Outcome ledger read; defaults to readLedger. */
   ledger?: () => LedgerRead;
   /** Revert-outcomes journal read; defaults to readRevertOutcomeRecords. */
@@ -236,13 +268,21 @@ export function syncCloudOutcomeObservations(deps: OutcomeObservationSyncDeps = 
     intact: true, reasons: [], proposals: 0, matched: 0, appended: 0, merged: 0, reverted: 0, revertLedger: 'missing', rekeyed: 0,
   };
   let records: LedgerRecord[];
-  let tasks: readonly CloudTaskV1[];
+  let tasks: readonly OutcomeObservationTask[];
   let revertRead: RevertLedgerRead;
   try {
     const led = (deps.ledger ?? readLedger)();
     if (!led.intact) return { ...out, intact: false, reasons: led.reasons };
     records = led.records;
-    tasks = (deps.tasks ?? (() => listCloudTasks(Number.MAX_SAFE_INTEGER)))();
+    const cloud = (deps.tasks ?? (() => listCloudTasks(Number.MAX_SAFE_INTEGER)))();
+    // Devin sessions claim the same backlog items, so their PRs carry the
+    // same merge/revert evidence — but an unreadable Devin store must not
+    // starve the cloud lane's observations (same rule as the claim fold).
+    let devin: readonly DevinTaskV1[] = [];
+    try {
+      devin = (deps.devinTasks ?? (() => listDevinTasks(Number.MAX_SAFE_INTEGER)))();
+    } catch { /* unreadable ⇒ none */ }
+    tasks = [...cloud, ...devin];
     revertRead = (deps.reverts ?? readRevertOutcomeRecords)();
   } catch {
     return { ...out, reason: 'source-unavailable' };

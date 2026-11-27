@@ -9,6 +9,8 @@ import { writeCloudTask } from '../src/core/cloud/store.js';
 import type { CloudBacklogItem, CloudTaskV1 } from '../src/core/cloud/types.js';
 import { appendLedger, kindOf, outcomesLedgerPath, readLedger, scoreOutcomes, type LedgerEvent, type MetricSpec } from '../src/core/improve/outcomes.js';
 import { backlogProposalId, backlogRegistrations, syncCloudBacklogOutcomes } from '../src/core/improve/backlog-sync.js';
+import { writeDevinTask } from '../src/core/devin/store.js';
+import { DEVIN_BRANCH_PREFIX, DEVIN_TASK_SCHEMA_VERSION } from '../src/core/devin/types.js';
 import { cmdImprove } from '../src/cli/improve.js';
 
 const metric: MetricSpec = { name: 'gate-ms', direction: 'decrease', runner: { kind: 'npm', script: 'bench:gate' } };
@@ -103,6 +105,16 @@ describe('backlog to ledger sync', () => {
     ]);
   });
 
+  it('registers a Devin-lane task identically, with blocked never a live carrier', () => {
+    const items = [user('m1', 'Perf Gate', 2, { metric })];
+    const devinOpen = { id: 'dv_20261126T0100_bbbbbb', repo: 'ashlrai/phantom', title: 'd', backlogItemId: 'm1', state: 'pr-open' as const, pr: pr(41) };
+    const devinBlockedCarrier = { ...devinOpen, id: 'dv_20261126T0101_cccccc', state: 'blocked' as const, pr: pr(42, 'closed'), supersededBy: { repo: 'ashlrai/phantom', number: 77 } };
+    const prs = backlogRegistrations([devinOpen, devinBlockedCarrier], items, []).filter((e) => e.type === 'pr');
+    expect(prs).toEqual([
+      { type: 'pr', proposalId: backlogProposalId(devinOpen.id), repository: 'ashlrai/phantom', number: 41 },
+    ]);
+  });
+
   it('phm improve sync-backlog registers stored cloud tasks', async () => {
     appendUserBacklogItems([user('m1', 'Perf Gate', 1, { metric })]);
     const now = new Date().toISOString();
@@ -129,6 +141,18 @@ describe('syncCloudBacklogOutcomes', () => {
       createdAt: now, launchedAt: now, updatedAt: now, pr: prState ? pr(number, prState) : null, report: null,
       estimatedCostUsd: 1, backlogItemId, needsYouId: null } as unknown as CloudTaskV1);
   };
+  const devinStored = (id: string, backlogItemId: string | null, prState: 'open' | 'merged' | 'closed' | null, number = 30) => {
+    const now = new Date().toISOString();
+    writeDevinTask({
+      v: DEVIN_TASK_SCHEMA_VERSION, id, repo: 'ashlrai/phantom', baseBranch: 'master',
+      branch: `${DEVIN_BRANCH_PREFIX}${id}`, title: id, prompt: 'p', origin: 'fleet', requestedBy: 'fleet',
+      sessionId: null, sessionUrl: null,
+      state: prState === 'merged' ? 'merged' : prState === 'closed' ? 'closed' : 'pr-open',
+      stateReason: null, failure: null, createdAt: now, launchedAt: now, updatedAt: now, session: null,
+      maxAcu: 10, devinMode: 'normal', pr: prState ? pr(number, prState) : null, headSha: null, report: null,
+      backlogItemId,
+    });
+  };
 
   it('registers stored metric PRs into the real ledger once, then reports nothing new', () => {
     appendUserBacklogItems([user('m1', 'Perf Gate', 1, { metric }), user('m2', 'Docs')]);
@@ -141,6 +165,30 @@ describe('syncCloudBacklogOutcomes', () => {
     const second = syncCloudBacklogOutcomes();
     expect(second).toMatchObject({ intact: true, registered: 0, appended: 0 });
     expect(second.reason).toBeUndefined();
+  });
+
+  it('registers stored Devin-lane tasks from the same backlog through the default store read', () => {
+    appendUserBacklogItems([user('m1', 'Perf Gate', 1, { metric })]);
+    devinStored('dv_20261126T0100_aaaaaa', 'm1', 'open', 31);
+    devinStored('dv_20261126T0101_bbbbbb', 'm1', null); // no PR yet: nothing to register
+    const res = syncCloudBacklogOutcomes();
+    expect(res).toMatchObject({ intact: true, registered: 1, appended: 2 });
+    expect(readLedger().records.filter((r) => r.type === 'pr').map((r) => (r as { number: number }).number)).toEqual([31]);
+  });
+
+  it('treats an unreadable Devin store as no Devin tasks, never blocking cloud registrations', () => {
+    const items = [user('m1', 'Perf Gate', 1, { metric })];
+    const tasks = [{ id: 'ct_z', repo: 'ashlrai/phantom', title: 'z', backlogItemId: 'm1', pr: pr(9), state: 'pr-open' }] as unknown as CloudTaskV1[];
+    const appended: LedgerEvent[] = [];
+    const res = syncCloudBacklogOutcomes({
+      tasks: () => tasks,
+      devinTasks: () => { throw new Error('devin store down'); },
+      items: () => items,
+      ledger: () => ({ records: [], intact: true, reasons: [] }),
+      append: (e) => { appended.push(e); },
+    });
+    expect(res).toMatchObject({ registered: 1, appended: 2 });
+    expect(appended.map((e) => e.type)).toEqual(['registered', 'pr']);
   });
 
   it('reports a broken ledger and writes nothing', () => {

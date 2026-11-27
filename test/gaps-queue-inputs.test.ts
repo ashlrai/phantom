@@ -56,6 +56,26 @@ describe('gap queue count', () => {
     expect(report.proposed![0]!.skipped).toMatch(/the job queue is full \(40 launchable rows, limit 40\)/);
     expect(await dropped()).toEqual([]);
   });
+  it('parks the waiting lane\'s rows in the same market-resolved units as the queue total', async () => {
+    await seedGaps(2);
+    // Six runnable rows resolve to the spent lane: four named in its lane
+    // column plus two the requirements cell overrides onto it. The dispatcher's
+    // own per-lane count reads the raw column, so it sees only the four —
+    // parkedRows must use the parser's resolved attribution like readyRows does.
+    const parked = [
+      ...Array.from({ length: 4 }, (_, i) => `RQ-P${i}\tphantom\tcodex-personal\twork\tprompts/RQ-P${i}.md`),
+      ...Array.from({ length: 2 }, (_, i) => `RQ-O${i}\tphantom\tclaude\twork\tprompts/RQ-O${i}.md\t{"preferred_lane":"codex-personal"}`),
+    ];
+    const open = Array.from({ length: 30 }, (_, i) => `RQ-C${i}\tphantom\tclaude\twork\tprompts/RQ-C${i}.md`);
+    await writeFile(join(root, 'queue', 'ready.tsv'), [...parked, ...open].join('\n') + '\n');
+    const spent = lane({ lane: 'codex-personal', running: 0, target: 1, queued: 4, remainingPct: 0, resetAt: BACK });
+    const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true,
+      lanes: [lane({ target: 40, queued: 32 }), spent], ...none });
+    expect(report.queue).toMatchObject({ readyRows: 36, parkedRows: 6, launchableRows: 30, full: false });
+    // The lane readings' own stuck figure stays the dispatcher's count (4):
+    // report.parked documents that view, queue.parkedRows the queue check's.
+    expect(report.parked).toBe(4);
+  });
   it('without propose (dry run) nothing is written', async () => {
     await seedGaps(2); await readyRows(1, 'claude');
     const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, lanes, ...none });

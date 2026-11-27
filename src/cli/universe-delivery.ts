@@ -1,7 +1,9 @@
 import { resolve } from 'node:path';
+import { isUniverseId } from '../core/universe/artifacts.js';
 import {
   deliverUniverseElite, readUniverseDeliveries, validUniverseDeliveryBranch, type UniverseDeliveryReceipt,
 } from '../core/universe/index.js';
+import { containsAsciiControlChars as hasControlCharacters } from '../core/universe/input-guards.js';
 
 const USAGE = `usage: ashlr universe deliver <id> --trial <elite-trial-id> --branch codex/<new-branch>
        ashlr universe deliveries <id>
@@ -27,10 +29,6 @@ interface Options {
   branch?: string;
   root?: string;
   json: boolean;
-}
-
-function hasControlCharacters(value: string): boolean {
-  return [...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
 }
 
 function parse(args: string[]): Options {
@@ -61,7 +59,7 @@ function parse(args: string[]): Options {
   if (positional.length > (command === 'help' ? 1 : 2)) throw new UsageError(`Too many arguments for ${command}`);
   if (help || command === 'help') return { command: 'help', json: false };
   if (!id) throw new UsageError(`${command} requires a universe id`);
-  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)) throw new UsageError('Invalid universe id');
+  if (!isUniverseId(id)) throw new UsageError('Invalid universe id');
   const trialId = values.get('--trial');
   const branch = values.get('--branch');
   if (command === 'deliveries' && (trialId !== undefined || branch !== undefined)) {
