@@ -34,6 +34,37 @@ describe('AGENT_COMMANDS — the CLI-first agent contract', () => {
     }
   });
 
+  it('names every verb `phm node --help` offers, so agents can discover the node router', async () => {
+    const { cmdNode } = await import('../src/cli/node.js');
+    const lines: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    });
+    try {
+      expect(await cmdNode(['--help'])).toBe(0);
+    } finally {
+      log.mockRestore();
+    }
+    // Usage lines read `phm node <verb>` or `phm node <verb>|<verb>`; prose
+    // mentions of real verbs only ever widen the expected set with verbs the
+    // help text itself names, so the check stays honest both directions.
+    const helpVerbs = new Set<string>();
+    for (const m of lines.join('\n').matchAll(/phm node ([a-z][a-z-]*(?:\|[a-z][a-z-]*)*) /g)) {
+      for (const verb of m[1]!.split('|')) helpVerbs.add(verb);
+    }
+    expect(helpVerbs.size).toBeGreaterThan(20);
+    const docVerbs = new Set(
+      AGENT_COMMANDS.filter((c) => c.usage.startsWith('phm node '))
+        .flatMap((c) => c.usage.split(' ')[2]!.split(/[|/]/)),
+    );
+    for (const verb of helpVerbs) {
+      expect(docVerbs.has(verb), `phm node ${verb} is missing from docs --agent`).toBe(true);
+    }
+    for (const verb of docVerbs) {
+      expect(helpVerbs.has(verb), `docs --agent names phm node ${verb}, which --help does not offer`).toBe(true);
+    }
+  });
+
   it('marks inbox approval as human-gate', () => {
     const approve = AGENT_COMMANDS.find((c) => c.usage.includes('approve'));
     expect(approve).toBeTruthy();

@@ -136,6 +136,21 @@ phm node result --job hello-1 --owner acme --json
 phm node status --owner acme --json
 ```
 
+To cancel a job instead of completing it — a test enqueue you no longer
+want — withdraw it:
+
+```sh
+phm node withdraw --job hello-1 --owner acme --json
+```
+
+A pending job, or one whose claim already lapsed, ends terminal at once and
+can never run; a job under a live claim answers `held`, so run the same
+command again once the claim lapses or completes. Withdrawal is scoped to
+`--owner` — a job in another scope answers `absent` — and safe to repeat.
+The job id stays taken, so a replacement job needs a new `--id`; `result`
+and `status` then read the job as `withdrawn by the producer`, never as
+node work.
+
 Every command above runs on this computer: the standalone registry is local,
 so producer and node are the same machine and a job enqueued elsewhere never
 reaches this node. To share one queue across computers you control — or to
