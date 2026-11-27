@@ -193,6 +193,29 @@ describe('CI baseline evidence', () => {
       expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
     },
   );
+  it.each([false, true])('withholds a master pass when another job fails to collect the suite (module summary: %s)', async filePass => {
+    const analyze = (count: number, failedFile: string) => {
+      const { gh } = github({ pass: true, filePass, count, extraMasterJob: 'failure', masterRunConclusion: 'failure' });
+      return analyzeCiBaseline('owner/repo', async args => {
+        if (args[1]?.endsWith('/jobs/30/logs')) {
+          const log = fixture('suite-shared').replaceAll('test/example.test.ts', failedFile);
+          return { ok: true, stdout: `/usr/bin/git log -1 --format=%H\n${master}\n${log}`, stderr: '' };
+        }
+        return gh(args);
+      });
+    };
+
+    const singleton = await analyze(1, 'test/example.test.ts');
+    expect(singleton.master.known).toBe(true);
+    expect(singleton.groups).toMatchObject([{ classification: 'unknown', action: 'unknown', master: 'unknown' }]);
+
+    const shared = await analyze(2, 'test/example.test.ts');
+    expect(shared.groups).toMatchObject([{ classification: 'shared-baseline', master: 'unknown' }]);
+    expect(shared.updates).toMatchObject([{ ready: false }, { ready: false }]);
+
+    const unrelated = await analyze(1, 'test/other.test.ts');
+    expect(unrelated.groups).toMatchObject([{ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' }]);
+  });
   it('accepts a partial module summary for a suite failure', async () => {
     const { gh } = github({ suite: true, pass: true, filePass: true, count: 1 });
     const report = await analyzeCiBaseline('owner/repo', async args => {

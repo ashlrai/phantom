@@ -2285,12 +2285,16 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   // running at all is what resolves it. The default reporter's green-module
   // line (`✓ file (N tests)`) proves the module loaded. For a named test,
   // require an unqualified summary or an explicit case pass.
-  const passes = (f: Failure) => filePassable(f.names) && masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
-    const m = PASS_LINE.exec(line);
-    if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
-    const modulePass = FILE_PASS_LINE.exec(line);
-    return modulePass?.[1] === f.file && (f.names === SUITE_NAMES || modulePass[2] === undefined);
-  }));
+  // A collection failure in another master job leaves case coverage
+  // unresolved even when a different job ran the same file successfully.
+  const passes = (f: Failure) => filePassable(f.names) && masterKnown &&
+    !masterFailures.some(m => m.testId === f.testId || (m.file === f.file && m.names === SUITE_NAMES)) &&
+    masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
+      const m = PASS_LINE.exec(line);
+      if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
+      const modulePass = FILE_PASS_LINE.exec(line);
+      return modulePass?.[1] === f.file && (f.names === SUITE_NAMES || modulePass[2] === undefined);
+    }));
   // Bundler-resolution candidates for one normalized repo-relative spec base.
   // Explicit extensions keep TypeScript precedence (.js -> .ts before .tsx,
   // the literal spec last so a real .js/.mjs file still resolves); extensionless
