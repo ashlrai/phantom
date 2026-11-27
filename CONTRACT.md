@@ -2670,8 +2670,11 @@ matching `proposeRouterWeights`. `readRouteLaneOutcomes`
 wraps the bounded `readRouterOutcomes` ledger read: 'read' carries the tallies,
 'missing' is an absent journal with empty tallies, and 'unreadable'/'not-file'
 report unusable evidence. `phm node route --outcomes-ledger [--runs-dir <dir>]`
-merges these tallies under any explicit `--outcomes` file (file wins per
-provider) and reports `outcomes_ledger` state in its JSON plan.
+passes ledger tallies as `RouterInput.outcomes` and explicit file entries as
+the optional `RouterInput.outcomeOverrides` map. A provider override needs a
+positive safe integer attempt count and a safe integer merge count from zero
+through attempts. Otherwise the planner uses that provider's ledger tally.
+The command reports `outcomes_ledger` state in its JSON plan.
 For a placed job, the `phantom.node-route.v1` fields `mergeRate`,
 `mergesPerMTok` and `mergesPerHour` require at least one recorded attempt
 with valid outcome counts. Otherwise they are `null`, and the placement
