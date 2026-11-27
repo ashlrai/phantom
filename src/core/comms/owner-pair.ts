@@ -14,6 +14,8 @@
  *
  * State is one 0600 file, comms/owner-pair.json (the pending handles, cursor and
  * times). Everything outside the bridge is injected, so tests send nothing.
+ * Automatic invitations pause after two unanswered expirations; an explicit pair
+ * or a successful YES resets the count. Each invitation still waits 24 hours.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,20 +26,21 @@ import { IMESSAGE_HANDLE_RE, detectOwnIMessageHandles, pollPairReplies, readMaxR
 import type { AshlrConfig } from '../types.js';
 import { readCommsLimits } from './comms-confirm.js';
 import { loadOwnerThreadSettings } from './owner-channel.js';
-import { OWNER_PAIR_STATE_FILE, PAIR_MAX_HANDLES, parsePendingRecord, type PairPending } from './owner-pair-pending.js';
+import { OWNER_PAIR_STATE_FILE, PAIR_MAX_HANDLES, parsePendingRecord, type PairPending as PendingRecord } from './owner-pair-pending.js';
 
 // The pending-record read lives in owner-pair-pending.ts — a leaf module the
 // unified inbox can import without pulling this file's bridge, network-rewrite
 // and confirm-route edges into the Tier-1 authority closure. Re-exported here
 // so the pair surface stays one import site.
 export { PAIR_MAX_HANDLES };
-export type { PairPending };
+export interface PairPending extends PendingRecord { auto?: boolean }
 export { readOwnerPairPending, type OwnerPairPendingRead, type OwnerPairPendingSummary } from './owner-pair-pending.js';
 
 export const PAIR_TEXT = 'Phantom: reply YES to get fleet updates here.';
 export const PAIR_TTL_MS = 24 * 60 * 60 * 1000;
+export const PAIR_AUTO_MAX_UNANSWERED = 2;
 
-export interface PairState { pending: PairPending | null; lastStartAt: number | null; /** Set by unpair: the self-tick does not pair again until Mason runs pair. */ autoOff: boolean }
+export interface PairState { pending: PairPending | null; lastStartAt: number | null; autoUnanswered: number; /** Set by unpair: the self-tick does not pair again until Mason runs pair. */ autoOff: boolean }
 
 /** `fromMe` is a row Mason's own Apple ID sent, e.g. his YES typed on the phone into the self-chat. */
 export interface PairInbound { rowid: number; text: string; handle: string; fromMe?: boolean }
@@ -61,11 +64,13 @@ export interface OwnerPairStatusV1 {
   sent?: number;
   /** False when the handle is bound but comms.toml does not confirm it yet. */
   confirmed?: boolean;
+  /** Automatic invitations stopped after unanswered expirations; explicit pairing can restart them. */
+  autoPaused?: true;
 }
 
 export type PairStartResult =
   | { status: 'pending'; handles: string[]; since: number }
-  | { status: 'already-paired' | 'already-pending' | 'too-soon' | 'none-found' | 'send-failed' | 'messages-unreadable' | 'bad-handle' };
+  | { status: 'already-paired' | 'already-pending' | 'too-soon' | 'auto-paused' | 'none-found' | 'send-failed' | 'messages-unreadable' | 'bad-handle' };
 export type PairCheckResult =
   | { status: 'none' | 'waiting' | 'expired' | 'unreadable' }
   | { status: 'bound'; confirmed: boolean; reason?: string };
@@ -77,14 +82,23 @@ const clock = (deps: PairDeps): number => (deps.now ?? Date.now)();
 // State file
 // ---------------------------------------------------------------------------
 
-function emptyState(): PairState { return { pending: null, lastStartAt: null, autoOff: false }; }
+function emptyState(): PairState { return { pending: null, lastStartAt: null, autoOff: false, autoUnanswered: 0 }; }
 
 export function readPairState(configDir: string): PairState {
   try {
     const raw = JSON.parse(readFileSync(join(configDir, 'comms', OWNER_PAIR_STATE_FILE), 'utf8')) as Record<string, unknown>;
-    return { pending: parsePendingRecord(raw.pending),
-      lastStartAt: Number.isFinite(raw.lastStartAt) ? raw.lastStartAt as number : null, autoOff: raw.autoOff === true };
-  } catch { return emptyState(); }
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid pair state');
+    const pending = parsePendingRecord(raw.pending);
+    // Missing means a legacy file. A damaged counter fails closed, including
+    // null (JSON.stringify(NaN)); valid counts saturate at the cap.
+    const count = raw.autoUnanswered;
+    const autoUnanswered = !Object.hasOwn(raw, 'autoUnanswered') ? 0
+      : typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 ? Math.min(count, PAIR_AUTO_MAX_UNANSWERED) : PAIR_AUTO_MAX_UNANSWERED;
+    return { pending: pending ? { ...pending, auto: (raw.pending as Record<string, unknown>).auto === true } : null,
+      lastStartAt: Number.isFinite(raw.lastStartAt) ? raw.lastStartAt as number : null, autoOff: raw.autoOff === true, autoUnanswered };
+  } catch (error) {
+    return { ...emptyState(), autoUnanswered: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 0 : PAIR_AUTO_MAX_UNANSWERED };
+  }
 }
 
 function atomicWrite(file: string, text: string, mode: number): void {
@@ -97,6 +111,14 @@ function atomicWrite(file: string, text: string, mode: number): void {
 
 function writePairState(configDir: string, state: PairState): void {
   atomicWrite(join(configDir, 'comms', OWNER_PAIR_STATE_FILE), JSON.stringify(state), 0o600);
+}
+
+/** Consume an expired invitation once, including when start is called without a preceding check. */
+function expirePair(configDir: string, state: PairState): PairState {
+  const next = { ...state, pending: null,
+    autoUnanswered: Math.min(PAIR_AUTO_MAX_UNANSWERED, state.autoUnanswered + (state.pending?.auto ? 1 : 0)) };
+  writePairState(configDir, next);
+  return next;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,20 +199,23 @@ export function readOwnerPairStatus(configDir: string): OwnerPairStatusV1 {
     const confirmed = readCommsLimits(configDir).state === 'confirmed';
     return { schema: 'owner-pair.status.v1', state: 'paired', line: `paired (${mask(bound)})`, confirmed };
   }
-  const pending = readPairState(configDir).pending;
+  const { pending, autoUnanswered } = readPairState(configDir);
   if (pending) return { schema: 'owner-pair.status.v1', state: 'waiting', line: `waiting for YES (sent to ${pending.handles.length})`, since: new Date(pending.startedAt).toISOString(), sent: pending.handles.length };
+  if (autoUnanswered >= PAIR_AUTO_MAX_UNANSWERED) return { schema: 'owner-pair.status.v1', state: 'not-paired', line: `not paired (auto invitations paused after ${PAIR_AUTO_MAX_UNANSWERED} unanswered)`, autoPaused: true };
   return { schema: 'owner-pair.status.v1', state: 'not-paired', line: 'not paired' };
 }
 
-/** Send the one pairing text to each own handle (cap 4) and record one pending pair. `auto` is the self-tick: at most one start per 24 h. */
+/** Send the pairing text to each own handle (cap 4). The self-tick starts at most once per 24 h, pausing after two unanswered invitations. */
 export async function startOwnerPair(deps: PairDeps, input: { handle?: string; auto?: boolean } = {}): Promise<PairStartResult> {
   const now = clock(deps);
   if (boundHandle(deps.configDir)) return { status: 'already-paired' };
-  const state = readPairState(deps.configDir);
+  let state = readPairState(deps.configDir);
   const explicit = input.handle?.trim();
   if (explicit !== undefined && !IMESSAGE_HANDLE_RE.test(explicit)) return { status: 'bad-handle' };
+  if (state.pending && state.pending.expiresAt <= now) state = expirePair(deps.configDir, state);
   const live = state.pending && state.pending.expiresAt > now ? state.pending : null;
   if (live && (explicit === undefined || live.handles.some(h => h.toLowerCase() === explicit.toLowerCase()))) return { status: 'already-pending' };
+  if (input.auto && state.autoUnanswered >= PAIR_AUTO_MAX_UNANSWERED) return { status: 'auto-paused' };
   if (input.auto && (state.autoOff || (state.lastStartAt !== null && now - state.lastStartAt < PAIR_TTL_MS))) return { status: 'too-soon' };
 
   // --handle narrows to one; otherwise every own handle found is Mason's.
@@ -201,7 +226,8 @@ export async function startOwnerPair(deps: PairDeps, input: { handle?: string; a
   const sent: string[] = [];
   for (const handle of targets) if (await deps.bridge.send(handle, PAIR_TEXT)) sent.push(handle);
   if (sent.length === 0) return { status: 'send-failed' };
-  writePairState(deps.configDir, { pending: { handles: sent, startedAt: now, expiresAt: now + PAIR_TTL_MS, afterRowId }, lastStartAt: now, autoOff: false });
+  writePairState(deps.configDir, { pending: { handles: sent, startedAt: now, expiresAt: now + PAIR_TTL_MS, afterRowId, auto: input.auto === true },
+    lastStartAt: now, autoOff: false, autoUnanswered: input.auto ? state.autoUnanswered : 0 });
   return { status: 'pending', handles: sent, since: now };
 }
 
@@ -214,7 +240,7 @@ export async function checkOwnerPair(deps: PairDeps): Promise<PairCheckResult> {
   const state = readPairState(deps.configDir);
   const pending = state.pending;
   if (!pending) return { status: 'none' };
-  if (pending.expiresAt <= now) { writePairState(deps.configDir, { ...state, pending: null }); return { status: 'expired' }; }
+  if (pending.expiresAt <= now) { expirePair(deps.configDir, state); return { status: 'expired' }; }
   const inbound = await deps.bridge.replies(pending.afterRowId, pending.handles);
   if (inbound === null) return { status: 'unreadable' };
   const own = new Set(pending.handles.map(h => h.toLowerCase()));
@@ -236,7 +262,7 @@ async function bindOwnerHandle(configDir: string, handle: string, state: PairSta
     const done = writeNetwork(configDir, (text, section) => withIdentity(text, section, handle), ['team', 'mason']);
     if (!done) return { status: 'waiting' };
   }
-  writePairState(configDir, { ...state, pending: null });
+  writePairState(configDir, { ...state, pending: null, autoUnanswered: 0 });
   // A YES from an own handle is the owner's proof. The confirmation goes through the owner-gated
   // route's handler-level function, which stays the only caller of the confirm writer. Loaded on
   // demand: the web layer is heavy and the self-tick needs it only here.
@@ -252,7 +278,7 @@ export function unpairOwner(configDir: string): { status: 'unpaired' | 'not-pair
   const state = readPairState(configDir);
   const wasBound = boundHandle(configDir) !== undefined;
   if (wasBound && !writeNetwork(configDir, (text, section) => withoutIdentity(text, section), ['mason', 'team'])) return { status: 'failed' };
-  writePairState(configDir, { pending: null, lastStartAt: state.lastStartAt, autoOff: true });
+  writePairState(configDir, { ...state, pending: null, autoOff: true });
   return { status: wasBound || state.pending ? 'unpaired' : 'not-paired' };
 }
 
@@ -262,7 +288,7 @@ export interface PairTickReport { action: 'none' | 'started' | 'waiting' | 'boun
 
 /**
  * One self-tick step (apply mode, iMessage on): no binding and no pending pair
- * starts one, at most once per 24 h; while pending it looks for the YES.
+ * starts one, at most once per 24 h and until two go unanswered; while pending it looks for the YES.
  */
 export async function pairTick(deps: PairDeps): Promise<PairTickReport> {
   if (boundHandle(deps.configDir)) return { action: 'none', detail: 'paired' };
@@ -276,6 +302,7 @@ export async function pairTick(deps: PairDeps): Promise<PairTickReport> {
   }
   const started = await startOwnerPair(deps, { auto: true });
   if (started.status === 'pending') return { action: 'started', detail: sentLine(started.handles.length) };
+  if (started.status === 'auto-paused') return { action: 'none', detail: `auto-paused: ${PAIR_AUTO_MAX_UNANSWERED} invitations unanswered; run phm owner pair imessage to retry` };
   return { action: expired ? 'expired' : 'none', detail: started.status };
 }
 
