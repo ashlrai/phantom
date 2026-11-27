@@ -146,6 +146,22 @@ describe('CI baseline evidence', () => {
     const fail = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
     expect(fail.groups[0]?.action).toBe('unknown');
   });
+  it.each([
+    { count: 1, flaky: false, masterFailure: 'flaky-shared', classification: 'unknown' },
+    { count: 1, flaky: true, masterFailure: 'shared', classification: 'unknown' },
+    { count: 2, flaky: true, masterFailure: 'shared', classification: 'shared-baseline' },
+  ])('withholds master pass evidence across reporter formats ($count PRs, $masterFailure on master)', async ({ count, flaky, masterFailure, classification }) => {
+    const { gh } = github({ count, flaky, pass: true, filePass: true, extraMasterJob: 'failure' });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      if (args[1]?.endsWith('/jobs/30/logs')) {
+        return { ok: true, stdout: `/usr/bin/git log -1 --format=%H\n${master}\n${fixture(masterFailure)}`, stderr: '' };
+      }
+      return gh(args);
+    });
+    expect(report.master.known).toBe(true);
+    expect(report.groups).toMatchObject([{ classification, master: 'unknown' }]);
+    expect(report.updates.map(update => update.ready)).toEqual(count === 2 ? [false, false] : []);
+  });
   it('reads default-reporter file-pass lines as master pass evidence', async () => {
     // The default reporter prints `✓ file (N tests)` for a green module and
     // no per-test pass lines; a green module means every test in it passed.

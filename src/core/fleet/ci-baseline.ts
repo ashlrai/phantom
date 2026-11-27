@@ -2282,16 +2282,25 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   // be flakes even when their file happens to be a test path a green-module
   // line could otherwise match.
   const filePassable = (names: string) => names === SUITE_NAMES || !names.startsWith('(');
+  // Qualification verdicts join titles with spaces; Vitest uses " > ".
+  // Flattening can collide across distinct cases, so use it only to veto
+  // a pass, never to assert an exact failure or combine failure groups.
+  const flattenedCaseId = (f: Failure) => `${f.file} > ${f.names.replaceAll(' > ', ' ')}`;
+  const masterFailedCases = new Set(masterFailures
+    .filter(f => f.names !== SUITE_NAMES && filePassable(f.names))
+    .map(flattenedCaseId));
   // A suite failure has no per-test pass line to match: the file loading and
   // running at all is what resolves it. The default reporter's green-module
   // line (`✓ file (N tests)`) proves the module loaded. For a named test,
   // require an unqualified summary or an explicit case pass.
-  const passes = (f: Failure) => filePassable(f.names) && masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
-    const m = PASS_LINE.exec(line);
-    if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
-    const modulePass = FILE_PASS_LINE.exec(line);
-    return modulePass?.[1] === f.file && (f.names === SUITE_NAMES || modulePass[2] === undefined);
-  }));
+  const passes = (f: Failure) => filePassable(f.names) && masterKnown &&
+    !(f.names === SUITE_NAMES ? masterFailures.some(m => m.testId === f.testId) : masterFailedCases.has(flattenedCaseId(f))) &&
+    masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
+      const m = PASS_LINE.exec(line);
+      if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
+      const modulePass = FILE_PASS_LINE.exec(line);
+      return modulePass?.[1] === f.file && (f.names === SUITE_NAMES || modulePass[2] === undefined);
+    }));
   // Bundler-resolution candidates for one normalized repo-relative spec base.
   // Explicit extensions keep TypeScript precedence (.js -> .ts before .tsx,
   // the literal spec last so a real .js/.mjs file still resolves); extensionless

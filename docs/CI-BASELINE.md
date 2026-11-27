@@ -57,6 +57,11 @@ on stderr. `<file>` is the report's repo-relative module path under
 `test/` or `src/web-ui/` and `<name>` is the JSON reporter's space-joined
 ancestor titles plus the case title, not the default reporter's ` > `
 chain, so the group keys on the identity the evidence itself printed.
+When comparing master failures against pass evidence, the analyzer also
+compares case titles with the nesting separators flattened to spaces.
+A same-file match vetoes the pass and leaves the master verdict unknown
+if the IDs differ. Flattened titles can match multiple cases, so this
+comparison only blocks probable-flake reruns and update-branch readiness.
 Because it names a real test, the usual dependency closure and pass
 evidence apply: a green master module resolves a one-off flake on an
 unaffected singleton to `probable-flake`/`rerun-failed`, while a flake
