@@ -23,7 +23,9 @@ A later conflicting receipt invalidates earlier matching proof. For jobs
 using checkout ref echoes as proof, the ref must equal the analyzed head exactly. An
 unpinned checkout (which falls back to the event's merge commit on pull
 requests), a non-SHA ref or a second checkout of anything else leaves the
-job unverifiable. Jobs that never check out the workspace (aggregators such
+job unverifiable. A log with a checkout step and no valid head proof keeps
+freshness unknown even when it contains no recognizable failure or test pass.
+Jobs that never check out the workspace (aggregators such
 as Merge Gate) cannot emit any proof; their logs are dropped from evidence
 only when they carry no parseable failure or per-test pass output. The
 default reporter's green-module pass lines are expected from checkout jobs

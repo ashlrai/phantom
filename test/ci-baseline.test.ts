@@ -111,6 +111,25 @@ function github(options: { count?: number; sameHead?: boolean; touched?: string;
 }
 
 describe('CI baseline evidence', () => {
+  it.each(['  ref: master\n', ''])(
+    'withholds freshness for a sibling checkout without head proof (%j)',
+    async ref => {
+      const { gh } = github({ count: 1, extraPrJob: 'failure' });
+      const report = await analyzeCiBaseline('owner/repo', async args => {
+        if (!args[1]?.endsWith('/jobs/40/logs')) return gh(args);
+        return {
+          ok: true,
+          stdout: `##[group]Run actions/checkout@v4\nwith:\n${ref}##[endgroup]\n##[error]Checkout failed\n`,
+          stderr: '',
+        };
+      });
+      expect(report.freshness).toMatchObject([
+        { state: 'unknown', reason: 'unreadable-log-or-unverified-checkout' },
+      ]);
+      expect(report.groups).toEqual([]);
+    },
+  );
+
   it('groups independent failures and keeps analysis read-only', async () => {
     const { gh, calls } = github();
     const report = await analyzeCiBaseline('owner/repo', gh);
