@@ -345,6 +345,35 @@ describe('ready.tsv -> node router bridge', () => {
     expect(report.rows[0]).toMatchObject({ offload: false, reasons: ['no_free_slot'] });
   });
 
+  it('uses fresh workers on a host while still charging a stale sibling’s claim', async () => {
+    const job = 'RQ-REVIEW-HEARTBEAT';
+    const f = fixture([row(job)], [
+      { id: 'sibling', caps: ['build'], slots: 1 },
+      { id: 'worker', caps: READ, slots: 1 },
+    ]);
+    const sample = { hostId: 'shared-host', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000_000 };
+    const sibling = f.sessions.get('sibling')!;
+    f.nodes.heartbeat(sibling, { capacity: sample });
+    f.advance(5_999);
+    f.nodes.enqueue('needs-build', { owner: 'ashlr', requires: ['build'] });
+    const pulled = f.nodes.pull(sibling)!;
+    expect(pulled.job.id).toBe('needs-build');
+
+    f.advance(2);
+    f.nodes.heartbeat(f.sessions.get('worker')!, {
+      capacity: { ...sample, sampledAtMs: 1_006_001 },
+    });
+    const busy = await f.pass();
+    expect(busy.nodes).toMatchObject([{ nodeId: 'worker', freeSlots: 0 }]);
+    expect(busy.rows[0]).toMatchObject({ offload: false, reasons: ['no_free_slot'] });
+    expect(busy.claimed).toEqual([]);
+
+    f.advance(1_000);
+    const available = await f.pass();
+    expect(available.claimed).toEqual([job]);
+    expect(available.rows[0]).toMatchObject({ offload: true, nodeId: 'worker' });
+  });
+
   it('reports unknown headroom when a shared host has incomplete slot telemetry', async () => {
     const f = fixture([row('RQ-REVIEW-A')], [
       { id: 'worker', caps: READ, slots: 1 },

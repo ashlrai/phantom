@@ -17,7 +17,7 @@ import { join, sep } from 'node:path';
 import { NODE_TASK_LIMIT, validNodeTask, nodeTaskArgs, type EmbeddedNodeTask } from './task.js';
 import { type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
 import { NODE_HEARTBEAT_MS, validCap } from './state.js';
-import type { RouteAssignment } from './router.js';
+import { NODE_OFFLINE_MS, type RouteAssignment } from './router.js';
 import { LOCAL_LANES, MARKET_LANE_ID, readyEnvelopeSpec, remoteLaneCap } from '../../fleet/unfed-market.js';
 import { scrubSecrets } from '../../util/scrub.js';
 
@@ -160,14 +160,31 @@ function reservesReadyId(row: ReadyRow): boolean {
 export function planNodeBridge(input: BridgeRouterView & {
   rows: ReadyRow[]; claimed: (job: string) => boolean; now: number; maxPerPass?: number;
 }): { nodes: BridgeNodeView[]; rows: BridgeRowDecision[] } {
-  const live = input.nodes.filter(n => n.live).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
-  const running = (id: string) => input.jobs.filter(j => j.state === 'running' && j.claimedBy === id).length;
+  const joined = input.nodes.filter(n => n.live);
+  const heartbeatAge = (n: NodeView) => n.heartbeatAt > 0 && n.heartbeatAt <= input.now
+    ? input.now - n.heartbeatAt : Infinity;
+  const live = joined.filter(n => n.capacity
+    ? heartbeatAge(n) <= 2 * NODE_HEARTBEAT_MS : heartbeatAge(n) < NODE_OFFLINE_MS)
+    .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
+  const claimsByNode = new Map<string, number>();
+  for (const job of input.jobs) {
+    if (job.state === 'running' && job.claimedBy) {
+      claimsByNode.set(job.claimedBy, (claimsByNode.get(job.claimedBy) ?? 0) + 1);
+    }
+  }
+  const running = (id: string) => claimsByNode.get(id) ?? 0;
   const free = new Map<string, number | null>(live.map(n => [n.nodeId, n.slots === undefined ? null : Math.max(0, n.slots - running(n.nodeId))]));
   // Count the physical host's budget once, including claims held by siblings.
   // Legacy nodes without samples still use their advertised slot bounds.
   const hostOf = (n: NodeView): string => n.capacity?.hostId ?? n.nodeId;
   const hostGroups = new Map<string, NodeView[]>();
   for (const n of live) { const host = hostOf(n); const members = hostGroups.get(host) ?? []; members.push(n); hostGroups.set(host, members); }
+  // An expired heartbeat stops new placement before the session and its claims expire.
+  const hostRunning = new Map<string, number>();
+  for (const node of joined) {
+    const host = hostOf(node);
+    hostRunning.set(host, (hostRunning.get(host) ?? 0) + running(node.nodeId));
+  }
   const hostFree = new Map<string, number | null>();
   const freshCapacity = (node: NodeView) => {
     const sample = node.capacity;
@@ -186,7 +203,7 @@ export function planNodeBridge(input: BridgeRouterView & {
       return member.slots ?? null;
     });
     hostFree.set(host, budgets.every((budget): budget is number => budget !== null)
-      ? Math.max(0, Math.min(...budgets) - members.reduce((sum, m) => sum + running(m.nodeId), 0))
+      ? Math.max(0, Math.min(...budgets) - (hostRunning.get(host) ?? 0))
       : null);
   }
   const reserve = (node: NodeView) => {
