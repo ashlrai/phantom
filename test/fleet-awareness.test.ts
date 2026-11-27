@@ -146,6 +146,30 @@ test('a producer withdrawal is a fence, not latency evidence; accepted completio
   expect(host.latency).toEqual({ samples: 1, medianMs: 2000, windowMs: 86_400_000 });
 });
 
+test('an unattributed completion cannot bias pool placement after a worker moves', () => {
+  const f = fixture();
+  const worker = f.add('a-worker', { hostId: 'old-mac', slots: 1 });
+  f.enqueue('legacy');
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  const legacy = nodes.pull(worker)!;
+  f.advance(100);
+  expect(nodes.complete(legacy.claim, 'result:legacy')).toBe(true);
+  delete f.state.jobs[0]!.executionHostId; // Completion persisted by a witness without host attribution.
+  f.beat(worker.nodeId, { hostId: 'new-mac', slots: 1 });
+
+  const other = f.add('z-worker', { slots: 2 });
+  f.enqueue('measured');
+  const measured = nodes.claim(f.state.leader!, other, 'measured')!;
+  f.advance(1000);
+  expect(nodes.complete(measured, 'result:measured')).toBe(true);
+
+  f.enqueue('next');
+  const hosts = projectFleetAwareness(f.state, f.now()).hosts;
+  expect(hosts.find(h => h.hostId === 'new-mac')?.latency).toMatchObject({ samples: 0, medianMs: null });
+  expect(hosts.find(h => h.hostId === other.nodeId)?.latency).toMatchObject({ samples: 1, medianMs: 1000 });
+  expect(f.plan()[0]?.nodeId).toBe(other.nodeId);
+});
+
 test('capacity cannot bypass owner/capability/auth fences and status stays scoped', () => {
   const f = fixture(); f.add('node');
   const nodes = new DriveNodes(f.store, { now: f.now });
