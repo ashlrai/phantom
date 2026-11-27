@@ -2319,6 +2319,22 @@ describe('CI baseline evidence', () => {
     const flake = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, touched: 'docs/README.md', contents }).gh);
     expect(flake.groups[0]?.action).toBe('rerun-failed');
   });
+  it.each(['tsconfig.json', 'jsconfig.json'])('attributes a newly added suite-local %s to the PR', async config => {
+    const contents = {
+      'src/web-ui/design/tokens.test.tsx': "import { it } from 'vitest';",
+      'tsconfig.json': '{}',
+    };
+    const baseline = { web: true, contents, pass: true, count: 1 };
+    const created = await analyzeCiBaseline('owner/repo', github({
+      ...baseline, touched: `src/web-ui/design/${config}`,
+    }).gh);
+    expect(created.groups[0]?.action).toBe('pr-caused');
+
+    const unrelated = await analyzeCiBaseline('owner/repo', github({
+      ...baseline, touched: `src/web-ui/other/${config}`,
+    }).gh);
+    expect(unrelated.groups[0]?.action).toBe('rerun-failed');
+  });
   it('scopes harness deps to the config that governs each suite', async () => {
     const contents = {
       'test/example.test.ts': "import { it } from 'vitest';",

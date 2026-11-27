@@ -2538,15 +2538,15 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
             for (const p of closure) out.add(p);
           }
         }
-        // Nearest toolchain config walking up from the test file: bundlers read
-        // the closest tsconfig/jsconfig per transformed file.
+        // A PR can add a nearer config even if master has no file at that path.
+        // Include every candidate along the test file's ancestor chain.
         let dir = posix.dirname(file);
         for (;;) {
           for (const name of ['tsconfig.json', 'jsconfig.json']) {
             const p = dir === '.' ? name : `${dir}/${name}`;
             const fetched = await contents(p);
-            if (fetched.ok) out.add(p);
-            else if (!fetched.absent) return null;
+            if (!fetched.ok && !fetched.absent) return null;
+            out.add(p);
           }
           if (dir === '.') break;
           const parent = posix.dirname(dir);

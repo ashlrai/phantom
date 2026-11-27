@@ -556,8 +556,9 @@ imports track dependency manifests. Independence also unions the runner
 harness a test's own imports never see: each `vitest.config.*`/`vitest.workspace.*`
 file whose literal `include` globs cover the suite (a config with none governs
 every suite), that config's import closure, its `setupFiles`/`globalSetup`
-entries and their closures, the nearest `tsconfig.json`/`jsconfig.json`
-walking up from the test file, and the dependency manifests (which also cover
+entries and their closures, candidate `tsconfig.json`/`jsconfig.json` paths
+walking up from the test file (including paths absent on master, where a PR
+can add a config), and the dependency manifests (which also cover
 suites running without bare imports). An unreadable governing config, an
 unresolvable or globbed setup entry, or a failed harness probe yields
 `unknown`, never independence. A candidate that 404s tries the next
