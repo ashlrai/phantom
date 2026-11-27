@@ -901,6 +901,38 @@ describe('phm agents bus (unified)', () => {
     expect((await run(['inbox', 'nova', '--channel', 'missing'])).json).toMatchObject({ status: 'ok', messages: [] });
   });
 
+  it('filters inbox reads by --topic', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'dm', '--id', 'tp-dm'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--topic', 'deploy', '--text', 'release deploy', '--id', 'tp-rel'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--topic', 'general', '--text', 'release general', '--id', 'tp-gen'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'ops', '--from', 'atlas', '--topic', 'deploy', '--text', 'ops deploy', '--id', 'tp-ops'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // The topic component matches across every member room at once.
+    const deploy = await run(['inbox', 'nova', '--topic', 'deploy']);
+    expect(deploy.code).toBe(0);
+    expect(deploy.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id).sort())
+      .toEqual(['tp-ops', 'tp-rel']);
+    // --channel composes into one room AND one topic.
+    expect((await run(['inbox', 'nova', '--topic', 'deploy', '--channel', 'release'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['tp-rel']);
+    const counted = await run(['inbox', 'nova', '--topic', 'deploy', '--matched']);
+    expect(counted.json.matched).toBe(2);
+    // A name outside the topic grammar is invalid; a well-formed topic no
+    // room uses reads ok-empty, never an error.
+    expect(await run(['inbox', 'nova', '--topic', 'Bad Topic'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect((await run(['inbox', 'nova', '--topic', 'missing'])).json).toMatchObject({ status: 'ok', messages: [] });
+  });
+
   it('filters inbox reads by --job across feed citations and job-threaded mail', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

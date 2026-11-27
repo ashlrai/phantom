@@ -80,6 +80,22 @@ it('applies the inbox filters to the stream', async () => {
   expect(messages(records).map(row => row.envelope.id)).toEqual(['dm-p0']);
 });
 
+it('applies the topic filter to the stream', async () => {
+  const options = setup();
+  register(options, 'atlas', 'nova');
+  createAgentChannel({ name: 'eng', createdBy: 'atlas', members: ['nova'] }, options);
+  createAgentChannel({ name: 'ops', createdBy: 'atlas', members: ['nova'] }, options);
+  await postChannelMessage({ from: 'atlas', channel: 'eng', topic: 'deploy', text: 'eng deploy', id: 'ch-dep' }, options);
+  await postChannelMessage({ from: 'atlas', channel: 'eng', topic: 'general', text: 'eng general', id: 'ch-gen' }, options);
+  await postChannelMessage({ from: 'atlas', channel: 'ops', topic: 'deploy', text: 'ops deploy', id: 'ch-ops-dep' }, options);
+  await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'direct', id: 'dm-1' }, options);
+  const { records, pending, expire } = follow({ agent: 'nova', topic: 'deploy' }, {}, options);
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id).sort()).toEqual(['ch-dep', 'ch-ops-dep']);
+});
+
 it('resumes after a persisted cursor without replaying shown rows', async () => {
   const options = setup();
   register(options, 'atlas', 'nova');

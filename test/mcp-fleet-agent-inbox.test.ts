@@ -91,7 +91,7 @@ describe('fleet_agent_inbox argument parsing', () => {
       agent: 'agent:planner', after: 3, limit: 10, matched: true,
       thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
       priority: 'P1', kind: 'handoff', job: 'RQ-9',
-      since: '1800000000000', before: '1700000000000', channel: 'ops', contains: '  Parser   Fix ',
+      since: '1800000000000', before: '1700000000000', channel: 'ops', topic: 'deploy', contains: '  Parser   Fix ',
       inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.result', result: 'failed',
     });
     expect(parsed).toMatchObject({
@@ -99,7 +99,7 @@ describe('fleet_agent_inbox argument parsing', () => {
       filters: {
         thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
         priority: 'P1', kind: 'handoff', job: 'RQ-9',
-        since: 1800000000000, before: 1700000000000, channel: 'ops', contains: 'parser fix',
+        since: 1800000000000, before: 1700000000000, channel: 'ops', topic: 'deploy', contains: 'parser fix',
         inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.result', result: 'failed',
       },
     });
@@ -121,6 +121,8 @@ describe('fleet_agent_inbox argument parsing', () => {
       { agent: 'a', kind: 'bogus' }, { agent: 'a', kind: 'work' }, { agent: 'a', kind: 3 },
       { agent: 'a', channel: 'Bad Channel!' }, { agent: 'a', channel: 'x'.repeat(33) },
       { agent: 'a', channel: 7 },
+      { agent: 'a', topic: 'Bad Topic' }, { agent: 'a', topic: 'deploy:extra' },
+      { agent: 'a', topic: 'x'.repeat(33) }, { agent: 'a', topic: '' }, { agent: 'a', topic: 7 },
       { agent: 'a', since: 'never' }, { agent: 'a', since: 5 }, { agent: 'a', since: '' },
       { agent: 'a', before: 'never' }, { agent: 'a', before: 5 }, { agent: 'a', before: '' },
       { agent: 'a', before: '1960-01-01T00:00:00.000Z' },
@@ -189,12 +191,12 @@ describe('fleet_agent_inbox reader', () => {
       return okPage({ messages: [] });
     };
     await readFleetAgentInbox(parseFleetAgentInboxArgs({
-      agent: 'a', since: '1800000000000', before: '1700000000000', contains: 'Parser Fix', channel: 'ops',
+      agent: 'a', since: '1800000000000', before: '1700000000000', contains: 'Parser Fix', channel: 'ops', topic: 'deploy',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
       priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake', result: 'complete',
     })!, { read });
     expect(seenPage).toMatchObject({
-      since: 1800000000000, before: 1700000000000, contains: 'parser fix', channel: 'ops',
+      since: 1800000000000, before: 1700000000000, contains: 'parser fix', channel: 'ops', topic: 'deploy',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
       priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake', result: 'complete',
     });
@@ -234,6 +236,8 @@ describe('fleet_agent_inbox MCP tool', () => {
       .toMatchObject({ type: 'string', enum: expect.arrayContaining(['P0', 'P3']) });
     expect(tool?.inputSchema.properties?.['matched']).toMatchObject({ type: 'boolean' });
     expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
+    expect(tool?.inputSchema.properties?.['topic'])
+      .toMatchObject({ type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$' });
     expect(tool?.inputSchema.properties?.['inReplyTo'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['id'])
