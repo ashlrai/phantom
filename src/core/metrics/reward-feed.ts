@@ -34,7 +34,8 @@
  *     claim never resolves, and absent keys change nothing.
  *   - dispatchedAt IS THE LAST DISPATCH BEFORE THE OUTCOME. claim,
  *     batch_claim and launch rows are dispatch evidence; the latest at or
- *     before the outcome produced it. Without an eligible dispatch row
+ *     before the outcome produced it. Claims marked launch_dedupe are
+ *     pre-spawn reservations and supply no dispatch evidence. Without an eligible dispatch row
  *     in the window, or with an undated dispatch that could supersede it,
  *     the dispatch time is unknown: skip.
  *   - ciWallMs IS THE LEDGER'S CI BOUNDARIES. jobs.jsonl's optional
@@ -323,7 +324,8 @@ export function foldJobsLedgerRewards(
     // A future verdict cannot establish PR ownership or supply other evidence yet.
     if (resolvedAt !== null && resolvedAt > nowMs) continue;
     const name = firstLedgerString(row, LEDGER_EVENT_KEYS)?.toLowerCase();
-    const dispatch = name !== undefined && DISPATCH_EVENTS.has(name);
+    const dispatch = name !== undefined && DISPATCH_EVENTS.has(name)
+      && !(name === 'claim' && row['launch_dedupe'] === true);
     const ciBoundary = name === 'ci_start' || name === 'ci_complete';
     // A standalone future revert cannot contest a PR claim yet. Mixed
     // receipts can still supply independent resolution or execution evidence.

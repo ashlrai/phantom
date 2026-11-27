@@ -803,6 +803,9 @@ readings across both endpoints record a measured zero.
 The daemon excludes batch session wrappers (`RQ-BATCH-*`)
 and node-pool attempt telemetry from the reward fold. Receipts marked
 `launched: false` supply no dispatch, PR claim, verdict or timing evidence.
+Claims marked `launch_dedupe: true` are pre-spawn reservations. They cannot
+supply a dispatch timestamp or lane, supersede an observed launch, or make
+dispatch timing ambiguous when the reservation has no timestamp.
 Batch members still
 use their own `batch_claim` rows and PR verdicts. The daemon records
 `ciWallMs` when the rewarded dispatch
