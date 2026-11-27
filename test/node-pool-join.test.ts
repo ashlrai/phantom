@@ -70,6 +70,43 @@ describe('repeatable Mac enrollment', () => {
     expect(deps.call).toHaveBeenCalledWith(config, 'join', args);
     expect(deps.call.mock.calls.some(c => c[1] === 'leave')).toBe(false);
   });
+  it('names the missing --node on an explicit pool join instead of the masked pool refusal', async () => {
+    // --caps/--slots route join past enrollment to the raw pool verb; the
+    // pool-side parser still requires --node but its refusal crosses SSH as
+    // 'held: inactive-runner'. The client names the flag before any dial.
+    expect(await cmdNodePool('join', ['--caps', 'codex', '--json'])).toBe(2);
+    expect(await cmdNodePool('join', ['--slots', '2', '--json'])).toBe(2);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]) as { error: { code: string; message: string } };
+    expect(out.error.code).toBe('usage');
+    expect(out.error.message).toContain('--node');
+    expect(deps.call).not.toHaveBeenCalled();
+  });
+  it('accepts --flag=value spellings on the explicit join path', async () => {
+    expect(await cmdNodePool('join', ['--node=air', '--caps=codex', '--slots=2', '--json'])).toBe(0);
+    expect(deps.call).toHaveBeenCalledWith(config, 'join', ['--node=air', '--caps=codex', '--slots=2', '--json']);
+  });
+  it('refuses a foreign --owner, a bad --node, bad caps and a bad slot bound before dialing', async () => {
+    const lastError = () => (JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]) as { error: { message: string } }).error.message;
+    expect(await cmdNodePool('join', ['--node', 'air', '--owner', 'other', '--caps', 'codex', '--json'])).toBe(2);
+    expect(lastError()).toContain('--owner');
+    expect(await cmdNodePool('join', ['--node', 'bad node!', '--caps', 'codex', '--json'])).toBe(2);
+    expect(lastError()).toContain('--node');
+    expect(await cmdNodePool('join', ['--node', 'air', '--caps', 'Codex', '--json'])).toBe(2);
+    expect(lastError()).toContain('--caps');
+    expect(await cmdNodePool('join', ['--node', 'air', '--caps', 'codex', '--slots', '65', '--json'])).toBe(2);
+    expect(lastError()).toContain('--slots');
+    expect(await cmdNodePool('join', ['--node', 'air', '--caps', 'codex', '--slots', 'two', '--json'])).toBe(2);
+    expect(lastError()).toContain('--slots');
+    expect(deps.call).not.toHaveBeenCalled();
+  });
+  it('still dials an explicit join whose --owner matches the pool scope or is absent', async () => {
+    expect(await cmdNodePool('join', ['--node', 'air', '--caps', 'codex', '--json'])).toBe(0);
+    expect(deps.call).toHaveBeenCalledWith(config, 'join', ['--node', 'air', '--caps', 'codex', '--json']);
+    deps.call.mockClear();
+    // An empty --caps value is an empty caps list pool-side, not a refusal.
+    expect(await cmdNodePool('join', ['--node', 'air', '--owner', 'mason', '--caps', '', '--json'])).toBe(0);
+    expect(deps.call).toHaveBeenCalledWith(config, 'join', ['--node', 'air', '--owner', 'mason', '--caps', '', '--json']);
+  });
   it('preserves a backup role and never resets its witness', async () => {
     deps.read.mockReturnValue({ ...config, role: 'backup' });
     expect(await cmdNodePool('join', ['--json'])).toBe(0);
