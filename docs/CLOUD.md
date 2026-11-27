@@ -441,7 +441,15 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   inside the 7-day window, the CONTRACT-M334 stage-3 bar being zero; a
   divergence item emits while the window holds at least 50 shadowed
   decisions and the measured divergence rate reaches the stage-2
-  tolerance of 2%, naming the largest recorded backend disagreements. A
+  tolerance of 2%, naming the largest recorded backend disagreements.
+  The same journal also feeds the stage-2 exit-criteria verdict itself,
+  evaluated over the full journal rather than the window: once the
+  journal holds the contract's own 200-decision bar, a soak that clears
+  the criteria (under 2% divergence, zero safety-relevant) becomes an
+  item queueing the stage-3 `gateway` default flip, and a cumulative
+  record that fails them becomes an item naming the blocker the window
+  cannot see — an old safety-relevant row or an all-time rate over
+  tolerance bars the flip for the life of the append-only journal. A
   missing or unreadable fabric directory emits nothing, and rows emit
   only for the fleet's own repository since the shadow covers this
   install's dispatches —
