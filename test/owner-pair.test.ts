@@ -1,5 +1,5 @@
 /** RQ-PAIRIMSGN22YQ8: `phm owner pair imessage`. Temp config dir and a fake bridge: nothing real is sent or read. */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -10,7 +10,7 @@ import { ensureOwnerAdaptersFile } from '../src/core/comms/owner-adapters-file.j
 import { loadOwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { readOwnerLiveStatus } from '../src/core/comms/owner-live-status.js';
 import {
-  PAIR_TEXT, PAIR_TTL_MS, checkOwnerPair, pairTick, readOwnerPairStatus, startOwnerPair, unpairOwner,
+  PAIR_TEXT, PAIR_TTL_MS, checkOwnerPair, pairTick, readOwnerPairPending, readOwnerPairStatus, startOwnerPair, unpairOwner,
   type PairBridge, type PairDeps, type PairInbound,
 } from '../src/core/comms/owner-pair.js';
 
@@ -241,6 +241,60 @@ describe('unpair and status', () => {
     s.reply('YES');
     await checkOwnerPair(s.deps);
     expect(readOwnerPairStatus(s.dir).line).toBe('paired (**st)');
+  });
+});
+
+describe('readOwnerPairPending', () => {
+  const sentAt = Date.UTC(2026, 10, 21, 14, 0);
+
+  it('missing state file reads missing; a live pending reads as a count-only summary', async () => {
+    const s = setup();
+    expect(readOwnerPairPending(s.dir)).toEqual({ status: 'missing' });
+    await startOwnerPair(s.deps);
+    const r = readOwnerPairPending(s.dir);
+    expect(r).toMatchObject({ status: 'ok', paired: false });
+    expect(r.status === 'ok' && r.pending).toEqual({ sent: 1, startedAt: sentAt, expiresAt: sentAt + PAIR_TTL_MS });
+    // The handles stay in the store: the summary reports only the count.
+    expect(JSON.stringify(r)).not.toContain('mason-test');
+    expect(JSON.stringify(r)).not.toContain('handles');
+  });
+
+  it('a bound owner reads paired and clears the pending record', async () => {
+    const s = setup();
+    await startOwnerPair(s.deps);
+    s.reply('YES');
+    await checkOwnerPair(s.deps);
+    expect(readOwnerPairPending(s.dir)).toEqual({ status: 'ok', paired: true, pending: null });
+  });
+
+  it('a bound owner with a leftover pending record still reports paired', async () => {
+    const s = setup();
+    await startOwnerPair(s.deps);
+    s.reply('YES');
+    await checkOwnerPair(s.deps);
+    // Simulate residue: rewrite a pending record under the bound owner.
+    writeFileSync(join(s.dir, 'comms', 'owner-pair.json'), JSON.stringify({
+      pending: { handles: ['mason-test'], startedAt: sentAt, expiresAt: sentAt + PAIR_TTL_MS, afterRowId: 10 },
+      lastStartAt: sentAt, autoOff: false,
+    }));
+    expect(readOwnerPairPending(s.dir)).toMatchObject({ status: 'ok', paired: true });
+    expect((readOwnerPairPending(s.dir) as { pending: unknown }).pending).not.toBeNull();
+  });
+
+  it('corrupt or non-object JSON reads unavailable — never an empty wait', () => {
+    const s = setup();
+    mkdirSync(join(s.dir, 'comms'), { recursive: true });
+    writeFileSync(join(s.dir, 'comms', 'owner-pair.json'), 'not json');
+    expect(readOwnerPairPending(s.dir)).toEqual({ status: 'unavailable' });
+    writeFileSync(join(s.dir, 'comms', 'owner-pair.json'), JSON.stringify(['not', 'an', 'object']));
+    expect(readOwnerPairPending(s.dir)).toEqual({ status: 'unavailable' });
+  });
+
+  it('a readable file with no pending record reads ok with a real null', () => {
+    const s = setup();
+    mkdirSync(join(s.dir, 'comms'), { recursive: true });
+    writeFileSync(join(s.dir, 'comms', 'owner-pair.json'), JSON.stringify({ pending: null, lastStartAt: null, autoOff: true }));
+    expect(readOwnerPairPending(s.dir)).toEqual({ status: 'ok', paired: false, pending: null });
   });
 });
 

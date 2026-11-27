@@ -24,14 +24,19 @@ import { IMESSAGE_HANDLE_RE, detectOwnIMessageHandles, pollPairReplies, readMaxR
 import type { AshlrConfig } from '../types.js';
 import { readCommsLimits } from './comms-confirm.js';
 import { loadOwnerThreadSettings } from './owner-channel.js';
+import { OWNER_PAIR_STATE_FILE, PAIR_MAX_HANDLES, parsePendingRecord, type PairPending } from './owner-pair-pending.js';
+
+// The pending-record read lives in owner-pair-pending.ts — a leaf module the
+// unified inbox can import without pulling this file's bridge, network-rewrite
+// and confirm-route edges into the Tier-1 authority closure. Re-exported here
+// so the pair surface stays one import site.
+export { PAIR_MAX_HANDLES };
+export type { PairPending };
+export { readOwnerPairPending, type OwnerPairPendingRead, type OwnerPairPendingSummary } from './owner-pair-pending.js';
 
 export const PAIR_TEXT = 'Phantom: reply YES to get fleet updates here.';
 export const PAIR_TTL_MS = 24 * 60 * 60 * 1000;
-const STATE_FILE = 'owner-pair.json';
 
-export const PAIR_MAX_HANDLES = 4;
-
-export interface PairPending { handles: string[]; startedAt: number; expiresAt: number; afterRowId: number }
 export interface PairState { pending: PairPending | null; lastStartAt: number | null; /** Set by unpair: the self-tick does not pair again until Mason runs pair. */ autoOff: boolean }
 
 /** `fromMe` is a row Mason's own Apple ID sent, e.g. his YES typed on the phone into the self-chat. */
@@ -76,15 +81,9 @@ function emptyState(): PairState { return { pending: null, lastStartAt: null, au
 
 export function readPairState(configDir: string): PairState {
   try {
-    const raw = JSON.parse(readFileSync(join(configDir, 'comms', STATE_FILE), 'utf8')) as Record<string, unknown>;
-    const p = raw.pending as Record<string, unknown> | null | undefined;
-    // Older state files held one `handle`.
-    const listed = Array.isArray(p?.handles) ? p.handles : typeof p?.handle === 'string' ? [p.handle] : [];
-    const handles = listed.filter((h): h is string => typeof h === 'string' && IMESSAGE_HANDLE_RE.test(h)).slice(0, PAIR_MAX_HANDLES);
-    const pending = p && handles.length > 0 && Number.isFinite(p.startedAt) && Number.isFinite(p.expiresAt) && Number.isSafeInteger(p.afterRowId)
-      ? { handles, startedAt: p.startedAt as number, expiresAt: p.expiresAt as number, afterRowId: p.afterRowId as number }
-      : null;
-    return { pending, lastStartAt: Number.isFinite(raw.lastStartAt) ? raw.lastStartAt as number : null, autoOff: raw.autoOff === true };
+    const raw = JSON.parse(readFileSync(join(configDir, 'comms', OWNER_PAIR_STATE_FILE), 'utf8')) as Record<string, unknown>;
+    return { pending: parsePendingRecord(raw.pending),
+      lastStartAt: Number.isFinite(raw.lastStartAt) ? raw.lastStartAt as number : null, autoOff: raw.autoOff === true };
   } catch { return emptyState(); }
 }
 
@@ -97,7 +96,7 @@ function atomicWrite(file: string, text: string, mode: number): void {
 }
 
 function writePairState(configDir: string, state: PairState): void {
-  atomicWrite(join(configDir, 'comms', STATE_FILE), JSON.stringify(state), 0o600);
+  atomicWrite(join(configDir, 'comms', OWNER_PAIR_STATE_FILE), JSON.stringify(state), 0o600);
 }
 
 // ---------------------------------------------------------------------------
