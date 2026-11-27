@@ -289,6 +289,8 @@ inside their existing fenced `plan` and `pull` transactions. Workers report capa
 `held`), host identity and a sample timestamp on each three-second heartbeat.
 After two intervals, missing, future or stale samples are unknown and admit no
 new work. A heartbeat without a capacity sample cannot refresh old capacity.
+A heartbeat carrying an older capacity sample still renews liveness. It
+leaves a newer, non-future sample and its measured slot bound in place.
 Upgrade the witness and workers together; older workers stay unknown in a pool.
 Standalone legacy queues retain their existing compatibility policy.
 
