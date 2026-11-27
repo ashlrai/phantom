@@ -410,6 +410,19 @@ describe('foldJobsLedgerRewards', () => {
       .toMatchObject([{ jobId: job, merged: true }]);
   });
 
+  it.each([
+    { repo: 'ashlrai/companion', held: true },
+    { repo: 'AshlrAI/Phantom', held: false },
+    { repo: undefined, held: false },
+  ])('scopes URL-free reverts by repository (%o)', ({ repo, held }) => {
+    const job = 'RQ-REVERT-REPO';
+    const revert = line({ job, event: 'reverted', ts: '2026-10-28T18:00:00.000Z', repo });
+    for (const merge of [merged(job), line({ job, state: 'MERGED', mergedAt: MERGED_ISO })]) {
+      expect(foldJobsLedgerRewards([launch(job), merge, revert].join('\n'), NOW_MS))
+        .toMatchObject([{ jobId: job, repo: 'ashlrai/phantom', merged: held }]);
+    }
+  });
+
   it.each(['MERGED', 'CLOSED'])('attributes %s rewards to the PR repository across URL aliases', (state) => {
     const job = 'RQ-PR-REPO';
     const rows = [
