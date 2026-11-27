@@ -258,6 +258,19 @@ replies whose channel fanout is not fully delivered — the delivery side of the
 same mark, which counts a reply answered even when every channel refused it
 (each `owner-delivery` item names the unconfirmed destinations as failed,
 pending or unknown and deep-links the resend that retries only them),
+a live iMessage owner-pairing wait — the one pairing text `phm owner pair
+imessage` or the owner-live self-tick sent to the owner's own handles still
+inside its YES window (`readOwnerPairPending`, the same
+`comms/owner-pair.json` `phm owner pair status` reads, minus the handles —
+only the sent count ever leaves the store; the first own handle answering
+YES binds and anything else binds nothing, so the wait is the owner's own
+step and lists as warn `owner-pair-waiting` with `since` the send time and
+`expiresAt` the real deadline the record keeps; an expired window is a
+closed wait, a bound owner makes any leftover record inert residue, a
+verified-absent state file is `missing` and a file that cannot be read or
+parsed `unavailable` — never an empty wait passed off as fact; deep links
+`phm owner pair status --json` and `phm owner pair imessage`, which checks
+a waiting pair first so re-running it after the YES finishes the binding),
 outbound drafts awaiting approval — `phm drafts` items plus pending
 Comms-agent reply drafts that have no cos mirror (every non-email transport,
 or an email mirror that failed to write; a mirrored copy lists through its
@@ -667,7 +680,8 @@ ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 `phm team approve|deny`, `phm inbox approve|reject`,
 `phm fleet slack-trace`, `phm channels slack status`, `phm channels slack
 run`, `phm channels`, `phm comms cycle`, `phm leader inbox`, `phm imessage
-replies`, `phm leader replies`, `phm comms send-owner`, `phm fleet
+replies`, `phm leader replies`, `phm comms send-owner`, `phm owner pair
+status`, `phm owner pair imessage`, `phm fleet
 coordination board`, `phm fleet coordination inbox --agent`, `phm fleet
 claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`,
 `phm agents bus status`, `phm fleet status`, `phm fleet resume`, `phm

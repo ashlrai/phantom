@@ -524,6 +524,7 @@
     "src/core/comms/local-mailbox-receipts.ts",
     "src/core/comms/owner-channel.ts",
     "src/core/comms/owner-live-transport.ts",
+    "src/core/comms/owner-pair-pending.ts",
     "src/core/comms/owner-thread.ts",
     "src/core/comms/pause.ts",
     "src/core/comms/requests.ts",

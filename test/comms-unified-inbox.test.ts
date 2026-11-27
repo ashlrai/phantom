@@ -73,6 +73,10 @@ afterEach(() => { vi.restoreAllMocks(); roots.splice(0).forEach(r => rmSync(r, {
 const read = (extra: Partial<UnifiedInboxOptions> = {}): Promise<UnifiedInbox> => readUnifiedInbox({
   runsDir, busRoot, now: () => now,
   readRequests: () => ({ status: 'missing', requests: [] }),
+  // The owner-pair state file lives under the real owner config dir; pin a
+  // verified-absent read so the suite stays hermetic. The source has its own
+  // describe block below with an injected reader.
+  readOwnerPair: () => ({ status: 'missing' }),
   // The work board classifies every durable bus envelope as a request, so the
   // fixtures this suite posts would all list as RECEIVED; pin a verified-empty
   // board so only the dedicated describe block exercises the real projection.
@@ -135,6 +139,7 @@ describe('readUnifiedInbox sources', () => {
       v: 1, total: 0, omitted: 0, items: [],
       sources: {
         'needs-you': { state: 'missing', pending: 0 },
+        'owner-pair': { state: 'missing', pending: 0 },
         imessage: { state: 'missing', pending: 0 },
         'teammate-tasks': { state: 'missing', pending: 0 },
         drafts: { state: 'healthy', pending: 0 },
@@ -5012,5 +5017,81 @@ describe('readUnifiedInbox channel health', () => {
       filter: { job: 'job-1' },
     });
     expect(byJob.items.filter(i => i.source === 'channel-health')).toHaveLength(0);
+  });
+});
+
+describe('readUnifiedInbox owner pair', () => {
+  type PairRead = NonNullable<UnifiedInboxOptions['readOwnerPair']>;
+  const pairOk = (pending: { sent: number; startedAt: number; expiresAt: number } | null, paired = false) =>
+    (): ReturnType<PairRead> => ({ status: 'ok', pending, paired });
+  // `now` is assigned in beforeEach — build the pending record lazily so its
+  // stamps are real epoch ms, not NaN from an undefined `now` at module load.
+  const livePending = () => ({ sent: 2, startedAt: now - 3_600_000, expiresAt: now + 20 * 3_600_000 });
+  const readPair = (readOwnerPair: UnifiedInboxOptions['readOwnerPair'], extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readOwnerPair, ...extra });
+
+  it('lists a live pairing wait as a warn item with its real send and YES-window deadline', async () => {
+    const pending = livePending();
+    const inbox = await readPair(pairOk(pending));
+    expect(inbox.sources['owner-pair']).toEqual({ state: 'healthy', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'owner-pair:pending')!;
+    expect(item).toMatchObject({
+      source: 'owner-pair', kind: 'owner-pair-waiting', severity: 'warn', blocking: false,
+      title: 'iMessage owner pairing waiting for YES',
+      since: new Date(pending.startedAt).toISOString(),
+      expiresAt: new Date(pending.expiresAt).toISOString(),
+      act: ['phm owner pair status --json', 'phm owner pair imessage'],
+    });
+    expect(item.detail).toContain(`${pending.sent} own handle(s)`);
+    expect(item.detail).toContain('answers YES binds');
+    expect(item.jobIds).toBeUndefined();
+  });
+
+  it('hides an expired wait — the YES window already closed', async () => {
+    const inbox = await readPair(pairOk({ sent: 1, startedAt: now - 30 * 3_600_000, expiresAt: now - 3_600_000 }));
+    expect(inbox.sources['owner-pair']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'owner-pair')).toHaveLength(0);
+  });
+
+  it('hides a leftover pending record once an owner handle is bound', async () => {
+    const inbox = await readPair(pairOk(livePending(), true));
+    expect(inbox.sources['owner-pair']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'owner-pair')).toHaveLength(0);
+  });
+
+  it('reports a verified-absent state file missing and a real zero pending', async () => {
+    const inbox = await readPair(() => ({ status: 'missing' }));
+    expect(inbox.sources['owner-pair']).toEqual({ state: 'missing', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'owner-pair')).toHaveLength(0);
+  });
+
+  it('reports an unreadable or unparseable state file unavailable — never an empty wait', async () => {
+    const inbox = await readPair(() => ({ status: 'unavailable' }));
+    expect(inbox.sources['owner-pair']).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'owner-pair')).toHaveLength(0);
+  });
+
+  it('keeps a readable file with no pending record healthy at a real zero', async () => {
+    const inbox = await readPair(pairOk(null));
+    expect(inbox.sources['owner-pair']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'owner-pair')).toHaveLength(0);
+  });
+
+  it('degrades to unavailable when the read throws', async () => {
+    const inbox = await read({ readOwnerPair: () => { throw new Error('pair boom'); } });
+    expect(inbox.sources['owner-pair']).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'owner-pair')).toHaveLength(0);
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    const pending = pairOk(livePending());
+    const bySource = await readPair(pending, { filter: { source: 'owner-pair' } });
+    expect(bySource.items).toHaveLength(1);
+    expect(bySource.items[0]!.source).toBe('owner-pair');
+    const byKind = await readPair(pending, { filter: { kind: 'owner-pair-waiting' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['owner-pair:pending']);
+    // A pair wait names no job — --job never matches it.
+    const byJob = await readPair(pending, { filter: { job: 'job-1' } });
+    expect(byJob.items.filter(i => i.source === 'owner-pair')).toHaveLength(0);
   });
 });
