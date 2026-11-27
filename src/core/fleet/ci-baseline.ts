@@ -2202,7 +2202,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       (run.conclusion === 'failure' && !data.jobs.some(job => job.conclusion === 'failure'));
     const result: { conclusion: string; text: string }[] = [];
     for (const job of data.jobs) {
-      if (job.conclusion === 'skipped') continue;
+      if (job.conclusion === 'skipped' || job.conclusion === 'neutral') continue;
       if (job.head_sha !== head) return null;
       let r = null;
       try { r = await gh(['api', `repos/${repo}/actions/jobs/${job.id}/logs`]); } catch { /* Log unavailable. */ }

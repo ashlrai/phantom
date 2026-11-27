@@ -46,7 +46,9 @@ that conclude `success` can supply pass evidence and are excluded from
 failure parsing because their logs can include failed attempts before the
 final pass. A missing log for a job that reached a verdict still makes the
 run's logs unusable. `skipped` and `neutral` conclusions are
-deliberate non-verdicts. A workflow whose conclusion is `failure` is also
+deliberate non-verdicts. The analyzer skips their job logs, so neither log
+output nor log availability affects failure evidence or freshness. A workflow
+whose conclusion is `failure` is also
 incomplete when it lists no failed job, including when it lists no jobs
 at all. A passing job in such a workflow cannot supply master pass
 evidence for a flake rerun.
