@@ -2276,6 +2276,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     else if (fetched.ok && fetched.source !== null) auditExceptions = parseAuditExceptions(fetched.source);
   }
   const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
+  const masterSuiteLoadFailures = new Set(masterFailures.filter(f => f.names === SUITE_NAMES).map(f => f.file));
   // Parenthesized identities are gate checks, not vitest tests: only
   // '(suite)' resolves through pass evidence, because the file loading is
   // what failed. '(lint)', '(typecheck)' and the other gate names can never
@@ -2286,7 +2287,8 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   // running at all is what resolves it. The default reporter's green-module
   // line (`✓ file (N tests)`) proves the module loaded. For a named test,
   // require an unqualified summary or an explicit case pass.
-  const passes = (f: Failure) => filePassable(f.names) && masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
+  // A suite-load failure leaves its named cases unverified across shards.
+  const passes = (f: Failure) => filePassable(f.names) && masterKnown && !masterSuiteLoadFailures.has(f.file) && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
     if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
     const modulePass = FILE_PASS_LINE.exec(line);
