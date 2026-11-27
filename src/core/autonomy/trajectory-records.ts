@@ -1288,11 +1288,13 @@ function listTrajectoryRecordsAt(
     const read = deps.readAgentActions
       ? deps.readAgentActions({
         sinceMs,
+        asOfMs,
         limit: Math.max(limit * 4, 200),
         maxFiles,
       })
       : readAgentActions({
         sinceMs,
+        asOfMs,
         limit: Math.max(limit * 4, 200),
         maxFiles,
         requireComplete: true,
@@ -1652,7 +1654,7 @@ function listTrajectoryRecordsAt(
       rank: 1,
       apply: () => processOutcome(outcome),
     })),
-    ...actions.map((action) => ({ ts: action.ts, rank: 2, apply: () => processAction(action) })),
+    ...actions.filter((action) => Date.parse(action.ts) <= asOfMs).map((action) => ({ ts: action.ts, rank: 2, apply: () => processAction(action) })),
   ].sort((a, b) => eventMs(a.ts) - eventMs(b.ts) || a.rank - b.rank);
   for (const event of causalEvents) event.apply();
 
@@ -1977,6 +1979,7 @@ export function listTrajectoryJoinQuality(
   try {
     actionRead = (deps.readAgentActionsDetailed ?? readAgentActionsDetailed)({
       sinceMs,
+      asOfMs,
       limit: Math.max(limit * 4, 200),
       maxFiles,
       inspectionOnly: true,
@@ -1995,7 +1998,10 @@ export function listTrajectoryJoinQuality(
     dispatchQuality,
   );
   const outcomes = attachReadQuality(outcomesInWindow, outcomeRead.sourceQuality);
-  const actions = attachReadQuality(actionRead.events, actionQuality);
+  const actions = attachReadQuality(
+    actionRead.events.filter((action) => Date.parse(action.ts) <= asOfMs),
+    actionQuality,
+  );
   const records = listTrajectoryRecordsAt({
     windowHours,
     limit,
@@ -2085,7 +2091,7 @@ export function listTrajectoryJoinQuality(
 
   const agentActions = emptyJoinEdge();
   let excludedIdentityFree = 0;
-  for (const action of actionRead.events) {
+  for (const action of actions) {
     const aliases = joinAliases(action);
     if (aliases.length === 0) {
       excludedIdentityFree++;
