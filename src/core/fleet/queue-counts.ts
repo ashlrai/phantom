@@ -79,14 +79,22 @@ export async function getLaneQueueCounts(
   ]);
   // Queue marks per job in ledger order. dispatchd emits `enqueue` once per
   // job (its .enqueued receipt), so a re-queued job's current wait starts at
-  // its latest re-arrival — a launch_failed retry, a retried task_outcome or
-  // a fresh enqueue — not its first-ever enqueue. A departure clears the
-  // arrival until the next entry; retry marks restart the dwell even when
-  // the launch they follow sits in the ledger's unread middle. Silent
-  // requeues (deferred launches, released batches, spawn failures) leave no
-  // row, so a job whose last mark is a departure has unknown wait and the
-  // lane reports null rather than a fabricated one.
-  const marks = new Map<string, { at: number; entry: boolean; restart: boolean }[]>();
+  // its latest re-arrival — a launch_failed retry, a retried task_outcome, a
+  // launch_terminal or a fresh enqueue — not its first-ever enqueue. A
+  // departure clears the arrival until the next entry; retry marks restart
+  // the dwell even when the launch they follow sits in the ledger's unread
+  // middle. dispatchd writes launch_terminal for every solo launch that ends
+  // without "launched " — deferred (PAUSED/HELD), spawn-failed, retried and
+  // interrupted attempts — and requeues the line on all but the give_up and
+  // skip endings, which drop it; a waiting job carrying one was therefore
+  // requeued and the stamp restarts its dwell. A launch_failed give_up ends
+  // the dwell like a departure and suppresses the terminal that follows it:
+  // that attempt dropped the line, so a later waiting presence is a row-less
+  // re-add whose dwell stays unknown. Batch members released before a
+  // session reaps leave only the bundle id's terminal row, which names no
+  // member, and other row-less requeues (manual ready.tsv edits) stay
+  // unevidenced too — those waits remain null rather than fabricated.
+  const marks = new Map<string, { at: number; entry: boolean; restart: boolean; gaveUp?: boolean }[]>();
   for (const line of metrics.text.split('\n')) {
     let row: Record<string, unknown>;
     try {
@@ -97,16 +105,18 @@ export async function getLaneQueueCounts(
     const rawEvent = row.event ?? row.type ?? row.kind;
     const event = typeof rawEvent === 'string' ? rawEvent : null;
     const outcome = typeof row.outcome === 'string' ? row.outcome.toLowerCase() : null;
-    let mark: { entry: boolean; restart: boolean } | null = null;
-    if (event !== null && ARRIVAL_EVENTS.has(event)) mark = { entry: true, restart: false };
-    else if (event !== null && DEPARTURE_EVENTS.has(event)) mark = { entry: false, restart: false };
-    else if (event === 'launch_failed' && row.action === 'retry') mark = { entry: true, restart: true };
-    else if (event === 'task_outcome' && outcome !== null && MEMBER_RETRY_OUTCOMES.has(outcome)) mark = { entry: true, restart: true };
-    if (mark === null) continue;
     const id = row.job ?? row.job_id ?? row.jobId ?? row.id;
     const raw = row.ts ?? row.timestamp ?? row.at ?? row.time ?? row.mergedAt ?? row.closedAt ?? row.recordedAt ?? row.updatedAt;
     const time = typeof raw === 'string' ? Date.parse(raw) : NaN;
     if (typeof id !== 'string' || !Number.isFinite(time) || time > at.getTime()) continue;
+    let mark: { entry: boolean; restart: boolean; gaveUp?: boolean } | null = null;
+    if (event !== null && ARRIVAL_EVENTS.has(event)) mark = { entry: true, restart: false };
+    else if (event !== null && DEPARTURE_EVENTS.has(event)) mark = { entry: false, restart: false };
+    else if (event === 'launch_failed' && row.action === 'retry') mark = { entry: true, restart: true };
+    else if (event === 'launch_failed' && row.action === 'give_up') mark = { entry: false, restart: false, gaveUp: true };
+    else if (event === 'task_outcome' && outcome !== null && MEMBER_RETRY_OUTCOMES.has(outcome)) mark = { entry: true, restart: true };
+    else if (event === 'launch_terminal' && marks.get(id)?.at(-1)?.gaveUp !== true) mark = { entry: true, restart: true };
+    if (mark === null) continue;
     const list = marks.get(id) ?? [];
     list.push({ at: time, ...mark });
     marks.set(id, list);
