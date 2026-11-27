@@ -301,13 +301,20 @@ describe('cmdOrg', () => {
     vi.stubEnv('ASHLR_HOME', home);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
+      const orgToml = join(home, 'org.toml');
       expect(await cmdOrg(['plan', '--queue', join(home, 'unread-queue.json'), '--json'])).toBe(0);
       expect(JSON.parse(log.mock.lastCall![0])).toEqual({
         schema: 'org.plan.v1', state: 'not-configured', generatedAt: null, leader: null,
         budgets: null, roles: null, assignments: null, unassigned: null, held: null, joinsDir: null,
+        file: orgToml,
       });
       expect(await cmdOrg(['plan'])).toBe(0);
-      expect(log).toHaveBeenLastCalledWith('Team org not configured; planning skipped.');
+      expect(log).toHaveBeenLastCalledWith(`Team org not configured; planning skipped. No org file at ${orgToml}. org.toml holds org ids and lane shares only, never credentials: get a copy from your org leader, or start a new org with phm org init --member <id> --machine <id>.`);
+      // --file names the probed path, not the default: the skip reports the
+      // override the caller actually passed.
+      const override = join(home, 'elsewhere', 'org.toml');
+      expect(await cmdOrg(['plan', '--file', override, '--json'])).toBe(0);
+      expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ state: 'not-configured', file: override });
       expect(await cmdOrg(['plan', '--queue', '--json'])).toBe(1);
       expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ schema: 'org.error.v1', error: { code: 'rejected' } });
     } finally { vi.unstubAllEnvs(); }
