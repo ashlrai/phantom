@@ -1572,6 +1572,27 @@
  *     own series bound; truncated tails are stated as lower bounds
  *     and items emit only for the fleet's own repository since the
  *     journal describes this install's seats;
+ *   - the improve loop's own outcome ledger's recurring adverse
+ *     evidence: the digest-chained {v:1, at, prev, digest}
+ *     envelopes around registered/pr/measured/promotion/observed
+ *     events that `phm improve register|measure|promote|observe`
+ *     appends to improve/outcomes.jsonl under the Phantom home —
+ *     until now read only by `phm improve outcomes` (a report
+ *     someone had to run), scoreOutcomes/rankByLeverage (per-
+ *     proposal status, never reason recurrence) and the promotion
+ *     gate itself (one proposal at a time), so a metric pipeline
+ *     that kept failing the same way or a gate that kept refusing
+ *     the same class of proposal never became work
+ *     (outcomeLedgerBacklogItems below). Rows count only as
+ *     readLedger returns them — the digest chain verified and every
+ *     event re-validated — a broken chain emits an integrity item
+ *     since appendLedger then refuses every later append, and a
+ *     reason cell emits only at the recurring bars of three adverse
+ *     rows across two distinct UTC days and two distinct proposals
+ *     inside the 7-day window, with out-of-window and undated rows
+ *     counted and never guessed, and items emit only for the
+ *     fleet's own repository since the machinery axes carry no
+ *     target-repo dimension;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1712,6 +1733,7 @@ import { teammateInboxBacklogItems } from './teammate-inbox-backlog.js';
 import { telemetrySpanBacklogItems } from './telemetry-span-backlog.js';
 import { coordinationBacklogItems } from './coordination-backlog.js';
 import { diskSweepBacklogItems } from './disk-sweep-backlog.js';
+import { outcomeLedgerBacklogItems } from './outcome-ledger-backlog.js';
 import { resetReleaseBacklogItems } from './reset-release-backlog.js';
 import { nodesOffloadBacklogItems } from './nodes-offload-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
@@ -3663,6 +3685,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // since the journal describes this install's seats and carries no
   // repository column.
   items.push(...await capacityHistoryBacklogItems({ repo }));
+
+  // Improve outcome ledger (improve/outcomes.jsonl under the Phantom
+  // home): the digest-chained registered/pr/measured/promotion/
+  // observed events `phm improve register|measure|promote|observe`
+  // appends — until now read only by `phm improve outcomes` (a report
+  // someone had to run), scoreOutcomes/rankByLeverage (per-proposal
+  // status, never reason recurrence) and the promotion gate itself,
+  // so measurement failures and gate refusals recurring by reason
+  // kind across proposals never became work, and a broken digest
+  // chain — which makes appendLedger refuse every later append —
+  // surfaced nowhere. Rows count only as readLedger returns them:
+  // the chain verified, every event re-validated, the verified prefix
+  // kept on a break; a reason cell emits only at the recurring bars
+  // of three adverse rows across two distinct UTC days and two
+  // distinct proposals inside the 7-day window, out-of-window and
+  // undated rows counted and never guessed, and items emit only for
+  // the fleet's own repository since the machinery axes carry no
+  // target-repo dimension.
+  items.push(...await outcomeLedgerBacklogItems({ repo }));
   return { items, errors };
 }
 
