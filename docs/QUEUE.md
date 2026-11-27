@@ -1400,8 +1400,10 @@ available, including when a reconciliation row still carries its original
 publish timestamp. Window placement and merge credit use the first terminal
 verdict in `state`, `outcome`, `status`, `phase`, `result` or `conclusion`.
 A `merged` or `closed` event supplies the verdict when those fields carry
-no terminal value. PRs and merges
-count jobs with recorded PRs and merges. A batch member counts as launched
+no terminal value. PR counts include jobs with a canonical GitHub pull request
+link in any supported URL field or an explicit merge verdict. Links to issues,
+workflow runs and other resources do not supply PR evidence. Merge counts use
+recorded merge verdicts. A batch member counts as launched
 when the window contains its `batch_claim` and the matching worker's launch
 receipt has an equal or later recorded timestamp. Each member counts once.
 Batch worker totals and node-pool attempt

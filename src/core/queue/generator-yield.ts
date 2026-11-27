@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { canonicalJson } from '../authority/canonical-json.js';
+import { prKeyOf } from '../fleet/eval-report.js';
 import { isNodePoolLedgerRow, ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
 
 export interface GenerationDecision {
@@ -132,7 +133,10 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     }
     const empty = phase?.toLowerCase() === 'empty' ? true : typeof r.empty === 'boolean' ? r.empty : null;
     if (launch || event === 'batch_claim' || empty !== null) job.empty = empty;
-    if (pickString(r, PR_KEYS) !== null) job.pr = true;
+    if (!job.pr && PR_KEYS.some(key => {
+      const pr = prKeyOf(r[key]);
+      return pr !== null && Number.isSafeInteger(pr.number) && pr.number > 0;
+    })) job.pr = true;
     if (terminal === 'MERGED') { job.merged = true; job.pr = true; }
     job.diff = count(r.diff_lines) ?? job.diff;
     job.tokens = count(r.tokens_total ?? r.tokens) ?? job.tokens;
