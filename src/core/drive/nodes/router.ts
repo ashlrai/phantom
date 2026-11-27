@@ -115,18 +115,29 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n, now)]));
   const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
+  const hasCapacity = (node: NodeRecord) => {
+    if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) return false;
+    if (!state.pool) return true;
+    const host = hosts.get(node.nodeId);
+    return !!host && host.eligibleNodeIds.includes(node.nodeId) &&
+      (host.freeSlots ?? 0) > (reserved.get(host.hostId) ?? 0);
+  };
+  const jobs = state.jobs.filter(job => job.owner && (owner === undefined || job.owner === owner) && routable(job, now));
+  const candidates = jobs.map((job, index) => ({
+    job, index,
+    placements: new Set(nodes.filter(node => !shortfall(node, job) && hasCapacity(node))
+      .map(node => state.pool ? hosts.get(node.nodeId)!.hostId : node.nodeId)).size,
+  }));
+  // Reserve scarce placements first. Equal counts retain queue order.
+  candidates.sort((a, b) => a.placements - b.placements || a.index - b.index);
   const plan: RouteAssignment[] = [];
-  for (const job of state.jobs) {
-    if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
+  for (const { job, index } of candidates) {
     const reasons = new Map<string, number>();
     let best: NodeRecord | null = null;
     for (const node of nodes) {
       const why = shortfall(node, job);
       if (why) { reasons.set(why.split(':')[0]!, 1); continue; }
-      if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) { reasons.set('capacity', 1); continue; }
-      const host = hosts.get(node.nodeId);
-      if (state.pool && (!host || !host.eligibleNodeIds.includes(node.nodeId) ||
-          (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) { reasons.set('capacity', 1); continue; }
+      if (!hasCapacity(node)) { reasons.set('capacity', 1); continue; }
       const score = (n: NodeRecord) => {
         const h = hosts.get(n.nodeId)!;
         return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency) : -load.get(n.nodeId)!;
@@ -138,7 +149,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       if (host) reserved.set(host.hostId, (reserved.get(host.hostId) ?? 0) + 1);
       load.set(best.nodeId, load.get(best.nodeId)! + CLAIM_LOAD);
       claims.set(best.nodeId, claims.get(best.nodeId)! + 1);
-      plan.push({ jobId: job.id, owner: job.owner, nodeId: best.nodeId });
+      plan[index] = { jobId: job.id, owner: job.owner!, nodeId: best.nodeId };
       continue;
     }
     const requires = job.requires ?? [];
@@ -151,7 +162,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       : reasons.has('caps')
         ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
         : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
-    plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
+    plan[index] = { jobId: job.id, owner: job.owner!, nodeId: null, fix };
   }
   return plan;
 }
