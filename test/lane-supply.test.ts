@@ -44,9 +44,9 @@ describe('lane supply verdicts', () => {
     expect(report.alarm).toBeNull();
   });
 
-  it('says out of usage until the reset for a 100% pool, even with free slots', () => {
+  it('reports zero launchable slots and the reset for an exhausted pool below target', () => {
     const [row] = buildLaneSupply(snapshot([lane('codex', { credit: credit(0, '2026-11-21T06:30:00Z') })]), null, NOW).lanes;
-    expect(row).toMatchObject({ verdict: 'out-of-usage', usedPct: 100, hoursToReset: 18.5 });
+    expect(row).toMatchObject({ verdict: 'out-of-usage', freeSlots: 0, target: 4, running: 0, usedPct: 100, hoursToReset: 18.5 });
     expect(row!.text).toBe('codex out of usage until 2026-11-21 06:30 UTC');
   });
 

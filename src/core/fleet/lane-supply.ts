@@ -89,7 +89,8 @@ export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: num
   const leftPct = left === null ? null : Math.max(0, Math.min(100, left));
   const resetMs = view.credit.resetAt === null ? NaN : Date.parse(view.credit.resetAt);
   const hoursToReset = Number.isFinite(resetMs) ? Math.max(0, Math.round(((resetMs - nowMs) / HOUR_MS) * 10) / 10) : null;
-  const free = held ? 0 : launchHeadroom !== undefined ? launchHeadroom
+  const drained = leftPct !== null && leftPct <= 0;
+  const free = held || drained ? 0 : launchHeadroom !== undefined ? launchHeadroom
     : running === null || target === null ? null : Math.max(0, target - running);
   const row = {
     lane: view.lane, running, target, freeSlots: free, queued: view.queueDepth,
@@ -102,7 +103,7 @@ export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: num
   let text: string;
   let detail: string | null = null;
   if (held) { verdict = 'held'; detail = view.hold?.reason ?? null; text = `${view.lane} held${detail ? `: ${detail}` : ''}`; }
-  else if (leftPct !== null && leftPct <= 0) { verdict = 'out-of-usage'; detail = `until ${resetWords(view.credit.resetAt)}`; text = `${view.lane} out of usage ${detail}`; }
+  else if (drained) { verdict = 'out-of-usage'; detail = `until ${resetWords(view.credit.resetAt)}`; text = `${view.lane} out of usage ${detail}`; }
   else if (idle && openRows === null) { verdict = 'unknown'; detail = 'lane-open supply unknown'; text = `${view.lane}: ${detail}`; }
   else if (idle && leftPct !== null && openSupply) { verdict = 'open-supply'; text = `${view.lane} open supply: ${plural(free, 'free slot')}, ${pct(leftPct)}% left, ${plural(openRows, 'open row')} wait`; }
   else if (idle && leftPct !== null) { verdict = 'idle-with-usage-left'; text = `${view.lane} idle: ${plural(free, 'free slot')}, ${pct(leftPct)}% left`; }

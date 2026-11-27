@@ -1201,7 +1201,7 @@ schema. `waiting_elsewhere` is null when the lane snapshot is unavailable or
 a starved lane exists and a held or drained lane has an unknown READY count.
 The command exits 1 when a lane is starved. The same data is the `starved` object of the
 `fleet.lanes.v1` read (`phm fleet lanes --json`, `GET /api/fleet/lanes`): per lane
-`free_slots` (slot target minus running, 0 when held), `ready_rows` and `starved_since`,
+`free_slots` (slot target minus running, 0 when held or drained), `ready_rows` and `starved_since`,
 plus read-level `open_rows` — the lane-open READY rows (no lane hint) the market
 may place on eligible executors that accept open work. Open supply keeps a free
 lane that accepts it from reading as starved.
@@ -1224,7 +1224,7 @@ The starvation view bounds each lane's free slots by the remaining shared
 fleet slots. A dispatcher pause, closed admission gate or full fleet cap
 suppresses starvation and its notice when the tick is at most 60 seconds old
 and no later than report time. Admission timestamps, when present, must match
-the enclosing tick. A confirmed fleet stop, lane hold or zero launch target
+the enclosing tick. A confirmed fleet stop, lane hold, exhausted quota or zero launch target
 reports zero free slots even when lane occupancy or the configured target is
 unknown. The missing lane measurements stay null. Without usable fleet admission
 evidence, the starvation view uses lane-local headroom.
