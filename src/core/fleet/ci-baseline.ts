@@ -10,7 +10,7 @@ import { nextFixGeneration } from './ci-fix-generations.js';
 
 type Failure = { testId: string; file: string; names: string; excerpt: string };
 type Pr = { number: number; headRefOid: string; headRefName: string; files: { path: string }[] };
-type Run = { id: number; head_sha: string; workflow_id: number; status: string; conclusion?: string };
+type Run = { id: number; head_sha: string; head_branch: string; workflow_id: number; status: string; conclusion?: string };
 type Job = { id: number; conclusion: string; head_sha: string };
 type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: number };
 
@@ -2179,10 +2179,14 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     } catch { return null; }
   }
   async function runs(ref: string): Promise<Run[] | null> {
-    const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?head_sha=${encodeURIComponent(ref)}&per_page=100`);
+    const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?head_sha=${encodeURIComponent(ref)}&branch=master&per_page=100`);
     if (!data || !completeActionsPage(data.workflow_runs, data.total_count)) return null;
     const seen = new Set<number>();
-    return data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
+    return data.workflow_runs.filter(r => {
+      if (r.head_branch !== 'master' || seen.has(r.workflow_id)) return false;
+      seen.add(r.workflow_id);
+      return true;
+    });
   }
   async function logs(run: Run, head: string): Promise<{ entries: { conclusion: string; text: string }[]; incomplete: boolean } | null> {
     const data = await json<{ jobs: Job[]; total_count: number }>(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
