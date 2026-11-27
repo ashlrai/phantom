@@ -30,8 +30,9 @@ A job whose conclusion is not a verdict — `cancelled`, `timed_out`,
 even when its log is absent or empty: the run cannot prove the ref's
 checks, so the PR reads `unknown` rather than `fresh` — freshness reason
 `incomplete-check`, distinct from `unreadable-log-or-unverified-checkout` —
-and master's known state drops while the run's verified job logs still
-feed failure parsing. If an incomplete job's log is unavailable, the
+and master's known state drops. Failure parsing uses verified master job
+logs from failed and incomplete jobs. Output from successful or neutral jobs
+does not establish a master failure. If an incomplete job's log is unavailable, the
 analyzer retains verified sibling logs. These same conclusions on the
 workflow run itself mark it incomplete even when every listed job reached
 a verdict. Verified master failures still contribute evidence. A missing log for a job that
