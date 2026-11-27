@@ -926,6 +926,27 @@
  *     is never surfaced, and items emit only for the fleet's own
  *     repository since the journal describes this install's usage
  *     subscriptions and carries no repo column;
+ *   - the usage-signal journal's corruption, provider-pressure and
+ *     meter-integrity cells: the {pool, pctUsed, resetAt, source,
+ *     fetchedAt, writtenAt, event, burnRatePctPerHour,
+ *     projected100At, cutActive} UsageReading rows writeUsageSignal
+ *     (src/core/fabric/usage-signal-writer.ts) appends to
+ *     <runs>/queue/usage-readings.log on every `phm usage signal`
+ *     pass — until now read only by display projections, the
+ *     reward-feed and growth series readers and the on-demand
+ *     `phm fleet usage-audit` report, so a journal the strict writer
+ *     itself refuses to append to, a pool whose meter stayed unread,
+ *     recurring provider 429/limit-message signals, or a meter that
+ *     kept reporting less used-percent inside one reset window never
+ *     became work (usageReadingsBacklogItems below). The corruption
+ *     cell emits on any scanned line that would trip the writer's
+ *     whole-file append validation; the per-pool and per-event cells
+ *     emit only at the recurring bars — rows (distinct signal
+ *     instants for limit signals) across distinct UTC days inside the
+ *     7-day window — only contract-valid rows feed the per-pool axes,
+ *     truncated tails are stated as lower bounds, and items emit only
+ *     for the fleet's own repository since the journal describes this
+ *     install's usage pools and carries no repo column;
  *   - the harness lifecycle ledger's recurring adverse cells: the
  *     authority ledger's harness:experiment terminal rows (failed,
  *     cancelled, inconclusive and reject verdicts — the adopt verdict
@@ -1599,6 +1620,7 @@ import { agentDiagnosticsBacklogItems } from './agent-diagnostics-backlog.js';
 import { deliveryReceiptsBacklogItems } from './delivery-receipts-backlog.js';
 import { postrunBacklogItems } from './postrun-backlog.js';
 import { usageLiveAlertsBacklogItems } from './usage-live-alerts-backlog.js';
+import { usageReadingsBacklogItems } from './usage-readings-backlog.js';
 import { harnessBacklogItems } from './harness-backlog.js';
 import { spawnProposalsBacklogItems } from './spawn-proposals-backlog.js';
 import { betAuditBacklogItems } from './bet-audit-backlog.js';
@@ -2964,6 +2986,20 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // journal describes this install's usage subscriptions and carries
   // no repo column.
   items.push(...await usageLiveAlertsBacklogItems({ repo }));
+
+  // Usage-signal journal: the UsageReading rows writeUsageSignal
+  // appends to <runs>/queue/usage-readings.log — corruption the
+  // writer's own whole-file append validation would throw on, pools
+  // whose meters stayed unread, recurring provider 429/limit-message
+  // signals, and same-reset-window used-percent decreases — become
+  // backlog items too. Until now the journal's only readers were
+  // display projections, the reward-feed and growth series readers and
+  // the on-demand `phm fleet usage-audit` report. Cells emit only for
+  // the fleet's own repository; per-pool and per-event cells need rows
+  // (distinct signal instants for limit signals) across distinct UTC
+  // days inside the 7-day window, only contract-valid rows feed the
+  // per-pool axes, and truncated tails are stated as lower bounds.
+  items.push(...await usageReadingsBacklogItems({ repo }));
 
   // Harness lifecycle ledger: the authority ledger's harness:experiment
   // terminal rows and harness:rolled-back transitions — the
