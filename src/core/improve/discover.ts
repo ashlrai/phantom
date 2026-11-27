@@ -1442,6 +1442,24 @@
  *     telemetry status` counting the daily files — no reader ever
  *     parsed a span — so a model lane that kept failing inside
  *     otherwise successful runs never became work;
+ *   - the fleet coordination ledger's recurring claim churn: the
+ *     advisory claim ledger fleet/coordination.jsonl (written by
+ *     src/core/fleet/coordination.ts behind `phm fleet coordination`)
+ *     records every claim, handoff, release, reap, return, post and
+ *     assign, but its recurring evidence never became work — until
+ *     now lease-expired reaps (claims orphaned when their holder's
+ *     lease lapsed) and handoff churn (the same work ping-ponging
+ *     between agents without a RESULT receipt) only ever reached
+ *     `phm fleet coordination board`/`returns`, point-in-time reads
+ *     of live state, and the inbox surfaces projecting the same
+ *     pending rows, never a trend (coordinationBacklogItems below).
+ *     Cells emit only at the recurring bars of distinct reaped
+ *     claims or handoffs spanning distinct UTC days inside the
+ *     7-day window, future-stamped rows past the sibling feeds'
+ *     one-minute skew never reach a cell, plain reap/release rows
+ *     without owner or reason stay out, and only the fleet's own
+ *     repository inherits the items since the churn is this
+ *     install's claim machinery, not any one target repo's;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1577,6 +1595,7 @@ import { backoffSkipBacklogItems } from './backoff-skip-backlog.js';
 import { evalGateBacklogItems } from './eval-gate-backlog.js';
 import { teammateInboxBacklogItems } from './teammate-inbox-backlog.js';
 import { telemetrySpanBacklogItems } from './telemetry-span-backlog.js';
+import { coordinationBacklogItems } from './coordination-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -3363,6 +3382,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // separately, and only the fleet's own repository inherits the
   // items since the journal carries no repository column.
   items.push(...await telemetrySpanBacklogItems({ repo }));
+
+  // Fleet coordination claim churn: the advisory claim ledger
+  // (fleet/coordination.jsonl, written by src/core/fleet/
+  // coordination.ts behind `phm fleet coordination`) records every
+  // claim, handoff, release, lease-expired reap, return, post and
+  // assign — but its recurring evidence never became work. Until now
+  // lease-expired reaps (claims orphaned when their holder's lease
+  // lapsed) and handoff churn (the same work ping-ponging between
+  // agents without a RESULT receipt) only ever reached
+  // `phm fleet coordination board`/`returns`, point-in-time reads of
+  // live state, and the inbox surfaces projecting the same pending
+  // rows — never a trend. Cells emit only at the recurring bars of
+  // distinct reaped claims or handoffs spanning distinct UTC days
+  // inside the 7-day window, future-stamped rows past the sibling
+  // feeds' one-minute skew never reach a cell, plain reap/release
+  // rows without owner or reason stay out, and only the fleet's own
+  // repository inherits the items since the churn is this install's
+  // claim machinery, not any one target repo's.
+  items.push(...await coordinationBacklogItems({ repo }));
   return { items, errors };
 }
 
