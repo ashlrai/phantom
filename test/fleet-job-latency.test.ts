@@ -187,6 +187,25 @@ it('counts exact dated Git-operation replays once in the contention report', asy
 });
 
 const start = '2026-01-01T00:00:00Z', end = '2026-01-01T00:01:00Z';
+it('excludes non-launch receipts from the attempt population and timing boundaries', () => {
+  const observed = [
+    event('launch', start),
+    event('finish', end),
+    event('publish', '2026-01-01T00:02:00Z'),
+    event('merged', '2026-01-01T00:03:00Z'),
+  ];
+  const skipped = [
+    { job: 'RQ-SKIPPED', event: 'outcome', state: 'DONE-NOOP', ts: start, launched: false },
+    { ...event('batch_claim', end), launched: false },
+    { ...event('launch', '2026-01-01T00:02:30Z'), launched: false },
+  ];
+  const baseline = observed.map(row => JSON.stringify(row)).join('\n');
+  const mixed = [...observed, ...skipped].map(row => JSON.stringify(row)).join('\n');
+
+  expect(jobLatency(mixed)).toEqual(jobLatency(baseline));
+  expect(mergeQueueLatency(mixed)).toEqual(mergeQueueLatency(baseline));
+});
+
 it('keeps phases that span a recorded relaunch unmeasured', () => {
   const firstLaunch = event('launch', start);
   const relaunch = event('launch', end);
