@@ -66,9 +66,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isAbsolute, join } from 'node:path';
 
 import type { ApiModule } from './api-modules.js';
+import { hasNoQuery, readMutationBody, sendInvalid } from './api-request-helpers.js';
 import type { VerseApiContext } from './verse-api.js';
 import type { NeedsYouItem } from './workbench-types.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { sendJson } from '../web/api.js';
 import {
   FLEET_ENGINES,
   GATE_ORDER,
@@ -123,9 +124,9 @@ const DAY_MS = 24 * HOUR_MS;
 /** A GET serves a snapshot at most this old; older ones are rebuilt first. */
 const GET_MAX_AGE_MS = 2_000;
 /** Background refresh cadence once anything has asked (≥ 2 s rule). */
-export const FLEET_LIVE_REFRESH_MS = 15_000;
+const FLEET_LIVE_REFRESH_MS = 15_000;
 /** needsYouItems refuses (activity reports the source as erroring) past this age. */
-export const NEEDS_YOU_MAX_AGE_MS = 2 * 60_000;
+const NEEDS_YOU_MAX_AGE_MS = 2 * 60_000;
 /** A dispatch start with no terminal row is only "producing" this long (a crash leaves orphans). */
 const IN_FLIGHT_MAX_AGE_MS = 3 * HOUR_MS;
 const MAX_RUNS = 200;
@@ -222,7 +223,7 @@ const DATED_PARTITION_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
 const DISPATCH_START = 'daemon:dispatch-start';
 const DISPATCH_TERMINAL = new Set(['daemon:dispatch', 'daemon:dispatch-skip']);
 /** Longest synchronous parsing stretch before yielding to the loop (well inside the 20 ms budget). */
-export const DISPATCH_TAIL_SLICE_MS = 6;
+const DISPATCH_TAIL_SLICE_MS = 6;
 const DISPATCH_TAIL_CHUNK_BYTES = 256 * 1024;
 /** A partition past this is not tailed (read as unknown) — bounds a cold read and memory. */
 const DISPATCH_TAIL_MAX_PARTITION_BYTES = 64 * 1024 * 1024;
@@ -1488,7 +1489,7 @@ function resumeAction(repo: string, kind: RepoHoldKind, label: string, body: str
 }
 
 /** Pure: the fleet's Needs-you items from holds and ledger rows. */
-export function needsYouFrom(holds: readonly RepoHold[], rows: readonly LedgerEntry[], nowMs: number): NeedsYouItem[] {
+function needsYouFrom(holds: readonly RepoHold[], rows: readonly LedgerEntry[], nowMs: number): NeedsYouItem[] {
   const items: NeedsYouItem[] = [];
   const subject = (repo: string, pr: number | null = null): NeedsYouItem['subject'] => ({
     repo,
@@ -1703,37 +1704,6 @@ export interface FleetLiveActionResult {
   snapshot: FleetLiveSnapshotV1 | null;
 }
 
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, maxBytes?: number): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  let raw: string;
-  try {
-    raw = await readBody(req, maxBytes);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  return parsed as Record<string, unknown>;
-}
-
 function exactKeys(value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []): boolean {
   const own = Object.keys(value);
   if (!required.every((k) => Object.prototype.hasOwnProperty.call(value, k))) return false;
@@ -1901,16 +1871,7 @@ async function applyDropJob(res: ServerResponse, body: Record<string, unknown>):
 
 async function handleDropJobs(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, method: string): Promise<true> {
   if (method === 'GET') {
-    try {
-      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-      for (const key of params.keys()) {
-        sendInvalid(res, `unknown query parameter: ${key}`);
-        return true;
-      }
-    } catch {
-      sendInvalid(res, 'invalid query string');
-      return true;
-    }
+    if (!hasNoQuery(req, res)) return true;
     try {
       const { listDropJobs, resolveDropJobRoot } = await import('../fleet/drop-job-writer.js');
       const { sanitizePublicJson } = await import('../util/public-json.js');
@@ -1921,7 +1882,7 @@ async function handleDropJobs(ctx: VerseApiContext, req: IncomingMessage, res: S
     return true;
   }
   if (method === 'POST') {
-    const body = await readMutationBody(ctx, req, res, DROP_JOB_BODY_MAX_BYTES);
+    const body = await readMutationBody(ctx, req, res, { maxBytes: DROP_JOB_BODY_MAX_BYTES });
     if (!body) return true;
     await applyDropJob(res, body);
     return true;

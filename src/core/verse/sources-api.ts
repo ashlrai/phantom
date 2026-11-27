@@ -28,21 +28,20 @@
  * 16 KB body cap, and 400 on unknown body keys. Responses go through
  * sendJson() → sanitizePublicJson().
  */
-import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
 import { readFile, realpath, stat } from 'node:fs/promises';
 
 import type { ApiModule } from './api-modules.js';
-import type { VerseApiContext } from './verse-api.js';
+import { readMutationBody, sendInvalid, sendRefused } from './api-request-helpers.js';
 import type { AshlrConfig } from '../types.js';
 import type { VerseSession } from './types.js';
 import { verseSessionRoots } from './types.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { sendJson } from '../web/api.js';
 import { withFolderIo } from './folder-io.js';
 import { checkWorkspaceRootPathAsync, expandHomePrefix, MAX_GUARDED_PATH_CHARS } from './path-guard.js';
 
-export const VERSE_SOURCES_PATH = '/api/verse/sources';
-export const VERSE_SOURCES_OPEN_PATH = `${VERSE_SOURCES_PATH}/open`;
+const VERSE_SOURCES_PATH = '/api/verse/sources';
+const VERSE_SOURCES_OPEN_PATH = `${VERSE_SOURCES_PATH}/open`;
 
 const MAX_BODY_BYTES = 16 * 1024;
 /** A session id as the store accepts it (session-store SESSION_ID_RE). */
@@ -68,53 +67,12 @@ async function defaultOpenInEditor(absPath: string, line: number, cfg: AshlrConf
   open.openInEditorAt(absPath, line, cfg);
 }
 
-export const DEFAULT_SOURCES_API_DEPS: SourcesApiDeps = {
+const DEFAULT_SOURCES_API_DEPS: SourcesApiDeps = {
   getSession: defaultGetSession,
   openInEditor: (absPath, line, cfg) => {
     void defaultOpenInEditor(absPath, line, cfg).catch(() => undefined);
   },
 };
-
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-function sendRefused(res: ServerResponse, reason: string): void {
-  sendJson(res, 409, { code: 'VERSE_REFUSED', error: reason });
-}
-
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, allowed: readonly string[]): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  let raw: string;
-  try {
-    raw = await readBody(req, MAX_BODY_BYTES);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  for (const key of Object.keys(parsed)) {
-    if (!allowed.includes(key)) {
-      sendInvalid(res, `unknown key: ${key.slice(0, 64)}`);
-      return null;
-    }
-  }
-  return parsed as Record<string, unknown>;
-}
 
 /** `file` is strictly below `root` (both physical paths); the root itself never qualifies. */
 function strictlyInside(file: string, root: string): boolean {
@@ -183,7 +141,7 @@ export function createSourcesApi(deps: SourcesApiDeps = DEFAULT_SOURCES_API_DEPS
         sendJson(res, 404, { error: `not found: ${method} ${p}` });
         return true;
       }
-      const body = await readMutationBody(ctx, req, res, ['sessionId', 'path', 'line']);
+      const body = await readMutationBody(ctx, req, res, { allowedKeys: ['sessionId', 'path', 'line'], maxBytes: MAX_BODY_BYTES });
       if (!body) return true;
       const { sessionId, path: rawPath } = body;
       const line = body['line'] === undefined ? 1 : body['line'];

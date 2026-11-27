@@ -19,45 +19,12 @@
  * list is pinned by test/verse-api-mount-310.test.ts and the mount grows the
  * Tier-1 closure snapshot. See BRIDGE_NOTES.md for the landing steps.
  */
-import type { IncomingMessage, ServerResponse } from 'node:http';
-
 import { addPin, LibraryPinError, listPins, removePin } from '../fleet/library-pins.js';
 import type { ApiModule } from './api-modules.js';
-import type { VerseApiContext } from './verse-api.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { readMutationBody, sendInvalid } from './api-request-helpers.js';
+import { sendJson } from '../web/api.js';
 
 export const VERSE_LIBRARY_PINS_PATH = '/api/verse/library/pins';
-
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  let raw: string;
-  try {
-    raw = await readBody(req);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  return parsed as Record<string, unknown>;
-}
 
 function unknownKey(body: Record<string, unknown>, allowed: readonly string[]): string | undefined {
   return Object.keys(body).find((key) => !allowed.includes(key));

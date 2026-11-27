@@ -27,8 +27,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import type { ApiModule } from './api-modules.js';
+import { hasNoQuery, readMutationBody, sendInvalid } from './api-request-helpers.js';
 import type { VerseApiContext } from './verse-api.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { sendJson } from '../web/api.js';
 import {
   AUTOMATION_FIRING_ID_PATTERN,
   AUTOMATION_ID_PATTERN,
@@ -69,67 +70,24 @@ export interface AutomationsApiDeps {
   isLoopback?: (req: IncomingMessage) => boolean;
 }
 
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
 function sendNotFound(res: ServerResponse, what: string): void {
   sendJson(res, 404, { error: `not found: ${what}` });
 }
 
-function hasNoQuery(req: IncomingMessage, res: ServerResponse): boolean {
-  let params: URLSearchParams;
-  try {
-    params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  } catch {
-    sendInvalid(res, 'invalid query string');
-    return false;
-  }
-  for (const key of params.keys()) {
-    sendInvalid(res, `unknown query parameter: ${key.slice(0, 64)}`);
-    return false;
-  }
-  return true;
-}
-
-async function readMutationBody(
+function readAutomationBody(
   ctx: VerseApiContext,
   req: IncomingMessage,
   res: ServerResponse,
-  allowed: readonly string[],
+  allowedKeys: readonly string[],
   maxBytes: number,
 ): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  if (!hasNoQuery(req, res)) return null;
-  let raw: string;
-  try {
-    raw = await readBody(req, maxBytes);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.trim().length === 0 ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  for (const key of Object.keys(parsed)) {
-    if (!allowed.includes(key)) {
-      sendInvalid(res, `unknown key: ${key.slice(0, 64)}`);
-      return null;
-    }
-  }
-  return parsed as Record<string, unknown>;
+  return readMutationBody(ctx, req, res, {
+    allowedKeys,
+    maxBytes,
+    requireNoQuery: true,
+    maxQueryKeyChars: 64,
+    trimEmpty: true,
+  });
 }
 
 const defaultIsLoopback = (req: IncomingMessage): boolean => LOOPBACK.has(req.socket?.remoteAddress ?? '');
@@ -150,12 +108,12 @@ export function createAutomationsApi(deps: AutomationsApiDeps = {}): ApiModule {
     try {
       // ── GET /api/verse/automations ───────────────────────────────────────
       if (p === VERSE_AUTOMATIONS_PATH && method === 'GET') {
-        if (!hasNoQuery(req, res)) return true;
+        if (!hasNoQuery(req, res, 64)) return true;
         sendJson(res, 200, await automationsOverview({ schedulerRunning: schedulerRunning(), ...(engine.now ? { now: engine.now() } : {}) }));
         return true;
       }
       if (p === `${VERSE_AUTOMATIONS_PATH}/journal` && method === 'GET') {
-        if (!hasNoQuery(req, res)) return true;
+        if (!hasNoQuery(req, res, 64)) return true;
         sendJson(res, 200, { entries: await readAutomationJournal(200) });
         return true;
       }
@@ -163,7 +121,7 @@ export function createAutomationsApi(deps: AutomationsApiDeps = {}): ApiModule {
 
       // ── POST /api/verse/automations (create) ─────────────────────────────
       if (p === VERSE_AUTOMATIONS_PATH) {
-        const body = await readMutationBody(ctx, req, res, DEFINITION_KEYS, DEFINITION_BODY_MAX);
+        const body = await readAutomationBody(ctx, req, res, DEFINITION_KEYS, DEFINITION_BODY_MAX);
         if (!body) return true;
         const automation = await createAutomation(body);
         sendJson(res, 201, { automation });
@@ -178,7 +136,7 @@ export function createAutomationsApi(deps: AutomationsApiDeps = {}): ApiModule {
         if (!fid || !AUTOMATION_FIRING_ID_PATTERN.test(fid) || (verb !== 'approve' && verb !== 'reject') || extra !== undefined) {
           return (sendNotFound(res, `${method} ${p}`), true);
         }
-        const body = await readMutationBody(ctx, req, res, [], SMALL_BODY_MAX);
+        const body = await readAutomationBody(ctx, req, res, [], SMALL_BODY_MAX);
         if (!body) return true;
         const result = await reviewFiring(fid, verb, engine);
         await refreshAutomationsNeedsYou();
@@ -195,7 +153,7 @@ export function createAutomationsApi(deps: AutomationsApiDeps = {}): ApiModule {
 
       // ── POST /api/verse/automations/<id> (update) ────────────────────────
       if (verb === undefined) {
-        const body = await readMutationBody(ctx, req, res, DEFINITION_KEYS, DEFINITION_BODY_MAX);
+        const body = await readAutomationBody(ctx, req, res, DEFINITION_KEYS, DEFINITION_BODY_MAX);
         if (!body) return true;
         const automation = await updateAutomation(id, body);
         if (!automation) return (sendNotFound(res, `automation ${id}`), true);
@@ -206,7 +164,7 @@ export function createAutomationsApi(deps: AutomationsApiDeps = {}): ApiModule {
       switch (verb) {
         case 'enable':
         case 'disable': {
-          const body = await readMutationBody(ctx, req, res, [], SMALL_BODY_MAX);
+          const body = await readAutomationBody(ctx, req, res, [], SMALL_BODY_MAX);
           if (!body) return true;
           const automation = verb === 'enable' ? await enableAutomation(id) : await disableAutomation(id);
           if (!automation) return (sendNotFound(res, `automation ${id}`), true);
@@ -214,7 +172,7 @@ export function createAutomationsApi(deps: AutomationsApiDeps = {}): ApiModule {
           return true;
         }
         case 'delete': {
-          const body = await readMutationBody(ctx, req, res, [], SMALL_BODY_MAX);
+          const body = await readAutomationBody(ctx, req, res, [], SMALL_BODY_MAX);
           if (!body) return true;
           const ok = await deleteAutomation(id);
           if (!ok) return (sendNotFound(res, `automation ${id}`), true);
@@ -223,7 +181,7 @@ export function createAutomationsApi(deps: AutomationsApiDeps = {}): ApiModule {
           return true;
         }
         case 'fire': {
-          const body = await readMutationBody(ctx, req, res, FIRE_KEYS, WEBHOOK_BODY_MAX);
+          const body = await readAutomationBody(ctx, req, res, FIRE_KEYS, WEBHOOK_BODY_MAX);
           if (!body) return true;
           if (body['dryRun'] !== undefined && typeof body['dryRun'] !== 'boolean') return (sendInvalid(res, 'dryRun must be true or false'), true);
           const repo = optionalString(body, 'repo');
@@ -245,7 +203,7 @@ export function createAutomationsApi(deps: AutomationsApiDeps = {}): ApiModule {
             sendJson(res, 403, { error: 'The automations webhook only answers on this Mac (loopback).' });
             return true;
           }
-          const body = await readMutationBody(ctx, req, res, WEBHOOK_KEYS, WEBHOOK_BODY_MAX);
+          const body = await readAutomationBody(ctx, req, res, WEBHOOK_KEYS, WEBHOOK_BODY_MAX);
           if (!body) return true;
           const text = optionalString(body, 'text');
           if (typeof text !== 'string') return (sendInvalid(res, 'text is required'), true);

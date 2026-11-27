@@ -33,8 +33,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import type { ApiModule } from './api-modules.js';
+import { hasNoQuery, readMutationBody, sendInvalid, sendRefused } from './api-request-helpers.js';
 import type { VerseApiContext } from './verse-api.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { sendJson } from '../web/api.js';
 import { VERSE_LEARNING_PATH } from '../learn/harness-types.js';
 import { adoptHarness, buildLearningState, rollbackHarness } from '../learn/harness-registry.js';
 import { cancelExperiment, startExperiment } from '../learn/experiments.js';
@@ -45,10 +46,10 @@ import {
   VERSE_LESSONS_SWEEP_PATH,
 } from '../learn/retro/types.js';
 
-export const VERSE_LEARNING_EXPERIMENTS_PATH = `${VERSE_LEARNING_PATH}/experiments`;
-export const VERSE_LEARNING_CANCEL_PATH = `${VERSE_LEARNING_PATH}/experiments/cancel`;
-export const VERSE_LEARNING_ADOPT_PATH = `${VERSE_LEARNING_PATH}/adopt`;
-export const VERSE_LEARNING_ROLLBACK_PATH = `${VERSE_LEARNING_PATH}/rollback`;
+const VERSE_LEARNING_EXPERIMENTS_PATH = `${VERSE_LEARNING_PATH}/experiments`;
+const VERSE_LEARNING_CANCEL_PATH = `${VERSE_LEARNING_PATH}/experiments/cancel`;
+const VERSE_LEARNING_ADOPT_PATH = `${VERSE_LEARNING_PATH}/adopt`;
+const VERSE_LEARNING_ROLLBACK_PATH = `${VERSE_LEARNING_PATH}/rollback`;
 
 const POST_ROUTES: Readonly<Record<string, readonly string[]>> = {
   [VERSE_LEARNING_EXPERIMENTS_PATH]: ['hypothesis'],
@@ -61,7 +62,7 @@ const POST_ROUTES: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** A GET older than this starts a background sweep (the response never waits for it). */
-export const LESSONS_STALE_MS = 10 * 60_000;
+const LESSONS_STALE_MS = 10 * 60_000;
 
 /**
  * Sweep in the background when the last sweep is stale. Fire-and-forget:
@@ -96,7 +97,7 @@ async function handleLessons(ctx: VerseApiContext, req: IncomingMessage, res: Se
     sendJson(res, 404, { error: `not found: ${method} ${path}` });
     return true;
   }
-  const body = await readMutationBody(ctx, req, res, allowed);
+  const body = await readMutationBody(ctx, req, res, { allowedKeys: allowed });
   if (!body) return true;
   const nowIso = new Date().toISOString();
 
@@ -148,67 +149,6 @@ function owns(path: string): boolean {
   return path === VERSE_LEARNING_PATH || path.startsWith(`${VERSE_LEARNING_PATH}/`);
 }
 
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-function sendRefused(res: ServerResponse, reason: string): void {
-  sendJson(res, 409, { code: 'VERSE_REFUSED', error: reason });
-}
-
-function hasNoQuery(req: IncomingMessage, res: ServerResponse): boolean {
-  let params: URLSearchParams;
-  try {
-    params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  } catch {
-    sendInvalid(res, 'invalid query string');
-    return false;
-  }
-  for (const key of params.keys()) {
-    sendInvalid(res, `unknown query parameter: ${key}`);
-    return false;
-  }
-  return true;
-}
-
-async function readMutationBody(
-  ctx: VerseApiContext,
-  req: IncomingMessage,
-  res: ServerResponse,
-  allowed: readonly string[],
-): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  let raw: string;
-  try {
-    raw = await readBody(req);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  for (const key of Object.keys(parsed)) {
-    if (!allowed.includes(key)) {
-      sendInvalid(res, `unknown key: ${key.slice(0, 64)}`);
-      return null;
-    }
-  }
-  return parsed as Record<string, unknown>;
-}
-
 const optionalReason = (value: unknown): string | null =>
   value === undefined ? 'requested from Phantom' : typeof value === 'string' && value.length <= 500 ? value : null;
 
@@ -236,7 +176,7 @@ export const handleLearningApi: ApiModule = async (ctx, req, res, path, method) 
       sendJson(res, 404, { error: `not found: ${method} ${path}` });
       return true;
     }
-    const body = await readMutationBody(ctx, req, res, allowed);
+    const body = await readMutationBody(ctx, req, res, { allowedKeys: allowed });
     if (!body) return true;
 
     if (path === VERSE_LEARNING_EXPERIMENTS_PATH) {
