@@ -2278,7 +2278,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   // A green job can log failed attempts before reporting its final pass.
   const masterFailures = masterLogs
     .filter(log => log.conclusion !== 'success')
-    .flatMap(log => parseBaselineFailures(log.text, repo, auditExceptions));
+    .flatMap(log => {
+      const failures = parseBaselineFailures(log.text, repo, auditExceptions);
+      if (log.conclusion === 'failure' && failures.length === 0) masterKnown = false;
+      return failures;
+    });
   // Parenthesized identities are gate checks, not vitest tests: only
   // '(suite)' resolves through pass evidence, because the file loading is
   // what failed. '(lint)', '(typecheck)' and the other gate names can never
