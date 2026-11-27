@@ -146,6 +146,31 @@ test('accepted witness boundaries weight observed latency and discard expired or
   f.advance(86_400_001); expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.latency.samples === 0)).toBe(true);
 });
 
+test('hosts without free slots do not set the routing weight for unmeasured hosts', () => {
+  const f = fixture();
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  const slow = f.add('slow', { slots: 1 });
+  f.enqueue('slow-sample');
+  const slowClaim = nodes.pull(slow)!.claim;
+  f.advance(5000);
+  expect(nodes.complete(slowClaim, 'done')).toBe(true);
+  f.beat('slow', { slots: 0, held: 'memory-pressure' });
+
+  const fast = f.add('fast', { slots: 1 });
+  f.enqueue('fast-sample');
+  const fastClaim = nodes.pull(fast)!.claim;
+  f.advance(1000);
+  expect(nodes.complete(fastClaim, 'done')).toBe(true);
+  const unmeasured = f.add('unmeasured', { slots: 2 });
+  f.enqueue('next');
+
+  expect(projectFleetAwareness(f.state, f.now()).hosts.find(h => h.hostId === 'slow'))
+    .toMatchObject({ freeSlots: 0, latency: { medianMs: 5000 } });
+  expect(f.plan()).toEqual([{ jobId: 'next', owner: 'mason', nodeId: 'unmeasured' }]);
+  expect(nodes.pull(fast)).toBeNull();
+  expect(nodes.pull(unmeasured)?.job.id).toBe('next');
+});
+
 test('a producer withdrawal is a fence, not latency evidence; accepted completions still count', () => {
   const f = fixture();
   const worker = f.add('worker', { hostId: 'mac', slots: 4 });
