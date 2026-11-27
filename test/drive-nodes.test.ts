@@ -631,6 +631,49 @@ describe('standalone join version reporting', () => {
   });
 });
 
+describe('standalone join sign-in lanes', () => {
+  it('a bare join advertises the lanes this machine\'s sign-ins support', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--json'],
+        { store, phmVersion: () => '9.9.9', providerLanes: () => ['gh', 'claude', 'codex'] });
+      expect(code).toBe(0);
+      const node = store.state.nodes.find(n => n.nodeId === 'laptop')!;
+      expect(node.caps).toEqual(['claude', 'codex', 'gh', 'phm-9.9.9']);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out).toMatchObject({ command: 'join', autoCaps: ['claude', 'codex', 'gh'] });
+      // gh was auto-detected, so the keep-alive beat probes auth like an explicit gh cap.
+      expect(out['next']).toContain('--probe-auth');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('an explicit --caps stays the complete advertisement and skips the sign-in probe', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build', '--json'],
+        { store, phmVersion: () => '9.9.9',
+          providerLanes: () => { throw new Error('the sign-in probe must not run'); } });
+      expect(code).toBe(0);
+      expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.caps).toEqual(['build', 'phm-9.9.9']);
+      expect(JSON.parse(lines.at(-1)!)).not.toHaveProperty('autoCaps');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('names the auto-detected caps in text mode', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme'],
+        { store, phmVersion: () => null, providerLanes: () => ['codex'] });
+      expect(code).toBe(0);
+      expect(lines.join('\n')).toContain('Caps auto-detected from this machine\'s sign-ins: codex. Pass --caps to advertise a different set.');
+    } finally { vi.restoreAllMocks(); }
+  });
+});
+
 describe('standalone join node id default', () => {
   it('defaults --node to the sanitized hostname so the shortest join works', async () => {
     const lines: string[] = [];
@@ -653,7 +696,7 @@ describe('standalone join node id default', () => {
     try {
       const store = new MemoryStore();
       const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--json'],
-        { store, hostname: () => 'My-MacBook-Pro' });
+        { store, hostname: () => 'My-MacBook-Pro', providerLanes: () => [] });
       expect(code).toBe(0);
       expect(JSON.parse(lines.at(-1)!)).toMatchObject({ nodeId: 'laptop' });
       expect(store.state.nodes.map(n => n.nodeId)).toEqual(['laptop']);
@@ -666,7 +709,7 @@ describe('standalone join node id default', () => {
       const store = new MemoryStore();
       // '_hidden' sanitizes to itself but fails validId's leading-alphanumeric rule.
       const code = await cmdNodeFleet('join', ['--owner', 'acme', '--json'],
-        { store, hostname: () => '_hidden' });
+        { store, hostname: () => '_hidden', providerLanes: () => [] });
       expect(code).toBe(2);
       expect(JSON.parse(lines.at(-1)!)).toMatchObject({ command: 'join',
         error: { code: 'missing-flag', message: expect.stringContaining('--node') } });
@@ -1336,7 +1379,7 @@ describe('fleet flag value validation', () => {
     vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
     try {
       const store = new MemoryStore();
-      const code = await cmdNodeFleet('join', ['--node', 'bad id', '--owner', 'acme', '--json'], { store });
+      const code = await cmdNodeFleet('join', ['--node', 'bad id', '--owner', 'acme', '--json'], { store, providerLanes: () => [] });
       expect(code).toBe(2);
       expect(JSON.parse(lines.at(-1)!)).toMatchObject({ schemaVersion: 1, command: 'join',
         error: { code: 'bad-node', fix: expect.stringContaining('phm node --help') } });

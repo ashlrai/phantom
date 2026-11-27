@@ -75,8 +75,15 @@ phm node status --owner acme
 
 `phm node join` may omit `--node`: the node id then defaults to this
 computer's sanitized hostname — the same default a pool join applies — so
-`phm node join --owner <scope>` is the shortest first join. A job with no
-live node prints a `phm node join --owner` fix that names the caps it needs.
+`phm node join --owner <scope>` is the shortest first join. It may also omit
+`--caps`: a bare join then advertises the lanes this machine's own sign-ins
+support, probed exactly the way a pool worker probes them — `codex` and
+`claude` only when their CLI login checks exit 0 on this computer, `gh` only
+when `gh auth status` passes — reported as `autoCaps` in `--json` and named in
+text mode. An explicit `--caps` list is the complete manual advertisement and
+skips that probe (the local-model and `phm-<version>` caps still merge in).
+A job with no live node prints a `phm node join --owner` fix that names the
+caps it needs.
 
 To send real work instead of an empty claim, embed the task text in the job:
 
