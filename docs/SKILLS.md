@@ -31,9 +31,12 @@ standing revert set the daemon supplies (`revertedPrKeys` — outcome-ledger,
 cloud-task and `phm fleet reverts --record` detections): a merged job whose
 standing verdict row identifies a PR claimed by exactly that job and whose
 lowercase `owner/repo#n` key stands in the set counts as reverted, the same
-unambiguous-claim rule the outcome learners apply. Repository case and a
-trailing slash do not distinguish claims on the same PR, so a merge git history
-proved did not hold never seeds a "recovery" draft. A merged,
+unambiguous-claim rule the outcome learners apply. The fold checks every
+supported URL field (`url`, `pr_url`, `prUrl`, `pr`, and `html_url`).
+Repository case and a trailing slash do not distinguish claims on the same
+PR. A verdict with links to multiple PRs cannot establish which PR was
+reverted, and each link still counts when checking whether another job
+uniquely claims that PR. A merged,
 non-reverted job that needed a retry, a
 recut, or recovered a failure class seen on three earlier failed jobs seeds
 one bounded draft card.

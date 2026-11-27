@@ -279,6 +279,31 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(job).not.toHaveProperty('reverted');
   });
 
+  it('recognizes a reverted merge through matching PR aliases behind a non-PR URL', () => {
+    const text = outcome('RQ-ALIASES', 'MERGED', {
+      url: 'https://github.com/ashlrai/phantom',
+      pr_url: 'https://github.com/AshlrAI/Phantom/pull/777/',
+      html_url: 'https://github.com/ashlrai/phantom/pull/777',
+    });
+    expect(skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#777']))[0])
+      .toMatchObject({ outcome: 'merged', reverted: true });
+  });
+
+  it('uses conflicting PR aliases to contest claims without attributing the revert to either job', () => {
+    const url = 'https://github.com/ashlrai/phantom/pull/777';
+    const text = [
+      outcome('RQ-AMBIGUOUS', 'MERGED', {
+        url: 'https://github.com/ashlrai/phantom/pull/778', html_url: url,
+      }),
+      outcome('RQ-OTHER', 'MERGED', { pr_url: url }),
+    ].join('\n');
+    expect(skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#777', 'ashlrai/phantom#778'])))
+      .toEqual([
+        { id: 'RQ-AMBIGUOUS', lane: 'codex', outcome: 'merged' },
+        { id: 'RQ-OTHER', lane: 'codex', outcome: 'merged' },
+      ]);
+  });
+
   it('excludes batch sessions and node-pool rows from the recovery fold and PR claims', () => {
     const url = 'https://github.com/ashlrai/phantom/pull/782';
     const text = [
