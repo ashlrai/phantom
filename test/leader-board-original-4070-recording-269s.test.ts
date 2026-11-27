@@ -78,6 +78,36 @@ it('keeps a bounded conflict trend, then reports unknown when ready.tsv disappea
   expect(read.board?.conflictingPrs.count).toBeNull();
 });
 
+it('uses only earlier conflict counts after repeated ticks and clock rollback', async () => {
+  await seed();
+  const recordAt = async (nowMs: number) => {
+    const result = await recordLeaderBoard({ runsDir: root, nowMs });
+    if (!result.wrote) throw new Error(result.reason);
+    return result.board.conflictingPrs;
+  };
+  await recordAt(NOW_MS - 120_000);
+  await recordAt(NOW_MS);
+
+  await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'RQ-REBASE-PHANTOM-1234-abc1234', 'devin', 'work'));
+  expect(await recordAt(NOW_MS)).toEqual({
+    count: 1, delta: -1, trend: 'falling', history: [
+      { at: new Date(NOW_MS - 120_000).toISOString(), count: 2 },
+      { at: new Date(NOW_MS).toISOString(), count: 1 },
+    ],
+  });
+  expect(await recordAt(NOW_MS - 60_000)).toEqual({
+    count: 1, delta: -1, trend: 'falling', history: [
+      { at: new Date(NOW_MS - 120_000).toISOString(), count: 2 },
+      { at: new Date(NOW_MS - 60_000).toISOString(), count: 1 },
+    ],
+  });
+  expect(await recordAt(NOW_MS - 180_000)).toEqual({
+    count: 1, delta: null, trend: 'unknown', history: [
+      { at: new Date(NOW_MS - 180_000).toISOString(), count: 1 },
+    ],
+  });
+});
+
 it('counts lane-open work by tier without attributing it to a lane', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), [
     'RQ-OPEN\tphantom\t\tfrontier\tprompts/open.md',
