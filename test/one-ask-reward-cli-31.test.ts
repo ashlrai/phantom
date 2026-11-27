@@ -230,10 +230,29 @@ describe('fleet lane-reward', () => {
     const fold = foldLaneRewardAttempts(rows(
       { event: 'publish', job: 'RQ-FAKE-A1', prUrl: 'https://github.com/Fake-Org/Fake-Repo/pull/5/' },
       { event: 'publish', job: 'RQ-FAKE-B1', url: URL(6) },
-      { event: 'merged', pr_url: URL(5) },
+      { event: 'merged', pr_url: URL(5), html_url: 'https://github.com/Fake-Org/Fake-Repo/pull/5/' },
     ));
     expect(fold.attempts.get('RQ-FAKE-A1')?.outcome).toBe('merged');
     expect(fold.attempts.get('RQ-FAKE-B1')?.outcome).toBeNull();
+  });
+
+  it('counts every URL alias on a job receipt when checking competing PR claims', () => {
+    const fold = foldLaneRewardAttempts(rows(
+      { event: 'publish', job: 'RQ-FAKE-A1', url: URL(5) },
+      { event: 'publish', job: 'RQ-FAKE-B1', url: URL(6), html_url: URL(5) },
+      { event: 'merged', url: URL(5) },
+    ));
+    expect(fold.attempts.get('RQ-FAKE-A1')?.outcome).toBeNull();
+    expect(fold.attempts.get('RQ-FAKE-B1')?.outcome).toBeNull();
+  });
+
+  it('withholds a URL-only outcome that names multiple PRs even for the same claimant', () => {
+    const fold = foldLaneRewardAttempts(rows(
+      { event: 'publish', job: 'RQ-FAKE-A1', url: URL(5) },
+      { event: 'publish', job: 'RQ-FAKE-A1', url: URL(6) },
+      { event: 'merged', url: URL(5), prUrl: URL(6) },
+    ));
+    expect(fold.attempts.get('RQ-FAKE-A1')?.outcome).toBeNull();
   });
 
   it('treats differently spelled claims on one GitHub PR as contested', () => {
