@@ -997,10 +997,15 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   for (const pool of Object.keys(budgets.pools)) lanes.add(pool);
 
   // Merge outcome rows carry no lane; the same job's launch/publish/finish
-  // rows do. Last write wins in ledger order — the lane that ran the job.
+  // rows do. Use the last lane in ledger order, excluding future evidence.
   const ledgerJobPool = new Map<string, string>();
   for (const event of ledgerEvents) {
-    if (event.job !== null && event.pool !== null) ledgerJobPool.set(event.job, event.pool);
+    if (event.job === null || event.pool === null) continue;
+    const observedAt = eventTimestamp(event.at);
+    const mergedAt = eventTimestamp(event.mergedAt);
+    if ((observedAt !== null && observedAt > now.getTime()) ||
+        (mergedAt !== null && mergedAt > now.getTime())) continue;
+    ledgerJobPool.set(event.job, event.pool);
   }
 
   const mergeCounts = new Map<string, number>();

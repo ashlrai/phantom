@@ -116,6 +116,10 @@ receipt proves coordination, not job execution.
 
 ## Leader
 
+The Leader board and Fleet lane console share merge attribution. When a merge
+receipt lacks a lane and attribution falls back to the job's ledger history,
+events with an observation or merge timestamp after report time are excluded.
+
 | Method | Path | Query | Response type / source | Handler | Curl example |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/verse/leader` | none | [LeaderStateV1](../src/core/vision/leader-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader'` |
