@@ -259,6 +259,79 @@ it('uses batch claims to separate attempts while requiring a launch for worker t
     .toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 0 });
 });
 
+it('withholds latency across a solo re-claim inside a measured span', () => {
+  const text = [
+    event('launch', start),
+    event('finish', '2026-01-01T00:01:30Z'),
+    event('claim', '2026-01-01T00:01:45Z'),
+    event('publish', '2026-01-01T00:02:00Z'),
+    event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  const report = jobLatency(text);
+  // worker ended before the re-claim: still one clean attempt.
+  expect(report.phases.find(p => p.phase === 'worker'))
+    .toMatchObject({ total_seconds: 90, measured_jobs: 1, missing_jobs: 0 });
+  // publish_wait contains the re-claim: the publish may belong to attempt two.
+  expect(report.phases.find(p => p.phase === 'publish_wait'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+  // The re-claim precedes the PR span, so open_to_merge stays measured.
+  expect(mergeQueueLatency(text).phases.find(p => p.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 0 });
+});
+
+it('keeps a claim stamped with its own launch inside post-queue spans', () => {
+  const text = [
+    event('claim', start),
+    event('launch', start),
+    event('checkout_complete', '2026-01-01T00:00:30Z'),
+    event('finish', '2026-01-01T00:01:30Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  const report = jobLatency(text);
+  expect(report.phases.find(p => p.phase === 'checkout'))
+    .toMatchObject({ total_seconds: 30, measured_jobs: 1, missing_jobs: 0 });
+  expect(report.phases.find(p => p.phase === 'worker'))
+    .toMatchObject({ total_seconds: 90, measured_jobs: 1, missing_jobs: 0 });
+});
+
+it('keeps queue wait measured across claims inside the admission span', () => {
+  const text = [
+    event('enqueue', start),
+    event('claim', '2026-01-01T00:00:05Z'),
+    event('claim', '2026-01-01T00:00:10Z'),
+    event('launch', '2026-01-01T00:00:20Z'),
+    event('finish', '2026-01-01T00:01:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  const report = jobLatency(text);
+  expect(report.phases.find(p => p.phase === 'queue_wait'))
+    .toMatchObject({ total_seconds: 20, measured_jobs: 1, missing_jobs: 0 });
+  expect(report.phases.find(p => p.phase === 'worker'))
+    .toMatchObject({ total_seconds: 40, measured_jobs: 1, missing_jobs: 0 });
+});
+
+it.each([null, 'bad-date'])('withholds post-queue phase timings when a claim timestamp is %s', timestamp => {
+  const text = [
+    event('enqueue', start),
+    event('claim', timestamp),
+    event('launch', '2026-01-01T00:00:20Z'),
+    event('finish', '2026-01-01T00:01:00Z'),
+    event('publish', '2026-01-01T00:02:00Z'),
+    event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  const report = jobLatency(text);
+  expect(report.phases.find(p => p.phase === 'queue_wait'))
+    .toMatchObject({ total_seconds: 20, measured_jobs: 1, missing_jobs: 0 });
+  for (const name of ['worker', 'publish_wait']) {
+    expect(report.phases.find(p => p.phase === name))
+      .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+  }
+  expect(mergeQueueLatency(text).phases.find(p => p.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+});
+
 it.each([null, 'bad-date'])('withholds phase timings when a launch timestamp is %s', timestamp => {
   const text = [
     event('enqueue', start),
