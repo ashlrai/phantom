@@ -9,6 +9,9 @@ export const VERSE_FLEET_LIVE_BUS_PATH = '/api/verse/fleet/live/bus';
 export type BusFeedSourceState = 'healthy' | 'missing' | 'degraded';
 export interface BusFeedHop { id: string; from: string; to: string; inputTokens: number | null; outputTokens: number | null }
 export type BusFeedEventKind = 'inbox' | 'orch' | 'incident' | 'lane-hold' | 'launch' | 'published' | 'blocked' | 'other';
+/** Every `BusFeedEventKind`, for surfaces validating a `kind` filter value. */
+export const BUS_FEED_EVENT_KINDS: ReadonlySet<BusFeedEventKind> = new Set<BusFeedEventKind>(
+  ['inbox', 'orch', 'incident', 'lane-hold', 'launch', 'published', 'blocked', 'other']);
 export interface BusFeedEvent { at: string; atIso?: string; kind: BusFeedEventKind; text: string }
 export interface FleetBusFeedV1 {
   v: 1;
@@ -20,8 +23,13 @@ export interface FleetBusFeedV1 {
   events: BusFeedEvent[];
   sources: { hops: BusFeedSourceState; events: BusFeedSourceState };
 }
-/** `eventsFile` overrides the default `<runsDir>/dispatch-events.log`, for callers that walk the candidate paths. */
-export interface BusFeedOptions { runsDir?: string; hopsFile?: string; eventsFile?: string; limit?: number }
+/** `eventsFile` overrides the default `<runsDir>/dispatch-events.log`, for callers that walk the candidate paths.
+ * `kind` narrows the returned `events` to one `BusFeedEventKind` — the feed
+ * classifies every dispatch-log row into a typed kind, so "only incidents" or
+ * "only launches" is one filtered read instead of paging the mixed tail; the
+ * hops pane is unaffected. An absent or unknown kind is the caller's argument
+ * error upstream — here it simply matches nothing. */
+export interface BusFeedOptions { runsDir?: string; hopsFile?: string; eventsFile?: string; limit?: number; kind?: BusFeedEventKind }
 const MAX_READ_BYTES = 256 * 1024;
 /** Parse complete newline-terminated rows, like the durable hop log reader.
  * An unfinished final row is excluded and counted as dropped. */
@@ -101,6 +109,8 @@ export async function readFleetBusFeed(opts: BusFeedOptions = {}): Promise<Fleet
     hops.status === 'unreadable' || hops.invalidRows > 0 || hops.partialFinalRow ||
     hops.byteTruncated || hops.rowTruncated ? 'degraded' : 'healthy';
   return { v: 1, hops: hops.hops, hopsDropped: hops.invalidRows + Number(hops.partialFinalRow),
-    lastHopAt: null, events: parseDispatchEvents(events.text).slice(-limit),
+    lastHopAt: null, events: parseDispatchEvents(events.text)
+      .filter((event) => opts.kind === undefined || event.kind === opts.kind)
+      .slice(-limit),
     sources: { hops: hopState, events: events.state } };
 }

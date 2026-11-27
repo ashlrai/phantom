@@ -79,6 +79,25 @@ describe('fleet bus feed reader', () => {
     }
   });
 
+  it('narrows events to one kind while hops stay whole', async () => {
+    const opts = await fixture();
+    await writeHops(opts.hopsFile, [hop('one'), hop('two')].join('\n') + '\n');
+    await writeFile(join(opts.runsDir, 'dispatch-events.log'), [
+      event('INBOX', 'mail'), event('INCIDENT', 'down'), event('LAUNCH', 'up'), event('PARKED', 'held'),
+    ].join('\n') + '\n');
+    const all = await readFleetBusFeed(opts);
+    expect(all.events.map((row) => row.kind)).toEqual(['inbox', 'incident', 'launch', 'blocked']);
+    const incidents = await readFleetBusFeed({ ...opts, kind: 'incident' });
+    expect(incidents.events.map((row) => row.kind)).toEqual(['incident']);
+    expect(incidents.events[0].text).toContain('down');
+    // The hops pane is never narrowed by the event kind.
+    expect(incidents.hops.map((row) => row.id)).toEqual(['one', 'two']);
+    const launches = await readFleetBusFeed({ ...opts, kind: 'launch' });
+    expect(launches.events.map((row) => row.kind)).toEqual(['launch']);
+    // A kind nothing carries is an honest empty page, not a widened one.
+    expect((await readFleetBusFeed({ ...opts, kind: 'orch' })).events).toEqual([]);
+  });
+
   it('scrubs event secrets before truncating text to 400 characters', async () => {
     const opts = await fixture();
     const secret = 'sk-' + 'FAKE0000000000000000';
