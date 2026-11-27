@@ -2356,6 +2356,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
         }
         return visited;
       }
+      const higherPriorityPaths = new Set<string>();
       async function visit(path: string): Promise<boolean> {
         if (visited.has(path)) return true;
         if (visited.size >= 100 || path.startsWith('../')) return false;
@@ -2385,6 +2386,8 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
             // A definitive 404 tries the next candidate; any other failure
             // (rate limit, 5xx, malformed body) fails the whole closure closed.
             if (!hit.absent) return false;
+            // A PR can add this path and change what the import resolves to.
+            higherPriorityPaths.add(candidate);
           }
           if (resolved === null) return false;
           // Asset queries (?raw/?url/?inline) embed file contents or URLs; the
@@ -2394,7 +2397,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
         }
         return true;
       }
-      return await visit(file) ? visited : null;
+      return await visit(file) ? new Set([...visited, ...higherPriorityPaths]) : null;
     })();
     dependencyCache.set(file, task);
     return task;
