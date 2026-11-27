@@ -21,7 +21,7 @@ import { frictionFeedbackDir, parseFrictionFlag } from './feedback-queue.js';
 import { triageFeedback } from '../fleet/feedback-triage.js';
 
 export interface ChangeRequestStatusRow { v: 1; id: string; jobId: string; surface: string; createdAt: string; status: 'queued'; }
-type ChangeRequestPr = { url: string; state: 'open' | 'merged' | 'closed' | null };
+export type ChangeRequestPr = { url: string; state: 'open' | 'merged' | 'closed' | null };
 export interface ChangeRequestListItem extends ChangeRequestStatusRow {
   ageSeconds: number; fate: DropJobFate | null; pr: ChangeRequestPr | null;
 }
@@ -148,7 +148,7 @@ function phantomPrUrl(value: string | null): string | null {
   return /^https:\/\/github\.com\/ashlrai\/phantom\/pull\/\d+\/?$/.exec(value ?? '')?.[0].replace(/\/$/, '') ?? null;
 }
 
-async function readRequestPrs(root: string, jobIds: ReadonlySet<string>): Promise<Map<string, ChangeRequestPr>> {
+export async function readRequestPrs(root: string, jobIds: ReadonlySet<string>): Promise<Map<string, ChangeRequestPr>> {
   const prs = new Map<string, ChangeRequestPr>();
   const isDirectory = async (path: string) => (await lstat(path).catch(() => null))?.isDirectory() ?? false;
   if (!await isDirectory(root)) return prs;
