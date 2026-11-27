@@ -40,7 +40,8 @@ export function planFleetShed(input: unknown, nowMs = Date.now()): ShedPlan {
   // Match dispatchd's free-memory fallback. Swap is reported, not used as a threshold.
   const pressure = memFreePct === null ? 'unknown' : memFreePct <= 30 ? 'high' : 'normal';
   const byLane = object(object(status.rollup_24h).by_lane);
-  const lanes: ShedLane[] = Object.entries(object(status.lanes)).filter(([name]) => name !== 'codex-cmp' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(name)).map(([lane, raw]) => {
+  const laneStatus = object(status.lanes);
+  const lanes: ShedLane[] = Object.entries(laneStatus).filter(([name]) => name !== 'codex-cmp' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(name)).map(([lane, raw]) => {
     const row = object(raw);
     const running = fresh ? count(row.running) : null;
     const merged = fresh ? count(object(byLane[lane]).merged) : null;
@@ -53,7 +54,11 @@ export function planFleetShed(input: unknown, nowMs = Date.now()): ShedPlan {
   });
   const priority = { local: 0, cloud: 1, unknown: 2 };
   lanes.sort((a, b) => priority[a.kind] - priority[b.kind] || (a.mergedPerGb ?? Infinity) - (b.mergedPerGb ?? Infinity) || a.lane.localeCompare(b.lane));
-  const candidate = pressure === 'high' ? lanes.find(l => l.kind !== 'unknown' && l.running !== null && l.running > 0) : undefined;
+  const candidate = pressure === 'high' ? lanes.find(lane => {
+    const row = object(laneStatus[lane.lane]);
+    return lane.kind !== 'unknown' && lane.running !== null && lane.running > 0
+      && row.held !== true && count(row.target) !== 0 && count(row.effective_target) !== 0;
+  }) : undefined;
   for (const lane of lanes) {
     if (pressure !== 'unknown' && lane.kind !== 'unknown' && lane.running !== null) lane.recommendation = lane === candidate ? 'shed' : 'keep';
   }
