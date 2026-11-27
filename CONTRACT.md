@@ -2720,8 +2720,14 @@ The planner takes `now` in epoch milliseconds to check capacity samples against
 the two-heartbeat freshness window. Each `BridgeNodeView` reports the node's
 full advertised `caps` — the set offload `requires` (lane cap, `pack:*`,
 `needs`) tests — beside `lanes`, the codex/claude/omlx model-lane subset.
-Assigned routes reserve slots on their destination node and host. Older views
-that omit routes use capability-based reservation estimates.
+`DriveNodes.view(owners)` and the node status JSON can include
+`NodeView.routerSlots` with `running`, `reserved`, `hostRunning`, and
+`hostReserved`. These aggregate counts come from live claims and assigned
+routes across owner scopes. Running claims count against their recorded
+execution host when available. Routes reserve slots on their destination
+node and host if that node meets the bridge heartbeat window. The bridge subtracts these counts once. Older views that omit
+them use scoped claims and routes, or capability-based reservation estimates
+when routes are absent.
 Bridge manifests bind `owner` and
 optional `routerScope`; reconciliation holds owner mismatches as
 `hold-owner-mismatch` and missing or changed scopes as `hold-router-mismatch`,

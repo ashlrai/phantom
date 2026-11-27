@@ -464,9 +464,12 @@ work_market gives remote built-ins), `requirement_unverifiable` (`min_tier`,
 working GitHub auth), `slots_unknown` (every eligible node lacks a measured
 node or shared host slot budget), `pass_limit` or `no_free_slot`. Free slots are a node's
 `slots` minus its running claims and the reservations in the router's placement
-plan. A waiting router job with no assignment, for example because it needs
-local GitHub auth, uses no slot. Older router views without a placement plan
-use capability and auth matching to estimate reservations. Nodes with a capacity
+plan. The router supplies aggregate counts across all owner scopes, including
+other owners' workers sharing the same host. Job and node details remain
+owner-scoped. A waiting job with no assignment, for example because it needs
+local GitHub auth, uses no slot. Older views use scoped jobs and assignments.
+When assignments are also absent, the bridge estimates reservations using
+capability and auth matching. Nodes with a capacity
 sample share one physical host's slots. The bridge uses the lowest advertised or
 measured bound across the host, then subtracts its running claims. A fresh host
 pressure hold makes every sibling's host budget zero. Samples older than two

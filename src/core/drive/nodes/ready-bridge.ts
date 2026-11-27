@@ -172,8 +172,12 @@ export function planNodeBridge(input: BridgeRouterView & {
       claimsByNode.set(job.claimedBy, (claimsByNode.get(job.claimedBy) ?? 0) + 1);
     }
   }
-  const running = (id: string) => claimsByNode.get(id) ?? 0;
-  const free = new Map<string, number | null>(live.map(n => [n.nodeId, n.slots === undefined ? null : Math.max(0, n.slots - running(n.nodeId))]));
+  const hasRouterSlots = live.length > 0 && live.every(n => n.routerSlots !== undefined);
+  const running = (node: NodeView) => hasRouterSlots ? node.routerSlots!.running : claimsByNode.get(node.nodeId) ?? 0;
+  const free = new Map<string, number | null>(live.map(n => {
+    const reserved = hasRouterSlots ? n.routerSlots!.reserved : 0;
+    return [n.nodeId, n.slots === undefined ? null : Math.max(0, n.slots - running(n) - reserved)];
+  }));
   // Count the physical host's budget once, including claims held by siblings.
   // Legacy nodes without samples still use their advertised slot bounds.
   const hostOf = (n: NodeView): string => n.capacity?.hostId ?? n.nodeId;
@@ -183,7 +187,7 @@ export function planNodeBridge(input: BridgeRouterView & {
   const hostRunning = new Map<string, number>();
   for (const node of joined) {
     const host = hostOf(node);
-    hostRunning.set(host, (hostRunning.get(host) ?? 0) + running(node.nodeId));
+    hostRunning.set(host, (hostRunning.get(host) ?? 0) + running(node));
   }
   const hostFree = new Map<string, number | null>();
   const freshCapacity = (node: NodeView) => {
@@ -202,8 +206,11 @@ export function planNodeBridge(input: BridgeRouterView & {
       if (member.capacity) return sample?.slots ?? null;
       return member.slots ?? null;
     });
+    const occupancy = hasRouterSlots
+      ? members[0]!.routerSlots!.hostRunning + members[0]!.routerSlots!.hostReserved
+      : hostRunning.get(host) ?? 0;
     hostFree.set(host, budgets.every((budget): budget is number => budget !== null)
-      ? Math.max(0, Math.min(...budgets) - (hostRunning.get(host) ?? 0))
+      ? Math.max(0, Math.min(...budgets) - occupancy)
       : null);
   }
   const reserve = (node: NodeView) => {
@@ -227,17 +234,17 @@ export function planNodeBridge(input: BridgeRouterView & {
     reserve(fits[0]);
     return fits[0];
   };
-  if (input.routes) {
+  if (!hasRouterSlots && input.routes) {
     const byId = new Map(live.map(node => [node.nodeId, node]));
     for (const route of input.routes) {
       const node = route.nodeId === null ? undefined : byId.get(route.nodeId);
       if (node) reserve(node);
     }
-  } else {
+  } else if (!hasRouterSlots) {
     // Older router views lack assignments. Keep their capability-based estimate.
     for (const job of input.jobs) if (job.state === 'pending' || (job.state === 'running' && !job.claimedBy)) take(job.requires);
   }
-  const nodes = live.map(n => ({ nodeId: n.nodeId, lanes: n.lanes, caps: n.caps, slots: n.slots ?? null, running: running(n.nodeId), freeSlots: available(n) }));
+  const nodes = live.map(n => ({ nodeId: n.nodeId, lanes: n.lanes, caps: n.caps, slots: n.slots ?? null, running: running(n), freeSlots: available(n) }));
   const limit = input.maxPerPass ?? NODE_BRIDGE_MAX_PER_PASS;
   const seen = new Set<string>();
   let planned = 0;

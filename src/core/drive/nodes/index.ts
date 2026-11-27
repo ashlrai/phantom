@@ -3,7 +3,7 @@ import { validNodeTask, type EmbeddedNodeTask } from './task.js';
 import { actionableClaim, jobBlockers, nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
 import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
-import { isNodeCapacity, isHostStats, type NodeCapacitySample, type HostStats } from './state.js';
+import { isNodeCapacity, isHostStats, NODE_HEARTBEAT_MS, type NodeCapacitySample, type HostStats } from './state.js';
 export { planRoutes } from './router.js';
 export type { RouteAssignment } from './router.js';
 export { LocalNodesStore } from './local-store.js';
@@ -99,6 +99,8 @@ export interface NodeView {
   heartbeatAt: number;
   expiresAt: number;
   lanes: string[];
+  /** Aggregate counts across owner scopes, including assignments waiting to be pulled. */
+  routerSlots?: { running: number; reserved: number; hostRunning: number; hostReserved: number };
 }
 
 export interface Pulled {
@@ -319,19 +321,47 @@ export class DriveNodes implements QueueV1 {
    */
   view(owners: string[]): { owners: string[]; nodes: NodeView[]; jobs: JobView[]; routes: RouteAssignment[] } {
     const scope = new Set(names(owners, validId, 'owner scope'));
-    return this.transaction((state, now) => ({
-      owners: [...scope],
-      nodes: state.nodes.filter(n => n.owners?.some(o => scope.has(o)))
-        .map(n => ({ nodeId: n.nodeId, live: n.expiresAt > now, owners: (n.owners ?? []).filter(o => scope.has(o)),
-          caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c) || isLocalModelCap(c)),
-          heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? null, auth: n.auth ?? 'unknown',
-          ...(n.capacity ? { capacity: n.capacity } : {}),
-          ...(n.slots === undefined ? {} : { slots: n.slots }) }))
-        .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),
-      jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => ({ ...this.jobView(j),
-        ...(actionableClaim(state, j, now) ? { claimedBy: j.claim!.nodeId } : {}) })),
-      routes: planRoutes(state, now).filter(a => scope.has(a.owner)),
-    }));
+    return this.transaction((state, now) => {
+      const routes = planRoutes(state, now);
+      const hosts = new Map(state.nodes.map(n => [n.nodeId, n.capacity?.hostId ?? n.nodeId]));
+      // The bridge cannot place work on measured nodes past its heartbeat window.
+      const bridgeCandidates = new Set(state.nodes.filter(n =>
+        !n.capacity || now - n.heartbeatAt <= 2 * NODE_HEARTBEAT_MS).map(n => n.nodeId));
+      const countByNode = new Map<string, number>();
+      const countByHost = new Map<string, number>();
+      const reservedByNode = new Map<string, number>();
+      const reservedByHost = new Map<string, number>();
+      const increment = (counts: Map<string, number>, key: string) => counts.set(key, (counts.get(key) ?? 0) + 1);
+      const active = new Set(state.jobs.filter(j => actionableClaim(state, j, now)));
+      for (const job of active) {
+        const nodeId = job.claim!.nodeId;
+        increment(countByNode, nodeId);
+        increment(countByHost, job.executionHostId ?? hosts.get(nodeId) ?? nodeId);
+      }
+      for (const route of routes) {
+        if (route.nodeId === null || !bridgeCandidates.has(route.nodeId)) continue;
+        increment(reservedByNode, route.nodeId);
+        increment(reservedByHost, hosts.get(route.nodeId) ?? route.nodeId);
+      }
+      return {
+        owners: [...scope],
+        nodes: state.nodes.filter(n => n.owners?.some(o => scope.has(o)))
+          .map(n => {
+            const host = hosts.get(n.nodeId)!;
+            return { nodeId: n.nodeId, live: n.expiresAt > now, owners: (n.owners ?? []).filter(o => scope.has(o)),
+              caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c) || isLocalModelCap(c)),
+              heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? null, auth: n.auth ?? 'unknown',
+              ...(n.capacity ? { capacity: n.capacity } : {}),
+              ...(n.slots === undefined ? {} : { slots: n.slots }),
+              routerSlots: { running: countByNode.get(n.nodeId) ?? 0, reserved: reservedByNode.get(n.nodeId) ?? 0,
+                hostRunning: countByHost.get(host) ?? 0, hostReserved: reservedByHost.get(host) ?? 0 } };
+          })
+          .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),
+        jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => ({ ...this.jobView(j),
+          ...(active.has(j) ? { claimedBy: j.claim!.nodeId } : {}) })),
+        routes: routes.filter(a => scope.has(a.owner)),
+      };
+    });
   }
 
   private currentClaim(state: NodesState, claim: JobClaim, now: number): boolean {
