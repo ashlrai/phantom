@@ -22,9 +22,10 @@
  */
 
 import type { TypeSafeChoiceQuestion } from '../classify/typesafe-client.js';
+import { setLruEntry } from './cache.js';
 import { decide, decideEach } from './decide.js';
 import { TASK_CLASSES } from './registry.js';
-import type { DecideOptions, Decision } from './types.js';
+import type { Decision, DecisionCallOptions } from './types.js';
 
 export type TaskClass = (typeof TASK_CLASSES)[number];
 
@@ -125,7 +126,7 @@ const CRITERIA: Readonly<Record<TaskClass, string>> = {
   other: 'None of the above fits.',
 };
 
-export const TASK_CLASS_QUESTION: TypeSafeChoiceQuestion = {
+const TASK_CLASS_QUESTION: TypeSafeChoiceQuestion = {
   type: 'choice',
   instructions: 'Classify the kind of engineering work this task describes. Judge what the change does, not incidental words.',
   criteria: CRITERIA,
@@ -147,13 +148,7 @@ function memoKey(text: string): string {
 function remember(text: string, cls: TaskClass): void {
   const k = memoKey(text);
   if (!k) return;
-  memo.delete(k);
-  memo.set(k, cls);
-  while (memo.size > MEMO_MAX) {
-    const oldest = memo.keys().next().value;
-    if (oldest === undefined) break;
-    memo.delete(oldest);
-  }
+  setLruEntry(memo, k, cls, MEMO_MAX);
 }
 
 /**
@@ -170,7 +165,7 @@ export function clearTaskClassMemo(): void {
   attempted.clear();
 }
 
-export type LabelTaskClassOptions = Omit<DecideOptions<TaskClass>, 'fallback' | 'interpret' | 'escalateOnly'>;
+export type LabelTaskClassOptions = DecisionCallOptions;
 
 /**
  * Label one task. NEVER THROWS. A confident answer is also memoized for the
