@@ -130,6 +130,10 @@ the scope's jobs by state (`pending`, `running`, `completed`) — claimed or
 finished work is not routable, and the note says so instead of implying the
 queue is empty.
 
+`phm node plan --owner <scope>` uses the same queue order and capacity
+reservations as `pull`, including earlier jobs from other owners that use
+shared capacity. The preview returns only jobs in the requested scope.
+
 The other verbs print plain-words outcomes too: `join` answers in a sentence
 naming the node, session, owner scopes and caps, states the 30-second session
 expiry, prints the keep-alive `beat --watch` command (or, with `--watch` on the
