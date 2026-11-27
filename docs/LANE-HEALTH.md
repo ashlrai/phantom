@@ -72,6 +72,10 @@ at or before report time. If a window has no such reading, the lane verdict
 is unknown. The Runs History API's meter field shows the newest reading at
 or before report time, or null when there is none.
 A reading must predate its own reset to support a reset comparison.
+A reset comparison uses the newest fresh, valid prior reading with an earlier
+observation time. Unusable readings between that sample and the current one
+do not prevent the comparison. An unusable current reading leaves the verdict
+unknown.
 A previous window can expire by report time and still establish a rollover
 if its reading was taken before it expired.
 The default reader scans personal Codex rollouts in descending file

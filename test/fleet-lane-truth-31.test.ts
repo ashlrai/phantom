@@ -54,6 +54,17 @@ describe('lane truth fixtures', () => {
     expect(await verdict({}, [sample, { ...sample, usedPercent: 90 }])).toBe('ok');
     expect(await verdict({}, [sample, { ...sample, usedPercent: 90, sampledAt: '2026-10-31T10:00:00Z' }])).toBe('ok');
   });
+  it('compares against the latest usable prior reading when an invalid sample intervenes', async () => {
+    const beforeReset = {
+      ...sample, sampledAt: '2026-10-31T11:55:00Z', resetAt: '2026-10-31T11:56:00Z', usedPercent: 100,
+    };
+    const afterExpiry = { ...beforeReset, sampledAt: '2026-10-31T11:57:00Z' };
+    expect(await verdict({ running: 0 }, [afterExpiry, sample, beforeReset])).toBe('reset_detected');
+    expect(await verdict({ running: 0 }, [beforeReset, afterExpiry])).toBe('unknown');
+    expect(await verdict({ running: 0 }, [
+      { ...beforeReset, sampledAt: '2026-10-31T11:00:00Z' }, afterExpiry, sample,
+    ])).toBe('idle_with_work');
+  });
   it('uses dated observations when an unreadable timestamp interrupts the journal', async () => {
     const older = { ...sample, usedPercent: 85, sampledAt: '2026-10-31T11:55:00Z' };
     const undated = { ...sample, sampledAt: 'unreadable' };
