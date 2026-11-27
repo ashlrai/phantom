@@ -1696,6 +1696,7 @@ const LANDING_PR = /^([^#@\s]+)#([1-9]\d*)@/;
  */
 export interface RouterOutcomeEvidenceRow {
   kind: string;
+  at?: string;
   landingId: string | null;
   revertsLandingId?: string | null;
 }
@@ -3701,7 +3702,9 @@ export async function readRouterOutcomes(opts: {
     passkFor: laneScoreLookup(laneScores),
     workClassFor: (jobId) => workClasses.get(jobId) ?? null,
     revertedPrKeys: unionRevertKeys(
-      authorityEvidence === null ? undefined : authorityRevertedPrKeys(authorityEvidence),
+      authorityEvidence === null ? undefined : authorityRevertedPrKeys(
+        authorityEvidence.filter(row => row.at === undefined || Date.parse(row.at) <= reportStartedAt),
+      ),
       revertLedger.keys),
     mergeEvents: mergeEvents?.evidence,
     mergeEventsTruncated,
