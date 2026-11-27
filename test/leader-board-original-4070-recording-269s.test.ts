@@ -92,6 +92,19 @@ it('counts lane-open work by tier without attributing it to a lane', async () =>
   expect(board?.lanes.find((lane) => lane.lane === 'codex')?.ready).toBe(1);
 });
 
+it('keeps unsupported tiers out of the dispatchable depth buckets', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    row('READY', 'RQ-LEGACY', 'codex', 'low'),
+    row('READY', 'RQ-TYPO', 'codex', 'fronter'),
+    row('READY', 'RQ-MISSING-TIER', 'codex', ''),
+    row('READY', 'RQ-WORK', 'codex', 'WORK'),
+    row('READY', 'RQ-MID', 'codex', 'mid'),
+  ].join('\n'));
+  expect((await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS })).wrote).toBe(true);
+  const { board } = await readFleetBoard({ runsDir: root });
+  expect(board?.queueDepthByTier).toEqual({ work: 1, mid: 1, unknown: 3 });
+});
+
 it('reports honest failures for hostile paths and the reader stays truthful', async () => {
   expect(await recordLeaderBoard({ runsDir: 'relative/path', nowMs: NOW_MS })).toMatchObject({ wrote: false });
   expect(await recordLeaderBoard({ runsDir: '/dev/null/impossible', nowMs: NOW_MS })).toMatchObject({ wrote: false });
