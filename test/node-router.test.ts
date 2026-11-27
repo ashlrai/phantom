@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DriveNodes, LocalNodesStore, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
+import { nodeCapacityView } from '../src/core/drive/nodes/router.js';
 import { probeLocalAuth } from '../src/core/drive/nodes/auth-probe.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 import { localPhmVersion, versionCap } from '../src/core/drive/nodes/phm-version.js';
@@ -119,6 +120,38 @@ describe('job leases: no job runs twice', () => {
     expect(f.mac.complete(second.claim, 'ok')).toBe(false);
     expect(f.box.pull(a)).toBeNull(); // completed jobs never run again
     expect(f.mac.pull(b)).toBeNull();
+  });
+
+  it('frees a live worker slot when the leader lease expires', () => {
+    const f = fixture();
+    const primary = f.box.join('leader', { owners: ['o'], slots: 0 })!;
+    const worker = f.mac.join('worker', { owners: ['o'], slots: 1 })!;
+    const leader = f.box.heartbeat(primary)!.leader!;
+    f.mac.heartbeat(worker, { capacity: { hostId: 'host', sampledAtMs: 1_000, ramBytes: 16 * 1024 ** 3, slots: 1, held: null } });
+    const host = () => {
+      const state = f.mac.snapshot();
+      return nodeCapacityView(state, state.observedAt).find(h => h.hostId === 'host');
+    };
+    f.box.enqueue('abandoned', { owner: 'o' });
+    const claim = f.box.claim(leader, worker, 'abandoned')!;
+    f.box.enqueue('next', { owner: 'o' });
+    expect(f.mac.plan()).toMatchObject([{ jobId: 'next', nodeId: null }]);
+
+    expect(host()).toMatchObject({ running: 1, freeSlots: 0 });
+
+    f.advance(20);
+    expect(host()).toMatchObject({ running: 0, freeSlots: 1 });
+    expect(f.mac.jobOutcome('abandoned', 'o')).toEqual({ state: 'running' });
+    expect(f.mac.renewClaim(claim)).toBeNull();
+    expect(f.mac.plan()).toEqual([{ jobId: 'next', owner: 'o', nodeId: 'worker' }]);
+    const next = f.mac.pull(worker)!;
+    expect(next.claim).toMatchObject({ jobId: 'next', nodeId: 'worker' });
+    expect(next.claim.leaderToken).toBeGreaterThan(claim.leaderToken);
+    expect(f.mac.complete(claim, 'late')).toBe(false);
+    expect(f.mac.complete(next.claim, 'done')).toBe(true);
+    expect(f.mac.pull(worker)).toBeNull();
+    f.advance(20);
+    expect(f.mac.pull(worker)?.job.id).toBe('abandoned');
   });
 
   it('works across real store instances sharing a directory', () => {

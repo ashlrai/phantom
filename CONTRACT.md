@@ -20,6 +20,14 @@ reward rows and `notHeldDays` for rows with `merged: false`, both based on
 the UTC date of `recordedAt`. The latter supplies the recurrence day gate
 and the dates quoted in discovery briefs.
 
+## Node claim accounting
+
+`liveLeader(state, now)` and `actionableClaim(state, job, now)` in
+`src/core/drive/nodes/router.ts` evaluate the supplied witness snapshot and
+clock. A running claim occupies a slot only while its claim lease, worker
+session and matching leader epoch are live. Normal pulls retry a running job
+after its claim lease expires.
+
 ## Fleet lane ledger
 
 `parseUsageJournals(texts, asOfMs?)` (`src/core/fleet/lane-console.ts`) selects
