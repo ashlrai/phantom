@@ -163,6 +163,7 @@ export interface FleetLaneSnapshot {
       unhinted: number;
     };
     queueState: { state: FleetLaneSourceState; file: string; jobs: number };
+    dispatcher: { state: FleetLaneSourceState; file: string };
     ledger: {
       state: FleetLaneSourceState; file: string; events: number; dropped: number;
       /**
@@ -832,16 +833,21 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   const now = options.now?.() ?? new Date();
   const mergeWindowMs = options.mergeWindowMs ?? DEFAULT_MERGE_WINDOW_MS;
   const queueDir = options.queueDir ?? join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue');
-  const status = await readTelemetryFile(join(queueDir, 'status.json')).then(text => {
-    try { return text === null ? null : record(JSON.parse(text)); } catch { return null; }
-  });
+  const statusText = await readTelemetryFile(join(queueDir, 'status.json'));
+  const status = (() => {
+    try { return statusText === null ? null : record(JSON.parse(statusText)); } catch { return null; }
+  })();
   const tick = typeof status?.last_tick === 'string' ? Date.parse(status.last_tick) : NaN;
-  const dispatchLanes = new Map(Object.entries(record(status?.lanes) ?? {}).filter(([lane]) => LANE_ID.test(lane)));
+  const dispatchEntries = Object.entries(record(status?.lanes) ?? {});
+  const dispatchLanes = new Map(dispatchEntries.filter(([lane]) => LANE_ID.test(lane)));
   const currentDispatch = now.getTime() >= tick && now.getTime() - tick < 5 * 60_000;
   const count = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  const dispatcherHealthy = currentDispatch && dispatchLanes.size > 0 && dispatchLanes.size === dispatchEntries.length &&
+    [...dispatchLanes.values()].every(fields => count(record(fields)?.running) !== null);
   const sources: FleetLaneSnapshot['sources'] = {
     queue: { state: 'missing', file: 'ready.tsv', rows: 0, dropped: 0, unhinted: 0 },
     queueState: { state: 'missing', file: 'queue.v1.json', jobs: 0 },
+    dispatcher: { state: dispatcherHealthy ? 'healthy' : statusText === null ? 'missing' : 'degraded', file: 'status.json' },
     ledger: { state: 'missing', file: 'jobs.jsonl', events: 0, dropped: 0, mergeWindow: 'absent' },
     usage: { state: 'missing', files: [], pools: 0, dropped: 0 },
     budgets: { state: 'healthy' },

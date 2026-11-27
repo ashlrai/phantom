@@ -55,6 +55,12 @@ dropped), `partial` (a zero merge count is unknown, not zero) or `absent`.
 `mergesPerHour` is null exactly when no merge was observed and the window is
 not `complete`.
 
+`FleetLaneSnapshot.sources.dispatcher` reports the state of the dispatcher
+running counts in `status.json`. `healthy` requires a tick at or before report
+time and less than five minutes old, plus a nonempty lane map whose running
+counts are all nonnegative safe integers. `missing` means the reader obtained
+no file contents. Other snapshots are `degraded`.
+
 `parseReadyTsv` returns `unhintedRows` entries with `id`, `repo` and `tier`
 for validated lane-open dispatcher jobs. Its optional `routerQueue` argument
 carries `queue/router-queue.md` text so a spec-less (five-column) dispatcher
