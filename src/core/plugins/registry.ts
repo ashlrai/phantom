@@ -20,23 +20,23 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { audit } from '../sandbox/audit.js';
 import { killSwitchOn } from '../sandbox/policy.js';
 import { readManifest } from './manifest.js';
 import { verifyIntegrity } from './integrity.js';
-import { buildHostApi } from './host-api.js';
+import { auditPlugin, buildHostApi, pluginDir, pluginsRootDir } from './host-api.js';
 import { wrapScanner, validateTemplate, wrapCommand } from './wrappers.js';
 import type { AshlrConfig, WorkItem, ProjectTemplate } from '../types.js';
-import type {
-  PluginManifest,
-  PluginContributions,
-  AshlrPlugin,
-  PluginCommandSpec,
-  PluginProviderSpec,
-  PluginScanner,
+import {
+  isPluginRecord,
+  pluginErrorMessage,
+  type PluginCapability,
+  type PluginManifest,
+  type PluginContributions,
+  type AshlrPlugin,
+  type PluginProviderSpec,
+  type PluginScanner,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ export function discoverPlugins(): Array<{
   reason?: string;
 }> {
   try {
-    const pluginsDir = join(homedir(), '.ashlr', 'plugins');
+    const pluginsDir = pluginsRootDir();
 
     let entries: string[];
     try {
@@ -179,6 +179,13 @@ function raceActivate(
 // Internal: filterContributions — drop undeclared capability kinds
 // ---------------------------------------------------------------------------
 
+const CONTRIBUTION_CAPABILITIES: ReadonlyArray<readonly [keyof PluginContributions, PluginCapability]> = [
+  ['scanners', 'scanner'],
+  ['templates', 'template'],
+  ['providers', 'provider'],
+  ['commands', 'command'],
+];
+
 /**
  * Drop contributions whose kind is not declared in manifest.capabilities.
  * Audits a 'plugin:capability-violation' for each dropped kind.
@@ -191,63 +198,33 @@ function filterContributions(
   const caps = new Set(manifest.capabilities);
   const filtered: PluginContributions = {};
 
-  if (raw.scanners !== undefined) {
-    if (caps.has('scanner')) {
-      filtered.scanners = raw.scanners;
+  for (const [field, capability] of CONTRIBUTION_CAPABILITIES) {
+    const contributed = raw[field];
+    if (contributed === undefined) continue;
+    if (caps.has(capability)) {
+      (filtered as Record<string, unknown>)[field] = contributed;
     } else {
-      audit({
-        action: 'plugin:capability-violation',
-        repo: null,
-        sandboxId: null,
-        summary: `plugin "${name}" contributed scanners but did not declare 'scanner' capability`,
-        result: 'refused',
-      });
-    }
-  }
-
-  if (raw.templates !== undefined) {
-    if (caps.has('template')) {
-      filtered.templates = raw.templates;
-    } else {
-      audit({
-        action: 'plugin:capability-violation',
-        repo: null,
-        sandboxId: null,
-        summary: `plugin "${name}" contributed templates but did not declare 'template' capability`,
-        result: 'refused',
-      });
-    }
-  }
-
-  if (raw.providers !== undefined) {
-    if (caps.has('provider')) {
-      filtered.providers = raw.providers;
-    } else {
-      audit({
-        action: 'plugin:capability-violation',
-        repo: null,
-        sandboxId: null,
-        summary: `plugin "${name}" contributed providers but did not declare 'provider' capability`,
-        result: 'refused',
-      });
-    }
-  }
-
-  if (raw.commands !== undefined) {
-    if (caps.has('command')) {
-      filtered.commands = raw.commands;
-    } else {
-      audit({
-        action: 'plugin:capability-violation',
-        repo: null,
-        sandboxId: null,
-        summary: `plugin "${name}" contributed commands but did not declare 'command' capability`,
-        result: 'refused',
-      });
+      auditPlugin(
+        'plugin:capability-violation',
+        `plugin "${name}" contributed ${field} but did not declare '${capability}' capability`,
+        'refused',
+      );
     }
   }
 
   return filtered;
+}
+
+/** Unwrap default/named plugin export and verify it implements activate(). */
+function resolvePluginExport(pluginModule: unknown): AshlrPlugin | null {
+  let candidate: unknown = pluginModule;
+  if (isPluginRecord(pluginModule)) {
+    if ('default' in pluginModule) candidate = pluginModule['default'];
+    else if ('plugin' in pluginModule) candidate = pluginModule['plugin'];
+  }
+  return isPluginRecord(candidate) && typeof candidate['activate'] === 'function'
+    ? (candidate as unknown as AshlrPlugin)
+    : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -278,13 +255,7 @@ export async function loadEnabledPlugins(cfg: AshlrConfig): Promise<LoadedPlugin
 
   // Gate 2: kill switch
   if (killSwitchOn()) {
-    audit({
-      action: 'plugin:load',
-      repo: null,
-      sandboxId: null,
-      summary: 'plugin loading refused: kill switch is ON',
-      result: 'refused',
-    });
+    auditPlugin('plugin:load', 'plugin loading refused: kill switch is ON', 'refused');
     return [];
   }
 
@@ -303,22 +274,19 @@ export async function loadEnabledPlugins(cfg: AshlrConfig): Promise<LoadedPlugin
     }
   }
 
-  const pluginsDir = join(homedir(), '.ashlr', 'plugins');
   const loaded: LoadedPlugin[] = [];
 
   for (const name of enabled) {
-    const dir = join(pluginsDir, name);
+    const dir = pluginDir(name);
 
     // Gate 4: read + validate manifest (also checks apiVersion range)
     const manifestResult = readManifest(dir);
     if (!manifestResult.ok) {
-      audit({
-        action: 'plugin:load',
-        repo: null,
-        sandboxId: null,
-        summary: `plugin "${name}" refused: invalid manifest — ${manifestResult.reason}`,
-        result: 'refused',
-      });
+      auditPlugin(
+        'plugin:load',
+        `plugin "${name}" refused: invalid manifest — ${manifestResult.reason}`,
+        'refused',
+      );
       continue;
     }
 
@@ -328,13 +296,11 @@ export async function loadEnabledPlugins(cfg: AshlrConfig): Promise<LoadedPlugin
     // Gate 5: integrity verification
     const integrityResult = verifyIntegrity(cfg, name, entryPath);
     if (!integrityResult.ok) {
-      audit({
-        action: 'plugin:load',
-        repo: null,
-        sandboxId: null,
-        summary: `plugin "${name}" refused: integrity check failed — ${integrityResult.reason ?? 'unknown'}`,
-        result: 'refused',
-      });
+      auditPlugin(
+        'plugin:load',
+        `plugin "${name}" refused: integrity check failed — ${integrityResult.reason ?? 'unknown'}`,
+        'refused',
+      );
       continue;
     }
 
@@ -350,48 +316,20 @@ export async function loadEnabledPlugins(cfg: AshlrConfig): Promise<LoadedPlugin
         pluginModule = await import(/* @vite-ignore */ dataUrl);
       }
     } catch (err) {
-      audit({
-        action: 'plugin:load',
-        repo: null,
-        sandboxId: null,
-        summary: `plugin "${name}" error: import failed — ${err instanceof Error ? err.message : String(err)}`,
-        result: 'error',
-      });
+      auditPlugin('plugin:load', `plugin "${name}" error: import failed — ${pluginErrorMessage(err)}`, 'error');
       continue;
-    }
-
-    // Resolve module default export or named 'plugin' export
-    let plugin: unknown;
-    if (pluginModule !== null && typeof pluginModule === 'object') {
-      const mod = pluginModule as Record<string, unknown>;
-      if ('default' in mod) {
-        plugin = mod['default'];
-      } else if ('plugin' in mod) {
-        plugin = mod['plugin'];
-      } else {
-        plugin = pluginModule;
-      }
-    } else {
-      plugin = pluginModule;
     }
 
     // Validate AshlrPlugin shape (must have activate function)
-    if (
-      plugin === null ||
-      typeof plugin !== 'object' ||
-      typeof (plugin as Record<string, unknown>)['activate'] !== 'function'
-    ) {
-      audit({
-        action: 'plugin:load',
-        repo: null,
-        sandboxId: null,
-        summary: `plugin "${name}" error: module does not export an AshlrPlugin (missing activate function)`,
-        result: 'error',
-      });
+    const ashlrPlugin = resolvePluginExport(pluginModule);
+    if (!ashlrPlugin) {
+      auditPlugin(
+        'plugin:load',
+        `plugin "${name}" error: module does not export an AshlrPlugin (missing activate function)`,
+        'error',
+      );
       continue;
     }
-
-    const ashlrPlugin = plugin as AshlrPlugin;
 
     // Gate 7: activate with timeout
     const host = buildHostApi(manifest, cfg);
@@ -399,26 +337,14 @@ export async function loadEnabledPlugins(cfg: AshlrConfig): Promise<LoadedPlugin
     try {
       contributions = await raceActivate(ashlrPlugin, host);
     } catch (err) {
-      audit({
-        action: 'plugin:load',
-        repo: null,
-        sandboxId: null,
-        summary: `plugin "${name}" error: activate() failed — ${err instanceof Error ? err.message : String(err)}`,
-        result: 'error',
-      });
+      auditPlugin('plugin:load', `plugin "${name}" error: activate() failed — ${pluginErrorMessage(err)}`, 'error');
       continue;
     }
 
     // Gate 8: capability filter (drops undeclared kinds + audits violations)
     const filtered = filterContributions(name, manifest, contributions);
 
-    audit({
-      action: 'plugin:load',
-      repo: null,
-      sandboxId: null,
-      summary: `plugin "${name}" loaded successfully`,
-      result: 'ok',
-    });
+    auditPlugin('plugin:load', `plugin "${name}" loaded successfully`, 'ok');
 
     loaded.push({ name, manifest, contributions: filtered });
   }
@@ -444,13 +370,9 @@ export async function getPluginScanners(
   cfg: AshlrConfig,
 ): Promise<Array<(repo: string) => Promise<WorkItem[]>>> {
   const plugins = await loadEnabledPlugins(cfg);
-  const wrapped: Array<(repo: string) => Promise<WorkItem[]>> = [];
-  for (const p of plugins) {
-    for (const scanner of (p.contributions.scanners ?? []) as PluginScanner[]) {
-      wrapped.push(wrapScanner(p.name, scanner));
-    }
-  }
-  return wrapped;
+  return plugins.flatMap((p) =>
+    ((p.contributions.scanners ?? []) as PluginScanner[]).map((scanner) => wrapScanner(p.name, scanner)),
+  );
 }
 
 /**
@@ -462,9 +384,7 @@ export async function getPluginTemplates(cfg: AshlrConfig): Promise<ProjectTempl
   for (const p of plugins) {
     for (const t of p.contributions.templates ?? []) {
       const validated = validateTemplate(p.name, t);
-      if (validated !== null) {
-        templates.push(validated);
-      }
+      if (validated !== null) templates.push(validated);
     }
   }
   return templates;
@@ -475,25 +395,24 @@ export async function getPluginTemplates(cfg: AshlrConfig): Promise<ProjectTempl
  */
 export async function getPluginProviders(cfg: AshlrConfig): Promise<PluginProviderSpec[]> {
   const plugins = await loadEnabledPlugins(cfg);
-  const providers: PluginProviderSpec[] = [];
-  for (const p of plugins) {
-    for (const provider of p.contributions.providers ?? []) {
-      providers.push(provider);
-    }
-  }
-  return providers;
+  return plugins.flatMap((p) => p.contributions.providers ?? []);
 }
 
 /**
- * Get all plugin commands, wrapped for safety (audit, exit-code catch).
+ * Find and run an enabled plugin's command through the audited wrapper.
+ * Returns the command's exit code, or null when no enabled plugin provides `commandName`.
  */
-export async function getPluginCommands(cfg: AshlrConfig): Promise<PluginCommandSpec[]> {
-  const plugins = await loadEnabledPlugins(cfg);
-  const commands: PluginCommandSpec[] = [];
-  for (const p of plugins) {
-    for (const cmd of p.contributions.commands ?? []) {
-      commands.push(wrapCommand(p.name, cmd));
+export async function runPluginCommand(
+  cfg: AshlrConfig,
+  commandName: string,
+  args: string[],
+): Promise<number | null> {
+  for (const p of await loadEnabledPlugins(cfg)) {
+    const command = (p.contributions.commands ?? []).find((cmd) => cmd.name === commandName);
+    if (command) {
+      const host = buildHostApi(p.manifest, cfg);
+      return wrapCommand(p.name, command).run(args, host);
     }
   }
-  return commands;
+  return null;
 }

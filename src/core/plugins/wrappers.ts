@@ -15,12 +15,18 @@
  *  - All wrappers NEVER throw themselves.
  */
 
-import { audit } from '../sandbox/audit.js';
 import { createHash } from 'node:crypto';
 import { scoreItem } from '../portfolio/backlog.js';
 import { scrubSecrets } from '../knowledge/index.js';
 import type { WorkItem, ProjectTemplate, TemplateFile } from '../types.js';
-import type { PluginScanner, PluginCommandSpec, PluginHost } from './types.js';
+import { auditPlugin } from './host-api.js';
+import {
+  isPluginRecord,
+  pluginErrorMessage,
+  type PluginScanner,
+  type PluginCommandSpec,
+  type PluginHost,
+} from './types.js';
 
 // ---------------------------------------------------------------------------
 // wrapScanner
@@ -47,6 +53,11 @@ function boundedIdentity(value: string, max: number): string {
   if (value.length <= max) return value;
   const suffix = createHash('sha256').update(value).digest('hex').slice(0, 12);
   return `${value.slice(0, max - suffix.length - 1)}-${suffix}`;
+}
+
+function clampRating(raw: unknown, fallback: number): number {
+  const num = typeof raw === 'number' ? raw : fallback;
+  return Math.max(1, Math.min(5, Math.round(num)));
 }
 
 /**
@@ -87,30 +98,28 @@ export function wrapScanner(
 
     for (let i = 0; i < capped.length; i++) {
       const item = capped[i];
-      if (item === null || typeof item !== 'object') continue;
+      if (!isPluginRecord(item)) continue;
 
       // Clamp value/effort to integers in 1..5
-      const rawValue = typeof item.value === 'number' ? item.value : 3;
-      const rawEffort = typeof item.effort === 'number' ? item.effort : 2;
-      const value = Math.max(1, Math.min(5, Math.round(rawValue)));
-      const effort = Math.max(1, Math.min(5, Math.round(rawEffort)));
+      const value = clampRating(item['value'], 3);
+      const effort = clampRating(item['effort'], 2);
 
       // Recompute score via scoreItem (deterministic, pure)
       const score = scoreItem(value, effort);
 
       // Scrub secrets from title + detail
-      const rawTitle = typeof item.title === 'string' ? item.title : '';
-      const rawDetail = typeof item.detail === 'string' ? item.detail : '';
+      const rawTitle = typeof item['title'] === 'string' ? item['title'] : '';
+      const rawDetail = typeof item['detail'] === 'string' ? item['detail'] : '';
       const title = boundedText(scrubSecrets(rawTitle), WORK_ITEM_TITLE_MAX, `Plugin scanner item ${i}`);
       const detail = boundedText(scrubSecrets(rawDetail), WORK_ITEM_DETAIL_MAX, 'Plugin scanner work item.');
 
       // Namespace id: plugin:<name>:<s.id>:<orig-or-index>
-      const origId = typeof item.id === 'string' && item.id.length > 0 ? item.id : String(i);
+      const origId = typeof item['id'] === 'string' && item['id'].length > 0 ? item['id'] : String(i);
       const id = boundedIdentity(`plugin:${pluginName}:${s.id}:${origId}`, WORK_ITEM_ID_MAX);
 
       // Force tags to include ['plugin', pluginName, s.id]
-      const baseTags: string[] = Array.isArray(item.tags)
-        ? (item.tags as unknown[]).filter((t): t is string => typeof t === 'string')
+      const baseTags: string[] = Array.isArray(item['tags'])
+        ? (item['tags'] as unknown[]).filter((t): t is string => typeof t === 'string')
         : [];
       const requiredTags = ['plugin', pluginName, s.id]
         .map((tag) => boundedText(tag, WORK_ITEM_TAG_MAX, 'plugin'));
@@ -119,6 +128,7 @@ export function wrapScanner(
         ...baseTags.map((tag) => boundedText(tag, WORK_ITEM_TAG_MAX, 'plugin-tag')),
       ])].slice(0, WORK_ITEM_TAGS_MAX);
 
+      const rawTs = item['ts'];
       const wrapped: WorkItem = {
         id,
         repo,
@@ -129,8 +139,8 @@ export function wrapScanner(
         effort,
         score,
         tags,
-        ts: typeof item.ts === 'string' && item.ts.length <= 40 && Number.isFinite(Date.parse(item.ts))
-          ? item.ts
+        ts: typeof rawTs === 'string' && rawTs.length <= 40 && Number.isFinite(Date.parse(rawTs))
+          ? rawTs
           : new Date().toISOString(),
       };
 
@@ -178,6 +188,10 @@ export function validateTemplate(
   pluginName: string,
   t: ProjectTemplate,
 ): ProjectTemplate | null {
+  const rejectTemplate = (summary: string): null => {
+    auditPlugin(`plugin:${pluginName}:template-rejected`, summary, 'refused');
+    return null;
+  };
   try {
     const prefix = `${pluginName}:`;
 
@@ -187,28 +201,12 @@ export function validateTemplate(
       probeFiles = t.files({ name: '', category: '' });
     } catch {
       // files() threw on probe — reject.
-      audit({
-        action: `plugin:${pluginName}:template-rejected`,
-        repo: null,
-        sandboxId: null,
-        summary: `plugin "${pluginName}" template "${t.id}" rejected: files() threw on probe`,
-        result: 'refused',
-      });
-      return null;
+      return rejectTemplate(`plugin "${pluginName}" template "${t.id}" rejected: files() threw on probe`);
     }
 
     for (const f of probeFiles) {
       const reason = checkFilePath(pluginName, t.id, f.path);
-      if (reason !== null) {
-        audit({
-          action: `plugin:${pluginName}:template-rejected`,
-          repo: null,
-          sandboxId: null,
-          summary: reason,
-          result: 'refused',
-        });
-        return null;
-      }
+      if (reason !== null) return rejectTemplate(reason);
     }
 
     // Prefix id if not already prefixed.
@@ -248,36 +246,27 @@ export function wrapCommand(pluginName: string, c: PluginCommandSpec): PluginCom
   return {
     ...c,
     async run(args: string[], host: PluginHost): Promise<number> {
-      audit({
-        action: `plugin:${pluginName}:command:${c.name}`,
-        repo: null,
-        sandboxId: null,
-        summary: `plugin "${pluginName}" command "${c.name}" invoked (${args.length} arg(s))`,
-        result: 'ok',
-      });
+      const action = `plugin:${pluginName}:command:${c.name}`;
+      auditPlugin(action, `plugin "${pluginName}" command "${c.name}" invoked (${args.length} arg(s))`, 'ok');
 
       let exitCode: number;
       try {
         exitCode = await c.run(args, host);
       } catch (err) {
-        audit({
-          action: `plugin:${pluginName}:command:${c.name}:exit`,
-          repo: null,
-          sandboxId: null,
-          summary: `plugin "${pluginName}" command "${c.name}" threw: ${err instanceof Error ? err.message : String(err)}`,
-          result: 'error',
-        });
+        auditPlugin(
+          `${action}:exit`,
+          `plugin "${pluginName}" command "${c.name}" threw: ${pluginErrorMessage(err)}`,
+          'error',
+        );
         return 1;
       }
 
       const code = typeof exitCode === 'number' && Number.isFinite(exitCode) ? exitCode : 1;
-      audit({
-        action: `plugin:${pluginName}:command:${c.name}:exit`,
-        repo: null,
-        sandboxId: null,
-        summary: `plugin "${pluginName}" command "${c.name}" exited with code ${code}`,
-        result: code === 0 ? 'ok' : 'error',
-      });
+      auditPlugin(
+        `${action}:exit`,
+        `plugin "${pluginName}" command "${c.name}" exited with code ${code}`,
+        code === 0 ? 'ok' : 'error',
+      );
 
       return code;
     },

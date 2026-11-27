@@ -33,11 +33,36 @@ export const PLUGIN_API_VERSION = '1.0.0';
 // ---------------------------------------------------------------------------
 
 /**
- * The set of capability kinds a plugin may declare. A plugin may only
+ * The canonical set of capability kinds a plugin may declare. A plugin may only
  * contribute items whose kind appears in manifest.capabilities — undeclared
  * contributions are DROPPED and audited as 'plugin:capability-violation'.
  */
-export type PluginCapability = 'scanner' | 'template' | 'provider' | 'command';
+export const PLUGIN_CAPABILITIES = ['scanner', 'template', 'provider', 'command'] as const;
+
+export type PluginCapability = (typeof PLUGIN_CAPABILITIES)[number];
+
+/** Canonical plugin name pattern: lowercase alphanumeric + hyphens, 1..40 chars. */
+export const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{0,39}$/;
+
+/** True when `value` is one of the declared plugin capability kinds. */
+export function isPluginCapability(value: unknown): value is PluginCapability {
+  return typeof value === 'string' && (PLUGIN_CAPABILITIES as readonly string[]).includes(value);
+}
+
+/** True when `value` is a valid plugin directory/manifest name. */
+export function isValidPluginName(value: unknown): value is string {
+  return typeof value === 'string' && PLUGIN_NAME_RE.test(value);
+}
+
+/** True when `value` is a non-null, non-array object record. */
+export function isPluginRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Extract a human-readable error message from an unknown thrown value. */
+export function pluginErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 // ---------------------------------------------------------------------------
 // PluginManifest — the <dir>/manifest.json schema
