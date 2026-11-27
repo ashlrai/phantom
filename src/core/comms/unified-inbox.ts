@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirty-four local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates thirty-five local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -49,6 +49,22 @@
  *               answered inbound's key (`--reply-to`, `--idempotency-key`)
  *               retries only the unconfirmed destinations. Act:
  *               `phm comms thread`, `phm comms send-owner --reply-to`.
+ *   owner-pair  a live iMessage owner-pairing wait — the one pairing text
+ *               `phm owner pair imessage` or the owner-live self-tick sent
+ *               to Mason's own handles is still inside its YES window
+ *               (`readOwnerPairPending`, the same `comms/owner-pair.json`
+ *               `phm owner pair status` reads, minus the handles — only the
+ *               sent count ever leaves the store). Only Mason can finish it:
+ *               the first own handle answering YES binds, anything else
+ *               binds nothing. An expired window is a closed wait, not
+ *               pending work; a bound owner makes any leftover record inert
+ *               residue; a verified-absent state file is 'missing' and a
+ *               file that cannot be read or parsed 'unavailable' — never an
+ *               empty wait passed off as fact. `since` is the send time and
+ *               `expiresAt` the real YES-window deadline. Act:
+ *               `phm owner pair status`, `phm owner pair imessage` (a
+ *               waiting pair is checked first, so re-running it after the
+ *               YES finishes the binding).
  *   drafts      outbound email drafts still pending approval
  *               (`phm drafts list --status pending`), act: show/approve/reject —
  *               plus pending Comms-agent reply drafts that have no cos mirror
@@ -628,6 +644,8 @@ import { probeOutboxDir, readEmailOutbox, type EmailOutboxEntry, type EmailOutbo
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
 import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
 import { readOwnerAwaitingReplies, readOwnerUndeliveredReplies, type OwnerAwaitingReplies, type OwnerUndeliveredReplies } from './owner-thread.js';
+import { fixedOwnerConfigDir } from './owner-channel.js';
+import { readOwnerPairPending, type OwnerPairPendingRead } from './owner-pair-pending.js';
 import { commsRequestAgeStartMs, commsRequestTtlMs, DEFAULT_REQUEST_TTL_HOURS, readCommsRequests, type CommsRequestsRead } from './requests.js';
 import { probePauseState, type PauseProbe } from './pause.js';
 import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
@@ -673,7 +691,7 @@ const SUGGESTED_LEASE_MS = 600_000;
 /** Every pending-work source the unified view can report, in display order. */
 export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
-  'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
+  'owner-delivery', 'owner-pair', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
   'send-gate', 'router-queue', 'channel-health',
@@ -695,7 +713,7 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
  * `--kind` filters on. */
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
-  'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
+  'owner-reply-undelivered', 'owner-pair-waiting', 'draft-approval', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
   'board-delivery', 'board-task', 'work-board-received', 'work-board-assigned', 'work-board-blocked',
   'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'session-handoff', 'org-membership', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
@@ -919,6 +937,11 @@ export interface UnifiedInboxOptions {
   readOwnerAwaiting?: (options: { runsDir: string }) => OwnerAwaitingReplies;
   /** Undelivered-reply seam; default reads the same owner thread plus its delivery receipts. */
   readOwnerUndelivered?: (options: { runsDir: string }) => OwnerUndeliveredReplies;
+  /** Owner-pair seam; default reads `<fixedOwnerConfigDir()>/comms/owner-pair.json`
+   * through `readOwnerPairPending` — the same state file `phm owner pair status`
+   * and the owner-live self-tick consult, minus the handles (only the sent count
+   * ever leaves the store). */
+  readOwnerPair?: (options: { configDir: string }) => OwnerPairPendingRead;
   readConversations?: typeof readAgentConversations;
   /** Wake-hint seam; default reads `readAllWakes` fleet-wide under the same
    * bus root and runs dir `agents bus wakes --all`/`fleet_agent_wakes` use. */
@@ -1258,6 +1281,55 @@ function ownerDeliveryItems(read: NonNullable<UnifiedInboxOptions['readOwnerUnde
       act,
     };
   });
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
+/** Epoch-ms → ISO only inside the range `Date` can represent; anything else
+ * stays null — an unparseable store time is unknown, never a fabricated one. */
+const isoMs = (ms: number): string | null =>
+  Number.isFinite(ms) && Math.abs(ms) <= 8_640_000_000_000_000 ? iso(ms) : null;
+
+/**
+ * A live iMessage owner-pairing wait — the one pairing text
+ * `phm owner pair imessage` or the owner-live self-tick sent to Mason's own
+ * handles is still inside its YES window. Until now the wait was invisible
+ * here: `phm owner pair status` and `phm fleet owner-live` were the only
+ * surfaces, so a pairing Mason never answered looked like nothing pending.
+ * Only Mason can finish it — the first own handle answering YES binds and
+ * anything else binds nothing — so it lists as a warn `owner-pair-waiting`
+ * item carrying the sent-handle count (never the handles), `since` the send
+ * time and `expiresAt` the real YES-window deadline the record keeps. An
+ * expired window is a closed wait, not pending work; a bound owner makes any
+ * leftover record inert residue the next pair check clears; a verified-
+ * absent state file is 'missing' and a file that cannot be read or parsed
+ * 'unavailable' — a pending YES wait it may hide stays unknown, never an
+ * empty wait passed off as fact.
+ */
+function ownerPairItems(read: NonNullable<UnifiedInboxOptions['readOwnerPair']>, configDir: string,
+  now: () => number): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: OwnerPairPendingRead;
+  try { result = read({ configDir }); } catch { result = { status: 'unavailable' }; }
+  if (result.status !== 'ok') {
+    return { report: { state: result.status, pending: result.status === 'missing' ? 0 : null }, items: [] };
+  }
+  const pending = result.pending;
+  const live = pending !== null && pending.expiresAt > now();
+  if (pending === null || result.paired || !live) {
+    return { report: { state: 'healthy', pending: 0 }, items: [] };
+  }
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [{
+    id: 'owner-pair:pending',
+    source: 'owner-pair',
+    kind: 'owner-pair-waiting',
+    severity: 'warn',
+    // Answering YES is Mason's own step; nothing here blocks other work.
+    blocking: false,
+    title: 'iMessage owner pairing waiting for YES',
+    detail: oneLine(`the pairing text went to ${pending.sent} own handle(s) — the first handle that answers YES binds; anything else binds nothing`, DETAIL_MAX) || null,
+    since: isoMs(pending.startedAt),
+    expiresAt: isoMs(pending.expiresAt),
+    act: ['phm owner pair status --json', 'phm owner pair imessage'],
+  }];
   return { report: { state: 'healthy', pending: items.length }, items };
 }
 
@@ -3798,6 +3870,8 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const teammates = teammateItems(options.readTexts ?? readTeammateTexts, options.runsDir, now, teammateTasks.coveredResultRowids);
   const ownerThread = ownerThreadItems(options.readOwnerAwaiting ?? readOwnerAwaitingReplies, options.runsDir);
   const ownerDelivery = ownerDeliveryItems(options.readOwnerUndelivered ?? readOwnerUndeliveredReplies, options.runsDir);
+  const ownerPair = ownerPairItems(options.readOwnerPair ?? ((o) => readOwnerPairPending(o.configDir)),
+    fixedOwnerConfigDir(), now);
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
   const bus = busItems(options);
   const mailbox = mailboxItems(options.readMailbox ?? readMailboxPending, options);
@@ -3839,6 +3913,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'teammate-tasks': teammateTasks.report,
     'owner-thread': ownerThread.report,
     'owner-delivery': ownerDelivery.report,
+    'owner-pair': ownerPair.report,
     drafts: drafts.report,
     bus: bus.report,
     mailbox: mailbox.report,
@@ -3868,7 +3943,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'router-queue': routerQueue.report,
     'channel-health': channelHealth.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
