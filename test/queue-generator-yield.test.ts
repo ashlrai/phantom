@@ -213,6 +213,31 @@ describe('generator yield', () => {
       ]);
     }
   });
+  it('keeps unknown sources out of job attribution while counting their decisions', () => {
+    const explicit = 'RQ-DRAIN-EXPLICIT';
+    const drafted = 'RQ-DRAIN-DRAFTED';
+    const inferred = 'RQ-DRAIN-INFERRED';
+    const report = generatorYield([
+      row({ job: explicit, event: 'launch', src: 'bets' }),
+      row({ job: explicit, state: 'MERGED', src: ' UnKnOwN ' }),
+      row({ job: drafted, event: 'launch', src: 'unknown' }),
+      row({ job: drafted, state: 'MERGED' }),
+      row({ job: inferred, event: 'launch', src: 'UNKNOWN' }),
+    ].join('\n'), 24, now, [
+      row({ job: explicit, event: 'drafted', src: 'ideas' }),
+      row({ job: drafted, event: 'drafted', src: 'ideas' }),
+      row({ job: drafted, event: 'drafted', src: 'UNKNOWN' }),
+      row({ job: inferred, event: 'drafted' }),
+      row({ job: inferred, event: 'rejected', src: ' Unknown ', reason: 'duplicate' }),
+    ].join('\n'));
+
+    expect(report.generators).toMatchObject([
+      { generator: 'bets', jobs: 1, launched: 1, merged: 1, drafted: 0 },
+      { generator: 'drain', jobs: 1, launched: 1, merged: 0, drafted: 0 },
+      { generator: 'ideas', jobs: 1, launched: 1, merged: 1, drafted: 2 },
+      { generator: 'unknown', jobs: 0, launched: 0, drafted: 2, rejected: 1 },
+    ]);
+  });
   it('takes lifecycle and generation evidence only from their respective journals', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'generator-yield-'));
     try {
