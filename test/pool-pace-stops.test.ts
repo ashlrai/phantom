@@ -94,6 +94,9 @@ it('explains free slots, stale provider records, history and exhausted pools wit
   expect(await cmdPoolWhy(['grok', '--json'], read)).toBe(0);
   expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({ schema: 'pool.why.v1', verdict: 'stale', explanation: expect.stringContaining('stale (72h)') });
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  expect(await cmdPoolWhy(['--help'])).toBe(0);
+  expect(await cmdPoolWhy(['-h'])).toBe(0);
+  expect(await cmdPool(['why', '--help'])).toBe(0);
   expect(await cmdPool(['why', '../bad'])).toBe(2);
   expect(await cmdPoolWhy(['absent'], read)).toBe(1);
   expect(error).toHaveBeenCalledTimes(2);

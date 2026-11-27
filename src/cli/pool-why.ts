@@ -1,9 +1,13 @@
 /** Explain the same typed evidence the leader reads. Read-only. */
 import { readFleetPace, type FleetPaceV1 } from '../core/fleet/pace-verdict.js';
+
+const USAGE = 'Usage: phm pool why <pool> [--json]';
+
 export async function cmdPoolWhy(args: string[], read: () => Promise<FleetPaceV1> = readFleetPace): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   const [pool, ...flags] = args;
   if (!pool || !/^[a-z0-9][a-z0-9._-]{0,79}$/.test(pool) || flags.length > 1 || flags.some(f => f !== '--json')) {
-    console.error('Usage: phm pool why <pool> [--json]'); return 2;
+    console.error(USAGE); return 2;
   }
   const row = (await read()).pools.find(p => p.pool === pool);
   if (!row) { console.error('Pool not recorded'); return 1; }
