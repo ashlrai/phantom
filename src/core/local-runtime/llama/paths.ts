@@ -8,11 +8,12 @@
  * none of them.
  */
 
+import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 /** `~/.ashlr` — the hub root. */
-export function ashlrHome(): string {
+function ashlrHome(): string {
   return join(homedir(), '.ashlr');
 }
 
@@ -81,14 +82,13 @@ export const LAUNCH_AGENT_LABEL = 'ai.ashlr.local-runtime';
 /** launchd job label for the Anthropic normalising proxy. */
 export const ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL = 'ai.ashlr.anthropic-proxy';
 
+function launchAgentPlistForLabel(label: string): string {
+  return join(homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
+}
+
 /** `~/Library/LaunchAgents/ai.ashlr.anthropic-proxy.plist`. */
 export function anthropicProxyPlistPath(): string {
-  return join(
-    homedir(),
-    'Library',
-    'LaunchAgents',
-    `${ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL}.plist`,
-  );
+  return launchAgentPlistForLabel(ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL);
 }
 
 /**
@@ -99,7 +99,7 @@ export function anthropicProxyPlistPath(): string {
  * explicit `--install` and the path is printed to the operator.
  */
 export function launchAgentPlistPath(): string {
-  return join(homedir(), 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`);
+  return launchAgentPlistForLabel(LAUNCH_AGENT_LABEL);
 }
 
 /**
@@ -110,4 +110,51 @@ export function ollamaModelsRoot(): string {
   const override = process.env['OLLAMA_MODELS']?.trim();
   if (override) return override;
   return join(homedir(), '.ollama', 'models');
+}
+
+// ---------------------------------------------------------------------------
+// Shared primitive guards and bounded-file readers for the local-runtime family.
+// ---------------------------------------------------------------------------
+
+/** True when `value` is a non-null, non-array object record. */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** True when `value` is a safe integer >= 0. */
+export function isNonNegativeSafeInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+/** True when `value` is a safe integer > 0. */
+export function isPositiveSafeInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+/** Extract a human-readable error message without throwing. */
+export function formatErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** True when `path` resolves to a regular file. Never throws. */
+export function isRegularFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read and parse a small regular JSON file up to `maxBytes`.
+ * Returns null on absence, non-regular file, size overflow or parse failure.
+ */
+export function readBoundedJsonFile(path: string, maxBytes: number): unknown | null {
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile() || stat.size > maxBytes) return null;
+    return JSON.parse(readFileSync(path, 'utf8')) as unknown;
+  } catch {
+    return null;
+  }
 }

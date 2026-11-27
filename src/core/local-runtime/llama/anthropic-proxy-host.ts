@@ -31,6 +31,7 @@
 import { originFor, resolveLlamaRuntimeConfig } from './config.js';
 import { startAnthropicProxy } from './anthropic-proxy.js';
 import type { AnthropicProxyHandle, AnthropicRequestAttribution } from './anthropic-proxy.js';
+import { isNonNegativeSafeInt } from './paths.js';
 import { loadConfigReadOnly } from '../../config.js';
 
 /** Explicit opt-in; one bounded numeric record, using the existing host log.
@@ -44,8 +45,7 @@ export function requestAttributionLogger(
     try {
       if (output.destroyed || output.writableNeedDrain) return;
       // Project each field explicitly, even if an untyped caller adds content.
-      const number = (value: unknown): number | null =>
-        typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+      const number = (value: unknown): number | null => (isNonNegativeSafeInt(value) ? value : null);
       const record = {
         requestBytes: number(metadata.requestBytes),
         forwardedBytes: number(metadata.forwardedBytes),

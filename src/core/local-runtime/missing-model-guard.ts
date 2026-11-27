@@ -40,10 +40,15 @@
  * the install path freezes into the shim like `resolve-model`'s.
  */
 
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { localRuntimeDir } from './llama/paths.js';
+import {
+  isRecord,
+  isRegularFile,
+  localRuntimeDir,
+  readBoundedJsonFile,
+} from './llama/paths.js';
 
 /**
  * Minimum time between attempts once the model is known missing: 30 minutes.
@@ -54,7 +59,7 @@ import { localRuntimeDir } from './llama/paths.js';
 export const MISSING_MODEL_BACKOFF_MS = 30 * 60 * 1000;
 
 /** How often a holding attempt re-stats the model path for early recovery. */
-export const MISSING_MODEL_POLL_MS = 30 * 1000;
+const MISSING_MODEL_POLL_MS = 30 * 1000;
 
 /** What a start attempt should do about a model that may be absent. */
 export type MissingModelDecision = 'run' | 'blocked' | 'retry-after';
@@ -111,16 +116,10 @@ export function missingModelStatePath(): string {
  * report. Never throws.
  */
 export function readMissingModelLastFailedAt(statePath: string): number | null {
-  try {
-    const stat = statSync(statePath);
-    if (!stat.isFile() || stat.size > STATE_FILE_MAX_BYTES) return null;
-    const parsed: unknown = JSON.parse(readFileSync(statePath, 'utf8'));
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-    const at = (parsed as Record<string, unknown>)['lastFailedAt'];
-    return typeof at === 'number' && Number.isFinite(at) && at >= 0 ? at : null;
-  } catch {
-    return null;
-  }
+  const parsed = readBoundedJsonFile(statePath, STATE_FILE_MAX_BYTES);
+  if (!isRecord(parsed)) return null;
+  const at = parsed['lastFailedAt'];
+  return typeof at === 'number' && Number.isFinite(at) && at >= 0 ? at : null;
 }
 
 /**
@@ -185,14 +184,6 @@ export interface CheckMissingModelOptions {
   fileExists?: (path: string) => boolean;
 }
 
-function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
-
 /**
  * The seam {@link decideMissingModel} documents: stat the model, read the
  * stamp, decide — and on a fresh `blocked`, write the stamp BEFORE returning
@@ -203,7 +194,7 @@ export function checkMissingModel(options: CheckMissingModelOptions): MissingMod
   const now = options.nowMs ?? Date.now();
   const backoff = options.backoffMs ?? MISSING_MODEL_BACKOFF_MS;
   const statePath = options.statePath ?? missingModelStatePath();
-  const fileExists = options.fileExists ?? isFile;
+  const fileExists = options.fileExists ?? isRegularFile;
   const lastFailedAtMs = readMissingModelLastFailedAt(statePath);
   const decision = decideMissingModel({
     modelExists: fileExists(options.modelPath),
@@ -252,7 +243,7 @@ export interface WaitMissingModelBackoffOptions {
 export async function waitMissingModelBackoff(
   options: WaitMissingModelBackoffOptions,
 ): Promise<'run' | 'expired'> {
-  const fileExists = options.fileExists ?? isFile;
+  const fileExists = options.fileExists ?? isRegularFile;
   const now = options.now ?? (() => Date.now());
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));

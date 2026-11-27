@@ -62,13 +62,15 @@ import {
   anthropicProxyHostInvocation,
   anthropicProxyLogPaths,
   buildLlamaServerArgs,
+  formatErrorMessage,
   installAnthropicProxyAgent,
   installLaunchAgent,
   isLoopbackHost,
-  launchAgentInstalled,
+  isRegularFile,
   launchAgentLoaded,
   launchAgentLogPaths,
   launchAgentPlistPath,
+  originFor,
   resolveLlamaRuntimeConfig,
   resolveOllamaModelBlob,
   restartLocalRuntime,
@@ -79,6 +81,7 @@ import {
   uninstallLaunchAgent,
 } from '../core/local-runtime/llama/index.js';
 import type {
+  LaunchAgentMutation,
   LifecycleOptions,
   LlamaRuntimeConfig,
   LlamaRuntimeSnapshot,
@@ -146,6 +149,14 @@ function parseFlags(args: string[]): ParsedFlags {
     return value;
   };
 
+  const strFlag = (raw: string | undefined, name: string): string | undefined => {
+    if (!raw || raw.startsWith('--')) {
+      out.error = `${name} expects a value`;
+      return undefined;
+    }
+    return raw;
+  };
+
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i] as string;
     switch (arg) {
@@ -156,18 +167,8 @@ function parseFlags(args: string[]): ParsedFlags {
       case '--ctx': out.ctx = num(args[++i], '--ctx', 512, 4_194_304); break;
       case '--wait-ms': out.waitMs = num(args[++i], '--wait-ms', 1_000, 3_600_000); break;
       case '--lines': out.lines = num(args[++i], '--lines', 1, 5_000); break;
-      case '--model': {
-        const value = args[++i];
-        if (!value || value.startsWith('--')) { out.error = '--model expects a value'; break; }
-        out.model = value;
-        break;
-      }
-      case '--model-path': {
-        const value = args[++i];
-        if (!value || value.startsWith('--')) { out.error = '--model-path expects a value'; break; }
-        out.modelPath = value;
-        break;
-      }
+      case '--model': out.model = strFlag(args[++i], '--model'); break;
+      case '--model-path': out.modelPath = strFlag(args[++i], '--model-path'); break;
       default:
         // A bare word is a positional, not a bad flag. `reshape <plan|execute>`
         // takes one; rejecting it here made the subcommand unreachable.
@@ -327,6 +328,24 @@ async function runLifecycle(
   return result.ok ? 0 : 1;
 }
 
+function reportRefused(
+  flags: ParsedFlags,
+  c: ReturnType<typeof makeColors>,
+  detail: string,
+  extra: Record<string, unknown> = {},
+): number {
+  if (flags.json) {
+    console.log(JSON.stringify({ ok: false, action: 'refused', detail, ...extra }, null, 2));
+  } else {
+    console.error(`${c.red('refused')}  ${detail}`);
+  }
+  return 1;
+}
+
+function printMutationLine(c: ReturnType<typeof makeColors>, mutation: LaunchAgentMutation): void {
+  console.log(`${mutation.ok ? c.green('ok') : c.red('failed')}  ${mutation.detail}`);
+}
+
 /**
  * `install` — write and load the launch agent.
  *
@@ -347,21 +366,14 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
       'when you want 24/7 operation; this command will never touch the sentinel.\n' +
       `Meanwhile \`ashlr local-runtime start\` runs it for this session.\n` +
       `Would have written: ${plistPath}`;
-    if (flags.json) {
-      console.log(JSON.stringify({ ok: false, action: 'refused', detail: message, plistPath }, null, 2));
-    } else {
-      console.error(c.red('refused') + '  ' + message);
-    }
-    return 1;
+    return reportRefused(flags, c, message, { plistPath });
   }
 
   if (runtime.binPath === null) {
     const message =
       'llama-server is not on PATH. Install llama.cpp (`brew install llama.cpp`) or set ' +
       'LLAMA_SERVER_BIN to its absolute path.';
-    if (flags.json) console.log(JSON.stringify({ ok: false, action: 'refused', detail: message }, null, 2));
-    else console.error(c.red('refused') + '  ' + message);
-    return 1;
+    return reportRefused(flags, c, message);
   }
 
   // A permanently-installed, LAN-exposed, UNAUTHENTICATED inference server is
@@ -377,9 +389,7 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
       'can reach the port can run inference and read every slot\'s prompt via /slots — and ' +
       'a launch agent brings it back at every login, unattended. Bind it to 127.0.0.1, or run ' +
       '`ashlr local-runtime start` for an attended session you can see and stop.';
-    if (flags.json) console.log(JSON.stringify({ ok: false, action: 'refused', detail: message }, null, 2));
-    else console.error(c.red('refused') + '  ' + message);
-    return 1;
+    return reportRefused(flags, c, message);
   }
 
   // Resolve the GGUF now so a broken reference is refused at install time
@@ -393,11 +403,7 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
   let modelPath = runtime.modelPath;
   if (modelPath === null) {
     const resolved = resolveOllamaModelBlob(runtime.modelRef);
-    if (!resolved.ok) {
-      if (flags.json) console.log(JSON.stringify({ ok: false, action: 'refused', detail: resolved.reason }, null, 2));
-      else console.error(c.red('refused') + '  ' + resolved.reason);
-      return 1;
-    }
+    if (!resolved.ok) return reportRefused(flags, c, resolved.reason);
     modelPath = resolved.blobPath;
   }
 
@@ -442,8 +448,8 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
     return mutation.ok && proxyMutation.ok ? 0 : 1;
   }
 
-  console.log(`${mutation.ok ? c.green('ok') : c.red('failed')}  ${mutation.detail}`);
-  console.log(`${proxyMutation.ok ? c.green('ok') : c.red('failed')}  ${proxyMutation.detail}`);
+  printMutationLine(c, mutation);
+  printMutationLine(c, proxyMutation);
   console.log('');
   console.log(c.yellow('This wrote files OUTSIDE the repository, in your login configuration:'));
   console.log(`  ${mutation.plistPath}`);
@@ -453,7 +459,7 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
   console.log(c.dim(`         ${logs.stderr}`));
   console.log(c.dim(`         ${proxyLogs.stdout}`));
   console.log(c.dim(`         ${proxyLogs.stderr}`));
-  console.log(c.dim(`  Anthropic clients: http://${runtime.host}:${runtime.anthropicPort}/v1`));
+  console.log(c.dim(`  Anthropic clients: ${originFor(runtime.host, runtime.anthropicPort)}/v1`));
   return mutation.ok && proxyMutation.ok ? 0 : 1;
 }
 
@@ -473,12 +479,8 @@ function selfLocalRuntimeCommand(verb: 'resolve-model' | 'missing-model-guard'):
   const exec = process.execPath;
   if (typeof exec !== 'string' || !isAbsolute(exec)) return null;
   const entry = process.argv[1];
-  if (typeof entry === 'string' && isAbsolute(entry)) {
-    try {
-      if (statSync(entry).isFile()) return [exec, entry, 'local-runtime', verb];
-    } catch {
-      // Fall through to the bare executable.
-    }
+  if (typeof entry === 'string' && isAbsolute(entry) && isRegularFile(entry)) {
+    return [exec, entry, 'local-runtime', verb];
   }
   // A packaged binary: `execPath` IS ashlr, so it takes the subcommand itself.
   return entry === undefined ? [exec, 'local-runtime', verb] : null;
@@ -495,13 +497,9 @@ function selfLocalRuntimeCommand(verb: 'resolve-model' | 'missing-model-guard'):
  */
 function cmdResolveModel(flags: ParsedFlags, runtime: LlamaRuntimeConfig): number {
   if (runtime.modelPath !== null) {
-    try {
-      if (statSync(runtime.modelPath).isFile()) {
-        console.log(runtime.modelPath);
-        return 0;
-      }
-    } catch {
-      // Reported below as unresolvable.
+    if (isRegularFile(runtime.modelPath)) {
+      console.log(runtime.modelPath);
+      return 0;
     }
     console.error(`configured modelPath does not exist: ${runtime.modelPath}`);
     return 1;
@@ -563,9 +561,9 @@ function cmdUninstall(flags: ParsedFlags): number {
     return mutation.ok && proxyMutation.ok ? 0 : 1;
   }
   const c = makeColors(isTty());
-  console.log(`${mutation.ok ? c.green('ok') : c.red('failed')}  ${mutation.detail}`);
+  printMutationLine(c, mutation);
   console.log(c.dim(`  ${mutation.plistPath}`));
-  console.log(`${proxyMutation.ok ? c.green('ok') : c.red('failed')}  ${proxyMutation.detail}`);
+  printMutationLine(c, proxyMutation);
   console.log(c.dim(`  ${proxyMutation.plistPath}`));
   return mutation.ok && proxyMutation.ok ? 0 : 1;
 }
@@ -585,7 +583,7 @@ function cmdLogs(flags: ParsedFlags): number {
     console.log(text.slice(Math.max(0, text.length - lines)).join('\n').trimEnd());
     return 0;
   } catch (err: unknown) {
-    console.error(`could not read ${stderr}: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`could not read ${stderr}: ${formatErrorMessage(err)}`);
     return 1;
   }
 }
@@ -637,12 +635,7 @@ export async function cmdLocalRuntime(args: string[]): Promise<number> {
   } catch (err: unknown) {
     // A throw here is a bug, not an expected state — report it as one rather
     // than letting a stack trace be the user interface.
-    console.error(`local-runtime failed unexpectedly: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`local-runtime failed unexpectedly: ${formatErrorMessage(err)}`);
     return 1;
   }
-}
-
-/** True when the launch agent is present — exported for the doctor surface. */
-export function localRuntimeLaunchAgentInstalled(): boolean {
-  return launchAgentInstalled();
 }

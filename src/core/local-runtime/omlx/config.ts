@@ -1,6 +1,5 @@
 /** Offline oMLX settings planner. No host probes, credentials or process starts. */
-const GIB = 1024 ** 3;
-const MIB = 1024 ** 2;
+import { OMLX_GIB, OMLX_MIB, floorToMib, isOmlxRecord } from './models.js';
 
 /** The stable line the default loopback lane stays on (0.7.2 or later stable). */
 const STABLE_VERSION = /^(?:0\.(?:[7-9]|[1-9]\d+)\.\d+|[1-9]\d*\.\d+\.\d+)$/;
@@ -70,8 +69,8 @@ function bytes(value: unknown): number {
 }
 
 function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected an object');
-  return value as Record<string, unknown>;
+  if (!isOmlxRecord(value)) throw new Error('Expected an object');
+  return value;
 }
 
 function canarySpec(request: Record<string, unknown>): { lane: string; version: string; port: number } | null {
@@ -140,7 +139,7 @@ export function planOmlxConfig(input: unknown, now = Date.now()): OmlxPlan {
   if (canary !== null && wired === null) throw new Error('Canary requires a live memguard wired limit');
   const reserveBytes = Math.ceil(total * 0.30);
   const allowance = wired === null ? headroom : Math.min(headroom, wired);
-  const budgetBytes = Math.floor(Math.min(allowance, Math.max(0, free - reserveBytes)) / MIB) * MIB;
+  const budgetBytes = floorToMib(Math.min(allowance, Math.max(0, free - reserveBytes)));
   if (!budgetBytes) throw new Error('No memory available while keeping 30% free');
   if (!Array.isArray(request.models) || !request.models.length) throw new Error('Models required');
   const models: Record<string, ModelPlan> = Object.create(null) as Record<string, ModelPlan>;
@@ -158,7 +157,7 @@ export function planOmlxConfig(input: unknown, now = Date.now()): OmlxPlan {
     if (model.engine !== 'mlx' && model.engine !== 'splash') throw new Error('Model engine must be mlx or splash');
     if (model.longContext !== undefined && typeof model.longContext !== 'boolean') throw new Error('longContext must be boolean');
     const allocation = bytes(model.budgetBytes);
-    if (!allocation || allocation % MIB) throw new Error('Model budgets must be positive whole MiB');
+    if (!allocation || allocation % OMLX_MIB) throw new Error('Model budgets must be positive whole MiB');
     if (allocation > budgetBytes - allocatedBytes) throw new Error('Concurrent models exceed memguard budget');
     allocatedBytes += allocation;
     const bits = model.longContext === true ? 4 : 8;
@@ -193,8 +192,8 @@ export function planOmlxConfig(input: unknown, now = Date.now()): OmlxPlan {
     reserveBytes, budgetBytes, allocatedBytes,
     settings: {
       server: { host: '127.0.0.1', port: DEFAULT_PORT },
-      memory: { prefill_memory_guard: true, memory_guard_tier: 'custom', memory_guard_custom_ceiling_gb: defaultCeiling / GIB },
-      integrations: { splash_kv_format: 'int8', splash_max_memory_gb: (splashCount ? splashBytes : defaultCeiling) / GIB },
+      memory: { prefill_memory_guard: true, memory_guard_tier: 'custom', memory_guard_custom_ceiling_gb: defaultCeiling / OMLX_GIB },
+      integrations: { splash_kv_format: 'int8', splash_max_memory_gb: (splashCount ? splashBytes : defaultCeiling) / OMLX_GIB },
     },
     modelSettings: { version: 1, models },
   };
@@ -206,9 +205,9 @@ export function planOmlxConfig(input: unknown, now = Date.now()): OmlxPlan {
       provenance: { ...CANARY_PROVENANCE },
       settings: {
         server: { host: '127.0.0.1', port: canary.port },
-        memory: { prefill_memory_guard: true, memory_guard_tier: 'custom', memory_guard_custom_ceiling_gb: canaryAllocated / GIB },
+        memory: { prefill_memory_guard: true, memory_guard_tier: 'custom', memory_guard_custom_ceiling_gb: canaryAllocated / OMLX_GIB },
         ...(canaryModels[canary.lane]!.external_engine === 'splash'
-          ? { integrations: { splash_kv_format: 'int8', splash_max_memory_gb: canaryAllocated / GIB } }
+          ? { integrations: { splash_kv_format: 'int8', splash_max_memory_gb: canaryAllocated / OMLX_GIB } }
           : {}),
       },
       modelSettings: { version: 1, models: canaryModels },

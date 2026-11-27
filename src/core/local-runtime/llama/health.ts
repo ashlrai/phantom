@@ -22,9 +22,10 @@
 
 import { readKillSwitch } from '../../sandbox/policy.js';
 import { launchAgentInstalled } from './launchd.js';
+import { formatErrorMessage, isNonNegativeSafeInt, isPositiveSafeInt, isRecord } from './paths.js';
 import { argvMatchesRecord, findLlamaServersOnPortAsync, processAliveAsync, processArgvAsync } from './process.js';
 import { readOwnershipRecord } from './record.js';
-import { resolveLlamaServerBaseUrl } from './config.js';
+import { originFromBaseUrl, resolveLlamaServerBaseUrl } from './config.js';
 import type {
   LlamaOwnershipRecord,
   LlamaRuntimeSnapshot,
@@ -68,7 +69,7 @@ export interface LlamaProbeReadings {
  * while measuring docs/LOCAL-FLEET.md. Carried verbatim as the runtime's words
  * so a surface can show evidence beside its own sentence.
  */
-export const OLLAMA_PARALLEL_REFUSAL =
+const OLLAMA_PARALLEL_REFUSAL =
   'ollama: "model architecture does not currently support parallel requests" ' +
   '(architecture=qwen35) — requests queue rather than batch, and OLLAMA_NUM_PARALLEL ' +
   'does not change it';
@@ -92,7 +93,6 @@ export function identifyRuntime(
     return 'ollama';
   }
   if (state === 'up' || state === 'loading') return 'llama-server';
-  if (state === 'down') return 'unknown';
   return 'unknown';
 }
 
@@ -116,11 +116,9 @@ async function readEndpoint(
     return { httpStatus: response.status, body, error: parseError };
   } catch (err: unknown) {
     const message =
-      err instanceof Error
-        ? err.name === 'AbortError'
-          ? `timed out after ${timeoutMs}ms`
-          : err.message
-        : String(err);
+      err instanceof Error && err.name === 'AbortError'
+        ? `timed out after ${timeoutMs}ms`
+        : formatErrorMessage(err);
     return { httpStatus: null, body: null, error: message };
   } finally {
     // Cleared only after the body read, so a server that hangs the body is
@@ -129,17 +127,22 @@ async function readEndpoint(
   }
 }
 
+/** True when an endpoint returned HTTP 200 with a cleanly parsed body. */
+function isOkReading(reading: EndpointReading): boolean {
+  return reading.httpStatus === 200 && reading.error === null;
+}
+
 /** Read a numeric field out of an unknown object. */
 function numField(body: unknown, key: string): number | null {
-  if (typeof body !== 'object' || body === null) return null;
-  const value = (body as Record<string, unknown>)[key];
+  if (!isRecord(body)) return null;
+  const value = body[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 /** Read a string field out of an unknown object. */
 function strField(body: unknown, key: string): string | null {
-  if (typeof body !== 'object' || body === null) return null;
-  const value = (body as Record<string, unknown>)[key];
+  if (!isRecord(body)) return null;
+  const value = body[key];
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
@@ -181,7 +184,7 @@ export function deriveSlotCapacity(props: EndpointReading, slots: EndpointReadin
 
   let configured: number | null = null;
   let source: LlamaSlotCapacity['source'] = 'unknown';
-  if (fromProps !== null && Number.isSafeInteger(fromProps) && fromProps > 0) {
+  if (isPositiveSafeInt(fromProps)) {
     configured = fromProps;
     source = 'props';
   } else if (slotList !== null && slotList.length > 0) {
@@ -190,24 +193,22 @@ export function deriveSlotCapacity(props: EndpointReading, slots: EndpointReadin
   }
 
   let busy: number | null = null;
-  if (slots.httpStatus === 200 && slots.error === null && slotList !== null && slotList.length === configured) {
+  if (isOkReading(slots) && slotList !== null && slotList.length === configured) {
     const ids = new Set<string>();
     const activity = slotList.map((slot): boolean | null => {
-      if (typeof slot !== 'object' || slot === null) return null;
-      const record = slot as Record<string, unknown>;
+      if (!isRecord(slot)) return null;
       // IDs are optional in older builds. Identifiable duplicates cannot
       // establish complete coverage, even when the array length matches.
-      if (Object.hasOwn(record, 'id')) {
-        const id = record['id'];
-        if (!(typeof id === 'number' && Number.isSafeInteger(id) && id >= 0)
-          && !(typeof id === 'string' && id.trim().length > 0)) return null;
+      if (Object.hasOwn(slot, 'id')) {
+        const id = slot['id'];
+        if (!isNonNegativeSafeInt(id) && !(typeof id === 'string' && id.trim().length > 0)) return null;
         const key = String(id).trim();
         if (ids.has(key)) return null;
         ids.add(key);
       }
-      if (typeof record['is_processing'] === 'boolean') return record['is_processing'];
+      if (typeof slot['is_processing'] === 'boolean') return slot['is_processing'];
       // Older builds report a numeric state; 0 is idle, anything else is not.
-      const state = record['state'];
+      const state = slot['state'];
       return typeof state === 'number' && Number.isSafeInteger(state) ? state !== 0 : null;
     });
     // Unknown or partial activity must not masquerade as an idle slot. Total
@@ -226,35 +227,31 @@ export function deriveSlotCapacity(props: EndpointReading, slots: EndpointReadin
 export function deriveSlotContext(props: EndpointReading, slots: EndpointReading): {
   perSlot: number | null; totalSlots: number | null; source: 'props' | 'slots' | null;
 } {
-  const usable = (reading: EndpointReading): EndpointReading => reading.httpStatus === 200 && reading.error === null
+  const usable = (reading: EndpointReading): EndpointReading => isOkReading(reading)
     ? reading : { httpStatus: null, body: null, error: reading.error };
   const observedProps = usable(props);
   const observedSlots = usable(slots);
   const totalSlots = deriveSlotCapacity(observedProps, observedSlots).configured;
   const unknown = { perSlot: null, totalSlots, source: null };
-  const positive = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
-  const generation = observedProps.body !== null && typeof observedProps.body === 'object'
-    ? (observedProps.body as Record<string, unknown>)['default_generation_settings'] : null;
-  const rawProps = generation !== null && typeof generation === 'object' && !Array.isArray(generation)
-    ? (generation as Record<string, unknown>)['n_ctx'] : null;
-  if (rawProps !== null && rawProps !== undefined && !positive(rawProps)) return unknown;
-  const fromProps = positive(rawProps) ? rawProps : null;
+  const generation = isRecord(observedProps.body) ? observedProps.body['default_generation_settings'] : null;
+  const rawProps = isRecord(generation) ? generation['n_ctx'] : null;
+  if (rawProps !== null && rawProps !== undefined && !isPositiveSafeInt(rawProps)) return unknown;
+  const fromProps = isPositiveSafeInt(rawProps) ? rawProps : null;
   const list = Array.isArray(observedSlots.body) ? observedSlots.body as unknown[] : null;
-  const reportsContext = list?.some(slot => slot !== null && typeof slot === 'object' && Object.hasOwn(slot, 'n_ctx')) ?? false;
+  const reportsContext = list?.some(slot => isRecord(slot) && Object.hasOwn(slot, 'n_ctx')) ?? false;
   if (!reportsContext) return fromProps === null ? unknown : { perSlot: fromProps, totalSlots, source: 'props' };
   if (totalSlots === null || list === null || list.length !== totalSlots) return unknown;
   const ids = new Set<number>();
   let fromSlots: number | null = null;
   for (const slot of list) {
-    if (slot === null || typeof slot !== 'object' || Array.isArray(slot)) return unknown;
-    const row = slot as Record<string, unknown>;
+    if (!isRecord(slot)) return unknown;
     // Missing IDs cannot prove coverage; string/fractional coercion can hide
     // duplicates. Older IDless payloads do not establish a slot allocation.
-    const id = row['id'];
-    if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 0 || ids.has(id)) return unknown;
+    const id = slot['id'];
+    if (!isNonNegativeSafeInt(id) || ids.has(id)) return unknown;
     ids.add(id);
-    const context = row['n_ctx'];
-    if (!positive(context) || fromSlots !== null && context !== fromSlots || fromProps !== null && context !== fromProps) return unknown;
+    const context = slot['n_ctx'];
+    if (!isPositiveSafeInt(context) || fromSlots !== null && context !== fromSlots || fromProps !== null && context !== fromProps) return unknown;
     fromSlots = context;
   }
   return { perSlot: fromProps ?? fromSlots, totalSlots, source: fromProps === null ? 'slots' : 'props' };
@@ -384,14 +381,7 @@ const defaultFetch: FetchLike = (url, init) =>
 export async function probeLlamaRuntime(options: ProbeOptions = {}): Promise<LlamaRuntimeSnapshot> {
   const record = options.record !== undefined ? options.record : readOwnershipRecord();
   const baseUrl = options.baseUrl ?? resolveLlamaServerBaseUrl();
-  let origin = options.origin ?? null;
-  if (origin === null) {
-    try {
-      origin = new URL(baseUrl).origin;
-    } catch {
-      origin = baseUrl.replace(/\/v1\/?$/, '');
-    }
-  }
+  const origin = options.origin ?? originFromBaseUrl(baseUrl);
 
   let host = record?.host ?? '';
   let port = record?.port ?? 0;
