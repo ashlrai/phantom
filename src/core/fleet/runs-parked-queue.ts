@@ -52,6 +52,8 @@ export interface FleetQueueV1 {
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const PARKED = /^PARKED-([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9][A-Za-z0-9._@-]{0,63}))?$/i;
 const DEP_REASON = /^(?:DEP|DEPENDENCY)$/i;
+/** True for the dependency-gate parked reasons the unmet/met dep detail covers — every other `PARKED-<reason>` group is a different hold the dep reads never resolve. */
+export const isDependencyParkedReason = (reason: string): boolean => DEP_REASON.test(reason);
 const GATE_LINE = /DEPENDENCY\s+GATE[:\s]+([^\n]+)/i;
 const GATE_TOK = /\b([A-Za-z0-9][A-Za-z0-9._-]{0,79})\b/g;
 const GATE_SKIP = new Set(['DEPENDENCY', 'GATE', 'AND', 'OR', 'NONE', 'N/A']);

@@ -17,7 +17,7 @@ import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
 import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
-import type { ParkedMetDep, ParkedUnmetDep } from '../src/core/fleet/runs-parked-queue.js';
+import type { ParkedGroup, ParkedMetDep, ParkedUnmetDep } from '../src/core/fleet/runs-parked-queue.js';
 import type { StuckJob as RunningStuckJob } from '../src/core/fleet/running-stuck.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
@@ -5160,7 +5160,10 @@ describe('readUnifiedInbox jobs stuck', () => {
 
 describe('readUnifiedInbox queue parked', () => {
   const parkedRead = (over: Partial<QueueParkedRead> = {}): QueueParkedRead => ({
-    state: 'healthy', waiting: [], stale: [], ...over,
+    state: 'healthy', waiting: [], stale: [], groups: [], ...over,
+  });
+  const parkedGroup = (over: Partial<ParkedGroup> = {}): ParkedGroup => ({
+    reason: 'BYHAND', lane: 'devin', count: 2, jobs: ['RQ-HAND-1', 'RQ-HAND-2'], ...over,
   });
   const readParked = (q: QueueParkedRead, extra: Partial<UnifiedInboxOptions> = {}) =>
     read({ readQueueParked: async () => q, ...extra });
@@ -5206,6 +5209,54 @@ describe('readUnifiedInbox queue parked', () => {
     expect(staleItem.detail).toContain('never unparked');
   });
 
+  it('lists each non-dependency parked group once as info parked-group, never borrowing the dep verdicts', async () => {
+    const inbox = await readParked(parkedRead({
+      waiting: [waiting()],
+      groups: [
+        parkedGroup(),
+        parkedGroup({ reason: 'MERGERATE', lane: 'codex-local', count: 9, jobs: ['RQ-M-1', 'RQ-M-2', 'RQ-M-3', 'RQ-M-4', 'RQ-M-5', 'RQ-M-6', 'RQ-M-7', 'RQ-M-8'] }),
+        parkedGroup({ reason: 'HOLD', lane: null, count: 1, jobs: ['RQ-HOLD-1'] }),
+      ],
+    }));
+    expect(inbox.sources['queue-parked']).toEqual({ state: 'healthy', pending: 4 });
+    const items = inbox.items.filter(i => i.source === 'queue-parked');
+    expect(items).toHaveLength(4);
+
+    const byHand = items.find(i => i.id === 'queue-parked:BYHAND:devin')!;
+    expect(byHand).toMatchObject({
+      kind: 'parked-group', severity: 'info', blocking: false,
+      title: '2 jobs parked BYHAND',
+      since: null, expiresAt: null,
+      jobIds: ['RQ-HAND-1', 'RQ-HAND-2'],
+      act: ['phm fleet queue-parked', 'phm fleet parked'],
+    });
+    expect(byHand.detail).toContain('lane devin');
+    expect(byHand.detail).toContain('jobs RQ-HAND-1, RQ-HAND-2');
+    expect(byHand.detail).toContain('non-dependency reason');
+
+    // The group's true count is 9 but the projection lists only eight ids —
+    // the overflow is named, never passed off as the whole set.
+    const merge = items.find(i => i.id === 'queue-parked:MERGERATE:codex-local')!;
+    expect(merge.title).toBe('9 jobs parked MERGERATE');
+    expect(merge.detail).toContain('+1 more');
+    expect(merge.jobIds).toHaveLength(8);
+
+    const noLane = items.find(i => i.id === 'queue-parked:HOLD:unknown')!;
+    expect(noLane.detail).toContain('lane unknown');
+    expect(noLane.title).toBe('1 job parked HOLD');
+  });
+
+  it('suppresses parked groups under missing and unavailable like the dep rows', async () => {
+    const groups = [parkedGroup()];
+    const missing = await readParked(parkedRead({ state: 'missing', groups }));
+    expect(missing.sources['queue-parked']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+
+    const unavailable = await readParked(parkedRead({ state: 'unavailable', groups }));
+    expect(unavailable.sources['queue-parked']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+  });
+
   it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
     const missing = await readParked(parkedRead({ state: 'missing', waiting: [waiting()], stale: [stale()] }));
     expect(missing.sources['queue-parked']).toEqual({ state: 'missing', pending: 0 });
@@ -5221,8 +5272,8 @@ describe('readUnifiedInbox queue parked', () => {
   });
 
   it('lists every parked row degraded when the ready read is partial, saying so in the detail', async () => {
-    const inbox = await readParked(parkedRead({ state: 'degraded', waiting: [waiting()], stale: [stale()] }));
-    expect(inbox.sources['queue-parked']).toEqual({ state: 'degraded', pending: 2 });
+    const inbox = await readParked(parkedRead({ state: 'degraded', waiting: [waiting()], stale: [stale()], groups: [parkedGroup()] }));
+    expect(inbox.sources['queue-parked']).toEqual({ state: 'degraded', pending: 3 });
     for (const item of inbox.items.filter(i => i.source === 'queue-parked')) {
       expect(item.detail).toContain('ready.tsv read degraded');
     }
@@ -5238,15 +5289,25 @@ describe('readUnifiedInbox queue parked', () => {
     writeFileSync(join(runsDir, 'queue', 'ready.tsv'), [
       `PARKED-DEP.devin\tRQ-WAIT\tdevin\twork\tphantom\t${waitPrompt}`,
       `PARKED-DEP.codex-local\tRQ-STALE\tcodex-local\twork\tphantom\t${stalePrompt}`,
+      'PARKED-BYHAND.devin\tRQ-HAND-1\tdevin\twork\tphantom\tprompts/hand1.md',
+      'PARKED-BYHAND.devin\tRQ-HAND-2\tdevin\twork\tphantom\tprompts/hand2.md',
+      'PARKED-DEPENDENCY.devin\tRQ-DEP-ALIAS\tdevin\twork\tphantom\tpool/x.md',
       'READY\tRQ-FREE\tdevin\twork\tphantom\tprompts/free.md',
     ].join('\n'), { mode: 0o600 });
     writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'),
       `${JSON.stringify({ event: 'outcome', state: 'MERGED', job: 'RQ-DONE' })}\n`, { mode: 0o600 });
 
     const inbox = await read();
-    expect(inbox.sources['queue-parked']).toEqual({ state: 'healthy', pending: 2 });
+    // DEP rows keep their dedicated items; the DEP alias row has no prompt
+    // gate ids so it lists nowhere — and the two BYHAND rows roll up into
+    // one parked-group item, never one per job.
+    expect(inbox.sources['queue-parked']).toEqual({ state: 'healthy', pending: 3 });
     const items = inbox.items.filter(i => i.source === 'queue-parked');
-    expect(items.map(i => i.id).sort()).toEqual(['queue-parked:RQ-STALE', 'queue-parked:RQ-WAIT']);
+    expect(items.map(i => i.id).sort()).toEqual(['queue-parked:BYHAND:devin', 'queue-parked:RQ-STALE', 'queue-parked:RQ-WAIT']);
+    const group = items.find(i => i.id === 'queue-parked:BYHAND:devin')!;
+    expect(group).toMatchObject({ kind: 'parked-group', severity: 'info', blocking: false, title: '2 jobs parked BYHAND' });
+    expect(group.jobIds).toEqual(['RQ-HAND-1', 'RQ-HAND-2']);
+    expect(group.detail).toContain('lane devin');
     const waitItem = items.find(i => i.id === 'queue-parked:RQ-WAIT')!;
     expect(waitItem).toMatchObject({ kind: 'parked-dep-waiting', severity: 'info' });
     // Only the unmet gate is named — RQ-DONE merged, so this item never cites it.
