@@ -1010,6 +1010,60 @@ describe('channel-filtered inbox reads', () => {
   });
 });
 
+describe('topic-filtered inbox reads', () => {
+  it('keeps only mail addressed to one group-address topic and composes with the other filters', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    // Channel posts under two topics of the same room, plus the room's
+    // default-topic post and mail no group address carries.
+    await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'deploy', text: 'deploy post', id: 'tp-dep' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'review', text: 'review post', id: 'tp-rev' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'general post', id: 'tp-gen' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm', id: 'tp-dm' }, options);
+    // A worker-handoff addressed to the deploy topic is deploy mail too —
+    // the filter matches the delivery address, not the reported kind.
+    expect(appendBusInbox({ id: 'tp-ho', from: 'agent:atlas', to: 'group:release:deploy', priority: 'P2', ttl: 60_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-TP-1', prompt: 'deploy assignment' } }, options).status).toBe('posted');
+
+    const deploy = readAgentInbox('nova', { topic: 'deploy' }, options);
+    if (deploy.status !== 'ok') throw new Error(`unexpected ${deploy.status}`);
+    expect(deploy.messages.map(m => `${m.kind}:${m.envelope.id}`).sort())
+      .toEqual(['channel:tp-dep', 'handoff:tp-ho'].sort());
+    // --channel and --topic compose into one room and one topic.
+    expect(readAgentInbox('nova', { channel: 'release', topic: 'review' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'tp-rev' } }] });
+    // It composes with --kind, and --matched counts only the accepted rows.
+    expect(readAgentInbox('nova', { topic: 'deploy', kind: 'handoff' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'handoff', envelope: { id: 'tp-ho' } }] });
+    const counted = readAgentInbox('nova', { topic: 'deploy', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(2);
+    // The unfiltered page still sees everything the filter skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages).toHaveLength(5);
+  });
+
+  it('refuses an invalid topic and reads a topic no room carries as empty', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'deploy', text: 'deploy post', id: 'tq-dep' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm', id: 'tq-dm' }, options);
+
+    expect(readAgentInbox('nova', { topic: 'Bad Topic' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { topic: '../x' }, options)).toMatchObject({ status: 'invalid' });
+    // A topic no room carries is an honest empty page, not an error — and
+    // the DM's agent:<handle> address can never match a group topic.
+    const missing = readAgentInbox('nova', { topic: 'nonexistent' }, options);
+    expect(missing).toMatchObject({ status: 'ok', messages: [] });
+    if (missing.status !== 'ok') throw new Error(`unexpected ${missing.status}`);
+    expect(missing.nextCursor).toBeGreaterThan(0);
+    expect(readAgentInbox('nova', { topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'tq-dep' } }] });
+  });
+});
+
 describe('contains-filtered reads', () => {
   it('narrows inbox and channel pages to rows whose summary carries the needle', async () => {
     const options = setup();
