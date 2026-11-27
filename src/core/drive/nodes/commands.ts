@@ -422,7 +422,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         // from the same snapshot, so "no job" never masquerades as an empty
         // queue while work this node could do sits elsewhere.
         const open = state.jobs.filter(j => j.owner !== undefined && rec.owners?.includes(j.owner) === true &&
-          routable(j, state.observedAt) && jobBlockers(rec, j).length === 0).length;
+          routable(j, state.observedAt, state) && jobBlockers(rec, j).length === 0).length;
         const held = state.pool
           ? nodeCapacityView(state, state.observedAt).find(host => host.nodeIds.includes(rec.nodeId))?.held
           : rec.capacity?.held;

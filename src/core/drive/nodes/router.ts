@@ -20,10 +20,19 @@ export interface RouteAssignment {
   fix?: string;
 }
 
-/** A job is routable while pending or when its lease lapsed (a later token fences the old holder). */
-export function routable(job: QueueJobV1, now: number): boolean {
+/** A job is routable while pending, or when its lease can never be acted on:
+ * lapsed by the clock, or held by a session that is no longer live. A rejoin,
+ * departure or expiry fences the claim — currentClaim already requires the
+ * live node record, so renew/complete refuse it — and a later token fences the
+ * old holder either way, so waiting out claim.expiresAt only strands the job.
+ * Callers without the state keep the clock-only rule. */
+export function routable(job: QueueJobV1, now: number, state?: NodesState): boolean {
   if (job.state === 'pending') return true;
-  return job.state === 'running' && !!job.claim && job.claim.expiresAt <= now;
+  if (job.state !== 'running' || job.claim === undefined) return false;
+  if (job.claim.expiresAt <= now) return true;
+  if (state === undefined) return false;
+  const claim = job.claim;
+  return !state.nodes.some(n => n.expiresAt > now && n.nodeId === claim.nodeId && n.session === claim.session);
 }
 
 export function liveNodes(state: NodesState, now: number): NodeRecord[] {
@@ -117,7 +126,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
-    if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
+    if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now, state)) continue;
     const reasons = new Map<string, number>();
     let best: NodeRecord | null = null;
     for (const node of nodes) {

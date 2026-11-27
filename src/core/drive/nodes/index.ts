@@ -271,7 +271,7 @@ export class DriveNodes implements QueueV1 {
       if (!node) return null;
       const mine = planRoutes(state, now).find(a => a.nodeId === node.nodeId);
       const job = mine && state.jobs.find(j => j.id === mine.jobId);
-      if (!job || !routable(job, now)) return null;
+      if (!job || !routable(job, now, state)) return null;
       let leader = this.liveLeader(state, now);
       if (!leader) {
         leader = state.leader = { ...worker, token: nextToken(state), expiresAt: now + this.leaderTtl };

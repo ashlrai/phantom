@@ -25,9 +25,10 @@ runs on two nodes.
   token; the old holder's renew and complete are then refused. Two nodes racing
   for one job get exactly one claim. Pass the token to every external effect so
   a paused node cannot act after losing the job. Only a claim its session can
-  still act on consumes capacity: a lapsed claim is re-routable, and a claim
-  fenced by a rejoin or departure frees the node's slot and host budget at
-  once even though the job itself stays fenced until the claim expires.
+  still act on consumes capacity: a claim is re-routable once it can no
+  longer be acted on — when the lease lapses, or at once when a rejoin,
+  departure or session expiry fences it, since the dead claim can never
+  complete; a live session's claim holds the job until the lease lapses.
 - **Handing a claim back.** A node that pulls a job it will not run releases
   the claim at once with `phm node release`, so the job returns to pending
   instead of showing as running until the lease lapses. A pool worker
