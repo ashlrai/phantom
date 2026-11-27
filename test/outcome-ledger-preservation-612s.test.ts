@@ -2270,7 +2270,7 @@ describe('router outcome merge-events join', () => {
     expect(events.size).toBe(1);
   });
 
-  it('counts exact timestamped replays once and preserves the latest auto-merge toggle', () => {
+  it.each(['identical', 'reserialized'])('counts %s timestamped replays once and preserves the latest auto-merge toggle', (encoding) => {
     const enabled = mergeEvent(7, 'auto_merge_enabled');
     const failed = mergeEvent(7, 'check_observed', { conclusion: 'failure', required: true, head_sha: 'abc123' });
     const recut = mergeEvent(7, 'recut_requested', { head_sha: 'abc123' });
@@ -2280,7 +2280,9 @@ describe('router outcome merge-events join', () => {
       enabled, failed, recut,
       disabled, { ...failed, head_sha: 'def456' }, { ...recut, at: '2026-11-21T01:00:00Z' },
       enabled, failed, recut, untimed, untimed,
-    ].map(row => JSON.stringify(row)).join('\n'));
+    ].map((row, index) => encoding === 'reserialized' && index >= 6
+      ? JSON.stringify(Object.fromEntries(Object.entries(row).reverse())).replace(/,/g, ', ')
+      : JSON.stringify(row)).join('\n'));
 
     expect(events.get('ashlrai/phantom#7')).toMatchObject({
       events: 8,
