@@ -56,6 +56,11 @@ export interface DoctorNode {
 export interface NodesDoctor { schema: typeof NODES_DOCTOR_SCHEMA; schemaVersion: 1; asOf: string; nodes: DoctorNode[]; reasons: string[] }
 export interface NodesDoctorDeps { view: NodesViewDeps; probe: NodeProbe }
 
+/** unknowns and gaps are reasons and fixes, not a log: several checks can share
+ * one cause (an offline computer explains every lane check at once), so an
+ * identical line prints once, in first-seen order. */
+const note = (list: string[], msg: string): void => { if (!list.includes(msg)) list.push(msg); };
+
 const LOGIN: Partial<Record<DoctorLane, string>> = { claude: 'claude auth login', codex: 'codex login' };
 const BINARY: Record<DoctorLane, string[]> = { claude: ['claude'], codex: ['codex'], devin: ['devin'], gemini: ['gemini'], 'local-model': ['ollama', 'omlx', 'llama-server'] };
 const STATUS_ARGS: Partial<Record<DoctorLane, string[]>> = { claude: ['auth', 'status', '--json'], codex: ['login', 'status'] };
@@ -119,18 +124,18 @@ export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Pro
   for (const row of rows) {
     const gaps: string[] = [], unknowns: string[] = [];
     const probe = row.reachable === false ? null : row.isSelf ? selfProbe : await safeProbe(row);
-    if (row.reachable === false) gaps.push(`${row.name}: not reachable. Wake it and check it is on Tailscale.`);
-    else if (row.reachable === UNKNOWN) unknowns.push(`${row.name}: reachability unknown (${view.reasons[0] ?? 'no network read'})`);
+    if (row.reachable === false) note(gaps, `${row.name}: not reachable. Wake it and check it is on Tailscale.`);
+    else if (row.reachable === UNKNOWN) note(unknowns, `${row.name}: reachability unknown (${view.reasons[0] ?? 'no network read'})`);
     // No live Phantom session means the computer cannot take jobs whatever its
     // lanes advertise; `state` already names the rejoin command when one exists.
-    if (row.stateCode === 'not-running') gaps.push(`${row.name}: ${row.state}`);
+    if (row.stateCode === 'not-running') note(gaps, `${row.name}: ${row.state}`);
     const lanes = DOCTOR_LANES.map(lane => laneStatus(lane, probe, row.reachable === false ? UNKNOWN : row.lanes));
     for (const c of lanes) {
       const login = LOGIN[c.lane];
       if (row.reachable === false) c.reason = 'computer is offline';
-      if (c.status === 'not-installed') gaps.push(`${row.name}: ${c.lane} is not installed. Install it on that Mac${login ? `, then run \`${login}\`` : ''}.`);
-      else if (c.status === 'signed-out') gaps.push(`${row.name}: ${c.lane} is not signed in. ${login ? `Run \`${login}\`` : `Sign in to ${c.lane}`} on that Mac.`);
-      else if (c.status === 'unknown' && c.reason) unknowns.push(`${row.name}: ${c.reason}`);
+      if (c.status === 'not-installed') note(gaps, `${row.name}: ${c.lane} is not installed. Install it on that Mac${login ? `, then run \`${login}\`` : ''}.`);
+      else if (c.status === 'signed-out') note(gaps, `${row.name}: ${c.lane} is not signed in. ${login ? `Run \`${login}\`` : `Sign in to ${c.lane}`} on that Mac.`);
+      else if (c.status === 'unknown' && c.reason) note(unknowns, `${row.name}: ${c.reason}`);
     }
     // The standalone registry is single-host: under it every record is this
     // computer's, so only the self row reads host stats from it (newest
@@ -142,13 +147,13 @@ export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Pro
         .sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
     const diskBytes = probe?.diskFreeBytes ?? (row.reachable === false ? null : record?.hostStats?.diskFree ?? null);
     const diskFreeGb = diskBytes === null ? UNKNOWN : gb(diskBytes);
-    if (diskFreeGb === UNKNOWN) unknowns.push(`${row.name}: free disk unknown (no measurement from that computer)`);
-    else if (diskFreeGb < DOCTOR_MIN_DISK_GB) gaps.push(`${row.name}: only ${diskFreeGb} GB free; jobs hold under ${DOCTOR_MIN_DISK_GB} GB. Free space on that Mac.`);
+    if (diskFreeGb === UNKNOWN) note(unknowns, `${row.name}: free disk unknown (no measurement from that computer)`);
+    else if (diskFreeGb < DOCTOR_MIN_DISK_GB) note(gaps, `${row.name}: only ${diskFreeGb} GB free; jobs hold under ${DOCTOR_MIN_DISK_GB} GB. Free space on that Mac.`);
     const repos = probe ? probe.repos : UNKNOWN;
     const missing = repos !== UNKNOWN && wanted ? wanted.filter(r => !repos.includes(r)) : UNKNOWN;
-    if (repos === UNKNOWN) unknowns.push(`${row.name}: repo clones unknown (${row.reachable === false ? 'computer is offline' : 'remote checks do not exist yet'})`);
-    else if (missing === UNKNOWN) unknowns.push(`${row.name}: repo list for comparison unavailable from this Mac`);
-    else if (missing.length) gaps.push(`${row.name}: missing repo ${missing.join(', ')}. Clone ${missing.length === 1 ? 'it' : 'them'} under ~/Projects/ashlrai on that Mac.`);
+    if (repos === UNKNOWN) note(unknowns, `${row.name}: repo clones unknown (${row.reachable === false ? 'computer is offline' : 'remote checks do not exist yet'})`);
+    else if (missing === UNKNOWN) note(unknowns, `${row.name}: repo list for comparison unavailable from this Mac`);
+    else if (missing.length) note(gaps, `${row.name}: missing repo ${missing.join(', ')}. Clone ${missing.length === 1 ? 'it' : 'them'} under ~/Projects/ashlrai on that Mac.`);
     nodes.push({ name: row.name, isSelf: row.isSelf, reachable: row.reachable, lanes, repos, missingRepos: missing, diskFreeGb, gaps, unknowns,
       ready: gaps.length === 0 && unknowns.length === 0 });
   }
