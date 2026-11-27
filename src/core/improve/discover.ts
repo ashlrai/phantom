@@ -1679,6 +1679,28 @@
  *     truncated tails are stated as lower bounds, and items emit
  *     only for the fleet's own repository since the journal
  *     describes this install's capacity evidence;
+ *   - the ops-side cruise shadow controller's host-stress samples:
+ *     the ashlr.cruise.shadow.v1 records the pinned cruise package
+ *     appends to metrics/cruise-shadow.jsonl under the runs root on
+ *     its ~5-minute cadence — the controller's warn|danger zone
+ *     verdict, the lane-target action it would take (hold_foreign,
+ *     decrease, shed, hold_warn, raise_warmup), the dispatchd
+ *     running/target/queued totals the sample saw and the reason
+ *     classes behind the verdict — until now read by nothing at
+ *     all, so a host that kept sampling danger-zone stress never
+ *     became work even though every row is measured evidence about
+ *     this install's capacity posture (cruiseShadowBacklogItems
+ *     below). Records count only under the producer's contract —
+ *     the shadow schema, mode 'shadow', an in-window timestamp, a
+ *     zone inside the controller's closed vocabulary — 'ok' and
+ *     'unknown' samples never count, bad_event rows are context
+ *     never their own cell, reason strings classify into leading
+ *     signal classes and are never quoted, a cell emits only at
+ *     the recurring bars of three samples across two UTC days
+ *     inside the 7-day window, truncated tails are stated as
+ *     lower bounds, and items emit only for the fleet's own
+ *     repository since the journal describes this install's host
+ *     and fleet;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1825,6 +1847,7 @@ import { outcomeLedgerBacklogItems } from './outcome-ledger-backlog.js';
 import { resetReleaseBacklogItems } from './reset-release-backlog.js';
 import { nodesOffloadBacklogItems } from './nodes-offload-backlog.js';
 import { commsRunBacklogItems } from './comms-run-backlog.js';
+import { cruiseShadowBacklogItems } from './cruise-shadow-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 import { reviewBlocksBacklogItems } from './review-blocks-backlog.js';
 import { capacityHistoryBacklogItems } from './capacity-history-backlog.js';
@@ -3882,6 +3905,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet's own repository inherits the items since the journal
   // describes this install's capacity evidence.
   items.push(...await amplifyBacklogItems({ repo }));
+
+  // Cruise shadow-controller journal (metrics/cruise-shadow.jsonl
+  // under the runs root): the ashlr.cruise.shadow.v1 samples the
+  // ops-side cruise package appends on its ~5-minute cadence —
+  // zone verdicts, the lane-target action each verdict implies,
+  // the dispatchd running/target/queued totals the sample saw and
+  // the reason classes behind it (cruiseShadowBacklogItems below).
+  // Until now the journal had no reader at all: the controller's
+  // own state and heartbeat are ops-side surfaces, so a host that
+  // kept sampling danger-zone stress — fleet targets oversubscribed
+  // it, foreign pressure dominated, or the job mix kept loading it
+  // — never became work. Same bounded tail read; a (zone, action)
+  // cell emits only at the recurring bars of three samples across
+  // two UTC days inside the 7-day window, 'ok'/'unknown' samples
+  // and lone bad_event rows never count, reasons classify into
+  // leading signal classes and are never quoted, truncated tails
+  // are stated as lower bounds, and only the fleet's own
+  // repository inherits the items since the journal describes this
+  // install's host and carries no repo column.
+  items.push(...await cruiseShadowBacklogItems({ repo }));
   return { items, errors };
 }
 
