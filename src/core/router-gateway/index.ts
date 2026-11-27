@@ -17,17 +17,12 @@ import {
 import { loadRouterGatewayDeps } from './deps.js';
 import { ensureRouterGatewayToken, routerGatewayTokenPath, startRouterGatewayServer, type RunningRouterGateway } from './server.js';
 
-export * from './config.js';
-export * from './complete.js';
-export { flattenChatMessages, parseChatRequest, ROUTER_GATEWAY_HOST, ROUTER_GATEWAY_SCHEMA, routerGatewayTokenPath } from './server.js';
-
-function loadDefaultConfig(): AshlrConfig {
-  return loadConfig();
-}
+export { initRouterGatewayConfig, loadRouterGatewayConfig, routerGatewayConfigPath } from './config.js';
+export { ROUTER_GATEWAY_SCHEMA } from './server.js';
 
 async function prepare(configPath?: string, cfg?: AshlrConfig): Promise<{ loaded: LoadedRouterGatewayConfig; deps: RouterGatewayDeps }> {
   const loaded = loadRouterGatewayConfig(configPath);
-  const deps = await loadRouterGatewayDeps(cfg ?? loadDefaultConfig(), loaded.config);
+  const deps = await loadRouterGatewayDeps(cfg ?? loadConfig(), loaded.config);
   return { loaded, deps };
 }
 

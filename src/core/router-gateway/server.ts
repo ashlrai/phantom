@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { isLocalClientRequest } from '../local-runtime/llama/anthropic-proxy.js';
 import { isLoopbackHost } from '../local-runtime/llama/config.js';
-import { routerGatewayDir } from './config.js';
+import { estimateRouterTokens, isRouterGatewayRecord, routerGatewayDir } from './config.js';
 import type { RoutedCompletionRequest, RoutedCompletionResult, RouterModelEntry } from './complete.js';
 
 export const ROUTER_GATEWAY_HOST = '127.0.0.1';
@@ -138,8 +138,8 @@ export function flattenChatMessages(messages: unknown): { system: string; prompt
 
 /** The OpenAI fields the gateway honours; anything that would silently change meaning is refused. */
 export function parseChatRequest(body: unknown): { request: Omit<RoutedCompletionRequest, 'signal'>; stream: boolean } {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BadRequest('Request body must be a JSON object.');
-  const b = body as Record<string, unknown>;
+  if (!isRouterGatewayRecord(body)) throw new BadRequest('Request body must be a JSON object.');
+  const b = body;
   if (typeof b['model'] !== 'string' || b['model'].length === 0) throw new BadRequest('model is required ("auto", "<lane>:<model>" or an alias).');
   for (const field of ['tools', 'functions', 'tool_choice', 'function_call']) {
     if (b[field] !== undefined && b[field] !== null && !(Array.isArray(b[field]) && (b[field] as unknown[]).length === 0)) {
@@ -158,8 +158,6 @@ export function parseChatRequest(body: unknown): { request: Omit<RoutedCompletio
   return { request, stream: b['stream'] === true };
 }
 
-const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
-
 function statusOf(result: Extract<RoutedCompletionResult, { ok: false }>): number {
   switch (result.status) {
     case 'bad-request': return 400;
@@ -170,8 +168,8 @@ function statusOf(result: Extract<RoutedCompletionResult, { ok: false }>): numbe
 }
 
 function completionBody(result: Extract<RoutedCompletionResult, { ok: true }>, id: string, created: number, promptChars: number): unknown {
-  const promptTokens = Math.ceil(promptChars / 4);
-  const completionTokens = estimateTokens(result.text);
+  const promptTokens = estimateRouterTokens(promptChars);
+  const completionTokens = estimateRouterTokens(result.text.length);
   return {
     id, object: 'chat.completion', created, model: `${result.seatId}:${result.model}`,
     choices: [{ index: 0, message: { role: 'assistant', content: result.text }, finish_reason: 'stop' }],

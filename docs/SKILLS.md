@@ -182,10 +182,14 @@ also prevents improvement discovery from using outcomes pooled across
 different card contents.
 
 `phm skills list --outcomes` joins the same projection onto the learned-skill
-list: each entry gains an `outcomes` object when its exact revision was
-observed on joined trajectories, and the report carries `outcomeState`
-(`"observed"` or `"withheld"`) so a missing tally is never mistaken for a
-zero. Plain-text output prints the tallies under each skill.
+list. A card receives an `outcomes` object when the recorded skill ID,
+revision and content digest match the newest card in a healthy corpus.
+If records for that revision disagree on the digest or status, its tallies
+are omitted. Tallies without a recorded digest remain available as
+historical evidence in the trajectory projection. The report's
+`outcomeState` (`"observed"` or `"withheld"`) describes whether that
+projection is available. A missing card tally represents unknown
+attribution. Plain-text output prints the tallies under each matched skill.
 
 The projection is sample-gated exactly like `skillObservation`: per-skill
 counts publish only after at least `MIN_SKILL_OBSERVED_TRAJECTORIES` (3)

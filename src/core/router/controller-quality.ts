@@ -28,14 +28,19 @@
  *     reported as evidence context only.
  */
 
-import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 
-import { readLedgerFile, type LedgerReadState } from './outcomes.js';
+import {
+  isLedgerRecord,
+  nonNegativeSafeInt,
+  readLedgerFile,
+  resolveRouterRunsDir,
+  type LedgerReadState,
+} from './outcomes.js';
 
 /** `<runsDir>/queue/fleet-controller.json` — dispatchd's atomic controller state. */
-export const CONTROLLER_QUALITY_STATE_RELATIVE = join('queue', 'fleet-controller.json');
-export const CONTROLLER_QUALITY_RECEIPT_SCHEMA = 'route.quality.v1';
+const CONTROLLER_QUALITY_STATE_RELATIVE = join('queue', 'fleet-controller.json');
+const CONTROLLER_QUALITY_RECEIPT_SCHEMA = 'route.quality.v1';
 /** The state file is small; a megabyte is already generous headroom. */
 const CONTROLLER_QUALITY_STATE_LIMIT = 1024 * 1024;
 /** Defensive bound on distinct lanes reported; the producer writes ~one per configured lane. */
@@ -97,15 +102,13 @@ export interface ControllerQualityRead {
 
 const finiteIn = (v: unknown, lo: number, hi: number): number | null =>
   typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : null;
-const countOrNull = (v: unknown): number | null =>
-  typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null;
 const boundedTextOrNull = (v: unknown): string | null =>
   typeof v === 'string' && v.length > 0 && v.length <= 64 ? v : null;
 
 /** Parse one raw receipt row; null when it cannot be attributed to a lane verdict at all. */
 function receiptFrom(raw: unknown): ControllerQualityReceipt | null {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
-  const row = raw as Record<string, unknown>;
+  if (!isLedgerRecord(raw)) return null;
+  const row = raw;
   if (row['schema'] !== CONTROLLER_QUALITY_RECEIPT_SCHEMA) return null;
   const lane = row['lane'];
   if (typeof lane !== 'string' || !LANE_ID.test(lane)) return null;
@@ -118,15 +121,15 @@ function receiptFrom(raw: unknown): ControllerQualityReceipt | null {
     ts,
     decided_at: finiteIn(row['decided_at'], 0, Number.MAX_SAFE_INTEGER),
     report_at: boundedTextOrNull(row['report_at']),
-    resolved: countOrNull(row['resolved']),
+    resolved: nonNegativeSafeInt(row['resolved']),
     score: finiteIn(row['score'], 0, 1),
     ci_adverse_delta: finiteIn(row['ci_adverse_delta'], -1, 1),
     from: finiteIn(row['from'], 0, 1),
     to: finiteIn(row['to'], 0, 1),
     reason: typeof reason === 'string' && QUALITY_REASONS.has(reason) ? reason : null,
     mode: typeof mode === 'string' && QUALITY_MODES.has(mode) ? mode : null,
-    target_from: countOrNull(row['target_from']),
-    target_to: countOrNull(row['target_to']),
+    target_from: nonNegativeSafeInt(row['target_from']),
+    target_to: nonNegativeSafeInt(row['target_to']),
   };
 }
 
@@ -138,8 +141,7 @@ function receiptFrom(raw: unknown): ControllerQualityReceipt | null {
  * state, not an exception.
  */
 export async function readControllerQuality(opts: { runsDir?: string } = {}): Promise<ControllerQualityRead> {
-  const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
-  if (!isAbsolute(runsDir)) throw new RangeError('runsDir must be an absolute path');
+  const runsDir = resolveRouterRunsDir(opts.runsDir);
   const path = join(runsDir, CONTROLLER_QUALITY_STATE_RELATIVE);
   const read = await readLedgerFile(path, CONTROLLER_QUALITY_STATE_LIMIT);
   if (read.state !== 'read') {
@@ -151,10 +153,10 @@ export async function readControllerQuality(opts: { runsDir?: string } = {}): Pr
   } catch {
     return { state: 'invalid', path, receipts: [], invalid_rows: null };
   }
-  if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) {
+  if (!isLedgerRecord(doc)) {
     return { state: 'invalid', path, receipts: [], invalid_rows: null };
   }
-  const raw = (doc as Record<string, unknown>)['quality_receipts'];
+  const raw = doc['quality_receipts'];
   if (raw === undefined) {
     // The controller state predates quality verdicts (or never reached the
     // quality pass): the file is healthy and zero verdicts is the truth.

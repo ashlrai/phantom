@@ -150,7 +150,12 @@ npm ci                    # single clone; also what CI and release packaging use
 ```
 
 Keep the upstream repository as `origin`: `node scripts/verify-changed.mjs`
-diffs against `origin/master`. Add your fork as a second remote to push to.
+diffs against `origin/master`. Fork the repository on GitHub if you have not
+(`gh repo fork ashlrai/phantom --clone=false`), sign in once with
+`gh auth login` and `gh auth setup-git` so `git push` uses the same
+credentials, then add your fork as a second remote to push to. The
+step-by-step version, including the SSH alternative:
+[Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md#2-clone-and-install).
 If you run several agents in trusted local worktrees on one machine, use
 `npm run install:worktree` instead of `npm ci` in each worktree; it requires
 pnpm 10.28.2 and shares one dependency store (see

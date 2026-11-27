@@ -36,7 +36,7 @@ export interface SkillListEntry {
   proposalId: string | 'unknown';
   attestationPresent: boolean;
   /**
-   * Trajectory outcome tallies for this exact skill revision, joined from
+   * Trajectory outcome tallies for this exact skill revision and digest, joined from
    * `trajectoryLearning.skillOutcomes`. Present only when the caller asked
    * for outcomes and this revision was observed on joined trajectories;
    * absent means unmeasured, never zero.
@@ -92,12 +92,8 @@ function newer(a: SkillCard, b: SkillCard): boolean {
   return a.revision !== b.revision ? a.revision > b.revision : a.ts > b.ts;
 }
 
-function entry(
-  card: SkillCard,
-  outcomeFor?: (skillId: string, revision: number) => TrajectorySkillOutcomeRow | undefined,
-): SkillListEntry {
+function entry(card: SkillCard, outcomes?: TrajectorySkillOutcomeRow): SkillListEntry {
   const evidence = card.verification?.evidenceCount;
-  const outcomes = outcomeFor?.(card.skillId, card.revision);
   return {
     skillId: text(card.skillId),
     revision: card.revision,
@@ -133,13 +129,25 @@ export function listSkills(opts: SkillListOptions = {}): SkillListReport {
   const matched = [...latest.values()]
     .filter((card) => !opts.status || card.status === opts.status)
     .sort((a, b) => (a.ts === b.ts ? a.skillId.localeCompare(b.skillId) : a.ts < b.ts ? 1 : -1));
-  const outcomeRows = opts.skillOutcomes
-    ? new Map(opts.skillOutcomes.perSkill.map((row) => [JSON.stringify([row.skillId, row.skillRevision]), row]))
-    : undefined;
-  const outcomeFor = outcomeRows
-    ? (skillId: string, revision: number) => outcomeRows.get(JSON.stringify([skillId, revision]))
-    : undefined;
-  const skills = matched.slice(0, limit).map((card) => entry(card, outcomeFor));
+  const outcomeRows = new Map<string, TrajectorySkillOutcomeRow>();
+  if (opts.skillOutcomes && corpus?.sourceState === 'healthy') {
+    const disputed = new Set<string>();
+    for (const card of corpus.cards) {
+      const current = latest.get(card.skillId);
+      if (current && current.revision === card.revision &&
+          (current.contentHash !== card.contentHash || current.status !== card.status)) {
+        disputed.add(card.skillId);
+      }
+    }
+    for (const row of opts.skillOutcomes.perSkill) {
+      const card = latest.get(row.skillId);
+      if (card && card.revision === row.skillRevision && card.contentHash &&
+          card.contentHash === row.skillContentHash && !disputed.has(row.skillId)) {
+        outcomeRows.set(row.skillId, row);
+      }
+    }
+  }
+  const skills = matched.slice(0, limit).map((card) => entry(card, outcomeRows.get(card.skillId)));
   return {
     schemaVersion: 1,
     matched: matched.length,
