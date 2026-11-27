@@ -1894,6 +1894,33 @@
  *     exact owner/repo or the pipeline's bare-name form of the target,
  *     and missing or over-cap state reads as no evidence rather than a
  *     guessed parse;
+ *   - the Engineering Ops job-cost-model journal's per-run cost
+ *     verdicts: the ashlr.job-cost-model/v1 rows growth_exports.py's
+ *     run_cost pass atomically rewrites into
+ *     $ASHLR_HOME/metrics/job-cost-model.jsonl on every export cycle —
+ *     one row per finish (realSpendUsd for metered lanes joined to
+ *     api-spend.jsonl, modeledValueUsd for token/plan lanes priced
+ *     under a named method, or an honest unknown with the recorded
+ *     reason) plus real-spend-unmatched rows for verified spend no
+ *     finish receipt could claim, the file compacting to a
+ *     thirty-five-day retention sorted by finish time (about ten
+ *     megabytes and twenty thousand rows at last measurement)
+ *     (jobCostBacklogItems below). Until now the journal's only
+ *     reader was the export's own status summary of per-lane modeled
+ *     totals — no repository code folded it into work, so a lane
+ *     whose finishes kept landing unpriced, or metered spend that
+ *     kept failing to join a finish receipt, never became a backlog
+ *     item. A cost-gap cell emits per lane at eight unpriced finish
+ *     verdicts across two distinct UTC days covering at least a
+ *     quarter of the lane's in-window finishes, naming each lane's
+ *     dominant unknown reasons; an unmatched-spend cell emits at
+ *     three real-spend-unmatched rows across two days; a corrupt cell
+ *     emits at three contract failures inside the retained tail;
+ *     rows re-validate under the writer's eleven-key contract, exact
+ *     line replays dedupe as re-export duplicates, truncated tails
+ *     are stated as lower bounds, and items emit only for the fleet's
+ *     own repository since the journal describes this install's
+ *     lanes and carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2058,6 +2085,7 @@ import { installsBacklogItems } from './installs-backlog.js';
 import { runsHistoryBacklogItems } from './runs-history-backlog.js';
 import { resolutionWitnessBacklogItems } from './resolution-witness-backlog.js';
 import { incidentLedgerBacklogItems } from './incident-ledger-backlog.js';
+import { jobCostBacklogItems } from './job-cost-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4345,6 +4373,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // is exact owner/repo or the bare-name form of the target, and the
   // install-wide drift cell lands only on the fleet's own repository.
   items.push(...await incidentLedgerBacklogItems({ repo }));
+
+  // Engineering Ops job-cost-model journal (<runs>/metrics/
+  // job-cost-model.jsonl): the ashlr.job-cost-model/v1 per-run cost
+  // verdicts growth_exports.py's run_cost rewrites each export pass —
+  // realSpendUsd for metered lanes, modeledValueUsd for token/plan
+  // lanes, and the recorded reason when a finish's cost stayed
+  // unknowable (jobCostBacklogItems below). Until now the journal had
+  // no repository reader at all — the export's status file only
+  // summarizes per-lane modeled totals — so lanes whose finishes kept
+  // landing unpriced never became work. A cost-gap cell emits per lane
+  // at eight unpriced finishes across two UTC days covering at least a
+  // quarter of the lane's in-window finishes; an unmatched-spend cell
+  // emits at three real-spend-unmatched rows across two days; a
+  // corrupt-lines cell emits at three contract failures inside the
+  // retained tail; exact-line replays count once, truncated tails are
+  // stated as lower bounds, and only the fleet's own repository
+  // inherits the items since the journal describes this install's
+  // lanes and carries no repo column.
+  items.push(...await jobCostBacklogItems({ repo }));
   return { items, errors };
 }
 
