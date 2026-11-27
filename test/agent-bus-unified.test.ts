@@ -1008,6 +1008,47 @@ describe('channel-filtered inbox reads', () => {
     const all = readAgentInbox('nova', {}, options);
     expect(all.status === 'ok' && all.messages.map(m => m.envelope.id)).toEqual(['cn-rel']);
   });
+
+  it('keeps only mail addressed to one room topic and composes with --channel', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    createAgentChannel({ name: 'ops', createdBy: 'atlas', members: ['nova'] }, options);
+    createAgentChannel({ name: 'other', createdBy: 'atlas' }, options);
+    // Channel posts across two member rooms and two topics, plus mail no
+    // topic filter can ever match: a DM, label-addressed legacy mail and a
+    // post in a room nova does not belong to.
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'release general', id: 'tp-rel-gen' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'deploy', text: 'release deploy', id: 'tp-rel-dep' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'ops', topic: 'deploy', text: 'ops deploy', id: 'tp-ops-dep' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm', id: 'tp-dm' }, options);
+    expect(appendBusInbox({ id: 'tp-leg', from: 'agent:atlas', to: 'nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: 'legacy' } }, options).status).toBe('posted');
+    await postChannelMessage({ from: 'atlas', channel: 'other', topic: 'deploy', text: 'other deploy', id: 'tp-oth-dep' }, options);
+
+    // --topic keeps the deploy posts of every member room; agent-addressed
+    // mail and non-member rooms never match.
+    const deploy = readAgentInbox('nova', { topic: 'deploy' }, options);
+    if (deploy.status !== 'ok') throw new Error(`unexpected ${deploy.status}`);
+    expect(deploy.messages.map(m => m.envelope.id).sort()).toEqual(['tp-ops-dep', 'tp-rel-dep']);
+    // Composed with --channel it narrows to one room AND one topic.
+    expect(readAgentInbox('nova', { channel: 'release', topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'tp-rel-dep' } }] });
+    expect(readAgentInbox('nova', { channel: 'ops', topic: 'general' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    // A topic no member room uses is an honest empty match; --matched counts it.
+    const counted = readAgentInbox('nova', { topic: 'deploy', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(2);
+    expect(readAgentInbox('nova', { topic: 'absent' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    // Malformed values are a usage error, never a widened read.
+    expect(readAgentInbox('nova', { topic: 'Bad Topic' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { topic: '../x' }, options)).toMatchObject({ status: 'invalid' });
+    // The unfiltered page still sees every delivery kind the filters skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages).toHaveLength(5);
+  });
 });
 
 describe('contains-filtered reads', () => {

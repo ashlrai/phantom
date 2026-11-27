@@ -515,6 +515,7 @@ untrusted data: a wake is a hint to read the inbox and grants no authority.
 [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>]
+[--topic <topic>]
 [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]`
 returns one page of
@@ -579,7 +580,16 @@ handoffs alike, matched on the delivery address rather than the reported
 kind — so an agent in several rooms reads one room's pending mail in one
 filtered read; it composes with `--kind` to separate a room's direct mail
 from its assignments, and a channel the agent is not a member of simply
-has no mail to show. `--contains` keeps only mail whose scrubbed
+has no mail to show. `--topic` keeps only mail addressed to a well-formed
+`group:<room>:<topic>` address carrying that exact topic component — the
+same `groupAddressTopicOf` parse `channel read --topic`, `dead-letters
+--topic`, `comms bus read|watch --topic`, `agents messages --topic` and
+the work feed's `--topic` apply, decided on the raw `to` label with no
+registry dependence — so "only the deploy topic across my channels" or,
+composed with `--channel`, "the deploy topic in one room" is one filtered
+read; an agent-addressed label, a bare label or a `group:<room>` without a
+topic never matches, the value takes the strict channel-name grammar, and
+a name outside it is a usage error. `--contains` keeps only mail whose scrubbed
 one-line summary — the same text the `--frame` read renders per row —
 carries the needle as a case-insensitive substring, whitespace collapsed
 on both sides, so "did anyone send me mail about X" is one filtered read
