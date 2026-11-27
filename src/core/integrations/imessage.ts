@@ -378,9 +378,19 @@ export async function pollPairReplies(afterRowId: number, handles: string[]): Pr
   if (process.platform !== 'darwin' || allow.length === 0 || !Number.isSafeInteger(afterRowId) || afterRowId < 0 || probeChatDb() !== 'ok') return null;
   const list = allow.map((h) => `'${h.replace(/'/g, "''")}'`).join(',');
   const out = await sqlite(['-readonly', '-json', readOnlyUri(chatDbPath()),
-    `SELECT m.ROWID AS rowid, m.is_from_me AS fromMe, h.id AS handle, m.text AS text FROM message m JOIN handle h ON m.handle_id = h.ROWID ` +
-    `WHERE m.associated_message_type = 0 AND m.ROWID > ${afterRowId} AND m.text IS NOT NULL AND lower(h.id) IN (${list}) ` +
-    `ORDER BY m.ROWID ASC LIMIT ${INTAKE_BATCH_LIMIT};`]);
+    `WITH destinations AS (` +
+    `SELECT ch.chat_id, MIN(h.id) AS handle FROM chat_handle_join ch LEFT JOIN handle h ON h.ROWID = ch.handle_id ` +
+    `GROUP BY ch.chat_id HAVING COUNT(DISTINCT ch.handle_id) = 1 AND COUNT(h.ROWID) = COUNT(*)` +
+    `), outgoing AS (` +
+    `SELECT cm.message_id, MIN(d.handle) AS handle FROM chat_message_join cm JOIN message msg ON msg.ROWID = cm.message_id LEFT JOIN destinations d ON d.chat_id = cm.chat_id ` +
+    `WHERE msg.is_from_me = 1 AND msg.ROWID > ${afterRowId} AND msg.associated_message_type = 0 AND msg.text IS NOT NULL ` +
+    `GROUP BY cm.message_id HAVING COUNT(d.handle) = COUNT(*) AND COUNT(DISTINCT lower(d.handle)) = 1` +
+    `), candidates AS (` +
+    `SELECT m.ROWID AS rowid, m.is_from_me AS fromMe, h.id AS handle, m.text AS text FROM message m JOIN handle h ON m.handle_id = h.ROWID WHERE m.is_from_me = 0 ` +
+    `UNION ALL SELECT m.ROWID, m.is_from_me, o.handle, m.text FROM message m JOIN outgoing o ON o.message_id = m.ROWID WHERE m.is_from_me = 1` +
+    `) SELECT c.rowid, c.fromMe, c.handle, c.text FROM candidates c JOIN message m ON m.ROWID = c.rowid ` +
+    `WHERE m.associated_message_type = 0 AND c.rowid > ${afterRowId} AND c.text IS NOT NULL AND lower(c.handle) IN (${list}) ` +
+    `ORDER BY c.rowid ASC LIMIT ${INTAKE_BATCH_LIMIT};`]);
   if (!out.ok) return null;
   let rows: unknown;
   try { rows = out.stdout.trim() ? JSON.parse(out.stdout) : []; } catch { return null; }
