@@ -53,6 +53,22 @@ it('ignores merge events with missing or invalid timestamps', async () => {
   expect(devin).toMatchObject({ lane: 'devin', merges: 1 });
 });
 
+it('includes lane-open jobs once in the fleet ready total', async () => {
+  const readyPath = join(queueDir, 'ready.tsv');
+  const open = 'RQ-OPEN\tphantom\t\twork\tprompts/open.md';
+  const hinted = 'RQ-HINTED\tphantom\tdevin\twork\tprompts/hinted.md';
+  await writeFile(readyPath, [open, open, hinted].join('\n'));
+  const mixed = await getLaneQueueCounts({ runsDir: root, now });
+  expect(mixed.sources.ready).toBe('healthy');
+  expect(mixed.totals.ready).toBe(2);
+  expect(mixed.lanes).toMatchObject([{ lane: 'devin', ready: 1 }]);
+
+  await writeFile(readyPath, open);
+  const shared = await getLaneQueueCounts({ runsDir: root, now });
+  expect(shared.totals.ready).toBe(1);
+  expect(shared.lanes).toEqual([]);
+});
+
 it('reports zero merges only when the merge ledger is healthy', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), [
     'id\tstatus\tpool\tat',
