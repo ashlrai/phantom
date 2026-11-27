@@ -8,7 +8,7 @@ export const VERSE_FLEET_CONTROL_LANES_PATH = '/api/verse/fleet/control/lanes';
 export const LANE_ID_RE = /^[a-z][a-z0-9-]{1,30}$/;
 /** Existing fleet-wide limit and attribution keys, never lane IDs. */
 export const GLOBAL_SLOT_KEYS: ReadonlySet<string> = new Set(['hard_cap', 'last_change_by']);
-export interface LaneTargetRow { lane: string; target: number; floor: number; ceiling: number | null; held: boolean; heldReason: string | null; heldUntil: string | null; pausedFrom: number | null; lastChange: string | null; changedBy: string | null }
+export interface LaneTargetRow { lane: string; target: number; floor: number; ceiling: number | null; hardCap?: number; held: boolean; heldReason: string | null; heldUntil: string | null; pausedFrom: number | null; lastChange: string | null; changedBy: string | null }
 /** A lane row that was left out of a read, with a plain-word reason. */
 export interface LaneSkip { lane: string; reason: string }
 export interface LaneTargetsV1 { v: 1; generatedAt: string; sourceState: 'healthy' | 'missing' | 'degraded'; lanes: LaneTargetRow[]; skipped?: LaneSkip[] }
@@ -129,7 +129,19 @@ export async function readLaneTargets(opts: LaneTargetsOptions = {}): Promise<La
   try {
     const { lanes, skipped } = await source(opts);
     if (skipped.length) state.skipped = skipped;
-    state.lanes = Object.entries(lanes).map(([lane, row]) => ({ lane, target: row.target as number, floor: row.floor as number, ceiling: integer(row.ceiling) ? row.ceiling : null, held: row.held === true, heldReason: nullableString(row.held_reason), heldUntil: nullableString(row.held_until), pausedFrom: pausedFrom(row), lastChange: epochIso(row.last_change), changedBy: changedBy(row) }));
+    state.lanes = Object.entries(lanes).map(([lane, row]) => ({
+      lane,
+      target: row.target as number,
+      floor: row.floor as number,
+      ceiling: integer(row.ceiling) ? row.ceiling : null,
+      ...(integer(row.hard_cap) ? { hardCap: row.hard_cap } : {}),
+      held: row.held === true,
+      heldReason: nullableString(row.held_reason),
+      heldUntil: nullableString(row.held_until),
+      pausedFrom: pausedFrom(row),
+      lastChange: epochIso(row.last_change),
+      changedBy: changedBy(row),
+    }));
   } catch (error) { state.sourceState = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded'; }
   return state;
 }

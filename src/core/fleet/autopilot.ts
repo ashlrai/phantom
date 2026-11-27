@@ -247,7 +247,10 @@ export function autopilotLanes(state: FleetAutopilotState): AutopilotLane[] {
     const slot = slotsByLane.get(raw) ?? slotsByLane.get(lane);
     // Config decreases tighten the projection immediately. Increases need
     // a dispatcher tick that confirms the higher launch ceiling.
-    const rawTarget = admit === null ? slot?.target ?? null : laneLaunchTarget(admit.target, slot?.target);
+    const configuredTarget = slot
+      ? Math.min(slot.target, slot.ceiling ?? slot.target, slot.hardCap ?? slot.target)
+      : null;
+    const rawTarget = admit === null ? configuredTarget : laneLaunchTarget(admit.target, configuredTarget);
     const target = lane === LOCAL_LANE ? clampLocalTarget(rawTarget, { workers: state.localWorkers ?? null }) : rawTarget;
     // A configured hold can arrive before the next dispatcher tick. The
     // tick can also observe runtime holds absent from slots.json.

@@ -683,6 +683,40 @@ describe('readFleetQueue depDetail metDeps', () => {
 });
 
 describe('fleet autopilot end-to-end on a fixture runs dir', () => {
+  it.each([
+    { ceiling: 8, hardCap: 0, running: 0, ready: 1, target: 0, restock: 0 },
+    { ceiling: 8, hardCap: 1, running: 1, ready: 0, target: 1, restock: 0 },
+    { ceiling: 3, hardCap: 2, running: 1, ready: 0, target: 2, restock: 1 },
+    { ceiling: 2, hardCap: 8, running: 1, ready: 0, target: 2, restock: 1 },
+    { ceiling: 4, hardCap: 'invalid', running: 1, ready: 0, target: 4, restock: 3 },
+  ])('applies current lane bounds ($ceiling, $hardCap) before the next tick', async ({
+    ceiling, hardCap, running, ready, target, restock,
+  }) => {
+    const dir = await mkdtemp(join(tmpdir(), 'fleet-autopilot-e2e-'));
+    dirs.push(dir);
+    await mkdir(join(dir, 'queue'));
+    await writeFile(join(dir, 'queue', 'ready.tsv'),
+      ready ? 'READY\tRQ-NEW\tdevin\twork\tphantom\tprompts/x.md\n' : '');
+    await writeFile(join(dir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: '2026-11-07T00:00:00Z',
+      admission: { admit: true, cap: 8, running, load1: 1, reason: null },
+      lanes: { devin: { running, target: 4, queued: ready, held: false } },
+    }));
+    await writeFile(join(dir, 'queue', 'slots.json'), JSON.stringify({
+      devin: { target: 4, floor: 0, ceiling, hard_cap: hardCap },
+    }));
+
+    const state = await readFleetAutopilotState({ runsDir: dir, now: () => new Date('2026-11-07T00:00:00Z') });
+    const report = planFleetAutopilot(state);
+    expect(report.lanes).toMatchObject([{ lane: 'devin', running, ready, target, freeSlots: restock }]);
+    if (restock > 0) {
+      expect(report.action).toMatchObject({ kind: 'enqueue', type: 'restock', count: restock, lane: 'devin' });
+    } else {
+      expect(report.gaps).toEqual([]);
+      expect(report.action).toMatchObject({ kind: 'no-op', reason: 'fleet-healthy' });
+    }
+  });
+
   it('honors operator lane holds before the next dispatcher tick', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fleet-autopilot-e2e-'));
     dirs.push(dir);
