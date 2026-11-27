@@ -91,6 +91,25 @@ describe('readNodesView', () => {
     expect(nodesThatCanTake(view, 'codex').map(row => row.name)).toEqual(['node-b']);
   });
 
+  it('pool workers sharing one measured host count its free slots once, not per session', () => {
+    // Two worker sessions on node-b each advertise slots=4 derived from the same
+    // shared host budget; the machine's free slots are the host's, not their sum.
+    const capacity = { hostId: 'node-b', sampledAtMs: NOW, ramBytes: 32 * GIB, slots: 4, held: null };
+    const records = [
+      node('w1', { capacity, slots: 4 }),
+      node('w2', { session: 2, capacity, slots: 4 }),
+    ];
+    const jobs: NodesState['jobs'] = [{ id: 'job-1', state: 'running', claim: { jobId: 'job-1', nodeId: 'w1', session: 1, token: 2, leaderToken: 1, expiresAt: NOW + 5_000 } }];
+    const pooled = registry(records, jobs);
+    pooled.state!.pool = { primary: 'primary-mac', backup: 'backup-mac', active: 'primary', epoch: 1, heartbeatAt: NOW - 2_000 };
+    const view = readNodesView(deps(tailnet([peer('node-b', true)]), pooled));
+    // w1: 4 slots - 1 claim = 3; w2: 4 - 0 = 4; shared host reports the tighter 3.
+    expect(view.nodes.find(row => row.name === 'node-b')).toMatchObject({ jobsRunning: ['job-1'], freeSlots: 3 });
+    // The same records in a non-pool store keep per-session bounds: 4+4-1 = 7.
+    const standalone = readNodesView(deps(tailnet([peer('node-b', true)]), registry(records, jobs)));
+    expect(standalone.nodes.find(row => row.name === 'node-b')).toMatchObject({ freeSlots: 7 });
+  });
+
   it('one offline: says since when, today and on an earlier day', () => {
     const view = readNodesView(deps(tailnet([peer('node-b', false), peer('node-c', false, '2026-11-14T08:05:00Z'), peer('node-d', false, '0001-01-01T00:00:00Z')]),
       registry([node('node-a'), node('node-b', { expiresAt: NOW - 60_000 })])));
