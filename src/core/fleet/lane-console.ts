@@ -1152,8 +1152,11 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     : null;
   const starved = readStarved(views.map(view => {
     const { slotTarget, liveJobs } = view;
-    const target = headroom !== null && slotTarget !== null && liveJobs !== null
-      ? Math.min(slotTarget, liveJobs + headroom) : slotTarget;
+    let target = slotTarget;
+    if (headroom === 0) target = 0;
+    else if (headroom !== null && slotTarget !== null && liveJobs !== null) {
+      target = Math.min(slotTarget, liveJobs + headroom);
+    }
     return {
       lane: view.lane,
       target,

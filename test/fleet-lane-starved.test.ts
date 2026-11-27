@@ -30,6 +30,15 @@ async function scratch(): Promise<string> {
 const input = (over: Partial<StarvedInput> = {}): StarvedInput => ({ lane: 'claude', target: 8, running: 0, ready: 0, held: false, drained: false, ...over });
 
 describe('readStarved', () => {
+  it.each([
+    { held: true, target: null, free: 0 },
+    { held: false, target: 0, free: 0 },
+    { held: false, target: 4, free: null },
+  ])('reports only provable headroom when running is unknown (%j)', ({ held, target, free }) => {
+    expect(readStarved([input({ held, target, running: null })], {}, NOW, 0).lanes.claude)
+      .toMatchObject({ free_slots: free, starved: false });
+  });
+
   it('marks a lane with free slots and no ready rows, with the plain line', () => {
     const read = readStarved([input()], { claude: minutesAgo(42) }, NOW);
     expect(read.lanes.claude).toEqual({
@@ -102,6 +111,30 @@ describe('readStarved', () => {
 });
 
 describe('lanes read: starved object', () => {
+  it.each([
+    { age: 0, paused: true, admission: {}, free: 0 },
+    { age: 0, paused: false, admission: { admit: false }, free: 0 },
+    { age: 0, paused: false, admission: { cap: 3, running: 3 }, free: 0 },
+    { age: 0, paused: false, admission: { cap: 4, running: 3 }, free: null },
+    { age: 60_001, paused: true, admission: { admit: false }, free: null },
+    { age: 0, paused: false, admission: { admit: false, ts: minutesAgo(1) }, free: null },
+  ])('uses a confirmed fleet stop with missing lane counts (%j)', async ({ age, paused, admission, free }) => {
+    const root = await scratch();
+    const queueDir = join(root, 'queue');
+    await mkdir(queueDir);
+    await writeFile(join(queueDir, 'ready.tsv'), '');
+    await writeFile(join(queueDir, 'status.json'), JSON.stringify({
+      last_tick: new Date(NOW - age).toISOString(),
+      lanes: { claude: {} },
+      paused, admission,
+    }));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir, budgetsDir: join(root, 'budgets'), usageLogPaths: [], now: () => new Date(NOW), starvedStateDir: root,
+    });
+    expect(snapshot.lanes.find(lane => lane.lane === 'claude')).toMatchObject({ slotTarget: null, liveJobs: null });
+    expect(snapshot.starved.lanes.claude).toMatchObject({ free_slots: free, ready_rows: 0, starved: false });
+  });
+
   it.each([
     { configuredHeld: false, dispatcherHeld: true, tickAgeMs: 0, held: true },
     { configuredHeld: true, dispatcherHeld: false, tickAgeMs: 0, held: true },
