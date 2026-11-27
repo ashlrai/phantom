@@ -38,7 +38,8 @@ const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
                                 A re-join replaces this machine's opt-ins; dropped lanes are listed. Nothing is sent
                                 and no provider auth is read; sign in to your own CLIs here.
   plan [--queue <jobs.json>]    Propose queue assignments and agent roles within each member's contributed limits
-                                Skips team planning when no org.toml is configured.
+                                Skips team planning when no org.toml is configured; the skip names the
+                                probed file and how to get one.
   init --member <id> --machine <id> [--name <name>] [--lane <lane>[=<share>]]... [--agent <id>:<lane>]...
                                 Write a starter org.toml (default ~/.ashlr/org.toml, or --file)
                                 declaring <member> as leader (founder) of a new org on <machine>.
@@ -149,8 +150,14 @@ export async function cmdOrg(argv: string[]): Promise<number> {
   if (json) args.splice(args.indexOf('--json'), 1);
   const print = (v: unknown, text: string) => { console.log(json ? JSON.stringify(v, null, 2) : text); return 0; };
   let command = 'org';
+  // `file` is hoisted so the not-configured plan catch can name the org.toml
+  // that was probed — including a --file override — the same path join and
+  // show report when they refuse. It stays undefined until line one of the
+  // try assigns it, and OrgNotConfiguredError can only come from loadOrg(file)
+  // after that assignment, so the catch always sees the resolved path.
+  let file: string | undefined;
   try {
-    const file = one(args, '--file') ?? orgFile();
+    file = one(args, '--file') ?? orgFile();
     const [sub, ...rest] = args;
     if (sub !== 'show' && sub !== 'join' && sub !== 'plan' && sub !== 'init') {
       return orgUsage(json, 'org', typeof sub === 'string' && !sub.startsWith('-') ? `Unknown org command '${sub}'` : undefined);
@@ -296,9 +303,13 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       `Opt-in counts join records held on this machine (${joinsDir()}); the plan covers only those records.`].join('\n'));
   } catch (err) {
     if (command === 'plan' && err instanceof OrgNotConfiguredError) {
+      // A first run on a machine with no org.toml must not dead-end: name the
+      // probed file and print the same guidance join/show give — where a copy
+      // comes from and how to start a new org — instead of a bare skip notice.
       return print({ schema: 'org.plan.v1', state: 'not-configured', generatedAt: null, leader: null,
-        budgets: null, roles: null, assignments: null, unassigned: null, held: null, joinsDir: null },
-      'Team org not configured; planning skipped.');
+        budgets: null, roles: null, assignments: null, unassigned: null, held: null, joinsDir: null,
+        file: file ?? orgFile() },
+      `Team org not configured; planning skipped. ${err.message}`);
     }
     return orgFailure(json, command, err);
   }

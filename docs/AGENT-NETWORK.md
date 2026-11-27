@@ -430,9 +430,12 @@ failure is `phm org: <message>` on stderr.
 
 The leader reads `phm org plan --json` each planning pass and applies it within each
 member's contributed limits. With no `org.toml`, the command succeeds with
-`org.plan.v1` and `state: "not-configured"`; the leader skips team planning and
-does not interpret null plan fields as zero capacity or empty work. An invalid
-or unreadable org file is still rejected. Solo fleet planning is independent.
+`org.plan.v1` and `state: "not-configured"` — `file` names the org.toml path
+probed, and text mode adds the same guidance `org join` and `org show` give for
+a missing file (where a copy comes from, or `phm org init` to start one); the
+leader skips team planning and does not interpret null plan fields as zero
+capacity or empty work. An invalid or unreadable org file is still rejected.
+Solo fleet planning is independent.
 Known spare slots from `phm resources plan` cap
 new proposals across all members on the same lane. An unknown target does
 not grant extra capacity or change an existing contributed budget. Private
