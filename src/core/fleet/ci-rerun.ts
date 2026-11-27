@@ -300,6 +300,7 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
         }
         const pendingAt = now();
         const pending = pendingVerdicts(repoEntries, observedCallResults(repoEntries, pendingAt), pendingAt);
+        const attemptsByRun = new Map(observedAttempts(repoEntries, pendingAt).map(entry => [rerunKey(entry), entry]));
         s.verdictsPending = pending.length;
         // A future-dated verdict is invisible to the tally but still deduplicates writes.
         const recordedVerdicts = new Set(journal.filter(e => e.outcome === 'verdict').map(rerunKey));
@@ -323,7 +324,11 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
           } catch (error) { if (opts.signal.aborted) throw error; }
           s.verdictCursor = { at: p.at, repo: p.repo, head: p.head, runId: p.runId };
           if (verdict === null) continue;
-          append({ at: new Date(observedAt).toISOString(), repo: p.repo, head: p.head, runId: p.runId, pr: p.pr, outcome: 'verdict', verdict, ...(p.test ? { test: p.test } : {}) });
+          const attempt = attemptsByRun.get(rerunKey(p));
+          const tests = attempt ? triggeringTests(attempt) : [];
+          // Older or truncated journals can have a call receipt without its attempt.
+          const test = p.test && (!attempt || (tests.length === 1 && tests[0] === p.test)) ? p.test : undefined;
+          append({ at: new Date(observedAt).toISOString(), repo: p.repo, head: p.head, runId: p.runId, pr: p.pr, outcome: 'verdict', verdict, ...(test ? { test } : {}) });
           s.verdictsResolved++;
         }
       } catch (error) {

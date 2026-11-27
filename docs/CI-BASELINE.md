@@ -687,6 +687,11 @@ for runs with a consistent call result.
 Later receipts cannot reset the settle or expiry clock. When these receipts
 disagree on the triggering test, the workflow verdict still counts in the
 overall tally and its per-test attribution is withheld.
+When recording a verdict, a visible attempt must identify the same single
+test as the successful call to retain per-test attribution. Multiple tests,
+conflicting attempt receipts, and mismatched test IDs yield a workflow-only
+verdict. A successful call can still supply attribution when its attempt
+receipt is absent from the retained journal.
 
 `phm ci reruns --json` reports `verdicts` tallies over the retained journal
 window: `pass`/`fail`/`inconclusive` counts, `pending` fired reruns still
