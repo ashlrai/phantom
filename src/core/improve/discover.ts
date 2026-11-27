@@ -426,6 +426,21 @@
  *     `phm fleet judge-health` — reports someone had to run — plus the
  *     build-only counterfactual replay nothing schedules, so a judge
  *     engine whose approvals kept not holding never became work;
+ *   - the fleet decisions ledger's recurring judge-infrastructure
+ *     failures: the DecisionEntry rows recordDecision appends to
+ *     ~/.ashlr/decisions/YYYY-MM-DD.jsonl for every proposal the
+ *     merge machinery judges — per (failure kind, engine), the
+ *     'judged' rows whose judgeReasonCode is 'judge-parse-failure'
+ *     or 'judge-network-failure' (synthetic fail-closed fallbacks the
+ *     judge-trace ledger records as ordinary 'review' verdicts) and
+ *     the 'escalated' rows whose reason records 'manager judge
+ *     unavailable', plus one source-health item when the shared
+ *     bounded read reports the ledger degraded
+ *     (decisionsBacklogItems below). Until now the ledger's only
+ *     readers were point-in-time reports and the merge gate's own
+ *     dedup read — never a trend — so a judge path that kept
+ *     failing to parse, kept erroring on the network, or kept being
+ *     unavailable never became work;
  *   - the Devin autoland decision journal's recurring adverse
  *     outcomes: the per-decision DevinAutolandDecision rows
  *     runDevinAutoland appends to devin/autoland.jsonl under the
@@ -1778,6 +1793,7 @@ import { worktreeReapBacklogItems } from './worktree-reap-backlog.js';
 import { gapProposalBacklogItems } from './gap-proposal-backlog.js';
 import { recutLoopBacklogItems } from './recut-loop-backlog.js';
 import { judgeBacklogItems } from './judge-backlog.js';
+import { decisionsBacklogItems } from './decisions-backlog.js';
 import { autolandBacklogItems } from './autoland-backlog.js';
 import { loadBacklogItems } from './load-backlog.js';
 import { autopilotBacklogItems } from './autopilot-backlog.js';
@@ -2562,6 +2578,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet's own repository inherits the items since every
   // judgeProposal call site is this install's merge path.
   items.push(...await judgeBacklogItems({ repo }));
+
+  // Fleet decisions ledger: the merge machinery's own lifecycle record —
+  // per (failure kind, engine), the 'judged' rows whose
+  // judgeReasonCode is 'judge-parse-failure'/'judge-network-failure'
+  // (synthetic fail-closed fallbacks, never considered verdicts) and
+  // the 'escalated' rows whose reason records 'manager judge
+  // unavailable' — become backlog items too, plus one source-health
+  // item when the shared bounded read reports the ledger degraded.
+  // Until now the ledger's only readers were point-in-time reports
+  // (`phm fleet status`, quality metrics, comms rollups, web
+  // visibility) and the merge gate's own dedup read — never a trend —
+  // and judge-traces cannot see the failure evidence at all since a
+  // fallback lands there as an ordinary 'review'. Cells emit only at
+  // the recurring bars of failure records across distinct UTC days
+  // AND distinct proposals inside the window, designed gate-held and
+  // self-target escalations never count, a degraded read yields the
+  // source item alone rather than folding partial evidence, and only
+  // the fleet's own repository inherits the items since the ledger
+  // carries no repository column.
+  items.push(...await decisionsBacklogItems({ repo }));
   // The Devin autoland journal (devin/autoland.jsonl under the Ashlr
   // home) is the only record of what the resident daemon's
   // ten-minute autoland timer and manual apply passes decided per
