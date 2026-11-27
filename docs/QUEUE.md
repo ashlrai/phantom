@@ -389,6 +389,8 @@ their matching requirements envelopes when `router-queue.md` is readable.
 An invalid envelope excludes the row. When the envelope file is unavailable,
 the tier tally falls back to the row's own fields.
 `phm fleet ready-supply` uses the same rule for hinted and lane-open jobs.
+The fleet truth `queued` count and the repos manager's per-repo `queueDepth`
+follow it too, so repeated READY rows cannot inflate either.
 The planner uses those counts for its supply floor, so repeated READY rows
 cannot inflate the backlog. Parked rows are counted separately.
 Planner autorun measures lane headroom against the configured target capped
