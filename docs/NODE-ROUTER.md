@@ -264,7 +264,11 @@ facts when it has them — `slots` (the advertised bound, absent when unbounded)
 `held` (the last measured capacity hold) and `open` (routable jobs in this
 node's owner scopes that pass its capability fences but routed to other nodes
 or wait on a free slot) — so an idle node can tell an empty queue from held
-capacity or work that went elsewhere; text mode says so in plain words. A
+capacity or work that went elsewhere; text mode says so in plain words. In a
+configured pool, `held` comes from the same shared host capacity view as
+placement. A fresh hold reported by a sibling worker on that host applies to
+the requesting node too. An expired capacity sample supplies no hold reason,
+even after a heartbeat without a new sample. A
 `lease-lost` error means stop work on that job
 and pull again. A flag value outside its documented range — `--usage` above
 1000 permille or `--slots` above 64 on `join` or `beat` — is refused as usage

@@ -3,7 +3,7 @@ import type { DriveNodes, JobClaim, NodeProfile } from './index.js';
 import { isVersionCap } from './phm-version.js';
 import type { NodeAuth, NodeCapacitySample } from './state.js';
 import { isNodeCapacity, isHostStats, validCap, validId, validSecretName } from './state.js';
-import { jobBlockers, routable, type RouteAssignment } from './router.js';
+import { jobBlockers, nodeCapacityView, routable, type RouteAssignment } from './router.js';
 import { NODE_TASK_LIMIT, validNodeTask } from './task.js';
 
 export class UsageError extends Error {
@@ -423,9 +423,12 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         // queue while work this node could do sits elsewhere.
         const open = state.jobs.filter(j => j.owner !== undefined && rec.owners?.includes(j.owner) === true &&
           routable(j, state.observedAt) && jobBlockers(rec, j).length === 0).length;
+        const held = state.pool
+          ? nodeCapacityView(state, state.observedAt).find(host => host.nodeIds.includes(rec.nodeId))?.held
+          : rec.capacity?.held;
         return { pulled: false,
           ...(rec.slots === undefined ? {} : { slots: rec.slots }),
-          ...(rec.capacity?.held ? { held: rec.capacity.held } : {}),
+          ...(held ? { held } : {}),
           ...(open > 0 ? { open } : {}) };
       }
       const { claim, job } = pulled;
