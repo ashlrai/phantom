@@ -42,6 +42,7 @@ import { replyTextHash } from '../src/core/fleet/mason-outbox.js';
 import type { FleetAssignment, FleetCoordinationPending, FleetMessage, FleetPendingReturn } from '../src/core/fleet/coordination.js';
 import type { ClaimDriftRow, ClaimStoreDrift } from '../src/core/fleet/claim-store-drift.js';
 import type { SessionHandoffList, SessionHandoffListEntry } from '../src/core/agents/session-handoff.js';
+import type { LeaderAssignment } from '../src/core/agents/leader-office.js';
 import type { WorkBoardItem, WorkBoardResult } from '../src/core/comms/work-board.js';
 import type { WorkItemState } from '../src/core/comms/work-item-state.js';
 import type { ChannelHealth, ChannelHealthReport } from '../src/core/fleet/channel-health.js';
@@ -77,6 +78,10 @@ const read = (extra: Partial<UnifiedInboxOptions> = {}): Promise<UnifiedInbox> =
   // verified-absent read so the suite stays hermetic. The source has its own
   // describe block below with an injected reader.
   readOwnerPair: () => ({ status: 'missing' }),
+  // The leader-office store lives under the real home dir; pin a
+  // verified-absent read so the suite stays hermetic. The source has its own
+  // describe block below with an injected reader.
+  readLeaderOffice: () => ({ status: 'missing' }),
   // The work board classifies every durable bus envelope as a request, so the
   // fixtures this suite posts would all list as RECEIVED; pin a verified-empty
   // board so only the dedicated describe block exercises the real projection.
@@ -156,6 +161,7 @@ describe('readUnifiedInbox sources', () => {
         'email-outbox': { state: 'missing', pending: 0 },
         'team-approvals': { state: 'healthy', pending: 0 },
         proposals: { state: 'healthy', pending: 0 },
+        'leader-office': { state: 'missing', pending: 0 },
       },
     });
   });
@@ -5093,5 +5099,119 @@ describe('readUnifiedInbox owner pair', () => {
     // A pair wait names no job — --job never matches it.
     const byJob = await readPair(pending, { filter: { job: 'job-1' } });
     expect(byJob.items.filter(i => i.source === 'owner-pair')).toHaveLength(0);
+  });
+});
+
+describe('readUnifiedInbox leader office', () => {
+  type OfficeRead = NonNullable<UnifiedInboxOptions['readLeaderOffice']>;
+  const officeAssignment = (over: Partial<LeaderAssignment> = {}): LeaderAssignment => ({
+    rq: 'RQ-TEST-1', owner: 'engineering', lane: 'work', due: '2026-11-10',
+    status: 'assigned', outcome: null, summary: 'fix the flaky test',
+    updatedAt: '2026-11-07T10:00:00.000Z', ...over,
+  });
+  const officeOk = (assignments: LeaderAssignment[]): OfficeRead => () => ({ status: 'ok', assignments });
+  const readOffice = (readLeaderOffice: UnifiedInboxOptions['readLeaderOffice'], extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readLeaderOffice, ...extra });
+
+  it('lists every open status under its kind, severity and blocking verdict', async () => {
+    const inbox = await readOffice(officeOk([
+      officeAssignment({ rq: 'RQ-ESC-1', status: 'escalated', owner: 'leader', lane: 'frontier', summary: 'secrets/keys', due: null }),
+      officeAssignment({ rq: 'RQ-NEW-1', status: 'assigned' }),
+      officeAssignment({ rq: 'RQ-NEW-2', status: 'in_progress' }),
+      officeAssignment({ rq: 'RQ-BLK-1', status: 'blocked' }),
+      officeAssignment({ rq: 'RQ-PRP-1', status: 'proposed' }),
+    ]));
+    expect(inbox.sources['leader-office']).toEqual({ state: 'healthy', pending: 5 });
+    const esc = inbox.items.find(i => i.id === 'leader-office:RQ-ESC-1')!;
+    expect(esc).toMatchObject({
+      source: 'leader-office', kind: 'leader-office-escalated', severity: 'warn', blocking: true,
+      title: 'Leader escalation RQ-ESC-1', since: '2026-11-07T10:00:00.000Z', expiresAt: null,
+      jobIds: ['RQ-ESC-1'], act: ['phm leader status --json'],
+    });
+    expect(esc.detail).toContain('needs the owner');
+    expect(esc.detail).toContain('secrets/keys');
+    const open = inbox.items.filter(i => i.kind === 'leader-office-open');
+    expect(open.map(i => i.id).sort()).toEqual(
+      ['leader-office:RQ-BLK-1', 'leader-office:RQ-NEW-1', 'leader-office:RQ-NEW-2', 'leader-office:RQ-PRP-1'].sort());
+    for (const item of open) expect(item.blocking).toBe(false);
+    // blocked and proposed wait on a claim conflict or a standing grant —
+    // warn; assigned and in_progress are tracked work the router admitted —
+    // info.
+    expect(inbox.items.find(i => i.id === 'leader-office:RQ-BLK-1')).toMatchObject({ severity: 'warn' });
+    expect(inbox.items.find(i => i.id === 'leader-office:RQ-PRP-1')).toMatchObject({ severity: 'warn' });
+    expect(inbox.items.find(i => i.id === 'leader-office:RQ-NEW-1')).toMatchObject({ severity: 'info' });
+    expect(inbox.items.find(i => i.id === 'leader-office:RQ-NEW-2')).toMatchObject({ severity: 'info' });
+  });
+
+  it('carries owner, lane, due and summary in an open item detail and the assign deep link', async () => {
+    const inbox = await readOffice(officeOk([officeAssignment()]));
+    const item = inbox.items.find(i => i.id === 'leader-office:RQ-TEST-1')!;
+    expect(item).toMatchObject({
+      kind: 'leader-office-open', title: 'Leader assignment RQ-TEST-1 (assigned)',
+      detail: 'owner engineering · lane work · due 2026-11-10 — fix the flaky test',
+      act: ['phm leader status --json',
+        'phm leader assign --rq RQ-TEST-1 --owner engineering --summary "<work summary>" --status <status> --json'],
+    });
+  });
+
+  it('keeps since honest — a recorded updatedAt lists, an unparseable one stays null', async () => {
+    const inbox = await readOffice(officeOk([
+      officeAssignment({ rq: 'RQ-DATED-1' }),
+      officeAssignment({ rq: 'RQ-DATED-2', updatedAt: 'not-a-date' }),
+    ]));
+    expect(inbox.items.find(i => i.id === 'leader-office:RQ-DATED-1')!.since).toBe('2026-11-07T10:00:00.000Z');
+    expect(inbox.items.find(i => i.id === 'leader-office:RQ-DATED-2')!.since).toBeNull();
+  });
+
+  it('lists a row without an rq under a positional label and no job citation', async () => {
+    const inbox = await readOffice(officeOk([officeAssignment({ rq: '' })]));
+    const item = inbox.items.find(i => i.source === 'leader-office')!;
+    expect(item.id).toBe('leader-office:row-1');
+    expect(item.title).toBe('Leader assignment row-1 (assigned)');
+    expect(item.jobIds).toBeUndefined();
+    // Without an rq the assign deep link cannot form — only the status read stays.
+    expect(item.act).toEqual(['phm leader status --json']);
+  });
+
+  it('reports a verified-absent office file missing and a real zero pending', async () => {
+    const inbox = await readOffice(() => ({ status: 'missing' }));
+    expect(inbox.sources['leader-office']).toEqual({ state: 'missing', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'leader-office')).toHaveLength(0);
+  });
+
+  it('reports an unreadable or invalid office file unavailable — never an empty office', async () => {
+    const inbox = await readOffice(() => ({ status: 'unavailable' }));
+    expect(inbox.sources['leader-office']).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'leader-office')).toHaveLength(0);
+  });
+
+  it('keeps a readable office with no open assignments healthy at a real zero', async () => {
+    const inbox = await readOffice(officeOk([]));
+    expect(inbox.sources['leader-office']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'leader-office')).toHaveLength(0);
+  });
+
+  it('degrades to unavailable when the read throws', async () => {
+    const inbox = await read({ readLeaderOffice: () => { throw new Error('office boom'); } });
+    expect(inbox.sources['leader-office']).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'leader-office')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind, --job and --blocking like every other source', async () => {
+    const assignments = [
+      officeAssignment({ rq: 'RQ-ESC-1', status: 'escalated', owner: 'leader', lane: 'frontier', summary: 'secrets/keys', due: null }),
+      officeAssignment({ rq: 'RQ-NEW-1', status: 'assigned' }),
+      officeAssignment({ rq: 'RQ-NEW-2', status: 'blocked' }),
+    ];
+    const bySource = await readOffice(officeOk(assignments), { filter: { source: 'leader-office' } });
+    expect(bySource.items).toHaveLength(3);
+    expect(bySource.items.every(i => i.source === 'leader-office')).toBe(true);
+    expect(bySource.sources['leader-office']).toEqual({ state: 'healthy', pending: 3 });
+    const byKind = await readOffice(officeOk(assignments), { filter: { kind: 'leader-office-escalated' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['leader-office:RQ-ESC-1']);
+    const byJob = await readOffice(officeOk(assignments), { filter: { job: 'RQ-NEW-1' } });
+    expect(byJob.items.filter(i => i.source === 'leader-office').map(i => i.id)).toEqual(['leader-office:RQ-NEW-1']);
+    const byBlocking = await readOffice(officeOk(assignments), { filter: { blocking: true } });
+    expect(byBlocking.items.filter(i => i.source === 'leader-office').map(i => i.id)).toEqual(['leader-office:RQ-ESC-1']);
   });
 });

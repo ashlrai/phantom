@@ -666,7 +666,28 @@ the source, since a throwing read is itself the degraded/unknown evidence
 and `unavailable`/`missing` never apply to a live probe that always
 resolves; deep links `phm fleet channel-health`, `phm channels slack
 status`, `phm imessage doctor`, `phm comms health --json`, `phm comms
-cycle`, `phm channels`) — and each item carries `act` deep-link commands (`phm fleet
+cycle`, `phm channels`) — and open Leader-office assignments (the RQ work
+`phm leader ask|assign` recorded in `~/.ashlr/vision/leader/office.json`,
+read through `readLeaderOfficePending` — the same `openAssignments` filter
+`phm leader status` applies to its `priorities`, every status but `done`,
+so the surfaces can never disagree about what is still open: until now an
+agent checking the one pending view could not see work the office had
+assigned, proposed, blocked on a claim conflict or escalated to the owner —
+only `phm leader status`, the Leader pane and `phm leader org` showed it;
+an `escalated` row is the office's hard-limit verdict — secrets, money, an
+outside send, owner-data destruction or wording it could not clear — so it
+lists as warn `leader-office-escalated` blocking on the owner, the same
+class the needs-you hard-limit items carry, while `blocked` and `proposed`
+list as warn `leader-office-open` and `assigned`/`in_progress` as info —
+tracked work the router already admitted; `since` is the assignment's
+recorded `updatedAt` — null when it does not parse, never invented —
+`expiresAt` stays null since an assignment carries a `due` target date,
+not a deadline it expires on, and `jobIds` cites the row's own `rq`, the
+work item id `--job` already matches; a verified-absent office file is
+`missing` (no assignment can exist) and an unreadable or invalid one
+`unavailable` — an open assignment it may hide stays unknown, never an
+empty office passed off as fact; deep links `phm leader status`, `phm
+leader assign`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -687,7 +708,8 @@ claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`,
 `phm agents bus status`, `phm fleet status`, `phm fleet resume`, `phm
 queue stuck`, `phm fleet unfed --json`, `phm queue`, `phm fleet
 channel-health`, `phm channels slack status`, `phm imessage doctor`, `phm
-comms health --json`, `phm comms cycle`). It never claims, replies, or mutates; a source
+comms health --json`, `phm comms cycle`, `phm leader status`, `phm leader
+assign`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:

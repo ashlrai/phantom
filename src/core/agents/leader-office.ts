@@ -336,6 +336,16 @@ function readStore(deps: LeaderOfficeDeps): Store | null {
   }
 }
 
+/** The assignment statuses the office still counts as open work — every
+ * status but 'done'. Shared by `leaderStatus`'s `priorities` and the
+ * pending-work read other surfaces consult, so they can never disagree
+ * about what is still open. */
+const OPEN_ASSIGNMENT_STATUSES: ReadonlySet<AssignmentStatus> = new Set(['proposed', 'assigned', 'in_progress', 'blocked', 'escalated']);
+
+function openAssignments(assignments: readonly LeaderAssignment[]): LeaderAssignment[] {
+  return assignments.filter((row) => OPEN_ASSIGNMENT_STATUSES.has(row.status));
+}
+
 function killedNow(deps: LeaderOfficeDeps): boolean {
   return deps.killed ? deps.killed() : killSwitchOn();
 }
@@ -627,7 +637,6 @@ export async function leaderStatus(deps: LeaderOfficeDeps = {}): Promise<LeaderO
   const seen = await look(deps, now);
   const store = readStore(deps);
   if (!store) return { schema: LEADER_OFFICE_SCHEMA, status: 'unavailable', reason: 'office-unreadable' };
-  const open = new Set<AssignmentStatus>(['proposed', 'assigned', 'in_progress', 'blocked', 'escalated']);
   return {
     schema: LEADER_OFFICE_SCHEMA,
     killed: deps.killed ? deps.killed() : killSwitchOn(),
@@ -636,7 +645,7 @@ export async function leaderStatus(deps: LeaderOfficeDeps = {}): Promise<LeaderO
     grant: grantOf(deps),
     org: org.org,
     orgSource: org.source,
-    priorities: store.assignments.filter((row) => open.has(row.status)),
+    priorities: openAssignments(store.assignments),
     inbox: store.messages.filter((row) => row.direction === 'in'),
     outbox: store.messages.filter((row) => row.direction === 'out'),
   };
@@ -667,4 +676,25 @@ export function readLeaderOutbox(deps: LeaderOfficeDeps = {}): { schema: typeof 
 export function readLeaderOfficeInbox(deps: LeaderOfficeDeps = {}): { schema: typeof LEADER_OFFICE_SCHEMA; entries: LeaderOfficeMessage[] } {
   const store = readStore(deps);
   return { schema: LEADER_OFFICE_SCHEMA, entries: store ? store.messages.filter((row) => row.direction === 'in') : [] };
+}
+
+/** Honest store states for the pending-assignments read: 'missing' is a
+ * verified-absent office file (no assignment can exist), 'ok' a readable
+ * store, 'unavailable' a file that exists but cannot be read or parsed —
+ * an open assignment it may be hiding stays unknown, never an empty office
+ * passed off as fact. */
+export type LeaderOfficePendingRead =
+  | { status: 'missing' }
+  | { status: 'ok'; assignments: LeaderAssignment[] }
+  | { status: 'unavailable' };
+
+/** The open assignments `phm leader status` reports as `priorities` — every
+ * status but 'done' — as a pending-work read other surfaces share through
+ * the same `openAssignments` filter, so they can never disagree about what
+ * is still open. Read-only: no world-model or grant lookup, never a write. */
+export function readLeaderOfficePending(deps: LeaderOfficeDeps = {}): LeaderOfficePendingRead {
+  if (!existsSync(storePath(deps))) return { status: 'missing' };
+  const store = readStore(deps);
+  if (!store) return { status: 'unavailable' };
+  return { status: 'ok', assignments: openAssignments(store.assignments) };
 }
