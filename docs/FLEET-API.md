@@ -397,7 +397,11 @@ from the selected runs directory's `queue/admission-ctl.json`. Missing, invalid,
 future or more than five-minute-old observations leave the reason and countdown
 unknown. A blocked guard supplies a reason and leaves the countdown unknown.
 An open or settling guard reports the seconds remaining in its pacing window.
-Queue counts come independently from `queue/status.json`.
+Queue counts come independently from `queue/status.json`. Lane running,
+target and queued counts require a readable dispatcher `last_tick` at or before
+report time and at most 60 seconds old. Without a fresh tick, lane names
+remain visible and counts are null. The queue total requires a valid lane
+map and a usable queued count for every lane.
 
 ### Fleet map
 
