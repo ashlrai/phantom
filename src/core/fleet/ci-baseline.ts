@@ -2239,10 +2239,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // Aggregator jobs that never check out the workspace (Merge Gate,
       // release autotag) cannot emit the checkout SHA this check requires.
       // Their logs are dropped from evidence only when they carry nothing
-      // the analyzer consumes; any recognizable failure or pass output in
-      // an unverifiable log keeps the whole run unknown rather than letting
-      // unattributed evidence pass as head-verified.
-      if (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line))) return null;
+      // the analyzer consumes. An unverified checkout is itself enough to
+      // withhold the run, even if the job printed no test results.
+      if (output.some(line => CHECKOUT_GROUP.test(line) || PASS_LINE.test(line)) ||
+        parseBaselineFailures(r.stdout, repo).length > 0) return null;
     }
     return { entries: result, incomplete };
   }
