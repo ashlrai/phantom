@@ -2281,6 +2281,32 @@ describe('CI baseline evidence', () => {
       expect(report.groups[0]?.action, dep).toBe('pr-caused');
     }
   });
+  it('follows CommonJS dependencies transitively and prefers literal files', async () => {
+    const contents = {
+      'test/example.test.ts': "import './helper.cjs';",
+      'test/helper.cjs': "module.exports = require('./support.js');",
+      'test/support.js': "module.exports = require('./data');",
+      'test/support.ts': 'export const unrelated = true;',
+      'test/data.json': '{}',
+    };
+    for (const touched of ['test/support.js', 'test/data.json']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ contents, touched }).gh);
+      expect(report.groups[0]?.classification, touched).toBe('pr-caused');
+    }
+    const report = await analyzeCiBaseline('owner/repo', github({ contents, touched: 'test/support.ts' }).gh);
+    expect(report.groups[0]?.classification).toBe('shared-baseline');
+  });
+  it.each(["require(selected)", "require('./' + selected)", "require('./missing.cjs')"])(
+    'withholds independence when a CommonJS load cannot be resolved: %s',
+    async load => {
+      const contents = {
+        'test/example.test.ts': "import './helper.cjs';",
+        'test/helper.cjs': `module.exports = ${load};`,
+      };
+      const report = await analyzeCiBaseline('owner/repo', github({ contents, count: 1, pass: true }).gh);
+      expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
+    },
+  );
   it('fails closed when a dependency probe errors instead of 404ing', async () => {
     const contents = { 'test/example.test.ts': "import './helper.js';" };
     const report = await analyzeCiBaseline('owner/repo', github({ contents, contentsMiss: 'error' }).gh);

@@ -2364,11 +2364,18 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
         const fetched = await contents(path);
         if (!fetched.ok || fetched.source === null) return false;
         const source = fetched.source;
-        // Computed imports cannot be proved independent of a PR diff.
+        // Computed module loads cannot be proved independent of a PR diff.
         if (/import\s*\(\s*[^'"\s]/.test(source)) return false;
-        for (const match of source.matchAll(/(?:from\s*|import\s*\(\s*|import\s*)['"]([^'"]+)['"]/g)) {
-          const spec = match[1]!;
+        const requires = [...source.matchAll(/\brequire\s*\(\s*(?:(['"])([^'"\\\r\n]+)\1\s*\))?/g)];
+        if (requires.some(match => match[2] === undefined)) return false;
+        const imports = [...source.matchAll(/(?:from\s*|import\s*\(\s*|import\s*)['"]([^'"]+)['"]/g)];
+        const loads = [
+          ...imports.map(match => ({ spec: match[1]!, commonJs: false })),
+          ...requires.map(match => ({ spec: match[2]!, commonJs: true })),
+        ];
+        for (const { spec, commonJs } of loads) {
           if (spec.startsWith('node:')) continue;
+          if (commonJs && (posix.isAbsolute(spec) || spec.endsWith('/') || spec.includes('?'))) return false;
           if (!spec.startsWith('.')) {
             if (spec.startsWith('#') || spec.startsWith('@/')) return false;
             for (const manifest of ['package.json', 'package-lock.json', 'pnpm-lock.yaml']) visited.add(manifest);
@@ -2380,7 +2387,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
           const base = posix.normalize(posix.join(posix.dirname(path), cleanSpec));
           if (base.startsWith('../') || posix.isAbsolute(base)) return false;
           let resolved: string | null = null;
-          for (const candidate of specCandidates(base)) {
+          // CommonJS loads literal files before trying its standard suffixes.
+          // If none resolves, directory/package entry points remain unknown.
+          const candidates = commonJs ? [base, `${base}.js`, `${base}.json`, `${base}.node`] : specCandidates(base);
+          for (const candidate of candidates) {
             const hit = await contents(candidate);
             if (hit.ok) { resolved = candidate; break; }
             // A definitive 404 tries the next candidate; any other failure
