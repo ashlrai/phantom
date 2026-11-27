@@ -191,9 +191,10 @@ historical evidence in the trajectory projection. The report's
 projection is available. A missing card tally represents unknown
 attribution. Plain-text output prints the tallies under each matched skill.
 
-The projection is sample-gated exactly like `skillObservation`: per-skill
-counts publish only after at least `MIN_SKILL_OBSERVED_TRAJECTORIES` (3)
-production trajectories carry skill-use coverage, and the whole section is
+Per-skill outcome counts require at least `MIN_SKILL_OBSERVED_TRAJECTORIES` (3)
+learning-eligible production trajectories with skill-use coverage.
+`skillObservation` measures receipt coverage across observed production
+trajectories, including incomplete trajectories. The outcome section is
 withheld when the skill-use ledger is degraded. A bounded read also marks
 the sample degraded if the file cap omits a daily partition that can contain
 events in the requested window, a partition exceeds the 4 MiB tail read cap,

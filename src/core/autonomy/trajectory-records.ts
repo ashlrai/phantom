@@ -2264,6 +2264,8 @@ export function summarizeTrajectoryLearning(
       ? 'insufficient-sample'
       : 'observed';
   const publishSkillMetrics = sampleState === 'observed';
+  const publishSkillOutcomes = productionRecords.filter((record) => record.coverage.skillUse).length
+    >= MIN_SKILL_OBSERVED_TRAJECTORIES;
   const { skillUse: _privateSkillCoverage, ...publishedCoverage } = coverage;
   const diagnosticRecords = records.filter(isActionOnlyPreclaimRoute);
   const routeReasonCounts = emptyRouteReasonCounts();
@@ -2276,7 +2278,7 @@ export function summarizeTrajectoryLearning(
   }>();
   const skillOutcomeSkillIds = new Set<string>();
   let skillOutcomeSelections = 0;
-  if (publishSkillMetrics) {
+  if (publishSkillOutcomes) {
     const hashesByRevision = new Map<string, string>();
     const unidentifiedRevisions = new Set<string>();
     const disputedRevisions = new Set<string>();
@@ -2355,7 +2357,7 @@ export function summarizeTrajectoryLearning(
           sampleState,
         }
       : { eventState, sampleState },
-    ...(publishSkillMetrics ? {
+    ...(publishSkillOutcomes ? {
       skillOutcomes: {
         skills: skillOutcomeSkillIds.size,
         selections: skillOutcomeSelections,
