@@ -97,8 +97,11 @@ function rates(s: NodeSnapshot, prev: NodeCapacityDoc | null): { swapoutsPerMin:
   }
   const minutes = elapsed / 60_000;
   const outs = s.swap.swapoutsTotal, prevOuts = prev.swap.swapouts_total;
-  // A counter that went backwards means a reboot: no rate rather than a negative one.
-  const swapoutsPerMin = finite(outs) && finite(prevOuts) && outs >= prevOuts ? (outs - prevOuts) * 60_000 / elapsed : null;
+  // A rollback marks a discontinuity. Neither delta can use that baseline.
+  if (finite(outs) && finite(prevOuts) && outs < prevOuts) {
+    return { swapoutsPerMin: null, growthPerMin: null };
+  }
+  const swapoutsPerMin = finite(outs) && finite(prevOuts) ? (outs - prevOuts) * 60_000 / elapsed : null;
   const used = s.swap.usedBytes, prevUsed = prev.swap.used_bytes;
   const growthPerMin = finite(used) && finite(prevUsed) ? Math.round((used - prevUsed) / minutes) : null;
   return { swapoutsPerMin, growthPerMin };
@@ -143,7 +146,7 @@ export function computeNodeCapacity(s: NodeSnapshot, prev: NodeCapacityDoc | nul
   const notes: string[] = [];
   const { swapoutsPerMin, growthPerMin } = rates(s, prev);
   const growing = swapoutsPerMin === null ? null : swapoutsPerMin >= CAPACITY_POLICY.growingSwapoutsPerMin;
-  if (swapoutsPerMin === null) notes.push('swap growth unknown: no previous sample of this node within 15 minutes');
+  if (swapoutsPerMin === null) notes.push('swap growth unknown: no comparable swap-out counters within 15 minutes');
 
   const total = s.mem.totalBytes;
   const freePct = finite(s.mem.freePercent) ? s.mem.freePercent
