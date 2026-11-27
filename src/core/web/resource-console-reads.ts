@@ -1,13 +1,11 @@
-import { createRequire } from 'node:module';
 import { isAbsolute, parse, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { types } from 'node:util';
 import { validateResourceObservations, validateResourcePool, type ResourceAssignmentExclusion,
   type ResourceObservation, type ResourcePool } from '../resources/pool-policy.js';
 import { validateResourceBindings, type ResourceBinding } from '../resources/worker.js';
 import { expandResourceQuotaDenials } from '../resources/quota-scope.js';
 import type { ResourceConsoleEvidence } from '../resources/console-types.js';
-import { createBoundedReadWorker, ReadProjectionError, type BoundedReadWorkerOptions } from './bounded-read-worker.js';
+import { createBoundedReadWorker, ReadProjectionError, resolveWorkerEntrypoint, type BoundedReadWorkerOptions } from './bounded-read-worker.js';
 import { degradedResourceConsoleEvidence, validateResourceConsoleResponse } from './resource-console-public.js';
 
 export interface ResourceConsoleReadScope { root: string; pool: ResourcePool; bindings: ResourceBinding[]; observationsFile: string;
@@ -180,14 +178,7 @@ function withholdExactWorkers(evidence: ResourceConsoleEvidence, blocked: Set<st
   return { ...evidence, plan: { ...evidence.plan, candidates, exclusions, selectedWorkerId: candidates[0]?.workerId ?? null, nextEligibleAt } };
 }
 
-function workerEntrypoint(): URL {
-  if (import.meta.url.endsWith('/resource-console-reads.ts')) {
-    const loader = pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm/api')).href;
-    const source = new URL('./resource-console-worker.ts', import.meta.url).href;
-    return new URL(`data:text/javascript,${encodeURIComponent(`import { register } from ${JSON.stringify(loader)}; register(); await import(${JSON.stringify(source)});`)}`);
-  }
-  return new URL('./resource-console-worker.js', import.meta.url);
-}
+const workerEntrypoint = (): URL => resolveWorkerEntrypoint(import.meta.url, 'resource-console-reads.ts', 'resource-console-worker');
 
 /** Pinned configuration and one private file; browser requests cannot choose paths. */
 export function createResourceConsoleReader(options: ResourceConsoleReadScope,

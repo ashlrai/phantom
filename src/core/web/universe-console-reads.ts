@@ -1,7 +1,5 @@
-import { createRequire } from 'node:module';
 import { isAbsolute, parse, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { createBoundedReadWorker, ReadProjectionError, type BoundedReadWorkerOptions } from './bounded-read-worker.js';
+import { createBoundedReadWorker, ReadProjectionError, resolveWorkerEntrypoint, type BoundedReadWorkerOptions } from './bounded-read-worker.js';
 import { validateUniverseConsoleResponse } from './universe-console-public.js';
 
 export interface UniverseConsoleReader {
@@ -39,14 +37,7 @@ export function normalizeUniverseConsoleRead(kind: unknown, payload: unknown): u
   throw new ReadProjectionError('Invalid Universe console read', 'READ_PROJECTION_INVALID_REQUEST');
 }
 
-function workerEntrypoint(): URL {
-  if (import.meta.url.endsWith('/universe-console-reads.ts')) {
-    const loader = pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm/api')).href;
-    const source = new URL('./universe-console-worker.ts', import.meta.url).href;
-    return new URL(`data:text/javascript,${encodeURIComponent(`import { register } from ${JSON.stringify(loader)}; register(); await import(${JSON.stringify(source)});`)}`);
-  }
-  return new URL('./universe-console-worker.js', import.meta.url);
-}
+const workerEntrypoint = (): URL => resolveWorkerEntrypoint(import.meta.url, 'universe-console-reads.ts', 'universe-console-worker');
 
 /** Root is pinned in workerData, never taken from a browser request or default configuration. */
 export function createUniverseConsoleReader(root: string, options: Pick<BoundedReadWorkerOptions,

@@ -17,7 +17,7 @@ import { basename, dirname, join } from 'node:path';
 
 import { leaderThreadPath } from '../vision/leader-thread.js';
 
-export const LEADER_THREAD_DEBOUNCE_MS = 250;
+const LEADER_THREAD_DEBOUNCE_MS = 250;
 export const LEADER_THREAD_POLL_MS = 2_000;
 
 export interface WatchLeaderThreadOptions {
