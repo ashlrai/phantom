@@ -636,6 +636,21 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(fold.unattached_rows).toBe(2);
   });
 
+  it.each([
+    ['superseded PR', { event: 'revert', pr_url: 'https://github.com/o/r/pull/1' }, null],
+    ['ambiguous job-only receipt', { event: 'revert' }, null],
+    ['standing PR', { event: 'revert', pr_url: 'https://github.com/O/R/pull/2/' }, true],
+    ['explicit negative verdict', { reverted: false, pr_url: 'https://github.com/o/r/pull/2' }, false],
+  ] as const)('attributes revert evidence from %s to the standing PR', (_label, receipt, reverted) => {
+    const rows = [
+      { job: 'J', phase: 'MERGED', mergedAt: '2026-11-01T00:00:00Z', pr_url: 'https://github.com/o/r/pull/1' },
+      { job: 'J', phase: 'MERGED', mergedAt: '2026-11-03T00:00:00Z', pr_url: 'https://github.com/o/r/pull/2' },
+      { job: 'J', ts: '2026-11-04T00:00:00Z', ...receipt },
+    ];
+    const [outcome] = foldRouterOutcomes(rows.map(row => JSON.stringify(row)).join('\n')).outcomes;
+    expect(outcome).toMatchObject({ merged: true, reverted });
+  });
+
   it('preserves measured zero and false instead of coercing them to null', () => {
     const text = [
       '{"job":"Z1","merged":false,"ci_first_pass":false,"cost_usd":0,"wall_s":0,"review_findings":{"fixed":0,"rejected":0,"ignored":0}}',

@@ -1008,7 +1008,12 @@ cannot establish which PR the counts describe.
 `reverted`
 folds explicit revert evidence — a `reverted` boolean, a revert event name
 or terminal REVERT/REVERTED state, or a parseable `reverted_at`/`revertedAt`
-stamp — plus the authority ledger's verified evidence index: a
+stamp. Jobs-ledger receipts with a PR URL must match the standing PR's
+unambiguous canonical identity. Legacy job-only receipts remain eligible
+when the job has no PR claim or one uncontested canonical claim. A revert
+on a superseded PR leaves the replacement merge's revert status unknown
+unless an eligible receipt supplies its verdict.
+The fold also uses the authority ledger's verified evidence index: a
 `revert:landed` row undoing a `merge:landed` landing marks the merged PR's
 outcome reverted when the job's standing merge verdict identifies that
 unambiguous canonical github.com pull URL. A legacy merge verdict without
