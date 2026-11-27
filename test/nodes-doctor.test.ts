@@ -117,6 +117,31 @@ describe('readNodesDoctor', () => {
     expect(report.nodes.find(n => n.name === 'node-c')!.lanes.find(l => l.lane === 'local-model')!.status).toBe('unknown');
   });
 
+  it('an expired record never vouches for disk; only a live session does', async () => {
+    // node-b's only registry record is an expired session: the nodes view
+    // already reports its memory/load as unknown, so the doctor's disk
+    // fallback must not resurrect its last hostStats figure either. node-c's
+    // live record still measures disk normally.
+    const stats = (diskFree: number) => ({ sampledAtMs: NOW - 2_000, uptimeSeconds: 1, load: [1, 1, 1], ramTotal: 8, ramUsed: 4, diskFree, cores: [{ total: 1, idle: 1 }] });
+    const pool: NodesRegistry = { source: 'pool-witness', selfNode: 'home-mac',
+      pool: { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' }, state: {
+        version: 'drive.nodes.v1', sequence: 1, observedAt: NOW - 1_000,
+        nodes: [
+          { nodeId: 'node-b', session: 1, heartbeatAt: NOW - 7_200_000, expiresAt: NOW - 7_100_000, caps: ['codex'], slots: 2, hostStats: stats(120 * GB) },
+          { nodeId: 'node-c', session: 1, heartbeatAt: NOW - 2_000, expiresAt: NOW + 30_000, caps: ['codex'], slots: 2, hostStats: stats(80 * GB) },
+        ],
+        leader: null, jobs: [] } };
+    const viewDeps: NodesViewDeps = { ...deps([['node-b', true], ['node-c', true]]), readRegistry: () => pool };
+    const report = await readNodesDoctor({ view: viewDeps, probe: fake({ 'home-mac': healthy() }) });
+    const b = report.nodes.find(n => n.name === 'node-b')!;
+    expect(b.diskFreeGb).toBe('unknown');
+    expect(b.unknowns.some(u => u.includes('free disk unknown'))).toBe(true);
+    expect(b.gaps.some(g => g.includes('GB free'))).toBe(false);
+    const c = report.nodes.find(n => n.name === 'node-c')!;
+    expect(c.diskFreeGb).toBe(80);
+    expect(c.unknowns.some(u => u.includes('free disk unknown'))).toBe(false);
+  });
+
   it('a reachable computer with no live Phantom session is a gap, never ready', async () => {
     // NO_POOL leaves this computer's standalone registry empty, so the view
     // proves Phantom is not running here even though every lane checks out.
