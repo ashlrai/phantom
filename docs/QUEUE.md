@@ -1450,8 +1450,10 @@ telemetry are excluded from generator yield. Jobs-ledger receipts explicitly
 marked `launched: false` do not create jobs or contribute execution evidence.
 Other receipts for the same job and generation-journal decisions still count.
 Empty rate uses jobs with a recorded
-empty or nonempty result on their latest observed attempt. A launch or batch
-claim supersedes earlier results. Replayed job receipts keep their first
+empty or nonempty result on their latest observed attempt. A launch, batch
+claim or launch reservation (`claim` with `launch_dedupe: true`) supersedes
+earlier results. A reservation leaves the empty result unknown until new
+outcome evidence arrives and supplies no launch credit. Replayed job receipts keep their first
 position when timestamps tie, including when JSON key order or whitespace
 changes. A replay cannot replace a later receipt's source, empty result,
 diff size or token total at the same timestamp. Median diff lines uses

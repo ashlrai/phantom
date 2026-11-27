@@ -69,6 +69,18 @@ describe('generator yield', () => {
     expect(report([...receipts, row({ job, event: 'finish', empty: false }), dispatch]))
       .toMatchObject([{ generator: 'fixup', jobs: 1, emptyRate: 0 }]);
   });
+  it('clears earlier empty evidence on a launch reservation without counting a launch', () => {
+    const job = 'FIXUP-X';
+    const finish = row({ job, event: 'finish', empty: true });
+    const claim = row({ job, event: 'claim' });
+    const reservation = row({ job, event: 'claim', launch_dedupe: true });
+    const report = (...receipts: string[]) => generatorYield(receipts.join('\n'), 24, now).generators;
+
+    expect(report(finish, claim)).toMatchObject([{ emptyRate: 1, launched: 0 }]);
+    expect(report(finish, reservation, finish)).toMatchObject([{ emptyRate: null, launched: 0 }]);
+    expect(report(finish, reservation, row({ job, event: 'finish', empty: false }), reservation))
+      .toMatchObject([{ emptyRate: 0, launched: 0 }]);
+  });
   it('keeps reserialized receipt replays from replacing newer evidence at the same timestamp', () => {
     const job = 'RQ-DRAIN-1';
     const finish = row({ job, event: 'finish', src: 'old', empty: true, tokens_total: 20, diff_lines: 0 });
