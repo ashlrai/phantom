@@ -2473,7 +2473,7 @@ describe('phm agents bus (unified)', () => {
       expect(help).toMatch(new RegExp(`ashlr agents messages [^\\n]*${flag.replace(/[|<>]/g, '\\$&')}`));
     }
     for (const flag of ['--with <name>', '--in-reply-to <id>', '--id <envelope-id>', '--channel <name>',
-      '--priority <P0|P1|P2|P3>', '--from <name>', '--exclude-from <name>', '--to <name>', '--thread <label>',
+      '--topic <topic>', '--priority <P0|P1|P2|P3>', '--from <name>', '--exclude-from <name>', '--to <name>', '--thread <label>',
       '--body-kind <kind>', '--result <reserved|admitted|complete|failed>', '--kind <ask|reply|handoff|status|blocker>']) {
       expect(help).toMatch(new RegExp(`ashlr agents conversations [^\\n]*${flag.replace(/[|<>]/g, '\\$&')}`));
     }

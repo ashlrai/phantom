@@ -83,7 +83,7 @@ describe('fleet_agent_conversations argument parsing', () => {
       agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: '1800000000000',
       before: '1800000001000', contains: '  Build   OK ',
-      inReplyTo: 'env-7', id: 'env-9', channel: 'dev', priority: 'P0', from: 'agent:bot',
+      inReplyTo: 'env-7', id: 'env-9', channel: 'dev', topic: 'deploy', priority: 'P0', from: 'agent:bot',
       excludeFrom: 'agent:spam', to: 'agent:leader', with: 'agent:peer', thread: 'release-1', bodyKind: 'work.post',
       result: 'failed', kind: 'blocker', limit: 25,
     });
@@ -91,7 +91,7 @@ describe('fleet_agent_conversations argument parsing', () => {
       agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: 1800000000000,
       before: 1800000001000, contains: 'build ok',
-      inReplyTo: 'env-7', id: 'env-9', channel: 'dev', priority: 'P0', from: 'agent:bot',
+      inReplyTo: 'env-7', id: 'env-9', channel: 'dev', topic: 'deploy', priority: 'P0', from: 'agent:bot',
       excludeFrom: 'agent:spam', to: 'agent:leader', with: 'agent:peer', thread: 'release-1', bodyKind: 'work.post',
       result: 'failed', kind: 'blocker', limit: 25,
     });
@@ -171,6 +171,7 @@ describe('fleet_agent_conversations argument parsing', () => {
       { inReplyTo: 'has space' }, { inReplyTo: '' }, { inReplyTo: 5 }, { inReplyTo: 'x'.repeat(129) },
       { id: 'has space' }, { id: '' }, { id: 5 }, { id: 'x'.repeat(129) },
       { channel: 'Has Space' }, { channel: '' }, { channel: 5 }, { channel: 'a'.repeat(65) },
+      { topic: 'Has Space' }, { topic: '' }, { topic: 5 }, { topic: 'a'.repeat(65) },
       { priority: 'P4' }, { priority: 'p0' }, { priority: 0 }, { priority: null },
       { from: 'has space' }, { from: '' }, { from: 5 },
       { excludeFrom: 'has space' }, { excludeFrom: '' }, { excludeFrom: 5 },
@@ -196,14 +197,16 @@ describe('fleet_agent_conversations reader', () => {
       parseFleetAgentConversationsArgs({
         agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
         job: 'RQ-9', waitingOn: 'agent:leader', since: '1800000000000',
-        before: '1800000001000', contains: 'Build OK', id: 'env-9', to: 'agent:leader', with: 'agent:peer',
+        before: '1800000001000', contains: 'Build OK', id: 'env-9', channel: 'dev', topic: 'deploy',
+        to: 'agent:leader', with: 'agent:peer',
         thread: 'release-1', bodyKind: 'work.post', result: 'failed', kind: 'blocker', limit: 10,
       })!,
       { read });
     expect(seen).toEqual([{
       agent: 'agent:claude', waitingOnly: true, blockedOnly: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: 1800000000000,
-      before: 1800000001000, contains: 'build ok', id: 'env-9', to: 'agent:leader', with: 'agent:peer',
+      before: 1800000001000, contains: 'build ok', id: 'env-9', channel: 'dev', topic: 'deploy',
+      to: 'agent:leader', with: 'agent:peer',
       thread: 'release-1', bodyKind: 'work.post', result: 'failed', kind: 'blocker', limit: 10,
     }]);
     expect(result).toMatchObject({
@@ -275,6 +278,8 @@ describe('fleet_agent_conversations MCP tool', () => {
     expect(tool?.inputSchema.properties?.['before'])
       .toMatchObject({ type: 'string' });
     expect(tool?.inputSchema.properties?.['id'])
+      .toMatchObject({ type: 'string' });
+    expect(tool?.inputSchema.properties?.['topic'])
       .toMatchObject({ type: 'string' });
     expect(tool?.inputSchema.properties?.['limit'])
       .toMatchObject({ type: 'integer', minimum: 1, maximum: 1024 });

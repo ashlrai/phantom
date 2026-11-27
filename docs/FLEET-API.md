@@ -686,7 +686,7 @@ compute scene draws its message lines at the same thickness.
 
 #### Agent conversations
 
-`phm agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <envelope-id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--to <name>] [--thread <label>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--kind <ask|reply|handoff|status|blocker>] [--limit <1..1024>] [--json]`
+`phm agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <envelope-id>] [--channel <name>] [--topic <topic>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--to <name>] [--thread <label>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--kind <ask|reply|handoff|status|blocker>] [--limit <1..1024>] [--json]`
 groups the same bus read into threads by reply chain and by the declared
 conversation label a body carries, longest-waiting first and then newest
 first. `--agent` matches a participant's routing label and, through
@@ -755,7 +755,16 @@ member message is addressed to `group:<name>:*` — the room's whole traffic
 under every topic, the same raw `to`-prefix rule `phm messages --channel`,
 `agents bus inbox --channel` and `channel read --channel` match — so "which
 threads touch channel X" is one filtered read, the value taking the strict
-channel-name grammar. `--priority <P0|P1|P2|P3>` keeps only the threads
+channel-name grammar. `--topic <topic>` keeps only the threads where at
+least one member message is addressed to a well-formed
+`group:<room>:<topic>` label carrying that exact topic component — the
+same `groupAddressTopicOf` match `phm messages --topic`, `agents bus
+inbox --topic`, `channel read --topic`, `agents bus wakes --topic`,
+`agents bus work feed --topic` and `comms bus next --topic` apply,
+composing with `--channel` into one room AND one topic while an agent
+address, a bare `group:<room>` or a malformed topic never matches — so
+"which threads touch channel X topic Y" is one filtered read, the value
+taking the same strict channel-name grammar. `--priority <P0|P1|P2|P3>` keeps only the threads
 where at least one member message carries that exact band — the same match
 every other bus read's `--priority` applies — so "which threads have urgent
 traffic" is one filtered read, a member message with no recorded band never
@@ -829,13 +838,13 @@ conversation; only the synthesized per-pair fallback stays reply-chain
 rooted. `group.presence` heartbeats are expiring observations with their own
 read (`phm comms bus group presence`), never messages: they form no thread
 and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-conversations[?agent=claude&with=grok&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&inReplyTo=env-1&id=env-2&channel=dev&priority=P0&from=claude&excludeFrom=bot&to=peer-a&thread=release-1&bodyKind=work.post&result=failed&kind=blocker&limit=50]`
+`GET /api/verse/fleet/control/agent-conversations[?agent=claude&with=grok&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&inReplyTo=env-1&id=env-2&channel=dev&topic=deploy&priority=P0&from=claude&excludeFrom=bot&to=peer-a&thread=release-1&bodyKind=work.post&result=failed&kind=blocker&limit=50]`
 serves the same read with a current read session. The isolated fleet MCP
 server's `fleet_agent_conversations` tool serves the same projection with
 the same filters as arguments (`agent`, `with` — the other agent in a
 two-way exchange, which needs `agent` — `waiting`/`blocked` booleans,
 `state`, `job`, `waitingOn`, `since`, `before`, `contains`, `inReplyTo`,
-`id`, `channel`, `priority`, `from`, `excludeFrom`, `to`, `thread`,
+`id`, `channel`, `topic`, `priority`, `from`, `excludeFrom`, `to`, `thread`,
 `bodyKind`, `result`, `kind`, `limit`), so an
 MCP-connected agent reads the fleet-wide thread view — who waits on whom,
 what is blocked, what moved lately — without shelling out to `phm`.
@@ -849,9 +858,10 @@ what is blocked, what moved lately — without shelling out to `phm`.
   the thread names none), `links[]` (the pairs that talked) and `messages[]`
   (`id`, `at`, `from`, `to`, `kind`, `subject`, plus `priority` — the envelope
   band — `inReplyTo` — the body's own reply citation — `thread` — the declared
-  conversation bucket — `bodyKind` — the body's kind discriminator — and
-  `result` — the member's `work.result` outcome — when the message carries
-  them).
+  conversation bucket — `bodyKind` — the body's kind discriminator — `result`
+  — the member's `work.result` outcome — and `topic` — the topic component
+  parsed off a well-formed `group:<room>:<topic>` `to` label — when the
+  message carries them).
 - `matched`: every thread the filters kept before `--limit`/`limit` cut the
   page; `null` when the bus could not be read, the same unknown-stays-unknown
   rule `conversations` follows.
