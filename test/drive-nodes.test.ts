@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
+import { nodeCapacityView } from '../src/core/drive/nodes/router.js';
 import { versionFromCaps } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNodeFleet } from '../src/cli/node-fleet.js';
 
@@ -274,6 +275,36 @@ describe('drive node leases', () => {
     expect(second.jobId).toBe('job2');
     expect(f.a.renewClaim(first)).toBeNull();
     expect(f.a.snapshot().jobs.find(j => j.id === 'job1')!.state).toBe('running');
+  });
+
+  it.each(['pull', 'claim'] as const)('frees worker and host slots after leader expiry for %s', method => {
+    const f = fixture();
+    f.store.state.pool = { primary: 'primary', backup: 'backup', active: 'primary', epoch: 1, heartbeatAt: 1_000 };
+    const worker = f.a.join('worker', { owners: ['o'] })!;
+    f.a.heartbeat(f.alice);
+    f.a.heartbeat(worker, { capacity: { hostId: 'mac', ramBytes: 8 * 1024 ** 3,
+      slots: 1, held: null, sampledAtMs: 1_000 } });
+    f.a.enqueue('first', { owner: 'o' });
+    f.a.enqueue('next', { owner: 'o' });
+    const first = f.a.pull(worker)!.claim;
+
+    expect(nodeCapacityView(f.store.state, 1_019)).toContainEqual(expect.objectContaining({
+      hostId: 'mac', running: 1, freeSlots: 0,
+    }));
+    expect(f.a.jobOutcome('first', 'o')).toEqual({ state: 'running', claimedBy: 'worker' });
+    expect(f.a.plan('o')[0]).toMatchObject({ jobId: 'next', nodeId: null });
+
+    f.advance(20);
+    expect(f.a.jobOutcome('first', 'o')).toEqual({ state: 'running' });
+    const leader = f.b.heartbeat(f.bob)!.leader!;
+    expect(f.a.renewClaim(first)).toBeNull();
+    expect(f.a.complete(first, 'stale')).toBe(false);
+    expect(nodeCapacityView(f.store.state, 1_020)).toContainEqual(expect.objectContaining({
+      hostId: 'mac', running: 0, freeSlots: 1,
+    }));
+    expect(f.a.plan('o')).toEqual([{ jobId: 'next', owner: 'o', nodeId: 'worker' }]);
+    const next = method === 'pull' ? f.a.pull(worker)?.claim : f.a.claim(leader, worker, 'next');
+    expect(next).toMatchObject({ jobId: 'next', leaderToken: leader.token });
   });
 
   it('pull plans past a claim fenced by a rejoined session', () => {
