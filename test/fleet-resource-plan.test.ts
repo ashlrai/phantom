@@ -169,7 +169,7 @@ describe('fleet resource plan', () => {
       expect(plan.lanes.filter(lane => lanes.includes(lane.lane)).map(lane => [lane.queued_jobs, lane.additional_slots])).toEqual([[2, 1], [2, 1]]);
       const readCapacity = async () => plan;
       const unfed = await readUnfedReport({ runsDir: dir, now: () => now, readCapacity });
-      expect(unfed.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: 1 });
+      expect(unfed.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: 0 });
       const board = await recordLeaderBoard({ runsDir: dir, nowMs: now, readCapacity });
       expect(board).toMatchObject({ wrote: true, board: { resourcePlan: { lanes: expect.arrayContaining([
         { lane: 'agy', running: 1, target_concurrency: 2 },

@@ -440,8 +440,11 @@ the lane's waiting-elsewhere count. A job may contribute to several distinct
 reasons, so the sum across reasons can exceed the number of waiting jobs.
 
 The separate `resourcePlan` comparison uses the same advisory lane targets as
-`phm resources plan` and shows how many additional slots lack waiting rows
-hinted to that lane. The advisory `unfedSlots` count stays null when plan
+`phm resources plan` and bounds how many additional slots could use work
+hinted to another lane. Each lane's estimate credits both its own hinted
+rows and lane-open rows before counting slots that could use a reroute.
+Lane-open rows are shared, so these per-lane estimates cannot be added to
+get a fleet total. The advisory `unfedSlots` count stays null when plan
 capacity is unknown, dispatcher status is stale, or `ready.tsv` is missing.
 Both the lane hint counts and the total waiting work for this comparison count
 each job once, using its first valid row in the same `ready.tsv` read.
