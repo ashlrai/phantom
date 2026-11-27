@@ -65,8 +65,10 @@ discarding the other readings in the rollout. If it is the latest reading for
 its window, the lane verdict stays unknown.
 
 The `idle_with_work` verdict requires a positive lane target, queued work,
-zero running workers and no hold. A measured target of zero is valid and
-suppresses the stall verdict. A missing target leaves the idle check unknown.
+zero running workers, no hold and remaining quota in every observed window.
+A current reading of 100% used in any window suppresses the stall verdict,
+as does a measured target of zero. A missing target leaves the idle check
+unknown.
 
 ## Memory shed plan
 

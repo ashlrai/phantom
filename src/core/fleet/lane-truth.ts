@@ -6,7 +6,7 @@
  *
  *   held_with_capacity  lane held while every fresh meter window shows room
  *   reset_detected      a window dropped >= 20 points or its reset moved later
- *   idle_with_work      positive target, queued work, zero running and no hold
+ *   idle_with_work      positive target, queued work, zero running, no hold and quota remaining
  *   ok                  evidence agrees
  *   unknown             lane or meter evidence missing, invalid or stale
  *
@@ -100,7 +100,8 @@ function analyzeLaneTruth(lanes: readonly LaneState[], meters: readonly MeterSam
       if (lane.held && windows.every(samples => samples[0]!.usedPercent! < 95)) verdict = 'held_with_capacity';
       else if (reset) verdict = 'reset_detected';
       else if (running !== null && queued !== null && target !== null) {
-        verdict = !lane.held && target > 0 && running === 0 && queued > 0 ? 'idle_with_work' : 'ok';
+        const quotaRemaining = windows.every(([current]) => current!.usedPercent! < 100);
+        verdict = !lane.held && target > 0 && running === 0 && queued > 0 && quotaRemaining ? 'idle_with_work' : 'ok';
       }
     }
     // Deliberately omit free-form hold reasons, transcripts and account metadata.
