@@ -90,7 +90,9 @@ discarding the other readings in the rollout. If it is the latest reading for
 its window, the lane verdict stays unknown.
 
 Lane truth uses the modification time of `queue/slots.json` to qualify its
-running count, queued count and hold state. These fields are null when the
+running count, queued count and hold state. The file is read under the
+resolved runs directory (`ASHLR_RUNS_DIR`, else `~/.ashlr-runs`), the same
+override the other fleet readers honor. These fields are null when the
 file is more than 15 minutes old or dated after report time. The configured
 target remains visible.
 

@@ -44,12 +44,15 @@ export function buildWasteRiskInputs(facts: WasteRiskFacts, nowIso: string): Was
   });
 }
 
-export async function readWasteRiskInputs(runsDir = join(homedir(), '.ashlr-runs'), nowIso = new Date().toISOString()): Promise<WasteRiskInput[]> {
+export async function readWasteRiskInputs(runsDir = process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs'), nowIso = new Date().toISOString()): Promise<WasteRiskInput[]> {
   const readers = defaultLaneTruthReaders(homedir(), Date.parse(nowIso));
+  // readers.lanes() resolves the same root (ASHLR_RUNS_DIR under the real
+  // home), so slot-derived lane states apply exactly when runsDir names it.
+  const laneTruthRoot = process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   const [ledger, meters, targets, localLanes] = await Promise.all([
     readResourceLedger({ runsDir, now: () => Date.parse(nowIso) }), readers.meters(),
-    readLaneTargets({ runsDir }), runsDir === join(homedir(), '.ashlr-runs') ? readers.lanes() : Promise.resolve([]),
+    readLaneTargets({ runsDir }), runsDir === laneTruthRoot ? readers.lanes() : Promise.resolve([]),
   ]);
-  const lanes = runsDir === join(homedir(), '.ashlr-runs') ? localLanes : targets.lanes.map(l => ({ lane: l.lane, target: l.target, running: ledger.lanes.find(r => r.lane === l.lane)?.running ?? null, held: l.held, queued: null }));
+  const lanes = runsDir === laneTruthRoot ? localLanes : targets.lanes.map(l => ({ lane: l.lane, target: l.target, running: ledger.lanes.find(r => r.lane === l.lane)?.running ?? null, held: l.held, queued: null }));
   return buildWasteRiskInputs({ lanes, meters, ledger }, nowIso);
 }
