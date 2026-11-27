@@ -2663,29 +2663,35 @@ bus page reads share: `--id` keeps only the envelope carrying that exact id,
 the same application convention `comms bus read|watch` and `fleet_bus_inbox`
 apply — `--kind`/`--topic` keep only protocol-v1 bodies whose
 `protocol.kind`/`protocol.topic` match, `topic` accepting an exact name or a
-namespace prefix like `fleet.*`, and `--body-kind <kind>` keeps only
-envelopes whose body carries that exact kind discriminator — the same
-`busBodyKind` own-field match `agents bus inbox --body-kind`, `channel
-read --body-kind`, `wakes --body-kind`, `agents conversations --body-kind`
-and `phm messages --body-kind` apply:
+namespace prefix like `fleet.*`. `--body-kind <kind>` narrows
+`comms bus read|watch` and `fleet bus-follow` — the same
+`busBodyKind` own-field match `fleet_bus_inbox`'s `bodyKind` already
+applies — to envelopes whose body carries that exact kind discriminator,
+the same match `agents bus inbox --body-kind`, `channel read --body-kind`,
+`wakes --body-kind`, `agents conversations --body-kind` and
+`phm messages --body-kind` apply:
 the v2 `kind` field, else a bus-transport v1 `protocol.kind`, else the
 `type`/`schema` a kindless notice keys on, exact and case-sensitive, a
 body carrying no discriminator never matching and an unrecognized but
-printable value an honest empty stream. `--result
-<reserved|admitted|complete|failed>` keeps only `work.result` bodies whose
-own `outcome` strictly equals the code — the same `busBodyResultOutcome`
-own-field match and `WORK_RESULT_OUTCOMES` vocabulary `phm messages
---result`, `agents messages --result`, `fleet messages`, `bus recent`,
-`fleet_bus_inbox`'s `result`, `fleet_agent_messages`'s `result` and the
-work feed's `--result` share —
+printable value an honest empty page or stream. `--result
+<reserved|admitted|complete|failed>` narrows the same two reads to
+`work.result` bodies whose own `outcome` strictly equals the code — the
+same `busBodyResultOutcome` own-field match and `WORK_RESULT_OUTCOMES`
+vocabulary `fleet bus-follow --result`, `fleet_bus_inbox`'s `result`,
+`phm messages --result`, `agents messages --result`, `fleet messages`,
+`bus recent`, `agents bus inbox --result` and the work feed's `--result`
+share —
 so the envelope-level audit trail a job-scoped follow already narrows by
 `--job` answers "stream only this job's failed result receipts" in one
 filtered read; every other body kind, including a `work.release` body's
 own `released`/`completed` outcome, and a `work.result` carrying no
 outcome never match, and a value outside the vocabulary is an invalid
-request, never a widened stream. As with `--to` and `--job`, filtered rows
-still advance checkpoints, so a narrowed stream resumes on the same cursor
-an unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
+request, never a widened read. As with `--to` and `--job`, filtered rows
+still advance `bus-follow` checkpoints and `comms bus` page cursors, so a
+narrowed stream or page resumes on the same cursor an unfiltered one
+would, and a `comms bus --checkpoint` consumer binds both values into its
+filter identity, so a changed discriminator or outcome fails closed.
+`--since <15m|2h|1d|ISO>` narrows
 `comms bus read|watch` to rows received at or after the cutoff — the same
 inclusive `receivedAt >= since` match `agents bus inbox --since`,
 `channel read --since`, `wakes --since` and `phm messages --since` apply,
