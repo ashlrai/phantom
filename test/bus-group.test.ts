@@ -44,8 +44,25 @@ describe('group bus', () => {
     expect(presence('2', 'codex', 'online', 101).status).toBe('posted');
     expect(presence('3', 'devin', 'offline', 102).status).toBe('posted');
     expect(presence('4', 'claude', 'online', 103, 'other').status).toBe('posted');
-    expect(groupPresence('team', 'work', { root, now: () => 104 })).toEqual({ status: 'ok', members: [{ member: 'codex', state: 'online', receivedAt: 101 }] });
-    expect(groupPresence('team', 'work', { root, now: () => 104 + GROUP_PRESENCE_TTL_MS })).toEqual({ status: 'ok', members: [] });
+    expect(groupPresence('team', 'work', { root, now: () => 104 })).toEqual({ status: 'ok', asOf: new Date(104).toISOString(), members: [{ member: 'codex', state: 'online', receivedAt: 101 }] });
+    expect(groupPresence('team', 'work', { root, now: () => 104 + GROUP_PRESENCE_TTL_MS })).toEqual({ status: 'ok', asOf: new Date(104 + GROUP_PRESENCE_TTL_MS).toISOString(), members: [] });
+  });
+  it('freezes the read clock across the presence fold and stamps asOf', () => {
+    const root = setup();
+    // A clock that advances on every read would let an early page's TTL
+    // verdict differ from a later page's; the fold must evaluate every page
+    // against one frozen now and report it as asOf.
+    let tick = 100;
+    const now = () => (tick += GROUP_PRESENCE_TTL_MS + 1000);
+    expect(publishGroupPresence({ id: 'p1', room: 'team', topic: 'work', member: 'devin', state: 'online' }, { root, now: () => 100 }).status).toBe('posted');
+    const folded = groupPresence('team', 'work', { root, now });
+    expect(folded.status).toBe('ok');
+    if (folded.status !== 'ok') throw new Error('presence read failed');
+    // The frozen read is one TTL past the observation, so the member list is
+    // honestly empty — and asOf names that same frozen instant, proving the
+    // fold stamped one clock rather than each page's own.
+    expect(folded.members).toEqual([]);
+    expect(folded.asOf).toBe(new Date(100 + GROUP_PRESENCE_TTL_MS + 1000).toISOString());
   });
 });
 

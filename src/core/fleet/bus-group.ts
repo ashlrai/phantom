@@ -72,12 +72,20 @@ export function subscribeGroup(room: string, topic: string, after: number, limit
   return { ...page, messages: page.messages.filter(row => row.envelope.to === address) };
 }
 
-/** Fold all live presence observations in cursor order; callers must handle failures. */
+/**
+ * Fold all live presence observations in cursor order; callers must handle
+ * failures. The read clock freezes once for the whole fold — every page
+ * evaluates TTL against the same `now`, so a member observed online on an
+ * early page cannot expire mid-scan — and the ok result reports `asOf`, the
+ * same read-time stamp every other bus read carries, so a consumer can tell
+ * how fresh the fold is without guessing from the newest `receivedAt`.
+ */
 export function groupPresence(room: string, topic: string, options: BusInboxOptions = {}) {
+  const now = (options.now ?? Date.now)();
   const members = new Map<string, { member: string; state: 'online' | 'offline'; receivedAt: number }>();
   let cursor = 0;
   for (;;) {
-    const page = subscribeGroup(room, topic, cursor, 100, options);
+    const page = subscribeGroup(room, topic, cursor, 100, { ...options, now: () => now });
     if (page.status !== 'ok') return { status: page.status };
     for (const row of page.messages) {
       const body = row.envelope.body;
@@ -89,5 +97,6 @@ export function groupPresence(room: string, topic: string, options: BusInboxOpti
     if (page.nextCursor === cursor) break;
     cursor = page.nextCursor;
   }
-  return { status: 'ok' as const, members: [...members.values()].filter(member => member.state === 'online') };
+  return { status: 'ok' as const, asOf: new Date(now).toISOString(),
+    members: [...members.values()].filter(member => member.state === 'online') };
 }
