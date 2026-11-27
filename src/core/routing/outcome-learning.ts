@@ -1395,26 +1395,29 @@ export function learnedSeatPenalty(learning: OutcomeLearning, jobType: string, r
 /**
  * The same posterior means pooled across every recorded cell: a seat-router
  * request carries no fleet job type or repo, so the honest prior is the
- * resource's whole dispatch record — attempts, good merges and usage summed
- * per resource over all models, job types and repos, then the same
- * meanSuccess x meanCheapness reward and normalization learnedSeatPenalty
- * applies. Lower is better; the best resource stays at 0 and every other
- * resource's penalty stays inside [0, 1]. An empty or all-unmeasured log
- * yields {} — the router's ranking is then byte-identical.
+ * resource's whole dispatch record across models, job types and repos.
+ * Compare allowance cheapness only when every resource has a measured
+ * allowance sample. Token totals and imputed charges never enter that
+ * comparison. Lower is better, with the best resource at 0.
  */
 export function learnedFleetSeatPenalty(learning: OutcomeLearning): Record<string, number> {
-  const pooled = new Map<string, { attempts: number; goodMerges: number; usage: number }>();
+  const pooled = new Map<string, Pick<OutcomeCellView, 'attempts' | 'goodMerges' | 'usageAllowance' | 'usageAllowanceKnown'>>();
   for (const cell of learning.cells) {
     if (cell.attempts < 1) continue;
-    const acc = pooled.get(cell.resource) ?? { attempts: 0, goodMerges: 0, usage: 0 };
+    const acc = pooled.get(cell.resource) ?? { attempts: 0, goodMerges: 0, usageAllowance: 0, usageAllowanceKnown: 0 };
     acc.attempts += cell.attempts;
     acc.goodMerges += cell.goodMerges;
-    acc.usage += cell.usage;
+    acc.usageAllowance += cell.usageAllowance;
+    acc.usageAllowanceKnown += cell.usageAllowanceKnown;
     pooled.set(cell.resource, acc);
   }
   const scores = new Map<string, number>();
+  const comparableAllowance = Array.from(pooled.values()).every((cell) => cell.usageAllowanceKnown > 0);
   for (const [resource, cell] of pooled) {
-    scores.set(resource, meanSuccess(cell) * meanCheapness(cell));
+    const score = meanSuccess(cell);
+    scores.set(resource, comparableAllowance
+      ? score * meanCheapness({ attempts: cell.usageAllowanceKnown, usage: cell.usageAllowance })
+      : score);
   }
   return normalizedPenalties(scores);
 }
