@@ -84,7 +84,7 @@ job IDs deduplicated by the parser. Its optional second argument is the
 `router-queue.md` text used for the same five-column envelope validation.
 `readyTsvHeader(cells)` returns the canonical column map for a recognized
 queue TSV header, or `null` for a data row. `conflictingPrIds(readyTsvText)`
-reads rebase identifiers from the job ID field, including parked rows.
+reads rebase identifiers from the job ID field of ready and parked rows.
 
 `findStarvedLanes(statusJson, readyTsv, routerQueue?, now?)`
 (`src/core/fleet/lane-starve.ts`) accepts `null` for a missing ready snapshot
