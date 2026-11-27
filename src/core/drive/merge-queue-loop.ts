@@ -49,8 +49,10 @@ import {
   REFIX_WINDOW_MS,
   drainKey,
   drainRow,
+  repoShortName as shortName,
   securityPinnedPath,
 } from './refix-loop.js';
+import { isPlainRecord } from './nodes/state.js';
 
 export const MERGEQ_REPOS = REFIX_REPOS;
 
@@ -231,7 +233,6 @@ export interface MergeQueueSummary {
 }
 
 const SHA = /^[0-9a-f]{40}$/i;
-const shortName = (repo: string): string => repo.split('/').pop() ?? repo;
 /** GraphQL reports a bot as `name`, REST as `name[bot]` (see prs/merge-identity.ts). */
 const bareLogin = (login: string): string => login.replace(/\[bot\]$/i, '').toLowerCase();
 /** Merge states GitHub reports for a mergeable head the queue may accept. */
@@ -393,12 +394,12 @@ export function normalizeMergeQueueState(value: unknown): MergeQueueState {
   for (const [key, raw] of Object.entries((row['latency'] ?? {}) as Record<string, MergeQueueLatency>)) {
     if (raw && typeof raw.headSha === 'string' && SHA.test(raw.headSha) && actions.has(raw.state)
       && Number.isSafeInteger(raw.since) && raw.since >= 0 && Number.isSafeInteger(raw.observedAt) && raw.observedAt >= raw.since
-      && raw.stateMs && typeof raw.stateMs === 'object' && !Array.isArray(raw.stateMs)
-      && Object.entries(raw.stateMs).every(([s, ms]) => actions.has(s as MergeQueueAction) && Number.isSafeInteger(ms) && ms >= 0)
+      && isPlainRecord(raw.stateMs)
+      && Object.entries(raw.stateMs).every(([s, ms]) => actions.has(s as MergeQueueAction) && Number.isSafeInteger(ms) && (ms as number) >= 0)
       && (raw.blockers === undefined || (Array.isArray(raw.blockers)
         && new Set(raw.blockers).size === raw.blockers.length && raw.blockers.every(b => BLOCKERS.includes(b))))
-      && (raw.blockerMs === undefined || (raw.blockerMs && typeof raw.blockerMs === 'object' && !Array.isArray(raw.blockerMs)
-        && Object.entries(raw.blockerMs).every(([b, ms]) => BLOCKERS.includes(b as MergeQueueBlocker) && Number.isSafeInteger(ms) && ms >= 0)))
+      && (raw.blockerMs === undefined || (isPlainRecord(raw.blockerMs)
+        && Object.entries(raw.blockerMs).every(([b, ms]) => BLOCKERS.includes(b as MergeQueueBlocker) && Number.isSafeInteger(ms) && (ms as number) >= 0)))
       && (raw.checks === undefined || CHECKS_SEEN.has(raw.checks))
       && (raw.blockedReason === undefined || raw.blockedReason === null || EVENT_REASONS.has(raw.blockedReason))
       && (raw.conflictRecorded === undefined || typeof raw.conflictRecorded === 'boolean')) {
@@ -411,7 +412,7 @@ export function normalizeMergeQueueState(value: unknown): MergeQueueState {
     }
   }
   for (const [key, raw] of Object.entries((row['signals'] ?? {}) as Record<string, MergeQueuePrSignals>)) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    if (!isPlainRecord(raw)) continue;
     // Sanitize rather than reject: dropping the row would lose the dedupe
     // memory that keeps once-per-PR events unique for the ledger consumers.
     const autoMerge = typeof raw.autoMerge === 'boolean' ? raw.autoMerge : undefined;

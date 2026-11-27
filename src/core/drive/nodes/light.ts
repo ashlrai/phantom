@@ -7,7 +7,7 @@ import { NODE_OFFLINE_MS } from './router.js';
 import { validId } from './state.js';
 
 /** Fixed, read-only recipes. Queue records never supply commands, paths or credentials. */
-export const LIGHT_RECIPES = [
+const LIGHT_RECIPES = [
   { id: 'channels-status', requires: ['light', 'comms'], args: ['channels', 'status', '--json'] },
   { id: 'comms-status', requires: ['light', 'comms'], args: ['comms', 'status', '--json'] },
   { id: 'docs-check', requires: ['light'], args: null },
@@ -20,7 +20,7 @@ export function lightRecipe(job: JobView) {
     validId(job.id) && new RegExp(`^${PREFIX}${r.id}-[0-9]+$`).test(job.id) && job.secrets.length === 0 &&
     job.requires.length === r.requires.length && r.requires.every(c => job.requires.includes(c)));
 }
-export interface LightView { nodes: NodeView[]; jobs: JobView[] }
+interface LightView { nodes: NodeView[]; jobs: JobView[] }
 export type NodeCall = (verb: string, args: string[]) => Record<string, unknown>;
 
 /** Called by restock independently of ready.tsv. Repeated passes reuse hourly IDs. */

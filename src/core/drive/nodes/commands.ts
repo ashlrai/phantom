@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DriveNodes, JobClaim, NodeProfile } from './index.js';
 import { isVersionCap } from './phm-version.js';
-import type { NodeAuth, NodeCapacitySample } from './state.js';
-import { isNodeCapacity, isHostStats, validCap, validId, validSecretName } from './state.js';
+import { isNodeCapacity, isHostStats, validCap, validId, validSecretName, type NodeAuth, type NodeCapacitySample } from './state.js';
 import { jobBlockers, routable, type RouteAssignment } from './router.js';
 import { NODE_TASK_LIMIT, validNodeTask } from './task.js';
 

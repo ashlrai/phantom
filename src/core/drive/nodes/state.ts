@@ -10,7 +10,7 @@ export const NODE_HEARTBEAT_MS = 3_000;
 export interface NodeCapacitySample extends NodeCapacity { hostId: string; sampledAtMs: number }
 
 export function isNodeCapacity(v: unknown): v is NodeCapacitySample {
-  if (!object(v)) return false;
+  if (!isPlainRecord(v)) return false;
   return Object.keys(v).sort().join() === 'held,hostId,ramBytes,sampledAtMs,slots' && validId(v.hostId) && scrubSecrets(v.hostId) === v.hostId &&
     integer(v.sampledAtMs) && v.sampledAtMs > 0 && integer(v.ramBytes) && v.ramBytes > 0 &&
     integer(v.slots) && v.slots <= 64 &&
@@ -63,12 +63,18 @@ export function validSecretName(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(value);
 }
 
-function list(value: unknown, ok: (v: unknown) => boolean): boolean {
-  return Array.isArray(value) && value.length <= 64 && value.every(ok) && new Set(value).size === value.length;
+/** Bounded single-component job id safe for node work/result filenames. */
+export function validNodeJobFilenameId(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,119}$/.test(value);
 }
 
-function object(value: unknown): value is Record<string, unknown> {
+/** True for non-null, non-array plain objects. */
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function list(value: unknown, ok: (v: unknown) => boolean): boolean {
+  return Array.isArray(value) && value.length <= 64 && value.every(ok) && new Set(value).size === value.length;
 }
 
 function integer(value: unknown): value is number {
@@ -78,25 +84,25 @@ function integer(value: unknown): value is number {
 /** Reject corrupt or unknown authority state, never reset its fencing counter. */
 export function parseState(value: unknown): NodesState {
   const fail = (): never => { throw new Error('Invalid drive nodes state'); };
-  if (!object(value) || value.version !== 'drive.nodes.v1' || !integer(value.sequence) ||
+  if (!isPlainRecord(value) || value.version !== 'drive.nodes.v1' || !integer(value.sequence) ||
       !integer(value.observedAt) || !Array.isArray(value.nodes) || !Array.isArray(value.jobs)) return fail();
   const sequence = value.sequence;
-  if (value.pool !== undefined && (!object(value.pool) || !validId(value.pool.primary) ||
+  if (value.pool !== undefined && (!isPlainRecord(value.pool) || !validId(value.pool.primary) ||
       !validId(value.pool.backup) || value.pool.primary === value.pool.backup ||
       !['primary', 'backup'].includes(String(value.pool.active)) || !integer(value.pool.epoch) ||
       value.pool.epoch < 1 || value.pool.epoch > sequence || !integer(value.pool.heartbeatAt) || value.pool.heartbeatAt > value.observedAt)) return fail();
   const token = (v: unknown): boolean => integer(v) && v > 0 && v <= sequence;
   const session = (v: Record<string, unknown>): boolean => validId(v.nodeId) && token(v.session);
   const lease = (v: Record<string, unknown>): boolean => session(v) && token(v.token) && integer(v.expiresAt);
-  if (!value.nodes.every(n => object(n) && session(n) && integer(n.heartbeatAt) && integer(n.expiresAt) &&
+  if (!value.nodes.every(n => isPlainRecord(n) && session(n) && integer(n.heartbeatAt) && integer(n.expiresAt) &&
     (n.owners === undefined || list(n.owners, validId)) && (n.caps === undefined || list(n.caps, validCap)) &&
     (n.usage === undefined || (integer(n.usage) && n.usage <= 1000)) &&
     (n.slots === undefined || (integer(n.slots) && n.slots <= 64)) &&
     (n.capacity === undefined || isNodeCapacity(n.capacity)) &&
     (n.auth === undefined || ['ok', 'missing', 'unknown'].includes(String(n.auth))))) return fail();
   if (new Set(value.nodes.map(n => n.nodeId)).size !== value.nodes.length) return fail();
-  if (value.leader !== null && (!object(value.leader) || !lease(value.leader))) return fail();
-  if (!value.jobs.every(j => object(j) && validId(j.id) &&
+  if (value.leader !== null && (!isPlainRecord(value.leader) || !lease(value.leader))) return fail();
+  if (!value.jobs.every(j => isPlainRecord(j) && validId(j.id) &&
     (j.owner === undefined || validId(j.owner)) && (j.requires === undefined || list(j.requires, validCap)) &&
     (j.declined === undefined || (Array.isArray(j.declined) && j.declined.length <= 16 && j.declined.every(token))) &&
     (j.pack === undefined || validId(j.pack)) && (j.secrets === undefined || list(j.secrets, validSecretName)) &&
@@ -107,7 +113,7 @@ export function parseState(value: unknown): NodesState {
     (j.result === undefined || typeof j.result === 'string') &&
     (j.producerWithdrawn === undefined || (j.producerWithdrawn === true && j.state === 'completed')) &&
     (j.state !== 'completed' || typeof j.result === 'string') &&
-    (j.state === 'pending' ? j.claim === undefined : object(j.claim) && lease(j.claim) &&
+    (j.state === 'pending' ? j.claim === undefined : isPlainRecord(j.claim) && lease(j.claim) &&
       j.claim.jobId === j.id && token(j.claim.leaderToken)))) return fail();
   if (new Set(value.jobs.map(j => j.id)).size !== value.jobs.length) return fail();
   return value as unknown as NodesState;
@@ -131,8 +137,8 @@ const number = (v: unknown): v is number => typeof v === 'number' && Number.isFi
 
 /** Closed numeric schema prevents remote beats carrying arbitrary text or credential fields. */
 export function isHostStats(v: unknown): v is HostStats {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
-  const s = v as HostStats;
+  if (!isPlainRecord(v)) return false;
+  const s = v as unknown as HostStats;
   return Object.keys(s).sort().join() === 'cores,diskFree,load,ramTotal,ramUsed,sampledAtMs,uptimeSeconds' &&
     number(s.sampledAtMs) && s.sampledAtMs <= 8.64e15 && number(s.uptimeSeconds) && number(s.ramTotal) &&
     number(s.ramUsed) && s.ramUsed <= s.ramTotal && (s.diskFree === null || number(s.diskFree)) &&

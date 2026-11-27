@@ -17,24 +17,16 @@
 import { readNodeCapacity, sampleHostStats, type NodeCapacity } from '../core/drive/nodes/capacity.js';
 import { nodeBeatCapacity } from '../core/drive/nodes/capacity-sample.js';
 import { isHostStats, type HostStats } from '../core/drive/nodes/state.js';
-import { parseNodeWatchFlags, runNodeWatchLoop } from './node-watch.js';
+import { runNodeWatchCommand, type NodeWatchCommandDeps } from './node-watch.js';
 
 /** Same bound the pool worker applies to one host-stats sample. */
 const HOST_STATS_MAX_BYTES = 64 * 1024;
 
-export interface NodeBeatWatchDeps {
-  /** One beat pass; defaults to the `phm node beat` dispatch (pool-aware). */
-  run?: (args: string[]) => Promise<number>;
+export interface NodeBeatWatchDeps extends NodeWatchCommandDeps {
   measure?: () => NodeCapacity;
   hostStats?: () => HostStats;
-  /** Injectable for tests; production waits on a timer the stop signal can cut short. */
-  sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   host?: () => string;
-  log?: (line: string) => void;
-  error?: (line: string) => void;
-  /** Test seam: an aborted signal stops the loop exactly like SIGINT/SIGTERM. */
-  signal?: AbortSignal;
 }
 
 function hasFlag(args: string[], name: string): boolean {
@@ -70,30 +62,17 @@ function beatArgs(base: string[], deps: NodeBeatWatchDeps): string[] {
 }
 
 export async function cmdNodeBeatWatch(args: string[], deps: NodeBeatWatchDeps = {}): Promise<number> {
-  const json = args.includes('--json');
-  const log = deps.log ?? ((line: string) => console.log(line));
-  const errorOut = deps.error ?? ((line: string) => console.error(line));
-  const parsed = parseNodeWatchFlags(args);
-  if ('error' in parsed) {
-    const fix = 'Run: phm node beat --help';
-    if (json) {
-      log(JSON.stringify({ schemaVersion: 1, command: 'beat', error: { code: 'usage', message: parsed.error, fix } }));
-    } else errorOut(`${parsed.error} Fix: ${fix}`);
-    return 2;
-  }
-  return runNodeWatchLoop({
+  return runNodeWatchCommand({
     command: 'beat',
-    flags: parsed,
+    args,
+    deps,
     stoppedText: 'Heartbeat stopped; the node session expires on its own within 30 seconds.',
-    run: deps.run ?? (async (beat: string[]) => {
+    defaultRun: async (beat: string[]) => {
       void import('../core/fleet/fleet-replica.js')
         .then(({ syncFleetReplica }) => syncFleetReplica())
         .catch(() => undefined);
       return (await import('./node-fleet.js')).cmdNodeFleet('beat', beat);
-    }),
+    },
     argsFor: base => beatArgs(base, deps),
-    sleep: deps.sleep,
-    signal: deps.signal,
-    log,
   });
 }

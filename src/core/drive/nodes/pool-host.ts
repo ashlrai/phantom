@@ -23,6 +23,12 @@ function writePrivate(name: string, value: unknown): void {
   writePrivateFileAtomically(join(root, `${name}.${randomUUID()}.tmp`), join(root, name), JSON.stringify(value) + '\n',
     { anchorPath: root, label: 'Node pool state' });
 }
+function isValidPoolConfigFields(config: PoolConfig | null | undefined): config is PoolConfig {
+  return !!config && ['primary', 'backup', 'worker'].includes(config.role) &&
+    validSshHost(config.primary) && validSshHost(config.backup) &&
+    config.primary !== config.backup && validId(config.owner) && validId(config.node);
+}
+
 export function readPoolConfig(): PoolConfig | null {
   // A missing config is not a write. poolDirectory() creates the directory,
   // so a read must not call it until the file is known to exist.
@@ -31,9 +37,9 @@ export function readPoolConfig(): PoolConfig | null {
   const read = readStableRegularFile(path, { anchorPath: root, maxFileBytes: 4096, remainingBytes: 4096 });
   if (!read.ok) throw new Error('Invalid node pool config');
   const config: PoolConfig = JSON.parse(read.text);
-  if (!config || !['primary', 'backup', 'worker'].includes(config.role) || !validSshHost(config.primary) ||
-      !validSshHost(config.backup) || config.primary === config.backup || !validId(config.owner) || !validId(config.node) ||
-      Object.keys(config).sort().join() !== 'backup,node,owner,primary,role') throw new Error('Invalid node pool config');
+  if (!isValidPoolConfigFields(config) || Object.keys(config).sort().join() !== 'backup,node,owner,primary,role') {
+    throw new Error('Invalid node pool config');
+  }
   return config;
 }
 export function canWriteStandingGrantHere(): boolean {
@@ -41,8 +47,7 @@ export function canWriteStandingGrantHere(): boolean {
   catch { return false; }
 }
 export function configurePool(config: PoolConfig): void {
-  if (!['primary', 'backup', 'worker'].includes(config.role) || !validSshHost(config.primary) || !validSshHost(config.backup) ||
-      config.primary === config.backup || !validId(config.node) || !validId(config.owner)) throw new Error('Invalid node pool config');
+  if (!isValidPoolConfigFields(config)) throw new Error('Invalid node pool config');
   if (readPoolConfig()) throw new Error('Node pool already configured; never reset an active witness');
   if (config.role === 'backup') initializePool(new LocalNodesStore(poolDirectory()), config.primary, config.backup);
   writePrivate('config.json', config);
@@ -50,7 +55,7 @@ export function configurePool(config: PoolConfig): void {
 
 export interface NodeRpcRequest { kind: 'client' | 'witness'; request: PoolRequest }
 export type NodeSsh = (host: string, request: unknown) => unknown;
-export function parsePoolReply(value: unknown): PoolReply {
+function parsePoolReply(value: unknown): PoolReply {
   const r = value as PoolReply;
   if (!r || r.schemaVersion !== 1 || !['primary', 'backup'].includes(r.active) || !Number.isSafeInteger(r.epoch) ||
       r.epoch < 1 || typeof r.demoted !== 'boolean' || !r.result || typeof r.result !== 'object') throw new Error('Invalid node pool reply');

@@ -8,7 +8,7 @@ import { DriveNodes } from './index.js';
 import { LocalNodesStore } from './local-store.js';
 import { callPool, readPoolConfig } from './pool-host.js';
 import { localBridgeRouter, poolBridgeRouter, runNodeBridge, type BridgeRouter, type NodeBridgeReport } from './ready-bridge.js';
-import { validId } from './state.js';
+import { isPlainRecord, validId } from './state.js';
 
 export interface NodeBridgeConfig { enabled: boolean; owner: string | null; maxPerPass?: number; pendingTtlMs?: number }
 
@@ -17,9 +17,9 @@ export function readNodeBridgeConfig(home: string = ashlrHome()): NodeBridgeConf
   const path = join(home, 'node-bridge.json');
   if (!existsSync(path)) return { enabled: false, owner: null };
   try {
-    const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    const raw: unknown = JSON.parse(readFileSync(path, 'utf8'));
     const int = (v: unknown, max: number) => v === undefined || (Number.isSafeInteger(v) && (v as number) > 0 && (v as number) <= max);
-    if (!raw || typeof raw !== 'object' || typeof raw['enabled'] !== 'boolean' || !validId(raw['owner']) ||
+    if (!isPlainRecord(raw) || typeof raw['enabled'] !== 'boolean' || !validId(raw['owner']) ||
         !int(raw['maxPerPass'], 32) || !int(raw['pendingTtlMs'], 24 * 3_600_000) ||
         Object.keys(raw).some(k => !['enabled', 'owner', 'maxPerPass', 'pendingTtlMs'].includes(k))) return 'invalid';
     return raw as unknown as NodeBridgeConfig;

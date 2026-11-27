@@ -14,6 +14,7 @@ import {
   LANE_MAX_SLOTS, OMLX_MODEL_CATALOG, planOmlxLocalLanes,
   type OmlxLaneConfig, type OmlxLanePlan,
 } from '../../local-runtime/omlx/models.js';
+import { isPlainRecord } from './state.js';
 
 export function localLaneConfigPath(home = ashlrHome()): string {
   return join(home, 'local-lanes.json');
@@ -31,10 +32,10 @@ export function readLocalLaneConfig(path = localLaneConfigPath()): LocalLaneConf
   try { raw = JSON.parse(readFileSync(path, 'utf8')); } catch {
     return { config: null, error: 'local-lanes.json is not valid JSON' };
   }
-  const c = raw as Record<string, unknown>;
-  if (typeof c !== 'object' || c === null || Array.isArray(c)) {
+  if (!isPlainRecord(raw)) {
     return { config: null, error: `local-lanes.json must be a JSON object: ${CONFIG_USAGE}` };
   }
+  const c = raw;
   for (const key of Object.keys(c)) {
     if (!CONFIG_KEYS.has(key)) return { config: null, error: `local-lanes.json: unknown key '${key}'` };
   }

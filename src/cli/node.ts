@@ -3,7 +3,7 @@ import { NODE_FLEET_USAGE, NODE_FLEET_VERBS, nodeFleetVerbUsage } from './node-f
 /** `bootstrap` is planning only: no provisioning, host inspection, credentials, or registry I/O.
  * The other verbs (see node-fleet.ts) are the local node registry, router and job leases.
  */
-export function nodeBootstrapPlan() {
+function nodeBootstrapPlan() {
   return {
     schemaVersion: 1,
     dryRun: true,

@@ -50,18 +50,26 @@
  */
 
 import { assertQueueTier, QUEUE_TIER_SCOPE } from './queue-tier.js';
+import {
+  FLEET_AUTHOR,
+  REFIX_CYCLE_CAP,
+  pruneOldestKeys,
+  repoShortName as shortName,
+  securityPinnedPath,
+} from './refix-loop.js';
+import { isPlainRecord } from './nodes/state.js';
 import { collapseJobOutcomes, type JobOutcome } from '../queue/job-outcomes.js';
 import { clusterKey, fileClusters } from '../fleet/rebase-order.js';
 
-export const QUEUEGEN_CYCLE_CAP = 20;
+export { securityPinnedPath };
+
 export const QUEUEGEN_PR_WINDOW_MS = 24 * 60 * 60 * 1000;
-export const QUEUEGEN_FLEET_AUTHOR = 'ashlr-fleet[bot]';
 export const QUEUEGEN_SECURITY_PIN = '[Security pin required]';
-export const QUEUEGEN_TEXT_CAP = 560;
+const QUEUEGEN_TEXT_CAP = 560;
 /** Same-evidence attempts that all came back empty before a candidate is suppressed. */
 export const QUEUEGEN_EMPTY_STREAK = 2;
 /** Emission records kept per PR; oldest fall off first. */
-export const QUEUEGEN_HISTORY_CAP = 8;
+const QUEUEGEN_HISTORY_CAP = 8;
 export const QUEUEGEN_FRESHNESS_PERIOD_MS = 7 * 24 * 60 * 60 * 1_000;
 
 export interface QueuegenPr {
@@ -165,7 +173,6 @@ export interface QueuegenSummary {
 }
 
 const FAILING = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'stale']);
-const shortName = (repo: string): string => repo.split('/').pop() ?? repo;
 
 const FRESHNESS_WORK = {
   DOCS: 'Check docs, generated navigation, and README examples against current code and CLI help. Verify commands and flags with the project docs checks. Report evidence and propose a focused docs update only for confirmed drift. In BRIDGE_NOTES.md put exactly one standalone line: FRESHNESS: clean, FRESHNESS: drift, or FRESHNESS: unknown.',
@@ -206,15 +213,6 @@ function enqueueFreshness(
 }
 export const isFailing = (check: QueuegenCheck): boolean =>
   check.status === 'completed' && check.conclusion !== null && FAILING.has(check.conclusion);
-
-/** `.github` segment, publish.sh basename, or a segment containing the token. */
-export function securityPinnedPath(path: string): boolean {
-  return path.split('/').some((segment) => {
-    const s = segment.toLowerCase();
-    return s === '.github' || s === 'publish.sh' ||
-      /dispatchd|git[-_]safe|scrub|reap/.test(s);
-  });
-}
 
 /* First error line — the dispatchd ERRLINE contract: a narrow primary set,
  * then common failure markers as fallback; usage/rollup noise never counts. */
@@ -288,7 +286,7 @@ const hhmm = (now: number): string => {
   return `${String(stamp.getHours()).padStart(2, '0')}:${String(stamp.getMinutes()).padStart(2, '0')}`;
 };
 
-export function fixupId(repo: string, pr: QueuegenPr): string {
+function fixupId(repo: string, pr: QueuegenPr): string {
   return `RQ-FIXUP-${shortName(repo)}-${pr.number}-${pr.headSha.slice(0, 7)}`;
 }
 export function rebaseId(repo: string, pr: QueuegenPr): string {
@@ -326,14 +324,13 @@ const boundedText = (value: unknown, max: number): string | undefined =>
     ? value : undefined;
 
 function normalizeEmission(entry: unknown): QueuegenEmission | null {
-  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return null;
-  const e = entry as Record<string, unknown>;
-  if (typeof e['id'] !== 'string' || !Number.isSafeInteger(e['at'])) return null;
-  const headSha = boundedText(e['headSha'], 64);
-  const check = boundedText(e['check'], 200);
-  const file = boundedText(e['file'], 400);
+  if (!isPlainRecord(entry)) return null;
+  if (typeof entry['id'] !== 'string' || !Number.isSafeInteger(entry['at'])) return null;
+  const headSha = boundedText(entry['headSha'], 64);
+  const check = boundedText(entry['check'], 200);
+  const file = boundedText(entry['file'], 400);
   return {
-    id: e['id'], at: e['at'] as number,
+    id: entry['id'], at: entry['at'] as number,
     ...(headSha ? { headSha } : {}), ...(check ? { check } : {}), ...(file ? { file } : {}),
   };
 }
@@ -363,11 +360,7 @@ function prune(state: QueuegenState, cap = 8_192): void {
       state.emitted[key] = state.emitted[key]!.slice(0, QUEUEGEN_HISTORY_CAP);
     }
   }
-  const keys = Object.keys(state.emitted);
-  if (keys.length > cap) {
-    keys.sort((a, b) => (state.emitted[a]![0]?.at ?? 0) - (state.emitted[b]![0]?.at ?? 0))
-      .slice(0, keys.length - cap).forEach((k) => delete state.emitted[k]);
-  }
+  pruneOldestKeys(state.emitted, cap, (history) => history[0]?.at ?? 0);
 }
 
 /**
@@ -418,9 +411,9 @@ function countEmptyStreak(
  */
 export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}): QueuegenSummary {
   const repos = options.repos ?? [];
-  const cycleCap = options.cycleCap ?? QUEUEGEN_CYCLE_CAP;
+  const cycleCap = options.cycleCap ?? REFIX_CYCLE_CAP;
   const windowMs = options.windowMs ?? QUEUEGEN_PR_WINDOW_MS;
-  const authors = options.fleetAuthors ?? [QUEUEGEN_FLEET_AUTHOR];
+  const authors = options.fleetAuthors ?? [FLEET_AUTHOR];
   const emit = {
     fixupPriority: options.fixupPriority ?? 'P1',
     rebasePriority: options.rebasePriority ?? 'P0',
