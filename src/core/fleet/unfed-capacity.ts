@@ -335,8 +335,7 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     : data.schema === 'dispatchd.status.v1' && Number.isFinite(tickMs) && nowMs >= tickMs && nowMs - tickMs <= STATUS_FRESH_MS;
   const published = isRecord(data.unfed_capacity) ? data.unfed_capacity : null;
   const ctx = published === null ? marketContext(market) : null;
-  const operatorHolds = published === null && ctx === null
-    ? new Set((market?.hold ?? '').split(/\s+/u).filter(Boolean)) : null;
+  const operatorHolds = ctx?.holds ?? new Set((market?.hold ?? '').split(/\s+/u).filter(Boolean));
   const stop = fleetStopVerdict(data);
   // An admission-stopped tick never ran the market: the dispatcher's own
   // _waiting then uses the raw lane column from JID+tier-valid rows.
@@ -357,7 +356,7 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     const target = laneLaunchTarget(tickTarget, configuredTarget);
     const statusHeld = value.held === true;
     const view = ctx === null ? null : marketLaneView(lane, value.running, target, statusHeld, ctx);
-    const held = view?.held ?? (statusHeld || operatorHolds?.has(lane) === true);
+    const held = view?.held ?? (statusHeld || operatorHolds.has(lane));
     const headroom = Math.max(0, target - value.running);
     const readyHinted = hints === null ? null : hints.byLane.get(lane) ?? 0;
     const entry = publishedLanes[lane];
