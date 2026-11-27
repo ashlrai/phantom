@@ -185,6 +185,11 @@ expired windows stay unknown. High risk means projected unused allowance exceeds
 15% with less than 40% of the window remaining; medium means more than 5% unused.
 Projected usage is capped at included allowance.
 
+The fleet waste-risk reader uses provider meter and weekly ledger readings
+only when observed within the current quota window and within 15 minutes of
+report time. A reading at the window start is eligible. Once the reset time
+arrives, the reader needs evidence from a new window.
+
 The target aims at 97% usage by reset. Worker throughput comes from live burn
 per running worker, or an explicit measured job duration. Zero burn without a
 measured duration leaves the target unknown. Held and exhausted lanes target zero.
