@@ -1903,6 +1903,14 @@ function foldRouterOutcomesWithCiCoverage(
   const crossesAttemptBoundary = (job: string, start: number, end: number) =>
     attemptBoundaries.get(job)?.some(at => at === null || (start <= at && at <= end)) === true;
 
+  // Receipt and update stamps can date legacy rows, but the event-time
+  // aliases must agree when more than one records the boundary.
+  const hasConflictingEventTime = (row: Row, at: number): boolean =>
+    ['ts', 'timestamp', 'at', 'time'].some((key) => {
+      const stamp = parseLedgerTs(row[key]);
+      return stamp !== null && stamp !== at;
+    });
+
   // CI-boundary evidence, derived once per job from the same ci_start/
   // ci_complete event pair the reward feed's ciWallMs and job-latency's
   // ci phase read: exactly one of each boundary yields the recorded CI
@@ -1918,13 +1926,7 @@ function foldRouterOutcomesWithCiCoverage(
     const name = event.toLowerCase();
     if (name !== 'ci_start' && name !== 'ci_complete') continue;
     const at = ledgerEventTs(r, null);
-    // Receipt and update stamps can date legacy rows, but the event-time
-    // aliases must agree when more than one records the boundary.
-    const conflicts = ['ts', 'timestamp', 'at', 'time'].some((key) => {
-      const stamp = parseLedgerTs(r[key]);
-      return stamp !== null && stamp !== at;
-    });
-    if (at === null || conflicts) {
+    if (at === null || hasConflictingEventTime(r, at)) {
       ambiguousCiJobs.add(j);
       continue;
     }
@@ -1952,7 +1954,7 @@ function foldRouterOutcomesWithCiCoverage(
   // and one publish stamp across the retained rows yields the recorded
   // publish wait — identical repeated stamps dedupe so a replayed
   // append cannot fake ambiguity, and a retried attempt's second
-  // finish, a republish's second publish or an undated boundary
+  // finish, a republish's second publish or an ambiguous boundary
   // leaves the job absent so its outcome keeps null. Terminal lifecycle
   // phases stay authoritative over the event name: the outcomes reconciler copies
   // the publish row and only swaps the outcome, so its
@@ -1960,7 +1962,7 @@ function foldRouterOutcomesWithCiCoverage(
   // at verdict time, never a second publish — while a PUBLISHED phase
   // on any row is the publish claim itself, event name or not.
   const publishMarks = new Map<string, { finishes: Set<number>; publishes: Set<number>; prKeys: Set<string> }>();
-  const undatedPublishJobs = new Set<string>();
+  const ambiguousPublishJobs = new Set<string>();
   for (const r of rows) {
     const j = attributedJobId(r);
     if (!j || j.startsWith(BATCH_SESSION_PREFIX)) continue;
@@ -1971,8 +1973,8 @@ function foldRouterOutcomesWithCiCoverage(
     const publish = phase === 'PUBLISHED' || ((event === 'publish' || event === 'published') && !terminal);
     if (!finish && !publish) continue;
     const at = ledgerEventTs(r, null);
-    if (at === null) {
-      undatedPublishJobs.add(j);
+    if (at === null || hasConflictingEventTime(r, at)) {
+      ambiguousPublishJobs.add(j);
       continue;
     }
     const marks = publishMarks.get(j) ?? { finishes: new Set<number>(), publishes: new Set<number>(), prKeys: new Set<string>() };
@@ -1982,7 +1984,7 @@ function foldRouterOutcomesWithCiCoverage(
   }
   const publishWaitS = new Map<string, number>();
   for (const [j, marks] of publishMarks) {
-    if (undatedPublishJobs.has(j) || marks.finishes.size !== 1 || marks.publishes.size !== 1 || marks.prKeys.size > 1) continue;
+    if (ambiguousPublishJobs.has(j) || marks.finishes.size !== 1 || marks.publishes.size !== 1 || marks.prKeys.size > 1) continue;
     const finish = [...marks.finishes][0]!;
     const publish = [...marks.publishes][0]!;
     if (publish >= finish && !crossesAttemptBoundary(j, finish, publish)) {
