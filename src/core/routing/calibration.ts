@@ -152,7 +152,8 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
     const phase = terminalPhases.values().next().value ?? ledgerPhase(row);
     const event = ledgerLifecycleEvent(row, phase);
     const state = ledgerOutcomeState(row, event, phase);
-    const isOutcomeEvent = OUTCOME_EVENTS.has(event ?? '');
+    const eventVerdict = event === 'merged' ? true : event === 'closed' ? false : undefined;
+    const isOutcomeEvent = eventVerdict !== undefined || OUTCOME_EVENTS.has(event ?? '');
     if (state === null && !isOutcomeEvent && !['launch', 'batch_claim', 'finish', 'publish'].includes(event ?? '')) continue;
     recognized++;
     if (row['launched'] === false) continue;
@@ -188,7 +189,7 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
     const reportedVerdicts = isOutcomeEvent
       ? [row['merged'], row['outcome'], row['result'], row['status']].map(outcome)
       : [terminalVerdict !== undefined && typeof row['merged'] === 'boolean' ? row['merged'] : undefined];
-    const verdicts = new Set([terminalVerdict, ...reportedVerdicts]);
+    const verdicts = new Set([eventVerdict, terminalVerdict, ...reportedVerdicts]);
     verdicts.delete(undefined);
     if (verdicts.size > 1 || (row['merged'] === true && terminalPhases.has('CLOSED'))) {
       throw new Error('Conflicting merged verdicts on a job receipt');
