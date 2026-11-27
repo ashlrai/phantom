@@ -1,11 +1,14 @@
 /**
  * Per-credential Web Push sender with bounded, scrubbed fleet summaries.
  */
-import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import webpush, { type PushSubscription } from 'web-push';
 import { defaultVerseRoot } from '../verse/preferences.js';
 import { writePrivateFileAtomically } from '../verse/session-store.js';
+import {
+  REMOTE_SUBJECT_RE, REMOTE_UUID_RE, assertPrivatePath, isBase64UrlOfByteLength, isPublicHttpsOrigin,
+  isRemoteRecord, lstatOrNull, readPrivateJsonObject, withExclusivePrivateLock,
+} from './remote-access.js';
 import { sanitizePushDetail } from './remote-push-fleet.js';
 import type { RemoteDeviceStore } from './remote-device-store.js';
 
@@ -13,11 +16,9 @@ const FILE = 'remote-push.json';
 const MAX_FILE_BYTES = 262_144;
 const COALESCE_MS = 60_000;
 const MAX_SUBSCRIPTIONS = 32;
-const ENCODED = /^[A-Za-z0-9_-]+$/;
 export type RemotePushKind = 'needs-you' | 'completed' | 'fleet-merged' | 'fleet-lane-held' | 'leader-reply';
 export interface RemotePushDetail { detail?: string; count?: number }
 const PUSH_KINDS: RemotePushKind[] = ['needs-you', 'completed', 'fleet-merged', 'fleet-lane-held', 'leader-reply'];
-
 
 interface Entry { deviceId: string; subject: string; subscription: PushSubscription; createdAt: number }
 interface Registry { v: 1; entries: Entry[] }
@@ -27,14 +28,6 @@ export interface RemotePushConfig {
   privateKey: string;
   /** A stable HTTPS or mailto contact for VAPID, never localhost. */
   subject: string;
-}
-
-function privatePath(path: string, directory: boolean): void {
-  const stat = lstatSync(path);
-  if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile())
-    || (stat.mode & 0o077) !== 0 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
-    throw new Error('Remote push store is not private');
-  }
 }
 
 function validEndpoint(value: unknown): value is string {
@@ -47,38 +40,30 @@ function validEndpoint(value: unknown): value is string {
 }
 
 function validSubscription(value: unknown): value is PushSubscription {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
+  if (!isRemoteRecord(value)) return false;
+  const record = value;
   if (!Object.keys(record).every((key) => ['endpoint', 'expirationTime', 'keys'].includes(key))
     || !validEndpoint(record.endpoint)) return false;
   if (record.expirationTime !== undefined && record.expirationTime !== null
     && (!Number.isSafeInteger(record.expirationTime) || (record.expirationTime as number) <= Date.now())) return false;
-  if (!record.keys || typeof record.keys !== 'object' || Array.isArray(record.keys)) return false;
-  const keys = record.keys as Record<string, unknown>;
-  return Object.keys(keys).length === 2 && typeof keys.p256dh === 'string' && typeof keys.auth === 'string'
-    && ENCODED.test(keys.p256dh) && ENCODED.test(keys.auth)
-    && Buffer.from(keys.p256dh, 'base64url').length === 65 && Buffer.from(keys.auth, 'base64url').length === 16;
+  if (!isRemoteRecord(record.keys)) return false;
+  const keys = record.keys;
+  return Object.keys(keys).length === 2
+    && isBase64UrlOfByteLength(keys.p256dh, 65) && isBase64UrlOfByteLength(keys.auth, 16);
 }
 
 function validConfig(value: RemotePushConfig): boolean {
-  if (!value || typeof value !== 'object' || typeof value.publicKey !== 'string'
-    || typeof value.privateKey !== 'string' || typeof value.subject !== 'string') return false;
-  if (!ENCODED.test(value.publicKey) || !ENCODED.test(value.privateKey)
-    || Buffer.from(value.publicKey, 'base64url').length !== 65
-    || Buffer.from(value.privateKey, 'base64url').length !== 32) return false;
+  if (!isRemoteRecord(value) || typeof value.subject !== 'string') return false;
+  if (!isBase64UrlOfByteLength(value.publicKey, 65) || !isBase64UrlOfByteLength(value.privateKey, 32)) return false;
   if (value.subject.startsWith('mailto:')) return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value.subject.slice(7));
-  try {
-    const url = new URL(value.subject);
-    return url.protocol === 'https:' && url.origin === value.subject && url.hostname.includes('.')
-      && url.hostname !== 'localhost' && !url.hostname.endsWith('.localhost');
-  } catch { return false; }
+  return isPublicHttpsOrigin(value.subject);
 }
 
 function validEntry(value: unknown): value is Entry {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const entry = value as Record<string, unknown>;
-  return typeof entry.deviceId === 'string' && /^[a-f0-9-]{36}$/.test(entry.deviceId)
-    && typeof entry.subject === 'string' && /^[A-Za-z0-9_-]{8,256}$/.test(entry.subject)
+  if (!isRemoteRecord(value)) return false;
+  const entry = value;
+  return typeof entry.deviceId === 'string' && REMOTE_UUID_RE.test(entry.deviceId)
+    && typeof entry.subject === 'string' && REMOTE_SUBJECT_RE.test(entry.subject)
     && validSubscription(entry.subscription) && Number.isSafeInteger(entry.createdAt)
     && (entry.createdAt as number) > 0;
 }
@@ -95,21 +80,11 @@ export function createRemotePush(config: RemotePushConfig, devices: RemoteDevice
   const lastSent = new Map<string, number>();
   const offRevoke = devices.onRevoked((id) => { try { removeDevice(id); } catch { /* fail closed at send-time */ } });
 
-  function exists(target: string): boolean {
-    try { lstatSync(target); return true; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
-  }
   function read(): Registry {
-    if (!exists(root)) return { v: 1, entries: [] };
-    privatePath(root, true);
-    if (!exists(path)) return { v: 1, entries: [] };
-    privatePath(path, false);
-    if (lstatSync(path).size > MAX_FILE_BYTES) throw new Error('Remote push store is too large');
-    let data: unknown;
-    try { data = JSON.parse(readFileSync(path, 'utf8')) as unknown; }
-    catch { throw new Error('Remote push store is unreadable'); }
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Remote push store is invalid');
-    const registry = data as Record<string, unknown>;
+    if (!lstatOrNull(root)) return { v: 1, entries: [] };
+    assertPrivatePath(root, 'directory', 'Remote push store is not private');
+    if (!lstatOrNull(path)) return { v: 1, entries: [] };
+    const registry = readPrivateJsonObject(path, MAX_FILE_BYTES, 'Remote push store');
     if (registry.v !== 1 || !Array.isArray(registry.entries) || registry.entries.length > MAX_SUBSCRIPTIONS
       || !registry.entries.every(validEntry)) throw new Error('Remote push store is invalid');
     const entries = registry.entries as Entry[];
@@ -117,21 +92,19 @@ export function createRemotePush(config: RemotePushConfig, devices: RemoteDevice
     return { v: 1, entries };
   }
   function mutate<T>(update: (registry: Registry) => T): T {
-    mkdirSync(root, { recursive: true, mode: 0o700 });
-    privatePath(root, true);
-    const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
-    const fd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow, 0o600);
-    try {
-      writeSync(fd, `${process.pid}\n`);
-      fsyncSync(fd);
-      if ((fstatSync(fd).mode & 0o077) !== 0) throw new Error('Remote push lock is not private');
-      const registry = read();
-      const result = update(registry);
-      const bytes = `${JSON.stringify(registry)}\n`;
-      if (Buffer.byteLength(bytes) > MAX_FILE_BYTES) throw new Error('Remote push store is too large');
-      writePrivateFileAtomically(root, path, bytes);
-      return result;
-    } finally { closeSync(fd); rmSync(lockPath, { force: true }); }
+    return withExclusivePrivateLock(
+      root,
+      lockPath,
+      { dir: 'Remote push store is not private', lock: 'Remote push lock is not private' },
+      () => {
+        const registry = read();
+        const result = update(registry);
+        const bytes = `${JSON.stringify(registry)}\n`;
+        if (Buffer.byteLength(bytes) > MAX_FILE_BYTES) throw new Error('Remote push store is too large');
+        writePrivateFileAtomically(root, path, bytes);
+        return result;
+      },
+    );
   }
   function removeDevice(deviceId: string): void {
     mutate((registry) => { registry.entries = registry.entries.filter((entry) => entry.deviceId !== deviceId); });
