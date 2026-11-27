@@ -32,7 +32,8 @@
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+
+import { isPlainRecord, sha256Hex } from './store.js';
 
 const MAX_STEERING_BYTES = 64 * 1024;
 const MAX_CUSTOM_PAGES = 40;
@@ -103,10 +104,6 @@ async function readJsonCapped(file: string): Promise<{ raw: string; value: unkno
   }
 }
 
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
-}
-
 function cleanText(v: unknown, max = MAX_NOTE_CHARS): string | null {
   if (typeof v !== 'string') return null;
   // Control characters out; these strings reach model prompts and the UI.
@@ -131,7 +128,7 @@ function noteList(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   const out: string[] = [];
   for (const item of v) {
-    const t = cleanText(asRecord(item)?.['content'] ?? item);
+    const t = cleanText(isPlainRecord(item) ? item['content'] : item);
     if (t) out.push(t);
     if (out.length >= MAX_NOTES) break;
   }
@@ -142,13 +139,12 @@ function pageList(v: unknown): WikiCustomPage[] {
   if (!Array.isArray(v)) return [];
   const out: WikiCustomPage[] = [];
   for (const item of v) {
-    const rec = asRecord(item);
-    if (!rec) continue;
-    const title = cleanText(rec['title'], 120);
+    if (!isPlainRecord(item)) continue;
+    const title = cleanText(item['title'], 120);
     if (!title) continue;
-    const purpose = cleanText(rec['purpose'], 600) ?? `Explain ${title}.`;
-    const parent = cleanText(rec['parent'], 120) ?? undefined;
-    const notes = [...noteList(rec['page_notes']), ...noteList(rec['notes'])];
+    const purpose = cleanText(item['purpose'], 600) ?? `Explain ${title}.`;
+    const parent = cleanText(item['parent'], 120) ?? undefined;
+    const notes = [...noteList(item['page_notes']), ...noteList(item['notes'])];
     out.push({ title, purpose, ...(parent ? { parent } : {}), notes });
     if (out.length >= MAX_CUSTOM_PAGES) break;
   }
@@ -163,7 +159,7 @@ function safePrefix(p: string): string | null {
 }
 
 export function wikiIgnorePaths(value: unknown): string[] {
-  return stringList(asRecord(value)?.['ignorePaths']).map(safePrefix).filter((p): p is string => p !== null);
+  return stringList(isPlainRecord(value) ? value['ignorePaths'] : undefined).map(safePrefix).filter((p): p is string => p !== null);
 }
 
 /**
@@ -176,8 +172,8 @@ export async function readWikiSteering(repo: string): Promise<WikiSteering> {
   const [ashlr, devin] = await Promise.all([readJsonCapped(ashlrFile), readJsonCapped(devinFile)]);
   if (!ashlr && !devin) return EMPTY_STEERING;
 
-  const a = asRecord(ashlr?.value) ?? {};
-  const d = asRecord(devin?.value) ?? {};
+  const a = isPlainRecord(ashlr?.value) ? ashlr.value : {};
+  const d = isPlainRecord(devin?.value) ? devin.value : {};
 
   const ashlrPages = pageList(a['pages']);
   const devinPages = pageList(d['pages']);
@@ -188,12 +184,7 @@ export async function readWikiSteering(repo: string): Promise<WikiSteering> {
       ? Math.min(80, Math.floor(maxPagesRaw))
       : undefined;
 
-  const hash = createHash('sha256')
-    .update(ashlr?.raw ?? '')
-    .update('\u0000')
-    .update(devin?.raw ?? '')
-    .digest('hex')
-    .slice(0, 16);
+  const hash = sha256Hex(`${ashlr?.raw ?? ''}\u0000${devin?.raw ?? ''}`).slice(0, 16);
 
   return {
     include,

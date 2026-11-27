@@ -3,6 +3,7 @@ import { mirrorPathFor } from '../../fleet/mirrors.js';
 import { nameWithOwnerFromRemote, repoIdentityOfPath } from '../../fleet/repo-identity.js';
 import { scrubSecrets } from '../../util/scrub.js';
 import { wikiCandidateRepos } from './status.js';
+import { isPlainRecord } from './store.js';
 import { systemMapPackageUses } from './system-map.js';
 import { mapBlobs, mapGit, mapTree } from './system-map-git.js';
 import { ecosystemDeclarations, type Anchor, type Declaration } from './ecosystem-declarations.js';
@@ -23,7 +24,7 @@ function manifestFacts(commit: string, contents: ReadonlyMap<string, string>): M
     if (!source) return;
     try {
       const doc: unknown = JSON.parse(source);
-      if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return;
+      if (!isPlainRecord(doc)) return;
       const locations = new Map<string, number>();
       let line = 1, newline = source.indexOf('\n');
       for (const token of source.matchAll(/"(?:[^"\\]|\\.)*"/g)) {
@@ -31,7 +32,7 @@ function manifestFacts(commit: string, contents: ReadonlyMap<string, string>): M
         while (newline >= 0 && newline < token.index) { line++; newline = source.indexOf('\n', newline + 1); }
         if ((/^\s*:/.test(source.slice(end)) === useKeys) && !locations.has(token[0])) locations.set(token[0], line);
       }
-      visit(doc as Record<string, unknown>, value => {
+      visit(doc, value => {
         const line = locations.get(JSON.stringify(value));
         return line ? { commit, file, line } : undefined;
       });
@@ -43,7 +44,7 @@ function manifestFacts(commit: string, contents: ReadonlyMap<string, string>): M
       if (typeof doc.name === 'string' && PACKAGE.test(doc.name) && scrubSecrets(doc.name) === doc.name) result.names.add(doc.name);
       for (const key of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
         const deps = doc[key];
-        if (!deps || typeof deps !== 'object' || Array.isArray(deps)) continue;
+        if (!isPlainRecord(deps)) continue;
         for (const [name, spec] of Object.entries(deps)) {
           const alias = typeof spec === 'string' ? /^npm:((?:@[a-z0-9_.-]+\/)?[a-z0-9_.-]+)(?:@[^\s]+)?$/.exec(spec)?.[1] : undefined;
           const anchor = lineOf(name);
@@ -53,10 +54,9 @@ function manifestFacts(commit: string, contents: ReadonlyMap<string, string>): M
     });
   }
   read('.mcp.json', false, (doc, lineOf) => {
-    if (!doc.mcpServers || typeof doc.mcpServers !== 'object') return;
-    for (const server of Object.values(doc.mcpServers) as unknown[]) {
-      if (!server || typeof server !== 'object' || !('command' in server) || server.command !== 'npx' ||
-          !('args' in server) || !Array.isArray(server.args)) continue;
+    if (!isPlainRecord(doc.mcpServers)) return;
+    for (const server of Object.values(doc.mcpServers)) {
+      if (!isPlainRecord(server) || server.command !== 'npx' || !Array.isArray(server.args)) continue;
       const args = server.args as unknown[];
       let explicitPackage = false;
       for (let i = 0; i < args.length; i++) {

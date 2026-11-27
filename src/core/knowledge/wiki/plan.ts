@@ -12,10 +12,9 @@
  * inputs leaves it fresh — only stale pages are regenerated.
  */
 
-import { createHash } from 'node:crypto';
-
 import type { RepoFacts, ModuleInfo } from './facts.js';
 import type { WikiSteering } from './steering.js';
+import { sha256Hex } from './store.js';
 import { WIKI_GENERATOR_VERSION, type WikiPageSpec } from './types.js';
 import { isTestFile } from './scan.js';
 
@@ -42,7 +41,7 @@ function topSourceFiles(m: ModuleInfo, facts: RepoFacts, max: number): string[] 
 }
 
 /** Find the module a focus area names: exact key, key suffix, or substring. */
-export function moduleForFocus(focus: string, modules: readonly ModuleInfo[]): ModuleInfo | null {
+function moduleForFocus(focus: string, modules: readonly ModuleInfo[]): ModuleInfo | null {
   const f = focus.replace(/^\.\//, '').replace(/\/+$/, '').toLowerCase();
   return (
     modules.find((m) => m.key.toLowerCase() === f) ??
@@ -226,18 +225,14 @@ export function planPages(facts: RepoFacts, steering: WikiSteering): WikiPageSpe
 // Hashing
 // ---------------------------------------------------------------------------
 
-function sha(text: string): string {
-  return createHash('sha256').update(text).digest('hex');
-}
-
 /** Hash of every listed path — the `@tree` pseudo-input. */
 export function treeHash(paths: Iterable<string>): string {
-  return sha([...paths].sort().join('\n')).slice(0, 24);
+  return sha256Hex([...paths].sort().join('\n')).slice(0, 24);
 }
 
 /** Hash of a spec's static parts (plus the repo notes, which shape every page). */
 export function specHash(spec: WikiPageSpec, repoNotes: readonly string[]): string {
-  return sha(
+  return sha256Hex(
     JSON.stringify({
       v: WIKI_GENERATOR_VERSION,
       id: spec.id,
@@ -261,5 +256,5 @@ export interface HashContext {
 export function inputHash(spec: { specHash: string; inputs: readonly string[]; pseudo: readonly string[] }, ctx: HashContext): string {
   const inputs = spec.inputs.map((rel) => `${rel}\u0000${ctx.blobs.get(rel) ?? 'missing'}`);
   const pseudo = spec.pseudo.map((p) => (p === '@tree' ? `@tree:${ctx.tree}` : p === '@steering' ? `@steering:${ctx.steering}` : p));
-  return sha(JSON.stringify({ s: spec.specHash, inputs, pseudo })).slice(0, 32);
+  return sha256Hex(JSON.stringify({ s: spec.specHash, inputs, pseudo })).slice(0, 32);
 }

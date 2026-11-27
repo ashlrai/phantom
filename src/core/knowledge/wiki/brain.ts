@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -11,14 +10,12 @@ import { scrubSecrets } from '../../util/scrub.js';
 import { checkedCitation } from './citations.js';
 import { isWikiReadable } from './scan.js';
 import { wikiIgnorePaths } from './steering.js';
-import { wikiKey, wikiRoot } from './store.js';
-import { extractMapFacts, mapMarks, safeMapPath, sourcePattern } from './system-map-facts.js';
-import { mapBlobs, mapDiff, mapGit, mapTree, objectId } from './system-map-git.js';
+import { sha256Hex, wikiKey, wikiRoot } from './store.js';
+import { extractMapFacts, isMapSourcePath, mapMarks, WIKI_STEERING_PATH } from './system-map-facts.js';
+import { mapBlobs, mapDiff, mapGit, mapTree, objectId, resolveMapCommit } from './system-map-git.js';
 
-const STEERING = '.ashlr/wiki.json';
 const MAX_TARGETS = 32;
 const MAX_LINKS = 24;
-const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 const sha = z.string().regex(objectId);
 export const brainSourceSchema = z.object({
   kind: z.enum(['decision', 'lesson', 'pr', 'failure', 'owner-direction']),
@@ -28,13 +25,11 @@ export const brainSourceSchema = z.object({
 }).strict();
 export type BrainSource = z.infer<typeof brainSourceSchema>;
 
-const eligible = (file: string) => sourcePattern.test(file) && safeMapPath(file);
-
 function nodeFile(id: string): string | null {
   if (id.length > 1200) return null;
   const file = id.startsWith('file:') ? id.slice(5) :
     /^(?:symbol|cli|route|mcp):(.+):[^:]+:[1-9]\d*$/.exec(id)?.[1];
-  return file && eligible(file) ? file : null;
+  return file && isMapSourcePath(file) ? file : null;
 }
 
 const targetSchema = z.object({
@@ -52,7 +47,7 @@ const recordSchema = z.object({
 type Record = z.infer<typeof recordSchema>;
 
 const serialize = (record: Record) => JSON.stringify(record) + '\n';
-const recordId = (record: Record) => digest(JSON.stringify([
+const recordId = (record: Record) => sha256Hex(JSON.stringify([
   record.origin, record.source.kind, record.source.id, record.source.digest, record.observedCommit,
   record.origin === 'curated' ? record.targets[0]?.nodeId : null,
 ]));
@@ -78,15 +73,13 @@ function store(repo: string) {
 }
 
 export async function brainHead(repo: string): Promise<string | null> {
-  const output = await mapGit(repo, ['rev-parse', '--show-prefix', '--verify', 'HEAD^{commit}']).catch(() => null);
-  const [prefix, commit] = output?.toString('utf8').split('\n') ?? [];
-  return prefix === '' && commit && objectId.test(commit) ? commit : null;
+  return resolveMapCommit(repo);
 }
 
 async function readTargets(repo: string, commit: string, ids: readonly string[]): Promise<Map<string, Target>> {
   const paths = [...new Set(ids.flatMap(id => nodeFile(id) ?? []))];
-  const tree = new Map(await mapTree(repo, commit, [STEERING, ...paths]));
-  const steering = tree.get(STEERING);
+  const tree = new Map(await mapTree(repo, commit, [WIKI_STEERING_PATH, ...paths]));
+  const steering = tree.get(WIKI_STEERING_PATH);
   let ignore: string[] = [];
   if (steering) await mapBlobs(repo, [steering], (_oid, source) => {
     if (source === null) throw new Error('Pinned steering unavailable.');
@@ -130,37 +123,38 @@ export async function linkBrainEvidence(repo: string, nodeId: string, source: Br
   return target ? save(repo, { observedCommit, source, origin: 'curated', targets: [target], truncated: false }) : 'invalid';
 }
 
+async function diffTargets(repo: string, baseCommit: string, observedCommit: string): Promise<{ targets: Target[]; truncated: boolean } | null> {
+  const paths = (await mapDiff(repo, baseCommit, observedCommit))
+    .filter(([file, blob]) => blob !== null && isMapSourcePath(file)).map(([file]) => file).sort();
+  const ids = paths.slice(0, MAX_TARGETS).map(file => 'file:' + file);
+  if (!ids.length) return null;
+  const targets = [...(await readTargets(repo, observedCommit, ids)).values()];
+  return targets.length ? { targets, truncated: paths.length > MAX_TARGETS } : null;
+}
+
 export async function recordBrainMerge(repo: string, githubRepo: string, pr: number, observedCommit: string) {
   if (!objectId.test(observedCommit) || !Number.isSafeInteger(pr) || pr < 1) return 'invalid';
   const parent = (await mapGit(repo, ['rev-parse', '--verify', observedCommit + '^1^{commit}'])).toString('utf8').trim();
   if (!objectId.test(parent)) return 'invalid';
-  const paths = (await mapDiff(repo, parent, observedCommit))
-    .filter(([file, blob]) => blob !== null && eligible(file)).map(([file]) => file).sort();
-  const ids = paths.slice(0, MAX_TARGETS).map(file => 'file:' + file);
-  if (!ids.length) return 'empty';
-  const targets = [...(await readTargets(repo, observedCommit, ids)).values()];
-  if (!targets.length) return 'empty';
+  const diff = await diffTargets(repo, parent, observedCommit);
+  if (!diff) return 'empty';
   const id = 'github:' + githubRepo.toLowerCase() + '/pull/' + pr;
-  const source = brainSourceSchema.parse({ kind: 'pr', id, digest: digest(JSON.stringify([id, observedCommit])) });
-  return save(repo, { observedCommit, source, origin: 'cloud-merge', targets, truncated: paths.length > MAX_TARGETS });
+  const source = brainSourceSchema.parse({ kind: 'pr', id, digest: sha256Hex(JSON.stringify([id, observedCommit])) });
+  return save(repo, { observedCommit, source, origin: 'cloud-merge', ...diff });
 }
 
 export async function recordBrainRejection(repo: string, githubRepo: string, pr: number, observedCommit: string, baseBranch: string, failedChecks: string[]) {
   if (!objectId.test(observedCommit) || !Number.isSafeInteger(pr) || pr < 1) return 'invalid';
   const base = (await mapGit(repo, ['merge-base', observedCommit, 'refs/remotes/origin/' + baseBranch])).toString('utf8').trim();
   if (!objectId.test(base)) return 'invalid';
-  const paths = (await mapDiff(repo, base, observedCommit))
-    .filter(([file, blob]) => blob !== null && eligible(file)).map(([file]) => file).sort();
-  const ids = paths.slice(0, MAX_TARGETS).map(file => 'file:' + file);
-  if (!ids.length) return 'empty';
-  const targets = [...(await readTargets(repo, observedCommit, ids)).values()];
-  if (!targets.length) return 'empty';
+  const diff = await diffTargets(repo, base, observedCommit);
+  if (!diff) return 'empty';
   const id = 'github:' + githubRepo.toLowerCase() + '/pull/' + pr + '/closed';
   const checks = [...new Set(failedChecks.map(check =>
     scrubSecrets(check).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').trim().slice(0, 120)).filter(Boolean))].sort().slice(0, 12);
   const lesson = 'Closed without merge.' + (checks.length ? ' Failed checks: ' + checks.join(', ') + '.' : '');
-  const source = brainSourceSchema.parse({ kind: 'lesson', id, digest: digest(JSON.stringify([id, observedCommit, lesson])) });
-  return save(repo, { observedCommit, source, origin: 'cloud-rejection', targets, truncated: paths.length > MAX_TARGETS, lesson });
+  const source = brainSourceSchema.parse({ kind: 'lesson', id, digest: sha256Hex(JSON.stringify([id, observedCommit, lesson])) });
+  return save(repo, { observedCommit, source, origin: 'cloud-rejection', ...diff, lesson });
 }
 
 type Staleness = 'valid' | 'target-changed' | 'target-removed' | 'unknown-ancestry';

@@ -13,19 +13,24 @@
  */
 
 import path from 'node:path';
-import { pad, makeColors, isTty } from './ui.js';
+import { pad, makeColors, isTty, isStderrTty } from './ui.js';
 import { isEnrolled } from '../core/sandbox/policy.js';
 import { runKnowledgeContextPack } from './knowledge-context-pack.js';
 import { runKnowledgeEditPreflight } from './knowledge-edit-preflight.js';
 import { runKnowledgeHandoff } from './knowledge-handoff.js';
 
 /**
- * Resolve user-supplied repo paths to absolute and partition them by enrollment.
+ * Resolve user-supplied repo paths to absolute and enforce enrollment.
  * ENROLLMENT-SCOPED (docs/contracts/CONTRACT-M25.md invariant 3): only enrolled repos may be
  * indexed/walked. Non-enrolled paths are rejected at the CLI so the user gets a
  * clear error instead of a silent no-op (the core modules also drop them).
  */
-function partitionEnrolled(repos: string[]): { enrolled: string[]; rejected: string[] } {
+function resolveScopedRepos(
+  repos: string[],
+  verb: 'indexed' | 'analyzed',
+  red: (s: string) => string,
+): { ok: true; repos: string[] | undefined } | { ok: false } {
+  if (repos.length === 0) return { ok: true, repos: undefined };
   const enrolled: string[] = [];
   const rejected: string[] = [];
   for (const r of repos) {
@@ -33,24 +38,23 @@ function partitionEnrolled(repos: string[]): { enrolled: string[]; rejected: str
     if (isEnrolled(abs)) enrolled.push(abs);
     else rejected.push(r);
   }
-  return { enrolled, rejected };
+  if (rejected.length > 0) {
+    process.stderr.write(
+      red('error: ') +
+      'not enrolled: ' + rejected.join(', ') + '\n' +
+      `       Only enrolled repos can be ${verb}. Enroll first: ` +
+      'ashlr enroll add <path>\n',
+    );
+    return { ok: false };
+  }
+  return { ok: true, repos: enrolled };
 }
 
 // ─── Lazy imports (graceful degradation if M25 modules not yet built) ────────
 
-type BuildKnowledgeFn = (opts?: {
-  repos?: string[];
-  allowCloud?: boolean;
-  /** M32: per-repo progress callback (best-effort; wrapped by the core). */
-  onProgress?: (ev: { repo: string; repoIndex: number; repoCount: number; newChunks: number }) => void;
-}) => Promise<{ repos: number; chunks: number }>;
-
-type BuildGraphFn = (repos?: string[]) => import('../core/types.js').KnowledgeGraph;
-
-type ImpactFn = (
-  target: string,
-  repos?: string[],
-) => import('../core/types.js').ImpactResult;
+type BuildKnowledgeFn = typeof import('../core/knowledge/index.js').buildKnowledge;
+type BuildGraphFn = typeof import('../core/knowledge/graph.js').buildGraph;
+type ImpactFn = typeof import('../core/knowledge/graph.js').impact;
 
 let _buildKnowledge: BuildKnowledgeFn | null | undefined = undefined;
 let _buildGraph: BuildGraphFn | null | undefined = undefined;
@@ -234,20 +238,9 @@ async function runBuild(subArgs: string[]): Promise<number> {
 
   // ENROLLMENT-SCOPED: reject any user-supplied --repo / positional path that is
   // not enrolled before forwarding to buildKnowledge (no scanning of arbitrary dirs).
-  let scopedRepos: string[] | undefined;
-  if (parsed.repos.length > 0) {
-    const { enrolled, rejected } = partitionEnrolled(parsed.repos);
-    if (rejected.length > 0) {
-      process.stderr.write(
-        red('error: ') +
-        'not enrolled: ' + rejected.join(', ') + '\n' +
-        '       Only enrolled repos can be indexed. Enroll first: ' +
-        'ashlr enroll add <path>\n',
-      );
-      return 1;
-    }
-    scopedRepos = enrolled;
-  }
+  const scope = resolveScopedRepos(parsed.repos, 'indexed', red);
+  if (!scope.ok) return 1;
+  const scopedRepos = scope.repos;
 
   if (parsed.allowCloud && !parsed.json) {
     process.stderr.write(
@@ -275,7 +268,6 @@ async function runBuild(subArgs: string[]): Promise<number> {
 
   // M32: single-line stderr progress while indexing (TTY only, never in JSON
   // mode). stdout stays clean; non-TTY/JSON runs are silent as before.
-  const { isStderrTty } = await import('./ui.js');
   const showProgress = isStderrTty() && !parsed.json;
   let progressShown = false;
 
@@ -415,20 +407,9 @@ async function runGraph(subArgs: string[]): Promise<number> {
   const { red } = makeColors(tty);
 
   // ENROLLMENT-SCOPED: reject non-enrolled --repo / positional paths.
-  let scopedRepos: string[] | undefined;
-  if (parsed.repos.length > 0) {
-    const { enrolled, rejected } = partitionEnrolled(parsed.repos);
-    if (rejected.length > 0) {
-      process.stderr.write(
-        red('error: ') +
-        'not enrolled: ' + rejected.join(', ') + '\n' +
-        '       Only enrolled repos can be analyzed. Enroll first: ' +
-        'ashlr enroll add <path>\n',
-      );
-      return 1;
-    }
-    scopedRepos = enrolled;
-  }
+  const scope = resolveScopedRepos(parsed.repos, 'analyzed', red);
+  if (!scope.ok) return 1;
+  const scopedRepos = scope.repos;
 
   const graphMod = await importGraph();
   if (!graphMod) {
@@ -520,20 +501,9 @@ async function runImpact(subArgs: string[]): Promise<number> {
   const { red } = makeColors(tty);
 
   // ENROLLMENT-SCOPED: reject non-enrolled --repo / positional paths.
-  let scopedRepos: string[] | undefined;
-  if (parsed.repos.length > 0) {
-    const { enrolled, rejected } = partitionEnrolled(parsed.repos);
-    if (rejected.length > 0) {
-      process.stderr.write(
-        red('error: ') +
-        'not enrolled: ' + rejected.join(', ') + '\n' +
-        '       Only enrolled repos can be analyzed. Enroll first: ' +
-        'ashlr enroll add <path>\n',
-      );
-      return 1;
-    }
-    scopedRepos = enrolled;
-  }
+  const scope = resolveScopedRepos(parsed.repos, 'analyzed', red);
+  if (!scope.ok) return 1;
+  const scopedRepos = scope.repos;
 
   const graphMod = await importGraph();
   if (!graphMod) {
@@ -637,9 +607,4 @@ async function runCommand(args: string[], run: () => Promise<number>): Promise<n
 
 export async function cmdKnowledge(args: string[]): Promise<number> {
   return runCommand(args, () => dispatchKnowledge(args));
-}
-
-/** Programmatic entry for `ashlr knowledge impact`. */
-export async function cmdImpact(args: string[]): Promise<number> {
-  return runCommand(args, () => runImpact(args));
 }
