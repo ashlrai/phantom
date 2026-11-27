@@ -1231,12 +1231,16 @@ const repoLabel = (r: Row): string | null => {
 function rewardForOutcome(
   outcome: RouterOutcome,
   rewards: ReadonlyMap<string, RewardOutcomeEvidence> | undefined,
+  prKey: string | undefined,
 ): RewardOutcomeEvidence | undefined {
   const reward = rewards?.get(outcome.job_id);
   const jobsRepo = outcome.repo;
   const rewardRepo = reward?.repo;
-  if (jobsRepo?.includes('/') && rewardRepo?.includes('/') &&
-      jobsRepo.toLowerCase() !== rewardRepo.toLowerCase()) return undefined;
+  if (rewardRepo?.includes('/')) {
+    const expected = rewardRepo.toLowerCase();
+    if (jobsRepo?.includes('/') && jobsRepo.toLowerCase() !== expected) return undefined;
+    if (prKey !== undefined && prKey.slice(0, prKey.lastIndexOf('#')) !== expected) return undefined;
+  }
   return reward;
 }
 
@@ -1793,6 +1797,7 @@ function foldRouterOutcomesWithCiCoverage(
   mergeEventCoverage?: MergeEventCoverage,
   rewards?: ReadonlyMap<string, RewardOutcomeEvidence>,
   throughMs = Infinity,
+  spendCosts?: ReadonlyMap<string, number>,
 ): RouterOutcomeFold {
   const rows: Row[] = [];
   let malformed = 0;
@@ -2329,19 +2334,30 @@ function foldRouterOutcomesWithCiCoverage(
       }
     }
   }
-  if (opts.mergeEvents !== undefined || opts.crossReviews !== undefined || opts.revertedPrKeys?.size) {
+  if (rewards || spendCosts || opts.mergeEvents !== undefined || opts.crossReviews !== undefined || opts.revertedPrKeys?.size) {
     for (const o of outcomes.values()) {
       const latestClaim = jobPrKeys.get(o.job_id);
       const verdictClaim = verdictPrKeys.get(o.job_id);
+      const prKey = verdictClaim === null ? undefined : verdictClaim ?? latestClaim;
+      const solePrClaim = prKey !== undefined && soleClaimByJob.get(o.job_id) === `pr:${prKey}`;
+      const rewardPr = verdictClaim !== undefined || solePrClaim ? prKey : undefined;
+      const reward = rewardForOutcome(o, rewards, rewardPr);
+      const rewardMerge = o.merged === null && reward?.merged === true;
+      const recordedVerdict = o.merged;
+      o.cost_usd ??= spendCosts?.get(o.job_id) ?? null;
+      if (reward !== undefined) {
+        o.merged ??= reward.merged;
+        if (o.merged === true) o.ttm_s ??= reward.ttm_s;
+        if (!ambiguousCiJobs.has(o.job_id)) o.ci_wall_s ??= reward.ci_wall_s;
+        o.cost_usd ??= reward.cost_usd;
+        o.repo ??= reward.repo;
+        o.pool_pct_used = reward.pool_pct_used;
+      }
       // A null verdict claim records an explicit URL that could not be joined.
-      if (verdictClaim === null) continue;
-      const prKey = verdictClaim ?? latestClaim;
       if (prKey === undefined) continue;
-      const solePrClaim = soleClaimByJob.get(o.job_id) === `pr:${prKey}`;
-      if (verdictClaim === undefined && o.merged !== null && !solePrClaim) continue;
+      if (verdictClaim === undefined && recordedVerdict !== null && !solePrClaim) continue;
       // Reward rows resolve the job but carry no PR identity of their own.
-      const rewardMerge = o.merged === null && solePrClaim && rewardForOutcome(o, rewards)?.merged === true;
-      if ((o.merged === true || rewardMerge) && opts.revertedPrKeys?.has(prKey)) o.reverted = true;
+      if ((recordedVerdict === true || (rewardMerge && solePrClaim)) && opts.revertedPrKeys?.has(prKey)) o.reverted = true;
       if (opts.mergeEvents !== undefined) {
         const evidence = opts.mergeEvents.get(prKey);
         if (evidence !== undefined) {
@@ -3614,32 +3630,8 @@ export async function readRouterOutcomes(opts: {
     crossReviews: crossReviewRead.state === 'read'
       ? foldCrossReviewsThrough(crossReviewRead.text, reportStartedAt)
       : undefined,
-  }, ambiguousCiJobs, mergeEvents?.coverage, rewards, reportStartedAt);
-  if (spendRead.state === 'read' && !spendTruncated) {
-    const costs = foldSpendCosts(spendRead.text, reportStartedAt);
-    for (const o of folded.outcomes) {
-      if (o.cost_usd !== null) continue;
-      const sum = costs.get(o.job_id);
-      if (sum !== undefined) o.cost_usd = sum;
-    }
-  }
-  if (rewards !== undefined) {
-    for (const o of folded.outcomes) {
-      const reward = rewardForOutcome(o, rewards);
-      if (reward === undefined) continue;
-      // Fill-only join: a recorded jobs-ledger verdict or measurement
-      // always wins; the reward row's resolved evidence fills what the
-      // fold left unknown. ttm_s is merge evidence, so it fills only
-      // while the standing verdict is a merge — the same gate the
-      // jobs-ledger dialect applies.
-      if (o.merged === null) o.merged = reward.merged;
-      if (o.merged === true && o.ttm_s === null) o.ttm_s = reward.ttm_s;
-      if (o.ci_wall_s === null && !ambiguousCiJobs.has(o.job_id)) o.ci_wall_s = reward.ci_wall_s;
-      if (o.cost_usd === null) o.cost_usd = reward.cost_usd;
-      if (o.repo === null) o.repo = reward.repo;
-      o.pool_pct_used = reward.pool_pct_used;
-    }
-  }
+  }, ambiguousCiJobs, mergeEvents?.coverage, rewards, reportStartedAt,
+  spendRead.state === 'read' && !spendTruncated ? foldSpendCosts(spendRead.text, reportStartedAt) : undefined);
   if (emptyTagRead.state === 'read') {
     const tags = foldEmptyTags(emptyTagRead.text, reportStartedAt);
     for (const o of folded.outcomes) {
