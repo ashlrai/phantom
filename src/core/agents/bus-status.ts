@@ -24,7 +24,8 @@
  * `phm fleet coordination` and the unified inbox coordination source
  * read, the claim-store
  * drift verdict comparing the claim journal with the coordination table it
- * is dual-written to, and the outbound send gate `localWriteGate` applies
+ * is dual-written to, the channel adapter registry every channel-addressed
+ * send's delivery decision consults, and the outbound send gate `localWriteGate` applies
  * before every bus write lands. Each
  * section reports its own real state; a section that cannot be read reports
  * unavailable or null, never zero, and the whole read never throws. Read-only:
@@ -46,6 +47,8 @@ import { ashlrHome } from '../cloud/store.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
 import type { AshlrConfig } from '../types.js';
 import { listCoordination } from './claim-store.js';
+import { listChannelRegistry, type ChannelHealth } from './channel-registry.js';
+import type { ChannelId } from './channel-policy.js';
 import { readBusWakes } from '../fleet/bus-wake-queue.js';
 import { BUS_HOPLOG_TAIL_MAX_ROWS, readBusHoplogTail } from '../fleet/bus-hoplog.js';
 import { readAgentRegistry } from './bus-identity.js';
@@ -435,6 +438,29 @@ export interface UnifiedBusStatus {
      * the `released-unposted` class only this projection names; same
      * null rule. */
     returns: number | null;
+  };
+  /** Channel adapter registry (`listChannelRegistry`, the same read
+   * `agents bus channels list`, `agents bus channels test` and the
+   * comms-agent adapter probe serve) behind every channel-addressed send's
+   * delivery decision — which of the fixed bus channel ids have a
+   * registered adapter in this process and each adapter's health verdict.
+   * The bus and handoff adapters probe the same inbox store `store`
+   * reports, so their `healthy` tracks it; a channel with no registered
+   * adapter reports `adapterRegistered:false` and `healthy:'unknown'` — a send
+   * addressed through it refuses rather than guessing a delivery path.
+   * Process-local registration only: this section describes this
+   * process's adapter table, never a fleet-wide channel census, and it
+   * takes no lock and probes no network — `inspectBusInbox` is the same
+   * total read `store` already ran. */
+  channels: {
+    source: 'available' | 'unavailable';
+    /** One row per channel id in fixed CHANNEL_IDS order — the same
+     * `{id, adapterRegistered, healthy}` shape `agents bus channels list`
+     * reports, null when the registry cannot be read. `healthy` is the
+     * adapter's own verdict — `true` usable, `false` confirmed down,
+     * `'unknown'` when nothing can assess it — never collapsed to a
+     * boolean and never guessed for an unregistered channel. */
+    adapters: Array<{ id: ChannelId; adapterRegistered: boolean; healthy: ChannelHealth }> | null;
   };
   /** Outbound send gate behind every bus write verb — the kill-switch
    * sentinel and the comms soft-pause flag `localWriteGate` consults
@@ -948,6 +974,25 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     fleetCoordination = { source: 'unavailable', messages: null, proposals: null, returns: null };
   }
 
+  // The channel adapter registry behind every channel-addressed send's
+  // delivery decision — `agents bus channels list`/`test` answer it on a
+  // separate dispatch path, so the health probe names it here too: which
+  // of the fixed channel ids have a registered adapter in this process
+  // and each adapter's own health verdict. `listChannelRegistry` is a
+  // total read over the process-local table plus the same
+  // `inspectBusInbox` the `store` section already ran, under the probe's
+  // own root and clock; its try stays so a throwing adapter factory or
+  // registry read cannot hide the send-gate verdict. Channel ids and
+  // verdicts only — never adapter internals or message data.
+  let channels: UnifiedBusStatus['channels'];
+  try {
+    const adapters = listChannelRegistry({ root: options.root, now });
+    channels = { source: 'available', adapters: adapters.map(row =>
+      ({ id: row.id, adapterRegistered: row.adapterRegistered, healthy: row.healthy })) };
+  } catch {
+    channels = { source: 'unavailable', adapters: null };
+  }
+
   // The send gate every bus write passes through. Both readers are total
   // by contract, but each keeps its own try so one throwing probe cannot
   // hide the other's verdict — and an uninspectable source reports
@@ -979,5 +1024,5 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     kill, pause,
   };
 
-  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, peerInbox, deadLetters, sessionHandoffs, fleetCoordination, sendGate };
+  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, peerInbox, deadLetters, sessionHandoffs, fleetCoordination, channels, sendGate };
 }

@@ -14,6 +14,7 @@ import { BusBoard } from '../src/core/fleet/bus-board.js';
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
 import { SharedStore } from '../src/core/fleet/shared-store.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
+import { registerChannelAdapter, resetChannelRegistryForTests } from '../src/core/agents/channel-registry.js';
 import { appendBusHop } from '../src/core/fleet/bus-hoplog.js';
 import { claimFleetWork, concludeFleetClaim, postFleetMessage, proposeFleetAssignment } from '../src/core/fleet/coordination.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
@@ -85,6 +86,18 @@ describe('readUnifiedBusStatus', () => {
     // A verifiably absent fleet coordination ledger holds no pending
     // surface: real zeros across all three classes.
     expect(status.fleetCoordination).toEqual({ source: 'missing', messages: 0, proposals: 0, returns: 0 });
+    // The process-local adapter table always reads: the two default
+    // adapters are registered and probe the verified-missing store;
+    // every other channel id honestly reports no adapter and unknown
+    // health — never a guessed delivery path.
+    expect(status.channels).toEqual({ source: 'available', adapters: [
+      { id: 'bus', adapterRegistered: true, healthy: true },
+      { id: 'slack', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'imessage', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'email', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'telegram', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'handoff', adapterRegistered: true, healthy: true },
+    ] });
     expect(Number.isNaN(Date.parse(status.asOf))).toBe(false);
   });
 
@@ -887,6 +900,67 @@ describe('deadLetters section', () => {
   });
 });
 
+describe('channels section', () => {
+  it('reports every channel id on a fresh root — bus and handoff registered and healthy, the rest honestly adapter-less', () => {
+    const status = readUnifiedBusStatus(setup());
+    // The same rows `agents bus channels list` serves: the two default
+    // adapters probe the (verified-missing) store and stay usable; a
+    // channel with no registered adapter is never guessed healthy.
+    expect(status.channels).toEqual({ source: 'available', adapters: [
+      { id: 'bus', adapterRegistered: true, healthy: true },
+      { id: 'slack', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'imessage', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'email', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'telegram', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'handoff', adapterRegistered: true, healthy: true },
+    ] });
+    expect(status.store.source).toBe('missing');
+  });
+
+  it('reflects a registered non-default adapter without guessing its health', () => {
+    registerChannelAdapter({ id: 'slack',
+      ingest: async function* () { yield* [] as BusEnvelope[]; },
+      deliver: async () => ({ status: 'refused' as const, reason: 'test adapter' }) });
+    try {
+      const status = readUnifiedBusStatus(setup());
+      const slack = status.channels.adapters!.find(row => row.id === 'slack')!;
+      // Registered is a fact; health stays 'unknown' — no local probe exists
+      // for a non-bus/handoff adapter, so the section never invents one.
+      expect(slack).toEqual({ id: 'slack', adapterRegistered: true, healthy: 'unknown' });
+      expect(status.channels.adapters!.find(row => row.id === 'bus'))
+        .toEqual({ id: 'bus', adapterRegistered: true, healthy: true });
+    } finally { resetChannelRegistryForTests(); }
+  });
+
+  it('marks the bus and handoff adapters down when the store they probe is unreadable', () => {
+    const options = setup();
+    const envelope: BusEnvelope = { id: 'ch-1', from: 'agent:nova', to: 'agent:atlas',
+      priority: 'P2', ttl: 120_000, body: { kind: 'note', text: 'fake note' } };
+    expect(appendBusInbox(envelope, { root: options.root, now: options.now }).status).toBe('posted');
+    // Corrupt only the store payload; channel health tracks the same
+    // inspectBusInbox verdict `store` reports — down, never unknown-as-up.
+    const file = join(options.root!, 'bus-inbox', 'messages.json');
+    writeFileSync(file, '{not json');
+    chmodSync(file, 0o600);
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.store.source).toBe('unavailable');
+    expect(status.channels.source).toBe('available');
+    expect(status.channels.adapters).toEqual([
+      { id: 'bus', adapterRegistered: true, healthy: false },
+      { id: 'slack', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'imessage', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'email', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'telegram', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'handoff', adapterRegistered: true, healthy: false },
+    ]);
+    // The feed projects the same sick store, so it degrades with it — never
+    // an empty job list. A gate read on a different path stays its own verdict.
+    expect(status.feed).toEqual({ status: 'unavailable', jobs: null });
+    expect(status.sendGate.state).toBe('open');
+  });
+});
+
 describe('sendGate section', () => {
   // The gate reads realHome() — the worker's isolated HOME under the test
   // harness — never the probe's `root`, exactly like the send path.
@@ -1163,6 +1237,14 @@ describe('phm agents bus status', () => {
     // The CLI forwards only --root, so the ledger resolves its own locator
     // under the isolated worker home — verified absent there too.
     expect(json.fleetCoordination).toEqual({ source: 'missing', messages: 0, proposals: 0, returns: 0 });
+    expect(json.channels).toEqual({ source: 'available', adapters: [
+      { id: 'bus', adapterRegistered: true, healthy: true },
+      { id: 'slack', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'imessage', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'email', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'telegram', adapterRegistered: false, healthy: 'unknown' },
+      { id: 'handoff', adapterRegistered: true, healthy: true },
+    ] });
     expect(json.sendGate).toEqual({ state: 'open',
       kill: { state: 'inactive', reason: 'missing' },
       pause: { state: 'clear', since: null, reason: null } });
@@ -1186,6 +1268,7 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('deadLetters missing pending=0 exhausted=0 expired=0 noRoute=0 other=0 truncated=false');
     expect(lines.join('\n')).toContain('sessionHandoffs missing journals=0 open=0 awaitingFailover=0 unreadable=0 truncated=false');
     expect(lines.join('\n')).toContain('fleetCoordination missing messages=0 proposals=0 returns=0');
+    expect(lines.join('\n')).toContain('channels bus=ok slack=no-adapter imessage=no-adapter email=no-adapter telegram=no-adapter handoff=ok');
     expect(lines.join('\n')).toContain('sendGate open kill=inactive:missing pause=clear');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
     expect(lines.join('\n')).toContain('hoplog missing bytes=0 hops=0 skipped=0 truncated=false');

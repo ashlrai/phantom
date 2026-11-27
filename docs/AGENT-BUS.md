@@ -2000,7 +2000,7 @@ the claimable work-feed jobs. Exit 0 on
 coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the nineteen
+**Status.** `phm agents bus status [--json]` is a read-only probe of the twenty
 dependencies every verb above touches plus the outbound send gate every
 write verb passes through: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
@@ -2131,7 +2131,20 @@ report unavailable (`source` plus `messages`/`proposals`/`returns`
 counts of the live pending surface — posted coordination mail, advisory
 assignment proposals and unpublished RESULT intents still inside their
 TTLs; 0 on a verified-missing ledger, null when unreadable, never agent
-labels, repos, task text, bodies or record ids), plus the
+labels, repos, task text, bodies or record ids), the channel adapter
+registry `listChannelRegistry` reads — the same projection `agents bus
+channels list`, `agents bus channels test` and the comms-agent adapter
+probe serve — behind every channel-addressed send's delivery decision
+(`source` plus one `adapters` row per fixed channel id in CHANNEL_IDS
+order carrying `adapterRegistered` and the adapter's own `healthy`
+verdict — `true` usable, `false` confirmed down, `'unknown'` when nothing
+can assess it, never collapsed to a boolean and never guessed for an
+unregistered channel; the bus and handoff adapters probe the same inbox
+store `store` reports, so their health tracks it, and the section
+describes this process's adapter table, never a fleet-wide channel
+census; `adapters` is null only when the registry cannot be read —
+`source:'unavailable'`, never an invented empty table — channel ids and
+verdicts only, never adapter internals or message data), plus the
 claim-store drift verdict the claim journal and the
 coordination table imply — the same `fleet.claim-drift.v1` read
 `ashlr fleet claim-drift` serves, run over the probe's own two reads so the
