@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. One hundred thirty-two sources, all of which Phantom
+ * evidence instead of a hand-kept list. One hundred thirty-three sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -1869,6 +1869,30 @@
  *     same-digest rows dedupe as replays, truncated tails are stated
  *     as lower bounds, and items emit only for the fleet's own
  *     repository since the ledger describes this install's scanners;
+ *   - the incident pipeline ledger's recurring re-opened incidents,
+ *     aged un-receipted criticals and contract-drifted rows: the
+ *     { schema: 'incident.v1', entries, admissions } document
+ *     ingestSignal and sendReceipts rewrite under
+ *     incidents.v1.lock at <runs>/incidents/incidents.v1.json on every
+ *     `phm incident report` and `phm incident receipts` pass — one
+ *     entry per fingerprint carrying jobId, attempt, repo, severity,
+ *     kind, source, title, firstSeen/lastSeen, cumulative count and
+ *     receiptedAt (incidentLedgerBacklogItems below). Until now the
+ *     ledger's only readers were the pipeline's own dedup and receipt
+ *     passes — `phm incident` exposes just report and receipts, no
+ *     list or report verb — so a production signal that kept coming
+ *     back after its fix job closed, a sev1/sev2 sitting over a day
+ *     with no completion receipt, or rows drifting off the writer's
+ *     field contract never became work. A regressed cell emits per
+ *     repo at two re-opened fingerprints or one on its fourth attempt,
+ *     a critical-open cell at one aged un-receipted sev1 or two sev2s
+ *     still sighted inside two days, and an unparsed cell at three
+ *     contract failures install-wide (fleet repo only); rows count
+ *     only under the writer's IncidentEntry contract inside the
+ *     seven-day lastSeen window plus skew tolerance, repo matching is
+ *     exact owner/repo or the pipeline's bare-name form of the target,
+ *     and missing or over-cap state reads as no evidence rather than a
+ *     guessed parse;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2032,6 +2056,7 @@ import { botHandoffBacklogItems } from './bot-handoff-backlog.js';
 import { installsBacklogItems } from './installs-backlog.js';
 import { runsHistoryBacklogItems } from './runs-history-backlog.js';
 import { resolutionWitnessBacklogItems } from './resolution-witness-backlog.js';
+import { incidentLedgerBacklogItems } from './incident-ledger-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4303,6 +4328,22 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // since the ledger describes this install's scanners and carries no
   // repo column of its own.
   items.push(...await resolutionWitnessBacklogItems({ repo }));
+
+  // Incident pipeline ledger (<runs>/incidents/incidents.v1.json): the
+  // incident.v1 state document ingestSignal and sendReceipts rewrite
+  // under incidents.v1.lock on every `phm incident report` and
+  // `phm incident receipts` pass — until now read only by the
+  // pipeline's own dedup and receipt passes, with `phm incident`
+  // exposing no list or report verb, so recurring re-opened incidents,
+  // aged un-receipted criticals and contract-drifted rows never became
+  // work (incidentLedgerBacklogItems below). The document is read
+  // whole under a byte cap — one JSON document cannot be partially
+  // trusted, so missing, degraded or over-cap state yields no items —
+  // rows count only under the writer's IncidentEntry contract inside
+  // the seven-day lastSeen window plus skew tolerance, repo matching
+  // is exact owner/repo or the bare-name form of the target, and the
+  // install-wide drift cell lands only on the fleet's own repository.
+  items.push(...await incidentLedgerBacklogItems({ repo }));
   return { items, errors };
 }
 
