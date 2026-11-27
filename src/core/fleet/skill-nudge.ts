@@ -12,6 +12,7 @@ import type { SkillCard } from '../types.js';
 import type { MetricsJob } from './metrics-ingest.js';
 import { ledgerEventName, ledgerPhase } from './empty-cause.js';
 import { isNodePoolLedgerRow, ledgerEventTs } from './jobs-ledger-dialect.js';
+import { LEDGER_URL_KEYS } from '../metrics/loop.js';
 import { readSkillCardCorpus, recordSkillCard, sanitizeSkillCard } from './skill-records.js';
 import { hasRevertEvidence } from './slot-yield.js';
 import {
@@ -139,8 +140,6 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 const LEDGER_JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const LEDGER_LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const LEDGER_ACTION_KEYS = ['action'] as const;
-/** PR URL spellings the jobs-ledger producers emit — the set outcome-learning and the router outcome fold read. */
-const PR_URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;
 /** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit. */
 const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\/([1-9]\d*)\/?$/i;
 /** Batch session ids are infrastructure and never claim a PR — the rule the sibling outcome folds apply. */
@@ -187,11 +186,14 @@ function firstString(row: Record<string, unknown>, keys: readonly string[]): str
   return null;
 }
 
-/** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
-function rowPrKey(row: Record<string, unknown>): string | null {
-  const url = firstString(row, PR_URL_KEYS);
-  const match = url === null ? null : GITHUB_PULL_URL.exec(url);
-  return match ? `${match[1]!.toLowerCase()}/${match[2]!.toLowerCase()}#${match[3]}` : null;
+function rowPrKeys(row: Record<string, unknown>): Set<string> {
+  const keys = new Set<string>();
+  for (const field of LEDGER_URL_KEYS) {
+    const url = row[field];
+    const match = typeof url === 'string' ? GITHUB_PULL_URL.exec(url.trim()) : null;
+    if (match !== null) keys.add(`${match[1]!.toLowerCase()}/${match[2]!.toLowerCase()}#${match[3]}`);
+  }
+  return keys;
 }
 
 /**
@@ -321,11 +323,15 @@ export function skillNudgeJobsFromLedger(
       if (recoveryReceipts.has(receipt)) continue;
       recoveryReceipts.add(receipt);
     }
-    const prKey = claims === null ? null : rowPrKey(row);
-    if (claims !== null && prKey !== null) {
-      const set = claims.get(prKey) ?? new Set<string>();
-      set.add(id);
-      claims.set(prKey, set);
+    let prKey: string | null = null;
+    if (claims !== null) {
+      const keys = rowPrKeys(row);
+      for (const key of keys) {
+        const set = claims.get(key) ?? new Set<string>();
+        set.add(id);
+        claims.set(key, set);
+        if (keys.size === 1) prKey = key;
+      }
     }
     if (!LEDGER_ID_PATTERN.test(id)) continue;
     let acc = jobs.get(id);
