@@ -44,14 +44,16 @@
  * `\{{` is a literal `{{` (Go templates: `docker ps --format '\{{.Names}}'`).
  */
 
+import { normalizeLineEndings } from './types.js';
+
 /** A hole's name: a letter or `_`, then up to 31 letters, digits, `_` or `-`. */
-export const COMMAND_PARAM_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$/;
+const COMMAND_PARAM_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$/;
 /** Distinct holes per template. */
-export const MAX_COMMAND_PARAMS = 20;
+const MAX_COMMAND_PARAMS = 20;
 /** A template's size, in characters. */
-export const MAX_COMMAND_TEMPLATE_CHARS = 4096;
+const MAX_COMMAND_TEMPLATE_CHARS = 4096;
 /** One filled value, in characters. */
-export const MAX_COMMAND_VALUE_CHARS = 1024;
+const MAX_COMMAND_VALUE_CHARS = 1024;
 
 /** A value inserted without quotes. See rule 1 above. */
 const SIMPLE_WORD = /^[A-Za-z0-9_./:@%+=,-]+$/;
@@ -63,17 +65,17 @@ const SIMPLE_WORD = /^[A-Za-z0-9_./:@%+=,-]+$/;
 function invisibleTrick(c: number): boolean {
   return (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069) || c === 0x2028 || c === 0x2029 || c === 0x200e || c === 0x200f;
 }
-/** C0 controls except newline and tab, DEL, C1 controls and invisibleTrick: never in a template. */
-function templateForbidden(s: string): boolean {
-  return hasCode(s, (c) => c <= 0x08 || (c >= 0x0b && c <= 0x1f) || (c >= 0x7f && c <= 0x9f) || invisibleTrick(c));
-}
-/** Every C0 control (newline and tab included), DEL, C1 and invisibleTrick: never in a value. */
-function valueForbidden(s: string): boolean {
-  return hasCode(s, (c) => c <= 0x1f || (c >= 0x7f && c <= 0x9f) || invisibleTrick(c));
-}
-/** Char-code scans instead of control-character regexes (eslint no-control-regex). */
-function hasCode(s: string, bad: (code: number) => boolean): boolean {
-  for (let i = 0; i < s.length; i += 1) if (bad(s.charCodeAt(i))) return true;
+/**
+ * Char-code scan for forbidden controls (eslint no-control-regex):
+ * C0 controls (templates allow tab 0x09 and LF 0x0a; values refuse all),
+ * DEL, C1 controls, and bidi/line-separator tricks.
+ */
+function hasForbiddenControl(s: string, allowTabsAndNewlines: boolean): boolean {
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s.charCodeAt(i);
+    if (allowTabsAndNewlines && (c === 0x09 || c === 0x0a)) continue;
+    if (c <= 0x1f || (c >= 0x7f && c <= 0x9f) || invisibleTrick(c)) return true;
+  }
   return false;
 }
 /** Stands for a hole while the template is lexed. NUL cannot occur in a valid template. */
@@ -293,8 +295,8 @@ const CONTEXT_PROBLEM: Record<Exclude<HoleContext, 'plain' | 'comment'>, string>
 // ---------------------------------------------------------------------------
 
 /** Why `value` cannot fill a hole, or null when it can. Rule 3. */
-export function commandValueProblem(value: string): string | null {
-  if (valueForbidden(value)) return 'contains a line break, tab or control character — a pasted command is one line of text.';
+function commandValueProblem(value: string): string | null {
+  if (hasForbiddenControl(value, false)) return 'contains a line break, tab or control character — a pasted command is one line of text.';
   if (value.length > MAX_COMMAND_VALUE_CHARS) return `is longer than ${MAX_COMMAND_VALUE_CHARS} characters.`;
   return null;
 }
@@ -311,7 +313,7 @@ function parsePieces(text: string): { pieces: Piece[]; params: CommandParam[]; e
   if (text.length > MAX_COMMAND_TEMPLATE_CHARS) {
     return { pieces: [], params: [], errors: [`The command is longer than ${MAX_COMMAND_TEMPLATE_CHARS} characters.`] };
   }
-  if (templateForbidden(text)) return { pieces: [], params: [], errors: ['The command contains a control character.'] };
+  if (hasForbiddenControl(text, true)) return { pieces: [], params: [], errors: ['The command contains a control character.'] };
   const pieces = tokenize(text, errors);
   const params: CommandParam[] = [];
   const byName = new Map<string, CommandParam>();
@@ -380,6 +382,25 @@ export interface CommandValueIssue {
   required: boolean;
 }
 
+function renderPieces(
+  pieces: readonly Piece[],
+  params: readonly CommandParam[],
+  values: Readonly<Record<string, string>>,
+  renderHole: (param: CommandParam, value: string) => string,
+): string {
+  const byName = new Map(params.map((p) => [p.name, p]));
+  let out = '';
+  for (const piece of pieces) {
+    if (piece.kind === 'text') {
+      out += piece.text;
+      continue;
+    }
+    const param = byName.get(piece.name)!;
+    out += renderHole(param, valueFor(values, param));
+  }
+  return out.replace(/\s+$/, '');
+}
+
 /**
  * The command with every hole filled — each value as ONE shell word (rule 1);
  * a missing value falls back to the hole's default, then to '' (inserted as
@@ -391,19 +412,11 @@ export interface CommandValueIssue {
 export function fillCommandTemplate(text: string, values: Readonly<Record<string, string>>): string {
   const { pieces, params, errors } = parsePieces(text);
   if (errors.length > 0) throw new CommandTemplateError(errors[0]!);
-  const byName = new Map(params.map((p) => [p.name, p]));
-  let out = '';
-  for (const piece of pieces) {
-    if (piece.kind === 'text') {
-      out += piece.text;
-      continue;
-    }
-    const value = valueFor(values, byName.get(piece.name)!);
+  return renderPieces(pieces, params, values, (param, value) => {
     const problem = commandValueProblem(value);
-    if (problem) throw new CommandTemplateError(`\`${piece.name}\` ${problem}`);
-    out += quoteShellValue(value);
-  }
-  return out.replace(/\s+$/, '');
+    if (problem) throw new CommandTemplateError(`\`${param.name}\` ${problem}`);
+    return quoteShellValue(value);
+  });
 }
 
 /**
@@ -414,14 +427,10 @@ export function fillCommandTemplate(text: string, values: Readonly<Record<string
  */
 export function previewCommandTemplate(text: string, values: Readonly<Record<string, string>> = {}): string {
   const { pieces, params } = parsePieces(text);
-  const byName = new Map(params.map((p) => [p.name, p]));
-  return pieces.map((piece) => {
-    if (piece.kind === 'text') return piece.text;
-    const param = byName.get(piece.name)!;
-    const value = valueFor(values, param);
-    if (commandValueProblem(value) || (param.default === null && value === '')) return `<${piece.name}>`;
+  return renderPieces(pieces, params, values, (param, value) => {
+    if (commandValueProblem(value) || (param.default === null && value === '')) return `<${param.name}>`;
     return quoteShellValue(value);
-  }).join('').replace(/\s+$/, '');
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -435,7 +444,7 @@ const FENCE_OPEN = /^\s{0,3}(`{3,}|~{3,})([^`]*)$/;
  * one fenced code block (``` or ~~~, any info string). Pure.
  */
 export function extractCommandFence(body: string): { ok: true; template: string } | { ok: false; error: string } {
-  const lines = body.replace(/\r\n?/g, '\n').split('\n');
+  const lines = normalizeLineEndings(body).split('\n');
   let i = 0;
   while (i < lines.length && !lines[i]!.trim()) i += 1;
   const open = i < lines.length ? FENCE_OPEN.exec(lines[i]!) : null;
