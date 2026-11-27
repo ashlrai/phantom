@@ -2245,6 +2245,13 @@ function foldRouterOutcomesWithCiCoverage(
   }
   for (const o of outcomes.values()) {
     o.lane ??= unlaunchedLanes.get(o.job_id) ?? null;
+    const verdictPr = verdictPrKeys.get(o.job_id);
+    const ciPrs = ciMarks.get(o.job_id)?.prKeys;
+    if (verdictPr !== undefined && ciPrs?.size &&
+        (verdictPr === null || !ciPrs.has(verdictPr))) {
+      o.ci_wall_s = null;
+      ambiguousCiJobs.add(o.job_id);
+    }
   }
   if (opts.passkFor || opts.workClassFor) {
     for (const o of outcomes.values()) {

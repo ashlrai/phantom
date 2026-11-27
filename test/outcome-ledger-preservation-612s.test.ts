@@ -2960,6 +2960,29 @@ describe('router outcome reward-signals join', () => {
     expect(result.outcomes[0]).toMatchObject({ merged: true, ci_wall_s: expected });
   });
 
+  it.each([
+    ['MERGED', 2, true, null],
+    ['CLOSED', 2, false, null],
+    ['MERGED', 1, true, 300],
+  ] as const)('binds CI timing to the standing %s verdict for PR %i', async (phase, pr, merged, duration) => {
+    const ciPr = 'https://github.com/ashlrai/phantom/pull/1';
+    const rows = [
+      { job: 'J1', event: 'ci_start', ts: '2026-11-01T00:00:00Z', url: ciPr },
+      { job: 'J1', event: 'ci_complete', ts: '2026-11-01T00:05:00Z', pr_url: ciPr },
+      { job: 'J1', phase: 'CLOSED', closedAt: '2026-11-01T00:06:00Z', url: ciPr },
+      { job: 'J1', phase, ts: '2026-11-01T00:07:00Z', url: `https://github.com/AshlrAI/Phantom/pull/${pr}/` },
+    ].map(row => JSON.stringify(row)).join('\n');
+    const expected = { merged, ci_wall_s: duration };
+    expect(foldRouterOutcomes(rows).outcomes[0]).toMatchObject(expected);
+
+    const result = await readRouterOutcomes({
+      runsDir: runsDir(rows),
+      ashlarDir: rewardLedger([rewardRow('J1', merged, { ciWallMs: 60_000 })]),
+      authorityEvidence: null,
+    });
+    expect(result.outcomes[0]).toMatchObject(expected);
+  });
+
   it('lets api-spend cost evidence win over the reward row, reward cost only as last resort', async () => {
     const root = runsDir('{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n');
     writeSpend(root, '{"job":"J1","cost_usd":1.5,"ts":"2026-11-01T00:30:00Z"}\n');
