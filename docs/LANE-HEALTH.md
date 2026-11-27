@@ -57,9 +57,10 @@ between the current phase start and report time, inclusive.
 ## Lane truth quota evidence
 
 `phm fleet lane-truth --json` compares dated quota readings within each
-provider window. Readings with unreadable observation timestamps are excluded
-from ordering and reset detection. If an observed window has no dated reading,
-the lane verdict is unknown.
+provider window. Ordering and reset detection use readable observation times
+at or before report time. If a window has no such reading, the lane verdict
+is unknown. The Runs History API's meter field shows the newest reading at
+or before report time, or null when there is none.
 An out-of-range Codex reset timestamp is recorded as an unknown reset without
 discarding the other readings in the rollout. If it is the latest reading for
 its window, the lane verdict stays unknown.

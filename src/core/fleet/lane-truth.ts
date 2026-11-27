@@ -67,7 +67,7 @@ export interface LaneTruthRow {
 
 interface LaneTruthAnalysis {
   row: LaneTruthRow;
-  /** Newest sample seen for the lane's provider, regardless of validity. */
+  /** Newest sample at or before report time, even if its quota fields are invalid. */
   meter: MeterSample | null;
 }
 
@@ -82,7 +82,7 @@ function analyzeLaneTruth(lanes: readonly LaneState[], meters: readonly MeterSam
       const group = groups.get(sample.window) ?? [];
       groups.set(sample.window, group);
       const at = Date.parse(sample.sampledAt);
-      if (!Number.isFinite(at)) continue;
+      if (!Number.isFinite(at) || at > now) continue;
       group.push(sample);
       if (latest === null || at > Date.parse(latest.sampledAt)) latest = sample;
     }
@@ -130,7 +130,7 @@ export interface LaneTruthWireLane extends LaneTruthRow {
 
 /**
  * The wire-ready report: same verdicts as readLaneTruth plus the newest
- * sample that informed each lane and a fixed reason clause. Both readers
+ * sample at or before report time and a fixed reason clause. Both readers
  * must succeed — a failure propagates so the caller can answer
  * 'unavailable' rather than serving half-evidence as truth.
  */

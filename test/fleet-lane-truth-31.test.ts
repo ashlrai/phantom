@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm, utimes, readFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readLaneTruthReport } from '../src/core/fleet/lane-truth.js';
 import { cmdFleetLaneTruth, defaultLaneTruthReaders, readLaneTruth, type LaneState, type MeterSample } from '../src/cli/fleet-lane-truth.js';
 
 const now = Date.parse('2026-10-31T12:00:00Z');
@@ -51,6 +52,16 @@ describe('lane truth fixtures', () => {
     expect(await verdict({}, [older, undated, sample])).toBe('reset_detected');
     expect(await verdict({}, [undated, older, sample])).toBe('reset_detected');
     expect(await verdict({}, [sample, { ...undated, window: 'session' }])).toBe('unknown');
+  });
+  it('uses quota evidence available at report time for the verdict and wire meter', async () => {
+    const current = { ...sample, sampledAt: new Date(now).toISOString() };
+    const future = { ...sample, sampledAt: new Date(now + 1000).toISOString(), usedPercent: 100 };
+    const lanes = async () => [{ ...lane, running: 0 }];
+    expect(await readLaneTruthReport({ lanes, meters: async () => [future, current] }, now))
+      .toMatchObject([{ verdict: 'idle_with_work', meter: { sampledAt: current.sampledAt, usedPercent: 60 } }]);
+    expect(await readLaneTruthReport({ lanes, meters: async () => [future] }, now))
+      .toMatchObject([{ verdict: 'unknown', meter: null }]);
+    expect(await verdict({ running: 0 }, [current, { ...future, window: 'session' }])).toBe('unknown');
   });
   it('emits one row per lane and strips untrusted metadata', async () => {
     const result = await readLaneTruth({ lanes: async () => [lane, { ...lane, lane: 'claude', held_reason: 'fixture-secret' }], meters: async () => [sample] }, now);
