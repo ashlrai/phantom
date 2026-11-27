@@ -5076,7 +5076,14 @@ already-formatted `formatBusWorkMine` lines — through the same markers'
 discipline, scrub and 32 KiB bound under BEGIN/END UNTRUSTED AGENT BUS WORK
 DIGEST markers, newline and tab flattened so one digest line never opens a
 second framed row and the cut stated; `--json` carries it as `framed`
-beside the full projection. Identities
+beside the full projection. `frameBusWorkFeed(cli, lines)` renders the
+fleet work feed (`agents bus work feed --frame <cli>`) — the
+already-formatted `formatBusWorkFeed` lines, job rows, hold rows and the
+honest `jobs=… feed=…` summary — through the same shared line renderer
+under BEGIN/END UNTRUSTED AGENT BUS WORK FEED markers, so a refused or
+unavailable feed frames its own state line and never an invented job
+list; `--json` carries it as `framed` beside the full projection the same
+way. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one

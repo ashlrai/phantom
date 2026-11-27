@@ -399,6 +399,30 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['work', 'mine', '--frame', 'gemini'], env)).toMatchObject({ code: 2 });
   });
 
+  it('frames the work feed as untrusted data', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-FRAME', '--title', 'Frame me',
+      '--repo', 'ashlrai/phantom', '--id', 'wf-post'])).json).toMatchObject({ status: 'posted' });
+    // --frame prints the whole feed — job rows and the jobs=/feed= summary —
+    // as one bounded block under its own markers; --json carries it on
+    // `framed` beside the full projection.
+    const framed = await run(['work', 'feed', '--frame', 'claude']);
+    expect(framed.code).toBe(0);
+    expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS WORK FEED');
+    expect(framed.json.framed).toContain('RQ-FRAME queued "Frame me"');
+    expect(framed.json.framed).toContain('feed=ok');
+    expect(framed.json.framed).toContain('END UNTRUSTED AGENT BUS WORK FEED');
+    expect(framed.json.framed).not.toContain('BEGIN UNTRUSTED AGENT BUS WORK DIGEST');
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const framedText: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'feed', '--frame', 'grok', '--root', root],
+      t => framedText.push(t), () => {}, {})).toBe(0);
+    expect(framedText.join('\n')).toContain('BEGIN UNTRUSTED AGENT BUS WORK FEED');
+    expect(framedText.join('\n')).toContain('RQ-FRAME');
+    expect(framedText.join('\n')).not.toContain('"status"');
+    expect(await run(['work', 'feed', '--frame', 'gemini'])).toMatchObject({ code: 2 });
+  });
+
   it('resolves one retained envelope by id without needing an identity', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
