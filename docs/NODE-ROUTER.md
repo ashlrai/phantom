@@ -337,7 +337,10 @@ Standalone legacy queues retain their existing compatibility policy.
 
 Workers reporting the same host share the minimum fresh slot budget. Active
 claims and planned assignments consume it once; a fresh pressure hold blocks
-that host. Placement ranks remaining slots divided by the median accepted
+that host. When one heartbeat carries both `--slots` and `--capacity`,
+`--slots` sets the worker's individual limit and the sample supplies the shared
+host budget. A hold in the sample sets the worker limit to zero as well.
+Placement ranks remaining slots divided by the median accepted
 claim-to-completion duration over 24 hours; a producer withdrawal is a fence,
 not an execution, and adds no sample. Missing latency uses the mean of
 measured host medians (equal weights when none exist). Unknown duration is never
