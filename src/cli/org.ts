@@ -1,10 +1,26 @@
 /** `phm org` - declarative co-founder org model. Thin: logic lives in src/core/org/org.ts. */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { FleetOrgTree } from '../core/fleet/org-tree.js';
-import { droppedJoinLanes, initOrg, joinOrg, joinsDir, loadOrg, openJoinLanes, orgFile, parseQueue, planOrg, readJoins, OrgError, OrgNotConfiguredError } from '../core/org/org.js';
+import {
+  droppedJoinLanes,
+  formatOrgJoinCommand,
+  initOrg,
+  joinOrg,
+  joinRecordPath,
+  joinsDir,
+  loadOrg,
+  openJoinLanes,
+  orgFile,
+  parseOrgAgentSpecs,
+  parseOrgLaneSpecs,
+  parseQueue,
+  planOrg,
+  readJoins,
+  OrgError,
+  OrgNotConfiguredError,
+} from '../core/org/org.js';
 
-export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
+const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
        phm org <show|join|plan|init> [--file <org.toml>] [--json]
   (no verb)                     The live organization as a fleet.org.v1 JSON tree: the leader, its planners (executor,
                                 Core orchestrator, main guardian, comms), each lane, each job with tier, age and goal.
@@ -148,41 +164,17 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       if (!member || !machine) throw new OrgError('init needs --member and --machine.');
       // Same flag shape as join's --lane, except a bare lane declares the full share (100)
       // and the share itself is bounded by the schema's 0-100, not a prior declaration.
-      const lanes = laneArgs.map((s) => {
-        const eq = s.indexOf('=');
-        if (eq >= 0 && s.indexOf('=', eq + 1) >= 0) throw new OrgError(`--lane takes <lane> or <lane>=<share>: '${s}'`);
-        const laneName = eq < 0 ? s : s.slice(0, eq);
-        const shareText = eq < 0 ? undefined : s.slice(eq + 1);
-        if (laneName === '') throw new OrgError(`--lane needs a lane name: '${s}'`);
-        const share = shareText === undefined ? 100 : Number(shareText);
-        if (shareText !== undefined && (shareText.trim() === '' || !Number.isFinite(share) || share < 0 || share > 100)) {
-          throw new OrgError(`--lane share must be a number from 0 to 100: '${s}'`);
-        }
-        return { lane: laneName, share };
-      });
-      const seenLanes = new Set<string>();
-      for (const l of lanes) {
-        if (seenLanes.has(l.lane)) throw new OrgError(`--lane ${l.lane} was given more than once.`);
-        seenLanes.add(l.lane);
-      }
+      const lanes = parseOrgLaneSpecs(laneArgs, { defaultShare: 100 });
       // --agent takes <id>:<lane>; the schema allows one lane per agent id, so a
       // repeated id is refused here with the same shape as a repeated --lane.
-      const agents = agentArgs.map((s) => {
-        const parts = s.split(':');
-        if (parts.length !== 2 || parts[0] === '' || parts[1] === '') throw new OrgError(`--agent takes <id>:<lane>: '${s}'`);
-        return { id: parts[0]!, lane: parts[1]! };
-      });
-      const seenAgents = new Set<string>();
-      for (const a of agents) {
-        if (seenAgents.has(a.id)) throw new OrgError(`--agent ${a.id} was given more than once.`);
-        seenAgents.add(a.id);
-      }
+      const agents = parseOrgAgentSpecs(agentArgs);
       const r = initOrg({ member, machine, ...(name === undefined ? {} : { name }), lanes, agents }, file);
       const m = r.org.members[0]!;
       const laneText = m.contributions.length ? m.contributions.map((c) => `${c.lane} ${c.share}%`).join(', ') : 'none';
       const agentText = m.agents.length ? `, agents ${m.agents.map((a) => `${a.id} (${a.roles.join('/')} on ${a.lane})`).join(', ')}` : '';
+      const joinHint = `${formatOrgJoinCommand(m.id, m.machines[0]!.id, m.contributions.map((c) => c.lane))} --json`;
       return print({ schema: 'org.init.v1', file: r.file, leader: r.org.leader, member: m.id, machine: m.machines[0]!.id, lanes: m.contributions, agents: m.agents },
-        `Wrote ${r.file}: ${r.org.leader} leads ${m.name} on ${m.machines[0]!.id} with lanes ${laneText}${agentText}.\nEdit the file to add members, agents and lanes. Each machine opts in with:\n  phm org join --member ${m.id} --machine ${m.machines[0]!.id}${m.contributions.length ? ` --lane ${m.contributions.map((c) => c.lane).join(' --lane ')}` : ''} --json\nThe leader plans with: phm org plan --json`);
+        `Wrote ${r.file}: ${r.org.leader} leads ${m.name} on ${m.machines[0]!.id} with lanes ${laneText}${agentText}.\nEdit the file to add members, agents and lanes. Each machine opts in with:\n  ${joinHint}\nThe leader plans with: phm org plan --json`);
     }
     const queueFile = sub === 'plan' ? one(rest, '--queue') : undefined;
     if (sub === 'plan') noLeftovers(rest);
@@ -216,7 +208,7 @@ export async function cmdOrg(argv: string[]): Promise<number> {
         // name the declared machines or members when it does not.
         const row = member === undefined ? undefined : org.members.find((m) => m.id === member);
         if (machine === undefined && row?.machines.length === 1) {
-          const fix = `phm org join --member ${member} --machine ${row.machines[0]!.id}${laneArgs.map((l) => ` --lane ${l}`).join('')}`;
+          const fix = formatOrgJoinCommand(member!, row.machines[0]!.id, laneArgs);
           throw new OrgError(`join needs --machine: ${member} declares one machine — run: ${fix}`);
         }
         const missing = member === undefined && machine === undefined ? '--member and --machine'
@@ -229,27 +221,12 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       }
       // --lane takes <lane> or <lane>=<share>; a second '=', an empty name or a
       // non-numeric share is a usage error, and the same lane is never repeated.
-      const optIn = laneArgs.map((s) => {
-        const eq = s.indexOf('=');
-        if (eq >= 0 && s.indexOf('=', eq + 1) >= 0) throw new OrgError(`--lane takes <lane> or <lane>=<share>: '${s}'`);
-        const name = eq < 0 ? s : s.slice(0, eq);
-        const shareText = eq < 0 ? undefined : s.slice(eq + 1);
-        if (name === '') throw new OrgError(`--lane needs a lane name: '${s}'`);
-        if (shareText !== undefined && (shareText.trim() === '' || !Number.isFinite(Number(shareText)))) {
-          throw new OrgError(`--lane share must be a number: '${s}'`);
-        }
-        return { lane: name, share: shareText === undefined ? undefined : Number(shareText) };
-      });
-      const seen = new Set<string>();
-      for (const o of optIn) {
-        if (seen.has(o.lane)) throw new OrgError(`--lane ${o.lane} was given more than once.`);
-        seen.add(o.lane);
-      }
+      const optIn = parseOrgLaneSpecs(laneArgs);
       // Read the machine's current record before joinOrg replaces it, so a re-join that
       // stops naming a lane reports the opt-out instead of dropping it silently.
       const prior = readJoins().find((j) => j.member === member && j.machine === machine);
       const r = joinOrg(org, { member, machine, optIn });
-      const recordFile = join(joinsDir(), `${r.member}.${r.machine}.json`);
+      const recordFile = joinRecordPath(r.member, r.machine);
       const dropped = droppedJoinLanes(prior, r);
       const droppedNote = dropped.length
         ? `This machine no longer opts in: ${dropped.map((l) => `${l.lane} (was ${l.share}%)`).join(', ')}. Name the lane again with --lane to restore it.\n`
@@ -265,8 +242,7 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       const openNote = open.length
         ? `Not opted in on this machine: ${open.map((l) => `${l.lane} (declared ${l.share}%)`).join(', ')}. ` +
           `Opt in by re-joining — it replaces this record, so name every lane to keep: ` +
-          `phm org join --member ${r.member} --machine ${r.machine}` +
-          [...r.lanes.map((l) => ` --lane ${l.lane}=${l.share}`), ...open.map((l) => ` --lane ${l.lane}`)].join('') + '.\n'
+          `${formatOrgJoinCommand(r.member, r.machine, [...r.lanes, ...open.map((l) => l.lane)])}.\n`
         : '';
       return print({ schema: 'org.join.v1', record: r, dir: joinsDir(), recordFile, droppedLanes: dropped, availableLanes: open }, `${r.member} joined on ${r.machine} with ${r.lanes.length ? r.lanes.map((l) => `${l.lane} ${l.share}%`).join(', ') : 'no lanes (nothing contributed)'}.\n${droppedNote}${openNote}Record: ${recordFile}\nSign in to your own provider CLIs on this machine; nothing was sent and no auth was read. Copy the record file into the leader's joins directory to count this machine.`);
     }
@@ -299,8 +275,7 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       const machineArg = record?.machine ?? (machines.length === 1 ? machines[0]! : machines.length ? `<${machines.join('|')}>` : null);
       if (machineArg === null) return `  held ${h.member}/${h.lane}: ${h.reason} — add a machine for this member in org.toml before join`;
       const kept = (record?.lanes ?? []).filter((l) => l.lane !== h.lane && declared.has(l.lane));
-      const laneArgs = [...kept.map((l) => ` --lane ${l.lane}=${l.share}`), ` --lane ${h.lane}`].join('');
-      return `  held ${h.member}/${h.lane}: ${h.reason} — on that member's machine run: phm org join --member ${h.member} --machine ${machineArg}${laneArgs}`;
+      return `  held ${h.member}/${h.lane}: ${h.reason} — on that member's machine run: ${formatOrgJoinCommand(h.member, machineArg, [...kept, h.lane])}`;
     });
     // An empty queue makes the headline counts read like a broken org: with no
     // jobs to assign, "0 assigned, 0 unassigned" is the honest answer, not a

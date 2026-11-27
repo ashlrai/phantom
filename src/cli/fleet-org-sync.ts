@@ -6,11 +6,15 @@
  * metadata, not live staffing or an execution grant. Logic lives in
  * src/core/org/agent-plane-outbox.ts; this file parses argv and renders.
  */
-import { OrgStoreError, orgRunsRoot } from '../core/org/agent-plane-reader.js';
+import {
+  orgRunsRoot,
+  orgStoreErrorMessage,
+  parseOrgPlaneCliArgs,
+} from '../core/org/agent-plane-reader.js';
 import { applyOrgOutbox, previewOrgOutbox, type OutboxDeps, type OutboxEvent } from '../core/org/agent-plane-outbox.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-export const ORG_SYNC_USAGE = `Usage: phm fleet org-sync [--runs-dir DIR] [--json] [--apply]
+const ORG_SYNC_USAGE = `Usage: phm fleet org-sync [--runs-dir DIR] [--json] [--apply]
 
 Delivers pending org.membership bus events recorded in an EXISTING org/agents.json (--runs-dir,
 else $ASHLR_RUNS_DIR, else ~/.ashlr-runs). Default previews and never writes or posts.
@@ -30,37 +34,28 @@ const line = (event: OutboxEvent) => `  rev ${event.revision} ${event.roleId} ${
 export async function cmdFleetOrgSync(args: string[], deps: FleetOrgSyncDeps = {}): Promise<number> {
   const out = deps.out ?? ((text: string) => console.log(text));
   const err = deps.err ?? ((text: string) => console.error(text));
-  if (args.some(arg => arg === '--help' || arg === '-h')) { out(ORG_SYNC_USAGE); return 0; }
+  const parsed = parseOrgPlaneCliArgs(args, { allowApply: true });
+  if (parsed.kind === 'help') { out(ORG_SYNC_USAGE); return 0; }
+  if (parsed.kind === 'usage') { err(ORG_SYNC_USAGE); return 2; }
 
-  let json = false, apply = false;
-  let runsDir: string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    const next = args[i + 1];
-    if (arg === '--json' && !json) json = true;
-    else if (arg === '--apply' && !apply) apply = true;
-    else if (arg === '--runs-dir' && runsDir === undefined && next && !next.startsWith('--')) { runsDir = next; i++; }
-    else { err(ORG_SYNC_USAGE); return 2; }
-  }
-
-  const mode = apply ? 'apply' : 'preview';
+  const mode = parsed.apply ? 'apply' : 'preview';
   const base = { schema: 'org.outbox.sync.v1', mode, grantsExecutionAuthority: false, liveStaffing: 'unknown' };
   let events: OutboxEvent[];
   let persisted = true, complete = true;
   try {
-    const root = runsDir ?? (deps.defaultRunsRoot ?? orgRunsRoot)();
-    if (apply) ({ events, persisted, complete } = applyOrgOutbox(root, deps));
+    const root = parsed.runsDir ?? (deps.defaultRunsRoot ?? orgRunsRoot)();
+    if (parsed.apply) ({ events, persisted, complete } = applyOrgOutbox(root, deps));
     else events = previewOrgOutbox(root);
   } catch (error) {
-    const reason = error instanceof OrgStoreError ? error.message : 'Org sync unavailable.';
-    if (json) out(JSON.stringify({ ...base, status: 'refused', reason }));
+    const reason = orgStoreErrorMessage(error, 'Org sync unavailable.');
+    if (parsed.json) out(JSON.stringify({ ...base, status: 'refused', reason }));
     else err(`phm fleet org-sync: ${reason}`);
     return 1;
   }
 
   const ok = complete && persisted;
   const view = { ...base, status: ok ? 'ok' : 'incomplete', persisted, events };
-  if (json) out(JSON.stringify(sanitizePublicJson(view), null, 2));
+  if (parsed.json) out(JSON.stringify(sanitizePublicJson(view), null, 2));
   else out(sanitizePublicJson([`org sync ${mode}: planning metadata only; live staffing unknown; ${events.length} event(s)`,
     ...events.map(line), ...(persisted ? [] : ['delivery flags not persisted; a retry is duplicate-safe'])].join('\n')) as string);
   return ok ? 0 : 1;
