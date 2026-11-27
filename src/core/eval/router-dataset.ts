@@ -154,7 +154,7 @@ export function foldRouterEvalDataset(outcomes: readonly RouterOutcome[]): Route
   return { jobs, counts, unattributed };
 }
 
-export const ROUTER_DATASET_SCHEMA_NOTE =
+const ROUTER_DATASET_SCHEMA_NOTE =
   'router-eval.v1 fold of live fleet ledgers (phm eval dataset); real outcomes only — no counterfactual arms, changed decisions replay unobserved';
 
 /** Serialize the computation to dataset JSONL: one meta line, then job lines. */
