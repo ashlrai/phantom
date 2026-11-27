@@ -29,7 +29,7 @@ export interface LaneSupplyLane {
   running: number | null;
   /** Null when the lane has no target row (a null ceiling): the lane cannot be called idle. */
   target: number | null;
-  /** target - running, never below 0; 0 while held; null when running or target is unknown. */
+  /** Lane headroom bounded by confirmed dispatcher admission. Null when headroom is unknown. */
   freeSlots: number | null;
   queued: number | null;
   /** 0..100 of the pool used; null when unmeasured or stale. */
@@ -80,7 +80,7 @@ function resetWords(resetAt: string | null): string {
 }
 
 /** The verdict and plain sentence for one lane. `openRows` is the snapshot's lane-open READY count: supply the market may place on any lane, so a positive count keeps a free lane from reading as idle. */
-export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: number | null = null): LaneSupplyLane {
+export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: number | null = null, launchHeadroom?: number | null): LaneSupplyLane {
   const running = view.liveJobs;
   const target = view.slotTarget;
   const held = view.hold?.held === true;
@@ -88,7 +88,8 @@ export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: num
   const leftPct = left === null ? null : Math.max(0, Math.min(100, left));
   const resetMs = view.credit.resetAt === null ? NaN : Date.parse(view.credit.resetAt);
   const hoursToReset = Number.isFinite(resetMs) ? Math.max(0, Math.round(((resetMs - nowMs) / HOUR_MS) * 10) / 10) : null;
-  const free = held ? 0 : running === null || target === null ? null : Math.max(0, target - running);
+  const free = held ? 0 : launchHeadroom !== undefined ? launchHeadroom
+    : running === null || target === null ? null : Math.max(0, target - running);
   const row = {
     lane: view.lane, running, target, freeSlots: free, queued: view.queueDepth,
     usedPct: leftPct === null ? null : pct(100 - leftPct), leftPct: leftPct === null ? null : pct(leftPct),
@@ -104,7 +105,8 @@ export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: num
   else if (idle && leftPct !== null && openSupply) { verdict = 'open-supply'; text = `${view.lane} open supply: ${plural(free, 'free slot')}, ${pct(leftPct)}% left, ${plural(openRows, 'open row')} wait`; }
   else if (idle && leftPct !== null) { verdict = 'idle-with-usage-left'; text = `${view.lane} idle: ${plural(free, 'free slot')}, ${pct(leftPct)}% left`; }
   else if (idle) { verdict = 'idle-usage-unknown'; text = `${view.lane} idle: ${plural(free, 'free slot')}, usage unknown`; }
-  else if (free === null) { verdict = 'unknown'; text = `${view.lane}: running or target unknown`; }
+  else if (free === 0 && (running === null || target === null || running < target)) { verdict = 'busy'; text = `${view.lane}: no launch slots available`; }
+  else if (free === null) { verdict = 'unknown'; text = `${view.lane}: ${launchHeadroom === null ? 'launch headroom unknown' : 'running or target unknown'}`; }
   // Free slots with an unreadable queue can be starved or busy — never call
   // it either. A lane already at target is busy whatever the queue read says.
   else if (view.queueDepth === null && free > 0) { verdict = 'unknown'; text = `${view.lane}: ${running} of ${target} running, queue depth unknown`; }
@@ -133,7 +135,8 @@ export function readPlannerFacts(recordJson: string | null, nowMs: number): Pick
 
 export function buildLaneSupply(snapshot: FleetLaneSnapshot, selfTickRecord: string | null, nowMs: number): LaneSupplyReport {
   const openRows = snapshot.starved?.open_rows ?? null;
-  const lanes = snapshot.lanes.map(view => laneSupplyLane(view, nowMs, openRows)).sort((a, b) => a.lane.localeCompare(b.lane));
+  const lanes = snapshot.lanes.map(view => laneSupplyLane(view, nowMs, openRows, snapshot.starved?.lanes[view.lane]?.free_slots))
+    .sort((a, b) => a.lane.localeCompare(b.lane));
   const idle = lanes.filter(l => l.verdict === 'idle-with-usage-left').sort((a, b) => (b.freeSlots ?? 0) - (a.freeSlots ?? 0));
   return {
     schema: LANE_SUPPLY_SCHEMA,
