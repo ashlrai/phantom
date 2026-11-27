@@ -1,4 +1,10 @@
-import { OrgStoreError, orgBoardView, orgRunsRoot, readAgentPlane } from '../core/org/agent-plane-reader.js';
+import {
+  orgBoardView,
+  orgRunsRoot,
+  orgStoreErrorMessage,
+  parseOrgPlaneCliArgs,
+  readAgentPlane,
+} from '../core/org/agent-plane-reader.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 export const ORG_BOARD_USAGE = `Usage: phm fleet org-board [--runs-dir DIR] [--json]
@@ -17,7 +23,7 @@ export interface FleetOrgBoardDeps {
 }
 
 /** Human summary. Callers sanitize the whole string before printing. */
-export function formatOrgBoardText(view: ReturnType<typeof orgBoardView>): string {
+function formatOrgBoardText(view: ReturnType<typeof orgBoardView>): string {
   const lines = [
     `org board ${view.schema} revision ${view.revision}: persisted planning metadata; live staffing unknown; grantsExecutionAuthority false`,
     `roles (${view.agents.length}):`,
@@ -32,31 +38,23 @@ export function formatOrgBoardText(view: ReturnType<typeof orgBoardView>): strin
 export async function cmdFleetOrgBoard(args: string[], deps: FleetOrgBoardDeps = {}): Promise<number> {
   const out = deps.out ?? ((line: string) => console.log(line));
   const err = deps.err ?? ((line: string) => console.error(line));
-  if (args.some(arg => arg === '--help' || arg === '-h')) { out(ORG_BOARD_USAGE); return 0; }
-
-  let json = false;
-  let runsDir: string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    const next = args[i + 1];
-    if (arg === '--json' && !json) json = true;
-    else if (arg === '--runs-dir' && runsDir === undefined && next && !next.startsWith('--')) { runsDir = next; i++; }
-    else { err(ORG_BOARD_USAGE); return 2; }
-  }
+  const parsed = parseOrgPlaneCliArgs(args);
+  if (parsed.kind === 'help') { out(ORG_BOARD_USAGE); return 0; }
+  if (parsed.kind === 'usage') { err(ORG_BOARD_USAGE); return 2; }
 
   let plane;
   try {
-    plane = readAgentPlane(runsDir ?? (deps.defaultRunsRoot ?? orgRunsRoot)());
+    plane = readAgentPlane(parsed.runsDir ?? (deps.defaultRunsRoot ?? orgRunsRoot)());
   } catch (error) {
     // Only OrgStoreError messages are fixed and safe; anything else gets a generic line.
-    const reason = error instanceof OrgStoreError ? error.message : 'Org board unavailable.';
-    if (json) out(JSON.stringify({ schema: 'org.board.unavailable.v1', status: 'unavailable', reason, grantsExecutionAuthority: false, liveStaffing: 'unknown' }));
+    const reason = orgStoreErrorMessage(error, 'Org board unavailable.');
+    if (parsed.json) out(JSON.stringify({ schema: 'org.board.unavailable.v1', status: 'unavailable', reason, grantsExecutionAuthority: false, liveStaffing: 'unknown' }));
     else err(`phm fleet org-board: ${reason}`);
     return 1;
   }
 
   const view = { ...orgBoardView(plane), provenance: 'persisted-planning-metadata', liveStaffing: 'unknown' };
-  if (json) out(JSON.stringify(sanitizePublicJson(view), null, 2));
+  if (parsed.json) out(JSON.stringify(sanitizePublicJson(view), null, 2));
   else out(sanitizePublicJson(formatOrgBoardText(view)) as string);
   return 0;
 }
