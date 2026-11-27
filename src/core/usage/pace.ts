@@ -98,7 +98,7 @@ export function projectUsagePace(raw: unknown, now = Date.now()): PaceSnapshot {
   }) };
 }
 
-export async function readUsagePace(path = join(homedir(), '.ashlr-runs', 'queue', 'status.json'), openFile: typeof open = open): Promise<PaceSnapshot> {
+export async function readUsagePace(path = join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'status.json'), openFile: typeof open = open): Promise<PaceSnapshot> {
   try {
     const handle = await openFile(path, 'r');
     try {
