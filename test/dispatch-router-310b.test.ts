@@ -211,7 +211,8 @@ describe('resident lane auto', () => {
   const task = item({ tags: ['tier:work'] });
   const row = (model: string) => ({ lane: 'codex-personal', tier: 'work', work_class: 'feature',
     model, merged: true, reverted: false, ci_first_pass: true, cost_usd: 1 });
-  const evidence = (rows = [row(alternative)], over: Partial<LaneAutoEvidence> = {}): LaneAutoEvidence => ({
+  const evidence = (rows: Parameters<typeof indexLaneAutoScores>[0] = [row(alternative)],
+    over: Partial<LaneAutoEvidence> = {}): LaneAutoEvidence => ({
     models: new Map([['codex', 'auto']]), registry: [], docs: [], score: indexLaneAutoScores(rows), workClassFor: () => 'feature',
     nativeModels: () => new Set([prior, alternative, 'claude-opus-5-5']), ...over,
   });
@@ -244,6 +245,18 @@ describe('resident lane auto', () => {
     expect(pick(evidence(rows))).toMatchObject({ model: prior, autoModel: { candidates: [
       { model: alternative, usdPerHeldMerge: null }, { model: prior },
     ] } });
+  });
+
+  it('uses first-pass CI for tied models only when both samples have complete CI coverage', () => {
+    const priorRows = Array.from({ length: 5 }, () => ({ ...row(prior), ci_first_pass: false }));
+    const alternativeRows = Array.from({ length: 5 }, () => row(alternative));
+    const partialRows = priorRows.map((entry, index) => ({ ...entry, ci_first_pass: index === 0 ? false : null }));
+    expect(pick(evidence([...partialRows, ...alternativeRows]))).toMatchObject({ model: prior, autoModel: { reason: 'scored',
+      candidates: [{ model: alternative, firstPassCiRate: 1 }, { model: prior, firstPassCiRate: null }] } });
+    expect(pick(evidence([...priorRows, ...alternativeRows])))
+      .toMatchObject({ model: alternative, autoModel: { reason: 'scored' } });
+    expect(pick(evidence([...partialRows, ...alternativeRows.map(entry => ({ ...entry, cost_usd: 0.5 }))])))
+      .toMatchObject({ model: alternative, autoModel: { reason: 'scored' } });
   });
 
   it.each([
