@@ -168,6 +168,9 @@ trajectories for that sample or contribute to dispatch join diagnostics.
 Direct trajectory reads also exclude future UTC dispatch partitions from
 the file cap and future dispatches from the event cap. Physical scan limits
 still apply to every selected file.
+Agent-action receipts also use the report cutoff for timeline evidence and
+join counts. Future UTC action partitions leave dated file slots available,
+and valid future actions in selected files leave event slots available.
 Proposal snapshots whose creation timestamps fall after report time cannot
 supply trajectory outcomes or enter trajectory join diagnostics.
 Proposal decisions contribute trajectory coverage, metadata and terminal outcomes

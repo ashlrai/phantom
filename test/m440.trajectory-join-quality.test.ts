@@ -324,6 +324,28 @@ describe('trajectory join quality', () => {
     expect(result.edges.dispatchToProposal).toMatchObject({ denominator: 1, joined: 1, rate: 1 });
   });
 
+  it('omits future agent actions from trajectories and join counts', () => {
+    const read = actionRead();
+    const future = new Date(Date.parse(NOW) + 1).toISOString();
+    read.events = [
+      { ...read.events[0]!, ts: NOW },
+      { ...read.events[1]!, ts: future },
+      { ...read.events[2]!, ts: future },
+    ];
+
+    const result = listTrajectoryJoinQuality({
+      deps: {
+        readDispatchProductionEventsDetailed: () => dispatchRead(),
+        listOutcomeRecordsDetailed: () => listOutcomeRecordsDetailed({ deps: outcomeDeps() }),
+        readAgentActionsDetailed: () => read,
+      },
+    });
+
+    expect(result.agentActions).toMatchObject({ denominator: 1, joined: 1, excludedIdentityFree: 0 });
+    expect(result.records.flatMap((record) => record.timeline)
+      .filter((event) => event.kind === 'agent-action').map((event) => event.ts)).toEqual([NOW]);
+  });
+
   it('omits future proposal snapshots from join matches and denominators', () => {
     const outcomes = listOutcomeRecordsDetailed({ deps: outcomeDeps() });
     outcomes.records[0]!.proposal.createdAt = new Date(Date.parse(NOW) + 1).toISOString();
