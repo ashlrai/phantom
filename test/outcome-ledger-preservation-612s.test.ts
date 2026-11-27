@@ -680,6 +680,35 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(outcome?.review_findings).toEqual({ fixed: 1, rejected: 0, ignored: 0 });
   });
 
+  it.each([
+    ['MERGED', 'mergedAt'],
+    ['CLOSED', 'closedAt'],
+  ] as const)('bounds review findings by the standing %s time', (phase, stamp) => {
+    const at = '2026-11-21T02:00:00Z';
+    const prUrl = (pr: number) => `https://github.com/o/r/pull/${pr}`;
+    const review = (job: string, pr: number, fixed: number, ts?: string) => ({
+      job, pr_url: prUrl(pr), ts, review_findings: { fixed, rejected: 0, ignored: 0 },
+    });
+    const rows = [
+      { job: 'R1', pr_url: prUrl(1), phase, [stamp]: at },
+      review('R1', 1, 1, '2026-11-21T01:00:00Z'),
+      review('R1', 1, 2, at),
+      review('R1', 1, 3, '2026-11-21T03:00:00Z'),
+      review('R1', 1, 4),
+      { job: 'R2', pr_url: prUrl(2), phase, [stamp]: at },
+      review('R2', 2, 3, '2026-11-21T03:00:00Z'),
+      review('R2', 2, 4),
+      review('R3', 3, 2, at),
+      review('R3', 3, 3, '2026-11-21T03:00:00Z'),
+    ];
+    const { outcomes } = foldRouterOutcomes(rows.map(row => JSON.stringify(row)).join('\n'));
+    expect(outcomes).toMatchObject([
+      { job_id: 'R1', review_findings: { fixed: 2, rejected: 0, ignored: 0 } },
+      { job_id: 'R2', review_findings: null },
+      { job_id: 'R3', review_findings: { fixed: 3, rejected: 0, ignored: 0 } },
+    ]);
+  });
+
   it('withholds PR evidence from contradictory URL aliases and counts both claims', () => {
     const first = 'https://github.com/o/r/pull/1';
     const second = 'https://github.com/o/r/pull/2';
