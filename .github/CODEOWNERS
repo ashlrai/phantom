@@ -626,6 +626,7 @@
 /test/improve-coordination-backlog.test.ts @masonwyatt23
 /test/improve-cos-reconcile-backlog.test.ts @masonwyatt23
 /test/improve-credit-release-backlog.test.ts @masonwyatt23
+/test/improve-cruise-alerts-backlog.test.ts @masonwyatt23
 /test/improve-cruise-shadow-backlog.test.ts @masonwyatt23
 /test/improve-custody-backlog.test.ts @masonwyatt23
 /test/improve-decisions-backlog.test.ts @masonwyatt23
