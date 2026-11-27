@@ -680,6 +680,34 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(outcome?.review_findings).toEqual({ fixed: 1, rejected: 0, ignored: 0 });
   });
 
+  it('withholds PR evidence from contradictory URL aliases and counts both claims', () => {
+    const first = 'https://github.com/o/r/pull/1';
+    const second = 'https://github.com/o/r/pull/2';
+    const rows = [
+      { job: 'R1', url: first, pr_url: second, phase: 'MERGED', ci_first_pass: true },
+      { job: 'R2', url: second, phase: 'MERGED', ci_first_pass: true },
+    ];
+    const result = foldRouterOutcomes(rows.map(row => JSON.stringify(row)).join('\n'), {
+      mergeEvents: foldMergeEvents(JSON.stringify({ repo: 'o/r', pr: 1, type: 'checks_passed', at: '2026-11-01T00:00:00Z' })),
+    });
+    expect(result.ambiguous_urls).toBe(1);
+    expect(result.outcomes).toMatchObject([
+      { job_id: 'R1', merged: true, ci_first_pass: null, merge_queue: null },
+      { job_id: 'R2', merged: true, ci_first_pass: null, merge_queue: null },
+    ]);
+  });
+
+  it('joins equivalent URL aliases but leaves contradictory URL-only receipts unattached', () => {
+    const rows = [
+      { job: 'R1', url: 'https://github.com/o/r/pull/1' },
+      { url: 'https://github.com/o/r/pull/1', pr_url: 'https://github.com/O/R/pull/1/', ci_first_pass: true },
+      { url: 'https://github.com/o/r/pull/1', pr_url: 'https://github.com/o/r/pull/2', ci_first_pass: false },
+    ];
+    const result = foldRouterOutcomes(rows.map(row => JSON.stringify(row)).join('\n'));
+    expect(result.unattached_rows).toBe(1);
+    expect(result.outcomes).toMatchObject([{ job_id: 'R1', ci_first_pass: true }]);
+  });
+
   it.each([
     ['older and undated receipts', [[2, 2], [1, 1], [null, 3]], 2],
     ['identical receipts', [[2, 2], [2, 2]], 2],

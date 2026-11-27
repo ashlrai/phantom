@@ -1820,7 +1820,8 @@ function foldRouterOutcomesWithCiCoverage(
   const jobId = (r: Row) => r['schema'] === SESSION_POOL_SCHEMA || r['schema'] === NODE_RUNNER_SCHEMA
     ? str(r, 'jobId')
     : str(r, 'job', 'job_id', 'jobId', 'id');
-  const prUrl = (r: Row) => str(r, 'url', 'pr_url', 'prUrl', 'pr');
+  const prUrlKeys = ['url', 'pr_url', 'prUrl', 'pr'] as const;
+  const prUrl = (r: Row) => str(r, ...prUrlKeys);
   const claimKey = (url: string) => {
     const prKey = pullRequestKey(url);
     return prKey === null ? `url:${url}` : `pr:${prKey}`;
@@ -1831,23 +1832,32 @@ function foldRouterOutcomesWithCiCoverage(
   // session rows are infrastructure: they never claim URLs themselves.
   const claims = new Map<string, Set<string>>();
   const soleClaimByJob = new Map<string, string | null>();
+  const conflictingUrls = new Set<Row>();
   for (const r of rows) {
-    const j = jobId(r), u = prUrl(r);
-    if (!j || !u || j.startsWith(BATCH_SESSION_PREFIX)) continue;
-    const key = claimKey(u);
-    const jobs = claims.get(key) ?? new Set<string>();
-    jobs.add(j);
-    claims.set(key, jobs);
-    const prior = soleClaimByJob.get(j);
-    if (prior === undefined) soleClaimByJob.set(j, key);
-    else if (prior !== key) soleClaimByJob.set(j, null);
+    const keys = new Set<string>();
+    for (const field of prUrlKeys) {
+      const url = str(r, field);
+      if (url !== null) keys.add(claimKey(url));
+    }
+    if (keys.size > 1) conflictingUrls.add(r);
+    const j = jobId(r);
+    if (!j || j.startsWith(BATCH_SESSION_PREFIX)) continue;
+    for (const key of keys) {
+      const jobs = claims.get(key) ?? new Set<string>();
+      jobs.add(j);
+      claims.set(key, jobs);
+      const prior = soleClaimByJob.get(j);
+      if (prior === undefined) soleClaimByJob.set(j, key);
+      else if (prior !== key) soleClaimByJob.set(j, null);
+    }
   }
   const ambiguous = new Set([...claims].filter(([, jobs]) => jobs.size > 1).map(([u]) => u));
   const claimToJob = new Map([...claims].filter(([key]) => !ambiguous.has(key))
     .map(([key, jobs]) => [key, [...jobs][0]!] as const));
 
-  const claimantFor = (url: string | null) => url === null ? undefined : claimToJob.get(claimKey(url));
-  const attributedJobId = (r: Row) => jobId(r) ?? claimantFor(prUrl(r));
+  const claimantFor = (r: Row, url = prUrl(r)) =>
+    url === null || conflictingUrls.has(r) ? undefined : claimToJob.get(claimKey(url));
+  const attributedJobId = (r: Row) => jobId(r) ?? claimantFor(r);
 
   // Queue-admission evidence, derived once per job from the same boundary
   // stamps job-latency's queue_wait phase pairs: arrival rows (enqueue/
@@ -1999,7 +2009,7 @@ function foldRouterOutcomesWithCiCoverage(
   let sessionRows = 0;
   for (const r of rows) {
     const u = prUrl(r);
-    const claimant = claimantFor(u);
+    const claimant = claimantFor(r, u);
     const j = jobId(r) ?? claimant;
     if (!j) { unattached++; continue; }
     if (j.startsWith(BATCH_SESSION_PREFIX)) { sessionRows++; continue; }
