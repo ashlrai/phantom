@@ -946,7 +946,10 @@ Decision rows, wrong-schema rows, malformed rows and foreign kinds
 are skipped, never counted, and the reviewer's pool/family, reasons
 and semantic detail stay audit-side rather than joining. The join
 resolves each outcome's `cross_review` through the same PR identity as
-`merge_queue`. Cross-review rows never create outcomes. The evidence is
+`merge_queue`. Cross-review rows never create outcomes. For a dated standing merge or close,
+the latest review must have a recorded time at or before the verdict.
+A later or undated latest review leaves the join unknown without falling
+back to an earlier review. The evidence is
 review-gate context like `merge_queue`: a `reject` is the recorded
 reason the PR may never merge, but a review verdict is not a merge
 verdict — the join never feeds routing, ranking, admission or weight

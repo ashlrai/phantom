@@ -1007,7 +1007,10 @@ parseable review time, conflicting verdicts or distinct valid
 `reviewedHeadSha` values leave the review evidence unknown. A missing or
 invalid head supplies no identity and cannot settle a conflict. The fold's
 `crossReviews` option joins each outcome's `cross_review` through the
-same PR identity as the merge-queue join. Review rows never create
+same PR identity as the merge-queue join. For a dated standing merge or close,
+the latest review must have a recorded time at or before the verdict.
+A later or undated latest review leaves the join unknown without falling
+back to an earlier review. Review rows never create
 outcomes. The join is fill-only
 diagnostic context: it explains what the review gate recorded while
 the merge verdict stayed unrecorded, and it never feeds routing,
