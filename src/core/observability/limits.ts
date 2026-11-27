@@ -21,6 +21,7 @@ import { collectUsageEvents } from './usage-source.js';
 import { modelToProviderKey } from './rollup.js';
 import { estCostUsd } from '../run/budget.js';
 import { readCodexRateLimits } from './codex-source.js';
+import { withAbortTimeout } from './hop-events.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -122,14 +123,8 @@ function buildWindows(): UsageWindow[] {
  * Wrap a fetch call with an AbortController timeout.
  * Returns the Response, or throws on timeout/network error.
  */
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: ac.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  return withAbortTimeout(timeoutMs, (signal) => fetch(url, { ...init, signal }));
 }
 
 /**

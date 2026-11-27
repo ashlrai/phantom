@@ -21,6 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import type { UsageEvent } from '../types.js';
+import { isPlainRecord } from './hop-events.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -190,59 +191,41 @@ interface SessionState {
   lastRateLimits: CodexRateLimits | null;
 }
 
+function parseRateLimitWindow(
+  raw: unknown,
+): { usedPercent: number; windowMinutes: number; resetsAt: number } | undefined {
+  if (!isPlainRecord(raw)) return undefined;
+  if (
+    typeof raw['used_percent'] !== 'number' ||
+    typeof raw['window_minutes'] !== 'number' ||
+    typeof raw['resets_at'] !== 'number'
+  ) return undefined;
+  return {
+    usedPercent: raw['used_percent'],
+    windowMinutes: raw['window_minutes'],
+    resetsAt: raw['resets_at'],
+  };
+}
+
 function parseRateLimits(rl: Record<string, unknown>): CodexRateLimits {
   const result: CodexRateLimits = {};
-
-  const primary = rl['primary'];
-  if (typeof primary === 'object' && primary !== null) {
-    const p = primary as Record<string, unknown>;
-    if (
-      typeof p['used_percent'] === 'number' &&
-      typeof p['window_minutes'] === 'number' &&
-      typeof p['resets_at'] === 'number'
-    ) {
-      result.primary = {
-        usedPercent: p['used_percent'],
-        windowMinutes: p['window_minutes'],
-        resetsAt: p['resets_at'],
-      };
-    }
-  }
-
-  const secondary = rl['secondary'];
-  if (typeof secondary === 'object' && secondary !== null) {
-    const s = secondary as Record<string, unknown>;
-    if (
-      typeof s['used_percent'] === 'number' &&
-      typeof s['window_minutes'] === 'number' &&
-      typeof s['resets_at'] === 'number'
-    ) {
-      result.secondary = {
-        usedPercent: s['used_percent'],
-        windowMinutes: s['window_minutes'],
-        resetsAt: s['resets_at'],
-      };
-    }
-  }
-
+  const primary = parseRateLimitWindow(rl['primary']);
+  if (primary) result.primary = primary;
+  const secondary = parseRateLimitWindow(rl['secondary']);
+  if (secondary) result.secondary = secondary;
   if (typeof rl['plan_type'] === 'string') {
     result.planType = rl['plan_type'];
   }
-
   return result;
 }
 
 function parseRow(line: string): Record<string, unknown> | null {
-  let obj: unknown;
   try {
-    obj = JSON.parse(line);
+    const obj: unknown = JSON.parse(line);
+    return isPlainRecord(obj) ? obj : null;
   } catch {
     return null;
   }
-
-  return typeof obj === 'object' && obj !== null
-    ? obj as Record<string, unknown>
-    : null;
 }
 
 function processHeadLine(line: string, state: SessionState): void {

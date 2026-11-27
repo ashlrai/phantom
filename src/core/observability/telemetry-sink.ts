@@ -30,6 +30,12 @@ import { randomUUID } from 'node:crypto';
 import { readEnvironmentCredential, resolveProviderKey } from '../integrations/secrets.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig, GenAiSpan, TelemetryEmitResult } from '../types.js';
+import {
+  isNonNegativeFinite,
+  isNonNegativeSafeInt,
+  isPositiveSafeInt,
+  withAbortTimeout,
+} from './hop-events.js';
 import { buildGenAiTrace } from './otlp.js';
 
 // ---------------------------------------------------------------------------
@@ -166,13 +172,8 @@ class OtlpHttpSink implements TelemetrySink {
 
     try {
       const body = JSON.stringify(buildGenAiTrace(spans));
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), OTLP_FETCH_TIMEOUT_MS);
-
-      let res: Response;
-      try {
-        res = await fetch(endpoint, {
+      const res = await withAbortTimeout(OTLP_FETCH_TIMEOUT_MS, (signal) =>
+        fetch(endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -180,11 +181,9 @@ class OtlpHttpSink implements TelemetrySink {
             Authorization: `Bearer ${pat}`,
           },
           body,
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timer);
-      }
+          signal,
+        }),
+      );
 
       if (res.ok) {
         return { sink: 'otlp', ok: true, detail: `HTTP ${res.status}` };
@@ -268,12 +267,11 @@ export function buildBusHopEvent(input: BusHopInput): BusHopEvent {
   const identifier = (value: unknown): value is string =>
     typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,199}$/.test(value) &&
     scrubSecrets(value) === value && !/(?:phc_|phx_|phm_)[A-Za-z0-9_-]+/.test(value);
-  const count = (value: unknown): boolean => value === null ||
-    (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0);
+  const count = (value: unknown): boolean => value === null || isNonNegativeSafeInt(value);
   if (!identifier(node) || !identifier(engine) || !identifier(job) ||
       !count(tokensIn) || !count(tokensOut) ||
-      !(costUsd === null || (typeof costUsd === 'number' && Number.isFinite(costUsd) && costUsd >= 0)) ||
-      !(pr === null || (typeof pr === 'number' && Number.isSafeInteger(pr) && pr > 0))) {
+      !(costUsd === null || isNonNegativeFinite(costUsd)) ||
+      !(pr === null || isPositiveSafeInt(pr))) {
     throw new Error('invalid bus hop metadata');
   }
   const event: BusHopEvent = {
@@ -354,15 +352,17 @@ export async function emitBusHopEvent(input: BusHopInput, options: BusHopOptions
     return { ok: false, spooled: true, delivered: false, detail: 'invalid PostHog host' };
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), OTLP_FETCH_TIMEOUT_MS);
+  let timedOut = false;
   try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...event, token: key }),
-      redirect: 'error', // Never forward the credential to a redirect target.
-      signal: controller.signal,
+    const response = await withAbortTimeout(OTLP_FETCH_TIMEOUT_MS, (signal) => {
+      signal.addEventListener('abort', () => { timedOut = true; }, { once: true });
+      return fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...event, token: key }),
+        redirect: 'error', // Never forward the credential to a redirect target.
+        signal,
+      });
     });
     // No response content is needed; don't retain a streaming response body.
     void response.body?.cancel().catch(() => {});
@@ -372,8 +372,6 @@ export async function emitBusHopEvent(input: BusHopInput, options: BusHopOptions
   } catch {
     // Fetch errors can contain credentials/URLs. Never serialize or log them.
     return { ok: false, spooled: true, delivered: false,
-      detail: controller.signal.aborted ? 'PostHog request timed out' : 'PostHog request failed' };
-  } finally {
-    clearTimeout(timer);
+      detail: timedOut ? 'PostHog request timed out' : 'PostHog request failed' };
   }
 }

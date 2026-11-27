@@ -21,6 +21,7 @@ import { completeReportedTokens, validateTokenEvidence } from '../run/token-evid
 
 import { randomBytes } from 'node:crypto';
 import type { GenAiSpan, RunState, SwarmRun } from '../types.js';
+import { isPlainRecord } from './hop-events.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -146,6 +147,8 @@ export function buildGenAiTrace(spans: GenAiSpan[]): OtlpTrace {
     let end = isoToUnixNano(s.endTs);
     // Guarantee end >= start even if timestamps are equal/inverted.
     if (BigInt(end) < BigInt(start)) end = start;
+    const reported = completeReportedTokens(s);
+    const evidence = validateTokenEvidence(s.tokenEvidence, s.tokensIn, s.tokensOut);
 
     return {
       traceId,
@@ -159,14 +162,16 @@ export function buildGenAiTrace(spans: GenAiSpan[]): OtlpTrace {
       attributes: [
         strAttr('gen_ai.system', s.provider),
         strAttr('gen_ai.request.model', s.model),
-        ...(completeReportedTokens(s) ? [intAttr('gen_ai.usage.input_tokens', s.tokensIn), intAttr('gen_ai.usage.output_tokens', s.tokensOut)] : []),
-        strAttr('phantom.token_provenance', completeReportedTokens(s) ? 'reported' : validateTokenEvidence(s.tokenEvidence, s.tokensIn, s.tokensOut) ? 'partial' : 'unknown'),
+        ...(reported ? [intAttr('gen_ai.usage.input_tokens', s.tokensIn), intAttr('gen_ai.usage.output_tokens', s.tokensOut)] : []),
+        strAttr('phantom.token_provenance', reported ? 'reported' : evidence ? 'partial' : 'unknown'),
         intAttr('phantom.accounted.input_tokens', s.tokensIn),
         intAttr('phantom.accounted.output_tokens', s.tokensOut),
-        ...(['reported', 'estimated', 'reserved', 'unknown'] as const).flatMap(basis => {
-          const evidence = validateTokenEvidence(s.tokenEvidence, s.tokensIn, s.tokensOut);
-          return evidence ? [intAttr(`phantom.${basis}.input_tokens`, evidence.input[basis]), intAttr(`phantom.${basis}.output_tokens`, evidence.output[basis])] : [];
-        }),
+        ...(evidence
+          ? (['reported', 'estimated', 'reserved', 'unknown'] as const).flatMap((basis) => [
+              intAttr(`phantom.${basis}.input_tokens`, evidence.input[basis]),
+              intAttr(`phantom.${basis}.output_tokens`, evidence.output[basis]),
+            ])
+          : []),
         doubleAttr('gen_ai.usage.cost_usd', s.estCostUsd),
         strAttr('ashlr.run.id', s.runId),
         strAttr('ashlr.provider', s.provider),
@@ -223,6 +228,43 @@ function modelForProvider(provider: string): string {
   return provider || 'unknown';
 }
 
+interface TaskWithUsage {
+  id: string;
+  status: string;
+  usage?: {
+    tokenEvidence?: import('../types.js').RunTokenEvidence;
+    tokensIn: number;
+    tokensOut: number;
+    estCostUsd: number;
+  };
+}
+
+function spansFromTasks(
+  tasks: readonly TaskWithUsage[],
+  meta: { runId: string; model: string; provider: string; tier: string; startTs: string; endTs: string },
+): GenAiSpan[] {
+  const spans: GenAiSpan[] = [];
+  for (const task of tasks) {
+    if (!task.usage) continue;
+    const tokenEvidence = validateTokenEvidence(task.usage.tokenEvidence, task.usage.tokensIn, task.usage.tokensOut);
+    spans.push({
+      name: task.id, // metadata id, NOT goal/result/project
+      runId: meta.runId,
+      model: meta.model,
+      provider: meta.provider,
+      tier: meta.tier,
+      ...(tokenEvidence ? { tokenEvidence } : {}),
+      tokensIn: task.usage.tokensIn,
+      tokensOut: task.usage.tokensOut,
+      estCostUsd: task.usage.estCostUsd,
+      status: task.status,
+      startTs: meta.startTs,
+      endTs: meta.endTs,
+    });
+  }
+  return spans;
+}
+
 // ---------------------------------------------------------------------------
 // Public: spansFromRun
 // ---------------------------------------------------------------------------
@@ -235,30 +277,14 @@ function modelForProvider(provider: string): string {
  */
 export function spansFromRun(run: RunState): GenAiSpan[] {
   const provider = run.provider || 'unknown';
-  const model = modelForProvider(provider);
-  const tier = tierForProvider(provider);
-  const startTs = run.createdAt;
-  const endTs = run.updatedAt;
-
-  const spans: GenAiSpan[] = [];
-  for (const task of run.tasks) {
-    if (!task.usage) continue;
-    spans.push({
-      name: task.id, // metadata id, NOT task.goal
-      runId: run.id,
-      model,
-      provider,
-      tier,
-      ...(validateTokenEvidence(task.usage.tokenEvidence, task.usage.tokensIn, task.usage.tokensOut) ? { tokenEvidence: task.usage.tokenEvidence } : {}),
-      tokensIn: task.usage.tokensIn,
-      tokensOut: task.usage.tokensOut,
-      estCostUsd: task.usage.estCostUsd,
-      status: task.status,
-      startTs,
-      endTs,
-    });
-  }
-  return spans;
+  return spansFromTasks(run.tasks, {
+    runId: run.id,
+    model: modelForProvider(provider),
+    provider,
+    tier: tierForProvider(provider),
+    startTs: run.createdAt,
+    endTs: run.updatedAt,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -272,31 +298,14 @@ export function spansFromRun(run: RunState): GenAiSpan[] {
  * metadata defaults. Timestamps fall back to the swarm's createdAt/updatedAt.
  */
 export function spansFromSwarm(swarm: SwarmRun): GenAiSpan[] {
-  const provider = 'ashlr-swarm';
-  const model = 'swarm';
-  const tier = 'local';
-  const startTs = swarm.createdAt;
-  const endTs = swarm.updatedAt;
-
-  const spans: GenAiSpan[] = [];
-  for (const task of swarm.tasks) {
-    if (!task.usage) continue;
-    spans.push({
-      name: task.id, // metadata id, NOT goal/result/project
-      runId: swarm.id,
-      model,
-      provider,
-      tier,
-      ...(validateTokenEvidence(task.usage.tokenEvidence, task.usage.tokensIn, task.usage.tokensOut) ? { tokenEvidence: task.usage.tokenEvidence } : {}),
-      tokensIn: task.usage.tokensIn,
-      tokensOut: task.usage.tokensOut,
-      estCostUsd: task.usage.estCostUsd,
-      status: task.status,
-      startTs,
-      endTs,
-    });
-  }
-  return spans;
+  return spansFromTasks(swarm.tasks, {
+    runId: swarm.id,
+    model: 'swarm',
+    provider: 'ashlr-swarm',
+    tier: 'local',
+    startTs: swarm.createdAt,
+    endTs: swarm.updatedAt,
+  });
 }
 
 /** Metadata retained from untrusted native-client OTLP spans. */
@@ -355,8 +364,7 @@ const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 const REFUSAL_REASONS = new Set(['refusal', 'content_filter']);
 
 function record(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown> : {};
+  return isPlainRecord(value) ? value : {};
 }
 
 function list(value: unknown): unknown[] {

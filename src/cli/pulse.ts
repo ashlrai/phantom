@@ -32,77 +32,45 @@ const { bold, dim, red, green, yellow, cyan, gray, magenta } = makeColors(isTty(
 // Lazy imports
 // ---------------------------------------------------------------------------
 
+function createLazyLoader<T>(load: () => Promise<T>): () => Promise<T | null> {
+  let cached: T | null | undefined = undefined;
+  return async () => {
+    if (cached === undefined) {
+      try {
+        cached = await load();
+      } catch {
+        cached = null;
+      }
+    }
+    return cached ?? null;
+  };
+}
+
 type BuildRollupFn = (
   window: '1d' | '7d' | '30d',
   cfg: AshlrConfig,
   opts?: { project?: string },
 ) => ActivityRollup;
+type BuildForecastFn = (window: '7d' | '30d', cfg: AshlrConfig) => CostForecast;
+type EvalGovernanceFn = (cfg: AshlrConfig) => GovernanceStatus;
+type LoadPromptPromotionsFn = () => PromptPromotionsRegistry | null;
 
-let _buildRollup: BuildRollupFn | null | undefined = undefined;
-
-async function loadBuildRollup(): Promise<BuildRollupFn | null> {
-  if (_buildRollup === undefined) {
-    try {
-      const mod = await import('../core/observability/rollup.js') as { buildRollup: BuildRollupFn };
-      _buildRollup = mod.buildRollup;
-    } catch {
-      _buildRollup = null;
-    }
-  }
-  return _buildRollup ?? null;
-}
+const loadBuildRollup = createLazyLoader<BuildRollupFn>(async () =>
+  (await import('../core/observability/rollup.js') as { buildRollup: BuildRollupFn }).buildRollup,
+);
+const loadBuildForecast = createLazyLoader<BuildForecastFn>(async () =>
+  (await import('../core/observability/forecast.js') as { buildForecast: BuildForecastFn }).buildForecast,
+);
+const loadEvalGovernance = createLazyLoader<EvalGovernanceFn>(async () =>
+  (await import('../core/observability/governance.js') as { evalGovernance: EvalGovernanceFn }).evalGovernance,
+);
+const loadPromptPromotionsFn = createLazyLoader<LoadPromptPromotionsFn>(async () =>
+  (await import('../core/eval/prompt-promotions.js') as { loadPromptPromotions: LoadPromptPromotionsFn }).loadPromptPromotions,
+);
 
 async function loadConfig(): Promise<AshlrConfig> {
   const mod = await import('../core/config.js') as { loadConfig: () => AshlrConfig };
   return mod.loadConfig();
-}
-
-type BuildForecastFn = (window: '7d' | '30d', cfg: AshlrConfig) => CostForecast;
-
-let _buildForecast: BuildForecastFn | null | undefined = undefined;
-
-async function loadBuildForecast(): Promise<BuildForecastFn | null> {
-  if (_buildForecast === undefined) {
-    try {
-      const mod = await import('../core/observability/forecast.js') as { buildForecast: BuildForecastFn };
-      _buildForecast = mod.buildForecast;
-    } catch {
-      _buildForecast = null;
-    }
-  }
-  return _buildForecast ?? null;
-}
-
-type EvalGovernanceFn = (cfg: AshlrConfig) => GovernanceStatus;
-
-let _evalGovernance: EvalGovernanceFn | null | undefined = undefined;
-
-async function loadEvalGovernance(): Promise<EvalGovernanceFn | null> {
-  if (_evalGovernance === undefined) {
-    try {
-      const mod = await import('../core/observability/governance.js') as { evalGovernance: EvalGovernanceFn };
-      _evalGovernance = mod.evalGovernance;
-    } catch {
-      _evalGovernance = null;
-    }
-  }
-  return _evalGovernance ?? null;
-}
-
-type LoadPromptPromotionsFn = () => PromptPromotionsRegistry | null;
-
-let _loadPromptPromotions: LoadPromptPromotionsFn | null | undefined = undefined;
-
-async function loadPromptPromotionsFn(): Promise<LoadPromptPromotionsFn | null> {
-  if (_loadPromptPromotions === undefined) {
-    try {
-      const mod = await import('../core/eval/prompt-promotions.js') as { loadPromptPromotions: LoadPromptPromotionsFn };
-      _loadPromptPromotions = mod.loadPromptPromotions;
-    } catch {
-      _loadPromptPromotions = null;
-    }
-  }
-  return _loadPromptPromotions ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -207,12 +175,13 @@ function fmtDate(iso: string): string {
   }
 }
 
+const ALERT_ICON_BY_LEVEL = { over: '●', warn: '◐', ok: '○' } as const;
+const ALERT_COLOR_BY_LEVEL = { over: red, warn: yellow, ok: green } as const;
+
 /** Render a budget alert line with appropriate color. */
 function renderBudgetLine(budget: BudgetAlert): string {
-  const ICON_BY_LEVEL = { over: '●', warn: '◐', ok: '○' } as const;
-  const COLOR_BY_LEVEL = { over: red, warn: yellow, ok: green } as const;
-  const icon = ICON_BY_LEVEL[budget.level];
-  const colorFn = COLOR_BY_LEVEL[budget.level];
+  const icon = ALERT_ICON_BY_LEVEL[budget.level];
+  const colorFn = ALERT_COLOR_BY_LEVEL[budget.level];
 
   const parts: string[] = [colorFn(`${icon} ${budget.message}`)];
 
@@ -230,9 +199,9 @@ function renderBudgetLine(budget: BudgetAlert): string {
 
 /** Render the M19 spend-governance status line. */
 function renderGovernanceLine(gov: GovernanceStatus): string {
-  const ICON = gov.level === 'over' ? '●' : gov.level === 'warn' ? '◐' : '○';
-  const colorFn = gov.level === 'over' ? red : gov.level === 'warn' ? yellow : green;
-  const levelStr = colorFn(`${ICON} ${gov.level.toUpperCase()}`);
+  const icon = ALERT_ICON_BY_LEVEL[gov.level];
+  const colorFn = ALERT_COLOR_BY_LEVEL[gov.level];
+  const levelStr = colorFn(`${icon} ${gov.level.toUpperCase()}`);
   const detail = gov.capUsd !== null
     ? gray(`  ($${gov.spentUsd.toFixed(2)} / $${gov.capUsd.toFixed(2)} this ${gov.window})`)
     : dim('  (no cap configured)');
@@ -1085,19 +1054,13 @@ function storePatViaPhantom(cfg: import('../core/types.js').AshlrConfig, _token:
 // ---------------------------------------------------------------------------
 
 async function connectStatus(): Promise<number> {
-  const { loadConfig } = await import('../core/config.js') as {
-    loadConfig: () => import('../core/types.js').AshlrConfig;
-  };
-  const { patAvailable, getSink } = await import('../core/observability/telemetry-sink.js') as {
-    patAvailable: (cfg: import('../core/types.js').AshlrConfig, allowPhantomProbe?: boolean) => boolean;
-    getSink: (cfg: import('../core/types.js').AshlrConfig) => { emit: (spans: import('../core/types.js').GenAiSpan[]) => Promise<import('../core/types.js').TelemetryEmitResult> };
+  const { patAvailable } = await import('../core/observability/telemetry-sink.js') as {
+    patAvailable: (cfg: AshlrConfig, allowPhantomProbe?: boolean) => boolean;
   };
 
-  const cfg = loadConfig();
+  const cfg = await loadConfig();
   const endpoint = cfg.telemetry?.pulse;
   const hasPat = patAvailable(cfg, true);
-  const sink = getSink(cfg);
-  // Determine active sink name without emitting
   const sinkName = endpoint && hasPat ? 'OtlpHttpSink' : 'LocalFileSink';
 
   console.log('');
@@ -1119,8 +1082,6 @@ async function connectStatus(): Promise<number> {
   }
   console.log('');
 
-  // Suppress unused variable warning — sink is used for type inference only
-  void sink;
   return 0;
 }
 
@@ -1129,14 +1090,11 @@ async function connectStatus(): Promise<number> {
 // ---------------------------------------------------------------------------
 
 async function connectTest(): Promise<number> {
-  const { loadConfig } = await import('../core/config.js') as {
-    loadConfig: () => import('../core/types.js').AshlrConfig;
-  };
   const { getSink } = await import('../core/observability/telemetry-sink.js') as {
-    getSink: (cfg: import('../core/types.js').AshlrConfig, allowPhantomProbe?: boolean) => { emit: (spans: import('../core/types.js').GenAiSpan[]) => Promise<import('../core/types.js').TelemetryEmitResult> };
+    getSink: (cfg: AshlrConfig, allowPhantomProbe?: boolean) => { emit: (spans: import('../core/types.js').GenAiSpan[]) => Promise<import('../core/types.js').TelemetryEmitResult> };
   };
 
-  const cfg = loadConfig();
+  const cfg = await loadConfig();
 
   if (!cfg.telemetry?.pulse) {
     console.log(`${C.yellow}not configured${C.reset} — no OTLP endpoint set.`);
