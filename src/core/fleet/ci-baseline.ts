@@ -81,6 +81,16 @@ const CHECKOUT_GROUP_END = '##[endgroup]';
 const CHECKOUT_WITH = 'with:';
 const CHECKOUT_ENV = 'env:';
 const CHECKOUT_REF = /^ref:\s*([a-f0-9]{40})$/;
+// actions/checkout's pull_request default resolves an unpinned checkout to
+// the event merge ref: `refs/remotes/pull/<n>/merge` on pull requests, the
+// merge queue's `gh-readonly-queue` branch on merge_group. The checkout
+// action's own `git log -1` receipt then prints the merge commit, never the
+// head. ci.yml's OS aggregate gates are the only always-on jobs that take
+// that default -- they run ci-os-gate.mjs, a pure needs-context reducer
+// that never reads the workspace -- so their merge-tree logs carry no head
+// evidence either way and drop from evidence like the checkout-free
+// aggregators, unless they emit something the analyzer consumes.
+const MERGE_CHECKOUT_REF = /refs\/remotes\/pull\/\d+\/merge|refs\/heads\/gh-readonly-queue\//;
 
 function checkoutRefsVerify(output: string[], head: string): boolean {
   let groups = 0;
@@ -561,6 +571,8 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   '.github/scripts/ci-fast-inputs.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-green-reuse.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-mcp-selection.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-os-paths.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-os-typecheck.mjs': ['.github/workflows/ci.yml'],
   // The memory benchmark gate runs `tsx scripts/benchmark-memory.ts`
   // (npm run bench:memory -- --check): its import closure covers the
   // benchmark, its floors file and the whole src/core/memory
@@ -1333,6 +1345,17 @@ const CI_SCRIPT_GATES: Record<string, string> = {
   'ci-fast-inputs.mjs': '(fast-inputs)',
   'ci-green-reuse.mjs': '(green-reuse)',
   'ci-mcp-selection.mjs': '(mcp-selection)',
+  // The OS-sensitive path gate runs inside the bound classify job on every
+  // event, and ci-os-typecheck runs inside the ref-pinned fast-windows and
+  // fast-macos lanes on os-sensitive revisions: both are analyzer-visible,
+  // so a crash with no vitest/TAP/tsc shape would leave every open PR
+  // unknown. ci-os-gate.mjs is deliberately absent: it only runs in the
+  // OS aggregate gate jobs, whose pull_request logs resolve to the event
+  // merge commit and drop as merge-tree aggregators before parsing, and
+  // whose verified master-run failures are always derivative of a `needs`
+  // result the upstream job's own log already reports.
+  'ci-os-paths.mjs': '(os-paths)',
+  'ci-os-typecheck.mjs': '(os-typecheck)',
 };
 const CI_SCRIPT_GATE_FILES = new Set(Object.keys(CI_SCRIPT_GATES).map(base => `.github/scripts/${base}`));
 const CI_STEP_GROUP = /^##\[group\]Run(?:\s+(.*))?$/;
@@ -1409,7 +1432,11 @@ function parseCiScriptGateFailures(log: string): Failure[] {
         phase = 'idle'; gate = null; suppressed = false; recent = [];
         continue;
       }
-      if (FAIL_LINE.test(line) || SUITE_FAIL_LINE.test(line) || /^not ok\b/.test(line)) suppressed = true;
+      // tsc diagnostics are owned the same way: ci-os-typecheck's whole
+      // job is running the compiler, so its real type errors already
+      // group per file under '(typecheck)' and the coarse gate group
+      // would only duplicate them.
+      if (FAIL_LINE.test(line) || SUITE_FAIL_LINE.test(line) || /^not ok\b/.test(line) || TSC_ERROR_LINE.test(line)) suppressed = true;
       if (line !== '') { recent.push(line); if (recent.length > 4) recent.shift(); }
     }
   }
@@ -2214,14 +2241,32 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       }
       const output = lines(r.stdout);
       // Every direct checkout receipt must identify the analyzed head,
-      // including when a log reports both forms of proof.
+      // including when a log reports both forms of proof. A binding
+      // receipt or git-log echo for any other sha is fatal -- except the
+      // checkout action's own `git log -1` of an event merge-ref checkout:
+      // the OS aggregate gates take actions/checkout's pull_request
+      // default and resolve to the merge commit, which can never equal the
+      // head. Like the checkout-free aggregators below, their logs drop
+      // from evidence unless they carry something the analyzer consumes;
+      // a binding receipt, a git-log echo of any other ref, or consumable
+      // output in a merge-tree log keeps the run unknown.
       let directProof = false;
+      let mergeCheckout = false;
       for (const [index, line] of output.entries()) {
         const bound = BOUND_LINE.exec(line);
         const gitLog = /(?:^|\/)git log -1 --format=%H$/.test(line);
         if (!bound && !gitLog) continue;
-        if ((bound ? bound[1] : output[index + 1]) !== head) return null;
-        directProof = true;
+        const proven = bound ? bound[1] : output[index + 1];
+        if (proven === head) { directProof = true; continue; }
+        if (bound !== null || !/^[a-f0-9]{40}$/.test(proven ?? '')) return null;
+        mergeCheckout = true;
+      }
+      if (mergeCheckout) {
+        const mergeRef = output.some(line => MERGE_CHECKOUT_REF.test(line));
+        const consumable = output.some(line => PASS_LINE.test(line)) ||
+          parseBaselineFailures(r.stdout, repo).length > 0;
+        if (directProof || !mergeRef || consumable) return null;
+        continue;
       }
       if (directProof) {
         result.push({ conclusion: job.conclusion, text: r.stdout });

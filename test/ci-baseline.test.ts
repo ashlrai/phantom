@@ -466,6 +466,75 @@ describe('CI baseline evidence', () => {
       expect(report.freshness.every(p => p.state === 'unknown')).toBe(true);
     }
   });
+  it('drops inert merge-checkout aggregator logs like checkout-free gates', async () => {
+    // The OS aggregate gates take actions/checkout's pull_request default:
+    // the log resolves to refs/remotes/pull/<n>/merge and `git log -1`
+    // prints the merge commit, never the head. ci-os-gate.mjs only reduces
+    // the needs context, so -- like Merge Gate -- the log drops from
+    // evidence whether it passed or reports a derivative need failure.
+    const merge = 'e'.repeat(40);
+    const mergeLog = (body: string) => [
+      '##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      'with:',
+      '  fetch-depth: 1',
+      '  persist-credentials: false',
+      '##[endgroup]',
+      '##[group]Fetching the repository',
+      `[command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +${merge}:refs/remotes/pull/7/merge`,
+      '[command]/usr/bin/git checkout --progress --force refs/remotes/pull/7/merge',
+      `HEAD is now at ${merge} Merge ${head} into ${master}`,
+      '[command]/usr/bin/git log -1 --format=%H',
+      merge,
+      '##[group]Run node .github/scripts/ci-os-gate.mjs',
+      'node .github/scripts/ci-os-gate.mjs',
+      'shell: /usr/bin/bash -e {0}',
+      '##[endgroup]',
+      body,
+      '',
+    ].join('\n');
+    for (const body of [
+      'OS gate passed: fast-gate=success, install-smoke-linux=skipped',
+      'fast-gate concluded failure\n##[error]Process completed with exit code 1.',
+    ]) {
+      const { gh } = github({ count: 1, extraPrJob: 'failure' });
+      const report = await analyzeCiBaseline('owner/repo', async args =>
+        args[1]?.endsWith('/jobs/40/logs')
+          ? { ok: true, stdout: mergeLog(body), stderr: '' }
+          : gh(args));
+      expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
+      expect(report.groups.length).toBeGreaterThan(0);
+    }
+  });
+  it('keeps merge-checkout logs with consumable or non-merge evidence unknown', async () => {
+    const merge = 'e'.repeat(40);
+    const mergePrefix = [
+      '##[group]Fetching the repository',
+      `[command]/usr/bin/git checkout --progress --force refs/remotes/pull/7/merge`,
+      `[command]/usr/bin/git log -1 --format=%H`,
+      merge,
+      '',
+    ].join('\n');
+    for (const body of [
+      // A recognizable failure or pass in an unverified merge-tree log
+      // still poisons the run.
+      `${mergePrefix}FAIL  |unit| test/example.test.ts > owner status > reports delivery`,
+      `${mergePrefix}✓ |unit| test/example.test.ts > owner status > reports delivery 5ms`,
+      // A git-log receipt for any other ref -- no merge checkout in the
+      // log -- stays unverifiable even when inert.
+      `/usr/bin/git log -1 --format=%H\n${merged}\nnothing else`,
+      // A binding receipt always names the analyzed head; one for another
+      // sha is fatal even alongside a merge checkout.
+      `${mergePrefix}Bound candidate ${merged} to event tree ${master}`,
+    ]) {
+      const { gh } = github({ count: 1, extraPrJob: 'failure' });
+      const report = await analyzeCiBaseline('owner/repo', async args =>
+        args[1]?.endsWith('/jobs/40/logs')
+          ? { ok: true, stdout: body, stderr: '' }
+          : gh(args));
+      expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'unreadable-log-or-unverified-checkout' }]);
+      expect(report.groups).toEqual([]);
+    }
+  });
   it('does not infer independence with unresolved imports', async () => {
     const report = await analyzeCiBaseline('owner/repo', github({ imports: "import helper from '#helper';" }).gh);
     expect(report.groups[0]?.classification).toBe('unknown');
@@ -1527,6 +1596,73 @@ describe('CI baseline evidence', () => {
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ fastSelect: true, count: 1, pass: true, contents }).gh);
     expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('groups OS-sensitive ci.yml helper failures and leaves the aggregate gate out', () => {
+    const step = (script: string, output: string[]) => [
+      `##[group]Run node .github/scripts/${script}`,
+      `node .github/scripts/${script}`,
+      'shell: /usr/bin/bash -e {0}',
+      '##[endgroup]',
+      ...output,
+      '##[error]Process completed with exit code 1.',
+    ].join('\n');
+    // ci-os-paths runs inside the bound classify job on every event and
+    // ci-os-typecheck inside the ref-pinned fast-windows/fast-macos lanes:
+    // their crashes group like every other whitelisted helper gate.
+    expect(parseBaselineFailures(step('ci-os-paths.mjs', ['merge base unavailable']), 'owner/repo').map(f => f.testId))
+      .toEqual(['.github/scripts/ci-os-paths.mjs > (os-paths)']);
+    expect(parseBaselineFailures(step('ci-os-typecheck.mjs', ['Error: spawnSync tsc ENOENT']), 'owner/repo').map(f => f.testId))
+      .toEqual(['.github/scripts/ci-os-typecheck.mjs > (os-typecheck)']);
+    // ci-os-gate only runs in the OS aggregate gate jobs, whose
+    // pull_request logs drop as merge-tree aggregators and whose verified
+    // failures are always derivative of a needs result: it stays
+    // unattributed.
+    expect(parseBaselineFailures(step('ci-os-gate.mjs', ['fast-gate concluded failure']), 'owner/repo')).toEqual([]);
+    // ci-os-typecheck's real type errors belong to the per-file
+    // '(typecheck)' groups the tsc parser already owns; the coarse gate
+    // group is suppressed so one failure never mints two identities.
+    const typed = parseBaselineFailures(step('ci-os-typecheck.mjs', [
+      'src/core/example.ts(12,5): error TS2322: Type \'string\' is not assignable to type \'number\'.',
+    ]), 'owner/repo');
+    expect(typed.map(f => f.testId)).toEqual(['src/core/example.ts > (typecheck)']);
+  });
+  it('attributes OS gate failures to the workflow, script and import inputs', async () => {
+    const contents = {
+      '.github/scripts/ci-os-paths.mjs': "import { appendFileSync } from 'node:fs';\nimport { fileURLToPath } from 'node:url';\nimport { changedPaths } from './ci-changed-paths.mjs';",
+      '.github/scripts/ci-changed-paths.mjs': "import { execFileSync } from 'node:child_process';",
+      '.github/scripts/ci-os-typecheck.mjs': "import { spawnSync } from 'node:child_process';\nimport { fileURLToPath } from 'node:url';",
+    };
+    const step = (script: string, output: string[]) => [
+      `##[group]Run node .github/scripts/${script}`,
+      `node .github/scripts/${script}`,
+      'shell: /usr/bin/bash -e {0}',
+      '##[endgroup]',
+      ...output,
+      '##[error]Process completed with exit code 1.',
+      '',
+    ].join('\n');
+    const tail = step('ci-os-paths.mjs', ['merge base unavailable']) + step('ci-os-typecheck.mjs', ['Error: spawnSync tsc ENOENT']);
+    const analyze = async (opts: Parameters<typeof github>[0] = {}) => {
+      const { gh } = github({ contents, ...opts });
+      return analyzeCiBaseline('owner/repo', async args => {
+        const result = await gh(args);
+        return /\/jobs\/(10|20|30|120|140)\/logs$/.test(args[1] ?? '')
+          ? { ...result, stdout: `${result.stdout}\n${tail}` }
+          : result;
+      });
+    };
+    const report = await analyze();
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    const byId = new Map(report.groups.map(g => [g.testId, g]));
+    for (const id of ['.github/scripts/ci-os-paths.mjs > (os-paths)', '.github/scripts/ci-os-typecheck.mjs > (os-typecheck)']) {
+      expect(byId.get(id), id).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+    }
+    // ci-os-paths' import closure reaches ci-changed-paths; a PR touching
+    // it is pr-caused for the paths gate only.
+    const caused = await analyze({ touched: '.github/scripts/ci-changed-paths.mjs' });
+    const causedById = new Map(caused.groups.map(g => [g.testId, g.action]));
+    expect(causedById.get('.github/scripts/ci-os-paths.mjs > (os-paths)')).toBe('pr-caused');
+    expect(causedById.get('.github/scripts/ci-os-typecheck.mjs > (os-typecheck)')).toBe('queue-master-fix');
   });
   it('attributes npm ci install failures to the dependency manifests', () => {
     // A broken manifest/lockfile on master fails every PR's "Install
