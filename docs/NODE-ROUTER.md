@@ -19,6 +19,9 @@ runs on two nodes.
   belongs to (`--owner acme`) and only ever sees, routes or pulls jobs of those
   owners. Another owner's jobs, packs, secret names and nodes never appear in
   its output. A job without an owner is never routed.
+  `phm node plan --owner acme` shows only jobs for that owner, using the same
+  shared capacity reservations as `phm node pull`. An earlier job for another
+  owner can reserve the last slot on a worker that serves both owners.
 - **Leases and fencing.** Pulling a job takes a lease (30 seconds by default)
   and a fencing token that only ever increases. Renew before it expires. If a
   node stalls, the lease lapses and another node can pull the job with a higher
