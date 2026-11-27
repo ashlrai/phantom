@@ -187,6 +187,25 @@ it('counts exact dated Git-operation replays once in the contention report', asy
 });
 
 const start = '2026-01-01T00:00:00Z', end = '2026-01-01T00:01:00Z';
+it('excludes no-launch receipts from both latency reports', () => {
+  const rows = [
+    event('launch', start),
+    event('finish', end),
+    event('publish', end),
+    event('merged', '2026-01-01T00:02:00Z'),
+  ];
+  const skipped = { event: 'outcome', state: 'DONE-NOOP', launched: false, ts: start };
+  const ledger = (entries: readonly object[]) => entries.map(row => JSON.stringify(row)).join('\n');
+  const actual = ledger([
+    ...rows,
+    { ...skipped, job: 'retired-before-launch' },
+    { ...rows[0], ...skipped },
+  ]);
+  for (const report of [jobLatency, mergeQueueLatency]) {
+    expect(report(actual)).toEqual(report(ledger(rows)));
+  }
+});
+
 it('keeps phases that span a recorded relaunch unmeasured', () => {
   const firstLaunch = event('launch', start);
   const relaunch = event('launch', end);
