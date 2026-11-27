@@ -2053,6 +2053,31 @@ describe('router outcome market handoff advisory join', () => {
     }
   });
 
+  it('bounds explicit jobs verdict timestamps independently of the receipt timestamp', async () => {
+    const boundary = '2026-11-25T12:00:00.123Z';
+    const future = '2026-11-25T12:00:00.124Z';
+    const root = runsDir([
+      { job: 'J1', phase: 'MERGED', ts: boundary, mergedAt: future, ttm_s: 99, lane: 'alpha' },
+      { job: 'J2', phase: 'MERGED', ts: boundary, mergedAt: boundary, ttm_s: 10 },
+      { job: 'J2', phase: 'CLOSED', ts: boundary, closedAt: future },
+      { job: 'J2', ts: boundary, reverted: false },
+      { job: 'J2', ts: boundary, revertedAt: future },
+      { job: 'J3', phase: 'MERGED', ts: boundary, reverted_at: boundary },
+    ].map(row => JSON.stringify(row)).join('\n'));
+
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(boundary));
+    try {
+      const result = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null });
+      expect(result.outcomes).toMatchObject([
+        { job_id: 'J1', lane: 'alpha', merged: null, ttm_s: null },
+        { job_id: 'J2', merged: true, ttm_s: 10, reverted: false },
+        { job_id: 'J3', merged: true, reverted: true },
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('joins market receipts only through report start, including its exact boundary', async () => {
     const asOfMs = Date.parse('2026-11-25T12:00:00.123Z');
     const boundary = asOfMs / 1000;
