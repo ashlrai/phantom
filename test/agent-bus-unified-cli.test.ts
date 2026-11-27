@@ -456,6 +456,10 @@ describe('phm agents bus (unified)', () => {
       '--reply-to', 'f-1', '--id', 'f-2'])).json).toMatchObject({ status: 'posted' });
     expect(appendBusInbox({ id: 'f-3', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
       body: { inReplyTo: 'f-2', kind: 'context', text: 'kindless follow-up', thread: 'rq-7' } }, { root }).status).toBe('posted');
+    expect(appendBusInbox({ id: 'f-4', from: 'agent:atlas', to: 'group:ops:general', priority: 'P2', ttl: 60_000,
+      body: { inReplyTo: 'f-1', kind: 'note', text: 'channel reply' } }, { root }).status).toBe('posted');
+    expect(appendBusInbox({ id: 'f-5', from: 'agent:atlas', to: 'group:ops:alerts', priority: 'P2', ttl: 60_000,
+      body: { inReplyTo: 'f-1', text: 'alerts reply' } }, { root }).status).toBe('posted');
 
     const ids = (json: { messages: Array<{ envelope: { id: string } }> }) => json.messages.map(m => m.envelope.id);
     // The shared filters narrow members; the chain and its honesty fields stay whole.
@@ -464,11 +468,21 @@ describe('phm agents bus (unified)', () => {
     expect(ids((await run(['thread', 'f-1', '--to', 'atlas'])).json)).toEqual(['f-2']);
     expect(ids((await run(['thread', 'f-1', '--priority', 'P3'])).json)).toEqual(['f-3']);
     expect(ids((await run(['thread', 'f-1', '--contains', 'ALPHA'])).json)).toEqual(['f-2']);
-    expect(ids((await run(['thread', 'f-1', '--in-reply-to', 'f-1'])).json)).toEqual(['f-2']);
+    expect(ids((await run(['thread', 'f-1', '--in-reply-to', 'f-1'])).json)).toEqual(['f-2', 'f-4', 'f-5']);
     expect(ids((await run(['thread', 'f-1', '--in-reply-to', 'f-2'])).json)).toEqual(['f-3']);
     expect(ids((await run(['thread', 'f-1', '--thread', 'rq-7'])).json)).toEqual(['f-3']);
-    expect(ids((await run(['thread', 'f-1', '--body-kind', 'note'])).json)).toEqual(['f-1', 'f-2']);
+    expect(ids((await run(['thread', 'f-1', '--body-kind', 'note'])).json)).toEqual(['f-1', 'f-2', 'f-4']);
     expect(ids((await run(['thread', 'f-1', '--body-kind', 'context'])).json)).toEqual(['f-3']);
+    // --channel keeps the room's whole traffic; --topic narrows to members
+    // whose to parses to that exact topic component, composing into one room
+    // AND one topic — the same groupAddressTopicOf match every bus read's
+    // --topic applies.
+    expect(ids((await run(['thread', 'f-1', '--channel', 'ops'])).json)).toEqual(['f-4', 'f-5']);
+    expect(ids((await run(['thread', 'f-1', '--topic', 'general'])).json)).toEqual(['f-4']);
+    expect(ids((await run(['thread', 'f-1', '--topic', 'alerts'])).json)).toEqual(['f-5']);
+    expect(ids((await run(['thread', 'f-1', '--channel', 'ops', '--topic', 'general'])).json)).toEqual(['f-4']);
+    expect(ids((await run(['thread', 'f-1', '--channel', 'ops', '--topic', 'alerts'])).json)).toEqual(['f-5']);
+    expect(ids((await run(['thread', 'f-1', '--channel', 'dev', '--topic', 'general'])).json)).toEqual([]);
     expect(ids((await run(['thread', 'f-1', '--from', 'nova', '--priority', 'P2'])).json)).toEqual(['f-2']);
     // A filter excluding every member keeps rootFound — never a proven miss.
     const none = await run(['thread', 'f-1', '--priority', 'P0']);
@@ -479,6 +493,7 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['thread', 'f-1', '--priority', 'P9'])).toMatchObject({ code: 2 });
     expect(await run(['thread', 'f-1', '--since', 'whenever'])).toMatchObject({ code: 2 });
     expect(await run(['thread', 'f-1', '--channel', 'Bad Name'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['thread', 'f-1', '--topic', 'Bad Name'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
     expect(await run(['thread', 'f-1', '--from', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
     expect(await run(['thread', 'f-1', '--contains', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });

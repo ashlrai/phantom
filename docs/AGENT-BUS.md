@@ -896,14 +896,21 @@ exchange's raw chain without dropping to the fleet command family; like
 id reports `not-found` here rather than resolving through `show`'s
 wake-hint path. All three surfaces take the shared bus-read filters —
 `--to`/`--from`/`--exclude-from` resolved through the identity registry
-with exact-label fallback, `--channel`, `--job`, `--priority`,
+with exact-label fallback, `--channel`, `--topic`, `--job`, `--priority`,
 `--thread`, `--in-reply-to`, `--body-kind`, `--result`, the
 `[since, before)` receivedAt window and `--contains` (the MCP tool's
 camelCase twins) — which narrow the listed chain members only: the
 `inReplyTo` walk, `rootFound` and the scan honesty fields still describe
 the whole chain, so a root whose every member a filter excludes reports
-`rootFound` with an empty `messages`, never a proven miss. All three
-surfaces read with live evidence: every message
+`rootFound` with an empty `messages`, never a proven miss. `--channel`
+keeps members addressed to `group:<channel>:*` under every topic;
+`--topic` keeps only members whose `to` parses to that exact topic
+component of a well-formed `group:<room>:<topic>` address through the
+shared `groupAddressTopicOf` — decided on the raw routing label with no
+registry dependence, the same match every other bus read's `--topic`
+applies, composing with `--channel` into one room AND one topic while an
+agent address, a bare `group:<room>` or a malformed topic never matches.
+All three surfaces read with live evidence: every message
 carries the same `held`/`holder`/`job`/`fromAgent` annotations `agents bus
 inbox`, `agents bus channel read` and `agents bus show` report — whether
 a claimable work or worker-handoff body in the chain is already taken,

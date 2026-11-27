@@ -55,7 +55,7 @@ ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> 
 ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
 ashlr agents bus dead-letters [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--priority P0..P3] [--id <id>] [--reason <${BUS_DEAD_LETTER_REASONS.join('|')}>] [--from <agent>] [--exclude-from <agent>] [--to <agent>] [--channel <name>] [--topic <topic>] [--body-kind <kind>] [--limit <1-100>]
 ashlr agents bus show <id>
-ashlr agents bus thread <id>
+ashlr agents bus thread <id> [--to <ref>] [--from <ref>] [--exclude-from <ref>] [--channel <name>] [--topic <topic>] [--job <id>] [--priority P0..P3] [--thread <t>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
@@ -293,11 +293,15 @@ a wh-… claim-holder hint id is not an envelope id and reports
 not-found rather than resolving through show's wake-hint path.
 thread takes the shared bus-read filters — --to/--from/--exclude-from
 resolved through the registry with exact-label fallback, --channel,
---job, --priority, --thread, --in-reply-to, --body-kind, --result,
---since/--before and --contains — which narrow the listed members
-only: the inReplyTo walk, rootFound and the scan honesty fields still
-describe the whole chain, so a root whose every member a filter
-excludes reports rootFound with an empty messages, never a miss.
+--topic, --job, --priority, --thread, --in-reply-to, --body-kind,
+--result, --since/--before and --contains — which narrow the listed
+members only: the inReplyTo walk, rootFound and the scan honesty fields
+still describe the whole chain, so a root whose every member a filter
+excludes reports rootFound with an empty messages, never a miss. --topic
+keeps only members addressed to a well-formed group:<room>:<topic>
+address carrying that exact topic component — the same
+groupAddressTopicOf match every other bus read's --topic applies,
+composing with --channel into one room AND one topic.
 A terminal work status also queues a routing-only wake hint for each live claim
 holder on the job's keys; --no-wake opts out. Holder labels need not be
 registered identities, so wakes (and the work mine wakes section) keep
@@ -1277,7 +1281,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (sub === undefined) throw new UsageError('A message id is required.');
       const result = readAgentBusThread(sub, options, {
         to: one('--to'), from: one('--from'), excludeFrom: one('--exclude-from'),
-        channel: one('--channel'), job: one('--job'), thread: one('--thread'),
+        channel: one('--channel'), topic: one('--topic'), job: one('--job'), thread: one('--thread'),
         inReplyTo: one('--in-reply-to'), bodyKind: one('--body-kind'), contains: one('--contains'),
         priority: priorityArg(), since: sinceArg(), before: beforeArg(), result: resultArg(),
       });
