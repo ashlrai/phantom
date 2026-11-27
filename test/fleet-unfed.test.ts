@@ -1513,6 +1513,27 @@ describe('fleet stop verdicts', () => {
   const STOP_LANES = { a: { running: 0, target: 2, held: false }, b: { running: 1, target: 1, held: false } };
   const TWO_WAITING = [row('RQ-A', 'b'), row('RQ-B', 'b')].join('\n');
 
+  it.each([{ running: 1 }, { target: 3 }, { headroom: 1 }, { held: true }])(
+    'withholds published lane demand and blockers when the lane contradicts its status tick (%j)',
+    conflict => {
+      const entry = { running: 0, target: 2, headroom: 2, held: false,
+        waiting_elsewhere: 2, blocked: { global_admission: 2 } };
+      const report = currentUnfed(JSON.stringify({
+        lanes: { ...STOP_LANES, a: { ...STOP_LANES.a, target: 3, effective_target: 2 } },
+        unfed_capacity: { waiting: 2, lanes: { a: { ...entry, ...conflict } } },
+      }), TWO_WAITING);
+      expect(report).toMatchObject({ waiting: 2, unfedSlots: null, unfedLanes: [], fleetStop: null });
+      expect(report.resources.find(r => r.lane === 'a')).toMatchObject({
+        target: 2, headroom: 2, waitingElsewhere: null, unfed: null, blocked: {},
+      });
+      const matching = currentUnfed(JSON.stringify({
+        lanes: { ...STOP_LANES, a: { ...STOP_LANES.a, target: 3, effective_target: 2 } },
+        unfed_capacity: { waiting: 2, lanes: { a: entry } },
+      }), TWO_WAITING);
+      expect(matching).toMatchObject({ unfedSlots: 2, unfedLanes: ['a'], fleetStop: 'global_admission' });
+    },
+  );
+
   it('reports admission_stopped from a pause marker or a tripped admission gate', () => {
     for (const extra of [
       { paused: 'maintenance window' },

@@ -368,10 +368,15 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     const readyHinted = hints === null ? null : hints.byLane.get(lane) ?? 0;
     const entry = publishedLanes[lane];
     const canBeUnfed = headroom > 0 && !held;
+    const consistentEntry = isRecord(entry) &&
+      (entry.running === undefined || entry.running === value.running) &&
+      (entry.target === undefined || entry.target === tickTarget) &&
+      (entry.headroom === undefined || entry.headroom === Math.max(0, tickTarget - value.running)) &&
+      (entry.held === undefined || entry.held === statusHeld);
     // The live ready file may already differ from the dispatcher's tick.
     let waitingElsewhere: number | null = canBeUnfed && waiting !== 0 ? null : 0;
     let blocked: Record<string, number> = {};
-    if (isRecord(entry) && count(entry.waiting_elsewhere) &&
+    if (consistentEntry && count(entry.waiting_elsewhere) &&
         (waiting === null || entry.waiting_elsewhere <= waiting)) {
       waitingElsewhere = entry.waiting_elsewhere;
       blocked = codes(entry.blocked, waitingElsewhere);
