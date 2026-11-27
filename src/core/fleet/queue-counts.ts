@@ -86,7 +86,7 @@ export async function getLaneQueueCounts(
   // requeues (deferred launches, released batches, spawn failures) leave no
   // row, so a job whose last mark is a departure has unknown wait and the
   // lane reports null rather than a fabricated one.
-  const marks = new Map<string, { at: number; entry: boolean; restart: boolean }[]>();
+  const marks = new Map<string, { at: number | null; entry: boolean; restart: boolean }[]>();
   for (const line of metrics.text.split('\n')) {
     let row: Record<string, unknown>;
     try {
@@ -106,9 +106,13 @@ export async function getLaneQueueCounts(
     const id = row.job ?? row.job_id ?? row.jobId ?? row.id;
     const raw = row.ts ?? row.timestamp ?? row.at ?? row.time ?? row.mergedAt ?? row.closedAt ?? row.recordedAt ?? row.updatedAt;
     const time = typeof raw === 'string' ? Date.parse(raw) : NaN;
-    if (typeof id !== 'string' || !Number.isFinite(time) || time > at.getTime()) continue;
+    if (typeof id !== 'string' || time > at.getTime()) continue;
+    const recordedAt = Number.isFinite(time) ? time : null;
+    // A departure or retry invalidates the previous dwell even when its own
+    // time is unknown. An ordinary enqueue without a timestamp adds no evidence.
+    if (recordedAt === null && mark.entry && !mark.restart) continue;
     const list = marks.get(id) ?? [];
-    list.push({ at: time, ...mark });
+    list.push({ at: recordedAt, ...mark });
     marks.set(id, list);
   }
   /** Current queue-dwell start for one job: the first entry mark after its last departure. */
