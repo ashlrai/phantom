@@ -13,6 +13,7 @@
  * empty-cause.ts; the event/phase/url key sets are the canonical ones
  * metrics/loop, slot-yield and dispatchd `_vc_pick`/`_vc_event` accept.
  */
+import { canonicalJson } from '../authority/canonical-json.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 import { ledgerEventName } from './empty-cause.js';
 
@@ -131,4 +132,13 @@ export function ledgerOutcomeState(row: Record<string, unknown>, event: string |
   if (event !== null && OUTCOME_EVENTS.has(event)) return ph !== '' ? ph : null;
   if (event === 'publish' && row['source'] === RECONCILER_SOURCE && TERMINAL_PHASES.has(ph)) return ph;
   return null;
+}
+
+/** Compare complete dated Git receipts while preserving distinct operations at the same time. */
+export function gitReceiptKey(row: Record<string, unknown>, line: string): string {
+  try {
+    return canonicalJson(row);
+  } catch {
+    return line.trim();
+  }
 }
