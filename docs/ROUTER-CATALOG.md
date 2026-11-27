@@ -56,9 +56,10 @@ removal is proposed. Refresh never removes models, including with --apply.
 user units. Add `--install` to install them as a regular user with a built CLI.
 
 For official provider documentation (rather than installed CLI discovery),
-`phm models radar --fetch --propose --json` reports fresh model candidates and
-configured lane retirements, and files unapplied registry patches as pending
-inbox notes. `phm models radar schedule` previews the daily job; it runs only
+`phm models radar --fetch --propose --json` reports fresh model candidates,
+retirements, renames and configured lane retirements, and files each finding
+class as a pending inbox note with its evidence and unapplied registry patch
+where one applies. `phm models radar schedule` previews the daily job; it runs only
 after explicit installation. See [official-source model radar](RADAR.md#official-source-model-radar).
 The scheduled command is `phm router catalog refresh --json`: it only writes
 report and patch artifacts, never applies catalog changes. Installation does

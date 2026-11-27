@@ -12,6 +12,7 @@ import { cmdModels, formatModelRadar } from '../src/cli/models.js';
 import { READ_ONLY_COMMANDS } from '../src/core/commands/catalog.js';
 import { MODEL_RADAR_SOURCES } from '../src/core/fleet/model-radar-fetch.js';
 import { MODEL_RADAR_PROVIDERS, proposeRegistryPatch, radarProvider, radarSummary, runModelRadar, scanModelReleaseNotes, type ModelRadarDoc } from '../src/core/fleet/model-radar.js';
+import { fileModelRadarProposals } from '../src/core/fleet/model-radar-proposals.js';
 import { modelRadarSchedule } from '../src/core/fleet/model-radar-schedule.js';
 import { loadVerifiedRegistry, selectVerifiedModel, type VerifiedModelRegistryEntry } from '../src/core/fleet/model-verify.js';
 import { listProposals } from '../src/core/inbox/store.js';
@@ -127,7 +128,7 @@ describe('phm models radar', () => {
 
   it('says it in plain words: the summary, each finding, what is unknown, the next step', async () => {
     await cmdModels(['radar', '--from', fixture('notes')], opts);
-    const lines = log.mock.calls.map(call => String(call[0]));
+    const lines = log.mock.calls.map((call: unknown[]) => String(call[0]));
     expect(lines[0]).toBe(SUMMARY);
     expect(lines).toContain('  new: claude-opus-6 (anthropic, high confidence), line 4: - We shipped `claude-opus-6`, our most capable model. See [the guide](https://platform.claude.com/docs/en/models/claude-opus-9).');
     expect(lines).toContain('  renamed: gpt-6-luna is now gpt-6-nova (openai, high confidence), line 3: gpt-6-luna is now gpt-6-nova. The old name keeps working for a week.');
@@ -223,7 +224,91 @@ describe('phm models radar', () => {
       }
     }
     expect(await cmdModels(['radar', 'schedule', '--hour', '5'], opts)).toBe(0);
-    expect(log.mock.calls.map(row => String(row[0])).join('\n')).toContain('--propose');
+    expect(log.mock.calls.map((row: unknown[]) => String(row[0])).join('\n')).toContain('--propose');
+  });
+});
+
+describe('fileModelRadarProposals', () => {
+  const fresh = (provider: string, text: string, url = `https://docs.example.com/${provider}/release-notes`): ModelRadarDoc =>
+    ({ provider, text, source_url: url, retrieved_on: '2026-11-18' });
+  const inbox = async () => { vi.stubEnv('HOME', temp); await mkdir(join(temp, '.ashlr'), { mode: 0o700 }); };
+
+  it('files notes for retire and rename patch ops with their page evidence, deduplicated by title', async () => {
+    await inbox();
+    const report = await runModelRadar({ ...opts, from: temp, freshDocs: [
+      fresh('anthropic', '- `claude-fable-5-1` was retired today. Requests to it now fail.', 'https://platform.claude.com/docs/en/release-notes'),
+      fresh('openai', 'gpt-6-luna is now gpt-6-nova. The old name keeps working for a week.', 'https://developers.openai.com/release-notes'),
+      fresh('xai', 'grok-9-new is available now.', 'https://docs.x.ai/release-notes'),
+    ] });
+    expect(report.patch.retire).toEqual([{ provider: 'anthropic', id: 'claude-fable-5-1' }]);
+    expect(report.patch.rename).toEqual([{ provider: 'openai', from: 'gpt-6-luna', to: 'gpt-6-nova' }]);
+    expect(report.patch.add.map(row => row.id)).toContain('grok-9-new');
+    const first = fileModelRadarProposals(report);
+    expect(first).toEqual({ filed: expect.any(Array), existing: [], failed: 0 });
+    expect(first.filed).toHaveLength(3);
+    const proposals = listProposals();
+    expect(proposals).toHaveLength(3);
+    const retire = proposals.find(item => item.title === '[model radar] Review retire anthropic:claude-fable-5-1');
+    expect(retire).toMatchObject({ kind: 'note', status: 'pending', repo: null });
+    expect(retire?.summary).toContain('was retired');
+    expect(retire?.summary).toContain('https://platform.claude.com/docs/en/release-notes (retrieved 2026-11-18');
+    expect(retire?.summary).toContain('"retire":[{"provider":"anthropic","id":"claude-fable-5-1"}]');
+    const rename = proposals.find(item => item.title === '[model radar] Review rename openai:gpt-6-luna');
+    expect(rename?.summary).toContain('is now gpt-6-nova');
+    expect(rename?.summary).toContain('"rename":[{"provider":"openai","from":"gpt-6-luna","to":"gpt-6-nova"}]');
+    const second = fileModelRadarProposals(report);
+    expect(second.filed).toEqual([]);
+    expect(second.existing).toHaveLength(3);
+    expect(listProposals()).toHaveLength(3);
+  });
+
+  it('files a lane note for a docs-flagged choice and a mentioned one, each deduplicated by lane and model', async () => {
+    await inbox();
+    await writeFile(join(temp, 'model-docs.json'), JSON.stringify({ schema: 'models.docs.v1', version: 1, records: [{
+      provider: 'anthropic', id: 'claude-opus-5-5', status: 'deprecated', replacement: 'claude-opus-6',
+      source_url: 'https://platform.claude.com/docs/en/models/overview', seen_at: '2026-11-18',
+    }] }));
+    await writeFile(join(temp, 'models.json'), JSON.stringify({ 'claude.work': 'claude-opus-5-5', 'fast.x': 'grok-9-old' }));
+    const report = await runModelRadar({ ...opts, from: temp, runsDir: temp, docsPath: join(temp, 'model-docs.json'), freshDocs: [
+      fresh('xai', 'grok-9-old is retired and no longer available.', 'https://docs.x.ai/release-notes'),
+    ] });
+    expect(report.lane_notices).toEqual(expect.arrayContaining([
+      expect.objectContaining({ lane: 'claude.work', id: 'claude-opus-5-5', status: 'deprecated', replacement: 'claude-opus-6' }),
+      expect.objectContaining({ lane: 'fast.x', id: 'grok-9-old', status: 'mentioned' }),
+    ]));
+    const first = fileModelRadarProposals(report);
+    expect(first.failed).toBe(0);
+    expect(first.filed).toHaveLength(2);
+    const proposals = listProposals();
+    const flagged = proposals.find(item => item.title === '[model radar] Review lane claude.work claude-opus-5-5');
+    expect(flagged?.summary).toContain('marks deprecated');
+    expect(flagged?.summary).toContain('claude-opus-6 as the replacement');
+    expect(flagged?.summary).toContain('phm models check --json');
+    const mentioned = proposals.find(item => item.title === '[model radar] Review lane fast.x grok-9-old');
+    expect(mentioned?.summary).toContain('mention as retiring');
+    expect(mentioned?.summary).toContain('https://docs.x.ai/release-notes');
+    const second = fileModelRadarProposals(report);
+    expect(second.filed).toEqual([]);
+    expect(second.existing).toHaveLength(2);
+    expect(listProposals()).toHaveLength(2);
+  });
+
+  it('files nothing without fetched-page provenance, on a registry error, or with no findings', async () => {
+    await inbox();
+    // The same retire/rename/new findings read from saved files carry no
+    // source_url/retrieved_on, so they stay report-only and file no notes.
+    const disk = await runModelRadar({ ...opts, from: fixture('notes') });
+    expect(disk.patch.retire.length + disk.patch.rename.length + disk.patch.add.length).toBeGreaterThan(0);
+    expect(fileModelRadarProposals(disk)).toEqual({ filed: [], existing: [], failed: 0 });
+    expect(listProposals()).toEqual([]);
+    const broken = await runModelRadar({ registryPath: fixture('none.json'), from: temp });
+    expect(broken.error).not.toBeNull();
+    expect(fileModelRadarProposals(broken)).toEqual({ filed: [], existing: [], failed: 0 });
+    for (const provider of Object.keys(MODEL_RADAR_PROVIDERS)) await writeFile(join(temp, `${provider}.md`), 'Nothing new.\n');
+    const quiet = await runModelRadar({ ...opts, from: temp });
+    expect(quiet.patch.add.length + quiet.patch.retire.length + quiet.patch.rename.length + quiet.lane_notices.length).toBe(0);
+    expect(fileModelRadarProposals(quiet)).toEqual({ filed: [], existing: [], failed: 0 });
+    expect(listProposals()).toEqual([]);
   });
 });
 

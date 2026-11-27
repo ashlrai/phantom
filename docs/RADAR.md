@@ -137,11 +137,14 @@ phm models radar schedule --install --hour 3
 Nothing is installed by default. The job runs at 03:47 local time by default
 and invokes `phm models radar --fetch --propose --json`. It uses bounded,
 unauthenticated public GETs (15 seconds, 2 MiB per page, no redirects), does
-not call models or spend, and writes pending inbox notes only for fresh
-high-confidence additions. Each note has the source URL, matched line,
-retrieval date and an unapplied registry patch. Cached pages remain usable
-for diagnosis but cannot create new notes. Configured lane retirements are
-reported alongside candidates. Review notes with `phm inbox --json`; the
+not call models or spend, and writes pending inbox notes for every finding
+class: fresh high-confidence additions, retirements and renames from the
+unapplied registry patch, and configured lanes whose model the provider-docs
+check flags. Each note has the source URL, matched line, retrieval date and
+an unapplied registry patch where one applies; lane notes cite the docs
+verdict or the fetched page instead. Cached release-note pages remain usable for diagnosis but
+cannot create new notes — only a page fetched in the same run carries the
+provenance a note quotes. Review notes with `phm inbox --json`; the
 job does not edit the registry, launch work, or open PRs.
 
 ## Offline verification
