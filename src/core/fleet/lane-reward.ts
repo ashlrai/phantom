@@ -125,7 +125,7 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
     try { row = asRow(JSON.parse(line)); } catch { dropped++; continue; }
     if (!row) { dropped++; continue; }
     const job = jobOf(row);
-    if (job?.startsWith('RQ-BATCH-') || isNodePoolLedgerRow(row)) continue;
+    if (row.launched === false || job?.startsWith('RQ-BATCH-') || isNodePoolLedgerRow(row)) continue;
     const event = eventOf(row);
     const phase = phaseOf(row, event);
     const receiptAt = ledgerEventTs(row, null);

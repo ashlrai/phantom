@@ -246,6 +246,23 @@ describe('fleet lane-reward', () => {
     expect(fold.attempts.get('RQ-FAKE-B1')?.outcome).toBeNull();
   });
 
+  it('excludes receipts marked as never launched from usage, attempts and PR claims', async () => {
+    const job = 'RQ-FAKE-EXECUTED';
+    const url = URL(7);
+    const text = rows(
+      { event: 'finish', job, lane: 'lane-a', tokens_total: 100, ts: '2026-10-31T09:00:00Z' },
+      { event: 'publish', job, url },
+      { event: 'finish', job, lane: 'lane-b', tokens_total: 900, launched: false, ts: '2026-10-31T10:00:00Z' },
+      { event: 'finish', job: 'RQ-FAKE-UNLAUNCHED', lane: 'lane-b', url, tokens_total: 800, launched: false },
+      { event: 'merged', url },
+    );
+    const report = await readLaneReward({ deps: deps({ jobsText: read(text) }) });
+    expect(report).toMatchObject({ source: 'healthy', attempts: 1, tokensMeasured: 100 });
+    expect(report.lanes).toMatchObject([
+      { lane: 'lane-a', attempts: 1, tokensMeasured: 100, reasons: { 'proposal-unavailable': 1 } },
+    ]);
+  });
+
   it('excludes batch wrappers and node-pool telemetry from measured attempts and PR claims', async () => {
     const job = 'RQ-FAKE-MEMBER';
     const url = URL(7);
