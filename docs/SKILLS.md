@@ -172,7 +172,10 @@ Per-skill rows count distinct trajectories per skill revision with sparse
 outcome tallies — for example how many selections ended `merged`, `rejected`
 or `failed`, and how many merged selections were later `reverted` or
 `regressed`. Lifecycle stages of one use collapse into a single selection,
-and unjoined or conflicting skill rows never enter the tally.
+and unjoined or conflicting skill rows never enter the tally. If joined
+receipts on learning-eligible trajectories disagree on the content hash for
+a skill revision, that revision is omitted from the per-skill rows and
+aggregate attribution counts. Other revisions and receipt coverage are unaffected.
 
 `phm skills list --outcomes` joins the same projection onto the learned-skill
 list: each entry gains an `outcomes` object when its exact revision was

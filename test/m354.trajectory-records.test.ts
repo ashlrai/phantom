@@ -1892,7 +1892,7 @@ describe('Trajectory records', () => {
     expect(summary.skillObservation).not.toHaveProperty('conflicting');
   });
 
-  it('attributes shadow skill selections to per-skill trajectory outcomes', () => {
+  it.each(['none', 'same trajectory', 'different trajectory'] as const)('attributes shadow skill outcomes with hash conflicts on %s', (conflict) => {
     const outcomeFor = (
       id: string,
       action: 'merged' | 'rejected',
@@ -1978,6 +1978,15 @@ describe('Trajectory records', () => {
           skillUse({ eventId: 'use-b-alpha', skillId: 'skill.alpha', skillRevision: 1, ts: TS1, trajectoryId: 'traj-b', runId: 'run-b', proposalId: 'prop-b' }),
           skillUse({ eventId: 'use-c-alpha-sel', skillId: 'skill.alpha', skillRevision: 1, ts: TS2, trajectoryId: 'traj-c', runId: 'run-c', proposalId: 'prop-c' }),
           skillUse({ eventId: 'use-c-alpha-outcome', skillId: 'skill.alpha', skillRevision: 1, ts: TS3, selectedAt: TS2, stage: 'outcome', outcome: 'merged', trajectoryId: 'traj-c', runId: 'run-c', proposalId: 'prop-c' }),
+          ...(conflict === 'none' ? [] : [skillUse({
+            eventId: 'use-alpha-conflict',
+            skillId: 'skill.alpha',
+            skillRevision: 1,
+            contentHash: 'c'.repeat(64),
+            ...(conflict === 'same trajectory'
+              ? { trajectoryId: 'traj-a', runId: 'run-a', proposalId: 'prop-a' }
+              : { trajectoryId: 'traj-d', runId: 'run-d', proposalId: 'prop-d' }),
+          })]),
           skillUse({ eventId: 'use-d-beta2', skillId: 'skill.beta', skillRevision: 2, contentHash: 'b'.repeat(64), ts: TS3, trajectoryId: 'traj-d', runId: 'run-d', proposalId: 'prop-d' }),
         ],
       }),
@@ -1987,15 +1996,15 @@ describe('Trajectory records', () => {
     const summary = summarizeTrajectoryLearning(records);
     expect(summary.skillObservation.sampleState).toBe('observed');
     expect(summary.skillOutcomes).toEqual({
-      skills: 2,
-      selections: 5,
+      skills: conflict === 'none' ? 2 : 1,
+      selections: conflict === 'none' ? 5 : 2,
       perSkill: [
-        {
+        ...(conflict === 'none' ? [{
           skillId: 'skill.alpha',
           skillRevision: 1,
           selections: 3,
           outcomes: { merged: 2, rejected: 1 },
-        },
+        }] : []),
         {
           skillId: 'skill.beta',
           skillRevision: 1,
