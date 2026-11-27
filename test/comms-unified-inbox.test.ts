@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,7 +16,7 @@ import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/co
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type GuidancePendingSession, type GuidanceSourceRead, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
@@ -42,6 +42,8 @@ import { replyTextHash } from '../src/core/fleet/mason-outbox.js';
 import type { FleetAssignment, FleetCoordinationPending, FleetMessage, FleetPendingReturn } from '../src/core/fleet/coordination.js';
 import type { ClaimDriftRow, ClaimStoreDrift } from '../src/core/fleet/claim-store-drift.js';
 import type { SessionHandoffList, SessionHandoffListEntry } from '../src/core/agents/session-handoff.js';
+import { appendSessionGuidance } from '../src/core/fleet/session-guidance-io.js';
+import type { SessionGuidanceEntry } from '../src/core/fleet/session-guidance.js';
 import type { WorkBoardItem, WorkBoardResult } from '../src/core/comms/work-board.js';
 import type { WorkItemState } from '../src/core/comms/work-item-state.js';
 import type { ChannelHealth, ChannelHealthReport } from '../src/core/fleet/channel-health.js';
@@ -5012,5 +5014,142 @@ describe('readUnifiedInbox channel health', () => {
       filter: { job: 'job-1' },
     });
     expect(byJob.items.filter(i => i.source === 'channel-health')).toHaveLength(0);
+  });
+});
+
+describe('readUnifiedInbox session guidance', () => {
+  const guidanceRead = (over: Partial<GuidanceSourceRead> = {}): GuidanceSourceRead => ({
+    state: 'healthy', sessions: [], ...over,
+  });
+  const queuedEntry = (over: Partial<SessionGuidanceEntry> = {}): SessionGuidanceEntry => ({
+    id: 'g-1', at: new Date(now - 3_600_000).toISOString(), source: 'fleet-console',
+    lane: 'codex-personal', tier: 'work', strategy: 'resume',
+    text: 'please also check the flaky test', truncated: false,
+    state: 'queued', turn: null, requeueTo: null, ackAt: null,
+    ...over,
+  });
+  const session = (over: Partial<GuidancePendingSession> = {}): GuidancePendingSession => ({
+    job: 'RQ-GUIDE', lane: 'codex-personal', strategy: 'resume',
+    queued: [queuedEntry()], orphanAcks: 0, invalidAcks: 0, ...over,
+  });
+  const readGuidance = (g: GuidanceSourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readGuidance: async () => g, ...extra });
+  const guidanceDir = (): string => join(runsDir, 'queue', 'guidance');
+  const appendAck = (job: string, ack: Record<string, unknown>): void => {
+    appendFileSync(join(guidanceDir(), `${job}.jsonl`), `${JSON.stringify({ v: 1, type: 'ack', ...ack })}\n`, { mode: 0o600 });
+  };
+
+  it('lists each session with queued guidance as a warn naming its job, wait, lane and newest text', async () => {
+    const inbox = await readGuidance(guidanceRead({ sessions: [
+      session({ job: 'RQ-ALPHA', queued: [
+        queuedEntry({ id: 'g-1', at: new Date(now - 7_200_000).toISOString(), text: 'first note' }),
+        queuedEntry({ id: 'g-2', at: new Date(now - 3_600_000).toISOString(), text: 'second note' }),
+      ] }),
+      session({ job: 'RQ-BETA', lane: null, strategy: 'requeue', queued: [queuedEntry({ lane: null, strategy: 'requeue', text: 'one more thing' })] }),
+    ] }));
+    expect(inbox.sources['guidance']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'guidance');
+    expect(items).toHaveLength(2);
+
+    const alpha = items.find(i => i.id === 'guidance:RQ-ALPHA')!;
+    expect(alpha).toMatchObject({
+      kind: 'session-guidance', severity: 'warn', blocking: false,
+      title: 'Session guidance queued for RQ-ALPHA',
+      // The wait starts at the OLDEST still-queued message, not the newest.
+      since: new Date(now - 7_200_000).toISOString(), expiresAt: null,
+      jobIds: ['RQ-ALPHA'],
+    });
+    expect(alpha.detail).toContain('2 guidance messages');
+    expect(alpha.detail).toContain('lane codex-personal');
+    expect(alpha.detail).toContain('resume');
+    expect(alpha.detail).toContain('newest: "second note"');
+    expect(alpha.act).toEqual(['phm fleet guidance read RQ-ALPHA', 'phm fleet guidance list']);
+
+    const beta = items.find(i => i.id === 'guidance:RQ-BETA')!;
+    expect(beta.detail).toContain('1 guidance message');
+    expect(beta.detail).toContain('lane unknown');
+    expect(beta.detail).toContain('requeue');
+    expect(beta.since).toBe(new Date(now - 3_600_000).toISOString());
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readGuidance(guidanceRead({ state: 'missing', sessions: [session()] }));
+    expect(missing.sources['guidance']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'guidance')).toHaveLength(0);
+
+    const unavailable = await readGuidance(guidanceRead({ state: 'unavailable', sessions: [session()] }));
+    expect(unavailable.sources['guidance']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'guidance')).toHaveLength(0);
+
+    const throwing = await read({ readGuidance: async () => { throw new Error('guidance boom'); } });
+    expect(throwing.sources['guidance']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'guidance')).toHaveLength(0);
+  });
+
+  it('lists readable sessions degraded while a refused file keeps its pending count unknown', async () => {
+    const inbox = await readGuidance(guidanceRead({ state: 'degraded', sessions: [session()] }));
+    expect(inbox.sources['guidance']).toEqual({ state: 'degraded', pending: 1 });
+    expect(inbox.items.filter(i => i.source === 'guidance')).toHaveLength(1);
+  });
+
+  it('keeps since null and notes refused acks when the queued rows cannot prove them', async () => {
+    const inbox = await readGuidance(guidanceRead({ sessions: [
+      session({ job: 'RQ-ODD', queued: [queuedEntry({ at: 'not-a-date' })], orphanAcks: 1, invalidAcks: 1 }),
+    ] }));
+    const item = inbox.items.find(i => i.id === 'guidance:RQ-ODD')!;
+    expect(item.since).toBeNull();
+    expect(item.detail).toContain('2 refused acks');
+  });
+
+  it('reads the real guidance files under runsDir: queued lists, delivered and requeued do not', async () => {
+    const first = await appendSessionGuidance('RQ-GUIDE-A', 'check the flaky test too', { runsDir, now: () => now - 7_200_000, lane: 'codex-personal', tier: 'work', id: 'g-a1' });
+    expect(first.ok).toBe(true);
+    const second = await appendSessionGuidance('RQ-GUIDE-A', 'and the docs', { runsDir, now: () => now - 3_600_000, lane: 'codex-personal', tier: 'work', id: 'g-a2' });
+    expect(second.ok).toBe(true);
+    const delivered = await appendSessionGuidance('RQ-GUIDE-B', 'already landed', { runsDir, now: () => now - 600_000, lane: 'claude', id: 'g-b1' });
+    expect(delivered.ok && delivered.id).toBe('g-b1');
+    appendAck('RQ-GUIDE-B', { id: 'g-b1', at: new Date(now - 300_000).toISOString(), state: 'delivered', turn: 4 });
+    const requeued = await appendSessionGuidance('RQ-GUIDE-C', 'fallback path', { runsDir, now: () => now - 300_000, lane: 'devin', id: 'g-c1' });
+    expect(requeued.ok && requeued.id).toBe('g-c1');
+    appendAck('RQ-GUIDE-C', { id: 'g-c1', at: new Date(now - 200_000).toISOString(), state: 'requeued', to: 'RQ-GUIDE-C2' });
+
+    const inbox = await read();
+    expect(inbox.sources['guidance']).toEqual({ state: 'healthy', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'guidance');
+    expect(items).toHaveLength(1);
+    const item = items[0]!;
+    expect(item.id).toBe('guidance:RQ-GUIDE-A');
+    expect(item.since).toBe(new Date(now - 7_200_000).toISOString());
+    expect(item.detail).toContain('2 guidance messages');
+    expect(item.detail).toContain('newest: "and the docs"');
+    expect(item.jobIds).toEqual(['RQ-GUIDE-A']);
+  });
+
+  it('degrades on a guidance file the bounded read refuses and reports a missing directory as missing', async () => {
+    mkdirSync(guidanceDir(), { recursive: true, mode: 0o700 });
+    // A directory named like a guidance file is not a regular file — the
+    // per-job read refuses it, so its pending count stays unknown.
+    mkdirSync(join(guidanceDir(), 'RQ-BAD.jsonl'), { mode: 0o700 });
+    const degraded = await read();
+    expect(degraded.sources['guidance']).toEqual({ state: 'degraded', pending: 0 });
+    expect(degraded.items.filter(i => i.source === 'guidance')).toHaveLength(0);
+
+    rmSync(guidanceDir(), { recursive: true, force: true });
+    const missing = await read();
+    expect(missing.sources['guidance']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'guidance')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = guidanceRead({ sessions: [session({ job: 'RQ-ALPHA' }), session({ job: 'RQ-BETA' })] });
+    const bySource = await readGuidance(pending, { filter: { source: 'guidance' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'guidance')).toBe(true);
+    const byKind = await readGuidance(pending, { filter: { kind: 'session-guidance' } });
+    expect(byKind.items.map(i => i.id).sort()).toEqual(['guidance:RQ-ALPHA', 'guidance:RQ-BETA']);
+    expect(byKind.sources['guidance']).toEqual({ state: 'healthy', pending: 2 });
+    // The session's job id is the item's own citation — --job names it directly.
+    const byJob = await readGuidance(pending, { filter: { job: 'RQ-ALPHA' } });
+    expect(byJob.items.filter(i => i.source === 'guidance').map(i => i.id)).toEqual(['guidance:RQ-ALPHA']);
   });
 });

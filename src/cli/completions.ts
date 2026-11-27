@@ -175,7 +175,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'claim-bind', 'claim-drift', 'claim-notices', 'config', 'conflict-risk', 'coordination',
     'cos-decline', 'cos-loop', 'cos-reconcile', 'cos-work', 'dep-gate', 'dirty-landed', 'disk',
     'disk-forecast', 'disk-sweep', 'done-evaluate', 'done-plan', 'dot-handoff', 'drift', 'edges',
-    'email-outbox', 'empty-merges', 'grok-usage', 'guardian-stuck', 'guardian-verify',
+    'email-outbox', 'empty-merges', 'grok-usage', 'guardian-stuck', 'guardian-verify', 'guidance',
     'handoff-receive', 'handoff-reply', 'health-age', 'heartbeat', 'held', 'hostload',
     'ideation-status', 'idle-lanes', 'imessage-path', 'imessage-tasks', 'intent', 'intent-evidence',
     'intent-import', 'intent-read', 'intent-summary', 'lane-hold', 'lane-idle', 'lane-share',

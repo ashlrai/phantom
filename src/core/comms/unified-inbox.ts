@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirty-four local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates thirty-five local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -586,6 +586,45 @@
  *               slack status`, `phm imessage doctor`, `phm comms health
  *               --json`, `phm comms cycle`, `phm channels`.
  *
+ *   guidance   operator guidance appended for a running session —
+ *               `<runsDir>/queue/guidance/<job>.jsonl`, the store
+ *               `phm fleet guidance append|read|list` and the fleet
+ *               console's session-guidance API serve. A guidance record
+ *               starts 'queued' and only a consumer ack line moves it to
+ *               'delivered' or 'requeued'; until now this was the one
+ *               comms store whose whole purpose is delivering a message
+ *               to a running agent while the unified view — the one
+ *               place an agent checks for pending comms — never named
+ *               it: appended guidance sat 'queued', undelivered and
+ *               unacked, invisible. Each session whose folded entries
+ *               still hold at least one 'queued' message lists as ONE
+ *               warn `session-guidance` item naming the job id — the
+ *               same label `phm fleet guidance` verbs take — `since`
+ *               the oldest still-queued message's recorded `at` (null
+ *               when no queued timestamp parses — the wait's start
+ *               stays unknown) and `expiresAt` null: guidance waits for
+ *               its consumer, never a guessed deadline. The detail
+ *               counts the queued messages, names the lane and delivery
+ *               strategy label and quotes the newest queued text —
+ *               already scrubbed at write, single-lined and capped like
+ *               every other body. The job id is the item's own
+ *               citation, so `--job` matches. The enumeration applies
+ *               `listSessionGuidance`'s own candidate rules — a
+ *               `<job>.jsonl` name whose stem passes `isGuidanceJobId`,
+ *               newest file first, bounded to GUIDANCE_LIST_MAX_JOBS —
+ *               then folds each through `readSessionGuidance`, the same
+ *               per-job read `phm fleet guidance read` serves, so the
+ *               surfaces can never disagree. A missing guidance
+ *               directory is 'missing' (verified-empty: no guidance can
+ *               be pending), an unlistable one 'unavailable', and a
+ *               listing holding a file the bounded read refuses —
+ *               oversized or non-regular — or more candidates than the
+ *               inspection cap degrades the source: every readable
+ *               session's queued rows still list while the refused
+ *               file's pending count stays unknown, never a fabricated
+ *               0. Act: `phm fleet guidance read <job>`,
+ *               `phm fleet guidance list`.
+ *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
  * heuristic, then expiry, then newest. `options.filter` narrows the returned
@@ -600,6 +639,7 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync } from 'node:fs';
+import { lstat, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { busWorkFeedHoldIndex, BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedJob, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
@@ -662,6 +702,9 @@ import { readKillSwitch, type KillSwitchReadResult } from '../sandbox/policy.js'
 import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
 import { readChannelHealth } from '../fleet/channel-health.js';
 import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
+import { guidanceKindInfo, isGuidanceJobId, GUIDANCE_DIR, GUIDANCE_LIST_MAX_JOBS,
+  type GuidanceDeliveryKind, type SessionGuidanceEntry } from '../fleet/session-guidance.js';
+import { readSessionGuidance } from '../fleet/session-guidance-io.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
@@ -676,7 +719,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
-  'send-gate', 'router-queue', 'channel-health',
+  'send-gate', 'router-queue', 'channel-health', 'guidance',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -705,7 +748,7 @@ export const UNIFIED_INBOX_KINDS = [
   'coordination-message', 'coordination-assignment', 'coordination-return-unposted',
   'claim-drift-bus', 'claim-drift-coordination', 'claim-drift-owner',
   'send-gate-kill', 'send-gate-pause', 'router-queue-job',
-  'channel-blocked', 'channel-degraded', 'channel-unknown',
+  'channel-blocked', 'channel-degraded', 'channel-unknown', 'session-guidance',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -733,7 +776,8 @@ export interface UnifiedInboxItem extends AttentionItem {
    * the job-carrying-thread rule `BusBoard.pendingFor` applies), a
    * conversation thread's `jobs`, a teammate task's `jobId`, a seat handoff's
    * node-job refs, a peer-dispatch receipt's peer-announced `jobId`, a
-   * session-handoff journal's job id, or a router-queue row's own READY id.
+   * session-handoff journal's job id, a router-queue row's own READY id,
+   * or a guidance session's job id.
    * Absent when the item names no job — unknown stays out of a
    * `--job` match rather than being guessed in.
    */
@@ -859,6 +903,34 @@ export interface RouterQueueStuckRead {
   jobs: readonly StuckJob[];
 }
 
+/** One session's still-queued guidance backlog: the folded 'queued' entries
+ * `readSessionGuidance` proves await a consumer ack, with the lane and
+ * delivery strategy the same read resolved. */
+export interface GuidancePendingSession {
+  job: string;
+  lane: string | null;
+  strategy: GuidanceDeliveryKind;
+  /** 'queued' entries in file order — each awaits a consumer ack line. */
+  queued: readonly SessionGuidanceEntry[];
+  /** Ack lines the fold refused or could not place — file-health detail,
+   * never a reason to hide the queued rows. */
+  orphanAcks: number;
+  invalidAcks: number;
+}
+
+/** The resolved session-guidance read: 'missing' a verified-absent guidance
+ * directory (no guidance can be pending), 'unavailable' a directory that
+ * cannot be listed at all, 'degraded' a listing whose inspection was
+ * partial — a candidate file the bounded read refused, or more files than
+ * the GUIDANCE_LIST_MAX_JOBS cap inspects — and 'healthy' the full read.
+ * `sessions` holds only jobs whose folded entries still hold 'queued'
+ * messages; a refused file contributes no row — its pending count stays
+ * unknown through the degraded state, never a fabricated 0. */
+export interface GuidanceSourceRead {
+  state: UnifiedInboxSourceState;
+  sessions: readonly GuidancePendingSession[];
+}
+
 /** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
  * when the store could be read — 'missing' is a verified-empty board (no
  * `state.json` ever written), 'unavailable' an unreadable one, never an
@@ -972,6 +1044,11 @@ export interface UnifiedInboxOptions {
   /** Telegram poll-health seam; default `readTelegramHealth` — the same
    * read `phm comms health --json` serves. */
   readTelegramPoll?: typeof readTelegramHealth;
+  /** Session-guidance seam; default enumerates `<runsDir>/queue/guidance/*.jsonl`
+   * candidates through `readSessionGuidance` — the same per-job fold
+   * `phm fleet guidance read`/`list` serve — reporting sessions whose
+   * entries still hold 'queued' messages awaiting a consumer ack. */
+  readGuidance?: (options: { runsDir?: string; now?: () => number }) => Promise<GuidanceSourceRead>;
   /** Optional narrowing of the returned item list by stored source, severity,
    * blocking, job citation, appearance time or display text. `total`/`omitted`/`items` then
    * describe the matched view and the applied filter echoes on the report;
@@ -3658,6 +3735,123 @@ async function channelHealthItems(options: UnifiedInboxOptions): Promise<{ repor
 }
 
 /**
+ * Operator guidance appended for a running session whose folded entries
+ * still hold 'queued' messages — appended to
+ * `<runsDir>/queue/guidance/<job>.jsonl` but never moved to 'delivered' or
+ * 'requeued' by a consumer ack, the same per-job fold `phm fleet guidance
+ * read`/`list` serve. Until now the one comms store whose whole purpose is
+ * delivering a message to a running agent was invisible here: guidance sat
+ * 'queued' — undelivered, unacked — while the unified view, the one place
+ * an agent checks for pending comms, never named it. Each session with at
+ * least one queued entry lists as ONE warn `session-guidance` item — agent
+ * coordination work, never Mason-blocking — naming the job id (the same
+ * label `phm fleet guidance` verbs take), `since` the oldest still-queued
+ * message's recorded `at` — the wait's true start, null when no queued
+ * timestamp parses rather than a guessed appearance — and `expiresAt`
+ * null: guidance waits for its consumer, never a guessed deadline. The
+ * detail counts the queued messages, names the lane and delivery strategy
+ * label and quotes the newest queued text — already scrubbed at write,
+ * single-lined and capped like every other body. The job id is the item's
+ * own citation, so `--job` matches. A missing guidance directory is
+ * 'missing' (verified-empty), an unlistable one 'unavailable', and a
+ * listing the bounded inspection only partly covered degrades the source
+ * — every readable session's queued rows still list while the refused
+ * file's pending count stays unknown, never a fabricated 0.
+ */
+async function guidanceItems(read: NonNullable<UnifiedInboxOptions['readGuidance']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: GuidanceSourceRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  // A session row with no queued entries carries no pending item — the real
+  // read never emits one, and a seam that does must not crash the view.
+  const items = result.sessions.filter((session) => session.queued.length > 0).map((session): Omit<UnifiedInboxItem, 'priority'> => {
+    const queuedAts = session.queued.map((entry) => Date.parse(entry.at)).filter((t) => Number.isFinite(t));
+    const sinceMs = queuedAts.length === 0 ? null : Math.min(...queuedAts);
+    const newest = session.queued[session.queued.length - 1]!;
+    const refused = session.orphanAcks + session.invalidAcks;
+    return {
+      id: `guidance:${session.job}`,
+      source: 'guidance',
+      kind: 'session-guidance',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Session guidance queued for ${session.job}`, TITLE_MAX),
+      detail: oneLine(`${session.queued.length} guidance message${session.queued.length === 1 ? '' : 's'} still 'queued' — awaiting consumer ack · lane ${session.lane ?? 'unknown'} · ${guidanceKindInfo(session.strategy).label}${refused > 0 ? ` · ${refused} refused ack${refused === 1 ? '' : 's'}` : ''} · newest: "${newest.text}"`, DETAIL_MAX) || null,
+      since: sinceMs === null ? null : iso(sinceMs),
+      expiresAt: null,
+      jobIds: [session.job],
+      act: [`phm fleet guidance read ${session.job}`, 'phm fleet guidance list'],
+    };
+  });
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real session-guidance read: enumerate `<runsDir>/queue/guidance`
+ * through the same candidate rules `listSessionGuidance` applies — a
+ * `<job>.jsonl` name whose stem passes `isGuidanceJobId`, newest file first,
+ * bounded to GUIDANCE_LIST_MAX_JOBS — then fold each candidate through
+ * `readSessionGuidance`, the same per-job read `phm fleet guidance read`
+ * serves, so this source and those surfaces can never disagree. A missing
+ * guidance directory is 'missing' (verified-empty: no guidance can be
+ * pending) and an unlistable one 'unavailable', never an empty backlog
+ * passed off as fact. A candidate the bounded read refuses — oversized or
+ * non-regular — a file that throws, a stat that fails for a reason other
+ * than vanishing, or more candidates than the inspection cap degrades the
+ * source: its pending count stays unknown while every readable session's
+ * queued rows still list. A file that vanishes between listing and read
+ * reports 'missing' and is skipped — a race, not an anomaly. */
+async function readGuidanceSource(options: { runsDir?: string; now?: () => number }): Promise<GuidanceSourceRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const guidanceDir = join(dir, GUIDANCE_DIR);
+  let names: string[];
+  try {
+    names = await readdir(guidanceDir);
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? 'missing' : 'unavailable', sessions: [] };
+  }
+  const candidates: { job: string; mtimeMs: number }[] = [];
+  for (const name of names) {
+    if (!name.endsWith('.jsonl')) continue;
+    const job = name.slice(0, -'.jsonl'.length);
+    if (!isGuidanceJobId(job)) continue;
+    try {
+      const info = await lstat(join(guidanceDir, name));
+      candidates.push({ job, mtimeMs: info.mtimeMs });
+    } catch {
+      // Vanished or unstat-able between listing and stat — the per-job read
+      // below reports it 'missing'/'degraded' on its own terms.
+      candidates.push({ job, mtimeMs: Number.NEGATIVE_INFINITY });
+    }
+  }
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  let degraded = false;
+  if (candidates.length > GUIDANCE_LIST_MAX_JOBS) {
+    degraded = true;
+    candidates.length = GUIDANCE_LIST_MAX_JOBS;
+  }
+  const sessions: GuidancePendingSession[] = [];
+  for (const { job } of candidates) {
+    let read: Awaited<ReturnType<typeof readSessionGuidance>>;
+    try {
+      read = await readSessionGuidance(job, { runsDir: dir, now: options.now });
+    } catch {
+      degraded = true;
+      continue;
+    }
+    if (read.sourceState === 'missing') continue;
+    if (read.sourceState === 'degraded') { degraded = true; continue; }
+    const queued = read.entries.filter((entry) => entry.state === 'queued');
+    if (queued.length === 0) continue;
+    sessions.push({ job, lane: read.lane, strategy: read.strategy, queued, orphanAcks: read.orphanAcks, invalidAcks: read.invalidAcks });
+  }
+  return { state: degraded ? 'degraded' : 'healthy', sessions };
+}
+
+/**
  * The same drop inbox `runEmailDropOnce` scans, resolved at the shared runs
  * dir: saved email-drop config → `inboxDir` → `readEmailDropInbox`. A missing
  * config or inbox dir is 'missing' (the pass treats an absent inbox as an
@@ -3831,6 +4025,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const sendGate = sendGateItems(options.readKillSwitch ?? readKillSwitch, options.probePause ?? probePauseState);
   const routerQueue = await routerQueueItems(options.readRouterQueue ?? readRouterQueueSource, options);
   const channelHealth = await channelHealthItems(options);
+  const guidance = await guidanceItems(options.readGuidance ?? readGuidanceSource, options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -3867,8 +4062,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'send-gate': sendGate.report,
     'router-queue': routerQueue.report,
     'channel-health': channelHealth.report,
+    guidance: guidance.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items, ...guidance.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
