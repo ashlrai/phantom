@@ -158,9 +158,10 @@ legacy routing, not a measured zero) and its last measured hold as
 command that restores each expired node's last advertised profile and keeps it
 live (the same hint a session-expired error prints; the join-managed
 `phm-<version>` build marker is left out because join re-derives it), annotate each node whose advertised
-`phm-<version>` cap is not this build (`phm=behind`, `phm=ahead` or
-`phm=unreported` — beats never re-stamp caps, so a node that outlived an
-upgrade reads as behind) and point at `phm node self-update --owner <scope>`
+`phm-<version>` cap is not this build (`phm=behind`, `phm=ahead`,
+`phm=unreported`, or `phm=unknown` when this machine's own version cannot be
+determined and no `--target` applies — beats never re-stamp caps, so a node
+that outlived an upgrade reads as behind) and point at `phm node self-update --owner <scope>`
 when any node drifted, mark producer withdrawals, carry the
 same fix `phm node plan` prints on a job that still has no taker, and an
 empty scope says so with the join command; `enqueue` says when the job id already
@@ -300,7 +301,10 @@ the node's own build replaces any stale `phm-*` cap copied into `--caps`).
 `phm node self-update --owner <scope> --json` compares every node against this
 machine's version (or `--target x.y.z`) and prints a plan. It is plan only: it
 never updates or restarts a node. A node showing `unreported` predates this or
-has not rejoined. Update primary and backup first, then workers.
+has not rejoined; a node showing `unknown` reported a build but no comparable
+target exists (this machine's version is unreadable and no `--target` was
+given), so drift is unmeasured rather than assumed current. Update primary and
+backup first, then workers.
 
 ## One fleet across enrolled Macs
 
