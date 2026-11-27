@@ -10,7 +10,7 @@
  */
 import { visibleWindows } from './provider-windows.js';
 
-export const USAGE_LIMITS_SCHEMA = 'usage.limits.v1';
+const USAGE_LIMITS_SCHEMA = 'usage.limits.v1' as const;
 
 type AccountState = 'checking' | 'observed' | 'signed-out' | 'unavailable';
 
@@ -100,7 +100,7 @@ export interface AccountLimitsRow {
 }
 
 export interface AccountLimitsReport {
-  schema: typeof USAGE_LIMITS_SCHEMA;
+  schema: 'usage.limits.v1';
   generatedAt: string;
   sampledAt: string;
   /** Where the windows came from: collector, shared-evidence, baseline or none. */

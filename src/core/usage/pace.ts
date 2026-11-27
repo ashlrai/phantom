@@ -1,13 +1,16 @@
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { poolShareSnapshot, type PoolShareInput, type PoolShareSnapshot } from './runway.js';
+import {
+  USAGE_MAX_USED_PCT, USAGE_POOL_NAME, asUsageRecord, isFiniteUsageNumber, isUsageRecord,
+  parseDispatchStatus, parseUsageTimestampMs, poolShareSnapshot, type PoolShareInput, type PoolShareSnapshot,
+} from './runway.js';
 
 export const PACE_POOLS = ['zai', 'gemini', 'claude', 'codex-personal'] as const;
 export interface PaceRow { pool: string; projectedPercent: number | null; hoursLeft: number | null; recommendedSlots: number | null;
   /** 100 - projectedPercent, integer; null whenever the projection is unknown. */
   unusedPercent: number | null }
-const POOL_NAME = /^[a-z0-9][a-z0-9._-]{0,39}$/;
+const POOL_NAME = USAGE_POOL_NAME;
 const MAX_POOLS = 24;
 
 /** The fixed core pools first, then every other budgeted lane with a use_it_all object, by name. */
@@ -21,8 +24,8 @@ function paceLaneNames(budget: Record<string, unknown>): string[] {
 export interface PaceSnapshot { v: 1; asOf: string | null; pools: PaceRow[];
   /** Per-pool runway verdict and suggested share of new work (`phm fleet pools --json`), from the same readings. */
   shares: PoolShareSnapshot }
-const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
-const number = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const object = isUsageRecord;
+const number = isFiniteUsageNumber;
 
 export interface PaceTargetInput {
   usedPercent: number; hoursLeft: number; burnPerHour: number; running: number;
@@ -62,23 +65,18 @@ function shareInput(pool: string, lane: unknown, now: number, fresh: boolean): P
   }
   const pace = object(lane) && object(lane.use_it_all) ? lane.use_it_all : {};
   if (pace.known !== true || pace.stale !== false) return { ...empty, unit: pool === 'claude-api' ? 'usd' : 'percent', reason: pace.stale === true ? 'reading stale' : 'no reading' };
-  const resetMs = typeof pace.reset_at === 'string' ? Date.parse(pace.reset_at) : number(pace.reset_at) && Math.abs(pace.reset_at) <= 8.64e12 ? pace.reset_at * 1000 : NaN;
+  const resetMs = parseUsageTimestampMs(pace.reset_at);
   const hours = Number.isFinite(resetMs) ? (resetMs - now) / 3_600_000 : number(pace.hours_to_reset) && Math.abs(now + pace.hours_to_reset * 3_600_000) <= 8.64e15 ? pace.hours_to_reset : null;
   // Overage readings above 1000% are malformed, as in spend.ts and runway-read.ts.
-  return { pool, resetAt: Number.isFinite(resetMs) ? new Date(resetMs).toISOString() : hours !== null ? new Date(now + hours * 3_600_000).toISOString() : null, usedPercent: number(pace.used_pct) && pace.used_pct <= 1000 ? pace.used_pct : null,
+  return { pool, resetAt: Number.isFinite(resetMs) ? new Date(resetMs).toISOString() : hours !== null ? new Date(now + hours * 3_600_000).toISOString() : null, usedPercent: number(pace.used_pct) && pace.used_pct <= USAGE_MAX_USED_PCT ? pace.used_pct : null,
     burnPerHour: number(pace.burn_pct_per_hour) ? pace.burn_pct_per_hour : null,
     hoursToReset: hours };
 }
 
 /** A controller tick may republish a stale reading; both freshness checks are required. */
 export function projectUsagePace(raw: unknown, now = Date.now()): PaceSnapshot {
-  const status = object(raw) ? raw : {};
-  const tick = typeof status.last_tick === 'string' ? Date.parse(status.last_tick) : NaN;
-  const fresh = status.schema === 'dispatchd.status.v1' && Number.isFinite(tick) && now >= tick && now - tick <= 120_000;
-  const budget = object(status.budget) ? status.budget : {};
-  const lanes = object(status.lanes) ? status.lanes : {};
-  const admission = object(status.admission) ? status.admission : {};
-  const asOf = Number.isFinite(tick) ? new Date(tick).toISOString() : null;
+  const { status, fresh, asOf, budget, lanes } = parseDispatchStatus(raw, now);
+  const admission = asUsageRecord(status.admission);
   const names = fresh ? paceLaneNames(budget) : [...PACE_POOLS];
   const shareNames = [...new Set([...PACE_POOLS, 'claude-api', ...Object.keys(budget).filter(name => name !== 'codex-cmp' && POOL_NAME.test(name)).sort()])].slice(0, MAX_POOLS);
   const shares = poolShareSnapshot(shareNames.map(pool => shareInput(pool, budget[pool], now, fresh)), asOf);
@@ -98,7 +96,12 @@ export function projectUsagePace(raw: unknown, now = Date.now()): PaceSnapshot {
   }) };
 }
 
-export async function readUsagePace(path = join(homedir(), '.ashlr-runs', 'queue', 'status.json'), openFile: typeof open = open): Promise<PaceSnapshot> {
+export function defaultDispatchStatusPath(runsDir = join(homedir(), '.ashlr-runs')): string {
+  return join(runsDir, 'queue', 'status.json');
+}
+
+/** The dispatchd status file, read with a 1 MiB bound (also when the file grows); null when missing, oversized or not JSON. */
+export async function readDispatchStatus(path: string, openFile: typeof open = open): Promise<unknown> {
   try {
     const handle = await openFile(path, 'r');
     try {
@@ -109,9 +112,12 @@ export async function readUsagePace(path = join(homedir(), '.ashlr-runs', 'queue
         if (bytesRead === 0) break;
         length += bytesRead;
       }
-      if (length > 1024 * 1024) return projectUsagePace(null);
-      const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length));
-      return projectUsagePace(JSON.parse(text) as unknown);
+      if (length > 1024 * 1024) return null;
+      return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length))) as unknown;
     } finally { await handle.close(); }
-  } catch { return projectUsagePace(null); }
+  } catch { return null; }
+}
+
+export async function readUsagePace(path = defaultDispatchStatusPath(), openFile: typeof open = open): Promise<PaceSnapshot> {
+  return projectUsagePace(await readDispatchStatus(path, openFile));
 }

@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runSelfRefresh } from '../core/fabric/lane-usage-self-io.js';
 import { SELF_LANES, type SelfLane } from '../core/fabric/lane-usage-self.js';
+import { hasCodexPathSegment } from '../core/usage/live/browser.js';
 
 /**
  * One-shot lane usage refresh for launchd or the bridge: reads each lane's sanctioned source,
@@ -21,7 +22,7 @@ export async function runUsageSelf(argv: string[]): Promise<string> {
     else throw new Error('Usage: [--runs-dir ABS_PATH] [--codex-personal-home ABS_PATH] [--lane LANE]... [--dry-run]');
   }
   if (!isAbsolute(runsDir) || codexPersonalHome !== undefined && !isAbsolute(codexPersonalHome)) throw new Error('Paths must be absolute');
-  if (codexPersonalHome && /(?:^|\/)\.codex[^/]*(?:\/|$)/.test(resolve(codexPersonalHome))) throw new Error('A ~/.codex* path is never read');
+  if (codexPersonalHome && hasCodexPathSegment(resolve(codexPersonalHome))) throw new Error('A ~/.codex* path is never read');
   const r = await runSelfRefresh({ runsDir, nowMs: Date.now, dryRun, ...(codexPersonalHome ? { codexPersonalHome } : {}), ...(lanes.length ? { lanes } : {}) });
   return JSON.stringify({ dryRun, lanes: r.outcomes.map(o => ({ lane: o.lane, action: o.action,
     weekly_used_pct: o.entry?.weekly_used_pct ?? null, reset_at: o.entry?.reset_at ?? null,

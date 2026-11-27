@@ -6,16 +6,14 @@
  * staleness rule: a row past its bound is unknown, not room. This module only
  * reads. It never writes the sidecar.
  */
-import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { defaultUsageRunsDir } from '../live/browser.js';
+import { nonNegativeUsageNumber } from '../runway.js';
 import {
   USAGE_SENSOR_STALE_MS, usageSensorReadingSchema, type UsageSensorReading,
 } from '../sensor-reading.js';
-import { parseResourceLiveSidecar, readResourceLiveFile } from './store.js';
-import { RESOURCE_LIVE_ALLOWANCES, type ResourceLiveReading } from './types.js';
+import { parseResourceLiveSidecar, readResourceHistoryFile, readResourceLiveFile } from './store.js';
+import { RESOURCE_LIVE_ALLOWANCES, type LaneHistory, type ResourceLiveReading } from './types.js';
 import { projectLaneHistory } from './history.js';
-import { readResourceHistoryFile } from './store.js';
-import type { LaneHistory } from './types.js';
 
 /** Pacing keys the world model reads from a sensor row. */
 export interface ResourceLivePaceRow {
@@ -61,10 +59,6 @@ function sensorRow(reading: ResourceLiveReading): UsageSensorReading | null {
   return parsed.success ? parsed.data : null;
 }
 
-function finite(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-}
-
 /** Project a stored sidecar. A missing or malformed file yields nothing. */
 export function projectResourceLiveFeed(raw: unknown, nowMs: number): ResourceLiveFeed {
   const sidecar = parseResourceLiveSidecar(raw);
@@ -81,9 +75,9 @@ export function projectResourceLiveFeed(raw: unknown, nowMs: number): ResourceLi
       const lane = reading ? sensorLane(reading.id) : null;
       const factor = reading ? scale(reading) : null;
       if (!reading || !lane || factor === null) continue;
-      const required = finite(row['target_rate_per_hour']);
-      const observed = finite(row['observed_rate_per_hour']);
-      const remaining = finite(row['remaining']);
+      const required = nonNegativeUsageNumber(row['target_rate_per_hour']);
+      const observed = nonNegativeUsageNumber(row['observed_rate_per_hour']);
+      const remaining = nonNegativeUsageNumber(row['remaining']);
       pace.push({
         lane,
         pacePerHour: observed === null ? null : observed * factor,
@@ -96,8 +90,7 @@ export function projectResourceLiveFeed(raw: unknown, nowMs: number): ResourceLi
 }
 
 export function defaultResourceLiveRunsDir(): string {
-  const configured = process.env['ASHLR_RUNS_DIR'];
-  return configured && isAbsolute(configured) ? configured : join(homedir(), '.ashlr-runs');
+  return defaultUsageRunsDir();
 }
 
 /** Live sensor rows and pacing from the sidecar. Never throws. */

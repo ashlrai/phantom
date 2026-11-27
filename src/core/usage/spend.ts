@@ -6,16 +6,19 @@
  * This module is in the Tier-1 import closure (test/fixtures/authority/
  * tier1-closure.json): add no imports here without that review.
  */
-import { open } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { PACE_POOLS } from './pace.js';
+import { PACE_POOLS, defaultDispatchStatusPath, readDispatchStatus } from './pace.js';
+import {
+  USAGE_MAX_USED_PCT, isFiniteUsageNumber, isUsageRecord, parseDispatchStatus,
+  parseUsageTimestampMs, roundUsage, runwayHours,
+} from './runway.js';
+
+export { readDispatchStatus };
 
 /** behind = a measured share would go unused at reset; sorted first. */
 export type SpendVerdict = 'behind' | 'on-pace' | 'used-up' | 'expired' | 'unknown';
 /** The one status word every surface prints. used-up and expired both read exhausted. */
 export type SpendStatus = 'on-pace' | 'behind' | 'exhausted' | 'unknown';
-export const USAGE_SPEND_SCHEMA = 'usage.spend.v1' as const;
+const USAGE_SPEND_SCHEMA = 'usage.spend.v1' as const;
 export interface SpendRow {
   pool: string;
   /** 'percent' for a subscription window, 'usd' for a credit or gift balance (`budget.<lane>.gift`). */
@@ -44,7 +47,7 @@ export interface SpendRow {
   resetsIn: string | null;
 }
 export interface SpendSnapshot {
-  schema: typeof USAGE_SPEND_SCHEMA; v: 1; asOf: string | null;
+  schema: 'usage.spend.v1'; v: 1; asOf: string | null;
   /** One plain sentence: the pool that will waste the most, or why nothing is known. */
   headline: string;
   pools: SpendRow[];
@@ -55,22 +58,18 @@ const HOUR_MS = 3_600_000;
 const SPEND_POOLS = ['codex-personal', 'claude', 'claude-api', 'devin', 'zai', 'local', ...PACE_POOLS];
 /** A gift or credit reading older than a day is stale (matches TYPED_MAX_AGE_MS in resources/lane-autopilot.ts). */
 const GIFT_MAX_AGE_MS = 24 * HOUR_MS;
-/** Overage readings above this are malformed, not measured. */
-const MAX_USED_PCT = 1000;
-const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
-const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const MAX_USED_PCT = USAGE_MAX_USED_PCT;
+const object = isUsageRecord;
+const num = isFiniteUsageNumber;
 const usd = (v: unknown): number | null => {
   const n = typeof v === 'string' && /^\d+(?:\.\d+)?$/.test(v.trim()) ? Number(v) : v;
   return num(n) && n >= 0 ? n : null;
 };
-const time = (v: unknown): number => typeof v === 'string' ? Date.parse(v) : num(v) ? v * 1000 : NaN;
-const round1 = (n: number): number => Math.round(n * 10) / 10;
+const time = parseUsageTimestampMs;
+const round1 = (n: number): number => roundUsage(n, 1);
 
 export function spendCountdown(hours: number | null): string | null {
-  if (hours === null || !(hours > 0)) return null;
-  const minutes = Math.floor(hours * 60);
-  const d = Math.floor(minutes / 1440); const h = Math.floor(minutes % 1440 / 60); const m = minutes % 60;
-  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+  return hours === null || !(hours > 0) ? null : runwayHours(hours);
 }
 
 function blank(pool: string, unit: SpendRow['unit'], reason: string): SpendRow {
@@ -160,10 +159,7 @@ export function spendHeadline(pools: readonly SpendRow[]): string {
 
 /** Rows sorted behind-first with the largest projected waste on top, then unknown; soonest reset first after that. */
 export function projectUsageSpend(raw: unknown, now = Date.now()): SpendSnapshot {
-  const status = object(raw) ? raw : {};
-  const tick = typeof status.last_tick === 'string' ? Date.parse(status.last_tick) : NaN;
-  const fresh = status.schema === 'dispatchd.status.v1' && Number.isFinite(tick) && now >= tick && now - tick <= 120_000;
-  const budget = object(status.budget) ? status.budget : {};
+  const { fresh, asOf, budget } = parseDispatchStatus(raw, now);
   const names = [...new Set([...SPEND_POOLS, ...Object.keys(budget).filter(k => k !== 'codex-cmp' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(k))])];
   const pools = names.map(pool => {
     const lane = object(budget[pool]) ? budget[pool] : {};
@@ -171,26 +167,9 @@ export function projectUsageSpend(raw: unknown, now = Date.now()): SpendSnapshot
       ? giftRow(pool, object(lane.gift) ? lane.gift : {}, fresh, now) : percentRow(pool, lane, fresh, now);
   }).sort((a, b) => ORDER[a.verdict] - ORDER[b.verdict] || (a.verdict === 'behind' ? wasteShare(b) - wasteShare(a) : 0)
     || (a.hoursLeft ?? Infinity) - (b.hoursLeft ?? Infinity) || a.pool.localeCompare(b.pool));
-  return { schema: USAGE_SPEND_SCHEMA, v: 1, asOf: Number.isFinite(tick) ? new Date(tick).toISOString() : null, headline: spendHeadline(pools), pools };
-}
-/** The dispatchd status file, read with a 1 MiB bound (also when the file grows); null when missing, oversized or not JSON. */
-export async function readDispatchStatus(path: string): Promise<unknown> {
-  try {
-    const file = await open(path, 'r');
-    try {
-      const bytes = Buffer.alloc(1024 * 1024 + 1);
-      let length = 0;
-      while (length < bytes.length) {
-        const { bytesRead } = await file.read(bytes, length, bytes.length - length, null);
-        if (bytesRead === 0) break;
-        length += bytesRead;
-      }
-      if (length === bytes.length) return null;
-      return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length))) as unknown;
-    } finally { await file.close(); }
-  } catch { return null; }
+  return { schema: USAGE_SPEND_SCHEMA, v: 1, asOf, headline: spendHeadline(pools), pools };
 }
 
-export async function readUsageSpend(path = join(homedir(), '.ashlr-runs', 'queue', 'status.json'), now = Date.now()): Promise<SpendSnapshot> {
+export async function readUsageSpend(path = defaultDispatchStatusPath(), now = Date.now()): Promise<SpendSnapshot> {
   return projectUsageSpend(await readDispatchStatus(path), now);
 }

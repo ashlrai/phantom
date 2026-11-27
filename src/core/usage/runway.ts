@@ -70,9 +70,46 @@ export interface RunwaySnapshot {
   shares?: PoolShareSnapshot;
 }
 
-const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-const round1 = (n: number): number => Math.round(n * 10) / 10;
-const round2 = (n: number): number => Math.round(n * 100) / 100;
+export const USAGE_POOL_NAME = /^[a-z0-9][a-z0-9._-]{0,39}$/;
+/** Overage readings above this are malformed, not measured. */
+export const USAGE_MAX_USED_PCT = 1000;
+const DISPATCH_STATUS_FRESH_MS = 120_000;
+
+export const isUsageRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+export const asUsageRecord = (value: unknown): Record<string, unknown> => (isUsageRecord(value) ? value : {});
+export const isFiniteUsageNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+export const nonNegativeUsageNumber = (value: unknown): number | null =>
+  isFiniteUsageNumber(value) && value >= 0 ? value : null;
+export const roundUsage = (value: number, places = 1): number => {
+  const scale = 10 ** places;
+  return Math.round(value * scale) / scale;
+};
+export const isCanonicalIsoTimestamp = (value: unknown): value is string => {
+  if (typeof value !== 'string') return false;
+  const time = Date.parse(value);
+  return Number.isFinite(time) && new Date(time).toISOString() === value;
+};
+/** Parse an ISO timestamp or bounded epoch seconds (within JS Date range) to epoch ms; NaN otherwise. */
+export const parseUsageTimestampMs = (value: unknown): number =>
+  typeof value === 'string' ? Date.parse(value) : isFiniteUsageNumber(value) && Math.abs(value) <= 8.64e12 ? value * 1000 : NaN;
+
+/** Parse the dispatcher's `dispatchd.status.v1` envelope and evaluate tick freshness. */
+export function parseDispatchStatus(raw: unknown, now: number, freshMs = DISPATCH_STATUS_FRESH_MS) {
+  const status = asUsageRecord(raw);
+  const tick = typeof status.last_tick === 'string' ? Date.parse(status.last_tick) : NaN;
+  const fresh = status.schema === 'dispatchd.status.v1' && Number.isFinite(tick) && now >= tick && now - tick <= freshMs;
+  return {
+    status, tick, fresh,
+    asOf: Number.isFinite(tick) ? new Date(tick).toISOString() : null,
+    budget: asUsageRecord(status.budget),
+    lanes: asUsageRecord(status.lanes),
+  };
+}
+
+const round1 = (n: number): number => roundUsage(n, 1);
+const round2 = (n: number): number => roundUsage(n, 2);
 /** "3d 4h", "5h 12m", "40m"; same shape as spend.ts spendCountdown. */
 export function runwayHours(hours: number): string {
   if (!(hours > 0)) return 'now';
@@ -84,9 +121,9 @@ const hoursText = runwayHours;
 
 /** The pure verdict for one pool. A missing reading makes the state unknown; nothing is inferred. */
 export function runway(input: RunwayInput): PoolRunway {
-  const used = num(input.usedPercent) && input.usedPercent >= 0 ? input.usedPercent : null;
-  const burn = num(input.burnPerHour) && input.burnPerHour >= 0 ? input.burnPerHour : null;
-  const reset = num(input.hoursToReset) && input.hoursToReset > 0 ? input.hoursToReset : null;
+  const used = nonNegativeUsageNumber(input.usedPercent);
+  const burn = nonNegativeUsageNumber(input.burnPerHour);
+  const reset = isFiniteUsageNumber(input.hoursToReset) && input.hoursToReset > 0 ? input.hoursToReset : null;
   const base: PoolRunway = { pool: input.pool, state: 'unknown', usedPercent: used, burnPerHour: burn, hoursToEmpty: null,
     hoursToReset: reset === null ? null : round2(reset), idleHours: null, unusedAtResetPercent: null, safeBurnPerHour: null, reason: null, advice: '' };
   const missing = used === null ? 'no usage reading' : reset === null ? 'reset time unknown' : null;
@@ -146,7 +183,7 @@ export function sortRunways(pools: readonly PoolRunway[]): PoolRunway[] {
 
 /** Wire guard for clients: a reply that is not pool.runway.v1 is treated as unknown, never rendered. */
 export function isRunwaySnapshot(value: unknown): value is RunwaySnapshot {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!isUsageRecord(value)) return false;
   const v = value as Partial<RunwaySnapshot>;
   return v.schema === POOL_RUNWAY_SCHEMA && v.v === 1 && typeof v.headline === 'string' && Array.isArray(v.pools)
     && v.pools.every(row => row !== null && typeof row === 'object' && typeof row.pool === 'string'
@@ -163,11 +200,11 @@ export function isRunwaySnapshot(value: unknown): value is RunwaySnapshot {
  *   on_pace   neither.
  *   unknown   any reading is missing, or the reset time has already passed. Never guessed.
  */
-export const POOL_SHARE_SCHEMA = 'fleet.pools.v1' as const;
+const POOL_SHARE_SCHEMA = 'fleet.pools.v1' as const;
 export type PoolShareState = 'starving' | 'wasting' | 'on_pace' | 'unknown';
 export const POOL_SHARE_STATES: readonly PoolShareState[] = ['wasting', 'on_pace', 'starving', 'unknown'];
-export const POOL_STARVING_RUNWAY_SHARE = 0.8;
-export const POOL_WASTING_PROJECTED_PERCENT = 90;
+const POOL_STARVING_RUNWAY_SHARE = 0.8;
+const POOL_WASTING_PROJECTED_PERCENT = 90;
 
 export interface PoolShareInput {
   pool: string;
@@ -209,7 +246,7 @@ export interface PoolShare {
 }
 
 export interface PoolShareSnapshot {
-  schema: typeof POOL_SHARE_SCHEMA;
+  schema: 'fleet.pools.v1';
   asOf: string | null;
   /** The pool that should take the next ordinary job; null when no pool is known to have room. */
   next_pool: string | null;
@@ -234,9 +271,9 @@ const wholeHours = (n: number): string => `${Math.max(0, Math.round(n))} h`;
  */
 export function planPoolShares(inputs: readonly PoolShareInput[]): PoolShare[] {
   const rows = inputs.map(input => {
-    const used = num(input.usedPercent) && input.usedPercent >= 0 ? input.usedPercent : null;
-    const burn = num(input.burnPerHour) && input.burnPerHour >= 0 ? input.burnPerHour : null;
-    const hours = num(input.hoursToReset) ? input.hoursToReset : null;
+    const used = nonNegativeUsageNumber(input.usedPercent);
+    const burn = nonNegativeUsageNumber(input.burnPerHour);
+    const hours = isFiniteUsageNumber(input.hoursToReset) ? input.hoursToReset : null;
     const reason = input.reason ?? (used === null ? 'no usage reading' : burn === null ? 'no burn rate yet'
       : hours === null ? 'reset time unknown' : hours <= 0 ? 'reset already passed; waiting for a new reading' : null);
     const base = { pool: input.pool, reset_at: input.resetAt ?? null, burn_pct_per_hour: burn,
