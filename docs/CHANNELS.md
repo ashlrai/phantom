@@ -666,7 +666,29 @@ source — every READY row still lists but its launch state is
 unproven, and the detail says so — an absent queue file is `missing`
 (verified-empty: no READY rows can exist) and an unreadable one
 `unavailable`, never an empty queue passed off as fact; deep links
-`phm queue stuck`, `phm fleet unfed --json`, `phm queue`) — and owner-channel
+`phm queue stuck`, `phm fleet unfed --json`, `phm queue`) — and running
+jobs that are not really running (the same `readStuckJobs`/`jobs.stuck.v1`
+read `phm jobs stuck` and the `--stuck` pass of `phm fleet stray-stop`
+serve, over the dispatchd run markers — `queue/run/<job>.line` open,
+`.fin` absent — so the surfaces can never disagree: until now a dead or
+hung job held its lane's running count — every status, vitals and
+capacity read inflated — while no pending surface named it, since the
+bus, feed, board, queue and channel sources all look at work not yet
+claimed or refused, never at markers that claim a run which is not
+happening; a GHOST — the recorded pid is gone while the marker still
+claims the lane's running slot — lists as warn `stuck-ghost` and STUCK —
+started over 90 minutes ago with the log silent for 30 — as warn
+`stuck-job`, each naming the job id `phm jobs stuck` prints, `since` the
+recorded start reconstructed at the report's whole-minute precision
+(null when the marker kept none — age unknown stays unknown) and
+`expiresAt` null, since a lying marker waits for stray-stop or a finish,
+never a guessed deadline; an unlistable marker directory is `unavailable`
+— the stuck set is unknown, never an empty list passed off as fact —
+unless `queue/run` is verified absent, which is `missing` (no job can
+count as running, so nothing can be stuck); the read never writes —
+closing a ghost marker or stopping a stuck job is `phm fleet stray-stop
+--stuck --apply`'s job, which the self-tick also runs; deep links `phm
+jobs stuck`, `phm fleet stray-stop --stuck --apply`) — and owner-channel
 transport health (the slack and iMessage bridges through `readChannelHealth`
 — the same projection `phm fleet channel-health` and `phm channels` serve —
 plus the Telegram poller through `telegramEnabled` + `readTelegramHealth`,
@@ -710,7 +732,8 @@ status`, `phm owner pair imessage`, `phm fleet
 coordination board`, `phm fleet coordination inbox --agent`, `phm fleet
 claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`,
 `phm agents bus status`, `phm fleet status`, `phm fleet resume`, `phm
-queue stuck`, `phm fleet unfed --json`, `phm queue`, `phm fleet
+queue stuck`, `phm fleet unfed --json`, `phm queue`, `phm jobs stuck`,
+`phm fleet stray-stop --stuck --apply`, `phm fleet
 channel-health`, `phm channels slack status`, `phm imessage doctor`, `phm
 comms health --json`, `phm comms cycle`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
@@ -727,8 +750,8 @@ that provably name that job — a bus, mailbox or peer-mail body's
 delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job, a
 seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
-peer-dispatch receipt's job, a session-handoff journal's job id or a
-router-queue row's own READY id —
+peer-dispatch receipt's job, a session-handoff journal's job id, a
+router-queue row's own READY id or a jobs-stuck marker's own job id —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound

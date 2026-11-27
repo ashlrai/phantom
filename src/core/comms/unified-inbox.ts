@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirty-six local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates thirty-seven local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -600,6 +600,34 @@
  *               The job id is the item's own citation, so `--job` matches.
  *               Act: `phm queue stuck`, `phm fleet unfed --json`,
  *               `phm queue`.
+ *   jobs-stuck  running jobs that are not really running — the same
+ *               `readStuckJobs`/`jobs.stuck.v1` read `phm jobs stuck` and
+ *               the `--stuck` pass of `phm fleet stray-stop` serve, over
+ *               the dispatchd run markers (`queue/run/<job>.line` open,
+ *               `.fin` absent): a GHOST — the recorded pid is gone while
+ *               the marker still claims the lane's running slot — and
+ *               STUCK — started over 90 minutes ago with the log silent
+ *               for 30. Until now a dead or hung job held its lane's
+ *               running count — every status, vitals and capacity read
+ *               inflated — while no pending surface named it: the bus,
+ *               feed, board, queue and channel sources all look at work
+ *               not yet claimed or refused, never at markers that claim
+ *               a run which is not happening. Each row lists as a warn
+ *               `stuck-ghost`/`stuck-job` naming the job id — the same
+ *               label `phm jobs stuck` prints — `since` the recorded
+ *               start reconstructed at the report's whole-minute
+ *               precision (null when the marker kept none — age unknown
+ *               stays unknown) and `expiresAt` null: a lying marker
+ *               waits for stray-stop or a finish, never a guessed
+ *               deadline. The job id is the item's own citation, so
+ *               `--job` matches. The marker directory unreadable is
+ *               'unavailable' — the stuck set is unknown, never an
+ *               empty list passed off as fact — unless `queue/run` is
+ *               verified absent, which is 'missing' (no job can count
+ *               as running, so nothing can be stuck). The stray-stop /
+ *               self-tick remediation is the act, never this read.
+ *               Act: `phm jobs stuck`, `phm fleet stray-stop --stuck
+ *               --apply`.
  *   channel-health  owner-channel transport health — the slack and
  *               iMessage bridges through `readChannelHealth` (the same
  *               projection `phm fleet channel-health` and `phm channels`
@@ -711,6 +739,7 @@ import { listWorkBoard, WORK_BOARD_MAX_LIMIT, type WorkBoardResult } from './wor
 import type { WorkItemState } from './work-item-state.js';
 import { readKillSwitch, type KillSwitchReadResult } from '../sandbox/policy.js';
 import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
+import { readStuckJobs, type StuckJob as RunningStuckJob, type StuckJobsReport } from '../fleet/running-stuck.js';
 import { readChannelHealth } from '../fleet/channel-health.js';
 import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
 
@@ -727,7 +756,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'owner-delivery', 'owner-pair', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'peer-inbox', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
-  'send-gate', 'router-queue', 'channel-health',
+  'send-gate', 'router-queue', 'jobs-stuck', 'channel-health',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -756,6 +785,7 @@ export const UNIFIED_INBOX_KINDS = [
   'coordination-message', 'coordination-assignment', 'coordination-return-unposted',
   'claim-drift-bus', 'claim-drift-coordination', 'claim-drift-owner',
   'send-gate-kill', 'send-gate-pause', 'router-queue-job',
+  'stuck-ghost', 'stuck-job',
   'channel-blocked', 'channel-degraded', 'channel-unknown',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
@@ -784,7 +814,8 @@ export interface UnifiedInboxItem extends AttentionItem {
    * the job-carrying-thread rule `BusBoard.pendingFor` applies), a
    * conversation thread's `jobs`, a teammate task's `jobId`, a seat handoff's
    * node-job refs, a peer-dispatch receipt's peer-announced `jobId`, a
-   * session-handoff journal's job id, or a router-queue row's own READY id.
+   * session-handoff journal's job id, a router-queue row's own READY id, or
+   * a jobs-stuck marker's own job id.
    * Absent when the item names no job — unknown stays out of a
    * `--job` match rather than being guessed in.
    */
@@ -908,6 +939,17 @@ export interface MailboxPendingRead {
 export interface RouterQueueStuckRead {
   state: UnifiedInboxSourceState;
   jobs: readonly StuckJob[];
+}
+
+/** The resolved jobs-stuck read: `readStuckJobs`'s ghost/stuck rows mapped
+ * onto the unified source states — 'missing' a verified-absent run-marker
+ * directory (`queue/run` itself missing: no job can count as running, so
+ * nothing can be stuck), 'unavailable' any other read failure (the stuck
+ * set is unknown, never an empty list), 'healthy' the full read. `jobs`
+ * stays empty whenever the state is 'missing'/'unavailable'. */
+export interface JobsStuckSourceRead {
+  state: UnifiedInboxSourceState;
+  jobs: readonly RunningStuckJob[];
 }
 
 /** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
@@ -1055,6 +1097,10 @@ export interface UnifiedInboxOptions {
    * `dispatch-events.log` through `readStuckQueue` — the same bounded read
    * `phm queue stuck` and the desktop Queue view serve. */
   readRouterQueue?: (options: { runsDir?: string; now?: () => number }) => Promise<RouterQueueStuckRead>;
+  /** Jobs-stuck seam; default reads `<runsDir>/queue/run` markers through
+   * `readStuckJobs` — the same bounded read `phm jobs stuck` and the
+   * `--stuck` pass of `phm fleet stray-stop` serve. */
+  readJobsStuck?: (options: { runsDir?: string; now?: () => number }) => Promise<JobsStuckSourceRead>;
   /** Channel-health seam; default reads `readChannelHealth` — the same
    * slack/imessage bridge projection `phm fleet channel-health` and
    * `phm channels` serve. */
@@ -3899,6 +3945,78 @@ async function readRouterQueueSource(options: { runsDir?: string; now?: () => nu
   }
 }
 
+/**
+ * Running jobs that are not really running — dispatchd run markers
+ * (`queue/run/<job>.line` open, `.fin` absent) whose recorded pid is gone
+ * (GHOST) or whose log has been silent past the stuck bound (STUCK) — the
+ * same `readStuckJobs`/`jobs.stuck.v1` read `phm jobs stuck` and the
+ * `--stuck` pass of `phm fleet stray-stop` serve, so this source and those
+ * surfaces can never disagree. Until now a dead or hung job held its
+ * lane's running count — every status, vitals and capacity read inflated —
+ * while no pending surface named it: the bus, feed, board, queue and
+ * channel sources all look at work not yet claimed or refused, never at
+ * markers that claim a run which is not happening. Each row lists as a
+ * warn `stuck-ghost`/`stuck-job` naming the job id (the same label
+ * `phm jobs stuck` prints), `since` the recorded start reconstructed at
+ * the report's whole-minute precision (`age_min` floors to minutes, so
+ * the reconstructed start can sit up to a minute late; `age_min` null —
+ * the marker kept no start — leaves `since` null rather than guessing)
+ * and `expiresAt` null: a lying marker waits for stray-stop or a finish,
+ * never a guessed deadline. The job id is the item's own citation, so
+ * `--job` matches. The read itself never writes: closing a ghost marker
+ * or stopping a stuck job is `phm fleet stray-stop --stuck --apply`'s
+ * job, which the self-tick also runs.
+ */
+async function jobsStuckItems(read: NonNullable<UnifiedInboxOptions['readJobsStuck']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: JobsStuckSourceRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const nowMs = (options.now ?? Date.now)();
+  const items = result.jobs.map((job): Omit<UnifiedInboxItem, 'priority'> => {
+    const ageMin = typeof job.age_min === 'number' && Number.isFinite(job.age_min) && job.age_min >= 0
+      ? job.age_min : null;
+    const ghost = job.kind === 'ghost';
+    return {
+      id: `jobs-stuck:${job.job}`,
+      source: 'jobs-stuck',
+      kind: ghost ? 'stuck-ghost' : 'stuck-job',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(ghost
+        ? `Job ${job.job} counted running but its process is gone`
+        : `Job ${job.job} running with a silent log`, TITLE_MAX),
+      detail: oneLine(`lane ${job.lane} · ${ageMin === null ? 'age unknown' : `age ${queueWaitLabel(ageMin * 60)}`} · last log ${job.last_log_at ?? 'none'} · ${job.why}`, DETAIL_MAX) || null,
+      since: ageMin === null ? null : iso(nowMs - ageMin * 60_000),
+      expiresAt: null,
+      jobIds: [job.job],
+      act: ['phm jobs stuck', 'phm fleet stray-stop --stuck --apply'],
+    };
+  });
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real jobs-stuck read: `readStuckJobs` on the shared runs dir. The
+ * read itself never throws — an unlistable marker directory comes back
+ * `known:false`, which this maps by probing `queue/run`: verified absent
+ * is 'missing' (no job can count as running, so nothing can be stuck),
+ * anything else is 'unavailable' — the stuck set is unknown, never an
+ * empty list passed off as fact. */
+async function readJobsStuckSource(options: { runsDir?: string; now?: () => number }): Promise<JobsStuckSourceRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const report: StuckJobsReport = await readStuckJobs({ runsDir: dir, now: options.now });
+  if (report.known) return { state: 'healthy', jobs: report.stuck };
+  try {
+    lstatSync(join(dir, 'queue', 'run'));
+    return { state: 'unavailable', jobs: [] };
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? 'missing' : 'unavailable', jobs: [] };
+  }
+}
+
 /** Display label and deep links per channel-health leg; telegram's acts differ because its diagnostic is `phm comms health`, not `phm fleet channel-health`. */
 const channelHealthPresentation = (channel: string): { label: string; acts: readonly string[] } =>
   channel === 'slack'
@@ -4221,6 +4339,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const claimDrift = claimDriftItems(options.readClaimDrift ?? readClaimStoreDrift, options);
   const sendGate = sendGateItems(options.readKillSwitch ?? readKillSwitch, options.probePause ?? probePauseState);
   const routerQueue = await routerQueueItems(options.readRouterQueue ?? readRouterQueueSource, options);
+  const jobsStuck = await jobsStuckItems(options.readJobsStuck ?? readJobsStuckSource, options);
   const channelHealth = await channelHealthItems(options);
 
   const sources: UnifiedInbox['sources'] = {
@@ -4259,9 +4378,10 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'claim-drift': claimDrift.report,
     'send-gate': sendGate.report,
     'router-queue': routerQueue.report,
+    'jobs-stuck': jobsStuck.report,
     'channel-health': channelHealth.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
