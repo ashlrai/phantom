@@ -1,3 +1,4 @@
+import { canonicalJson } from '../authority/canonical-json.js';
 import { ledgerEventName } from './empty-cause.js';
 import { prKeyOf } from './eval-report.js';
 import { isNodePoolLedgerRow, ledgerEventTs, ledgerJobId } from './jobs-ledger-dialect.js';
@@ -131,10 +132,15 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
           ignored++;
           continue;
         }
-        // A dated receipt can be replayed verbatim. Preserve distinct lines
-        // even when the writer records multiple operations at the same time.
+        // Deduplicate complete dated receipts so distinct operations recorded
+        // at the same time keep their own samples.
         if (Number.isFinite(observation.end)) {
-          const receipt = line.trim();
+          let receipt = line.trim();
+          try {
+            receipt = canonicalJson(row);
+          } catch {
+            // Preserve exact-text deduplication when canonicalization fails.
+          }
           if (seenGitReceipts.has(receipt)) continue;
           seenGitReceipts.add(receipt);
         }
