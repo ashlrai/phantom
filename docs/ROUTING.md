@@ -835,7 +835,9 @@ identity across `url`, `pr_url`, `prUrl`, `pr` and `html_url`. Equivalent
 GitHub PR URLs count once. A PR-specific discount requires one distinct PR
 identity on the merge receipt and, for a ledger revert, on the revert receipt.
 Every valid PR reference counts when checking for competing standing revert
-claims. Ledger reverts without any PR reference retain job-level attribution.
+claims. A ledger revert with a repository label and no PR reference discounts
+a merge only when the reward resolves to that repository, ignoring case.
+Ledger reverts without either identity retain job-level attribution.
 The fold uses the recorded revert time when available and the receipt
 timestamp otherwise.
 Receipts for the same effective merge or close time retain all observed PR

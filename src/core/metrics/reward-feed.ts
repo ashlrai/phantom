@@ -213,7 +213,7 @@ interface RewardJobAccum {
   merge: ResolutionMark | null;
   /** Latest closed-unmerged resolution time, falling back to the row stamp. */
   close: ResolutionMark | null;
-  /** Latest effective revert per PR, with null for receipts lacking PR identity. */
+  /** Latest effective revert per PR or repository, with null for job-wide receipts. */
   reverts: Map<string | null, number>;
   /** Resolution evidence when the job has only a revert verdict. */
   latestRevert: ResolutionMark | null;
@@ -355,12 +355,13 @@ export function foldJobsLedgerRewards(
     }
     const revertedAtMs = explicitRevertMs ?? (hasRevertEvidence(row) ? at : null);
     if (revertedAtMs !== null && revertedAtMs <= nowMs) {
-      // Only a receipt without a PR reference can apply job-wide.
-      const key = prKeys.length === 1 ? prKeys[0]! : null;
-      if (key !== null || firstLedgerString(row, LEDGER_URL_KEYS) === null) {
+      const repo = repoOf(row, prKeys);
+      const pr = prKeys.length === 1 ? prKeys[0]! : null;
+      if (pr !== null || firstLedgerString(row, LEDGER_URL_KEYS) === null) {
+        const key = pr ?? repo ?? null;
         acc.reverts.set(key, Math.max(acc.reverts.get(key) ?? 0, revertedAtMs));
         acc.latestRevert = latestResolution(acc.latestRevert, {
-          resolvedMs: revertedAtMs, repo: repoOf(row, prKeys), prKeys,
+          resolvedMs: revertedAtMs, repo, prKeys,
         });
       }
     }
@@ -427,11 +428,15 @@ function rewardInput(
   if (acc.merge !== null) {
     const merge = acc.merge;
     const key = merge.prKeys.length === 1 ? merge.prKeys[0]! : null;
-    const revertedAt = Math.max(acc.reverts.get(null) ?? -Infinity, acc.reverts.get(key) ?? -Infinity);
-    const heldMerge = !acc.standingReverted && merge.resolvedMs > revertedAt;
     const dispatch = dispatchBefore(acc, merge.resolvedMs);
     if (dispatch === null) return null;
     const repo = merge.repo === undefined ? dispatch.repo : merge.repo;
+    const revertedAt = Math.max(
+      acc.reverts.get(null) ?? -Infinity,
+      acc.reverts.get(key) ?? -Infinity,
+      typeof repo === 'string' ? acc.reverts.get(repo) ?? -Infinity : -Infinity,
+    );
+    const heldMerge = !acc.standingReverted && merge.resolvedMs > revertedAt;
     return {
       jobId: id, pool: dispatch.lane, repo: repo ?? null,
       merged: heldMerge, dispatchedAt: iso(dispatch.ms), mergedAt: heldMerge ? iso(merge.resolvedMs) : null,
