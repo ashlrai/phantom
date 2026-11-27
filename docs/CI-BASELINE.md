@@ -48,6 +48,12 @@ A suite that fails to load (transform, parse, or collection error) prints
 `<file> > (suite)` identity, capture the suite's error line, and count as
 passing on master when the file shows any pass evidence -- the file loading
 and running is what resolves a suite failure.
+A verified master suite-load failure also blocks pass evidence for named
+cases in that file, even if another master job printed a case pass or a green
+module summary. The named case's master verdict stays `unknown` unless there
+is a failure for that exact case. This keeps singleton failures from being
+classified as probable flakes and shared failures from becoming ready for
+branch updates on conflicting suite evidence.
 The `ci` job's qualification lanes wrap the suite runs in
 `.github/scripts/ci-qualification-lane.mjs`, which re-reads each Vitest
 JSON report and refuses a case that passed only after a retry -- the

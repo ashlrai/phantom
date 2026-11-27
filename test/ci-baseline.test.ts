@@ -180,6 +180,29 @@ describe('CI baseline evidence', () => {
     });
     expect(report.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
   });
+  it.each([false, true])('withholds a named master pass after a same-file suite-load failure (file summary: %s)', async filePass => {
+    for (const count of [1, 2]) {
+      const { gh } = github({ count, pass: true, filePass, extraMasterJob: 'failure' });
+      const analyze = (file: string) => analyzeCiBaseline('owner/repo', async args => {
+        if (args[1]?.endsWith('/jobs/30/logs')) {
+          const stdout = `/usr/bin/git log -1 --format=%H\n${master}\n${fixture('suite-shared').replaceAll('test/example.test.ts', file)}`;
+          return { ok: true, stdout, stderr: '' };
+        }
+        return gh(args);
+      });
+      const conflicted = await analyze('test/example.test.ts');
+      expect(conflicted.master.known).toBe(true);
+      expect(conflicted.groups[0]).toMatchObject({
+        classification: count === 1 ? 'unknown' : 'shared-baseline',
+        action: count === 1 ? 'unknown' : 'queue-master-fix',
+        master: 'unknown',
+      });
+      expect(conflicted.updates.map(update => update.ready)).toEqual(count === 1 ? [] : [false, false]);
+
+      const unrelated = await analyze('test/other.test.ts');
+      expect(unrelated.groups[0]).toMatchObject({ master: 'pass' });
+    }
+  });
   it('excludes stale and unreadable or unrecognized logs', async () => {
     for (const options of [{ stale: true }, { unknown: true }, { unreadable: true }]) {
       const report = await analyzeCiBaseline('owner/repo', github(options).gh);
