@@ -221,8 +221,8 @@ phm node list --owner <scope> --json
 ```
 
 - Node ID defaults to the sanitized hostname. Repeating `phm node join --json` rechecks saved config without changing roles.
-- RAM slots reserve max(4 GiB, 30%), then budget 4 GiB per job: 8 GiB gives one slot, 16 GiB gives two.
-- Admission holds on available RAM below 30%, swap use, disk below 20 GB or unknown telemetry; pressure stops running work. Disk telemetry covers the home filesystem; the runner's DISKGUARD must cover checkout and artifact volumes.
+- RAM slots reserve max(4 GiB, 30%), then budget 1 GiB per advertised `codex-file` slot: 8 GiB gives 4 slots, 16 GiB gives 11, capped at 64; packs without a measured RAM estimate keep 4 GiB.
+- Admission holds on non-normal kernel memory pressure, unmeasured memory or disk telemetry, an unmeasured or exhausted host slot registry, free disk below 20 GB, or missing CPU headroom for cpu-bound packs; free-memory and swap readings are measured but not thresholded. Pressure stops running work. Disk telemetry covers the home filesystem; the runner's DISKGUARD must cover checkout and artifact volumes.
 - `phm node worker --runner /absolute/host-owned-runner --json` launches one bounded batch up to the RAM ceiling under one session, waits for every started slot and exits; there is no permanent supervisor.
 - `phm node rpc --json` is the SSH stdin endpoint. The backup witnesses every admission and promotes after fifteen minutes; a returning primary is demoted.
 - Share credential-free connector metadata and reviewed checkout MCP and skill files, never client auth. There is no automatic config synchronization, copied auth, new paid service, message send or worker publication.

@@ -108,18 +108,22 @@ combined into a larger model. No measured benefit establishes distributed or
 sharded inference, so join does not enable it. iPad Pro and phone remain mobile
 control surfaces only; do not install workers or advertise them as compute nodes.
 
-Reserve the larger of 4 GiB or 30% of RAM. A job slot budgets 4 GiB; the ceiling is
-`floor((RAM - reserve) / 4 GiB)`, capped at 64 slots. This gives one slot on an
-8 GiB Mac and two on a 16 GiB Mac. These are conservative admission ceilings,
-not measured throughput or promises that a particular workload fits.
+Reserve at least 4 GiB or 30% of RAM, whichever is larger. The advertised
+`codex-file` budget is 1 GiB per slot — `floor((RAM - reserve) / 1 GiB)`, capped
+at 64 — so an 8 GiB Mac advertises 4 slots and a 16 GiB Mac 11; packs without a
+measured RAM estimate keep the conservative 4 GiB budget. These are admission
+ceilings, not measured throughput or promises that a particular workload fits.
 
-Admission holds when available memory is below 30%, swap is in use, free disk is
-below 20 GB, or required telemetry is unavailable. Workers recheck capacity before
-pulling and immediately before starting the runner, then during execution; pressure
-stops the runner process groups. The disk sample covers the home filesystem;
-the runner's existing DISKGUARD must also cover checkout and artifact volumes.
-Retry after resources recover. Existing DISKGUARD, PAUSE, KILL, lease fencing and
-runner sandbox requirements still apply.
+Admission holds when kernel memory pressure is not normal, when memory or disk
+telemetry cannot be measured, when the host slot registry is unmeasured or
+exhausted, when free disk is below 20 GB, or when a cpu-bound pack lacks
+measured CPU headroom; free-memory and swap readings must be measured but are
+not thresholded — the kernel pressure level is the memory gate. Workers recheck
+capacity before pulling and immediately before starting the runner, then during
+execution; pressure stops the runner process groups. The disk sample covers the
+home filesystem; the runner's existing DISKGUARD must also cover checkout and
+artifact volumes. Retry after resources recover. Existing DISKGUARD, PAUSE,
+KILL, lease fencing and runner sandbox requirements still apply.
 
 ## Share configuration through Phantom
 
