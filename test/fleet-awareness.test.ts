@@ -33,7 +33,7 @@ test('pool dispatch prefers measured free slots and shares one host budget acros
   f.add('mbp-w1', { hostId: 'mbp', slots: 3 }); f.add('mbp-w2', { hostId: 'mbp', slots: 3 });
   f.add('air', { slots: 1 }); f.add('held', { slots: 0, held: 'memory-pressure' });
   for (let i = 0; i < 6; i++) f.enqueue(`j${i}`);
-  expect(f.plan().map(r => r.nodeId)).toEqual(['mbp-w1', 'mbp-w1', 'air', 'mbp-w1', null, null]);
+  expect(f.plan().map(r => r.nodeId)).toEqual(['mbp-w1', 'mbp-w2', 'air', 'mbp-w1', null, null]);
   const node = f.state.nodes[0]!;
   expect(f.run('pull', ['--node', node.nodeId, '--session', String(node.session)]).pulled).toBe(true);
   const report = projectFleetAwareness(f.state, f.now(), { schema: 'dispatchd.status.v1', last_tick: new Date(f.now()).toISOString(), paused: null,
@@ -42,6 +42,22 @@ test('pool dispatch prefers measured free slots and shares one host budget acros
   expect(report.lanes[0]).toMatchObject({ running: 2, target: 5, effectiveTarget: 4, floor: 1, queued: 6, available: 2 });
   expect(report.queue).toEqual({ nodePending: 5, laneQueued: 6 });
   expect(f.plan().filter(r => r.nodeId)).toHaveLength(3);
+});
+
+test('pool pull favors an idle sibling when the other worker already holds a claim', () => {
+  const f = fixture();
+  const a = f.add('a', { hostId: 'mac', slots: 2 });
+  const b = f.add('b', { hostId: 'mac', slots: 2 });
+  const pull = (node: typeof a) => f.run('pull', ['--node', node.nodeId, '--session', String(node.session)]);
+  f.enqueue('first');
+  f.enqueue('second');
+  f.enqueue('overflow');
+
+  expect(pull(a).pulled).toBe(true);
+  expect(f.plan().map(r => [r.jobId, r.nodeId])).toEqual([['second', 'b'], ['overflow', null]]);
+  expect(pull(b).pulled).toBe(true);
+  expect(f.state.jobs[1]?.claim?.nodeId).toBe('b');
+  expect(f.plan()[0]).toMatchObject({ jobId: 'overflow', nodeId: null });
 });
 
 test('unknown, stale, future and expired reports never become pool capacity; exact two-interval boundary is fresh', () => {
