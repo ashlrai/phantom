@@ -11,6 +11,7 @@
  * bus starts its own thread. Names are routing labels, not proven identities.
  */
 import { JOB_THREAD_PREFIX, agentName, projectAgentMessages } from './agent-messages.js';
+import { groupAddressTopicOf } from './bus-group.js';
 import { busBodyJobId, labelIdentityOf } from '../agents/bus-unified.js';
 import { busBodyKind, busBodyResultOutcome } from '../agents/bus-v2-schema.js';
 import { agentLabels, agentRefAddressMatcher, readAgentRegistry, resolveAgent,
@@ -37,6 +38,12 @@ const ownInReplyTo = (body: Record<string, unknown> | null): string | undefined 
 /** Bus receipts → messages. Subjects come from the scrubbed `phm messages` projection; only ids and states are read from the body. */
 export function conversationMessages(rows: readonly BusInboxReceipt[]): ConversationMessage[] {
   const raw = new Map(rows.map(row => [row.envelope.id, record(row.envelope.body)]));
+  // The `to` routing label verbatim — the `topic` member field parses it
+  // through the shared `groupAddressTopicOf`, the same raw-label match
+  // `phm messages --topic` and every other bus read's `--topic` apply, so
+  // the projected `to` name's prefix stripping and scrub can never change
+  // which topic a member message provably sits in.
+  const addressed = new Map(rows.map(row => [row.envelope.id, row.envelope.to]));
   return projectAgentMessages(rows).map(m => {
     const body = raw.get(m.id) ?? null, status = (text(body?.status) ?? '').toLowerCase();
     const outcome = (text(body?.outcome) ?? '').toLowerCase();
@@ -50,6 +57,12 @@ export function conversationMessages(rows: readonly BusInboxReceipt[]): Conversa
     if (m.job !== null) jobIds.add(m.job);
     if (m.conversation.startsWith(JOB_THREAD_PREFIX) && m.conversation.length > JOB_THREAD_PREFIX.length)
       jobIds.add(m.conversation.slice(JOB_THREAD_PREFIX.length));
+    // The topic component of the raw `to` label when it is a well-formed
+    // `group:<room>:<topic>` address — the same `groupAddressTopicOf`
+    // match every bus read's `--topic` applies — carried to the member
+    // item so the thread-level filter can match it; an agent address, a
+    // bare `group:<room>` or a malformed topic stays absent, never guessed.
+    const topic = groupAddressTopicOf(addressed.get(m.id) ?? '');
     return {
       id: m.id, from: m.from.name, to: m.to.name, kind: m.kind, subject: m.summary, at: Date.parse(m.ts),
       replyTo: text(body?.replyTo) ?? text(body?.inReplyTo),
@@ -63,6 +76,7 @@ export function conversationMessages(rows: readonly BusInboxReceipt[]): Conversa
       // match it; a body that is no work.result receipt or carries no
       // outcome stays absent, never guessed.
       result: busBodyResultOutcome(body) ?? undefined,
+      ...(topic === null ? {} : { topic }),
       ...(jobIds.size === 0 ? {} : { jobIds: [...jobIds].sort() }),
       // The message projection's conversation key is the declared thread bucket —
       // a v2 `thread` label, `threadId`, `job:<id>` or origin — the same key
@@ -151,9 +165,9 @@ export function buildAgentConversations(scan: { source: AgentConversations['sour
 export function readAgentConversations(query: ConversationQuery = {}, options: BusInboxOptions = {}): AgentConversations {
   // The registry backs `agent`, `waitingOn`, `with`, `to` and the
   // `from`/`excludeFrom` sender filters' identity matching; every other
-  // filter — `channel`, `priority`, `inReplyTo`, `thread`, `bodyKind`,
-  // `result`, `kind` included — decides on member-message fields alone
-  // and needs no read.
+  // filter — `channel`, `topic`, `priority`, `inReplyTo`, `thread`,
+  // `bodyKind`, `result`, `kind` included — decides on member-message
+  // fields alone and needs no read.
   const needsRegistry = query.agent !== undefined || query.waitingOn !== undefined ||
     query.from !== undefined || query.excludeFrom !== undefined || query.with !== undefined ||
     query.to !== undefined;
