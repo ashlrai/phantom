@@ -628,9 +628,11 @@ file order supplies each job's tier, whether it has a lane hint or is open.
 Open jobs have no per-lane attribution.
 
 The Leader board estimates the number of conflicting PRs from rebase job IDs
-in `ready.tsv`. It includes parked rebase jobs, expands batches into their
-member PRs, and counts each PR once across job IDs. References in titles,
-prompts, and requirements do not contribute to the estimate.
+in `ready.tsv`. It includes ready, waiting, blocked, held and parked rebase jobs
+as well as rows from exports without a status. It excludes in-flight and
+historical rows, expands batches into their member PRs, and counts each PR once
+across job IDs. References in titles, prompts, and requirements do not
+contribute to the estimate.
 
 `phm queue` owns the separate `queue.v1` coordination snapshot at
 `~/.ashlr-runs/queue/queue.v1.json`. `--dir <directory>` selects an isolated store.
