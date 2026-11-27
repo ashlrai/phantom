@@ -17,8 +17,15 @@
  * every bus read's sender filter applies: the literal ref plus every
  * label of the identity it resolves to, exact-label matching kept on an
  * unresolvable ref or unreadable registry so unknown identity state
- * never widens the filter. The two refs compose with each other and
- * with the window. Unknown keys, wrong types, caller roots, paths and
+ * never widens the filter — and `channel`/`topic` the strict
+ * channel-name grammar every other bus read's room filters enforce:
+ * `channel` keeps only links whose receipts are addressed to
+ * `group:<channel>:*` — the room's whole traffic under every topic —
+ * while `topic` keeps only links whose `to` parses to that exact topic
+ * through the shared `groupAddressTopicOf`, composing with `channel`
+ * into one room AND one topic exactly as `phm fleet edges --channel
+ * --topic` applies. The filters compose with each other and with the
+ * window. Unknown keys, wrong types, caller roots, paths and
  * working directories are all refused before the store is touched.
  *
  * The result is the projection untouched plus the MCP envelope
@@ -33,11 +40,12 @@
  * the tool never posts, claims, acks, replies or renews TTL.
  */
 import { readFleetEdges, type FleetEdges } from '../core/fleet/fleet-edges.js';
+import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 
 /** The printable routing-label rule every bus read's `--from`/`--to` filter validates. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const EDGE_KEYS = new Set(['windowMinutes', 'from', 'to']);
+const EDGE_KEYS = new Set(['windowMinutes', 'from', 'to', 'channel', 'topic']);
 
 /**
  * The parsed arguments are the projection's own option subset — the MCP
@@ -51,6 +59,10 @@ export interface FleetAgentEdgesArgs {
   from?: string;
   /** Recipient-side agent ref under the shared identity-label rule. */
   to?: string;
+  /** Room name whose `group:<channel>:*` traffic is kept; every topic. */
+  channel?: string;
+  /** Exact topic component a well-formed `group:<room>:<topic>` `to` must carry. */
+  topic?: string;
 }
 
 /**
@@ -60,9 +72,10 @@ export interface FleetAgentEdgesArgs {
  * the same value rule `phm fleet edges` enforces on its flags:
  * `windowMinutes` stays an integer inside 1..1440 (the bound
  * `projectFleetEdges` would throw on is refused here instead), `from`
- * and `to` stay printable routing labels. Unknown keys, wrong types,
- * caller roots and malformed values are all refused before the store is
- * touched.
+ * and `to` stay printable routing labels, and `channel`/`topic` take
+ * the strict channel-name grammar every other bus read's room filters
+ * enforce. Unknown keys, wrong types, caller roots and malformed values
+ * are all refused before the store is touched.
  */
 export function parseFleetAgentEdgesArgs(args: Record<string, unknown>): FleetAgentEdgesArgs | null {
   if (Object.keys(args).some(key => !EDGE_KEYS.has(key))) return null;
@@ -74,10 +87,15 @@ export function parseFleetAgentEdgesArgs(args: Record<string, unknown>): FleetAg
   const from = args.from, to = args.to;
   if ((from !== undefined && (typeof from !== 'string' || !BUS_LABEL.test(from))) ||
     (to !== undefined && (typeof to !== 'string' || !BUS_LABEL.test(to)))) return null;
+  const channel = args.channel, topic = args.topic;
+  if ((channel !== undefined && (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success)) ||
+    (topic !== undefined && (typeof topic !== 'string' || !agentChannelNameSchema.safeParse(topic).success))) return null;
   return {
     ...(windowMinutes === undefined ? {} : { windowMinutes }),
     ...(from === undefined ? {} : { from: from as string }),
     ...(to === undefined ? {} : { to: to as string }),
+    ...(channel === undefined ? {} : { channel: channel as string }),
+    ...(topic === undefined ? {} : { topic: topic as string }),
   };
 }
 

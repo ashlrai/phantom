@@ -2858,12 +2858,19 @@ agent's identity sent and `--to <agent>` keeps only links addressed to it, so
 take the same identity-label rule every bus read's sender filter applies —
 the literal ref plus every label of the identity it resolves to, exact-label
 matching kept on an unresolvable ref or unreadable registry — and they compose
-with each other and with the window. `--root <absolute>` reads a non-default
+with each other and with the window. `--channel <name>` keeps only links whose
+receipts are addressed to `group:<channel>:*` — the room's whole traffic under
+every topic, the same raw `to`-prefix rule every other bus read's `--channel`
+applies — and `--topic <topic>` keeps only links whose `to` parses to that
+exact topic component through the shared `groupAddressTopicOf`, composing with
+`--channel` into one room AND one topic while an agent address, a bare
+`group:<room>` or a malformed topic never matches; both take the strict
+channel-name grammar. `--root <absolute>` reads a non-default
 fleet store like the other fleet bus reads. `fleet_agent_edges` (the isolated
 fleet MCP tool) serves the same `readFleetEdges` projection with the same
-`windowMinutes`/`from`/`to` arguments — every other key refused and no caller
-root, path or working directory accepted, the bus store and registry roots
-staying server-owned. Provider labels come from sender metadata observed on
+`windowMinutes`/`from`/`to`/`channel`/`topic` arguments — every other key
+refused and no caller root, path or working directory accepted, the bus store
+and registry roots staying server-owned. Provider labels come from sender metadata observed on
 the filtered receipts — a provider proven only by traffic the filters exclude
 stays `null` (unknown), the same bound the window applies. A missing or conflicting provider is `null` (unknown). Labels
 are not authenticated identities. Broadcasts to `leaders`, human/external

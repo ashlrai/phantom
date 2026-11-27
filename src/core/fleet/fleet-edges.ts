@@ -1,5 +1,5 @@
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
-import { isGroupPresenceBody } from './bus-group.js';
+import { groupAddressTopicOf, isGroupPresenceBody } from './bus-group.js';
 import { agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
 
 export interface FleetEdgeEndpoint { address: string; provider: string | null }
@@ -19,6 +19,29 @@ export interface FleetEdgeAddressFilter {
   to?: (value: string) => boolean;
 }
 
+/**
+ * The group-room narrowing every bus read's `--channel`/`--topic` pair
+ * applies, over the raw `to` routing label — no identity resolution, so the
+ * projection takes the literals directly. `channel` keeps only envelopes
+ * addressed to `group:<channel>:*` — the room's whole traffic under every
+ * topic — the same raw `to`-prefix rule `phm messages --channel`,
+ * `agents bus inbox --channel` and `channel read --channel` match;
+ * `topic` keeps only envelopes whose `to` parses to that exact topic
+ * component through the shared `groupAddressTopicOf` — the same match
+ * `work feed --topic`, `work next --topic`, `inbox --topic`,
+ * `channel read --topic` and `comms bus next --topic` apply — composing
+ * with `channel` into one room AND one topic while an agent address, a
+ * bare `group:<room>` or a malformed topic never matches. A `group.presence`
+ * heartbeat still drops out under `agentToAgent` either way: the room
+ * filter narrows which receipts count, never what counts as mail.
+ */
+export interface FleetEdgeRoomFilter {
+  /** Room name whose `group:<channel>:*` traffic is kept; every topic. */
+  channel?: string;
+  /** Exact topic component a well-formed `group:<room>:<topic>` `to` must carry. */
+  topic?: string;
+}
+
 export interface FleetEdgesOptions extends BusInboxOptions {
   /** Trailing window in minutes; same 1..1440 bound `projectFleetEdges` enforces. */
   windowMinutes?: number;
@@ -36,6 +59,18 @@ export interface FleetEdgesOptions extends BusInboxOptions {
    * "who do I reach" are one filtered read each.
    */
   to?: string;
+  /**
+   * Bus channel name (`--channel`) keeping only receipts addressed to
+   * `group:<channel>:*` — the same strict channel-name grammar and raw
+   * `to`-prefix rule every other bus read's `--channel` applies.
+   */
+  channel?: string;
+  /**
+   * Group topic (`--topic`) keeping only receipts whose `to` parses to that
+   * topic through `groupAddressTopicOf` — the same strict name grammar and
+   * match every other bus read's `--topic` applies; composes with `channel`.
+   */
+  topic?: string;
 }
 
 /** The transport dead-letter sink (docs/AGENT-BUS.md "Dead letters"): the
@@ -54,7 +89,7 @@ export const agentToAgent = (envelope: BusInboxReceipt['envelope']): boolean =>
 
 /** Routing labels are claims, not authenticated identities. Never expose message bodies. */
 export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now(), windowMinutes?: number,
-  addressFilter?: FleetEdgeAddressFilter): FleetEdge[] {
+  addressFilter?: FleetEdgeAddressFilter, roomFilter?: FleetEdgeRoomFilter): FleetEdge[] {
   if (windowMinutes !== undefined) {
     if (!Number.isInteger(windowMinutes) || windowMinutes < 1 || windowMinutes > 1440) throw new Error('Minutes must be 1..1440');
     rows = rows.filter(row => row.receivedAt > now - windowMinutes * 60_000 && row.receivedAt <= now);
@@ -66,6 +101,15 @@ export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now(), win
     rows = rows.filter(({ envelope }) =>
       (addressFilter.from === undefined || addressFilter.from(envelope.from)) &&
       (addressFilter.to === undefined || addressFilter.to(envelope.to)));
+  }
+  // The room filter is the same row-level bound on the raw `to` label: a
+  // channel keeps the room's traffic under every topic, a topic keeps one
+  // room's one topic, and the two compose into one room AND one topic.
+  if (roomFilter !== undefined) {
+    const channelPrefix = roomFilter.channel === undefined ? undefined : `group:${roomFilter.channel}:`;
+    rows = rows.filter(({ envelope }) =>
+      (channelPrefix === undefined || envelope.to.startsWith(channelPrefix)) &&
+      (roomFilter.topic === undefined || groupAddressTopicOf(envelope.to) === roomFilter.topic));
   }
   const edges = new Map<string, FleetEdge>();
   const providers = new Map<string, Set<string>>();
@@ -110,13 +154,17 @@ export function readFleetEdges(options: FleetEdgesOptions = {}): FleetEdges {
   const source = inspectBusInbox(options).source;
   if (source !== 'available') return { schema: 'fleet.edges.v1', source, edges: null };
   const addressFilter = fleetEdgeAddressFilter(options);
+  const roomFilter: FleetEdgeRoomFilter | undefined =
+    options.channel === undefined && options.topic === undefined ? undefined
+      : { ...(options.channel === undefined ? {} : { channel: options.channel }),
+          ...(options.topic === undefined ? {} : { topic: options.topic }) };
   const rows: BusInboxReceipt[] = [];
   let cursor = 0;
   for (let page = 0; page <= BUS_INBOX_MAX_MESSAGES / BUS_INBOX_MAX_READ; page++) {
     const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, options);
     if (result.status !== 'ok') return { schema: 'fleet.edges.v1', source: 'unavailable', edges: null };
     rows.push(...result.messages);
-    if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) return { schema: 'fleet.edges.v1', source, edges: projectFleetEdges(rows, options.now?.() ?? Date.now(), options.windowMinutes, addressFilter) };
+    if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) return { schema: 'fleet.edges.v1', source, edges: projectFleetEdges(rows, options.now?.() ?? Date.now(), options.windowMinutes, addressFilter, roomFilter) };
     cursor = result.nextCursor;
   }
   return { schema: 'fleet.edges.v1', source: 'unavailable', edges: null };
