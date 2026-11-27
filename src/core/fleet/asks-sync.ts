@@ -125,7 +125,7 @@ export async function readSyncInputs(opts: { runsDir?: string; now: () => number
   const runs = opts.runsDir === undefined ? {} : { runsDir: opts.runsDir };
   const ledger = await readResourceLedger({ ...runs, now: () => nowMs }).catch(() => null);
   const view = buildPoolsView(ledger ?? { v: 1, generatedAt: new Date(nowMs).toISOString(), sources: { status: 'missing', apiSpend: 'missing', jobs: 'missing' }, asOf: null, lanes: [], apiSpend: null, jobsMalformedRows: null },
-    nowMs, await readUsageSamples({ nowMs }).catch(() => []));
+    nowMs, await readUsageSamples({ ...runs, nowMs }).catch(() => []));
   const state = await readFleetRunsDirState({ ...runs, now: () => nowMs }).catch(() => null);
   const heldReasons = state === null ? null : Object.fromEntries(state.lanes.filter(l => l.held).map(l => [l.lane, l.heldReason]));
   return { view, ledgerReadable: ledger !== null && ledger.sources.status === 'healthy', heldReasons };
