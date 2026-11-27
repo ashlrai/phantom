@@ -41,10 +41,14 @@
  * cloud/tracker.ts reports — or null when the row carries none
  * (pre-fields rows, a failed or capped read); 'none' inside that
  * vocabulary is a real empty-rollup signal, never missing evidence.
+ * `diff` is gh's recorded merge size — the `additions`/`deletions`/
+ * `changedFiles` triple the same merged-list read returns, frozen at
+ * merge — or null when the row carries none (pre-fields rows) or the
+ * record is malformed; a partial triple never counts as real zeros.
  */
 import { join } from 'node:path';
 
-import type { OutsidePrCiVerdict, OutsidePrReviewDecision, OutsidePrReviewEvidence, OutsidePrRevertVerdict } from './outside-pr-outcomes.js';
+import type { OutsidePrCiVerdict, OutsidePrDiffEvidence, OutsidePrReviewDecision, OutsidePrReviewEvidence, OutsidePrRevertVerdict } from './outside-pr-outcomes.js';
 
 export const OUTSIDE_PR_OUTCOME_SCHEMA = 'fleet.outside-pr-outcome.v1';
 export const OUTSIDE_PR_SCAN_SCHEMA = 'fleet.outside-pr-scan.v1';
@@ -88,6 +92,8 @@ export interface OutsidePrOutcomeJournalRow {
   reviews: OutsidePrReviewEvidence | null;
   /** CI verdict on the merge's head checks; null when the row carries none. */
   ci: OutsidePrCiVerdict | null;
+  /** gh's recorded diff size for the merge; null when the row carries none or the record is malformed. */
+  diff: OutsidePrDiffEvidence | null;
   reverted: OutsidePrRevertVerdict;
 }
 
@@ -147,6 +153,23 @@ function parseReviewEvidenceRow(raw: unknown): OutsidePrReviewEvidence | null {
   return { decision, latest };
 }
 
+/**
+ * The journaled diff-size evidence, or null when the row carries none or
+ * the record is malformed — a partial triple never counts as real zeros.
+ * All three counts must be nonnegative safe integers; anything else
+ * (pre-fields rows, corrupt rows) reads as no evidence, matching the
+ * reviews/ci rule.
+ */
+function parseDiffRow(raw: unknown): OutsidePrDiffEvidence | null {
+  if (!isRecord(raw)) return null;
+  const additions = int(raw['additions']);
+  const deletions = int(raw['deletions']);
+  const changedFiles = int(raw['changedFiles']);
+  if (additions === null || additions < 0 || deletions === null || deletions < 0 ||
+      changedFiles === null || changedFiles < 0) return null;
+  return { additions, deletions, changedFiles };
+}
+
 function parseOutcomeRow(row: Record<string, unknown>): OutsidePrOutcomeJournalRow | null {
   const repo = str(row['repo']);
   const number = int(row['number']);
@@ -164,6 +187,7 @@ function parseOutcomeRow(row: Record<string, unknown>): OutsidePrOutcomeJournalR
   const reviews = row['reviews'] === undefined || row['reviews'] === null ? null : parseReviewEvidenceRow(row['reviews']);
   const ciRaw = row['ci'];
   const ci = typeof ciRaw === 'string' && CI_VERDICTS.has(ciRaw) ? ciRaw as OutsidePrCiVerdict : null;
+  const diff = row['diff'] === undefined || row['diff'] === null ? null : parseDiffRow(row['diff']);
   return {
     v: 1,
     kind: OUTSIDE_PR_OUTCOME_SCHEMA,
@@ -178,6 +202,7 @@ function parseOutcomeRow(row: Record<string, unknown>): OutsidePrOutcomeJournalR
     createdAt,
     reviews,
     ci,
+    diff,
     reverted: reverted as OutsidePrRevertVerdict,
   };
 }

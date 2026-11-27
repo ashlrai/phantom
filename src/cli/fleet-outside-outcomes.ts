@@ -5,10 +5,10 @@
  * workspace checkout), keeps the ones outside-prs.ts's rules call outside
  * work, and joins each against the standing revert set so a merged-then-
  * reverted community change is visible evidence. Each row also carries
- * gh's recorded open timestamp and review evidence (open→merge minutes,
- * reviewer count, review decision) when gh returned them — null when
- * unrecorded; a real empty review list stays a real "unreviewed" signal —
- * plus the bounded per-PR `gh pr view` check-rollup verdict (`ci`) when
+ * gh's recorded open timestamp, review evidence (open→merge minutes,
+ * reviewer count, review decision), merge size (`diff`: additions,
+ * deletions, changed files — null when gh returned no parseable fields)
+ * and the bounded per-PR `gh pr view` check-rollup verdict (`ci`) when
  * the read returned one.
  * Read-only: it runs `gh pr
  * list` and reads the local revert ledger; it never merges, records or
@@ -24,7 +24,8 @@ Merged outside-PR outcomes on fleet repos (default window: 30 days).
 Per repo: merged PRs outside work touched, each marked reverted yes/no/
 unknown against the standing revert ledger (unreadable ledger → unknown,
 never "not reverted") plus its recorded open→merge minutes, review
-evidence and check-rollup CI verdict when gh returned them. Per author: merged and reverted counts;
+evidence, diff size and check-rollup CI verdict when gh returned them.
+Per author: merged and reverted counts;
 per agent:
 the same tallies attributed by recorded branch/login convention (unmatched
 → unattributed, never guessed); model is always null — gh records none.
@@ -67,6 +68,7 @@ function renderText(r: OutsidePrOutcomesV1): string {
           : `reviewed ${pr.reviews.latest}${pr.reviews.decision === null ? '' : ` ${pr.reviews.decision.toLowerCase().replaceAll('_', '-')}`}`);
       }
       if (pr.ci !== null) bits.push(`ci ${pr.ci}`);
+      if (pr.diff !== null) bits.push(`+${pr.diff.additions}/-${pr.diff.deletions} in ${pr.diff.changedFiles} files`);
       lines.push(`  #${pr.number} ${pr.title} — ${pr.author ?? 'unknown author'}${pr.agent !== null ? ` [${pr.agent}]` : ''} — ${bits.join(' — ')}`);
     }
   }

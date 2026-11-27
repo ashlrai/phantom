@@ -1533,7 +1533,12 @@ the sync's bounded per-PR `gh pr view` read recorded — `success`/
 cloud/tracker.ts reports) and `ci_passed`/`ci_failed`/`ci_pending`/
 `ci_none` tally its contents; a null `ci` — pre-fields rows, a failed
 or capped read — never counts toward any verdict, matching the reviews
-rule.
+rule. `diff_known` counts rows carrying a journaled `diff` triple —
+gh's recorded `additions`/`deletions`/`changedFiles` merge size, frozen
+at merge — and `diff_lines_mean`/`diff_files_mean` are the mean lines
+changed (additions plus deletions) and files touched over that
+denominator (null when it is empty); a null or malformed `diff` never
+counts, matching the same rule.
 `coverage` carries the
 newest scan row's `source_state`, `revert_ledger` and bounded
 `degraded_repos`; `truncated`/`ignored_rows` mark a cut tail and

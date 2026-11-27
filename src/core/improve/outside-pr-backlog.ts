@@ -51,11 +51,14 @@
  *    product the sync's recorded branch/login convention matched
  *    (outsidePrAgentAttribution), or null for the unattributed bucket;
  *    prompts quote that tally and never claim a model — gh records none.
- *  - Review evidence is evidence, not blame. Reverted merges' journaled
- *    createdAt/reviews fields tally usable open→merge latency and gh's
- *    recorded review coverage — including merges gh shows as unreviewed
- *    or still CHANGES_REQUESTED. Pre-fields rows count in neither
- *    denominator; unknown review coverage is quoted as unknown, never 0.
+ *  - Review and size evidence is evidence, not blame. Reverted merges'
+ *    journaled createdAt/reviews/diff fields tally usable open→merge
+ *    latency, gh's recorded review coverage — including merges gh shows
+ *    as unreviewed or still CHANGES_REQUESTED — and the recorded merge
+ *    size (mean lines changed and files touched), so a repo whose
+ *    reverted outside merges were also its largest reads differently
+ *    than one reverting small fixes. Pre-fields rows count in no
+ *    denominator; unknown coverage is quoted as unknown, never 0.
  *  - Dedup is downstream. The item id embeds a stable hash of the repo
  *    identity (never the counts or timestamps), so a refresh
  *    re-derives the same id and appendUserBacklogItems adds only what
@@ -148,6 +151,16 @@ export interface OutsidePrBacklogCell {
   unreviewed: number;
   /** reviews_known reverted merges whose reviewDecision stands CHANGES_REQUESTED at journal time. */
   changes_requested: number;
+  /**
+   * Reverted merges carrying a journaled `diff` triple — gh's recorded
+   * additions/deletions/changedFiles merge size. Rows journaled before
+   * the field existed or carrying a malformed record never count.
+   */
+  diff_known: number;
+  /** Mean additions+deletions lines over diff_known reverted merges; null when diff_known is 0. */
+  diff_lines_mean: number | null;
+  /** Mean changedFiles over diff_known reverted merges; null when diff_known is 0. */
+  diff_files_mean: number | null;
   /** Up to MAX_EXAMPLES reverted merges, most recent merge first. */
   examples: Array<{ number: number; title: string; author: string | null; mergedAt: string }>;
   /** ISO bounds of the reverted merges' mergedAt; null when none carried a parseable one. */
@@ -209,6 +222,9 @@ export function foldOutsidePrCells(
     let reviewsKnown = 0;
     let unreviewed = 0;
     let changesRequested = 0;
+    let diffKnown = 0;
+    let diffLines = 0;
+    let diffFiles = 0;
     for (const row of revertedRows) {
       const openedMs = row.createdAt === null ? NaN : Date.parse(row.createdAt);
       const mergedAtMs = mergedMs(row);
@@ -220,6 +236,11 @@ export function foldOutsidePrCells(
         reviewsKnown += 1;
         if (row.reviews.latest === 0) unreviewed += 1;
         if (row.reviews.decision === 'CHANGES_REQUESTED') changesRequested += 1;
+      }
+      if (row.diff !== null) {
+        diffKnown += 1;
+        diffLines += row.diff.additions + row.diff.deletions;
+        diffFiles += row.diff.changedFiles;
       }
     }
     cells.push({
@@ -233,6 +254,9 @@ export function foldOutsidePrCells(
       reviews_known: reviewsKnown,
       unreviewed,
       changes_requested: changesRequested,
+      diff_known: diffKnown,
+      diff_lines_mean: diffKnown === 0 ? null : Math.round((diffLines / diffKnown) * 10) / 10,
+      diff_files_mean: diffKnown === 0 ? null : Math.round((diffFiles / diffKnown) * 10) / 10,
       authors: [...authorCounts.entries()]
         .map(([author, count]) => ({ author, reverted: count }))
         .sort((a, b) => b.reverted - a.reverted || (a.author ?? '').localeCompare(b.author ?? ''))
@@ -309,6 +333,18 @@ function reviewText(cell: OutsidePrBacklogCell): string {
   return ` Review and merge-speed evidence (journaled gh fields — rows written before these fields existed count in no denominator): ${parts.join('; ')}.`;
 }
 
+/**
+ * The diff-size evidence the journaled rows carry for the reverted
+ * merges — how large the reverted changes were, so a repo reverting its
+ * biggest outside merges reads differently than one reverting small
+ * fixes. The denominator is stated so "no evidence" never reads as
+ * "empty diffs"; an empty string when no reverted row carried the field.
+ */
+function diffText(cell: OutsidePrBacklogCell): string {
+  if (cell.diff_known === 0 || cell.diff_lines_mean === null || cell.diff_files_mean === null) return '';
+  return ` Diff-size evidence (journaled gh fields — rows written before the field existed count in no denominator): ${cell.diff_known} of the reverted merges carry journaled diff size (mean ${cell.diff_lines_mean} lines changed across ${cell.diff_files_mean} files).`;
+}
+
 function examplesText(cell: OutsidePrBacklogCell): string {
   if (cell.examples.length === 0) return '';
   const parts = cell.examples.map((example) => {
@@ -348,7 +384,7 @@ function outsidePrPrompt(
     : `Outside contributors' pull requests on ${cell.repo} keep being merged and then reverted — ${cell.reverted} of the recorded ${cell.merged} outside merges inside the ${windowHours}-hour window carry a standing revert verdict, the self-improvement work this backlog exists for.`;
   const scope = `The reverts themselves are evidence, not the defect — what is in scope is this repository's outside-PR path: whether review or merge gates treat non-fleet heads differently than fleet work, whether CONTRIBUTING or CI bars outside contributions can realistically pass, whether auto-merge or merge-queue policy lets weak outside PRs land and then get reverted by hand, and whether the fleet's own merge machinery should route outside heads through a different lane. Fix the cause in ${cell.repo}. Run the affected suite. ` + NO_CHANGE;
   const lines = [lead, '',
-    `An "outside" PR is a merged pull request whose head is not a fleet 'codex-bridge/*' branch and whose author is not the fleet App — community work the fleet's own ledgers never record. Each journaled row is one such merge joined to the standing revert set: 'yes' means a revert of that PR is standing, 'no' means none is, 'unknown' means the revert ledger could not be read when the sync ran. ${tallyText(cell)}${seenText(cell)}${authorsText(cell)}${agentsText(cell)}${reviewText(cell)}${examplesText(cell)}`,
+    `An "outside" PR is a merged pull request whose head is not a fleet 'codex-bridge/*' branch and whose author is not the fleet App — community work the fleet's own ledgers never record. Each journaled row is one such merge joined to the standing revert set: 'yes' means a revert of that PR is standing, 'no' means none is, 'unknown' means the revert ledger could not be read when the sync ran. ${tallyText(cell)}${seenText(cell)}${authorsText(cell)}${agentsText(cell)}${reviewText(cell)}${diffText(cell)}${examplesText(cell)}`,
     '', EVIDENCE, '', scope];
   const coverage = coverageText(scan);
   if (coverage.length > 0) lines.push('', ...coverage);

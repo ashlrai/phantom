@@ -1280,9 +1280,13 @@ rows whose `createdAt` stamp parses at or before `mergedAt`),
 and `ci_known`/`ci_passed`/`ci_failed`/`ci_pending`/`ci_none` (the
 check-rollup verdict the sync's bounded per-PR `gh pr view` read
 recorded — `success`/`failure`/`pending`/`none`, where `none` is a real
-empty rollup, never missing evidence) — rows journaled before the
-fields existed, or gh rows missing them, count in no denominator and
-read as unknown, never as zero reviews, zero CI or zero latency — and
+empty rollup, never missing evidence) and
+`diff_known`/`diff_lines_mean`/`diff_files_mean` (gh's recorded merge
+size — additions plus deletions lines and changed files, frozen at
+merge — as means over the rows carrying the journaled triple) — rows
+journaled before the fields existed, or gh rows missing them, count in
+no denominator and read as unknown, never as zero reviews, zero CI,
+zero latency or empty diffs — and
 `community_seats_coverage` carries the newest scan row's recorded
 `source_state`/`revert_ledger` plus the degraded repo list so a
 partial community picture reads as partial. `community_seats_truncated`
