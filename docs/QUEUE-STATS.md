@@ -45,14 +45,14 @@ complete than the journal's latest snapshot is refused.
 Station mapping (visit id `<job>:a<attempt>`, pool = the launch lane):
 
 - **READY** — queue dwell. Arrival is the earliest `enqueue`/`queued` stamp
-  or `launch_failed` receipt with `action=retry` before the attempt's launch
-  (attempt 1 also accepts enqueue stamps; later attempts only retry receipts);
+  or `launch_failed` receipt with `action=retry` before the attempt's launch;
   departure is the `launch` stamp, with `startedAt === completedAt` because
   dispatch service is instantaneous. Jobs still listed `- READY` in
-  router-queue.md with zero recorded launches produce open visits (arrival
-  from the ledger enqueue stamp or the line's `enq=` epoch-seconds token). A
-  job resolved `DONE-NOOP` before any launch completes its READY visit at the
-  outcome stamp.
+  router-queue.md produce open visits: first-stint jobs take the ledger
+  enqueue stamp or the line's `enq=` epoch-seconds token, while a re-queued
+  job (recorded launches) admits only an `enq=` stamp that postdates its
+  last launch and numbers as the next attempt. A job resolved `DONE-NOOP`
+  before any launch completes its READY visit at the outcome stamp.
 - **claimed** — `launch` to the first of `finish`, `publish` or a matched
   terminal outcome; service starts at launch (dedicated worker), so `wait` is
   zero and `rho` measures mean concurrency.
@@ -66,9 +66,10 @@ Station mapping (visit id `<job>:a<attempt>`, pool = the launch lane):
 - **merged** — zero-dwell marker at the merge stamp for throughput.
 
 Known gaps stay unknown: `planned`, `released`, `fix-main`, review and release
-stations have no ledger boundaries; re-queued attempts (a second launch after
-a non-launch-failure requeue) have no recorded re-arrival, so their READY wait
-is not emitted; `checkout`, `model` and check phases inside claimed/pr-ci are
+stations have no ledger boundaries; a re-queued attempt whose re-arrival left
+no `enqueue`/`queued`/`launch_failed`-retry stamp and no fresh `enq=` token on
+its READY line still has no recorded re-arrival, so that READY wait is not
+emitted; `checkout`, `model` and check phases inside claimed/pr-ci are
 not split. URL-bearing outcomes match the attempt that published that PR;
 URL-less outcomes follow the dispatcher's current-attempt rule.
 

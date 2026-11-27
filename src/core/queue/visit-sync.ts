@@ -201,9 +201,11 @@ function visitsForJob(job: string, events: LedgerEvent[]): { visits: QueueVisit[
 
     // READY: queue dwell ends when the launch fires; dispatch service is
     // instantaneous, so startedAt === completedAt keeps wait honest and mu null.
-    const arrivalPool = k === 0
-      ? preQueue.filter(e => e.kind === 'enqueue' || e.kind === 'queued' || (e.kind === 'launch_failed' && e.action === 'retry'))
-      : windows[k - 1]!.filter(e => e.kind === 'launch_failed' && e.action === 'retry');
+    // Re-arrival evidence is the same for every attempt: an enqueue/queued
+    // stamp or a launch_failed retry receipt inside the previous window.
+    const reArrival = (e: LedgerEvent) =>
+      e.kind === 'enqueue' || e.kind === 'queued' || (e.kind === 'launch_failed' && e.action === 'retry');
+    const arrivalPool = k === 0 ? preQueue.filter(reArrival) : windows[k - 1]!.filter(reArrival);
     const arrival = earliest(arrivalPool, ['enqueue', 'queued', 'launch_failed'])?.at ?? null;
     if (arrival !== null) {
       push(makeVisit(job, attempt, STATION_READY, pool, arrival, launch.at, launch.at));
@@ -258,6 +260,8 @@ export interface JobQueueEvidence {
   enqueueAt: number | null;
   lane: string | null;
   launches: number;
+  /** Stamp of the most recent launch; a READY line re-arrival must postdate it. */
+  lastLaunchAt: number | null;
 }
 
 export interface JobsVisitFold {
@@ -291,12 +295,15 @@ export function queueVisitsFromJobs(text: string | null, now = Date.now()): Jobs
     const list = byJob.get(id) ?? [];
     list.push(ev);
     byJob.set(id, list);
-    const info = jobs.get(id) ?? { enqueueAt: null, lane: null, launches: 0 };
+    const info = jobs.get(id) ?? { enqueueAt: null, lane: null, launches: 0, lastLaunchAt: null };
     if ((ev.kind === 'enqueue' || ev.kind === 'queued') && (info.enqueueAt === null || ev.at < info.enqueueAt)) {
       info.enqueueAt = ev.at;
       info.lane = ev.lane ?? info.lane;
     }
-    if (ev.kind === 'launch') info.launches++;
+    if (ev.kind === 'launch') {
+      info.launches++;
+      if (info.lastLaunchAt === null || ev.at > info.lastLaunchAt) info.lastLaunchAt = ev.at;
+    }
     jobs.set(id, info);
   }
   const visits: QueueVisit[] = [];
@@ -312,8 +319,11 @@ export function queueVisitsFromJobs(text: string | null, now = Date.now()): Jobs
  * Open READY visits for jobs still listed `- READY` in router-queue.md.
  * Arrival is the ledger enqueue stamp when known, else the line's `enq=`
  * epoch-seconds token; neither means the wait cannot be bounded, so the job
- * is skipped rather than stamped at an invented time. Only first-stint jobs
- * (zero launches) qualify — a re-queued attempt has no recorded re-arrival.
+ * is skipped rather than stamped at an invented time. A re-queued job
+ * (launches > 0) cannot reuse the ledger's earliest enqueue — it predates
+ * the last launch — so only the line's own `enq=` stamp, which must postdate
+ * that launch, bounds the new stint; the visit then numbers as the next
+ * attempt so it progresses into the fold's completed snapshot at launch.
  */
 export function queueReadyVisits(
   queueText: string,
@@ -326,11 +336,20 @@ export function queueReadyVisits(
     if (!match) continue;
     const id = match[1]!;
     const info = jobs.get(id);
-    if (info && info.launches > 0) continue;
     const enq = /(?:^|[\s,(])enq=(\d+)(?=$|[\s,)])/.exec(line);
-    const arrivedAt = info?.enqueueAt ?? (enq ? Number(enq[1]) * 1000 : null);
+    const stamped = enq ? Number(enq[1]) * 1000 : null;
+    let arrivedAt: number | null;
+    let attempt = 1;
+    if (info && info.launches > 0) {
+      if (stamped === null || info.lastLaunchAt === null || stamped <= info.lastLaunchAt) continue;
+      arrivedAt = stamped;
+      attempt = info.launches + 1;
+    } else {
+      arrivedAt = info?.enqueueAt ?? stamped;
+    }
     if (arrivedAt === null || !Number.isFinite(arrivedAt) || arrivedAt > now) continue;
-    const visit = makeVisit(id, 1, STATION_READY, poolOf(info?.lane ?? null), arrivedAt);
+    const pool = /(?:^|[\s,(])pool=([^\s,)]+)/.exec(line)?.[1] ?? info?.lane ?? null;
+    const visit = makeVisit(id, attempt, STATION_READY, poolOf(pool), arrivedAt);
     if (visit) visits.push(visit);
   }
   return visits;
