@@ -1683,6 +1683,13 @@ function pullRequestKey(url: string): string | null {
   return m ? `${m[1]!.toLowerCase()}/${m[2]!.toLowerCase()}#${m[3]}` : null;
 }
 
+function addTimingPrKeys(keys: Set<string>, row: Row): void {
+  for (const url of [row.url, row.pr_url, row.prUrl, row.pr, row.html_url]) {
+    const key = typeof url === 'string' ? pullRequestKey(url.trim()) : null;
+    if (key !== null) keys.add(key);
+  }
+}
+
 /** Landing ids are `${repo}#${prNumber}@${mergeSha12}` (fleet/host-merge.ts landingId()). */
 const LANDING_PR = /^([^#@\s]+)#([1-9]\d*)@/;
 
@@ -1910,10 +1917,7 @@ function foldRouterOutcomesWithCiCoverage(
     }
     const marks = ciMarks.get(j) ?? { starts: new Set<number>(), completes: new Set<number>(), prKeys: new Set<string>() };
     (name === 'ci_start' ? marks.starts : marks.completes).add(at);
-    for (const url of [r.url, r.pr_url, r.prUrl, r.pr, r.html_url]) {
-      const key = typeof url === 'string' ? pullRequestKey(url.trim()) : null;
-      if (key !== null) marks.prKeys.add(key);
-    }
+    addTimingPrKeys(marks.prKeys, r);
     ciMarks.set(j, marks);
   }
   const ciWallS = new Map<string, number>();
@@ -1942,7 +1946,7 @@ function foldRouterOutcomesWithCiCoverage(
   // {event:'publish', outcome:'MERGED'} row is merge evidence stamped
   // at verdict time, never a second publish — while a PUBLISHED phase
   // on any row is the publish claim itself, event name or not.
-  const publishMarks = new Map<string, { finishes: Set<number>; publishes: Set<number> }>();
+  const publishMarks = new Map<string, { finishes: Set<number>; publishes: Set<number>; prKeys: Set<string> }>();
   const undatedPublishJobs = new Set<string>();
   for (const r of rows) {
     const j = attributedJobId(r);
@@ -1958,13 +1962,14 @@ function foldRouterOutcomesWithCiCoverage(
       undatedPublishJobs.add(j);
       continue;
     }
-    const marks = publishMarks.get(j) ?? { finishes: new Set<number>(), publishes: new Set<number>() };
+    const marks = publishMarks.get(j) ?? { finishes: new Set<number>(), publishes: new Set<number>(), prKeys: new Set<string>() };
     (finish ? marks.finishes : marks.publishes).add(at);
+    addTimingPrKeys(marks.prKeys, r);
     publishMarks.set(j, marks);
   }
   const publishWaitS = new Map<string, number>();
   for (const [j, marks] of publishMarks) {
-    if (undatedPublishJobs.has(j) || marks.finishes.size !== 1 || marks.publishes.size !== 1) continue;
+    if (undatedPublishJobs.has(j) || marks.finishes.size !== 1 || marks.publishes.size !== 1 || marks.prKeys.size > 1) continue;
     const finish = [...marks.finishes][0]!;
     const publish = [...marks.publishes][0]!;
     if (publish >= finish && !crossesAttemptBoundary(j, finish, publish)) {
@@ -2320,6 +2325,11 @@ function foldRouterOutcomesWithCiCoverage(
         (verdictPr === null || !ciPrs.has(verdictPr))) {
       o.ci_wall_s = null;
       ambiguousCiJobs.add(o.job_id);
+    }
+    const publishPrs = publishMarks.get(o.job_id)?.prKeys;
+    if (verdictPr !== undefined && publishPrs?.size &&
+        (verdictPr === null || !publishPrs.has(verdictPr))) {
+      o.publish_wait_s = null;
     }
   }
   if (opts.passkFor || opts.workClassFor) {

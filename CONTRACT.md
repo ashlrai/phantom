@@ -1392,7 +1392,11 @@ publish claim the reconciler consumes — counts with or without a
 publish event name. A missing or repeated boundary, reversed stamps
 or publish-before-finish ordering leaves the job absent so its
 outcome keeps `null`, unknown, never a partial guess and never
-another phase's duration.
+another phase's duration. Conflicting PR identities on the finish and
+publish receipts also withhold the duration, including conflicting claims
+at the same timestamp. When the timing receipts name a PR and the standing
+merge or close verdict includes a PR URL, that URL must resolve to the
+same PR.
 Both timings stay unknown when a job records a `batch_claim` at or between
 the paired boundaries, or when that claim lacks a usable timestamp. In
 these cases the router also withholds CI timing from the reward fallback.
