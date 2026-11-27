@@ -51,6 +51,12 @@ function flag(args: string[], name: string): string | undefined {
 
 export async function cmdTeam(argv: string[]): Promise<number> {
   const args = [...argv];
+  // `--help`/`-h` anywhere prints usage and exits 0 without acting — the same
+  // contract test/cli-help-no-side-effects guards for every command. It must
+  // be intercepted before flag() splices values and before any verb runs:
+  // `team say --help` would otherwise post "--help" and `team join --help`
+  // would enroll the local human.
+  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   const json = args.includes('--json'); if (json) args.splice(args.indexOf('--json'), 1);
   const team = flag(args, '--team') ?? DEFAULT_TEAM;
   const name = normalizeHandle(flag(args, '--as') ?? process.env['PHM_TEAM_USER'] ?? userInfo().username);
