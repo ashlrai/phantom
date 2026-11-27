@@ -1257,7 +1257,10 @@ zero latency) — and
 partial community picture reads as partial. `community_seats_truncated`
 marks a journal exceeding the retained tail and
 `community_seats_ignored` counts rows that failed the recorded
-contract. Outside PRs carry no lane or work_class, so these tallies
+contract. Community-seat reports and outside-PR improvement discovery
+select the last appended verdict and scan visible at their report time.
+They skip receipts whose `at` is later than that time and count
+unparseable receipt timestamps as ignored rows. Outside PRs carry no lane or work_class, so these tallies
 are advisory context only: they never enter a `(work_class, lane)`
 proposal group and the weight math is unchanged by them. Each
 proposal also carries an `evidence` block folded
