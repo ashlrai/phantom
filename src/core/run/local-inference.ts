@@ -30,14 +30,16 @@
  * Pure: no I/O, no DNS. Reads env only where a caller passes it.
  */
 
-export const LOCAL_INFERENCE_PROVIDERS = ['ollama', 'omlx', 'openai-compat'] as const;
-export type LocalInferenceProvider = (typeof LOCAL_INFERENCE_PROVIDERS)[number];
-export const LOCAL_INFERENCE_ROLES = ['coder', 'reviewer', 'planner', 'proposalOnly'] as const;
-export type LocalInferenceRole = (typeof LOCAL_INFERENCE_ROLES)[number];
-/** Roles that may hold credentials or feed a merge decision. */
-export const CREDENTIALED_ROLES: readonly LocalInferenceRole[] = ['coder', 'reviewer', 'planner'];
+import { isRecord } from './tool-calls.js';
 
-export const PROVIDER_DEFAULT_BASE_URL: Readonly<Record<LocalInferenceProvider, string | null>> = Object.freeze({
+export type LocalInferenceProvider = 'ollama' | 'omlx' | 'openai-compat';
+const LOCAL_INFERENCE_PROVIDERS: readonly LocalInferenceProvider[] = ['ollama', 'omlx', 'openai-compat'];
+export type LocalInferenceRole = 'coder' | 'reviewer' | 'planner' | 'proposalOnly';
+const LOCAL_INFERENCE_ROLES: readonly LocalInferenceRole[] = ['coder', 'reviewer', 'planner', 'proposalOnly'];
+/** Roles that may hold credentials or feed a merge decision. */
+const CREDENTIALED_ROLES: readonly LocalInferenceRole[] = ['coder', 'reviewer', 'planner'];
+
+const PROVIDER_DEFAULT_BASE_URL: Readonly<Record<LocalInferenceProvider, string | null>> = Object.freeze({
   ollama: 'http://127.0.0.1:11434/v1',
   omlx: 'http://127.0.0.1:8000/v1',
   'openai-compat': null,
@@ -172,8 +174,8 @@ export type LocalInferenceParse =
  */
 export function parseLocalInferenceConfig(value: unknown): LocalInferenceParse {
   if (value === undefined || value === null) return { ok: true, config: null };
-  if (typeof value !== 'object' || Array.isArray(value)) return { ok: false, problems: ['localInference: must be an object'] };
-  const v = value as Record<string, unknown>;
+  if (!isRecord(value)) return { ok: false, problems: ['localInference: must be an object'] };
+  const v = value;
   const problems: string[] = [];
   const known = new Set(['provider', 'baseUrl', 'models', 'allowRemote', 'allowAbliterated']);
   const unknown = Object.keys(v).filter((k) => !known.has(k)).length;
@@ -199,10 +201,10 @@ export function parseLocalInferenceConfig(value: unknown): LocalInferenceParse {
   const models: Partial<Record<LocalInferenceRole, string>> = {};
   const rawModels = v['models'];
   if (rawModels !== undefined) {
-    if (typeof rawModels !== 'object' || rawModels === null || Array.isArray(rawModels)) {
+    if (!isRecord(rawModels)) {
       problems.push('localInference.models: must be an object');
     } else {
-      for (const [role, model] of Object.entries(rawModels as Record<string, unknown>)) {
+      for (const [role, model] of Object.entries(rawModels)) {
         if (!(LOCAL_INFERENCE_ROLES as readonly string[]).includes(role)) {
           problems.push('localInference.models: unrecognized role');
           continue;

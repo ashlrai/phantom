@@ -243,7 +243,7 @@ function activeMarker(active: boolean): string {
 // ---------------------------------------------------------------------------
 
 /** Plain status word for one registry row. */
-export function registryStatus(row: ModelRegistryRow): string {
+function registryStatus(row: ModelRegistryRow): string {
   return row.stale ? 'stale (verified over 30 days ago)' : row.status;
 }
 
