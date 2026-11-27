@@ -11,7 +11,7 @@ import {
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, busWorkJobDispatch, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
-import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusInbox, frameBusWakes, frameBusWorkFeed, frameBusWorkMine, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
+import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusInbox, frameBusThread, frameBusWakes, frameBusWorkFeed, frameBusWorkMine, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, claimNextBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   waitClaimNextBusWorkJob,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope,
@@ -55,7 +55,7 @@ ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> 
 ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--frame <cli>]
 ashlr agents bus dead-letters [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--priority P0..P3] [--id <id>] [--reason <${BUS_DEAD_LETTER_REASONS.join('|')}>] [--from <agent>] [--exclude-from <agent>] [--to <agent>] [--channel <name>] [--topic <topic>] [--body-kind <kind>] [--limit <1-100>]
 ashlr agents bus show <id>
-ashlr agents bus thread <id> [--to <ref>] [--from <ref>] [--exclude-from <ref>] [--channel <name>] [--topic <topic>] [--job <id>] [--priority P0..P3] [--thread <t>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
+ashlr agents bus thread <id> [--to <ref>] [--from <ref>] [--exclude-from <ref>] [--channel <name>] [--topic <topic>] [--job <id>] [--priority P0..P3] [--thread <t>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--frame <cli>]
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
@@ -301,7 +301,15 @@ excludes reports rootFound with an empty messages, never a miss. --topic
 keeps only members addressed to a well-formed group:<room>:<topic>
 address carrying that exact topic component — the same
 groupAddressTopicOf match every other bus read's --topic applies,
-composing with --channel into one room AND one topic.
+composing with --channel into one room AND one topic. --frame <cli>
+prints the same chain — the verdict header and every receipt's summary
+and held/holder/job evidence — as one bounded block marked untrusted
+under BEGIN/END UNTRUSTED AGENT BUS THREAD markers, the same scrub,
+flattening and 32 KiB clip bound the inbox, channel-read, wakes,
+work-mine and work-feed frames apply with the cut stated, so a host can
+hand a whole exchange to a CLI's next turn as data in a single block;
+--json carries it as framed beside the full projection, and a proven
+miss frames its own not-found verdict rather than an invented chain.
 A terminal work status also queues a routing-only wake hint for each live claim
 holder on the job's keys; --no-wake opts out. Holder labels need not be
 registered identities, so wakes (and the work mine wakes section) keep
@@ -1315,6 +1323,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'thread') {
       noExtra(2);
       if (sub === undefined) throw new UsageError('A message id is required.');
+      const frame = one('--frame');
+      if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
       const result = readAgentBusThread(sub, options, {
         to: one('--to'), from: one('--from'), excludeFrom: one('--exclude-from'),
         channel: one('--channel'), topic: one('--topic'), job: one('--job'), thread: one('--thread'),
@@ -1323,7 +1333,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       });
       if (result.status !== 'ok') return finish(result, '');
       const thread = result.thread;
-      out(json ? JSON.stringify(thread) : threadHuman(thread, sub).join('\n'));
+      const lines = threadHuman(thread, sub);
+      const framed = frame === undefined ? undefined : frameBusThread(frame as BusCli, lines);
+      out(json ? JSON.stringify(framed === undefined ? thread : { ...thread, framed })
+        : framed ?? lines.join('\n'));
       return thread.complete && thread.rootFound ? 0 : 1;
     }
     if (verb === 'wakes') {

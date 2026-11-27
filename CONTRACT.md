@@ -5091,7 +5091,15 @@ honest `jobs=… feed=…` summary — through the same shared line renderer
 under BEGIN/END UNTRUSTED AGENT BUS WORK FEED markers, so a refused or
 unavailable feed frames its own state line and never an invented job
 list; `--json` carries it as `framed` beside the full projection the same
-way. Identities
+way. `frameBusThread(cli, lines)` renders one reply chain
+(`agents bus thread <id> --frame <cli>`) — the already-formatted
+`threadHuman` lines, verdict header and per-receipt summary and
+held/holder/job evidence rows — through the same shared line renderer
+under BEGIN/END UNTRUSTED AGENT BUS THREAD markers, so the whole
+exchange reaches a CLI's next turn as marked-untrusted data in a single
+block and a thread block can never pass for an inbox page, a digest or
+a feed; `--json` carries it as `framed` beside the full projection the
+same way, and a proven miss frames its own not-found verdict. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
