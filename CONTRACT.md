@@ -2645,6 +2645,13 @@ Calibration rejects a receipt when its explicit merge verdict disagrees
 with its terminal lifecycle state. A false merge flag on a nonterminal
 publish receipt leaves the outcome unresolved.
 
+When calibration joins dispatch receipts with reward signals, the standalone
+launch supplies the arm. For a batch member without a standalone launch,
+exactly one distinct observed claim lane supplies the arm. Missing or ambiguous
+dispatch attribution stays `unknown`. The reward pool supplies the arm only
+for jobs represented solely by reward and outcome evidence. A reward's merge
+verdict still takes precedence over the lifecycle verdict.
+
 ## Router queue generation
 
 `runQueuegenCycle` takes explicit repository scope in `QueuegenOptions.repos`.

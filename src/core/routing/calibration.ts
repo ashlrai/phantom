@@ -37,6 +37,7 @@ interface Job {
   launchReceipt?: Row;
   batchLanes?: Set<string>;
   batchClaimTimes?: Set<number | null>;
+  rewardArm?: string;
   /** Reward signals can account for reversions after the PR merged. */
   rewardMerged?: boolean;
 }
@@ -142,7 +143,7 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
       recognized++;
       const job = jobs.get(row.jobId) ?? { launched: false };
       jobs.set(row.jobId, job);
-      assign(job, 'arm', observedArm(row.pool));
+      assign(job, 'rewardArm', observedArm(row.pool));
       assign(job, 'rewardMerged', row.merged);
       continue;
     }
@@ -208,9 +209,13 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
   const groups = new Map<string, Job[]>();
   for (const job of jobs.values()) {
     if (!job.launched && !job.batchLanes && job.rewardMerged === undefined) throw new Error('Event has no matching launch');
-    if (!job.arm) {
-      job.arm = !job.launched && job.batchLanes?.size === 1 ? [...job.batchLanes][0]! : 'unknown';
+    if (!job.launched) {
+      // A reward can describe a different attempt from the dispatch receipts.
+      job.arm = job.batchLanes
+        ? (job.batchLanes.size === 1 ? job.batchLanes.values().next().value : undefined)
+        : job.rewardArm;
     }
+    job.arm ??= 'unknown';
     job.merged = job.rewardMerged ?? job.merged;
     const started = job.started;
     const finished = job.finished;
