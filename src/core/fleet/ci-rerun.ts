@@ -28,6 +28,10 @@ function rerunKey(e: Pick<Entry, 'repo' | 'head' | 'runId'>): string {
   return JSON.stringify([e.repo.toLowerCase(), e.head, e.runId]);
 }
 
+function workflowRunKey(e: Pick<Entry, 'repo' | 'runId'>): string {
+  return JSON.stringify([e.repo.toLowerCase(), e.runId]);
+}
+
 function compareVerdictPosition(a: VerdictCursor, b: VerdictCursor): number {
   return Date.parse(a.at) - Date.parse(b.at) || rerunKey(a).localeCompare(rerunKey(b));
 }
@@ -37,7 +41,7 @@ function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
   const runs = new Map<string, { first: Entry; verdictConflict: boolean; testConflict: boolean }>();
   for (const entry of entries) {
     if (entry.outcome !== 'verdict' || Date.parse(entry.at) > nowMs) continue;
-    const key = JSON.stringify([entry.repo.toLowerCase(), entry.runId]);
+    const key = workflowRunKey(entry);
     const run = runs.get(key);
     if (!run) {
       runs.set(key, { first: entry, verdictConflict: false, testConflict: false });
@@ -62,14 +66,14 @@ export function observedAttempts(entries: readonly Entry[], nowMs: number): Entr
   const attempts = new Map<string, { first: Entry; testsKey: string; testConflict: boolean }>();
   for (const entry of entries) {
     if (entry.outcome !== 'attempt' || Date.parse(entry.at) > nowMs) continue;
-    const key = rerunKey(entry);
+    const key = workflowRunKey(entry);
     const testsKey = JSON.stringify(triggeringTests(entry));
     const attempt = attempts.get(key);
     if (!attempt) {
       attempts.set(key, { first: entry, testsKey, testConflict: false });
       continue;
     }
-    attempt.testConflict ||= attempt.testsKey !== testsKey;
+    attempt.testConflict ||= attempt.first.head !== entry.head || attempt.testsKey !== testsKey;
     if (Date.parse(entry.at) < Date.parse(attempt.first.at)) attempt.first = entry;
   }
   return [...attempts.values()].map(({ first, testConflict }) =>
@@ -317,7 +321,7 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
         }
         const pendingAt = now();
         const pending = pendingVerdicts(repoEntries, observedCallResults(repoEntries, pendingAt), pendingAt);
-        const attemptsByRun = new Map(observedAttempts(repoEntries, pendingAt).map(entry => [rerunKey(entry), entry]));
+        const attemptsByRun = new Map(observedAttempts(repoEntries, pendingAt).map(entry => [workflowRunKey(entry), entry]));
         s.verdictsPending = pending.length;
         // A future-dated verdict is invisible to the tally but still deduplicates writes.
         const recordedVerdicts = new Set(journal.filter(e => e.outcome === 'verdict').map(rerunKey));
@@ -341,10 +345,10 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
           } catch (error) { if (opts.signal.aborted) throw error; }
           s.verdictCursor = { at: p.at, repo: p.repo, head: p.head, runId: p.runId };
           if (verdict === null) continue;
-          const attempt = attemptsByRun.get(rerunKey(p));
+          const attempt = attemptsByRun.get(workflowRunKey(p));
           const tests = attempt ? triggeringTests(attempt) : [];
           // Older or truncated journals can have a call receipt without its attempt.
-          const test = p.test && (!attempt || (tests.length === 1 && tests[0] === p.test)) ? p.test : undefined;
+          const test = p.test && (!attempt || (attempt.head === p.head && tests.length === 1 && tests[0] === p.test)) ? p.test : undefined;
           append({ at: new Date(observedAt).toISOString(), repo: p.repo, head: p.head, runId: p.runId, pr: p.pr, outcome: 'verdict', verdict, ...(test ? { test } : {}) });
           s.verdictsResolved++;
         }
