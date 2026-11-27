@@ -1,6 +1,6 @@
 import { scrubSecrets } from '../../util/scrub.js';
 import { isNodeCapacity, NODE_HEARTBEAT_MS, type NodeRecord, type NodesState } from './state.js';
-import type { QueueJobV1 } from './queue-v1.js';
+import type { LeaderLease, QueueJobV1 } from './queue-v1.js';
 
 /** Load added per claim a node already holds or is planned to receive (permille). */
 export const CLAIM_LOAD = 100;
@@ -30,20 +30,22 @@ export function liveNodes(state: NodesState, now: number): NodeRecord[] {
   return state.nodes.filter(n => nodeCanAcceptWork(n, now));
 }
 
-/** True while a running job's claim can still be acted on: the claim is
- * unexpired and an unexpired node record carries the same id and session.
- * A lapsed claim is re-routable, and a claim fenced by a rejoin or departure
- * frees the node's capacity at once even though the job stays fenced until
- * the claim expires. */
-export function actionableClaim(state: NodesState, job: QueueJobV1, now: number): boolean {
-  const claim = job.claim;
-  return job.state === 'running' && claim !== undefined && claim.expiresAt > now &&
-    state.nodes.some(n => n.expiresAt > now && n.nodeId === claim.nodeId && n.session === claim.session);
+/** Resolve the leader lease against the same clock and session records as claims. */
+export function liveNodeLeader(state: NodesState, now: number): LeaderLease | null {
+  const leader = state.leader;
+  return leader && leader.expiresAt > now &&
+    state.nodes.some(n => n.expiresAt > now && n.nodeId === leader.nodeId && n.session === leader.session)
+    ? leader : null;
 }
 
-function activeClaims(state: NodesState, node: NodeRecord, now: number): number {
-  return state.jobs.filter(j => j.state === 'running' && j.claim && j.claim.expiresAt > now &&
-    j.claim.nodeId === node.nodeId && j.claim.session === node.session).length;
+/** Only an unexpired claim in the live leader epoch with a live holder consumes capacity.
+ * A fenced job can still be waiting for its claim lease to lapse before pull can retry it. */
+export function actionableClaim(state: NodesState, job: QueueJobV1, now: number): boolean {
+  const claim = job.claim;
+  if (job.state !== 'running' || claim === undefined || claim.expiresAt <= now) return false;
+  const leader = liveNodeLeader(state, now);
+  return leader !== null && claim.leaderToken === leader.token &&
+    state.nodes.some(n => n.expiresAt > now && n.nodeId === claim.nodeId && n.session === claim.session);
 }
 
 /** Capability fences every assignment path honors: a session that released the
@@ -70,12 +72,15 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
   const fresh = (at: number, now: number, interval: number) => at > 0 && at <= now && now - at <= 2 * interval;
   const safe = (s: string) => scrubSecrets(s) === s;
   const groups = new Map<string, NonNullable<NodesState>['nodes']>();
+  const nodesById = new Map<string, NodeRecord>();
   for (const node of state?.nodes ?? []) {
+    nodesById.set(node.nodeId, node);
     const id = isNodeCapacity(node.capacity) ? node.capacity.hostId : node.nodeId;
     const members = groups.get(id) ?? []; members.push(node); groups.set(id, members);
   }
-  const unplacedClaims = state !== null && state.jobs.some(j => actionableClaim(state, j, now) &&
-    !j.executionHostId && !state.nodes.some(n => n.nodeId === j.claim!.nodeId && isNodeCapacity(n.capacity)));
+  const runningClaims = state?.jobs.filter(j => actionableClaim(state, j, now)) ?? [];
+  const unplacedClaims = runningClaims.some(j =>
+    !j.executionHostId && !isNodeCapacity(nodesById.get(j.claim!.nodeId)?.capacity));
   const hosts = [...groups].filter(([id, nodes]) => safe(id) && nodes.every(n => safe(n.nodeId))).map(([hostId, nodes]) => {
     const nodeIds = nodes.map(n => n.nodeId).sort();
     const onHost = (j: NodesState['jobs'][number]) => j.executionHostId ? j.executionHostId === hostId : !!j.claim && nodeIds.includes(j.claim.nodeId);
@@ -85,7 +90,7 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
     // Stale workers' old grants are not capacity. Live claims still occupy the physical host.
     const known = !unplacedClaims && measured.length > 0 && measured.length === live.length;
     const slots = held ? 0 : known ? Math.min(...measured.map(n => n.capacity!.slots)) : null;
-    const running = state === null ? 0 : state.jobs.filter(j => actionableClaim(state, j, now) && onHost(j)).length;
+    const running = runningClaims.filter(onHost).length;
     // A producer withdrawal completes without executing: its startedAt→completedAt
     // span is claim-hold plus detection lag, not runner time, so it is no latency evidence.
     const durations = (state?.jobs ?? []).filter(j => j.state === 'completed' && j.claim && j.producerWithdrawn !== true && onHost(j) &&
@@ -113,8 +118,13 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const neutralLatency = measuredLatency.length ? measuredLatency.reduce((a, b) => a + b, 0) / measuredLatency.length : 1;
   const reserved = new Map<string, number>();
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
-  const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n, now)]));
-  const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
+  const claims = new Map(nodes.map(n => [n.nodeId, 0]));
+  for (const job of state.jobs) {
+    if (!actionableClaim(state, job, now)) continue;
+    const id = job.claim!.nodeId;
+    if (claims.has(id)) claims.set(id, claims.get(id)! + 1);
+  }
+  const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * claims.get(n.nodeId)!]));
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;

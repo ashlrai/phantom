@@ -34,7 +34,7 @@ function deps(peers: Record<string, unknown>[], read: NodesRegistry): NodesViewD
   return { peers: { now: () => new Date(NOW), homeDir: () => '/fake-home', exec: () => tailnet(peers) }, readRegistry: () => read,
     localStats: () => stats(8, 1, 200), hostName: () => 'node-a.fake.example', timeZone: 'UTC' };
 }
-const claimed = (id: string, nodeId: string) => ({ id, state: 'running', claim: { nodeId, session: 1, expiresAt: NOW + 30_000 } }) as unknown as NodesState['jobs'][number];
+const claimed = (id: string, nodeId: string) => ({ id, state: 'running', claim: { jobId: id, nodeId, session: 1, token: 3, leaderToken: 2, expiresAt: NOW + 30_000 } }) satisfies NodesState['jobs'][number];
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -54,6 +54,7 @@ describe('readNodesPool', () => {
     const view = deps([peer('node-b', true), peer('node-c', false, '2026-11-17T10:42:00Z')],
       registry([node('node-a', { slots: 4 }), node('node-b', { slots: 7, hostStats: stats(16, 4, 90) })]));
     const read = registry([node('node-a', { slots: 4 }), node('node-b', { slots: 7, hostStats: stats(16, 4, 90) })]);
+    read.state!.leader = { nodeId: 'node-a', session: 1, token: 2, expiresAt: NOW + 30_000 };
     read.state!.jobs = [claimed('RQ-ONE', 'node-b'), claimed('RQ-TWO', 'node-b'), claimed('RQ-THREE', 'node-b'), claimed('RQ-FOUR', 'node-b')];
     view.readRegistry = () => read;
     const pool = readNodesPool({ view, readOffload: () => true });
