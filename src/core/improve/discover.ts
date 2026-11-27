@@ -377,6 +377,16 @@
  *     and read — so a reap whose removals keep failing, whose unsafe
  *     paths keep recurring, or whose safety holds keep accumulating
  *     un-reapable worktrees never became work;
+ *   - the opt-in node offload's decision journal: the
+ *     phantom.nodes-offload-event.v1 rows recordOffloadMoves appends
+ *     to nodes-offload-events.jsonl under the Phantom home every time
+ *     `phm nodes offload` runs live with the setting on and a peer
+ *     takes a job this host's guard held — the load and/or
+ *     engine-admission memory verdicts that shed the work
+ *     (nodesOffloadBacklogItems below). Until now the journal's only
+ *     reader was the writer's own job-id dedupe — a write-side read,
+ *     not a trend — so a host whose guard kept holding launches while
+ *     peers kept absorbing the shed work never became work;
  *   - the gap proposer's own queue-write journal: the {at, id, title,
  *     repo} rows `phm jobs gaps --propose` — run by the fleet self-tick's
  *     autofill harvest — appends to metrics/gap-proposed.jsonl for every
@@ -1652,6 +1662,7 @@ import { telemetrySpanBacklogItems } from './telemetry-span-backlog.js';
 import { coordinationBacklogItems } from './coordination-backlog.js';
 import { diskSweepBacklogItems } from './disk-sweep-backlog.js';
 import { resetReleaseBacklogItems } from './reset-release-backlog.js';
+import { nodesOffloadBacklogItems } from './nodes-offload-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -3534,6 +3545,22 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // stated as lower bounds, and only the fleet's own repository
   // inherits the items since the journal carries no repo column.
   items.push(...await resetReleaseBacklogItems({ repo }));
+
+  // Nodes-offload decision journal (nodes-offload-events.jsonl under
+  // the Phantom home): the phantom.nodes-offload-event.v1 rows
+  // recordOffloadMoves appends per moved job when `phm nodes offload`
+  // runs live with the setting on — each one a launch this host's
+  // guard held (load and/or the engine-admission memory gate) while a
+  // peer took the job (nodesOffloadBacklogItems below). Until now the
+  // journal's only reader was the writer's own job-id dedupe, a
+  // write-side read rather than a trend, so a host whose guard kept
+  // holding launches while peers kept absorbing the shed work never
+  // became work. Same bounded tail read; a hold-kind cell emits only
+  // at the recurring bars of distinct jobs across two UTC days inside
+  // the 7-day window, truncated tails are stated as lower bounds, and
+  // only the fleet's own repository inherits the items since the
+  // journal carries no repo column.
+  items.push(...await nodesOffloadBacklogItems({ repo }));
   return { items, errors };
 }
 
