@@ -1916,6 +1916,7 @@ import { jobReissueBacklogItems } from './job-reissue-backlog.js';
 import { shadowRouteBacklogItems } from './shadow-route-backlog.js';
 import { feedbackSubmissionsBacklogItems } from './feedback-submissions-backlog.js';
 import { outsidePrBacklogItems } from './outside-pr-backlog.js';
+import { outsidePrAgentBacklogItems } from './outside-pr-agent-backlog.js';
 import { repoShareBacklogItems } from './repo-share-backlog.js';
 import { reasoningInsightBacklogItems } from './reasoning-insight-backlog.js';
 import { fleetGapBacklogItems } from './fleet-gap-backlog.js';
@@ -3652,6 +3653,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // lower bounds, and items self-target the outside PRs' own
   // repository — the fix lives where the merges land.
   items.push(...await outsidePrBacklogItems());
+
+  // Outside-PR agent-attribution journal: the same
+  // metrics/outside-pr-outcomes.jsonl rows folded per recorded agent
+  // product instead of per repository — an agent's merges can
+  // recurently revert while spread thin enough across repos that no
+  // single repo cell reaches the sibling feed's bar. Until now the
+  // per-agent tallies surfaced only inside `phm fleet
+  // outside-outcomes` and the router-weights advisory report — reads
+  // someone had to run — so a community agent product whose PRs keep
+  // getting reverted never became work. An agent cell emits only at
+  // the same recurring bar of reverted merges inside the window
+  // ('unknown' verdicts and unattributed rows never count), the
+  // per-repo spread is quoted so single-repo concentration reads
+  // differently from a fleet-wide pattern, degraded scan coverage is
+  // quoted, truncated tails are stated as lower bounds, and items
+  // emit only for the fleet's own repository since the agent-level
+  // question — intake guidance and attribution conventions — lives in
+  // this repository's machinery.
+  items.push(...await outsidePrAgentBacklogItems({ repo }));
 
   // Work-market share journal: the same journal's change-triggered
   // `repo_share` rows folded per (repo, code) cell for the three adverse

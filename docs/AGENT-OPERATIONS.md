@@ -1251,6 +1251,11 @@ per pass),
 and `phm improve discover` folds repos whose outside merges keep carrying
 standing revert verdicts into self-targeted backlog items — see
 [core/improve/outside-pr-backlog.ts](../src/core/improve/outside-pr-backlog.ts).
+The same journal is also folded per recorded agent attribution, so an
+agent product whose outside merges recurently revert across repos — too
+spread out for any single repo cell to reach the bar — becomes a
+fleet-repo backlog item; see
+[core/improve/outside-pr-agent-backlog.ts](../src/core/improve/outside-pr-agent-backlog.ts).
 
 `phm fleet pr-hygiene [--repo <owner/name>] [--stale-days <n>] [--limit <n>] [--json]`
 audits one repo's open PRs and emits the `fleet.pr-hygiene.v1` triage report
