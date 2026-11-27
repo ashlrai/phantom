@@ -197,6 +197,10 @@ outcome tallies — for example how many selections ended `merged`, `rejected`
 or `failed`, and how many merged selections were later `reverted` or
 `regressed`. Lifecycle stages of one use collapse into a single selection,
 and unjoined or conflicting skill rows never enter the tally.
+A receipt that resolves to one trajectory still conflicts if it gives a
+different identifier of a kind already recorded for that trajectory, even
+when the different identifier does not resolve elsewhere. An identifier of
+a kind the trajectory has never recorded can accompany a matching one.
 When joined production receipts carry distinct content hashes for the same skill
 ID and revision, the report omits that revision from per-skill results and
 aggregate skill outcome counts. Other revisions retain their tallies. This
