@@ -4502,7 +4502,7 @@ carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
 check `thread` gets, and `kind` — `note` or `context`, the v2 conversational
 body kind `postLabelMessage` already exposed, now shared by all three so a
-DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, with?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?, bodyKind?, result?}, options?)`
+DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, with?, priority?, kind?, job?, matched?, since?, before?, channel?, topic?, contains?, inReplyTo?, id?, bodyKind?, result?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every
@@ -4524,7 +4524,13 @@ keeps only mail addressed to `group:<name>:*` of one registry channel the
 agent belongs to — channel posts and channel-addressed handoffs alike,
 matched on the delivery address rather than the reported kind, so it
 composes with `kind` and a channel the agent is not a member of simply
-has no mail to show; `job` keeps
+has no mail to show; `topic` keeps only mail addressed to a well-formed
+`group:<room>:<topic>` address carrying that exact topic component — the
+same `groupAddressTopicOf` parse every other bus read's `topic` filter
+applies, decided on the raw `to` label with no registry dependence, so it
+composes with `channel` into one room AND one topic while an
+agent-addressed label, a bare label or a `group:<room>` without a topic
+never matches; `job` keeps
 only mail that names one job — a `work.post`/`work.status`/`work.result`/`wake`
 body declaring that `jobId`, a `worker-handoff` assigning that fleet job id
 through `taskId`, or a `note`/`context` body carrying the
