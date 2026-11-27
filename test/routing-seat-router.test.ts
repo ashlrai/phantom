@@ -501,6 +501,31 @@ describe('routeSeat — today’s machine in balanced mode', () => {
     expect(held.exclusions.find((row) => row.seatId === 'claude')?.reasons[0]).toContain('autonomy stops at 70% to protect your live session');
   });
 
+  it.each([
+    { sessionUsed: 95, weeklyReset: iso(30 * H), expected: iso(30 * H) },
+    { sessionUsed: 100, weeklyReset: iso(30 * H), expected: iso(30 * H) },
+    { sessionUsed: 95, weeklyReset: null, expected: null },
+  ])('waits for every quota blocker before reporting a seat reopening (%j)', ({ sessionUsed, weeklyReset, expected }) => {
+    const capacity = seat('claude', 'claude', [
+      win('five_hour', sessionUsed, { resetsAt: iso(H) }),
+      win('seven_day', 65, { resetsAt: weeklyReset }),
+      win('seven_day_fable', 100),
+    ]);
+    const decision = routeSeat(auto('code', 'high'), [capacity], {
+      ...balanced(),
+      seats: { claude: { seatId: 'claude', enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 } },
+    }, opts);
+    expect(decision.seatId).toBeNull();
+    expect(decision.exclusions[0]).toMatchObject({ seatId: 'claude', nextEligibleAt: expected });
+  });
+
+  it('has no reopening estimate for a seat with a 100% reserve', () => {
+    const capacity = seat('claude', 'claude', [win('seven_day', 0, { resetsAt: iso(30 * H) })]);
+    const assessment = assessSeat(capacity, { seatId: 'claude', enabled: true, reservePercent: 100 }, opts);
+    expect(assessment.headroom.eligibleForAutonomy).toBe(false);
+    expect(assessment.reopensAt).toBeNull();
+  });
+
   it('closes the Claude fail-open: unknown Claude usage is never routed autonomous work', () => {
     const d = routeSeat(auto('leader', 'high'), [seat('claude', 'claude', [])], balanced(), opts);
     expect(d.seatId).toBeNull();

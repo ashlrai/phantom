@@ -95,6 +95,12 @@ Local models incur no provider token charges; available hardware determines thei
 eligible included Codex allowance; stored per-account Off settings still apply. A seat whose usage cannot be read is never eligible.
 Your own chats ignore reserves.
 
+For a seat blocked by quota, the router estimates reopening from the latest
+recorded reset among all blocking account windows. This includes windows at
+the provider limit, the session ceiling or the reserve threshold. The estimate
+stays unknown if a blocking window has no machine-readable reset or the reserve
+is 100%. Dispatch still requires fresh quota evidence.
+
 
 **Account scope in 3.18.** The grant editor shows only the accounts listed by
 this server. Choose whether each can work autonomously, its permitted roles,
