@@ -218,17 +218,26 @@ export async function checkOwnerPair(deps: PairDeps): Promise<PairCheckResult> {
   if (pending.expiresAt <= now) { writePairState(deps.configDir, { ...state, pending: null }); return { status: 'expired' }; }
   const inbound = await deps.bridge.replies(pending.afterRowId, pending.handles);
   if (inbound === null) return { status: 'unreadable' };
+  // A later invitation or another poll may have changed state while replies was in flight.
+  const current = readPairState(deps.configDir);
+  const latest = current.pending;
+  if (!latest || current.autoOff || boundHandle(deps.configDir)
+    || latest.startedAt !== pending.startedAt || latest.expiresAt !== pending.expiresAt
+    || latest.afterRowId !== pending.afterRowId || latest.handles.length !== pending.handles.length
+    || latest.handles.some((handle, i) => handle !== pending.handles[i])) {
+    return { status: latest ? 'waiting' : 'none' };
+  }
   const own = new Set(pending.handles.map(h => h.toLowerCase()));
   // Rows at or before the send are older than the pairing; only the chats with pending own handles count.
   const mine = inbound.filter(m => m.rowid > pending.afterRowId && own.has(m.handle.toLowerCase())).sort((a, b) => a.rowid - b.rowid);
   const yes = mine.find(isYes);
   if (!yes) {
     const top = mine.reduce((max, m) => Math.max(max, m.rowid), pending.afterRowId);
-    if (top > pending.afterRowId) writePairState(deps.configDir, { ...state, pending: { ...pending, afterRowId: top } });
+    if (top > pending.afterRowId) writePairState(deps.configDir, { ...current, pending: { ...pending, afterRowId: top } });
     return { status: 'waiting' };
   }
   const handle = pending.handles.find(h => h.toLowerCase() === yes.handle.toLowerCase())!;
-  return bindOwnerHandle(deps.configDir, handle, state, () => new Date(now));
+  return bindOwnerHandle(deps.configDir, handle, current, () => new Date(now));
 }
 
 async function bindOwnerHandle(configDir: string, handle: string, state: PairState, at: () => Date): Promise<PairCheckResult> {
