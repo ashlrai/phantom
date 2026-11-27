@@ -135,6 +135,19 @@ describe('generator yield', () => {
       { generator: 'filler', jobs: 1, prs: 1, merged: 1, drafted: 0, rejected: 0, launched: 0, rejections: {}, emptyRate: 1, medianDiffLines: null, tokensPerMergedPr: null },
     ]);
   });
+  it('counts canonical PR links across aliases and retains explicit merge evidence', () => {
+    const report = generatorYield([
+      row({ job: 'FIXUP-ISSUE', url: 'https://github.com/x/y/issues/1' }),
+      row({ job: 'FIXUP-RUN', html_url: 'https://github.com/x/y/actions/runs/2' }),
+      row({ job: 'FIXUP-PLACEHOLDER', pr: 'unknown' }),
+      row({ job: 'FIXUP-INVALID', prUrl: 'https://github.com/x/y/pull/0' }),
+      row({ job: 'FIXUP-PR', pr: 'unknown', html_url: 'https://github.com/x/y/pull/3' }),
+      row({ job: 'FIXUP-MERGED', state: 'MERGED' }),
+    ].join('\n'), 24, now);
+    expect(report.generators).toMatchObject([
+      { generator: 'fixup', jobs: 6, prs: 2, merged: 1 },
+    ]);
+  });
   it('counts launched batch members once and excludes worker telemetry from generator totals', () => {
     const batch = 'RQ-BATCH-X';
     const member = 'RQ-FOOA123Q8';
