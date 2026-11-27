@@ -1,7 +1,7 @@
 import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
-import { readUnifiedInbox, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, UNIFIED_INBOX_CONTAINS_MAX,
+import { readUnifiedInbox, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_MAX_ITEMS,
   type UnifiedInbox, type UnifiedInboxFilter, type UnifiedInboxKind, type UnifiedInboxSeverity, type UnifiedInboxSource } from '../core/comms/unified-inbox.js';
 import { createChannelReceiver } from '../core/fleet/channel-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -9,7 +9,7 @@ import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js'
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { entryInstant, parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]
+const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines
@@ -49,7 +49,10 @@ dimensions AND together, and the
 per-source counts still report every
 store's real pending total — null when a source could not be read, never a
 fabricated 0 — so a filtered view never hides a busy or degraded
-source. --json prints the same view as JSON.
+source. --limit <1..200> keeps only the first N ranked items of the matched
+view — the same slice GET /api/verse/comms/inbox and fleet_comms_inbox apply,
+with total still the true matched count and omitted covering every unshown
+item. --json prints the same view as JSON.
 read and post read and write the owner's local inbox file. Output is JSON; post returns the receiver acknowledgement.
 --receipt-only on post returns only the acknowledgement status, channel and durable deduplication key, or a failure reason; it excludes message text and private paths.
 Read options select the newest matching entries (default limit 50), returned oldest first; source is metadata, not identity.
@@ -153,7 +156,7 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       let json = false, blocking = false;
       let source: UnifiedInboxSource | undefined, kind: UnifiedInboxKind | undefined,
         severity: UnifiedInboxSeverity | undefined, job: string | undefined, contains: string | undefined;
-      let sinceMs: number | undefined, beforeMs: number | undefined;
+      let sinceMs: number | undefined, beforeMs: number | undefined, limit: number | undefined;
       const seen = new Set<string>();
       for (let i = 0; i < args.length; i++) {
         const arg = args[i]!;
@@ -210,6 +213,17 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
             value.length > UNIFIED_INBOX_CONTAINS_MAX) return invalid();
           seen.add(arg); contains = value; continue;
         }
+        if (arg === '--limit' && !seen.has(arg)) {
+          const value = args[++i];
+          // The same --limit bound the API query and fleet_comms_inbox apply:
+          // an integer from 1 to the inbox's own item cap — a flag-looking,
+          // blank, non-numeric or out-of-range value is a missing bound, not
+          // a page size.
+          if (value === undefined || !/^[0-9]+$/.test(value)) return invalid();
+          const bound = Number(value);
+          if (!Number.isSafeInteger(bound) || bound < 1 || bound > UNIFIED_INBOX_MAX_ITEMS) return invalid();
+          seen.add(arg); limit = bound; continue;
+        }
         return invalid();
       }
       const filter: UnifiedInboxFilter | undefined =
@@ -225,7 +239,14 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
               ...(blocking ? { blocking: true } : {}) };
       const report = await readUnifiedInbox({ runsDir: options.runsDir, busRoot: options.busRoot,
         ...(filter === undefined ? {} : { filter }) });
-      if (json) console.log(JSON.stringify(report)); else printUnified(report);
+      // --limit keeps only the first N ranked items of the matched view — the
+      // same edge slice GET /api/verse/comms/inbox and fleet_comms_inbox
+      // apply; total stays the true matched count and omitted covers the
+      // unshown tail, so a page never reads as the whole pending set.
+      const items = limit === undefined ? report.items : report.items.slice(0, limit);
+      const view: UnifiedInbox = limit === undefined ? report
+        : { ...report, items, omitted: Math.max(0, report.total - items.length) };
+      if (json) console.log(JSON.stringify(view)); else printUnified(view);
       return 0;
     }
     const [verb, ...rest] = args;
