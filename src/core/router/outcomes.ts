@@ -1987,7 +1987,7 @@ function foldRouterOutcomesWithCiCoverage(
   const outcomes = new Map<string, RouterOutcome>();
   const unlaunchedLanes = new Map<string, string>();
   const mergedAt = new Map<string, number>();
-  const disputedCiFirstPass = new Set<string>();
+  const ciVerdicts: { job: string; pr: string | null; passed: boolean }[] = [];
   const reviewFindings: { job: string; pr: string | null; findings: NonNullable<RouterOutcome['review_findings']> }[] = [];
   let unattached = 0;
   let sessionRows = 0;
@@ -2090,13 +2090,8 @@ function foldRouterOutcomesWithCiCoverage(
       }
     }
     const ciFirstPass = r['ci_first_pass'];
-    if (typeof ciFirstPass === 'boolean' && !disputedCiFirstPass.has(j)) {
-      if (o.ci_first_pass === null || o.ci_first_pass === ciFirstPass) {
-        o.ci_first_pass = ciFirstPass;
-      } else {
-        disputedCiFirstPass.add(j);
-        o.ci_first_pass = null;
-      }
+    if (typeof ciFirstPass === 'boolean' && (u === null || rowPrKey !== null)) {
+      ciVerdicts.push({ job: j, pr: rowPrKey, passed: ciFirstPass });
     }
     o.cost_usd = num(r['cost_usd']) ?? num(r['usd']) ?? num(r['cost']) ?? o.cost_usd;
     o.wall_s = num(r['wall_s']) ?? o.wall_s;
@@ -2321,16 +2316,29 @@ function foldRouterOutcomesWithCiCoverage(
     }
     outcomes.set(j, o);
   }
-  for (const { job, pr, findings } of reviewFindings) {
+  const matchesStandingPr = (job: string, pr: string | null): boolean => {
     const verdictPr = verdictPrKeys.get(job);
     const soleClaim = soleClaimByJob.get(job);
     const standingPr = verdictPr === undefined && !(mergedAt.has(job) && soleClaim === null)
       ? jobPrKeys.get(job) : verdictPr ?? null;
-    // Legacy job-only counts can stand with no PR claim or a single verified
-    // PR identity. Explicit counts must match the standing PR.
-    const matches = pr !== null ? pr === standingPr
+    // Legacy job-only evidence can stand with no PR claim or a single
+    // verified PR identity. Explicit evidence must match the standing PR.
+    return pr !== null ? pr === standingPr
       : standingPr !== null && (soleClaim === undefined || soleClaim === `pr:${standingPr}`);
-    if (matches) outcomes.get(job)!.review_findings = findings;
+  };
+  for (const { job, pr, findings } of reviewFindings) {
+    if (matchesStandingPr(job, pr)) outcomes.get(job)!.review_findings = findings;
+  }
+  const disputedCiFirstPass = new Set<string>();
+  for (const { job, pr, passed } of ciVerdicts) {
+    if (disputedCiFirstPass.has(job) || !matchesStandingPr(job, pr)) continue;
+    const outcome = outcomes.get(job)!;
+    if (outcome.ci_first_pass === null || outcome.ci_first_pass === passed) {
+      outcome.ci_first_pass = passed;
+    } else {
+      outcome.ci_first_pass = null;
+      disputedCiFirstPass.add(job);
+    }
   }
   for (const o of outcomes.values()) {
     o.lane ??= unlaunchedLanes.get(o.job_id) ?? null;
@@ -2388,7 +2396,7 @@ function foldRouterOutcomesWithCiCoverage(
         if (evidence !== undefined) {
           o.merge_queue = { ...evidence, blocked_reasons: [...evidence.blocked_reasons] };
           // Queue observations only fill gaps where the jobs ledger
-          // supplied no explicit verdict.
+          // supplied no attributable explicit verdict.
           if (o.ci_first_pass === null && !disputedCiFirstPass.has(o.job_id)) {
             const incomplete = opts.mergeEventsTruncated === true ||
               mergeEventCoverage?.unattributed === true || mergeEventCoverage?.incompletePrs.has(prKey) === true;

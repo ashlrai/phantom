@@ -910,10 +910,13 @@ in case or a trailing slash share one claim identity for URL-only jobs
 rows and all PR evidence joins. Multiple jobs claiming that identity
 count once in `ambiguous_urls` and receive no evidence through it. Other
 URLs still match literally for URL-only jobs rows. The same joined check record
-resolves `ci_first_pass` fill-only when no jobs row recorded a verdict.
-Conflicting jobs-ledger boolean verdicts for one job leave `ci_first_pass`
-unknown (`null`). Replaying either verdict or joining queue observations
-cannot resolve that conflict. For jobs without an explicit verdict,
+resolves `ci_first_pass` fill-only when the jobs ledger supplies no
+attributable verdict. PR-scoped verdicts require a unique job claim and
+must match the standing PR. Job-only verdicts are usable with no PR
+claim or one unambiguous standing PR. Conflicting attributable
+jobs-ledger boolean verdicts leave `ci_first_pass` unknown (`null`).
+Replaying either verdict or joining queue observations cannot resolve
+that conflict. For jobs without an attributable verdict,
 any recorded `check_observed` failure — required or unrelated — reads
 `false` even beside a later `checks_passed` boundary or a merge (a
 rerun or a new head got it green, which is not a first pass). A
