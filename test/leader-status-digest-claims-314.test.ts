@@ -37,7 +37,7 @@ const FIVE = [
   'App: installed 3.29.15 · published 3.30.32 · update pending',
   'Merges: 3 in the last hour · 41 in the last 24h',
   'Lanes: claude 4/8 · held: codex-cmp (usage limit)',
-  'Needs Mason: 2 hard-limit asks waiting',
+  'Needs the owner: 2 hard-limit asks waiting',
   'Top P0: Phantom status (12m ago)',
 ];
 

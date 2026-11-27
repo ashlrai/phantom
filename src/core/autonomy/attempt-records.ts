@@ -18,8 +18,16 @@ import {
   readDispatchProductionEvents,
   readDispatchProductionEventsDetailed,
 } from '../fleet/dispatch-production-ledger.js';
-import type { OutcomeRecord } from './outcome-records.js';
-import { listOutcomeRecords } from './outcome-records.js';
+import {
+  coverageMetric,
+  isDerivedWorkTrajectory,
+  listOutcomeRecords,
+  parseEventMs as eventMs,
+  pushToGroupMap as mapPush,
+  safeArray,
+  safeValue,
+  type OutcomeRecord,
+} from './outcome-records.js';
 import type { EngineId, EngineTier, Proposal, RunActionCounts, WorkItem } from '../types.js';
 import { readDecisions } from '../fleet/decisions-ledger.js';
 import { listAutonomyEvidencePacks, readAutonomyEvidencePack, type AutonomyEvidencePack } from './evidence-pack.js';
@@ -246,29 +254,6 @@ function bounded(value: unknown, max: number, fallback = ''): string {
   return stripped.length > max ? `${stripped.slice(0, max - 3)}...` : stripped;
 }
 
-function eventMs(ts: string | undefined): number | null {
-  const parsed = Date.parse(ts ?? '');
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function safeArray<T>(read: () => T[] | undefined): T[] {
-  try {
-    const value = read();
-    return Array.isArray(value) ? value : [];
-  } catch {
-    return [];
-  }
-}
-
-function safeValue<T>(read: () => T | null | undefined): T | undefined {
-  try {
-    const value = read();
-    return value === null ? undefined : value;
-  } catch {
-    return undefined;
-  }
-}
-
 function safeWorked(read: () => WorkedLedger | undefined): WorkedEvent[] {
   try {
     const value = read();
@@ -278,19 +263,8 @@ function safeWorked(read: () => WorkedLedger | undefined): WorkedEvent[] {
   }
 }
 
-function mapPush<K, V>(map: Map<K, V[]>, key: K | undefined, value: V): void {
-  if (key === undefined || key === null || key === '') return;
-  const existing = map.get(key);
-  if (existing) existing.push(value);
-  else map.set(key, [value]);
-}
-
 function repoItemKey(repo: string | undefined, itemId: string | undefined): string | undefined {
   return repo && itemId ? `${repo}\0${itemId}` : undefined;
-}
-
-function isDerivedWorkTrajectory(id: string | undefined): boolean {
-  return typeof id === 'string' && id.startsWith('work:');
 }
 
 function attemptId(event: DispatchProductionEvent): string {
@@ -732,11 +706,7 @@ export function listAttemptRecords(opts?: AttemptRecordListOptions): AttemptReco
 }
 
 function metric(records: AttemptRecord[], read: (record: AttemptRecord) => boolean): AttemptCoverageMetric {
-  const count = records.filter(read).length;
-  return {
-    count,
-    rate: records.length > 0 ? count / records.length : 0,
-  };
+  return coverageMetric(records.filter(read).length, records.length);
 }
 
 function emptyAttemptGeneratedRepairSummary(): AttemptGeneratedRepairSummary {
@@ -857,12 +827,13 @@ export function summarizeAttemptCoverage(
               ? records.filter((record) => !record.policySuppressed && record.learningKind !== 'cancelled')
               : null;
           const metricValue = causalLabelRecords
-            ? {
-                count: causalLabelRecords.filter((record) => record.causalCoverage[kind]).length,
-                rate: causalLabelRecords.length > 0
-                  ? causalLabelRecords.filter((record) => record.causalCoverage[kind]).length / causalLabelRecords.length
-                  : 1,
-              }
+            ? (() => {
+                const count = causalLabelRecords.filter((record) => record.causalCoverage[kind]).length;
+                return {
+                  count,
+                  rate: causalLabelRecords.length > 0 ? count / causalLabelRecords.length : 1,
+                };
+              })()
             : causalCoverage[kind];
           const gap = causalGaps.find((candidate) => candidate.kind === kind);
           const sampleRefs = causalLabelRecords

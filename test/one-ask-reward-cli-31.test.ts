@@ -54,6 +54,73 @@ describe('fleet lane-reward', () => {
       reasons: { 'invalid-usage': 1 } });
   });
 
+  it('preserves lane evidence through unknown receipts and groups missing lanes as unattributed', async () => {
+    const report = await readLaneReward({ deps: deps({ jobsText: read(rows(
+      { event: 'launch', job: 'RQ-FAKE-L1', lane: 'lane-a' },
+      { event: 'finish', job: 'RQ-FAKE-L1', lane: 'unknown', tokens_total: 120 },
+      { event: 'publish', job: 'RQ-FAKE-L1', lane: 'UNKNOWN', url: URL(11) },
+      { event: 'finish', job: 'RQ-FAKE-L2', lane: 'unknown', pool: 'lane-b', tokens_total: 80 },
+      { event: 'finish', job: 'RQ-FAKE-L3', pool: 'unknown', tokens_total: 50 },
+    )) }) });
+    expect(report.lanes).toMatchObject([
+      { lane: 'lane-a', tokensMeasured: 120, outcomes: { published: 1 } },
+      { lane: 'lane-b', tokensMeasured: 80 },
+      { lane: 'unattributed', tokensMeasured: 50 },
+    ]);
+  });
+
+  it('bounds spend, PR ownership and terminal evidence by the report time', async () => {
+    const at = '2026-10-31T12:00:00Z';
+    const future = '2026-10-31T12:00:01Z';
+    const first = 'RQ-FAKE-T1';
+    const second = 'RQ-FAKE-T2';
+    const jobsText = read(rows(
+      { event: 'finish', job: first, lane: 'lane-a', tokens_total: 120 },
+      { event: 'publish', job: first, url: URL(21), ts: at },
+      { event: 'merged', url: URL(21), mergedAt: at },
+      { event: 'finish', job: first, lane: 'lane-b', tokens_total: 900, ts: future },
+      { event: 'publish', job: second, url: URL(21), ts: future },
+      { event: 'closed', job: first, ts: at, closedAt: future },
+      { event: 'merged', job: second, ts: future, mergedAt: at },
+    ));
+    const score: LaneRewardDeps['score'] = input => input.outcome.kind === 'merged'
+      ? { state: 'scored', outcome: 'stable', rewardPerToken: 0.001 }
+      : { state: 'scored', outcome: 'published', rewardPerToken: 0 };
+    const proposal: LaneRewardDeps['proposal'] = id => ({ id } as Proposal);
+    const report = await readLaneReward({ deps: deps({ jobsText, score, proposal }) });
+    expect(report).toMatchObject({ attempts: 1, tokensMeasured: 120, verifiedResults: 1 });
+    expect(report.lanes).toMatchObject([{ lane: 'lane-a', outcomes: { stable: 1 } }]);
+
+    const later = await readLaneReward({
+      deps: deps({ jobsText, score, proposal, nowMs: () => Date.parse(future) }),
+    });
+    expect(later).toMatchObject({ attempts: 2, tokensMeasured: 900, verifiedResults: 0 });
+  });
+
+  it('uses the latest measured finish despite late arrivals and replays', async () => {
+    const job = 'RQ-FAKE-USAGE';
+    const old = { event: 'finish', job, tokens_total: 100, ts: '2026-10-31T09:00:00Z' };
+    const latest = { event: 'finish', job, tokens_total: 200, ts: '2026-10-31T10:00:00Z' };
+    const undated = { event: 'finish', job, tokens_total: 300 };
+    const report = await readLaneReward({ deps: deps({ jobsText: read(rows(
+      old, latest, old, latest, undated,
+    )) }) });
+    expect(report).toMatchObject({ attempts: 1, tokensMeasured: 200 });
+  });
+
+  it('withholds conflicting measurements until a newer measured finish', () => {
+    const job = 'RQ-FAKE-USAGE';
+    const first = { event: 'finish', job, tokens_total: 100, ts: '2026-10-31T09:00:00Z' };
+    const conflict = { ...first, tokens_total: 200 };
+    const later = { ...first, tokens_total: 300, ts: '2026-10-31T10:00:00Z' };
+    const undated = { event: 'finish', job, tokens_total: 400 };
+    expect(foldLaneRewardAttempts(rows(first, conflict, first, undated)).attempts.get(job)?.tokens).toBeNull();
+    expect(foldLaneRewardAttempts(rows(conflict, first)).attempts.get(job)?.tokens).toBeNull();
+    expect(foldLaneRewardAttempts(rows(first, conflict, later, first)).attempts.get(job)?.tokens).toBe(300);
+    expect(foldLaneRewardAttempts(rows({ event: 'finish', job, tokens_total: 50 }, undated))
+      .attempts.get(job)?.tokens).toBe(400);
+  });
+
   it('scores merged attempts through the inspector using the trusted proposal', async () => {
     const proposal = { id: 'RQ-FAKE-M1', repo: '/fake/repo', status: 'applied' } as Proposal;
     const seen: unknown[] = [];
@@ -137,6 +204,7 @@ describe('fleet lane-reward', () => {
     const fold = foldLaneRewardAttempts(rows(
       { event: 'finish', job: 'RQ-FAKE-U1', lane: 'lane-a', tokens_total: 100 },
       { event: 'publish', job: 'RQ-FAKE-U1', lane: 'lane-a', url: URL(5) },
+      { event: 'publish', job: 'RQ-FAKE-U1', lane: 'lane-a', url: URL(5) },
       { event: 'outcome', url: URL(5), state: 'MERGED', ttm_s: 300, ts: '2026-10-31T07:00:00Z' },
       { event: 'finish', job: 'RQ-FAKE-T1', lane: 'lane-a', tokens_total: 100 },
       { event: 'outcome', job: 'RQ-FAKE-T1', state: 'MERGED', ts: '2026-10-31T07:00:00Z' },
@@ -144,6 +212,76 @@ describe('fleet lane-reward', () => {
     ));
     expect(fold.attempts.get('RQ-FAKE-U1')).toMatchObject({ lane: 'lane-a', tokens: 100, outcome: 'merged' });
     expect(fold.attempts.get('RQ-FAKE-T1')?.outcome).toBe('closed');
+  });
+
+  it('withholds URL-only outcomes for contested PRs and honors explicit job IDs', () => {
+    const fold = foldLaneRewardAttempts(rows(
+      { event: 'publish', job: 'RQ-FAKE-A1', lane: 'lane-a', url: URL(5) },
+      { event: 'publish', job: 'RQ-FAKE-B1', lane: 'lane-b', url: URL(5) },
+      { event: 'publish', job: 'RQ-FAKE-A1', lane: 'lane-a', url: URL(5) },
+      { event: 'outcome', job: 'RQ-FAKE-B1', url: URL(5), state: 'CLOSED', ts: '2026-10-31T07:00:00Z' },
+      { event: 'outcome', url: URL(5), state: 'MERGED', ts: '2026-10-31T08:00:00Z' },
+    ));
+    expect(fold.attempts.get('RQ-FAKE-A1')).toMatchObject({ lane: 'lane-a', published: true, outcome: null });
+    expect(fold.attempts.get('RQ-FAKE-B1')).toMatchObject({ lane: 'lane-b', published: true, outcome: 'closed' });
+  });
+
+  it('joins URL-only outcomes across GitHub repository casing and trailing slashes', () => {
+    const fold = foldLaneRewardAttempts(rows(
+      { event: 'publish', job: 'RQ-FAKE-A1', prUrl: 'https://github.com/Fake-Org/Fake-Repo/pull/5/' },
+      { event: 'publish', job: 'RQ-FAKE-B1', url: URL(6) },
+      { event: 'merged', pr_url: URL(5) },
+    ));
+    expect(fold.attempts.get('RQ-FAKE-A1')?.outcome).toBe('merged');
+    expect(fold.attempts.get('RQ-FAKE-B1')?.outcome).toBeNull();
+  });
+
+  it('treats differently spelled claims on one GitHub PR as contested', () => {
+    const fold = foldLaneRewardAttempts(rows(
+      { event: 'publish', job: 'RQ-FAKE-A1', url: URL(5) },
+      { event: 'publish', job: 'RQ-FAKE-B1', url: 'https://github.com/Fake-Org/Fake-Repo/pull/5/' },
+      { event: 'merged', url: URL(5) },
+    ));
+    expect(fold.attempts.get('RQ-FAKE-A1')?.outcome).toBeNull();
+    expect(fold.attempts.get('RQ-FAKE-B1')?.outcome).toBeNull();
+  });
+
+  it('excludes batch wrappers and node-pool telemetry from measured attempts and PR claims', async () => {
+    const job = 'RQ-FAKE-MEMBER';
+    const url = URL(7);
+    const text = rows(
+      { event: 'batch_claim', job, batch: 'RQ-BATCH-FAKE' },
+      { event: 'finish', job, lane: 'lane-a', tokens_total: 100 },
+      { event: 'publish', job, url },
+      { event: 'finish', job: 'RQ-BATCH-FAKE', lane: 'lane-a', tokens_total: 900, url },
+      { schema: 'fleet.session-pool.v1', event: 'launch', id: 'session-fake', url },
+      { schema: 'phm-node-runner.v1', event: 'finish', jobId: job, lane: 'node-lane', tokens_total: 800 },
+      { event: 'merged', url },
+    );
+    const report = await readLaneReward({ deps: deps({ jobsText: read(text) }) });
+    expect(report).toMatchObject({ source: 'healthy', attempts: 1, tokensMeasured: 100 });
+    expect(report.lanes).toMatchObject([
+      { lane: 'lane-a', attempts: 1, tokensMeasured: 100, reasons: { 'proposal-unavailable': 1 } },
+    ]);
+  });
+
+  it('uses batch member claim lanes when execution and outcome receipts lack a lane', async () => {
+    const text = rows(
+      { event: 'batch_claim', job: 'RQ-FAKE-PENDING', lane: 'lane-a' },
+      { event: 'batch_claim', job: 'RQ-FAKE-RESOLVED', lane: 'lane-a' },
+      { event: 'finish', job: 'RQ-FAKE-RESOLVED', tokens_total: 100 },
+      { event: 'merged', job: 'RQ-FAKE-RESOLVED' },
+      { event: 'batch_claim', job: 'RQ-FAKE-OVERRIDE', lane: 'lane-a' },
+      { event: 'finish', job: 'RQ-FAKE-OVERRIDE', lane: 'lane-b', tokens_total: 200 },
+      { event: 'batch_claim', job: 'RQ-BATCH-FAKE', lane: 'lane-a' },
+    );
+    const report = await readLaneReward({ deps: deps({ jobsText: read(text) }) });
+    expect(report).toMatchObject({ attempts: 3, tokensMeasured: 300 });
+    expect(report.lanes).toMatchObject([
+      { lane: 'lane-a', attempts: 2, measured: 1, tokensMeasured: 100,
+        reasons: { unresolved: 1, 'proposal-unavailable': 1 } },
+      { lane: 'lane-b', attempts: 1, measured: 1, tokensMeasured: 200 },
+    ]);
   });
 
   it('reads alias timestamp fields and prefers mergedAt/closedAt on terminal rows', () => {
@@ -158,6 +296,20 @@ describe('fleet lane-reward', () => {
     ));
     expect(fold.attempts.get('RQ-FAKE-W1')?.outcome).toBe('closed');
     expect(fold.attempts.get('RQ-FAKE-W3')?.outcome).toBe('merged');
+  });
+
+  it('resolves terminal evidence behind generic lifecycle fields', () => {
+    const text = rows(
+      { job: 'RQ-FAKE-P1', event: 'publish', state: 'PUBLISHED', outcome: 'MERGED', mergedAt: '2026-10-31T08:00:00Z' },
+      { job: 'RQ-FAKE-P1', event: 'outcome', status: 'completed', conclusion: 'CLOSED', closedAt: '2026-11-01T08:00:00Z' },
+      { job: 'RQ-FAKE-P2', event: 'closed', status: 'completed' },
+      { job: 'RQ-FAKE-P3', state: 'completed', outcome: 'PUBLISHED' },
+    );
+    const fold = foldLaneRewardAttempts(text, NOW);
+    expect(fold.attempts.get('RQ-FAKE-P1')).toMatchObject({ published: true, outcome: 'merged' });
+    expect(fold.attempts.get('RQ-FAKE-P2')?.outcome).toBe('closed');
+    expect(fold.attempts.get('RQ-FAKE-P3')).toMatchObject({ published: true, outcome: null });
+    expect(foldLaneRewardAttempts(text).attempts.get('RQ-FAKE-P1')?.outcome).toBe('closed');
   });
 
   it('wires the real inspector by default and reports degraded sources', async () => {

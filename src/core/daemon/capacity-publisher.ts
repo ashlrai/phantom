@@ -119,8 +119,8 @@ export interface DaemonCapacityPublisher {
 }
 
 function ageMs(iso: string, nowMs: number): number {
-  const at = Date.parse(iso);
-  return Number.isFinite(at) ? nowMs - at : Number.POSITIVE_INFINITY;
+  const age = nowMs - Date.parse(iso);
+  return Number.isFinite(age) && age >= 0 ? age : Number.POSITIVE_INFINITY;
 }
 
 export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapacityPublisherDeps): DaemonCapacityPublisher {
@@ -178,7 +178,6 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
   }
 
   async function runCycle(): Promise<PublisherStatus> {
-    const now = deps.nowMs();
     let snapshot: CapacitySnapshot | null = null;
     try {
       snapshot = deps.readSnapshot();
@@ -186,7 +185,7 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
       snapshot = null;
     }
     if (snapshot) {
-      const age = ageMs(snapshot.publishedAt, now);
+      const age = ageMs(snapshot.publishedAt, deps.nowMs());
       const ours = status.lastPublishedAt !== null && snapshot.publishedAt === status.lastPublishedAt;
       if (!ours && age <= FOREIGN_FRESH_MS) {
         recordHistory(snapshot);

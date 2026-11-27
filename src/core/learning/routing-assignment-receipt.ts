@@ -31,38 +31,20 @@
  * could never be "policy-eligible".
  */
 
-import { realpathSync } from 'node:fs';
-import { createHash, createHmac } from 'node:crypto';
-import { isAbsolute } from 'node:path';
-
 import type { EngineId, WorkItem } from '../types.js';
 import { generatedRepairGenerationId } from '../fleet/generated-repair-lifecycle.js';
 import { existingWorkItemObjectiveHash } from '../fleet/work-item-objective.js';
 import { loadExistingProvenanceKey } from '../foundry/provenance.js';
 import {
+  SHA256_HEX_RE as SHA256_RE,
+  canonicalRealPath as canonicalRepo,
+  hmacSha256Tuple as hmacTuple,
+  sha256Tuple as shaTuple,
+} from './policy-assignment-identity.js';
+import {
   recordPolicyAssignmentReceipt,
   type PolicyAssignmentReceiptWriteDisposition,
 } from './policy-assignment-receipts.js';
-
-const SHA256_RE = /^[a-f0-9]{64}$/;
-
-function shaTuple(domain: string, values: readonly unknown[]): string {
-  return createHash('sha256').update(JSON.stringify([domain, ...values]), 'utf8').digest('hex');
-}
-
-function hmacTuple(key: Buffer, domain: string, values: readonly unknown[]): string {
-  return createHmac('sha256', key).update(JSON.stringify([domain, ...values]), 'utf8').digest('hex');
-}
-
-function canonicalRepo(value: string): string | null {
-  if (typeof value !== 'string' || value.length === 0 || !isAbsolute(value)) return null;
-  try {
-    const canonical = realpathSync(value);
-    return isAbsolute(canonical) ? canonical : null;
-  } catch {
-    return null;
-  }
-}
 
 /** Repair items already carry a durable lineage generation id; plain items get one scoped to this module. */
 function workItemGenerationId(item: WorkItem, repo: string, objectiveHash: string, key: Buffer): string | null {

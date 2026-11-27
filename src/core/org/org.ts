@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
-import { parse, stringify } from 'smol-toml';
+import { parse, stringify, TomlError } from 'smol-toml';
 import { z } from 'zod';
 import { ashlrHome } from '../cloud/store.js';
 import { assertMetadata } from '../connectors/profile.js';
@@ -89,7 +89,13 @@ export function loadOrg(file = orgFile()): Org {
   try { text = readFileSync(file, 'utf8'); } catch { return fail(`No org file at ${file}. org.toml holds org ids and lane shares only, never credentials: get a copy from your org leader, or start a new org with phm org init --member <id> --machine <id>.`); }
   if (text.length > 256 * 1024) fail('org.toml is too large.');
   let doc: unknown;
-  try { doc = parse(text); } catch { return fail('org.toml is not valid TOML.'); }
+  try { doc = parse(text); } catch (err) {
+    // TomlError carries the 1-based position of the first bad token; naming it
+    // gives a member something concrete to send their leader. File content is
+    // never echoed — org.toml holds member and machine ids only.
+    const at = err instanceof TomlError ? ` at line ${err.line}` : '';
+    return fail(`org.toml is not valid TOML${at}. org.toml is maintained by your org leader — ask them to repair it and send a fresh copy.`);
+  }
   return validateOrg(doc);
 }
 
@@ -100,10 +106,13 @@ const INIT_HEADER = '# org.toml — declarative org model: member and machine id
 
 /**
  * `phm org init`: write a starter org.toml declaring `member` as leader (founder) of a new org
- * on one machine, with the given lane contributions. The document is validated before anything
- * is written, and an existing file is never overwritten.
+ * on one machine, with the given lane contributions. `agents` declares implementer agents on
+ * that machine, one lane each, reporting to the founder — without them `phm org plan` can never
+ * assign work (every job reads "no implementer agent declared"). The document is validated
+ * before anything is written, and an existing file is never overwritten.
  */
-export function initOrg(req: { member: string; machine: string; name?: string; lanes: { lane: string; share: number }[] },
+export function initOrg(req: { member: string; machine: string; name?: string; lanes: { lane: string; share: number }[];
+  agents?: { id: string; lane: string }[] },
   file = orgFile()): { file: string; org: Org } {
   // Empty arrays stay out of the file: the schema defaults fill them on read.
   const doc = {
@@ -113,6 +122,8 @@ export function initOrg(req: { member: string; machine: string; name?: string; l
       id: req.member, name: req.name ?? req.member, role: 'founder' as const,
       machines: [{ id: req.machine }],
       ...(req.lanes.length ? { contributions: req.lanes.map((l) => ({ lane: l.lane, share: l.share })) } : {}),
+      ...(req.agents?.length ? { agents: req.agents.map((a) => ({ id: a.id, lane: a.lane, machine: req.machine,
+        roles: ['implementer' as const], reports_to: req.member })) } : {}),
     }],
   };
   const org = validateOrg(doc);
@@ -197,6 +208,19 @@ export function droppedJoinLanes(previous: JoinRecord | undefined, next: JoinRec
   return previous.lanes.filter((l) => !kept.has(l.lane));
 }
 
+/**
+ * Declared contributions this machine's join record has not opted into, each with the
+ * declared share a bare `--lane <name>` re-join would grant. Read-only projection for the
+ * join reply: it names what a re-join could still add — including the zero-lane first run,
+ * which contributes nothing until one is named — never what it must contribute.
+ */
+export function openJoinLanes(org: Org, record: JoinRecord): { lane: string; share: number }[] {
+  const member = org.members.find((x) => x.id === record.member);
+  if (!member) return [];
+  const opted = new Set(record.lanes.map((l) => l.lane));
+  return member.contributions.filter((c) => !opted.has(c.lane)).map((c) => ({ lane: c.lane, share: c.share }));
+}
+
 export interface QueueJob { id: string; title?: string; priority?: number; lane?: string; costPct?: number }
 export function parseQueue(text: string): QueueJob[] {
   assertMetadata(text);
@@ -234,9 +258,14 @@ export function planOrg(org: Org, joins: readonly JoinRecord[], view: ResourceVi
   capacity?: readonly { lane: string; additional_slots: number | null }[]): OrgPlan {
   const budgets: LaneBudget[] = [], held: OrgPlan['held'] = [];
   for (const m of org.members) for (const c of m.contributions) {
-    const joined = joins.filter((j) => j.member === m.id).flatMap((j) => j.lanes).find((l) => l.lane === c.lane);
-    if (!joined) { held.push({ member: m.id, lane: c.lane, reason: 'not opted in' }); continue; }
-    const share = Math.min(joined.share, c.share);
+    // A member's machines each hold their own join record for the lane, and
+    // every offer draws on the one declared pool for this member+lane — the
+    // offers are not additive. The member's ceiling is the largest share any
+    // machine committed; taking the first record would make the plan depend
+    // on join-filename order and could starve a lane the member fully offered.
+    const offers = joins.filter((j) => j.member === m.id).flatMap((j) => j.lanes).filter((l) => l.lane === c.lane);
+    if (!offers.length) { held.push({ member: m.id, lane: c.lane, reason: 'not opted in' }); continue; }
+    const share = Math.min(Math.max(...offers.map((o) => o.share)), c.share);
     if (share <= 0) { held.push({ member: m.id, lane: c.lane, reason: 'zero share' }); continue; }
     const pool = c.pool ?? POOL_OF[c.lane] ?? null;
     const reading = view && pool ? view.pools.find((p) => p.pool === pool) : undefined;

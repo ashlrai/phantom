@@ -57,5 +57,6 @@ describe('readEmptyJobs and recordEmptyTags', () => {
     expect(await recordEmptyTags(root, report!.tagged!)).toBe(0);
     const lines = (await readFile(join(root, 'metrics/empty-tags.jsonl'), 'utf8')).trim().split('\n').map(l => JSON.parse(l));
     expect(lines.map(l => l.tag).sort()).toEqual(['pool_cap', 'unknown']);
+    for (const row of lines) expect(new Date(row.ts).toISOString()).toBe(row.ts);
   });
 });

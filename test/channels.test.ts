@@ -31,12 +31,12 @@ afterEach(() => {
 });
 
 describe('channels status', () => {
-  it('reports all six kinds with real zeros on an empty home', async () => {
+  it('reports all seven kinds with real zeros on an empty home', async () => {
     const root = useHome();
     const status = await buildChannelsStatus({ homeDir: root, runsDir: join(root, '.ashlr-runs') });
     expect(status.v).toBe(1);
     expect(status.inbox).toBe('missing');
-    expect(status.channels.map((c) => c.kind)).toEqual(['email', 'telegram', 'mobile', 'desktop', 'page', 'cli']);
+    expect(status.channels.map((c) => c.kind)).toEqual(['email', 'telegram', 'imessage', 'mobile', 'desktop', 'page', 'cli']);
     for (const row of status.channels) {
       expect(row.received).toBe(0);
       if (row.kind === 'email') expect(row.pendingOutbound).toBe('unknown'); // no outbox path to measure
@@ -48,6 +48,12 @@ describe('channels status', () => {
     expect(telegram.paired).toBe(false);
     expect(telegram.ready).toBe(false);
     expect(telegram.next).toContain('phm channels add telegram');
+    const imessage = status.channels.find((c) => c.kind === 'imessage')!;
+    expect(imessage.configured).toBe(false);
+    expect(imessage.credential).toBe('none-needed');
+    expect(imessage.paired).toBe(false);
+    expect(imessage.ready).toBe(false);
+    expect(imessage.next).toContain('phm imessage doctor');
     const cli = status.channels.find((c) => c.kind === 'cli')!;
     expect(cli.configured).toBe(true);
     expect(cli.credential).toBe('none-needed');
@@ -60,12 +66,14 @@ describe('channels status', () => {
     await appendInboxEntry('hold the lane', { runsDir, source: 'telegram' });
     await appendInboxEntry('status?', { runsDir, source: 'Phantom desktop' });
     await appendInboxEntry('note', { runsDir, source: 'cli' });
+    await appendInboxEntry('imessage note', { runsDir, source: 'imessage' });
     const status = await buildChannelsStatus({ homeDir: root, runsDir });
     expect(status.inbox).toBe('healthy');
     const by = Object.fromEntries(status.channels.map((c) => [c.kind, c]));
     expect(by['telegram']!.received).toBe(1);
     expect(by['desktop']!.received).toBe(1);
     expect(by['cli']!.received).toBe(1);
+    expect(by['imessage']!.received).toBe(1);
     expect(by['email']!.received).toBe(0);
     expect(by['telegram']!.lastSeenAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
   });
@@ -151,6 +159,66 @@ describe('channels status', () => {
     const by = Object.fromEntries(status.channels.map((c) => [c.kind, c]));
     expect(by['telegram']!.pendingOutbound).toBe('unknown');
     expect(by['email']!.pendingOutbound).toBe('unknown');
+  });
+
+  it('reads the iMessage row from comms config, chat.db and the teammate-task ledger', async () => {
+    const root = useHome();
+    const runsDir = join(root, '.ashlr-runs');
+    mkdirSync(join(root, '.ashlr'), { recursive: true });
+    writeFileSync(join(root, '.ashlr', 'config.json'), JSON.stringify({
+      v: 1, comms: { enabled: true, imessageHandle: '+15551234567' },
+    }));
+    const chatDir = join(root, 'Library', 'Messages');
+    mkdirSync(chatDir, { recursive: true });
+    writeFileSync(join(chatDir, 'chat.db'), 'x');
+    const task = (jobId: string, n: number, state: string, extra: Record<string, unknown> = {}) => ({
+      jobId, peer: 'dot', kind: 'research', scope: 's', repo: 'o/r', prRefs: [],
+      format: 'f', deadline: '2099-01-01T00:00:00.000Z',
+      token: n.toString(16).padStart(32, '0'), createdAt: 1763000000000 + n,
+      state, metrics: [], settled: false, ...extra,
+    });
+    const ledger = join(runsDir, 'imessage');
+    mkdirSync(ledger, { recursive: true });
+    writeFileSync(join(ledger, 'teammate-tasks.json'), JSON.stringify({
+      v: 1,
+      tasks: [
+        task('JOB-A', 1, 'queued'),
+        task('JOB-B', 2, 'sending', { attemptedAt: 1763000001000 }),
+        task('JOB-C', 3, 'pending', { attemptedAt: 1763000001000,
+          receipt: { rowid: 50, sent: true, delivered: false, error: 0 } }),
+        task('JOB-D', 4, 'replied', { attemptedAt: 1763000001000,
+          receipt: { rowid: 51, sent: true, delivered: true, error: 0 },
+          result: { rowid: 52, status: 'DONE', summary: 's', at: 1763000002000 }, settled: true }),
+      ],
+      attempts: { dot: [], instinct: [] },
+    }));
+    const status = await buildChannelsStatus({ homeDir: root, runsDir });
+    const imessage = status.channels.find((c) => c.kind === 'imessage')!;
+    expect(imessage.configured).toBe(true);
+    expect(imessage.credential).toBe('none-needed');
+    expect(imessage.paired).toBe(true);
+    expect(imessage.ready).toBe(true);
+    expect(imessage.next).toBeUndefined();
+    // queued + sending are still outbound; pending already sent, replied settled.
+    expect(imessage.pendingOutbound).toBe(2);
+    // A corrupt ledger is unknown, never a guessed zero.
+    writeFileSync(join(ledger, 'teammate-tasks.json'), '{broken');
+    const degraded = await buildChannelsStatus({ homeDir: root, runsDir });
+    expect(degraded.channels.find((c) => c.kind === 'imessage')!.pendingOutbound).toBe('unknown');
+  });
+
+  it('marks iMessage not-ready with the honest next step when chat.db is absent', async () => {
+    const root = useHome();
+    const runsDir = join(root, '.ashlr-runs');
+    mkdirSync(join(root, '.ashlr'), { recursive: true });
+    writeFileSync(join(root, '.ashlr', 'config.json'), JSON.stringify({
+      v: 1, comms: { enabled: true, imessageHandle: '+15551234567' },
+    }));
+    const status = await buildChannelsStatus({ homeDir: root, runsDir });
+    const imessage = status.channels.find((c) => c.kind === 'imessage')!;
+    expect(imessage.configured).toBe(true);
+    expect(imessage.ready).toBe(false);
+    expect(imessage.next).toBeTruthy();
   });
 });
 
@@ -247,6 +315,16 @@ describe('channels add', () => {
     expect(mobile.ok).toBe(true);
     expect(mobile.next).toContain('verse-remote.json');
   });
+
+  it('refuses iMessage honestly — setup needs macOS permissions a config write cannot grant', async () => {
+    const root = useHome();
+    const result = await addChannel('imessage');
+    expect(result.ok).toBe(false);
+    expect(result.changed).toEqual([]);
+    expect(result.reason).toContain('phm imessage doctor');
+    expect(result.next).toBeUndefined();
+    expect(existsSync(join(root, '.ashlr', 'config.json'))).toBe(false);
+  });
 });
 
 describe('channelKindForSource', () => {
@@ -257,7 +335,19 @@ describe('channelKindForSource', () => {
     expect(channelKindForSource('mail')).toBe('email');
     expect(channelKindForSource('cli')).toBe('cli');
     expect(channelKindForSource('page')).toBe('page');
+    expect(channelKindForSource('imessage')).toBe('imessage');
     expect(channelKindForSource('fleet-say')).toBe('other');
+  });
+
+  it('maps the stored `<slug> (<id>)` channel-entry form back to its kind', () => {
+    // appendInboxEntry persists channel entries as `src:<slug> id:<id>` and
+    // reads them back as `<slug> (<id>)` — the id suffix must not break kind
+    // attribution (it silently dropped every iMessage entry before).
+    expect(channelKindForSource('imessage (imessage-a1b2c3d4e5f60718)')).toBe('imessage');
+    expect(channelKindForSource('telegram (tel-a1b2c3d4e5f60718)')).toBe('telegram');
+    expect(channelKindForSource('desktop (desk-a1b2c3d4e5f60718)')).toBe('desktop');
+    expect(channelKindForSource('phone (phone-a1b2c3d4e5f60718)')).toBe('mobile');
+    expect(channelKindForSource('cli (cli-a1b2c3d4e5f60718)')).toBe('cli');
   });
 });
 
@@ -269,7 +359,7 @@ describe('phm channels CLI', () => {
 
     expect(await cmdChannels(['status', '--json'])).toBe(0);
     const status = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
-    expect(status.channels).toHaveLength(6);
+    expect(status.channels).toHaveLength(7);
 
     expect(await cmdChannels(['add', 'telegram', '555777'])).toBe(0);
     const cfg = loadConfig();

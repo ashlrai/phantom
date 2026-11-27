@@ -24,20 +24,61 @@ sibling outcome readers share — job ids `job|job_id|jobId|id`, lanes
 `lane|pool|arm`, events `event|type|kind` (`published` folds to `publish`),
 terminal phases `phase|state|outcome|status|result|conclusion`, and
 `merged`/`closed`/`revert`/`reverted` event names when no phase field
-resolves. Reverted covers the ledger's own revert spellings plus the
+resolves. Other event names leave the standing terminal verdict and its
+evidence intact unless the row carries a recognized terminal phase.
+Reverted covers the ledger's own revert spellings plus the
 standing revert set the daemon supplies (`revertedPrKeys` — outcome-ledger,
 cloud-task and `phm fleet reverts --record` detections): a merged job whose
-standing verdict row's pull URL is claimed by exactly that job and whose
-`owner/repo#n` key stands in the set counts as reverted, the same
-unambiguous-claim rule the outcome learners apply, so a merge git history
+standing verdict row identifies a PR claimed by exactly that job and whose
+lowercase `owner/repo#n` key stands in the set counts as reverted, the same
+unambiguous-claim rule the outcome learners apply. Repository case and a
+trailing slash do not distinguish claims on the same PR, so a merge git history
 proved did not hold never seeds a "recovery" draft. A merged,
 non-reverted job that needed a retry, a
 recut, or recovered a failure class seen on three earlier failed jobs seeds
 one bounded draft card.
+Each draft lists up to 16 source job IDs and always includes the latest
+qualifying merge for that draft, even when earlier failures fill the list.
 For recurrence, Phantom orders jobs by their latest terminal outcome row in
-the retained ledger. Later bookkeeping rows do not change that order.
+the retained ledger. Exact replays of timestamped terminal rows keep their
+original position and evidence snapshot, including rows dated only by a
+merge or close timestamp. Later bookkeeping rows do not change that order.
+For each resolved job, the learner uses the lane, retries, recuts and
+failure class recorded through that terminal row in ledger order.
+Subsequent execution evidence becomes eligible when a newer terminal row
+resolves the job.
+The fold anchors evidence to the start of the sync and excludes receipts dated
+after that time, including terminal receipts whose merge or close timestamp
+is still in the future. An explicit revert timestamp takes effect when the
+sync reaches that time. Until then, a standalone revert receipt is ignored
+and a merge receipt carrying future revert metadata still supplies its merge
+verdict. Receipts without a parseable timestamp retain their ledger order.
+Exact replays of timestamped dispatch receipts count once and cannot consume
+a later recut admission. Dispatch receipts without a parseable timestamp
+retain their ledger order.
+Exact replays of timestamped `launch_failed`, `launch_terminal`, and `finish`
+receipts keep their original position. They contribute retry evidence once
+and cannot overwrite a later lane or failure classification. Receipts without
+a parseable timestamp retain their ledger order.
+A recut requires a `ready` recut admission followed by a dispatch attempt
+for the same job before its terminal outcome. Repeated readiness checks
+count once per dispatch. A later defer or skip clears pending readiness.
+Exact replays of timestamped admission receipts cannot re-arm consumed or
+cleared readiness or cancel a newer ready decision. Admissions without a
+parseable timestamp retain their ledger order.
+For timestamped receipts covered by replay detection, reserializing the same
+JSON fields with different key order or whitespace still counts as a replay.
+The learner uses the first identifier-safe classification on a row, skipping
+case-insensitive `unknown` values. A row with no usable classification leaves
+the last observed class intact while the lane stays the same. When the
+ledger changes from one known lane to another, the learner clears the
+previous failure class before reading any classification on that row.
+Without a class for the new lane, recorded retries or recuts can still
+seed a generic recovery draft.
 Recovery drafts require an observed lane. A terminal row can supply that
-lane even when it has no event name. Queue hints and `unknown` values
+lane even when it has no event name. The learner takes the first usable
+`lane`, `pool` or `arm` value on an eligible row, skipping case-insensitive
+`unknown` values. Queue-arrival rows (`enqueue`, `enqueued`, `queued`)
 leave the last observed lane intact. Jobs without an observed lane supply
 neither recurrence evidence nor recovery drafts.
 
@@ -104,6 +145,27 @@ Shadow skill selections are observe-only, but their outcomes are recorded:
 `phm fleet status --json` exposes `trajectoryLearning.skillOutcomes`, which
 attributes each trajectory's resolved terminal outcome (and deterministic
 post-merge realized outcome) back to the skill revisions selected on it.
+Only skill-use receipts timestamped within the reporting window, including
+both endpoints, contribute to the join or its coverage threshold.
+Skill-use partitions dated after the report day do not occupy file slots.
+Within scanned partitions, receipts timestamped after the report time do
+not count toward row limits or cause event-ID conflicts.
+Improvement discovery uses the same upper time bound when checking skill-use
+ledger health, so future partitions and receipts cannot queue a ledger repair.
+Dispatch receipts dated after report time cannot supply production
+trajectories for that sample or contribute to dispatch join diagnostics.
+Direct trajectory reads also exclude future UTC dispatch partitions from
+the file cap and future dispatches from the event cap. Physical scan limits
+still apply to every selected file.
+Proposal snapshots whose creation timestamps fall after report time cannot
+supply trajectory outcomes or enter trajectory join diagnostics.
+Proposal decisions contribute trajectory coverage, metadata and terminal outcomes
+when their recorded timestamps are at or before report time.
+The skill-outcome report anchors its ledger read and trajectory join to one
+report time, so time spent reading the ledger cannot shift either boundary.
+The trajectory timeline, join diagnostics and outcome tallies use only
+post-merge receipts whose observation timestamps fall within the reporting
+window, including its start and report time.
 Per-skill rows count distinct trajectories per skill revision with sparse
 outcome tallies — for example how many selections ended `merged`, `rejected`
 or `failed`, and how many merged selections were later `reverted` or
@@ -119,18 +181,32 @@ zero. Plain-text output prints the tallies under each skill.
 The projection is sample-gated exactly like `skillObservation`: per-skill
 counts publish only after at least `MIN_SKILL_OBSERVED_TRAJECTORIES` (3)
 production trajectories carry skill-use coverage, and the whole section is
-withheld when the skill-use ledger is degraded. Below the gate the field is
+withheld when the skill-use ledger is degraded. A bounded read also marks
+the sample degraded if the file cap omits a daily partition that can contain
+events in the requested window, a partition exceeds the 4 MiB tail read cap,
+its row scan runs out of room, or the number of distinct events exceeds
+the requested result limit. Exact replays within
+the scan budget count as a single event. Below the gate the field is
 absent — unknown stays unknown, never a zero.
 
 Recurring adverse tallies do not stay report-only:
 `phm improve discover` reads the same projection and queues a priority-3
-backlog item for the fleet repository when one live card revision records
+backlog item for `ashlrai/phantom` (case-insensitive, with bare `phantom`
+also accepted as shorthand) when one live card revision records
 at least three reverted + regressed + followed-up realized outcomes inside
-the 7-day window. Only the corpus's newest revision in a `candidate` or
-`verified` status qualifies — superseded and withdrawn cards were already
-handled — and the items keep the association-not-causation framing since
+the 7-day window. The trajectory join and skill-use diagnostics allow up to
+eight daily ledger partitions for that window, including both UTC date
+boundaries. Existing record and byte limits still apply. Only the corpus's newest revision in a `candidate` or
+`verified` status qualifies. If records for that revision disagree on its
+status, discovery withholds its brief regardless of their timestamps.
+A conflict on a superseded revision does not affect a newer revision.
+The items keep the association-not-causation framing since
 shadow selections never steered those runs. Withdrawing or rewriting a card
 itself remains an owner-only act on the host-signed ledger.
+
+Skill-evidence ledger and trajectory evidence-gap repair briefs from
+`phm improve discover` also target `ashlrai/phantom` or the bare `phantom`
+shorthand, matching case-insensitively.
 
 ## Exit codes
 

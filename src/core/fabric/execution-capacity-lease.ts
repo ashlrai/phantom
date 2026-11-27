@@ -10,7 +10,7 @@
  * allocation identity can never acquire a new lifetime (ABA) accidentally.
  */
 
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   closeSync,
   constants as fsConstants,
@@ -36,6 +36,15 @@ import {
 } from '../fleet/local-store-lock.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
+import {
+  SHA256_PREFIXED_DIGEST_RE as DIGEST_RE,
+  canonicalJsonString as canonicalJson,
+  exactKeys,
+  isCanonicalIsoTimestamp as canonicalTimestamp,
+  isSafeIntegerInRange as safeInteger,
+  sha256Prefixed as sha256,
+  timingSafeUtf8Equal as sameDigest,
+} from './external-contract-codec.js';
 
 export const EXECUTION_CAPACITY_LEASE_V1_PROTOCOL = 'ashlr-execution-capacity-lease-v1' as const;
 export const EXECUTION_CAPACITY_EVIDENCE_V1_PROTOCOL = 'ashlr-execution-capacity-evidence-v1' as const;
@@ -56,7 +65,6 @@ const MAX_FUTURE_SKEW_MS = 60_000;
 const MAX_LOCK_WAIT_MS = 2_000;
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
-const DIGEST_RE = /^sha256:[0-9a-f]{64}$/u;
 const CAPABILITY_RE = /^ecap_[A-Za-z0-9_-]{43}$/u;
 
 export const EXECUTION_CAPACITY_LEASE_NO_AUTHORITY_V1 = Object.freeze({
@@ -285,24 +293,6 @@ export function setExecutionCapacityLeaseTestHooksForTests(hooks?: LeaseTestHook
   leaseTestHooks = hooks;
 }
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const row = value as Record<string, unknown>;
-  return `{${Object.keys(row).sort().map((key) =>
-    `${JSON.stringify(key)}:${canonicalJson(row[key])}`).join(',')}}`;
-}
-
-function sha256(domain: string, value: string | Uint8Array): string {
-  return `sha256:${createHash('sha256').update(domain, 'utf8').update('\0').update(value).digest('hex')}`;
-}
-
-function exactKeys(row: Record<string, unknown>, keys: readonly string[]): boolean {
-  const actual = Object.keys(row).sort();
-  const expected = [...keys].sort();
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
-}
-
 function plainRecord(value: unknown): Record<string, unknown> | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
   try {
@@ -342,16 +332,6 @@ function snapshotPlainArray(value: unknown, maximum: number): unknown[] | null {
   } catch {
     return null;
   }
-}
-
-function canonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > 40) return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
-function safeInteger(value: unknown, minimum: number, maximum: number): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
 }
 
 function evidenceUnsigned(envelope: ExecutionCapacityEvidenceEnvelopeV1): ExecutionCapacityEvidenceUnsignedV1 {
@@ -716,12 +696,6 @@ function allocationIdHash(allocationId: string): string {
 
 function ownerCommitment(capability: string): string {
   return sha256('ashlr.execution-capacity-lease.owner-capability.v1', capability);
-}
-
-function sameDigest(left: string, right: string): boolean {
-  const leftBytes = Buffer.from(left, 'utf8');
-  const rightBytes = Buffer.from(right, 'utf8');
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
 }
 
 function requestDigest(allocationHash: string, ttlMs: number, items: readonly VerifiedBatchItem[]): string {

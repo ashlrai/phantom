@@ -14,6 +14,8 @@ export const FLEET_LAUNCH_STALL_SCHEMA = 'fleet.launch-stall.v1';
 export const STALL_AFTER_MS = 20 * 60_000;
 const HEAD_LINES = 3;
 const MAX_BYTES = 8 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; same 32 MiB bound the other market readers use. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 export interface LaunchStallFacts {
   lane: string;
@@ -94,16 +96,18 @@ export function explainLaunchStall(facts: LaunchStallFacts, now: Date | number):
   return { lane, stalled, reasons, firstAction: action };
 }
 
-async function readText(path: string): Promise<string | null> {
+async function readText(path: string, maxBytes = MAX_BYTES): Promise<string | null> {
   try {
     const info = await stat(path);
-    if (!info.isFile() || info.size > MAX_BYTES) return null;
+    if (!info.isFile() || info.size > maxBytes) return null;
     return await readFile(path, 'utf8');
   } catch { return null; }
 }
 
 const rec = (v: unknown): Record<string, unknown> | null =>
   typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : null;
+/** Parked rows wait on dependencies or holds; dispatchd skips them, so they never head the launch order. */
+const PARKED_STATUS = /^PARKED(?:[.-]|$)/;
 const num = (v: unknown): number | undefined => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
 const str = (v: unknown): string | undefined => typeof v === 'string' && v.trim() ? v.trim() : undefined;
 const iso = (v: unknown): string | undefined => {
@@ -122,13 +126,14 @@ const lanesOf = (text: string | null): Record<string, Record<string, unknown>> =
 /** Build facts for every lane in queue/status.json. Absent files leave facts undefined. */
 export async function readLaunchStallFacts(runsDir = process.env.ASHLR_RUNS_DIR || join(homedir(), '.ashlr-runs')): Promise<LaunchStallFacts[]> {
   const queue = join(runsDir, 'queue');
-  const [status, resources, ready, ledger, launchLog] = await Promise.all([
+  const [status, resources, ready, routerQueue, ledger, launchLog] = await Promise.all([
     readText(join(queue, 'status.json')), readText(join(queue, 'resources.json')),
-    readText(join(queue, 'ready.tsv')), readText(join(queue, 'jobs.jsonl')),
+    readText(join(queue, 'ready.tsv')), readText(join(queue, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES),
+    readText(join(queue, 'jobs.jsonl')),
     readText(join(runsDir, 'metrics', 'jobs.jsonl')),
   ]);
   const used = lanesOf(resources);
-  const rows = ready === null ? [] : parseReadyTsv(ready).rows;
+  const rows = ready === null ? [] : parseReadyTsv(ready, routerQueue).rows;
   const launches = launchLog === null ? null : parseJobLaunches(launchLog).latest;
   const merges = new Map<string, number>();
   for (const e of ledger === null ? [] : parseJobsJsonl(ledger).events) {
@@ -145,7 +150,9 @@ export async function readLaunchStallFacts(runsDir = process.env.ASHLR_RUNS_DIR 
       lastLaunchAt: launches?.get(lane)?.at ?? undefined,
       lastMergeAt: merge === undefined ? undefined : new Date(merge).toISOString(),
       // A ready row whose status is not READY is a blocked head line; its status is the blocker.
-      headLines: rows.filter(r => r.pool === lane && r.id).slice(0, HEAD_LINES)
+      // Parked rows are not launch candidates (dispatchd skips them and does not count them
+      // in `queued`), so the head lines are the first non-parked rows in queue order.
+      headLines: rows.filter(r => r.pool === lane && r.id && !PARKED_STATUS.test(r.status)).slice(0, HEAD_LINES)
         .map(r => ({ id: r.id!, ...(r.status !== 'READY' ? { blockedBy: r.status.toLowerCase() } : {}) })),
     };
   }).sort((a, b) => a.lane.localeCompare(b.lane));

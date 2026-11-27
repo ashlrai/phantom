@@ -87,6 +87,13 @@ export const LANDED_CLOSE_MAX_ITEMS = 8;
 const LANDED_CLOSE_ITEM_HARD_MAX = 25;
 /** The window every fold anchors on: the fleet's recurring-evidence week. */
 export const LANDED_CLOSE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Future-skew ceiling on journal `at` stamps, the sibling feeds'
+ * one-minute tolerance for same-host clock drift: a row stamped
+ * further ahead than the evaluation time is corrupt or replayed
+ * evidence and never reaches a cell.
+ */
+export const LANDED_CLOSE_FUTURE_SKEW_MS = 60_000;
 /** Adverse rows one cell needs inside the window… */
 export const LANDED_CLOSE_MIN_ROWS = 3;
 /** …spread across at least this many distinct UTC days. */
@@ -257,8 +264,9 @@ const newFold = (): LandedCloseFold => ({
 
 /**
  * Pure: fold validated rows into the adverse cells. Rows outside the
- * window contribute nothing. 'closed' rows are explained outcomes and
- * never fold; 'skipped' rows classify by their recorded reason —
+ * window — before its start or past the evaluation time plus the
+ * sibling feeds' future skew — contribute nothing. 'closed' rows are
+ * explained outcomes and never fold; 'skipped' rows classify by their recorded reason —
  * 'head-moved' and 'view-failed' are the writer's documented vocabulary,
  * anything else (including a missing reason) lands in other-skip so a
  * vocabulary change stays visible.
@@ -270,6 +278,7 @@ export function foldLandedCloseRows(
 ): LandedCloseFold {
   const fold = newFold();
   const windowStart = nowMs - windowMs;
+  const until = nowMs + LANDED_CLOSE_FUTURE_SKEW_MS;
   const perPr = (map: Map<number, AdverseTrack>, pr: number): AdverseTrack => {
     let track = map.get(pr);
     if (track === undefined) {
@@ -279,7 +288,7 @@ export function foldLandedCloseRows(
     return track;
   };
   for (const row of rows) {
-    if (row.atMs < windowStart) continue;
+    if (row.atMs < windowStart || row.atMs > until) continue;
     if (row.outcome === 'failed') {
       trackRow(perPr(fold.failed, row.pr), row);
     } else if (row.outcome === 'skipped') {

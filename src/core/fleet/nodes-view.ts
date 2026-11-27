@@ -18,6 +18,7 @@ import { sampleHostStats } from '../drive/nodes/capacity.js';
 import { joinHintCommand } from '../drive/nodes/commands.js';
 import { readPoolConfig } from '../drive/nodes/pool-host.js';
 import { isHostStats, parseState, type HostStats, type NodeRecord, type NodesState } from '../drive/nodes/state.js';
+import { isVersionCap } from '../drive/nodes/phm-version.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { aliasMatches } from './pool-reach.js';
 import { sanitizeIdentityText, UNKNOWN } from './runtime-identity.js';
@@ -131,11 +132,19 @@ interface Machine { name: string; isSelf: boolean; reachable: boolean | Unknown;
 /** The standalone rejoin for this computer's own expired session, from its newest record.
  * With no record it is a first join, which needs no --node: join defaults the id to the hostname.
  * A record restores the last advertised profile — owners, caps and slots — through the same
- * hint a session-expired fix prints, so the suggested rejoin never silently downgrades the node. */
+ * hint a session-expired fix prints, so the suggested rejoin never silently downgrades the node.
+ * Every form ends in --watch: a bare join's session dies 30 s after its last beat, so the
+ * command that restores "Phantom running" must also hold the session live. */
 function standaloneRejoin(records: NodeRecord[]): string {
   const rec = [...records].sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
-  return rec ? joinHintCommand(rec.nodeId, rec) : 'phm node join --owner <scope>';
+  return rec ? joinHintCommand(rec.nodeId, rec, { watch: true }) : 'phm node join --owner <scope> --watch';
 }
+
+/** The lane view of a record's advertised caps. `phm-<version>` is the
+ * self-update build marker — observation metadata, not work a job can name —
+ * so it stays in `caps` for drift checks but never lists or matches as a
+ * lane here. */
+const laneCaps = (record: NodeRecord): string[] => (record.caps ?? []).filter(cap => !isVersionCap(cap));
 
 /** Pure join of the tailnet read, the registry snapshot and this computer's sample. */
 export function buildNodesView(
@@ -231,7 +240,7 @@ export function buildNodesView(
     return {
       name: machine.name, isSelf: machine.isSelf, reachable: silent ? false : machine.reachable, lastSeen: machine.lastSeen, heartbeatAgeSeconds, phantom,
       ...headroom(machine.isSelf ? local.stats ?? undefined : newest?.hostStats),
-      lanes: machine.records.length ? [...new Set((live.length ? live : machine.records).flatMap(record => record.caps ?? []))].sort() : UNKNOWN,
+      lanes: machine.records.length ? [...new Set((live.length ? live : machine.records).flatMap(laneCaps))].sort() : UNKNOWN,
       jobsRunning: jobs, freeSlots: slots, stateCode, state: words,
       joined, joinCommand: joined ? null : enroll,
     };
@@ -240,10 +249,24 @@ export function buildNodesView(
   return { schema: NODES_SCHEMA, schemaVersion: 1, asOf, self: selfName, registry: registry?.source ?? UNKNOWN, nodes, reasons };
 }
 
+/** The oMLX cap family a node advertises for local-model work: `omlx` plus
+ * per-tier `omlx-<tier>` caps (drive/nodes/local-model-caps.ts). Runner packs
+ * advertise as `pack:<name>`, so the prefix never claims one. */
+const isLocalModelCap = (cap: string): boolean => cap === 'omlx' || cap.startsWith('omlx-');
+
+/** True when an advertised node cap serves `lane`. Provider lanes share their
+ * cap name; `local-model` is the doctor/`--can-take` report name for the oMLX
+ * family the worker actually publishes, so it is served by `omlx` caps —
+ * never by the category name itself or a `pack:*` runner cap. */
+export function capServesLane(cap: string, lane: string): boolean {
+  return lane === 'local-model' ? isLocalModelCap(cap) : cap === lane;
+}
+
 /** Require confirmed reachability, free slots and a live advertisement for the lane. */
 export function nodesThatCanTake(view: NodesView, lane: string): NodeRow[] {
   return view.nodes.filter(node => node.stateCode === 'ready' && node.reachable === true
-    && typeof node.freeSlots === 'number' && node.freeSlots > 0 && node.lanes !== UNKNOWN && node.lanes.includes(lane));
+    && typeof node.freeSlots === 'number' && node.freeSlots > 0 && node.lanes !== UNKNOWN
+    && node.lanes.some(cap => capServesLane(cap, lane)));
 }
 
 export interface NodePlacement {

@@ -16,24 +16,31 @@ import type {
   CloudLaunchResponse,
   CloudOverviewResponse,
   CloudSeatStatus,
-  CloudTaskOrigin,
   CloudTaskV1,
 } from './types.js';
-import { CLOUD_BRANCH_PREFIX, CLOUD_PROMPT_MAX_CHARS, CLOUD_SEAT_ID, CLOUD_TASK_SCHEMA_VERSION } from './types.js';
+import {
+  CLOUD_BRANCH_PREFIX,
+  CLOUD_IMPROVE_MAX_COUNT,
+  CLOUD_PROMPT_MAX_CHARS,
+  CLOUD_REPO_PATTERN,
+  CLOUD_SEAT_ID,
+  CLOUD_TASK_ORIGINS,
+  CLOUD_TASK_SCHEMA_VERSION,
+} from './types.js';
 import { readCloudBacklog, nextBacklogItem, type BacklogClaimTask } from './backlog.js';
 import { checkDoneWhen, type DoneChecker } from './backlog-done.js';
 import { listDevinTasks } from '../devin/store.js';
 import { cloudBudgetView } from './budget.js';
 import { declaredMcpServers, ensureCloudCheckout, isSafeBranchName, KeyedMutex, type CloudCheckoutDeps } from './checkout.js';
 import { buildCloudPrompt, companionToolsBlock } from './delivery-contract.js';
-import { cloudBrainContext } from '../knowledge/wiki/brain-cloud.js';
+import { cloudBrainContext, emptyWikiSlice } from '../knowledge/wiki/brain-cloud.js';
 import { knowledgeBlockFor } from '../learn/retro/inject.js';
 import { recordKnowledgeHits } from '../learn/retro/store.js';
 import { lessonArm, type LessonArm } from '../improve/lesson-trial.js';
 import { revertedPrKeys } from '../improve/reverted.js';
 import { playbookForLaunch } from '../playbooks/lanes.js';
 import { launchCloudSession, readCloudSeatArgv, SEAT_NOT_READY_REASON, type CloudLaunchDeps } from './launcher.js';
-import { CLOUD_REPO_PATTERN, listCloudTasks, newCloudTaskId, readCloudBudget, writeCloudTask } from './store.js';
+import { listCloudTasks, newCloudTaskId, readCloudBudget, writeCloudTask } from './store.js';
 import { defaultCloudGh, type CloudTrackerDeps } from './tracker.js';
 
 export interface CloudServiceDeps {
@@ -54,13 +61,11 @@ export type CloudInternalLaunch = Omit<CloudLaunchRequest, 'origin'> & {
   needsYouId?: string | null;
 };
 
-export const CLOUD_TITLE_MAX_CHARS = 80;
-export const CLOUD_IMPROVE_MAX_COUNT = 5;
+const CLOUD_TITLE_MAX_CHARS = 80;
 const OVERVIEW_TASK_LIMIT = 100;
 /** Used only when no base branch was given AND GitHub could not say which branch is the default. */
 const FALLBACK_BASE_BRANCH = 'main';
 
-const ORIGINS: readonly CloudTaskOrigin[] = ['chat', 'operator', 'cli', 'leader', 'self-improve'];
 const REF_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 
 /** One launch at a time per repo: every repo has one checkout folder, and the CLI launches from its current branch. */
@@ -118,7 +123,7 @@ async function launchWithGate(req: CloudLaunchRequest | CloudInternalLaunch, gat
   if (!req || typeof req !== 'object') return refusal('The launch request is empty.');
   const repo = typeof req.repo === 'string' ? req.repo.trim() : '';
   if (!CLOUD_REPO_PATTERN.test(repo)) return refusal('The repo must look like owner/name, for example ashlrai/ashlr-hub.');
-  if (!ORIGINS.includes(req.origin)) return refusal('The launch came from an unknown place.');
+  if (!CLOUD_TASK_ORIGINS.includes(req.origin)) return refusal('The launch came from an unknown place.');
   // NUL cannot travel in an argv element; drop it rather than fail the spawn.
   const rawPrompt = typeof req.prompt === 'string' ? req.prompt.replace(/\0/g, '').trim() : '';
   if (rawPrompt === '') return refusal('Describe the task before launching it.');
@@ -203,12 +208,12 @@ async function launchWithGate(req: CloudLaunchRequest | CloudInternalLaunch, gat
       const arm = block.noteIds.length > 0 ? (deps.lessonArm ?? lessonArm)(task.id) : 'served';
       if (block.noteIds.length > 0) task.lessons = { arm, noteIds: [...block.noteIds].slice(0, 64) };
       if (arm === 'served' && block.noteIds.length > 0) void recordKnowledgeHits(block.noteIds);
-      const brain = await cloudBrainContext(task.repo, checkout.path, `${task.title}\n${task.prompt}`).catch(() => ({ text: '', nodeIds: [] }));
+      const brain = await cloudBrainContext(task.repo, checkout.path, `${task.title}\n${task.prompt}`).catch(emptyWikiSlice);
       const lessons = [arm === 'served' ? block.text : '', brain.text].filter(Boolean).join('\n\n');
       const launched = await launchCloudSession({ cwd: checkout.path, prompt: buildCloudPrompt(task, lessons, playbook.block, companionToolsBlock(declaredMcpServers(checkout.path))) }, deps.launcher);
       if (!launched.ok) return fail(launched.failure, launched.message);
       Object.assign(task, {
-        wikiSlice: { bytes: Buffer.byteLength(brain.text), nodeIds: brain.nodeIds },
+        wikiSlice: { bytes: Buffer.byteLength(brain.text), nodeIds: brain.nodeIds, freshness: brain.freshness },
         state: 'running',
         sessionId: launched.sessionId,
         sessionUrl: launched.url,

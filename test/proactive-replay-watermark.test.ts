@@ -4,7 +4,15 @@ import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readReplayWatermark, reserveReplayWatermark } from '../src/core/proactive/replay-watermark.js';
+import {
+  commitWatermarkedLedgerRecord,
+  createRevisionRecordCodec,
+  createWatermarkedLedgerConfig,
+  readReplayWatermark,
+  readWatermarkedLedger,
+  reserveReplayWatermark,
+  type ChainedRevisionRecord,
+} from '../src/core/proactive/replay-watermark.js';
 
 let directory: string;
 const limits = { maxRecords: 16 }, first = 'a'.repeat(64), second = 'b'.repeat(64);
@@ -110,5 +118,36 @@ describe('independent local replay watermark custody', { timeout: 15_000 }, () =
       chmodSync(custody(), 0o755); expect(readReplayWatermark(directory, limits).sourceState).toBe('degraded');
       expect(reserveReplayWatermark(directory, two, limits)).toBe('unavailable');
     }
+  });
+  it('commits, reads, short-circuits, and degrades watermarked revision chains through the shared ledger custody helper', () => {
+    interface TestRecord extends ChainedRevisionRecord { value: string }
+    const codec = createRevisionRecordCodec<TestRecord>((raw) => {
+      if (!raw || typeof raw !== 'object') return null;
+      const item = raw as Record<string, unknown>;
+      return typeof item.revision === 'number' && typeof item.digest === 'string' && typeof item.value === 'string' &&
+        (item.previousDigest === null || typeof item.previousDigest === 'string') ? (item as unknown as TestRecord) : null;
+    });
+    const storeConfig = createWatermarkedLedgerConfig({ label: 'Test watermarked ledger', directory, maxRecordBytes: 4096, maxRecords: 16, maxAggregateBytes: 64 * 1024, codec });
+    const readAll = (verify = (_rec: TestRecord) => true) => readWatermarkedLedger(directory, storeConfig, 16, (rec) => verify(rec));
+    expect(readAll()).toEqual({ sourceState: 'missing', records: [] });
+    const commit = (value: string, shortCircuit = false) => commitWatermarkedLedgerRecord<TestRecord, { ok: boolean; reason?: string; revision?: number }>({
+      directory, lockFileName: '.test.lock', config: storeConfig, maxRecords: 16, read: () => readAll(), fail: reason => ({ ok: false, reason }),
+      prepare: (records) => {
+        if (shortCircuit) return { kind: 'short-circuit', value: { ok: true, revision: records.length } };
+        const previous = records.at(-1); const revision = records.length + 1;
+        return { kind: 'commit', record: { revision, previousDigest: previous?.digest ?? null, digest: createHash('sha256').update(`${revision}:${value}`).digest('hex'), value } };
+      },
+      onCommitted: (record) => ({ ok: true, revision: record.revision }),
+    });
+    expect(commit('first')).toEqual({ ok: true, revision: 1 });
+    expect(commit('skipped', true)).toEqual({ ok: true, revision: 1 });
+    expect(commit('second')).toEqual({ ok: true, revision: 2 });
+    const loaded = readAll();
+    expect(loaded.sourceState).toBe('healthy');
+    expect(loaded.records.map(r => r.value)).toEqual(['first', 'second']);
+    expect(readAll((rec) => rec.value !== 'second')).toEqual({ sourceState: 'degraded', records: [] });
+    expect(reserveReplayWatermark(directory, { revision: 3, ledgerDigest: 'd'.repeat(64), previousLedgerDigest: loaded.records[1]!.digest }, limits)).toBe('recorded');
+    expect(readAll()).toEqual({ sourceState: 'degraded', records: [] });
+    expect(commit('third')).toEqual({ ok: false, reason: 'unavailable' });
   });
 });

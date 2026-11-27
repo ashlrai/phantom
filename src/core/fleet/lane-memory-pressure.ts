@@ -9,6 +9,7 @@ import { readLaneTargets, LANE_ID_RE, type LaneTargetRow } from './runs-lane-tar
 import { readHostMemory, REAL_PRESSURE_FREE_PCT, SWAP_GROWING_MB_PER_MIN, type HostMemoryDeps } from './host-memory.js';
 import { defaultRunsDir } from './host-top.js';
 import { readPauseState, pauseLine, type PauseState, type PausePaths } from './pause-state.js';
+import { LOCAL_LANES } from './unfed-market.js';
 
 export const LANE_PRESSURE_SCHEMA = 'lanes.pressure.v1';
 /** Free memory under this percent is critical. Warning starts at REAL_PRESSURE_FREE_PCT (35). */
@@ -19,13 +20,10 @@ export const LOCAL_FLOOR_AFTER_MINUTES = 10;
 export type MemoryClass = 'local' | 'cloud';
 export type PressureLevel = 'normal' | 'warning' | 'critical' | 'unknown';
 
-/** Lanes whose model runs on this Mac unless lane config says otherwise. Everything else is cloud. */
-const DEFAULT_LOCAL_LANES: ReadonlySet<string> = new Set(['codex-local']);
-
-/** The configured class (`memory_class` in queue/slots.json) wins; otherwise codex-local is local and the rest are cloud. */
+/** The configured class wins. Otherwise the work market defines the local executors. */
 export function laneMemoryClass(lane: string, configured?: unknown): MemoryClass {
   if (configured === 'local' || configured === 'cloud') return configured;
-  return DEFAULT_LOCAL_LANES.has(lane) ? 'local' : 'cloud';
+  return LOCAL_LANES.has(lane) ? 'local' : 'cloud';
 }
 
 export interface MemoryReading { freePercent: number | null; swapGrowthMbPerMin: number | null; swapoutsPerMin: number | null }

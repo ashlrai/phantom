@@ -187,14 +187,16 @@ function rowTs(row: Record<string, unknown>): number {
  * event/type/kind precedence job-latency's boundaryEvent applies), an
  * operation inside the five-name vocabulary, non-empty machine and lane
  * strings, an in-window timestamp, and failed/retries in their recorded
- * shapes. Every other line is skipped, never guessed. elapsed_ms is
+ * shapes. Identical receipt lines count once. elapsed_ms is
  * accepted but not carried: no recorded verdict makes a slow operation
  * adverse.
  */
 export function parseGitContentionRows(text: string, cutoffMs: number, nowMs: number): GitOperationRecord[] {
   const out: GitOperationRecord[] = [];
+  const seen = new Set<string>();
   for (const line of text.split(/\r?\n/)) {
-    if (!line.trim()) continue;
+    const receipt = line.trim();
+    if (!receipt || seen.has(receipt)) continue;
     let row: unknown;
     try { row = JSON.parse(line); } catch { continue; }
     if (row === null || typeof row !== 'object' || Array.isArray(row)) continue;
@@ -209,6 +211,7 @@ export function parseGitContentionRows(text: string, cutoffMs: number, nowMs: nu
     if (typeof lane !== 'string' || lane.trim() === '') continue;
     const atMs = rowTs(r);
     if (!Number.isFinite(atMs) || atMs < cutoffMs || atMs > nowMs) continue;
+    seen.add(receipt);
     const failedRaw = r['failed'];
     const failed = typeof failedRaw === 'boolean' ? failedRaw : null;
     const retriesRaw = r['retries'];

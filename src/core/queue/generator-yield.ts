@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { canonicalJson } from '../authority/canonical-json.js';
+import { isNodePoolLedgerRow, ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
 
 export interface GenerationDecision {
   job: string; src: string; event: 'drafted' | 'rejected';
@@ -26,7 +28,6 @@ const count = (v: unknown): number | null => typeof v === 'number' && Number.isF
 const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
-const TS_KEYS = ['ts', 'timestamp', 'at', 'startedAt', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const PR_KEYS = ['pr', 'pr_url', 'prUrl', 'url', 'html_url'] as const;
 const pickString = (r: Record<string, unknown>, keys: readonly string[]): string | null => {
   for (const key of keys) {
@@ -35,6 +36,15 @@ const pickString = (r: Record<string, unknown>, keys: readonly string[]): string
   }
   return null;
 };
+function terminalVerdict(row: Record<string, unknown>, event: string | undefined): 'MERGED' | 'CLOSED' | null {
+  for (const key of PHASE_KEYS) {
+    const phase = string(row[key])?.toUpperCase();
+    if (phase === 'MERGED' || phase === 'CLOSED') return phase;
+  }
+  if (event === 'merged') return 'MERGED';
+  if (event === 'closed') return 'CLOSED';
+  return null;
+}
 function generator(id: string): string {
   if (/^FIXUP-/i.test(id)) return 'fixup';
   if (/^RQ-DRAIN-/i.test(id)) return 'drain';
@@ -45,50 +55,107 @@ function generator(id: string): string {
 /** Events in the window are grouped by job ID; repeated events never count twice. */
 export function generatorYield(raw: string, hours = 24, now = Date.now(), decisions = ''): GeneratorYieldReport {
   const jobs = new Map<string, Job>(); let malformedLines = 0;
-  const drafts = new Map<string, string>();
+  const drafts = new Map<string, Set<string>>();
   const generation = new Map<string, Map<string, { drafted: boolean; reasons: Set<string> }>>();
-  const rows: { id: string; at: number; row: Record<string, unknown> }[] = [];
+  const launchedBatches = new Map<string, number>();
+  const memberBatches = new Map<string, Map<string, number>>();
+  const rows: { id: string; at: number; event: string | undefined; terminal: ReturnType<typeof terminalVerdict>; row: Record<string, unknown>; line: string }[] = [];
   const since = now - hours * 3600000;
-  for (const line of `${raw}\n${decisions}`.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    let value: unknown;
-    try { value = JSON.parse(line); } catch { malformedLines++; continue; }
-    if (!value || typeof value !== 'object' || Array.isArray(value)) { malformedLines++; continue; }
-    const r = value as Record<string, unknown>;
-    const id = pickString(r, JOB_ID_KEYS);
-    const timestamp = pickString(r, TS_KEYS);
-    const at = timestamp ? Date.parse(timestamp) : NaN;
-    if (!id || !Number.isFinite(at)) { malformedLines++; continue; }
-    if (at < since || at > now) continue;
-    rows.push({ id, at, row: r });
+  for (const [text, isGenerationJournal] of [[raw, false], [decisions, true]] as const) {
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      let value: unknown;
+      try { value = JSON.parse(line); } catch { malformedLines++; continue; }
+      if (!value || typeof value !== 'object' || Array.isArray(value)) { malformedLines++; continue; }
+      const r = value as Record<string, unknown>;
+      if (isNodePoolLedgerRow(r)) continue;
+      const event = pickString(r, EVENT_KEYS)?.toLowerCase();
+      const isDecision = event === 'drafted' || event === 'rejected';
+      if (isGenerationJournal !== isDecision) continue;
+      if (!isDecision && r.launched === false) continue;
+      const id = pickString(r, JOB_ID_KEYS);
+      const terminal = isDecision ? null : terminalVerdict(r, event);
+      // Reconciled outcomes can retain the original publish timestamp.
+      const at = ledgerEventTs(r, terminal);
+      if (!id || at === null) { malformedLines++; continue; }
+      if (at < since || at > now) continue;
+      rows.push({ id, at, event, terminal, row: r, line });
+    }
   }
   // Late receipts can be appended out of order. Stable sorting preserves
   // ledger order when receipts share a timestamp.
-  for (const { id, row: r } of rows.sort((a, b) => a.at - b.at)) {
-    const event = pickString(r, EVENT_KEYS)?.toLowerCase();
+  let receiptTime: number | undefined;
+  const seenReceipts = new Set<string>();
+  for (const { id, at, event, terminal, row: r, line } of rows.sort((a, b) => a.at - b.at)) {
+    const launch = event === 'launch' || event === 'launched';
+    if (id.startsWith('RQ-BATCH-')) {
+      if (launch) launchedBatches.set(id, at);
+      continue;
+    }
     if (event === 'drafted' || event === 'rejected') {
       const source = string(r.src) ?? 'unknown', group = generation.get(source) ?? new Map<string, { drafted: boolean; reasons: Set<string> }>();
       const decision = group.get(id) ?? { drafted: false, reasons: new Set<string>() };
-      if (event === 'drafted') { decision.drafted = true; drafts.set(id, source); }
+      if (event === 'drafted') {
+        decision.drafted = true;
+        const sources = drafts.get(id) ?? new Set<string>();
+        sources.add(source);
+        drafts.set(id, sources);
+      }
       else decision.reasons.add(string(r.reason) ?? 'unknown');
       group.set(id, decision); generation.set(source, group); continue;
     }
+    if (at !== receiptTime) {
+      seenReceipts.clear();
+      receiptTime = at;
+    }
+    let receipt = line.trim();
+    try {
+      receipt = canonicalJson(r);
+    } catch {
+      // Fall back to the original text for rows that cannot be canonicalized.
+    }
+    if (seenReceipts.has(receipt)) continue;
+    seenReceipts.add(receipt);
     const job = jobs.get(id) ?? { generator: null, explicit: false, empty: null, pr: false, merged: false, diff: null, tokens: null, launched: false };
     const src = string(r.src);
     if (src) { job.generator = src; job.explicit = true; }
     else if (!job.explicit) job.generator = generator(id);
     const phase = pickString(r, PHASE_KEYS);
-    if (event === 'launch' || event === 'launched') job.launched = true;
-    if (typeof r.empty === 'boolean') job.empty = r.empty;
-    if (phase?.toLowerCase() === 'empty') job.empty = true;
+    if (launch) job.launched = true;
+    if (event === 'batch_claim') {
+      const batch = pickString(r, ['batch', 'batch_id', 'batchId']);
+      if (batch?.startsWith('RQ-BATCH-')) {
+        const batches = memberBatches.get(id) ?? new Map<string, number>();
+        if (!batches.has(batch)) batches.set(batch, at);
+        memberBatches.set(id, batches);
+      }
+    }
+    const empty = phase?.toLowerCase() === 'empty' ? true : typeof r.empty === 'boolean' ? r.empty : null;
+    if (launch || event === 'batch_claim' || empty !== null) job.empty = empty;
     if (pickString(r, PR_KEYS) !== null) job.pr = true;
-    if (phase?.toUpperCase() === 'MERGED' || event?.toLowerCase() === 'merged') { job.merged = true; job.pr = true; }
+    if (terminal === 'MERGED') { job.merged = true; job.pr = true; }
     job.diff = count(r.diff_lines) ?? job.diff;
     job.tokens = count(r.tokens_total ?? r.tokens) ?? job.tokens;
     jobs.set(id, job);
   }
   const groups = new Map<string, Job[]>();
-  for (const [id, job] of jobs) { const name = drafts.get(id) ?? job.generator ?? 'unknown'; groups.set(name, [...(groups.get(name) ?? []), job]); }
+  for (const [id, job] of jobs) {
+    for (const [batch, claimedAt] of memberBatches.get(id) ?? []) {
+      const launchedAt = launchedBatches.get(batch);
+      if (launchedAt !== undefined && launchedAt >= claimedAt) {
+        job.launched = true;
+        break;
+      }
+    }
+    const sources = drafts.get(id);
+    let name = job.generator ?? 'unknown';
+    if (!job.explicit && sources) {
+      name = sources.size === 1 ? [...sources][0]! : 'unknown';
+    }
+    const group = groups.get(name) ?? [];
+    group.push(job);
+    groups.set(name, group);
+  }
   const generators = [...new Set([...groups.keys(), ...generation.keys()])].map(name => {
     const rows = groups.get(name) ?? [], decisions = [...(generation.get(name)?.values() ?? [])];
     const diffs = rows.map(r => r.diff).filter((n): n is number => n !== null).sort((a, b) => a - b);

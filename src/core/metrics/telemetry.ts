@@ -10,7 +10,7 @@ import { ashlrHome } from '../cloud/store.js';
 import { assertNoSecrets } from '../teams/store.js';
 import { ensurePrivateDirectory, readPrivateFileCapped } from '../verse/preferences.js';
 
-export const TELEMETRY_SCHEMA_VERSION = 1 as const;
+const TELEMETRY_SCHEMA_VERSION = 1 as const;
 
 /** Dimensions every event is attributed to. */
 export interface Attribution { sessionId: string; agent: string; model?: string; resource?: string; strategy?: string; process?: string; taskType?: string; repo?: string; owner?: 'personal' | 'company' | `client:${string}` }
@@ -25,7 +25,7 @@ export type TelemetryEvent =
   | ({ kind: 'pr.opened' | 'pr.merged' | 'pr.reverted'; pr: PrRef } & Base)
   | ({ kind: 'pr.rated'; pr: PrRef; rater: 'human' | 'llm-judge'; rating: number /* 1..5 */; rubric?: string } & Base);
 
-interface Base extends Attribution { v: typeof TELEMETRY_SCHEMA_VERSION; id: string; ts: string }
+interface Base extends Attribution { v: 1; id: string; ts: string }
 export interface PrRef { repo: string; number: number; additions?: number; deletions?: number; files?: number; areas?: string[]; userFacing?: boolean; risk?: 'low' | 'medium' | 'high'; ciPassedFirstTry?: boolean; reviewFindings?: number; followUpFixes?: number; coverageDelta?: number; deployedToProduction?: boolean }
 
 export function metricsFile(): string { return join(ashlrHome(), 'metrics', 'events.jsonl'); }

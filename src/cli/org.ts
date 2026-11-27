@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FleetOrgTree } from '../core/fleet/org-tree.js';
-import { droppedJoinLanes, initOrg, joinOrg, joinsDir, loadOrg, orgFile, parseQueue, planOrg, readJoins, OrgError } from '../core/org/org.js';
+import { droppedJoinLanes, initOrg, joinOrg, joinsDir, loadOrg, openJoinLanes, orgFile, parseQueue, planOrg, readJoins, OrgError } from '../core/org/org.js';
 
 export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
        phm org <show|join|plan|init> [--file <org.toml>] [--json]
@@ -22,11 +22,13 @@ export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
                                 A re-join replaces this machine's opt-ins; dropped lanes are listed. Nothing is sent
                                 and no provider auth is read; sign in to your own CLIs here.
   plan [--queue <jobs.json>]    Propose queue assignments and agent roles within each member's contributed limits
-  init --member <id> --machine <id> [--name <name>] [--lane <lane>[=<share>]]...
+  init --member <id> --machine <id> [--name <name>] [--lane <lane>[=<share>]]... [--agent <id>:<lane>]...
                                 Write a starter org.toml (default ~/.ashlr/org.toml, or --file)
                                 declaring <member> as leader (founder) of a new org on <machine>.
-                                A bare --lane declares share 100; =<share> sets 0-100. Refuses to
-                                overwrite an existing file. Add members, agents and lanes by editing
+                                A bare --lane declares share 100; =<share> sets 0-100. Each --agent
+                                declares an implementer agent on <machine> for that lane, reporting
+                                to the founder; without one phm org plan can assign nothing. Refuses
+                                to overwrite an existing file. Add members, agents and lanes by editing
                                 the file; nothing is sent and no auth is read.
 Default file: ~/.ashlr/org.toml (create one with init, or use a copy of the leader's file). Guide: docs/AGENT-NETWORK.md#team-org
 
@@ -131,6 +133,7 @@ export async function cmdOrg(argv: string[]): Promise<number> {
     if (sub === 'init') {
       const member = one(rest, '--member'), machine = one(rest, '--machine'), name = one(rest, '--name');
       const laneArgs = take(rest, '--lane');
+      const agentArgs = take(rest, '--agent');
       noLeftovers(rest);
       if (!member || !machine) throw new OrgError('init needs --member and --machine.');
       // Same flag shape as join's --lane, except a bare lane declares the full share (100)
@@ -152,11 +155,24 @@ export async function cmdOrg(argv: string[]): Promise<number> {
         if (seenLanes.has(l.lane)) throw new OrgError(`--lane ${l.lane} was given more than once.`);
         seenLanes.add(l.lane);
       }
-      const r = initOrg({ member, machine, ...(name === undefined ? {} : { name }), lanes }, file);
+      // --agent takes <id>:<lane>; the schema allows one lane per agent id, so a
+      // repeated id is refused here with the same shape as a repeated --lane.
+      const agents = agentArgs.map((s) => {
+        const parts = s.split(':');
+        if (parts.length !== 2 || parts[0] === '' || parts[1] === '') throw new OrgError(`--agent takes <id>:<lane>: '${s}'`);
+        return { id: parts[0]!, lane: parts[1]! };
+      });
+      const seenAgents = new Set<string>();
+      for (const a of agents) {
+        if (seenAgents.has(a.id)) throw new OrgError(`--agent ${a.id} was given more than once.`);
+        seenAgents.add(a.id);
+      }
+      const r = initOrg({ member, machine, ...(name === undefined ? {} : { name }), lanes, agents }, file);
       const m = r.org.members[0]!;
       const laneText = m.contributions.length ? m.contributions.map((c) => `${c.lane} ${c.share}%`).join(', ') : 'none';
-      return print({ schema: 'org.init.v1', file: r.file, leader: r.org.leader, member: m.id, machine: m.machines[0]!.id, lanes: m.contributions },
-        `Wrote ${r.file}: ${r.org.leader} leads ${m.name} on ${m.machines[0]!.id} with lanes ${laneText}.\nEdit the file to add members, agents and lanes. Each machine opts in with:\n  phm org join --member ${m.id} --machine ${m.machines[0]!.id}${m.contributions.length ? ` --lane ${m.contributions.map((c) => c.lane).join(' --lane ')}` : ''} --json\nThe leader plans with: phm org plan --json`);
+      const agentText = m.agents.length ? `, agents ${m.agents.map((a) => `${a.id} (${a.roles.join('/')} on ${a.lane})`).join(', ')}` : '';
+      return print({ schema: 'org.init.v1', file: r.file, leader: r.org.leader, member: m.id, machine: m.machines[0]!.id, lanes: m.contributions, agents: m.agents },
+        `Wrote ${r.file}: ${r.org.leader} leads ${m.name} on ${m.machines[0]!.id} with lanes ${laneText}${agentText}.\nEdit the file to add members, agents and lanes. Each machine opts in with:\n  phm org join --member ${m.id} --machine ${m.machines[0]!.id}${m.contributions.length ? ` --lane ${m.contributions.map((c) => c.lane).join(' --lane ')}` : ''} --json\nThe leader plans with: phm org plan --json`);
     }
     const org = loadOrg(file);
     if (sub === 'show') {
@@ -165,16 +181,40 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       const lines = [`Org (leader ${org.leader})`];
       for (const m of org.members) {
         lines.push(`  ${m.name}${m.nickname ? ` "${m.nickname}"` : ''} [${m.id}] ${m.role}`);
-        for (const c of m.contributions) lines.push(`    lane ${c.lane}: ${c.share}% declared, ${joins.some((j) => j.member === m.id && j.lanes.some((l) => l.lane === c.lane)) ? 'opted in' : 'not opted in'}`);
+        for (const c of m.contributions) {
+          // Opt-in counts only the join records this machine holds; naming the
+          // machines behind it keeps a member's partial view (its own records
+          // only) from reading as the org's admitted set.
+          const machines = [...new Set(joins.filter((j) => j.member === m.id && j.lanes.some((l) => l.lane === c.lane)).map((j) => j.machine))].sort();
+          lines.push(`    lane ${c.lane}: ${c.share}% declared, ${machines.length ? `opted in on ${machines.join(', ')}` : 'not opted in'}`);
+        }
         for (const a of m.agents) lines.push(`    agent ${a.id} (${a.lane} on ${a.machine}; ${a.roles.join('/')}) reports to ${a.reports_to ?? 'nobody'}`);
       }
-      return print({ schema: 'org.show.v1', file, org, joins }, lines.join('\n'));
+      lines.push(`Opt-in counts join records held on this machine (${joinsDir()}); each machine sees only its own joins directory.`);
+      return print({ schema: 'org.show.v1', file, org, joins, joinsDir: joinsDir() }, lines.join('\n'));
     }
     if (sub === 'join') {
       const member = one(rest, '--member'), machine = one(rest, '--machine');
       const laneArgs = take(rest, '--lane');
       noLeftovers(rest);
-      if (!member || !machine) throw new OrgError('join needs --member and --machine.');
+      if (!member || !machine) {
+        // --machine asserts which of the member's declared computers this join
+        // records, so it stays explicit — but the refusal can still hand back
+        // the runnable command when org.toml leaves exactly one choice, and
+        // name the declared machines or members when it does not.
+        const row = member === undefined ? undefined : org.members.find((m) => m.id === member);
+        if (machine === undefined && row?.machines.length === 1) {
+          const fix = `phm org join --member ${member} --machine ${row.machines[0]!.id}${laneArgs.map((l) => ` --lane ${l}`).join('')}`;
+          throw new OrgError(`join needs --machine: ${member} declares one machine — run: ${fix}`);
+        }
+        const missing = member === undefined && machine === undefined ? '--member and --machine'
+          : member === undefined ? '--member' : '--machine';
+        const detail = row === undefined
+          ? (member === undefined ? '' : ` Unknown member ${member}. This org.toml declares: ${org.members.map((m) => m.id).join(', ')}.`)
+          : row.machines.length === 0 ? ` ${member} declares no machines in org.toml; ask the leader to add one before join.`
+          : ` ${member} declares machines: ${row.machines.map((x) => x.id).join(', ')} — pass --machine <id>.`;
+        throw new OrgError(`join needs ${missing}.${detail}`);
+      }
       // --lane takes <lane> or <lane>=<share>; a second '=', an empty name or a
       // non-numeric share is a usage error, and the same lane is never repeated.
       const optIn = laneArgs.map((s) => {
@@ -202,7 +242,21 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       const droppedNote = dropped.length
         ? `This machine no longer opts in: ${dropped.map((l) => `${l.lane} (was ${l.share}%)`).join(', ')}. Name the lane again with --lane to restore it.\n`
         : '';
-      return print({ schema: 'org.join.v1', record: r, dir: joinsDir(), recordFile, droppedLanes: dropped }, `${r.member} joined on ${r.machine} with ${r.lanes.length ? r.lanes.map((l) => `${l.lane} ${l.share}%`).join(', ') : 'no lanes (nothing contributed)'}.\n${droppedNote}Record: ${recordFile}\nSign in to your own provider CLIs on this machine; nothing was sent and no auth was read. Copy the record file into the leader's joins directory to count this machine.`);
+      // Declared lanes this record has not opted into — a join with no --lane
+      // contributes nothing, and a partial one leaves the rest unnamed. The
+      // re-join hint keeps every current opt-in at its recorded share and adds
+      // each open lane at the declared share a bare --lane grants, because a
+      // re-join replaces the whole record: a bare "--lane <new>" would silently
+      // drop the rest. Ids, lane names and shares are schema-validated tokens,
+      // safe to inline like joinHintCommand's profile values.
+      const open = openJoinLanes(org, r);
+      const openNote = open.length
+        ? `Not opted in on this machine: ${open.map((l) => `${l.lane} (declared ${l.share}%)`).join(', ')}. ` +
+          `Opt in by re-joining — it replaces this record, so name every lane to keep: ` +
+          `phm org join --member ${r.member} --machine ${r.machine}` +
+          [...r.lanes.map((l) => ` --lane ${l.lane}=${l.share}`), ...open.map((l) => ` --lane ${l.lane}`)].join('') + '.\n'
+        : '';
+      return print({ schema: 'org.join.v1', record: r, dir: joinsDir(), recordFile, droppedLanes: dropped, availableLanes: open }, `${r.member} joined on ${r.machine} with ${r.lanes.length ? r.lanes.map((l) => `${l.lane} ${l.share}%`).join(', ') : 'no lanes (nothing contributed)'}.\n${droppedNote}${openNote}Record: ${recordFile}\nSign in to your own provider CLIs on this machine; nothing was sent and no auth was read. Copy the record file into the leader's joins directory to count this machine.`);
     }
     const queueFile = one(rest, '--queue');
     noLeftovers(rest);
@@ -214,20 +268,37 @@ export async function cmdOrg(argv: string[]): Promise<number> {
     ]);
     const now = new Date();
     const capacity = await readFleetResourcePlan(runsRoot(), now.getTime()).catch(() => null);
-    const plan = planOrg(org, readJoins(), view, queue, now, capacity?.lanes);
+    const joins = readJoins();
+    const plan = planOrg(org, joins, view, queue, now, capacity?.lanes);
     // Text mode names each held lane and the join that opts it in; the JSON plan
     // already carries the same held rows, so --json consumers lose nothing.
+    // A re-join replaces the machine's whole record, so a fix naming only the
+    // held lane would drop the opt-ins that record already carries. When this
+    // machine holds an unambiguous record for the member — the single declared
+    // machine's own, or the member's only record on a declared machine — the
+    // fix keeps its opted-in lanes at their recorded shares and adds the held
+    // lane, the same command join's own open-lane note prints. Lanes the member
+    // no longer declares stay out: joinOrg would refuse them.
     const heldLines = plan.held.map((h) => {
-      const machines = org.members.find((m) => m.id === h.member)?.machines.map((x) => x.id) ?? [];
-      const machineArg = machines.length === 1 ? machines[0]! : machines.length ? `<${machines.join('|')}>` : null;
-      const fix = machineArg === null ? 'add a machine for this member in org.toml before join'
-        : `on that member's machine run: phm org join --member ${h.member} --machine ${machineArg} --lane ${h.lane}`;
-      return `  held ${h.member}/${h.lane}: ${h.reason} — ${fix}`;
+      const member = org.members.find((m) => m.id === h.member);
+      const machines = member?.machines.map((x) => x.id) ?? [];
+      const declared = new Set(member?.contributions.map((c) => c.lane) ?? []);
+      const memberRecords = joins.filter((j) => j.member === h.member && machines.includes(j.machine));
+      const record = machines.length === 1 ? memberRecords.find((j) => j.machine === machines[0])
+        : memberRecords.length === 1 ? memberRecords[0] : undefined;
+      const machineArg = record?.machine ?? (machines.length === 1 ? machines[0]! : machines.length ? `<${machines.join('|')}>` : null);
+      if (machineArg === null) return `  held ${h.member}/${h.lane}: ${h.reason} — add a machine for this member in org.toml before join`;
+      const kept = (record?.lanes ?? []).filter((l) => l.lane !== h.lane && declared.has(l.lane));
+      const laneArgs = [...kept.map((l) => ` --lane ${l.lane}=${l.share}`), ` --lane ${h.lane}`].join('');
+      return `  held ${h.member}/${h.lane}: ${h.reason} — on that member's machine run: phm org join --member ${h.member} --machine ${machineArg}${laneArgs}`;
     });
-    return print(plan, [`Plan for ${plan.leader}: ${plan.assignments.length} assigned, ${plan.unassigned.length} unassigned, ${plan.held.length} lanes held`,
+    // The plan covers only the join records this machine holds; a member's
+    // machine sees a partial org, so say which records counted.
+    return print({ ...plan, joinsDir: joinsDir() }, [`Plan for ${plan.leader}: ${plan.assignments.length} assigned, ${plan.unassigned.length} unassigned, ${plan.held.length} lanes held`,
       ...plan.assignments.map((a) => `  ${a.job} -> ${a.agent} (${a.member}/${a.lane}, ~${a.costPct}%)`),
       ...plan.unassigned.map((u) => `  ! ${u.job}: ${u.reason}`),
-      ...heldLines].join('\n'));
+      ...heldLines,
+      `Opt-in counts join records held on this machine (${joinsDir()}); the plan covers only those records.`].join('\n'));
   } catch (err) {
     return orgFailure(json, command, err);
   }

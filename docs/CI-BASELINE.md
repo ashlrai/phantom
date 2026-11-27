@@ -60,7 +60,7 @@ chain, so the group keys on the identity the evidence itself printed.
 Because it names a real test, the usual dependency closure and pass
 evidence apply: a green master module resolves a one-off flake on an
 unaffected singleton to `probable-flake`/`rerun-failed`, while a flake
-repeated across unaffected PRs -- or printed by master itself -- groups
+repeated across distinct unaffected PR heads -- or printed by master itself -- groups
 `shared-baseline` for a stabilization fix. Verdicts naming paths outside
 the suite roots, missing case names and near-miss wording stay unparsed,
 so an unrecognized lane failure still reads unknown rather than guessed.
@@ -540,10 +540,14 @@ job-memory, lifecycle (`started`/`exited`), aggregate
 unparsed: `exited` lines fire on ordinary test failures and on the
 stop-others SIGTERM cascade, so they can never be runner identities.
 
-Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
-brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
-with an explicit test pass on master's current run produces
-`rerun-failed`. Other evidence stays `unknown`. Relative imports are followed
+Two unaffected fresh PRs at distinct head commits sharing a failure produce
+`queue-master-fix` and a ready brief. PRs at the same commit remain visible in
+the group but contribute only one head toward that threshold. Test/import
+changes produce `pr-caused`. A singleton unaffected failure with an explicit
+test pass on master's current run produces
+`rerun-failed`. A green Vitest module summary with skipped or todo cases
+proves the suite loaded but leaves individual case outcomes unknown without
+an explicit pass line for the case. Relative imports are followed
 transitively from master (100-file cap) with bundler resolution: `.js`/`.jsx`
 specifiers map to `.ts`/`.tsx` sources, extensionless specifiers try file then
 directory `index`, `?raw`/`?url`/`?inline` queries and non-code files (`.css`,
@@ -564,8 +568,10 @@ test, while the default reporter's green-module line (`✓ file (N tests)`)
 resolves any failure identity in that file because every test the module
 contains passed on that run. Other pass output does not establish a test
 pass. The scan caps open PRs, runs, and jobs
-at 100 each and reports unknown rather than drawing conclusions from truncated
-run/job listings. Master reproduction remains an explicit step in the fix brief.
+at 100 each. A run or job listing supplies evidence only when its item count
+matches `total_count` and each item has a distinct, valid ID. Incomplete or
+capped listings leave that evidence unknown. Master reproduction remains an
+explicit step in the fix brief.
 
 `phm ci baseline --queue --json` appends only master-fix briefs to
 `~/.ashlr-runs/queue/router-queue.md`, at tier `work`, deduplicated by queue
@@ -603,8 +609,10 @@ unknown KILL state blocks queueing. These gates do not apply to flake reruns.
 
 The append-only `ci-reruns/journal.jsonl` under ASHLR_HOME (default `~/.ashlr`)
 records an attempt durably before calling GitHub, then records its outcome.
-Attempt rows carry the eligible failing test IDs (each bounded to 400
-characters), so each test flaking on unrelated commits is visible over time.
+Attempt rows carry eligible failing test IDs that fit within 400 characters
+and survive secret scrubbing unchanged. IDs that would need truncation or
+redaction are omitted from recurrence evidence, and their presence on a run
+withholds per-test attribution of its workflow verdict.
 When multiple probable flakes share a workflow run, one attempt counts
 toward each test's recurrence and consumes one slot in the hourly cap. A test that was
 rerun-attempted on at least three distinct heads within the last seven days is
@@ -621,12 +629,35 @@ most three attempts per test) — a fix that did not hold becomes fresh work
 instead of a permanently deduplicated row. The window keeps the signal honest — a fixed
 flake stops producing attempts and ages out instead of being re-queued on stale
 evidence, and journal rows written before the test field existed never count.
+Both stabilization and `phm improve discover` use a seven-day recurrence
+window that ends at the evaluation time. Future-dated rows contribute only
+once their recorded time falls inside that window.
 The repository, head SHA and run ID prevent repeated attempts even after a
 crash or failed call; a new head is eligible. Reads tolerate malformed rows and
 are bounded to the last 4 MiB, so deduplication, counts and recurrence cover
-that retained read window. `phm ci reruns --json` shows the latest 100 entries,
+that retained read window. Rerun identity compares repository names
+case-insensitively, so a configuration casing change preserves duplicate
+protection, pending verdicts and the polling cursor. Raw journal entries
+retain their recorded spelling. Recurring-flake groups combine attempt and
+verdict evidence across repository casing changes, and stabilization job IDs
+use the lowercase repository name. Test IDs retain their case.
+`phm ci reruns --json` shows the latest 100 entries,
 counts in that window, the last-hour attempt count, the recurring flakes and
-the rerun verdicts.
+the rerun verdicts. Reports and the hourly cap count rows through the
+evaluation time, inclusive. Future-dated receipts still prevent duplicate
+reruns and duplicate verdict writes.
+Attempt totals, the hourly cap, and flake recurrence use the earliest
+observed attempt receipt for each repository, head SHA and run ID within
+the retained journal. Ties use journal order. Replays leave the original
+attempt time in effect, and recent entries still show each observed receipt.
+If visible attempt receipts disagree on the set of triggering tests, the
+attempt still consumes its hourly slot but supplies no per-test attempt
+evidence to stabilization or discovery. Test order and duplicate test IDs
+within a receipt do not affect the comparison.
+Successful and failed call totals likewise count one result per repository,
+head SHA and run ID. When visible receipts disagree on whether the call
+succeeded, the result is unknown and excluded from both call totals and
+verdict polling. Recent entries retain the conflicting receipts.
 
 ## Rerun verdicts
 
@@ -636,28 +667,59 @@ pending reruns by reading `repos/<repo>/actions/runs/<runId>`: a completed run
 with conclusion `success` journals a `pass` verdict, `failure` or `timed_out`
 a `fail`, and any other reported conclusion (cancelled, skipped, neutral,
 startup failure, stale) an `inconclusive` one. Verdicts require a matching run
-ID and head SHA, a nonempty conclusion, and a parseable `updated_at` no earlier
-than one minute before the successful rerun call was journaled. In-progress
-runs and incomplete, mismatched or stale reads stay pending for a later pass. Attempts younger than five minutes are not checked
-yet so a stale pre-rerun read cannot be mistaken for the new attempt's result;
+ID and head SHA, a nonempty conclusion, and a `run_attempt` of at least two.
+The recorded `run_started_at` must be no earlier than one minute before the
+successful rerun call was journaled, and `updated_at` must fall between
+that start and the time Phantom observes the API response, inclusive.
+This keeps an updated workflow record for an older attempt from
+supplying a verdict. In-progress runs and incomplete, mismatched or stale
+reads stay pending for a later pass. Attempts younger than five minutes are
+given time to settle before polling;
 unresolved attempts older than 24 hours stop being polled. Each pass performs
 at most eight verdict reads per repository inside the same five-minute
 deadline. Each repository resumes after its last checked rerun, wrapping
 to the oldest eligible rerun when it reaches the end. The polling position
 persists across restarts, so transient read failures leave reruns pending
 for retry while later reruns still get checked.
+For each repository, head SHA and run ID, polling and the pending count
+use the earliest visible successful-call receipt in the retained journal
+for runs with a consistent call result.
+Later receipts cannot reset the settle or expiry clock. When these receipts
+disagree on the triggering test, the workflow verdict still counts in the
+overall tally and its per-test attribution is withheld.
+When recording a verdict, a visible attempt must identify the same single
+test as the successful call to retain per-test attribution. Multiple tests,
+conflicting attempt receipts, and mismatched test IDs yield a workflow-only
+verdict. A successful call can still supply attribution when its attempt
+receipt is absent from the retained journal.
 
 `phm ci reruns --json` reports `verdicts` tallies over the retained journal
 window: `pass`/`fail`/`inconclusive` counts, `pending` fired reruns still
 awaiting an outcome inside 24 hours, and `resolutionRate` (pass over
-pass+fail, null when nothing has resolved). Recurring-flake entries carry the
-same per-test verdict tallies and the `RQ-CIFLAKE-*` brief names them. Shared
-reruns contribute a workflow verdict only, since the run conclusion does
-not identify which test passed or failed. For singleton reruns, the per-test tally includes the workflow verdict. A `fail` verdict is evidence the classification may be wrong, not proof;
+pass+fail, null when nothing has resolved). Each repository and workflow run
+ID contributes at most one verdict, using the earliest observed timestamp.
+Disagreement on the head SHA or verdict withholds that run from the tallies.
+Disagreement on the triggering test withholds only its per-test attribution.
+The recent entries still show the raw receipts. Recurring-flake entries carry the
+same per-test verdict tallies and the `RQ-CIFLAKE-*` brief names them. A
+workflow verdict enters the per-test tally only when the baseline report
+identifies a single triggering test and records no other failures for that
+workflow run. Other recorded failures include groups ineligible for a rerun,
+such as PR-caused failures. A `fail` verdict is evidence the classification may be wrong, not proof;
 rerun firing rules are unchanged. In recurring-failure briefs from
 `phm improve discover`, a shared attempt counts once for each recorded
 triggering test. The shared workflow verdict does not count toward any
 test's recurring-failure threshold.
+Discovery counts one attempt per repository, head SHA and workflow run ID,
+and at most one verdict per repository and workflow run ID. The earliest
+observed receipt sets each attempt or verdict's time in the recurrence
+window, so a replay cannot bring expired evidence back into the window.
+If observed verdict receipts for a run disagree on its head, test
+attribution, or verdict, that run provides no per-test verdict evidence.
+For recurring call failures, discovery counts one call result per
+repository, head SHA and workflow run ID. The earliest observed receipt
+sets its time in the recurrence window. If observed receipts disagree on
+whether the call succeeded, that call contributes to neither tally.
 `ci-reruns/status.json` contains the last
 maintenance time, per-repository counts (including `recurringFlakes` detected,
 `flakeFixesQueued` appended, `verdictsPending` and `verdictsResolved`), errors

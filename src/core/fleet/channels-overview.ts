@@ -19,8 +19,9 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AshlrConfig } from '../types.js';
-import { loadConfigReadOnly } from '../config.js';
+import { loadConfigReadOnlyStrict } from '../config.js';
 import { readEmailDropConfig } from '../comms/email-drop-config.js';
+import { imessageAllowlist } from '../integrations/imessage.js';
 import { buildSlackBridgeStatus } from '../agents/slack-status.js';
 import { redactEmails, redactHomePaths } from '../util/scrub.js';
 import { createRemoteDeviceStore } from '../web/remote-device-store.js';
@@ -61,6 +62,12 @@ export interface ChannelFacts {
   relay: Record<ChannelName, { inbound: Unknowable<string[]>; replies: Unknowable<string[]> }>;
   verified: { email: Unknowable<number>; mobile: Unknowable<number>; slack: Unknowable<number>; imessage: Unknowable<number> };
   emailConfig: 'ok' | 'missing' | 'invalid';
+  /**
+   * True when ~/.ashlr/config.json exists but could not be read. Facts derived
+   * from it (Telegram's setup state, the iMessage sender allowlist) then report
+   * 'unknown' — the config's contents are unprovable, never a guessed default.
+   */
+  configUnreadable?: boolean;
   /** Raw addresses; the builder masks every one. */
   addresses: Partial<Record<ReceiverChannel, string[]>>;
 }
@@ -186,7 +193,15 @@ export function buildChannelsOverview(facts: ChannelFacts): ChannelsOverview {
     }
     let state: ChannelOverviewState;
     let reason: string | null = null;
+    let nextStep: string | null = null;
     if (row.ready) state = 'connected';
+    else if (channel === 'telegram' && facts.configUnreadable === true) {
+      // Telegram's configured/ready flags come from the main config; unreadable
+      // means we cannot prove it is unset — report unknown, not "not set up".
+      state = 'unknown';
+      reason = 'the main config could not be read';
+      nextStep = 'fix ~/.ashlr/config.json — it is unreadable or not valid JSON';
+    }
     else if (channel === 'email' && facts.emailConfig === 'invalid') { state = 'failing'; reason = 'email-drop config is invalid'; }
     else if (row.configured) { state = 'failing'; reason = row.credential === 'missing' ? `${LABELS[channel]} credential is missing` : `${LABELS[channel]} is not ready`; }
     else state = 'not-set-up';
@@ -207,7 +222,7 @@ export function buildChannelsOverview(facts: ChannelFacts): ChannelsOverview {
       messages24h: facts.inbox === null ? 'unknown' : within24h(inboxBy.get(channel) ?? [], nowMs, parseInboxAt),
       verifiedSenders,
       address: maskAddress(facts.addresses[channel]),
-      next: state === 'connected' ? null : plain(row.next ?? null),
+      next: state === 'connected' ? null : plain(nextStep ?? row.next ?? null),
     });
   }
 
@@ -250,7 +265,14 @@ export function createDefaultChannelsReader(opts: DefaultChannelsReaderOptions =
     const homeDir = opts.homeDir ?? homedir();
     const runsDir = opts.runsDir ?? join(homeDir, '.ashlr-runs');
     let cfg: AshlrConfig;
-    try { cfg = opts.cfg ?? loadConfigReadOnly(); } catch { cfg = {} as AshlrConfig; }
+    let configUnreadable = false;
+    if (opts.cfg !== undefined) {
+      cfg = opts.cfg;
+    } else {
+      // Strict: an existing-but-broken config must not silently read as
+      // "nothing configured" — config-derived facts report unknown instead.
+      try { cfg = loadConfigReadOnlyStrict(); } catch { cfg = {} as AshlrConfig; configUnreadable = true; }
+    }
 
     const inboxRead = await readInboxEntries({ runsDir, limit: Number.MAX_SAFE_INTEGER });
     const status = await buildChannelsStatus({ cfg, homeDir, runsDir, ...(opts.env ? { env: opts.env } : {}), now: () => now, inbox: inboxRead });
@@ -308,9 +330,10 @@ export function createDefaultChannelsReader(opts: DefaultChannelsReaderOptions =
         email: await settle(() => emailPairedCount(runsDir)),
         mobile: await settle(opts.mobileDevices ?? (() => createRemoteDeviceStore().list().filter((d) => d.revokedAt === null).length)),
         slack: slackStatus === 'unknown' ? 'unknown' : slackStatus.teamIdentities.slack,
-        imessage: imessageHandle ? 1 : 0,
+        imessage: configUnreadable ? 'unknown' : imessageAllowlist(cfg).length,
       },
       emailConfig: emailDrop.state,
+      configUnreadable,
       addresses: {
         ...(telegramChat ? { telegram: [telegramChat] } : {}),
         ...(emailDrop.config?.from.length ? { email: emailDrop.config.from } : {}),

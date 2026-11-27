@@ -12,8 +12,10 @@ import { DriveNodes } from '../src/core/drive/nodes/index.js';
 import { emptyState, parseState, type NodesState, type NodesStore } from '../src/core/drive/nodes/state.js';
 import {
   localLanePlan, probeLocalModelCaps, readLocalLaneConfig,
+  type LocalLaneProbeDeps,
 } from '../src/core/drive/nodes/local-model-caps.js';
 import { probeNodeLanes } from '../src/core/drive/nodes/worker.js';
+import { cmdNodeFleet } from '../src/cli/node-fleet.js';
 
 const GiB = 1024 ** 3;
 class MemoryStore implements NodesStore {
@@ -181,5 +183,88 @@ describe('unified pool routing over omlx caps', () => {
     const pulled = nodes.pull(big);
     expect(pulled?.job.id).toBe('draft-docs');
     expect(nodes.pull(small)).toBeNull(); // nothing left that a plain-omlx node can take
+  });
+});
+
+describe('standalone join advertises the planned local lane caps', () => {
+  const joinOnce = async (nodeId: string, localLanes: LocalLaneProbeDeps, capsArg?: string, phmVersion: () => string | null = () => null) => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join',
+        ['--node', nodeId, '--owner', 'mason', '--json', ...(capsArg === undefined ? [] : ['--caps', capsArg])],
+        { store, phmVersion, localLanes });
+      return { code, store, out: JSON.parse(lines.at(-1)!) as Record<string, unknown> };
+    } finally { vi.restoreAllMocks(); }
+  };
+
+  it('merges the probe caps into --caps so a local-model node is routable standalone', async () => {
+    writeFileSync(configPath, JSON.stringify(enable));
+    const { code, store, out } = await joinOnce('mini-16gb', deps({ headroom: headroom() }), 'build');
+    expect(code).toBe(0);
+    expect(store.state.nodes[0]!.caps).toEqual(['build', 'omlx', 'omlx-work']);
+    expect(out['caps']).toEqual(['build', 'omlx', 'omlx-work']);
+  });
+
+  it('dedupes caps the operator already passed and keeps the version cap', async () => {
+    writeFileSync(configPath, JSON.stringify(enable));
+    const { store } = await joinOnce('mini-16gb', deps({ headroom: headroom() }), 'omlx,build', () => '9.9.9');
+    expect(store.state.nodes[0]!.caps).toEqual(['build', 'omlx', 'omlx-work', 'phm-9.9.9']);
+  });
+
+  it('advertises nothing extra when the lane is absent, disabled or backed off', async () => {
+    let r = await joinOnce('n-absent', deps({ headroom: headroom() }), 'build');
+    expect(r.store.state.nodes[0]!.caps).toEqual(['build']);
+    writeFileSync(configPath, JSON.stringify({ schemaVersion: 1, enabled: false }));
+    r = await joinOnce('n-disabled', deps({ headroom: headroom() }), 'build');
+    expect(r.store.state.nodes[0]!.caps).toEqual(['build']);
+    writeFileSync(configPath, JSON.stringify(enable));
+    r = await joinOnce('n-pressured', deps({ headroom: headroom(60, 0, 4) }), 'build');
+    expect(r.store.state.nodes[0]!.caps).toEqual(['build']);
+  });
+
+  it('names a malformed local-lanes.json in the reply instead of silently skipping the lane', async () => {
+    writeFileSync(configPath, 'not json');
+    const { code, store, out } = await joinOnce('n-broken-config', deps({ headroom: headroom() }), 'build');
+    expect(code).toBe(0);
+    expect(store.state.nodes[0]!.caps).toEqual(['build']);
+    expect(out['caps']).toEqual(['build']);
+    expect(out['localLanes']).toEqual({
+      state: 'invalid',
+      error: 'local-lanes.json is not valid JSON',
+      fix: 'Run: phm node lanes',
+    });
+  });
+
+  it('prints the same diagnostic in text mode', async () => {
+    writeFileSync(configPath, 'not json');
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join',
+        ['--node', 'n-broken-text', '--owner', 'mason'],
+        { store, phmVersion: () => null, localLanes: deps({ headroom: headroom() }) });
+      expect(code).toBe(0);
+      expect(lines.join('\n')).toContain('Local model lanes not advertised: local-lanes.json is not valid JSON. Run: phm node lanes');
+    } finally { vi.restoreAllMocks(); }
+  });
+
+  it('adds no localLanes field when the config is absent, disabled, valid or the probe fails', async () => {
+    let r = await joinOnce('n-clean-absent', deps({ headroom: headroom() }), 'build');
+    expect(r.out['localLanes']).toBeUndefined();
+    writeFileSync(configPath, JSON.stringify({ schemaVersion: 1, enabled: false }));
+    r = await joinOnce('n-clean-disabled', deps({ headroom: headroom() }), 'build');
+    expect(r.out['localLanes']).toBeUndefined();
+    writeFileSync(configPath, JSON.stringify(enable));
+    r = await joinOnce('n-clean-valid', deps({ headroom: headroom() }), 'build');
+    expect(r.out['localLanes']).toBeUndefined();
+    expect(r.out['caps']).toContain('omlx');
+    // A probe that throws (here: the headroom reader) advertises nothing and
+    // reports no config error — same never-throw contract as before.
+    r = await joinOnce('n-clean-throw', deps({ headroom: () => { throw new Error('sysctl unavailable'); } }), 'build');
+    expect(r.out['localLanes']).toBeUndefined();
+    expect(r.store.state.nodes[0]!.caps).toEqual(['build']);
   });
 });

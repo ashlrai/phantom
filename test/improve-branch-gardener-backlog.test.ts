@@ -244,6 +244,40 @@ describe('branchGardenerBacklogItems', () => {
     expect(await branchGardenerBacklogItems({ repo: REPO, journalPath: writeJournal(stale), now: NOW })).toEqual([]);
   });
 
+  it('drops events stamped past the evaluation-time future skew', async () => {
+    // Both flag observations sit beyond now + skew: corrupt or replayed
+    // evidence, no stranded cell.
+    const future = await branchGardenerBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        result(REPO, NOW_S + 7200, [flag('fleet/future-alpha'), flag('fleet/future-beta')]),
+        result(REPO, NOW_S + 86400, [flag('fleet/future-alpha'), flag('fleet/future-beta')]),
+      ]),
+    });
+    expect(future).toEqual([]);
+    // A future stamp cannot stretch a persisting branch's span either:
+    // one real observation plus one beyond the skew leaves a lone flag.
+    const stretched = await branchGardenerBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        result(REPO, at(1), [flag('fleet/alpha'), flag('fleet/beta')]),
+        result(REPO, NOW_S + 86400, [flag('fleet/alpha'), flag('fleet/beta')]),
+      ]),
+    });
+    expect(stretched).toEqual([]);
+    // Inside the one-minute skew the stamp still counts as same-host drift:
+    // the same two branches now span a full day and emit.
+    const within = await branchGardenerBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        result(REPO, at(1), [flag('fleet/alpha'), flag('fleet/beta')]),
+        result(REPO, NOW_S + 30, [flag('fleet/alpha'), flag('fleet/beta')]),
+      ]),
+    });
+    expect(within).toHaveLength(1);
+    expect(within[0]!.id).toMatch(/^branch-gardener-stranded-/);
+  });
+
   it('yields nothing for a missing or malformed journal', async () => {
     expect(await branchGardenerBacklogItems({ repo: REPO, journalPath: path.join(home, 'no-such.jsonl'), now: NOW })).toEqual([]);
     const file = writeJournal([

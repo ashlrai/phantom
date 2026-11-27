@@ -15,9 +15,9 @@
  */
 
 import type { TypeSafeChoiceQuestion, TypeSafeNoulQuestion } from '../classify/typesafe-client.js';
-import { decide } from './decide.js';
+import { decide, readChoiceAnswer, readNoulAnswer } from './decide.js';
 import { availableLanes, chooseLaneHeuristic, laneQuestion, type LaneContext, type WorkLane } from './lane.js';
-import type { DecideOptions, Decision } from './types.js';
+import type { Decision, DecisionCallOptions } from './types.js';
 import { IMPACT_VERSION, rankImpactTemplates, type ImpactInput, type ImpactOverride } from '../metrics/impact.js';
 
 export interface TriggerInput {
@@ -57,7 +57,7 @@ export interface TriggerTriage {
   readonly workProbability?: number;
 }
 
-export type TriageTriggerOptions = Omit<DecideOptions<TriggerTriage>, 'fallback' | 'interpret' | 'escalateOnly'>;
+export type TriageTriggerOptions = DecisionCallOptions;
 
 const NON_ENGINEERING_LABELS = /^(question|duplicate|invalid|wontfix|won't fix|discussion|support)$|^ashlr:non-code\//i;
 const NOT_WORK_TEXT = /\b(question:|how do i|is it possible|feature request\?|thank you|thanks for)\b/i;
@@ -163,27 +163,22 @@ export async function triageTrigger(
     fallback: () => triageTriggerHeuristic(trigger, context),
     cacheSalt: JSON.stringify([open, playbooks.map((p) => [p.id, p.when])]),
     interpret: (answers) => {
-      const w = answers['work'];
-      const l = answers['lane'];
-      if (!w || w.type !== 'noul' || !l || l.type !== 'choice' || !open.includes(l.choice as WorkLane)) return undefined;
+      const w = readNoulAnswer(answers, 'work');
+      const l = readChoiceAnswer(answers, 'lane', open);
+      if (!w || !l) return undefined;
       let playbook: string | null = null;
       let pConf = 1;
       if (playbooks.length > 0) {
-        const p = answers['playbook'];
-        if (!p || p.type !== 'choice') return undefined;
-        if (p.choice !== 'none' && !playbookIds.includes(p.choice)) return undefined;
+        const p = readChoiceAnswer(answers, 'playbook', ['none', ...playbookIds]);
+        if (!p) return undefined;
         playbook = p.choice === 'none' ? null : p.choice;
         pConf = p.confidence;
       }
-      // A Noul is a probability, not a confidence: how far it sits from the
-      // coin-flip is how decisive it is.
-      const workDecisiveness = Math.max(w.noul, 1 - w.noul);
-      const confidence = Math.min(workDecisiveness, l.confidence, pConf);
-      const work = w.noul >= 0.5;
+      const confidence = Math.min(w.confidence, l.confidence, pConf);
       return {
-        value: { work, lane: l.choice as WorkLane, playbook, workProbability: w.noul },
+        value: { work: w.yes, lane: l.choice, playbook, workProbability: w.probability },
         confidence,
-        label: `${work ? 'work' : 'skip'}:${l.choice}${playbook ? `:${playbook}` : ''}`,
+        label: `${w.yes ? 'work' : 'skip'}:${l.choice}${playbook ? `:${playbook}` : ''}`,
       };
     },
   });
@@ -244,17 +239,13 @@ export async function automationTriageDecider(
   );
   const answers = d.answers;
   if (!answers) return { unavailable: d.reason ?? 'no-answer' };
-  const w = answers['work'];
-  const l = answers['lane'];
-  const p = answers['playbook'];
   const offered = input.lanes.map(toWorkLane);
+  const w = readNoulAnswer(answers, 'work');
+  const l = readChoiceAnswer(answers, 'lane', offered);
+  const p = readChoiceAnswer(answers, 'playbook', input.playbooks);
   return {
-    worth: w && w.type === 'noul' ? w.noul : null,
-    lane: l && l.type === 'choice' && offered.includes(l.choice as WorkLane)
-      ? { choice: toAutomationLane(l.choice as WorkLane), confidence: l.confidence }
-      : null,
-    playbook: p && p.type === 'choice' && p.choice !== 'none' && input.playbooks.includes(p.choice)
-      ? { choice: p.choice, confidence: p.confidence }
-      : null,
+    worth: w ? w.probability : null,
+    lane: l ? { choice: toAutomationLane(l.choice), confidence: l.confidence } : null,
+    playbook: p && p.choice !== 'none' ? p : null,
   };
 }

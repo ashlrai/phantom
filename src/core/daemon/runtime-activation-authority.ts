@@ -2,7 +2,6 @@ import {
   createHash,
   createPublicKey,
   sign as cryptoSign,
-  timingSafeEqual,
   verify as cryptoVerify,
   type KeyObject,
 } from 'node:crypto';
@@ -27,6 +26,17 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 // activation-permit re-exports, so the signed bytes are unchanged.
 import { canonicalJson as canonicalizeDaemonActivationValue } from '../authority/canonical-json.js';
 import {
+  RUNTIME_SHA256_RE as SHA256_RE,
+  decodeCanonicalBase64url as decodeBase64url,
+  equalSha256Digest as equalDigest,
+  hasExactKeys as exactKeys,
+  isCanonicalTimestamp,
+  isPathContained as contained,
+  isPlainRecord as isRecord,
+  sameStatSnapshot as sameSnapshot,
+  sha256Hex as sha256,
+} from './runtime-protocol-shared.js';
+import {
   parseRuntimeReleaseEvidenceEnvelope,
   parseRuntimeReleaseEvidenceTrustRoot,
   runtimeReleaseEvidenceKeyId,
@@ -47,9 +57,9 @@ export const RUNTIME_ACTIVATION_AUTHORITY_TRUST_ROOT_DOMAIN_V1 =
   'ashlr:runtime-activation-authority-trust-root:v1' as const;
 export const RUNTIME_ACTIVATION_AUTHORITY_KEY_DOMAIN_V1 =
   'ashlr:runtime-activation-authority-key:v1' as const;
-export const RUNTIME_ACTIVATION_MANIFEST_DOMAIN_V1 = 'ashlr:runtime-activation-manifest:v1' as const;
+const RUNTIME_ACTIVATION_MANIFEST_DOMAIN_V1 = 'ashlr:runtime-activation-manifest:v1' as const;
 export const RUNTIME_ACTIVATION_REQUEST_DOMAIN_V1 = 'ashlr:runtime-activation-preflight-request:v1' as const;
-export const RUNTIME_ACTIVATION_AUTHORITY_MAX_LIFETIME_MS = 15 * 60 * 1_000;
+const RUNTIME_ACTIVATION_AUTHORITY_MAX_LIFETIME_MS = 15 * 60 * 1_000;
 
 const SIGNATURE_INPUT_DOMAIN = 'ashlr:runtime-activation-manifest-signature:v1\0';
 const PLAN_DIGEST_DOMAIN = 'ashlr:runtime-activation-plan-digest:v1\0';
@@ -63,11 +73,9 @@ const MAX_TEXT_ARTIFACT_BYTES = 2 * 1024 * 1024;
 const MAX_HASH_ARTIFACT_BYTES = 512 * 1024 * 1024;
 const MAX_ARGUMENTS = 64;
 const MAX_ARGUMENT_BYTES = 16 * 1_024;
-const SHA256_RE = /^[a-f0-9]{64}$/;
 const SHA1_RE = /^[a-f0-9]{40}$/;
 const KEY_ID_RE = /^ed25519-sha256:[a-f0-9]{64}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -313,61 +321,16 @@ interface ReadRequestResult {
   requestPath: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
-  );
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
-}
-
 function canonicalJson(value: unknown): string {
   return `${canonicalizeDaemonActivationValue(value)}\n`;
-}
-
-function sha256(value: string | Buffer): string {
-  return createHash('sha256').update(value).digest('hex');
 }
 
 function domainSha256(domain: string, value: string | Buffer): string {
   return createHash('sha256').update(domain, 'utf8').update(value).digest('hex');
 }
 
-function equalDigest(left: string, right: string): boolean {
-  return (
-    SHA256_RE.test(left) &&
-    SHA256_RE.test(right) &&
-    timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'))
-  );
-}
-
 function validTimestamp(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length >= 20 &&
-    value.length <= 32 &&
-    Number.isFinite(Date.parse(value)) &&
-    new Date(Date.parse(value)).toISOString() === value
-  );
-}
-
-function decodeBase64url(value: unknown, expectedBytes?: number): Buffer | null {
-  if (typeof value !== 'string' || value.length === 0 || !BASE64URL_RE.test(value)) return null;
-  try {
-    const decoded = Buffer.from(value, 'base64url');
-    if (expectedBytes !== undefined && decoded.length !== expectedBytes) return null;
-    if (decoded.toString('base64url') !== value) return null;
-    return decoded;
-  } catch {
-    return null;
-  }
+  return typeof value === 'string' && value.length >= 20 && value.length <= 32 && isCanonicalTimestamp(value);
 }
 
 function parseCanonicalJson(value: string, maxBytes: number): unknown {
@@ -520,7 +483,7 @@ function signatureBytes(manifest: SignedRuntimeActivationManifestV1): Buffer {
   ]);
 }
 
-export function parseSignedRuntimeActivationManifest(value: string): ParsedActivationManifest {
+function parseSignedRuntimeActivationManifest(value: string): ParsedActivationManifest {
   const parsed = parseCanonicalJson(value, MAX_REQUEST_BYTES);
   if (
     !isRecord(parsed) ||
@@ -617,28 +580,6 @@ function exactPrivateFile(stat: BigIntStats): boolean {
     stat.nlink === 1n &&
     ownedByCurrentUser(stat) &&
     (process.platform === 'win32' || (stat.mode & 0o777n) === 0o600n)
-  );
-}
-
-function sameSnapshot(left: BigIntStats, right: BigIntStats): boolean {
-  return (
-    left.dev === right.dev &&
-    left.ino === right.ino &&
-    left.mode === right.mode &&
-    left.uid === right.uid &&
-    left.gid === right.gid &&
-    left.nlink === right.nlink &&
-    left.size === right.size &&
-    left.mtimeNs === right.mtimeNs &&
-    left.ctimeNs === right.ctimeNs
-  );
-}
-
-function contained(anchor: string, candidate: string, allowEqual = false): boolean {
-  const nested = relative(anchor, candidate);
-  return (
-    (allowEqual && nested === '') ||
-    (nested !== '' && nested !== '..' && !nested.startsWith(`..${sep}`) && !isAbsolute(nested))
   );
 }
 

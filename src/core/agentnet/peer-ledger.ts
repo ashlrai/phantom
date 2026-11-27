@@ -2,8 +2,10 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { PEER_MAX_HOPS, PEER_PAIR_LIMIT, PEER_WINDOW_MS, rowSchema } from './peer-bus.js';
+import { PEER_MAX_HOPS, PEER_PAIR_LIMIT, PEER_WINDOW_MS, rowSchema, type PeerLedgerRow } from './peer-bus.js';
 import { agentnetPaths, readPeerJson } from './slack-identities.js';
+
+export type { PeerLedgerRow };
 
 const CAPACITY = 1024, LIVE_MS = 86_400_000, MAX_PAIRS = 64, MAX_ORIGINS = 32;
 
@@ -82,4 +84,30 @@ export function readPeerLedger(options: { busRoot?: string; now?: () => number; 
       pairs: shown.slice(0, MAX_PAIRS), origins: originList.slice(0, MAX_ORIGINS),
       truncated: { pairs: pairList.length > MAX_PAIRS, origins: originList.length > MAX_ORIGINS } };
   } catch { return { ...report, status: 'unavailable', reason: 'peer-ledger-unreadable' }; }
+}
+
+export interface PeerLedgerRowsRead {
+  /** 'missing' is a verified-absent ledger; 'unavailable' means the file
+   * exists but fails the same custody, shape or conflict read
+   * `readPeerInbox`/`sendPeerMessage` apply — the failure that makes every
+   * peer verb refuse. */
+  status: 'missing' | 'available' | 'unavailable';
+  /** Validated coordination rows; empty unless the ledger read cleanly. */
+  rows: PeerLedgerRow[];
+}
+
+/** Row-level read of the same coordination ledger `readPeerLedger`
+ * summarizes, for callers that must match individual admission rows — id,
+ * target, send instant, digest — rather than count the live send budget.
+ * Never throws and never writes; an absent file is 'missing' with no rows,
+ * a failed read 'unavailable' with none. Rows are returned unfiltered:
+ * callers apply their own liveness window exactly as `readPeerInbox` does. */
+export function readPeerLedgerRows(options: { busRoot?: string } = {}): PeerLedgerRowsRead {
+  try {
+    const busRoot = options.busRoot ?? agentnetPaths().busRoot;
+    const file = join(busRoot, 'agentnet', 'coordination.json');
+    if (!existsSync(file)) return { status: 'missing', rows: [] };
+    return { status: 'available',
+      rows: z.array(rowSchema).max(CAPACITY).parse(readPeerJson(file, busRoot)) };
+  } catch { return { status: 'unavailable', rows: [] }; }
 }

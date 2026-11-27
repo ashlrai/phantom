@@ -1,19 +1,16 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { foldJobsLedger, parseGhPullRequests } from '../fleet/eval-report.js';
-import { readLedgerTail } from '../router/outcomes.js';
-import { normalizeLeverageJobs, type LeverageJobsText } from './leverage-class.js';
-import { runsRoot } from './loop-collect.js';
+import {
+  isTestPath, parseLeverageSources, readLeverageInputs,
+  type LeverageJobsText, type LeverageSourceOptions,
+} from './leverage-class.js';
 
-export const LEVERAGE_CLASSES = ['test-only', 'docs', 'feature', 'fleet/self-improvement', 'fix', 'unknown'] as const;
-export type LeverageClass = typeof LEVERAGE_CLASSES[number];
+const LEVERAGE_CLASSES = ['test-only', 'docs', 'feature', 'fleet/self-improvement', 'fix', 'unknown'] as const;
+export type LeverageClass = (typeof LEVERAGE_CLASSES)[number];
 
 /** Precedence: exclusively tests, exclusively documentation, fleet, fix, feature, unknown. */
 export function classifyLeverage(paths: readonly string[], jobId: string | null): LeverageClass {
-  const test = (p: string): boolean => /(^|\/)(__tests__|tests?|fixtures?)(\/|$)|\.(test|spec)\.[^/]+$/i.test(p);
   const docs = (p: string): boolean => /(^|\/)docs?\//i.test(p) || /(^|\/)(readme|changelog|contributing|license)(\.|$)/i.test(p) || /\.mdx?$/i.test(p);
-  if (paths.length && paths.every(test)) return 'test-only';
-  if (paths.length && paths.every(p => test(p) || docs(p)) && paths.some(docs)) return 'docs';
+  if (paths.length && paths.every(isTestPath)) return 'test-only';
+  if (paths.length && paths.every(p => isTestPath(p) || docs(p)) && paths.some(docs)) return 'docs';
   const id = (jobId ?? '').toLowerCase();
   if (/fleet|router|queue|dispatch|steward|self.improv|agentnet/.test(id) || paths.some(p => /^(src\/core\/fleet\/|contrib\/mac\/|fleet\/)/.test(p))) return 'fleet/self-improvement';
   if (/fix|bug|repair|regression|recover|harden/.test(id)) return 'fix';
@@ -28,9 +25,7 @@ export function classifyLeverage(paths: readonly string[], jobId: string | null)
  */
 export function buildLeverageMix(jobsText: LeverageJobsText, prsText: string | null, nowMs = Date.now()) {
   const since = nowMs - 24 * 60 * 60 * 1000;
-  const jobsRead = normalizeLeverageJobs(jobsText);
-  const ledger = jobsRead === null ? null : foldJobsLedger(jobsRead.text, since, nowMs);
-  const prs = prsText === null ? null : parseGhPullRequests(prsText);
+  const { ledger, prs, sources } = parseLeverageSources(jobsText, prsText, since, nowMs);
   const merges = new Map<string, { jobId: string | null; paths: string[] }>();
   for (const [key, row] of ledger?.outcomes ?? []) {
     if (row.state === 'MERGED' && row.atMs !== null && row.atMs >= since && row.atMs < nowMs) merges.set(key, { jobId: row.jobId, paths: [] });
@@ -47,24 +42,13 @@ export function buildLeverageMix(jobsText: LeverageJobsText, prsText: string | n
   const available = ledger !== null;
   return {
     schema: 'metrics.leverage-mix.v1' as const, window: { since: new Date(since).toISOString(), until: new Date(nowMs).toISOString() },
-    sources: { jobs: !ledger ? 'missing' : ledger.counts.ignored ? 'degraded' : 'available',
-      /** True when the jobs ledger exceeded the retained tail: merge counts cover only the newest bytes. */
-      jobsTruncated: jobsRead?.truncated ?? false,
-      pullRequests: !prs ? 'missing' : prs.ignored ? 'degraded' : 'available' },
+    sources,
     total: available ? total : null,
     classes: LEVERAGE_CLASSES.map(name => ({ name, count: available ? counts[name] : null, share: available && total ? counts[name] / total : null })),
     improvedShare: available && total && counts.unknown < total ? (counts.feature + counts['fleet/self-improvement'] + counts.fix) / total : null,
   };
 }
 export type LeverageMix = ReturnType<typeof buildLeverageMix>;
-
-export interface ReadLeverageMixOptions {
-  prsPath?: string;
-  runsDir?: string;
-  now?: number;
-  /** Injected jobs-ledger read; skips the jobs.jsonl read when set. */
-  jobs?: LeverageJobsText;
-}
 
 /**
  * Reads the jobs ledger's newest bounded tail (readLedgerTail, the same
@@ -73,12 +57,7 @@ export interface ReadLeverageMixOptions {
  * its tail and reports `sources.jobsTruncated` instead of implying full
  * coverage or refusing the read outright.
  */
-export async function readLeverageMix(opts: ReadLeverageMixOptions = {}): Promise<LeverageMix> {
-  const read = (path: string): string | null => { try { return readFileSync(path, 'utf8'); } catch { return null; } };
-  let jobs = opts.jobs;
-  if (jobs === undefined) {
-    const tail = await readLedgerTail(join(opts.runsDir ?? runsRoot(), 'metrics', 'jobs.jsonl'));
-    jobs = tail.state === 'read' ? { text: tail.text, truncated: tail.truncated } : null;
-  }
-  return buildLeverageMix(jobs, opts.prsPath ? read(opts.prsPath) : null, opts.now);
+export async function readLeverageMix(opts: LeverageSourceOptions = {}): Promise<LeverageMix> {
+  const { jobs, prsText } = await readLeverageInputs(opts);
+  return buildLeverageMix(jobs, prsText, opts.now);
 }

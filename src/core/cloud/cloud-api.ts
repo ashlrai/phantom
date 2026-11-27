@@ -71,6 +71,8 @@ import {
 } from './pr-actions.js';
 import { VERSE_CLOUD_PREVIEWS_PATH, type CloudPrPreview, type CloudPrPreviewsResponse } from './pr-preview.js';
 import {
+  CLOUD_IMPROVE_MAX_COUNT,
+  CLOUD_REPO_PATTERN,
   CLOUD_TASK_ID_PATTERN,
   VERSE_CLOUD_BUDGET_PATH,
   VERSE_CLOUD_IMPROVE_PATH,
@@ -78,6 +80,10 @@ import {
   VERSE_CLOUD_PATH,
   VERSE_CLOUD_REFRESH_PATH,
   VERSE_CLOUD_TASKS_PATH,
+  clipCloudText,
+  flattenControlWhitespace,
+  isCloudRecord,
+  isValidIsoTimestamp,
   type CloudBudgetUpdate,
   type CloudBudgetV1,
   type CloudImproveResponse,
@@ -89,8 +95,6 @@ import {
 // Input validation (pure, exported for tests)
 // ---------------------------------------------------------------------------
 
-/** Same shape the service validates (spec C1); checked here too so bad input is a 400, not a failed task. */
-export const CLOUD_REPO_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 /**
  * A conservative git branch name: what `git check-ref-format --branch`
  * accepts minus the exotic parts. The session clones this branch, so a
@@ -101,7 +105,6 @@ const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 const LAUNCH_BODY_MAX_BYTES = 128 * 1024;
 const SMALL_BODY_MAX_BYTES = 4 * 1024;
 const TITLE_MAX = 200;
-const IMPROVE_MAX_COUNT = 5;
 /** Budget figures above this are typos, not budgets ($1M of credits, a million sessions). */
 const BUDGET_NUMBER_MAX = 1_000_000;
 
@@ -113,10 +116,6 @@ const BUDGET_KEYS: ReadonlySet<string> = new Set([...BUDGET_NUMBER_KEYS, ...BUDG
 const SELF_IMPROVE_KEYS: ReadonlySet<string> = new Set(['enabled', 'repo', 'maxPerDay', 'reserveUsd', 'maxOpenPrs']);
 
 export class CloudInputError extends Error {}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export function rejectUnknownKeys(body: Record<string, unknown>, allowed: ReadonlySet<string>, where = ''): void {
   for (const key of Object.keys(body)) {
@@ -139,7 +138,7 @@ export function isValidBranchName(value: unknown): value is string {
 }
 
 /** Strict parse of a launch body; throws CloudInputError with a plain sentence. `origin` defaults to operator. */
-export function parseCloudLaunchBody(body: Record<string, unknown>): CloudLaunchRequest {
+function parseCloudLaunchBody(body: Record<string, unknown>): CloudLaunchRequest {
   rejectUnknownKeys(body, LAUNCH_KEYS);
   const { repo, baseBranch, title, prompt, origin } = body;
   if (!isValidCloudRepo(repo)) throw new CloudInputError('Repo must look like owner/name.');
@@ -188,7 +187,7 @@ export function parseCloudBudgetBody(body: Record<string, unknown>): CloudBudget
   }
   if (body['selfImprove'] !== undefined) {
     const raw = body['selfImprove'];
-    if (!isRecord(raw)) throw new CloudInputError('selfImprove must be an object.');
+    if (!isCloudRecord(raw)) throw new CloudInputError('selfImprove must be an object.');
     rejectUnknownKeys(raw, SELF_IMPROVE_KEYS, 'selfImprove.');
     const self: Partial<CloudBudgetV1['selfImprove']> = {};
     if (raw['enabled'] !== undefined) {
@@ -208,12 +207,12 @@ export function parseCloudBudgetBody(body: Record<string, unknown>): CloudBudget
   return out;
 }
 
-export function parseCloudImproveBody(body: Record<string, unknown>): { count: number } {
+function parseCloudImproveBody(body: Record<string, unknown>): { count: number } {
   rejectUnknownKeys(body, new Set(['count']));
   const count = body['count'];
   if (count === undefined) return { count: 1 };
-  if (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > IMPROVE_MAX_COUNT) {
-    throw new CloudInputError(`Count must be a whole number from 1 to ${IMPROVE_MAX_COUNT}.`);
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > CLOUD_IMPROVE_MAX_COUNT) {
+    throw new CloudInputError(`Count must be a whole number from 1 to ${CLOUD_IMPROVE_MAX_COUNT}.`);
   }
   return { count };
 }
@@ -251,7 +250,7 @@ export function parseCloudPrCloseBody(body: Record<string, unknown>): { headSha:
 // Dismiss (local record only — never GitHub)
 // ---------------------------------------------------------------------------
 
-export const CLOUD_DISMISS_REASON = 'Dismissed in Phantom.';
+const CLOUD_DISMISS_REASON = 'Dismissed in Phantom.';
 
 export type CloudDismissResult =
   | { ok: true; task: CloudTaskV1 }
@@ -288,9 +287,7 @@ const NEEDS_YOU_CACHE_MS = 15_000;
 const NEEDS_YOU_TASK_SCAN = 200;
 
 function clip(text: string, max: number): string {
-  // eslint-disable-next-line no-control-regex
-  const flat = text.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}…`;
+  return clipCloudText(flattenControlWhitespace(text), max);
 }
 
 function taskTitle(task: CloudTaskV1): string {
@@ -361,7 +358,7 @@ export function triageActions(task: Pick<CloudTaskV1, 'id'>, preview: CloudPrPre
 }
 
 function isoOr(value: string | null | undefined, fallback: string): string {
-  return typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? new Date(value).toISOString() : fallback;
+  return isValidIsoTimestamp(value) ? new Date(value).toISOString() : fallback;
 }
 
 /**
@@ -541,7 +538,7 @@ function guarded<T>(name: JobName, run: () => Promise<T>): Promise<T> {
   return next;
 }
 
-export function refreshCloudTasksGuarded(): Promise<{ checked: number; updated: number }> {
+function refreshCloudTasksGuarded(): Promise<{ checked: number; updated: number }> {
   return guarded('refresh', () => refreshCloudTasks());
 }
 
@@ -574,7 +571,7 @@ export function cloudSchedulerRefusal(env: NodeJS.ProcessEnv = process.env): str
 }
 
 /** Why unattended self-improvement must not run now (Stop or Pause), or null. Unreadable Stop state holds. */
-export async function unattendedHold(): Promise<string | null> {
+async function unattendedHold(): Promise<string | null> {
   try {
     const [{ killSwitchOn }, { isPaused }] = await Promise.all([import('../sandbox/policy.js'), import('../comms/pause.js')]);
     if (killSwitchOn()) return 'the autonomy kill switch is on';
@@ -624,6 +621,17 @@ export function startCloudScheduler(env: NodeJS.ProcessEnv = process.env, deps: 
   const improve = deps.improve ?? (async () => {
     const held = await unattendedHold();
     if (held) { try { log(`cloud improve skipped: ${held}`); } catch { /* never throws */ } return null; }
+    // Journal merged outside-PR outcomes — community contributions the
+    // fleet's own ledgers never see — into
+    // metrics/outside-pr-outcomes.jsonl BEFORE discovery, so this same
+    // tick's autoDiscover can fold recurring reverts into backlog items.
+    // Best-effort like the syncs below; a failure never blocks discovery
+    // and an unchanged pass appends only its scan receipt.
+    try {
+      const { syncOutsidePrOutcomes } = await import('../fleet/outside-outcome-sync.js');
+      const synced = await syncOutsidePrOutcomes();
+      if (synced.appended > 0) try { log(`cloud improve: recorded ${synced.appended} outside-PR outcome(s)`) } catch { /* never throws */ }
+    } catch { /* never throws */ }
     const { autoDiscover } = await import('../improve/discover.js');
     const found = await autoDiscover();
     if (found.added) try { log(`cloud backlog: ${found.added} new item(s) discovered`); } catch { /* never throws */ }
@@ -754,7 +762,7 @@ export async function readMutationBody(
     sendInvalid(res, 'Invalid JSON body.');
     return null;
   }
-  if (!isRecord(parsed)) {
+  if (!isCloudRecord(parsed)) {
     sendInvalid(res, 'Body must be a JSON object.');
     return null;
   }

@@ -212,6 +212,42 @@ describe('liveConfigBacklogItems', () => {
     expect(items).toEqual([]);
   });
 
+  it('drops rows stamped past the evaluation-time future skew', async () => {
+    // Three changes on distinct future UTC days: corrupt or replayed
+    // evidence — no churn cell, no off-contract cell.
+    const future = await liveConfigBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        row('lanes.work.target', 'set', -1, 6),
+        row('lanes.work.target', 'set', -2, 8, 'leader'),
+        row('lanes.work.target', 'unset', -4, null),
+      ]),
+    });
+    expect(future).toEqual([]);
+    // A future stamp cannot stretch a below-bar cell over the bar either:
+    // two in-window changes plus one beyond the skew stays two rows.
+    const stretched = await liveConfigBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        row('lanes.work.target', 'set', 1, 6),
+        row('lanes.work.target', 'set', 2, 8, 'leader'),
+        row('lanes.work.target', 'unset', -1, null),
+      ]),
+    });
+    expect(stretched).toEqual([]);
+    // A stamp inside the skew still counts as same-host clock drift:
+    // 1/120 h = 30 s ahead of NOW.
+    const drift = await liveConfigBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        row('lanes.work.target', 'set', 1, 6),
+        row('lanes.work.target', 'set', 2, 8, 'leader'),
+        { ...row('lanes.work.target', 'unset', 0, null), at: at(0, 1 / 120) },
+      ]),
+    });
+    expect(drift).toHaveLength(1);
+  });
+
   it('emits churn and off-contract items in a fixed order and honours the limit', async () => {
     const rows: Row[] = [
       ...churnRows('lanes.work.target'),

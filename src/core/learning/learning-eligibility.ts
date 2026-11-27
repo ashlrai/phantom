@@ -7,17 +7,20 @@
  * enter the schema.
  */
 
-import { createHash, createHmac } from 'node:crypto';
 import type { TrajectoryRecord, TrajectoryTerminalOutcome } from '../autonomy/trajectory-records.js';
 import { loadExistingProvenanceKeyReadOnly } from '../foundry/provenance.js';
 import type {
   PostMergePopulationMemberV2,
   PostMergePopulationV2,
 } from '../fleet/post-merge-population-v2.js';
+import {
+  SHA256_HEX_RE as DIGEST_RE,
+  hmacSha256Tuple,
+  sha256Tuple,
+} from './policy-assignment-identity.js';
 
 export const LEARNING_ELIGIBILITY_POLICY_VERSION = 'learning-eligibility-v1' as const;
 const MAX_MEMBERS = 4_096;
-const DIGEST_RE = /^[a-f0-9]{64}$/;
 
 export type LearningEligibilityRefusalCode =
   | 'trajectory-source-incomplete'
@@ -90,14 +93,6 @@ export type LearningEligibilityProjectionResult =
 
 interface LearningEligibilityDependencies {
   identityKey: () => Buffer | null;
-}
-
-function sha(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
-}
-
-function hmac(key: Buffer, domain: string, value: string): string {
-  return createHmac('sha256', key).update(JSON.stringify([domain, value])).digest('hex');
 }
 
 function identityOf(record: TrajectoryRecord): string {
@@ -248,11 +243,11 @@ export function buildLearningEligibilityProjectionV1(
       (record.proposalId !== undefined && (typeof record.proposalId !== 'string' ||
         record.proposalId.length < 1 || record.proposalId.length > 4_096 ||
         containsControlCharacters(record.proposalId)))) return { ok: false, reason: 'invalid-input' };
-    const subjectDigest = hmac(key, 'ashlr:learning-eligibility:subject:v1', identity);
+    const subjectDigest = hmacSha256Tuple(key, 'ashlr:learning-eligibility:subject:v1', [identity]);
     if (seen.has(subjectDigest)) return { ok: false, reason: 'duplicate-subject' };
     seen.add(subjectDigest);
     const proposalDigest = record.proposalId
-      ? hmac(key, 'ashlr:post-merge-v2:proposal', record.proposalId)
+      ? hmacSha256Tuple(key, 'ashlr:post-merge-v2:proposal', [record.proposalId])
       : undefined;
     const populationMember = proposalDigest ? populationByProposal.get(proposalDigest) : undefined;
     const source = sourceComplete(record);
@@ -296,8 +291,7 @@ export function buildLearningEligibilityProjectionV1(
     !member.refusalCodes.includes('agent-action-source-incomplete'));
   const selectionPropensityAvailable = members.length > 0 &&
     members.every((member) => member.selectionPropensityAvailable);
-  const candidateSetDigest = sha([
-    LEARNING_ELIGIBILITY_POLICY_VERSION,
+  const candidateSetDigest = sha256Tuple(LEARNING_ELIGIBILITY_POLICY_VERSION, [
     input.learningEpoch,
     sourceCompleteValue,
     denominatorComplete,

@@ -28,21 +28,23 @@
  * Tool evidence refs use the contract's event form `session:<id>#<seq>`.
  */
 
-import { readdir, lstat, readFile } from 'node:fs/promises';
+import { readdir, lstat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { classifyAgentDiagnosticError } from '../run/agent-diagnostics.js';
 import { isTransientVerseEvent, type VerseEvent, type VerseSession } from '../verse/types.js';
-import { TurnAccumulator, type ToolHandle, type TurnFeaturesV1 } from './extractors.js';
+import { TurnAccumulator, asString, type ToolHandle, type TurnFeaturesV1 } from './extractors.js';
 import {
   appendFeatures,
   appendSteps,
   appendStepsChunked,
   cleanLabel,
+  readBoundedJsonRecord,
+  readCursorMap,
   readJsonl,
-  readStoreState,
   reasoningRoot,
-  writeStoreState,
+  writeCursorMap,
+  yieldToLoop,
 } from './store.js';
 import type { ReasoningOutcome, ReasoningStepKind, ReasoningStepV1 } from './types.js';
 
@@ -50,7 +52,7 @@ import type { ReasoningOutcome, ReasoningStepKind, ReasoningStepV1 } from './typ
 // Shared reducer
 // ---------------------------------------------------------------------------
 
-export interface VerseSessionMeta {
+interface VerseSessionMeta {
   id: string;
   engine: string;
   model: string | null;
@@ -60,7 +62,7 @@ export interface VerseSessionMeta {
 /** Only the session fields the tap reads, so a caller can pass a full VerseSession or a stub. */
 export type VerseSessionLike = Pick<VerseSession, 'id' | 'engine' | 'model' | 'projectPath'>;
 
-export function verseSessionMeta(session: VerseSessionLike): VerseSessionMeta {
+function verseSessionMeta(session: VerseSessionLike): VerseSessionMeta {
   return {
     id: session.id,
     engine: session.engine,
@@ -82,9 +84,9 @@ interface OpenTurn {
   touchedMs: number;
 }
 
-export interface ReducerSink {
+interface ReducerSink {
   steps(steps: ReasoningStepV1[]): void;
-  feature(feature: TurnFeaturesV1): void;
+  feature?(feature: TurnFeaturesV1): void;
 }
 
 const MAX_OPEN_TURNS_PER_SESSION = 8;
@@ -107,11 +109,10 @@ function errorClassOf(event: Extract<VerseEvent, { type: 'error' }>): string | n
  * (backfill) holds a turn's steps until the turn closes; live mode writes
  * each step as soon as its `toolAfter` is known.
  */
-export class VerseSessionReducer {
+class VerseSessionReducer {
   readonly meta: VerseSessionMeta;
   private readonly sink: ReducerSink;
   private readonly bufferSteps: boolean;
-  private readonly emitFeatures: boolean;
   private readonly stepsBelowSeq: number;
   private readonly turns = new Map<string, OpenTurn>();
   /** Seq of the newest event that CLOSED a turn (cursor for the backfill). */
@@ -120,17 +121,12 @@ export class VerseSessionReducer {
   constructor(
     meta: VerseSessionMeta,
     sink: ReducerSink,
-    options: { bufferSteps?: boolean; emitFeatures?: boolean; stepsBelowSeq?: number } = {},
+    options: { bufferSteps?: boolean; stepsBelowSeq?: number } = {},
   ) {
     this.meta = meta;
     this.sink = sink;
     this.bufferSteps = options.bufferSteps === true;
-    this.emitFeatures = options.emitFeatures !== false;
     this.stepsBelowSeq = options.stepsBelowSeq ?? Number.POSITIVE_INFINITY;
-  }
-
-  get openTurns(): number {
-    return this.turns.size;
   }
 
   private emitStep(turn: OpenTurn, step: ReasoningStepV1, seq: number): void {
@@ -189,7 +185,7 @@ export class VerseSessionReducer {
     this.flushPending(turn, null);
     if (turn.buffered.length > 0) this.sink.steps(turn.buffered);
     const resolved = outcome ?? (turn.errored ? 'error' : null);
-    if (this.emitFeatures) this.sink.feature(turn.acc.finish(resolved, endedAt, turn.errorClass));
+    if (this.sink.feature) this.sink.feature(turn.acc.finish(resolved, endedAt, turn.errorClass));
     if (seq > this.lastClosedSeq) this.lastClosedSeq = seq;
   }
 
@@ -372,7 +368,6 @@ function enqueueSteps(steps: ReasoningStepV1[]): void {
 
 const liveSink: ReducerSink = {
   steps: enqueueSteps,
-  feature: (feature) => { appendFeatures([feature], tapRoot ?? reasoningRoot()); },
 };
 
 function sweep(nowMs: number): void {
@@ -401,7 +396,7 @@ export function recordVerseReasoning(event: VerseEvent, session: VerseSessionLik
       entry = {
         // Features come from the backfill, which sees the whole log (tool
         // results, errors, final messages) rather than the tap's subset.
-        reducer: new VerseSessionReducer(verseSessionMeta(session), liveSink, { emitFeatures: false }),
+        reducer: new VerseSessionReducer(verseSessionMeta(session), liveSink),
         firstSeq: typeof event.seq === 'number' ? event.seq : 0,
         touchedMs: nowMs,
       };
@@ -439,7 +434,7 @@ export function flushVerseReasoningQueue(): void {
 }
 
 /** First seq the live tap saw per session (the backfill leaves steps from there on to the tap). */
-export function verseTapProgress(): Map<string, { firstSeq: number }> {
+function verseTapProgress(): Map<string, { firstSeq: number }> {
   const out = new Map<string, { firstSeq: number }>();
   for (const [id, entry] of tapped) out.set(id, { firstSeq: entry.firstSeq });
   return out;
@@ -462,18 +457,12 @@ export function resetVerseReasoningTap(root: string | null = null): void {
 const CURSOR_NAME = 'verse-cursor';
 const EVENTS_SUFFIX = '.events.jsonl';
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
-const MAX_SESSION_RECORD_BYTES = 1024 * 1024;
 const MAX_SESSIONS_PER_RUN = 500;
 
 interface VerseCursorEntry {
   size: number;
   mtimeMs: number;
   lastSeq: number;
-}
-
-interface VerseCursorState {
-  v: 1;
-  sessions: Record<string, VerseCursorEntry>;
 }
 
 export interface VerseBackfillOptions {
@@ -495,33 +484,22 @@ export function defaultVerseRoot(): string {
 }
 
 async function readSessionRecord(path: string): Promise<VerseSessionLike | null> {
-  try {
-    const stat = await lstat(path);
-    if (!stat.isFile() || stat.size > MAX_SESSION_RECORD_BYTES) return null;
-    const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<VerseSession>;
-    if (typeof parsed.id !== 'string' || typeof parsed.engine !== 'string') return null;
-    return {
-      id: parsed.id,
-      engine: parsed.engine,
-      model: typeof parsed.model === 'string' ? parsed.model : '',
-      projectPath: typeof parsed.projectPath === 'string' ? parsed.projectPath : '',
-    };
-  } catch {
-    return null;
-  }
+  const parsed = await readBoundedJsonRecord(path);
+  if (!parsed || typeof parsed['id'] !== 'string' || typeof parsed['engine'] !== 'string') return null;
+  return {
+    id: parsed['id'],
+    engine: parsed['engine'] as VerseSession['engine'],
+    model: asString(parsed['model']),
+    projectPath: asString(parsed['projectPath']),
+  };
 }
-
-const yieldToLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 /** Incrementally ingest Verse session logs the live tap did not cover. Never throws. */
 export async function ingestVerseSessionLogs(options: VerseBackfillOptions = {}): Promise<VerseBackfillResult> {
   const root = options.root ?? reasoningRoot();
   const sessionsDir = join(options.verseRoot ?? defaultVerseRoot(), 'sessions');
   const result: VerseBackfillResult = { sessionsScanned: 0, sessionsChanged: 0, steps: 0, features: 0 };
-  const prior = readStoreState<VerseCursorState>(CURSOR_NAME, root);
-  const cursor: VerseCursorState = prior?.v === 1 && prior.sessions && typeof prior.sessions === 'object'
-    ? prior
-    : { v: 1, sessions: {} };
+  const cursorSessions = readCursorMap<VerseCursorEntry>(CURSOR_NAME, 'sessions', root);
   const tap = verseTapProgress();
 
   let names: string[];
@@ -544,7 +522,7 @@ export async function ingestVerseSessionLogs(options: VerseBackfillOptions = {})
     } catch {
       continue;
     }
-    const previous = cursor.sessions[id];
+    const previous = cursorSessions[id];
     if (previous && previous.size === stat.size && previous.mtimeMs === stat.mtimeMs) continue;
     const session = await readSessionRecord(join(sessionsDir, `${id}.json`));
     if (!session) continue;
@@ -571,13 +549,10 @@ export async function ingestVerseSessionLogs(options: VerseBackfillOptions = {})
     const lastSeq = reducer.lastClosedSeq;
     result.steps += await appendStepsChunked(batchSteps, root);
     result.features += appendFeatures(batchFeatures, root);
-    cursor.sessions[id] = { size: stat.size, mtimeMs: stat.mtimeMs, lastSeq };
+    cursorSessions[id] = { size: stat.size, mtimeMs: stat.mtimeMs, lastSeq };
     await yieldToLoop();
   }
   // Forget cursors for deleted sessions so the state file cannot grow forever.
-  for (const id of Object.keys(cursor.sessions)) {
-    if (!present.has(id)) delete cursor.sessions[id];
-  }
-  writeStoreState(CURSOR_NAME, cursor, root);
+  writeCursorMap(CURSOR_NAME, 'sessions', cursorSessions, present, root);
   return result;
 }

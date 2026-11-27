@@ -16,6 +16,7 @@
  * session-threads-read.ts.
  */
 import type { AgentMessages } from './agent-messages.js';
+import { ownerDisplayName } from '../owner-display.js';
 import type { JobControlLedgerRow } from './job-control-types.js';
 import { flatTree, type LiveSessionsV1 } from './live-sessions.js';
 import type { LeaderRepliesV1 } from './mason-outbox.js';
@@ -109,6 +110,7 @@ export interface SessionThreadsV1 {
 
 /** What the reader hands the builder. */
 export interface SessionThreadsParts {
+  ownerName?: string;
   /** False when the session list itself could not be read. */
   sessionsRead: boolean;
   /** Null when the read failed. */
@@ -209,7 +211,7 @@ export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsP
   const threads: SessionThreadsEntry[] = [];
   for (const { id, jobId, kind } of shown) {
     // A helper is never named in the Leader inbox, so it gets no inbox, as in the single thread's reader.
-    const thread = buildSessionThread(list, id, { sessionsRead: true, bus: parts.bus,
+    const thread = buildSessionThread(list, id, { sessionsRead: true, bus: parts.bus, ownerName: parts.ownerName,
       ...(jobId !== null && parts.activity.has(jobId) ? { activity: parts.activity.get(jobId) } : {}),
       ...(jobId !== null && parts.output?.has(jobId) ? { output: parts.output.get(jobId) } : {}),
       ...(jobId !== null && parts.controls !== undefined ? { controls: parts.controls } : {}),
@@ -229,7 +231,7 @@ export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsP
   const busDown = parts.bus === null || parts.bus.source === 'unavailable';
   if (busDown) gaps.push('Bus messages unknown: the agent bus could not be read.');
   const ownerDown = parts.owner === null || parts.owner?.sourceState === 'degraded';
-  if (ownerDown) gaps.push('Messages from Mason unknown: the Leader inbox could not be read.');
+  if (ownerDown) gaps.push(`Messages from ${ownerDisplayName(parts.ownerName)} unknown: the Leader inbox could not be read.`);
   const repliesDown = parts.replies === null || parts.replies?.sourceState === 'unknown';
   const ordersDown = parts.orders === null || parts.orders?.sources.inbox === 'degraded';
   if (ordersDown) gaps.push('Routing unknown: the order trace could not be read.');

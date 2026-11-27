@@ -19,11 +19,10 @@ import { loadProposal } from '../inbox/store.js';
 import type { LedgerEntryOf, LedgerEventKind } from '../authority/types.js';
 import { appendReceiptLater, listReceiptRunIds, readReceiptV1, receiptsDir, type AppendLaterResult } from './receipt-store.js';
 import type { ReceiptLaterEntry, ReceiptLaterKind } from './receipt-later.js';
+import { OID_RE, RUN_ID_RE } from './receipt-v1.js';
 
-const OID = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
-const RUN_ID = /^[A-Za-z0-9._-]{1,128}$/;
 /** How many recent receipts to scan when an event names a merge sha, not a proposal. */
-export const RECEIPT_SCAN_LIMIT = 500;
+const RECEIPT_SCAN_LIMIT = 500;
 
 type AnyEntry = { kind: LedgerEventKind | string; data: unknown };
 export type LaterHookResult =
@@ -42,7 +41,7 @@ const s = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 function defaultRunIdForProposal(proposalId: string): string | null {
   const p = loadProposal(proposalId);
   const runId = p?.runId;
-  return typeof runId === 'string' && RUN_ID.test(runId) ? runId : null;
+  return typeof runId === 'string' && RUN_ID_RE.test(runId) ? runId : null;
 }
 
 /** Run whose receipt carries a merge entry for this sha (full or 12+ hex prefix). Newest receipts first, bounded. */
@@ -76,25 +75,27 @@ export function receiptLaterFromLedgerEntry(entry: AnyEntry, deps: LaterHookDeps
     if (!existsSync(receiptsDir())) return { skipped: 'no-receipts' };
     const d = rec(entry.data);
     const toRun = deps.runIdForProposal ?? defaultRunIdForProposal;
+    const proposalRunId = (): string | null => {
+      const pid = s(d['proposalId']);
+      return pid ? toRun(pid) : null;
+    };
     let runId: string | null = null;
     let kind: ReceiptLaterKind;
     let data: Record<string, unknown>;
     if (entry.kind === 'gate:result') {
       if (d['gate'] !== 'G7' || (d['verdict'] !== 'pass' && d['verdict'] !== 'refuse')) return { skipped: 'not-relevant' };
-      const pid = s(d['proposalId']);
-      runId = pid ? toRun(pid) : null;
+      runId = proposalRunId();
       kind = 'ci';
       data = { head_oid: d['headSha'], conclusion: d['verdict'] === 'pass' ? 'success' : 'failure', completed_at: d['at'] };
     } else if (entry.kind === 'merge:landed') {
       if (d['kind'] !== 'merge') return { skipped: 'not-relevant' };
-      const pid = s(d['proposalId']);
-      runId = pid ? toRun(pid) : null;
+      runId = proposalRunId();
       kind = 'merge';
       // Fleet landings are squash merges of the fleet PR (fleet-types LandingRecord).
       data = { merge_oid: d['mergeSha'], pr_number: d['prNumber'], method: 'squash', merged_at: d['landedAt'] };
     } else if (entry.kind === 'post-merge:result') {
       const sha = s(d['mergeSha']);
-      const hit = sha && OID.test(sha) ? runIdForMergeSha(sha) : null;
+      const hit = sha && OID_RE.test(sha) ? runIdForMergeSha(sha) : null;
       runId = hit?.runId ?? null;
       kind = 'survival';
       data = { merge_oid: hit?.mergeOid ?? null, reverted: d['verdict'] === 'green' ? false : null, checked_at: d['checkedAt'] };

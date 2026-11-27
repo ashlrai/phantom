@@ -42,6 +42,41 @@ export interface OwnerThreadNotice {
   recipient: string;
 }
 
+/** One send outcome a completed pass reported, kept verbatim for the run journal. */
+export interface CommsRunSend {
+  transport: CommsTransport;
+  recipient: string;
+  status: 'sent' | 'drafted' | 'refused';
+  reason: string;
+}
+
+/**
+ * One completed Comms pass, appended to `runs.jsonl`. The record is the
+ * pass's own report plus its completion time — triage depth and per-send
+ * outcomes — so `status` can say when the role last ran and what it did
+ * without re-deriving it from the draft and send logs. A pass that fails
+ * mid-flight appends nothing: `lastRun` then still names the last pass
+ * that completed, which is the honest answer.
+ */
+export interface CommsRunRecord {
+  /** ISO time the pass completed. */
+  at: string;
+  schema: 'comms-agent.run.v1';
+  lane: string | null;
+  laneReason: string;
+  /** The pass's triage depth, verbatim from its report. */
+  triage: { kept: number; archived: number; drafted: number; deleted: number };
+  sends: CommsRunSend[];
+}
+
+/** The run journal read: `missing` is a verified-empty store (no pass ever
+ * completed); `ok` carries the last readable record, or null when the file
+ * exists but holds none — a pass may have run, the record cannot be
+ * verified. Unreadable stores throw like every other private read. */
+export type CommsRunJournal =
+  | { status: 'missing' }
+  | { status: 'ok'; record: CommsRunRecord | null };
+
 export interface InboxRead {
   messages: InboxMessage[];
   rows: Record<string, unknown>[];
@@ -255,6 +290,57 @@ export async function readSendLog(runsDir: string): Promise<SendLogEntry[]> {
     } catch { /* skip */ }
   }
   return entries;
+}
+
+function isRunSend(value: unknown): value is CommsRunSend {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const send = value as Record<string, unknown>;
+  return typeof send.transport === 'string' && isCommsTransport(send.transport)
+    && typeof send.recipient === 'string'
+    && (send.status === 'sent' || send.status === 'drafted' || send.status === 'refused')
+    && typeof send.reason === 'string';
+}
+
+function isRunTriage(value: unknown): value is CommsRunRecord['triage'] {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const triage = value as Record<string, unknown>;
+  return typeof triage.kept === 'number' && typeof triage.archived === 'number'
+    && typeof triage.drafted === 'number' && typeof triage.deleted === 'number';
+}
+
+function isRunRecord(value: unknown): value is CommsRunRecord {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return record.schema === 'comms-agent.run.v1'
+    && typeof record.at === 'string'
+    && (record.lane === null || typeof record.lane === 'string')
+    && typeof record.laneReason === 'string'
+    && isRunTriage(record.triage)
+    && Array.isArray(record.sends) && record.sends.every(isRunSend);
+}
+
+/** Append one completed pass to the run journal. The record is the pass's
+ * own report plus its completion time; malformed records are refused before
+ * they can poison the journal `status` reads. */
+export async function appendRunRecord(runsDir: string, record: CommsRunRecord): Promise<void> {
+  if (!isRunRecord(record)) throw new Error('Run record is not storable.');
+  await appendPrivate(runsDir, 'runs.jsonl', JSON.stringify(record));
+}
+
+/** The last readable run record. Bad lines are skipped like every other
+ * append-only log; a file with no valid record returns `record: null`. */
+export async function readRunJournal(runsDir: string): Promise<CommsRunJournal> {
+  const text = await readPrivate(runsDir, 'runs.jsonl');
+  if (text === null) return { status: 'missing' };
+  let record: CommsRunRecord | null = null;
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (isRunRecord(parsed)) record = parsed;
+    } catch { /* skip a bad line */ }
+  }
+  return { status: 'ok', record };
 }
 
 export async function appendOwnerNotice(runsDir: string, notice: OwnerThreadNotice): Promise<void> {

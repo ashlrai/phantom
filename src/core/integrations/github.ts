@@ -415,17 +415,17 @@ function runGh(cwd: string, args: string[]): string | null {
 /**
  * Parse a JSON string safely. Returns null on any parse error.
  */
-export async function runGhAsync(cwd: string, args: string[], signal?: AbortSignal): Promise<string | null> {
+export async function runGhAsync(cwd: string, args: string[], signal?: AbortSignal, timeoutMs: number = TIMEOUT_MS): Promise<string | null> {
   const context = backlogScanContext.getStore();
   signal ??= context?.signal;
   if (signal?.aborted) return null;
-  const key = JSON.stringify([cwd, args]);
+  const key = JSON.stringify([cwd, args, timeoutMs]);
   const cached = context?.snapshot?.remote.get(key);
   if (cached) return cached;
   const pending = new Promise<string | null>((resolve) => {
     try {
       execFile(GH_BIN, args, {
-        cwd, timeout: TIMEOUT_MS, encoding: 'utf8', signal,
+        cwd, timeout: timeoutMs, encoding: 'utf8', signal,
         env: { ...process.env, GH_HOST: 'github.com', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1' },
       }, (error, stdout) => resolve(error || typeof stdout !== 'string' ? null : stdout.trim()));
     } catch { resolve(null); }

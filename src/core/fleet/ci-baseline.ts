@@ -22,6 +22,12 @@ type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: n
 // required-check-neutral), not incomplete checks, and stay ignored.
 const INCOMPLETE_CONCLUSIONS = new Set(['cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
 
+function completeActionsPage<T extends { id: number }>(rows: T[] | undefined, total: number | undefined): rows is T[] {
+  return Array.isArray(rows) && rows.length === total && rows.length <= 100 &&
+    rows.every(row => Number.isSafeInteger(row?.id) && row.id > 0) &&
+    new Set(rows.map(row => row.id)).size === rows.length;
+}
+
 const clean = (s: string) => scrubSecrets(stripVTControlCharacters(s)).slice(0, 2000);
 const lines = (s: string) => stripVTControlCharacters(s).split('\n').map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+\s+/, '').trim());
 
@@ -41,9 +47,8 @@ const PASS_LINE = /^[\u2713\u2714\u221a]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui
 // The default reporter emits no per-test pass line for a green file; it
 // summarizes the whole module instead:
 //   ✓ |unit| test/example.test.ts (4 tests) 4ms
-// A green module means every test it contains passed on that run -- the
-// finest pass evidence the default reporter produces.
-const FILE_PASS_LINE = /^[✓✔√]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+\.test\.[cm]?[jt]sx?)\s+\(\d+ tests?(?:\s*\|[^)]*)?\)(?:\s+\d+(?:\.\d+)?m?s)?$/;
+// A summary with skipped or todo cases cannot identify which tests ran.
+const FILE_PASS_LINE = /^[✓✔√]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+\.test\.[cm]?[jt]sx?)\s+\([1-9]\d* tests?(\s*\|[^)]*)?\)(?:\s+\d+(?:\.\d+)?m?s)?$/;
 
 // .github/scripts/ci-source-binding.mjs verifies `git rev-parse HEAD` equals
 // the candidate revision and prints this receipt in every bound CI job:
@@ -2175,13 +2180,13 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   }
   async function runs(ref: string): Promise<Run[] | null> {
     const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?head_sha=${encodeURIComponent(ref)}&per_page=100`);
-    if (!Array.isArray(data?.workflow_runs) || data.total_count > 100) return null;
+    if (!data || !completeActionsPage(data.workflow_runs, data.total_count)) return null;
     const seen = new Set<number>();
     return data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
   }
   async function logs(run: Run, head: string): Promise<{ entries: { conclusion: string; text: string }[]; incomplete: boolean } | null> {
     const data = await json<{ jobs: Job[]; total_count: number }>(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
-    if (!Array.isArray(data?.jobs) || data.total_count > 100) return null;
+    if (!data || !completeActionsPage(data.jobs, data.total_count)) return null;
     // A job that never reached a verdict — cancelled while queued, timed
     // out, awaiting action, failed to start, or marked stale — is
     // incomplete evidence even when its log is absent or empty: the run
@@ -2278,12 +2283,13 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   const filePassable = (names: string) => names === SUITE_NAMES || !names.startsWith('(');
   // A suite failure has no per-test pass line to match: the file loading and
   // running at all is what resolves it. The default reporter's green-module
-  // line (`✓ file (N tests)`) is the same evidence at file granularity -- a
-  // green module means every test it contains passed on master.
+  // line (`✓ file (N tests)`) proves the module loaded. For a named test,
+  // require an unqualified summary or an explicit case pass.
   const passes = (f: Failure) => filePassable(f.names) && masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
     if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
-    return FILE_PASS_LINE.exec(line)?.[1] === f.file;
+    const modulePass = FILE_PASS_LINE.exec(line);
+    return modulePass?.[1] === f.file && (f.names === SUITE_NAMES || modulePass[2] === undefined);
   }));
   // Bundler-resolution candidates for one normalized repo-relative spec base.
   // Explicit extensions keep TypeScript precedence (.js -> .ts before .tsx,
@@ -2564,9 +2570,12 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   const observations: Observation[] = [];
   for (const pr of prs) {
     const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?branch=${encodeURIComponent(pr.headRefName)}&per_page=100`);
+    if (!data || !completeActionsPage(data.workflow_runs, data.total_count) || data.workflow_runs.length === 0) {
+      freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'unknown', reason: 'missing-or-capped-runs' });
+      continue;
+    }
     const seen = new Set<number>();
-    const latest = data?.workflow_runs?.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
-    if (!latest?.length || data!.total_count > 100) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'unknown', reason: 'missing-or-capped-runs' }); continue; }
+    const latest = data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
     if (latest.some(r => r.head_sha !== pr.headRefOid)) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'stale', reason: 'stale-head' }); continue; }
     let known = true;
     let incomplete = false;
@@ -2620,9 +2629,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const { file, names, testId: id, excerpt } = rows[0]!.failure;
     const failure = { file, names, testId: id, excerpt };
     const runs = [...new Map(rows.map(o => [`${o.pr.headRefOid}:${o.runId}`, { pr: o.pr.number, head: o.pr.headRefOid, runId: o.runId }])).values()];
-    const unaffected = [...new Set(rows.filter(o => o.touched === false).map(o => o.pr.number))];
+    const unaffectedRows = rows.filter(o => o.touched === false);
+    const unaffected = [...new Set(unaffectedRows.map(o => o.pr.number))];
+    const unaffectedHeads = new Set(unaffectedRows.map(o => o.pr.headRefOid));
     const prNumbers = [...new Set(rows.map(o => o.pr.number))];
-    const classification = unaffected.length >= 2 ? 'shared-baseline' : rows.every(o => o.touched === true) ? 'pr-caused' : prNumbers.length === 1 && rows[0]!.touched === false && passes(failure) ? 'probable-flake' : 'unknown';
+    const classification = unaffectedHeads.size >= 2 ? 'shared-baseline' : rows.every(o => o.touched === true) ? 'pr-caused' : prNumbers.length === 1 && rows[0]!.touched === false && passes(failure) ? 'probable-flake' : 'unknown';
     const action = classification === 'shared-baseline' ? 'queue-master-fix' : classification === 'probable-flake' ? 'rerun-failed' : classification === 'pr-caused' ? 'pr-caused' : 'unknown';
     const evidence = { ...failure, runs };
     const jobId = `RQ-CIBASE-${createHash('sha256').update(repo + ':' + testId).digest('hex').slice(0, 16).toUpperCase()}`;

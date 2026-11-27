@@ -31,6 +31,14 @@ describe('shadow skill nudges', () => {
     expect(draft?.steps).toHaveLength(3);
     expect(draftSkillNudges(repeated, ts)).toHaveLength(1);
   });
+  it('keeps the latest qualifying merge in capped recovery evidence', () => {
+    const failures = Array.from({ length: 17 }, (_, index) =>
+      job(`failure-${String(index).padStart(2, '0')}`, { outcome: 'failed', failureClass: 'types' }));
+    const firstRecovery = job('recovery-first', { failureClass: 'types' });
+    const latestRecovery = job('recovery-latest', { failureClass: 'types' });
+    const [draft] = draftSkillNudges([...failures, firstRecovery, latestRecovery], ts);
+    expect(draft?.sourceJobIds).toEqual([...failures.slice(0, 15).map(({ id }) => id), latestRecovery.id]);
+  });
   it('ignores clean first passes, unresolved failures and reverted successes', () => {
     expect(draftSkillNudges([job('clean'), ...repeated.slice(0, 2)], ts)).toEqual([]);
     expect(draftSkillNudges([job('revert', { retries: 1, reverted: true })], ts)).toEqual([]);
@@ -38,6 +46,13 @@ describe('shadow skill nudges', () => {
   it('learns from retries and recuts only after success', () => {
     expect(draftSkillNudges([job('retry', { retries: 1 }), job('recut', { recuts: 1 })], ts)).toHaveLength(2);
     expect(draftSkillNudges([job('fail', { outcome: 'failed', retries: 3 })], ts)).toEqual([]);
+  });
+  it('requires an observed failure class for recurrence and keeps generic retry evidence separate', () => {
+    const unclassified = repeated.map(entry => ({ ...entry, failureClass: 'UNKNOWN' }));
+    expect(draftSkillNudges(unclassified, ts)).toEqual([]);
+    const failures = repeated.slice(0, 3).map(entry => ({ ...entry, failureClass: 'recovery' }));
+    expect(draftSkillNudges([...failures, job('retry', { retries: 1, failureClass: 'unknown' })], ts))
+      .toMatchObject([{ trigger: 'typecheck: recover after retry', sourceJobIds: ['retry'] }]);
   });
   it('withholds drafts without an observed lane', () => {
     const unknownLane = repeated.map(entry => ({ ...entry, lane: 'unknown' }));

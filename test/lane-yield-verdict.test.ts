@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { laneYield, laneYieldAll, lowYieldReason, parseLaneJobs } from '../src/core/fleet/lane-yield-verdict.js';
 import { routeToEligibleLane } from '../src/core/fleet/lane-route-eligibility.js';
+import { computeLaneYield } from '../src/core/fleet/lane-yield-weight.js';
 import type { LaneTargetRow, LaneTargetsV1 } from '../src/core/fleet/runs-lane-targets.js';
 
 const jobs = (lane: string, n: number, empty: number, at = 1000) =>
@@ -31,6 +32,88 @@ describe('laneYield', () => {
 });
 
 describe('parseLaneJobs', () => {
+  it('attributes finish evidence only after the latest launch', () => {
+    const ledger = ['stale', 'pending', 'same-time', 'undated'].flatMap(job => {
+      const first = '2026-11-20T10:00:00Z';
+      const retry = '2026-11-20T11:00:00Z';
+      const launch = { event: 'launch', job };
+      const finish = { event: 'finish', job };
+      return [
+        { ...launch, lane: 'zai', ts: first },
+        { ...finish, empty: true, ts: job === 'pending' ? retry : undefined },
+        { ...launch, lane: 'claude', ts: retry },
+        // A delayed replay with an older timestamp still belongs to the first attempt.
+        { ...finish, empty: true, ts: '2026-11-20T10:05:00Z' },
+        ...(job === 'pending' ? [] : [{
+          ...finish, empty: job !== 'stale', ts: job === 'undated' ? undefined : retry,
+        }]),
+      ];
+    }).map(row => JSON.stringify(row)).join('\n');
+
+    expect(parseLaneJobs(ledger)).toEqual([
+      { job: 'stale', lane: 'claude', at: Date.parse('2026-11-20T11:00:00Z'), empty: false, merged: false },
+      { job: 'same-time', lane: 'claude', at: Date.parse('2026-11-20T11:00:00Z'), empty: true, merged: false },
+      { job: 'undated', lane: 'claude', at: Date.parse('2026-11-20T11:00:00Z'), empty: true, merged: false },
+    ]);
+    expect(computeLaneYield(ledger).rows.filter(row => row.size === 'all')).toMatchObject([
+      { lane: 'claude', launches: 4, empty: 2 },
+      { lane: 'zai', launches: 4, empty: 0 },
+    ]);
+  });
+
+  it('uses only merge and revert receipts belonging to the latest launch', () => {
+    const first = '2026-11-20T10:00:00Z';
+    const retry = '2026-11-20T11:00:00Z';
+    const oldOutcome = '2026-11-20T10:30:00Z';
+    const records = ['stale-merge', 'stale-revert', 'current-revert', 'same-time-before', 'undated'].flatMap(job => [
+      { event: 'launch', job, lane: 'zai', ts: first },
+      ...(job === 'same-time-before' ? [{ job, outcome: 'MERGED', mergedAt: retry }] : []),
+      { event: 'launch', job, lane: 'claude', ts: retry },
+      // A reconciler can append an old merge after the retry.
+      { job, outcome: 'MERGED', mergedAt: oldOutcome, ts: retry },
+      ...(job === 'stale-revert' ? [
+        { job, revertedAt: oldOutcome },
+        { job, outcome: 'MERGED', mergedAt: retry },
+      ] : []),
+      ...(job === 'current-revert' ? [
+        { job, outcome: 'MERGED', mergedAt: retry },
+        { job, event: 'revert', ts: retry },
+      ] : []),
+      ...(job === 'undated' ? [{ job, outcome: 'MERGED' }] : []),
+    ]);
+    const ledger = records.map(record => JSON.stringify(record)).join('\n');
+
+    expect(parseLaneJobs(ledger).map(({ job, merged }) => ({ job, merged }))).toEqual([
+      { job: 'stale-revert', merged: true },
+      { job: 'current-revert', merged: false },
+      { job: 'undated', merged: true },
+    ]);
+    expect(computeLaneYield(ledger).rows.filter(row => row.size === 'all')).toMatchObject([
+      { lane: 'claude', launches: 5, merged: 2, reverted: 1, yield: null },
+      { lane: 'zai', launches: 5, merged: 0, reverted: 0, yield: null },
+    ]);
+  });
+
+  it('keeps pre-launch skips from becoming empty finishes on older attempts', () => {
+    const records = Array.from({ length: 20 }, (_, i) => [
+      { event: 'launch', job: `job-${i}`, lane: 'zai', ts: '2026-11-20T10:00:00Z' },
+      { event: 'outcome', job: `job-${i}`, lane: 'claude', state: 'DONE-NOOP', launched: false, ts: '2026-11-20T11:00:00Z' },
+    ]).flat();
+    const ledger = [
+      ...records,
+      { event: 'finish', job: 'job-0', empty: true, ts: '2026-11-20T10:05:00Z' },
+    ].map(record => JSON.stringify(record)).join('\n');
+
+    const jobs = parseLaneJobs(ledger);
+    expect(jobs).toEqual([
+      { job: 'job-0', lane: 'zai', at: Date.parse('2026-11-20T10:05:00Z'), empty: true, merged: false },
+    ]);
+    expect(laneYield(jobs, 'zai').verdict).toBe('unknown');
+    expect(computeLaneYield(ledger).rows.find(result => result.size === 'all')).toMatchObject({
+      lane: 'zai', launches: 20, empty: 1, emptyRate: 0.05,
+    });
+  });
+
   it('folds ledger rows, skips junk lines and reverted merges', () => {
     const lines = [
       'not json', '[]', JSON.stringify({ event: 'launch', job: 'a', lane: 'zai', ts: '2026-11-20T10:00:00Z' }),

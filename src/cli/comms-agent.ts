@@ -1,13 +1,14 @@
 /**
- * `phm comms-agent status|run|drafts [--json]`.
+ * `phm comms-agent status|run|drafts [--status pending|sent|all] [--transport <transport>] [--json]`.
  * Thin handler. The role, triage and send policy live in src/core/comms-agent/.
  */
-import { commsDrafts, commsStatus, runCommsAgent } from '../core/comms-agent/run.js';
+import { COMMS_DRAFT_STATUSES, commsDrafts, commsStatus, runCommsAgent, type CommsDraftsFilter, type CommsDraftStatusFilter } from '../core/comms-agent/run.js';
+import { isCommsTransport } from '../core/comms-agent/policy.js';
 import { commsRunsRoot } from '../core/comms-agent/store.js';
 
 const USAGE = `phm comms-agent status [--dir <runs>] [--json]
 phm comms-agent run [--lanes <lane,lane>] [--dir <runs>] [--json]
-phm comms-agent drafts [--dir <runs>] [--json]
+phm comms-agent drafts [--status pending|sent|all] [--transport <transport>] [--dir <runs>] [--json]
 The Comms role is under the Leader. The router picks the lane; none is hard-coded.
 Sends require an owner standing approval. See docs/COMMS-AGENT.md.`;
 
@@ -35,12 +36,14 @@ export async function cmdCommsAgent(args: string[]): Promise<number> {
   };
   const dir = valueOf('--dir');
   const lanesFlag = valueOf('--lanes');
-  if (!dir.ok || !lanesFlag.ok) {
+  const statusFlag = valueOf('--status');
+  const transportFlag = valueOf('--transport');
+  if (!dir.ok || !lanesFlag.ok || !statusFlag.ok || !transportFlag.ok) {
     emit(json, { ok: false, error: 'Missing value for flag. See phm comms-agent --help.' });
     return 2;
   }
   const consumed = new Set<number>();
-  for (const flag of ['--dir', '--lanes']) {
+  for (const flag of ['--dir', '--lanes', '--status', '--transport']) {
     const index = args.indexOf(flag);
     if (index >= 0) { consumed.add(index); consumed.add(index + 1); }
   }
@@ -56,10 +59,29 @@ export async function cmdCommsAgent(args: string[]): Promise<number> {
     return 2;
   }
   const [verb, ...extra] = rest;
-  if (extra.length > 0 || !VERBS.includes(verb as typeof VERBS[number]) || rest.some(arg => arg.startsWith('-'))) {
+  const usageFail = (): number => {
     emit(json, { ok: false, error: 'Use phm comms-agent status|run|drafts --json' });
     if (!json) console.error(USAGE);
     return 2;
+  };
+  if (extra.length > 0 || !VERBS.includes(verb as typeof VERBS[number]) || rest.some(arg => arg.startsWith('-'))) {
+    return usageFail();
+  }
+  // --status/--transport narrow the drafts read only; on status|run they are
+  // a usage error rather than silently ignored flags.
+  const draftsFilter: CommsDraftsFilter = {};
+  if (verb !== 'drafts' && (statusFlag.value !== undefined || transportFlag.value !== undefined)) {
+    return usageFail();
+  }
+  if (verb === 'drafts') {
+    if (statusFlag.value !== undefined) {
+      if (!(COMMS_DRAFT_STATUSES as readonly string[]).includes(statusFlag.value)) return usageFail();
+      draftsFilter.status = statusFlag.value as CommsDraftStatusFilter;
+    }
+    if (transportFlag.value !== undefined) {
+      if (!isCommsTransport(transportFlag.value)) return usageFail();
+      draftsFilter.transport = transportFlag.value;
+    }
   }
   const runsDir = commsRunsRoot(dir.value);
   const lanes = lanesFlag.value ? lanesFlag.value.split(',').map(lane => lane.trim()).filter(Boolean) : [];
@@ -69,7 +91,7 @@ export async function cmdCommsAgent(args: string[]): Promise<number> {
       return 0;
     }
     if (verb === 'drafts') {
-      emit(json, await commsDrafts(runsDir));
+      emit(json, await commsDrafts(runsDir, draftsFilter));
       return 0;
     }
     emit(json, await runCommsAgent({ runsDir, lanes }));

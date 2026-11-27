@@ -97,6 +97,13 @@ export const HARNESS_MAX_ITEMS = 8;
 const HARNESS_ITEM_HARD_MAX = 25;
 /** The window every fold anchors on: the fleet's recurring-evidence week. */
 export const HARNESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Future-skew ceiling on ledger `at` stamps, the sibling feeds'
+ * one-minute tolerance for same-host clock drift: a row stamped further
+ * ahead than the evaluation time is corrupt or replayed evidence and
+ * never reaches a tally.
+ */
+export const HARNESS_FUTURE_SKEW_MS = 60_000;
 /** Adverse rows one cell needs inside the window… */
 export const HARNESS_MIN_ROWS = 3;
 /** …spread across at least this many distinct UTC days. */
@@ -256,7 +263,8 @@ export function harnessTargetOf(state: HarnessStateV1 | null, experimentId: stri
 
 /**
  * Pure: fold classified rows into (kind, target) cells. Rows outside the
- * window contribute nothing.
+ * window — before its start or past the evaluation time plus the sibling
+ * feeds' future skew — contribute nothing.
  */
 export function foldHarnessRows(
   rows: readonly HarnessLedgerRow[],
@@ -266,8 +274,9 @@ export function foldHarnessRows(
 ): HarnessFold {
   const fold: HarnessFold = new Map();
   const windowStart = nowMs - windowMs;
+  const until = nowMs + HARNESS_FUTURE_SKEW_MS;
   for (const row of rows) {
-    if (row.atMs < windowStart) continue;
+    if (row.atMs < windowStart || row.atMs > until) continue;
     const target = harnessTargetOf(state, row.experimentId);
     const key = cellKey(row.kind, target);
     let cell = fold.get(key);

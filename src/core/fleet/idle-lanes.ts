@@ -1,4 +1,4 @@
-import { laneLaunchTarget } from './lane-launch-target.js';
+import { dispatcherAdmissionHeadroom, laneLaunchTarget } from './lane-launch-target.js';
 
 export interface IdleLane {
   lane: string;
@@ -22,6 +22,8 @@ export function parseIdleLanes(statusJson: string): IdleLane[] {
   const isRecord = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null && !Array.isArray(value);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
+  const paused = data.paused === true || (typeof data.paused === 'string' && data.paused.trim().length > 0);
+  const admissionClosed = paused || dispatcherAdmissionHeadroom(data.admission, data.last_tick) === 0;
   const lanes: IdleLane[] = [];
   for (const [lane, value] of Object.entries(data.lanes)) {
     if (!isRecord(value) || typeof value.held !== 'boolean'
@@ -32,7 +34,7 @@ export function parseIdleLanes(statusJson: string): IdleLane[] {
     // A lane shed below its configured target has no phantom room: availability
     // counts against the launch target the dispatcher published this tick.
     const launchTarget = laneLaunchTarget(target, maybeCount(value.effective_target));
-    if (queued > 0 && (value.held || running < launchTarget)) {
+    if (queued > 0 && (value.held || (!admissionClosed && running < launchTarget))) {
       lanes.push({ lane, status: value.held ? 'warn' : 'red', running, target: launchTarget, queued });
     }
   }

@@ -100,14 +100,43 @@ it('projects admission and publishing evidence without inventing counts or expos
   expect((await readFleetCompute(f.options)).operations).toEqual({ publishes24h: null,
     admission: { admit: null, gateReason: null, warnings: null, observedAt: null } });
   const ts = new Date(now).toISOString();
-  await writeFile(join(f.root, 'queue', 'status.json'), JSON.stringify({ publishes_24h: 17,
+  await writeFile(join(f.root, 'queue', 'status.json'), JSON.stringify({ last_tick: ts, publishes_24h: 17,
     admission: { ts, admit: false, gate_reason: 'worktrees', warnings: ['daemon-stale', 5], privateField: 'must stay private' } }));
   const view = await readFleetCompute(f.options);
   expect(view.operations).toEqual({ publishes24h: 17,
     admission: { admit: false, gateReason: 'worktrees', warnings: ['daemon-stale'], observedAt: ts } });
   expect(JSON.stringify(view)).not.toContain('must stay private');
-  await writeFile(join(f.root, 'queue', 'status.json'), JSON.stringify({ publishes_24h: -1,
-    admission: { ts: 'invalid', admit: 'yes', gate_reason: 5, warnings: null } }));
+  await writeFile(join(f.root, 'queue', 'status.json'), JSON.stringify({ last_tick: ts, publishes_24h: -1,
+    admission: { ts, admit: 'yes', gate_reason: 5, warnings: null } }));
   expect((await readFleetCompute(f.options)).operations).toEqual({ publishes24h: null,
+    admission: { admit: null, gateReason: null, warnings: null, observedAt: ts } });
+});
+
+it.each([now - 60_001, now + 1, 'invalid', undefined])('withholds dispatcher verdicts for unusable tick %s', async tick => {
+  const f = await fixture();
+  const stamp = typeof tick === 'number' ? new Date(tick).toISOString() : tick;
+  await writeFile(join(f.root, 'queue', 'status.json'), JSON.stringify({ last_tick: stamp,
+    publishes_24h: 0, admission: { ts: stamp, admit: true, warnings: [] },
+    lanes: { claude: { hard_cap: 8, quota_ok: false } },
+  }));
+  const view = await readFleetCompute(f.options);
+  expect(view.dispatcherAt).toBe(typeof tick === 'number' ? stamp : null);
+  expect(view.lanes.claude).toEqual({ hardCap: 8, quotaOk: null });
+  expect(view.operations).toEqual({ publishes24h: null,
     admission: { admit: null, gateReason: null, warnings: null, observedAt: null } });
+});
+
+it('accepts a tick exactly 60 seconds old but withholds admission from another tick', async () => {
+  const f = await fixture();
+  const lastTick = new Date(now - 60_000).toISOString();
+  const status = { last_tick: lastTick, publishes_24h: 0, lanes: { claude: { quota_ok: true } },
+    admission: { ts: new Date(now - 59_000).toISOString(), admit: false, gate_reason: 'worktrees', warnings: [] } };
+  const file = join(f.root, 'queue', 'status.json');
+  await writeFile(file, JSON.stringify(status));
+  const view = await readFleetCompute(f.options);
+  expect(view.lanes.claude?.quotaOk).toBe(true);
+  expect(view.operations).toEqual({ publishes24h: 0,
+    admission: { admit: null, gateReason: null, warnings: null, observedAt: null } });
+  await writeFile(file, JSON.stringify({ ...status, admission: { admit: false } }));
+  expect((await readFleetCompute(f.options)).operations?.admission).toMatchObject({ admit: false, observedAt: null });
 });

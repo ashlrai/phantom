@@ -89,10 +89,12 @@ describe('fleet_work_feed argument parsing', () => {
     expect(parseFleetWorkFeedArgs({ tier: 'frontier' })?.filters).toMatchObject({ tier: 'frontier' });
     expect(parseFleetWorkFeedArgs({ to: 'leaders' })?.filters.toMatch).toBeTypeOf('function');
     expect(parseFleetWorkFeedArgs({ owner: 'agent:planner' })?.filters.ownerMatch).toBeTypeOf('function');
+    expect(parseFleetWorkFeedArgs({ excludeOwner: 'agent:planner' })?.filters.excludeOwnerMatch).toBeTypeOf('function');
     expect(parseFleetWorkFeedArgs({ since: '1800000000000' })?.filters).toMatchObject({ since: 1800000000000 });
     expect(parseFleetWorkFeedArgs({ before: '1800000000000' })?.filters).toMatchObject({ before: 1800000000000 });
     expect(parseFleetWorkFeedArgs({ contains: 'parser' })?.filters).toMatchObject({ contains: 'parser' });
     expect(parseFleetWorkFeedArgs({ channel: 'release' })?.filters).toMatchObject({ channel: 'release' });
+    expect(parseFleetWorkFeedArgs({ topic: 'deploy' })?.filters).toMatchObject({ topic: 'deploy' });
     expect(parseFleetWorkFeedArgs({ result: 'complete' })?.filters).toMatchObject({ result: 'complete' });
     expect(parseFleetWorkFeedArgs({ id: 'm-9' })?.filters).toMatchObject({ id: 'm-9' });
   });
@@ -102,10 +104,11 @@ describe('fleet_work_feed argument parsing', () => {
       { extra: 1 }, { root: '/tmp/fake' }, { path: '/tmp/x' }, { cwd: '/tmp' }, { runsDir: '/tmp' },
       { status: 'bogus' }, { status: 5 }, { job: 'has space' }, { job: '' },
       { repo: 'no-slash' }, { repo: 'a/b/c' }, { provider: 'bogus' }, { tier: 'bogus' },
-      { to: 'has space' }, { owner: 5 }, { since: 'not-a-time' }, { since: '' },
+      { to: 'has space' }, { owner: 5 }, { excludeOwner: 'has space' }, { excludeOwner: 5 }, { since: 'not-a-time' }, { since: '' },
       { before: 'not-a-time' }, { before: '' }, { before: 5 },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
       { channel: 'Has Space' }, { channel: '' }, { channel: 5 }, { channel: 'x'.repeat(33) },
+      { topic: 'Has Space' }, { topic: '' }, { topic: 5 }, { topic: 'x'.repeat(33) }, { topic: 'UPPER' },
       { result: 'bogus' }, { result: 'COMPLETE' }, { result: '' }, { result: 5 }, { result: null },
       { id: 'has space' }, { id: '' }, { id: 5 }, { id: null },
       { status: null }, { job: null },
@@ -186,6 +189,8 @@ describe('fleet_work_feed MCP tool', () => {
     expect(tool?.inputSchema.properties?.['tier'])
       .toMatchObject({ type: 'string', enum: expect.arrayContaining(['fast', 'frontier']) });
     expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
+    expect(tool?.inputSchema.properties?.['topic'])
+      .toMatchObject({ type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$' });
     expect(tool?.inputSchema.properties?.['id'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
   });

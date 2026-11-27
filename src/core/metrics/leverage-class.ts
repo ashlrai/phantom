@@ -9,7 +9,7 @@ export { MERGE_CLASSES, type MergeClass } from './leverage-class-types.js';
 export interface MergeFacts { title?: string | null; jobId?: string | null; paths?: readonly string[] }
 
 const HOUR = 3_600_000;
-const isTest = (p: string): boolean => /(^|\/)(__tests__|tests?|fixtures?)(\/|$)|\.(test|spec)\.[^/]+$/i.test(p);
+export const isTestPath = (p: string): boolean => /(^|\/)(__tests__|tests?|fixtures?)(\/|$)|\.(test|spec)\.[^/]+$/i.test(p);
 const isDoc = (p: string): boolean => /(^|\/)docs?\//i.test(p) || /(^|\/)(readme|changelog|contributing|license|llms)(\.|$)/i.test(p) || /\.mdx?$/i.test(p);
 const FLEET_WORDS = /dispatch|router|routing|merge|pool|guardian|self.?improv|\brsi\b|fleet|\bbus\b|steward|queue|autopilot|agentnet|recut/i;
 const PRODUCT_WORDS = /desktop|phone|mobile|channel|\bcli\b|verse|slack|sms|\bphm\b|\bui\b/i;
@@ -26,11 +26,11 @@ export function classifyMerge(facts: MergeFacts): MergeClass {
   const paths = facts.paths ?? [];
   const words = `${facts.jobId ?? ''} ${facts.title ?? ''}`;
   if (paths.length && paths.every(isDoc)) return 'docs';
-  if (FILLER_WORDS.test(words) || (paths.length === 1 && isTest(paths[0]!))) return 'filler';
+  if (FILLER_WORDS.test(words) || (paths.length === 1 && isTestPath(paths[0]!))) return 'filler';
   if (FLEET_WORDS.test(words)) return 'fleet';
   if (PRODUCT_WORDS.test(words)) return 'product';
-  if (paths.some(p => !isTest(p) && FLEET_PATH.test(p))) return 'fleet';
-  if (paths.some(p => !isTest(p) && PRODUCT_PATH.test(p))) return 'product';
+  if (paths.some(p => !isTestPath(p) && FLEET_PATH.test(p))) return 'fleet';
+  if (paths.some(p => !isTestPath(p) && PRODUCT_PATH.test(p))) return 'product';
   if (DOC_WORDS.test(words) && !paths.length) return 'docs';
   return 'unknown';
 }
@@ -47,10 +47,26 @@ const empty = (): Counts => ({ fleet: 0, product: 0, docs: 0, filler: 0, unknown
 export type LeverageJobsText = string | EvalReportJobsRead | null;
 
 /** Bare string means a complete read; { text, truncated } carries the tail cut flag; null is no ledger. */
-export const normalizeLeverageJobs = (jobsText: LeverageJobsText): EvalReportJobsRead | null =>
+const normalizeLeverageJobs = (jobsText: LeverageJobsText): EvalReportJobsRead | null =>
   jobsText === null ? null
     : typeof jobsText === 'string' ? { text: jobsText, truncated: false }
     : jobsText;
+
+export function parseLeverageSources(jobsText: LeverageJobsText, prsText: string | null, since: number, nowMs: number) {
+  const jobsRead = normalizeLeverageJobs(jobsText);
+  const ledger = jobsRead === null ? null : foldJobsLedger(jobsRead.text, since, nowMs);
+  const prs = prsText === null ? null : parseGhPullRequests(prsText);
+  return {
+    ledger,
+    prs,
+    sources: {
+      jobs: !ledger ? 'missing' : ledger.counts.ignored ? 'degraded' : 'available',
+      /** True when the jobs ledger exceeded the retained tail: merge counts cover only the newest bytes. */
+      jobsTruncated: jobsRead?.truncated ?? false,
+      pullRequests: !prs ? 'missing' : prs.ignored ? 'degraded' : 'available',
+    },
+  };
+}
 
 /**
  * `phm metrics leverage`: merges in the last `hours` hours, counted per class per hour.
@@ -60,9 +76,7 @@ export const normalizeLeverageJobs = (jobsText: LeverageJobsText): EvalReportJob
  */
 export function buildLeverageReport(jobsText: LeverageJobsText, prsText: string | null, nowMs = Date.now(), hours = 24) {
   const since = nowMs - hours * HOUR;
-  const jobsRead = normalizeLeverageJobs(jobsText);
-  const ledger = jobsRead === null ? null : foldJobsLedger(jobsRead.text, since, nowMs);
-  const prs = prsText === null ? null : parseGhPullRequests(prsText);
+  const { ledger, prs, sources } = parseLeverageSources(jobsText, prsText, since, nowMs);
   const merges = new Map<string, MergeFacts & { at: number }>();
   for (const [key, row] of ledger?.outcomes ?? []) {
     if (row.state === 'MERGED' && row.atMs !== null && row.atMs >= since && row.atMs < nowMs) merges.set(key, { at: row.atMs, jobId: row.jobId });
@@ -84,10 +98,7 @@ export function buildLeverageReport(jobsText: LeverageJobsText, prsText: string 
   return {
     schema: 'metrics.leverage.v1' as const,
     known, hours, since: new Date(since).toISOString(), until: new Date(nowMs).toISOString(),
-    sources: { jobs: !ledger ? 'missing' : ledger.counts.ignored ? 'degraded' : 'available',
-      /** True when the jobs ledger exceeded the retained tail: merge counts cover only the newest bytes. */
-      jobsTruncated: jobsRead?.truncated ?? false,
-      pullRequests: !prs ? 'missing' : prs.ignored ? 'degraded' : 'available' },
+    sources,
     total: known ? total : null,
     totals: known ? totals : null,
     leverageShare: known && total ? (totals.fleet + totals.product) / total : null,
@@ -96,8 +107,7 @@ export function buildLeverageReport(jobsText: LeverageJobsText, prsText: string 
 }
 export type LeverageReport = ReturnType<typeof buildLeverageReport>;
 
-export interface ReadLeverageReportOptions {
-  hours?: number;
+export interface LeverageSourceOptions {
   prsPath?: string;
   runsDir?: string;
   now?: number;
@@ -108,6 +118,10 @@ export interface ReadLeverageReportOptions {
   jobs?: LeverageJobsText;
 }
 
+export interface ReadLeverageReportOptions extends LeverageSourceOptions {
+  hours?: number;
+}
+
 /**
  * Reads the jobs ledger's newest bounded tail (readLedgerTail, the same
  * 16 MiB window every other fleet reader uses) plus an optional gh export.
@@ -115,12 +129,20 @@ export interface ReadLeverageReportOptions {
  * its tail and reports `sources.jobsTruncated` instead of implying full
  * coverage or refusing the read outright.
  */
-export async function readLeverageReport(opts: ReadLeverageReportOptions = {}): Promise<LeverageReport> {
-  const read = (path: string): string | null => { try { return readFileSync(path, 'utf8'); } catch { return null; } };
+export async function readLeverageInputs(opts: LeverageSourceOptions = {}): Promise<{ jobs: LeverageJobsText; prsText: string | null }> {
   let jobs = opts.jobs;
   if (jobs === undefined) {
     const tail = await readLedgerTail(join(opts.runsDir ?? runsRoot(), 'metrics', 'jobs.jsonl'));
     jobs = tail.state === 'read' ? { text: tail.text, truncated: tail.truncated } : null;
   }
-  return buildLeverageReport(jobs, opts.prsPath ? read(opts.prsPath) : null, opts.now, opts.hours);
+  let prsText: string | null = null;
+  if (opts.prsPath) {
+    try { prsText = readFileSync(opts.prsPath, 'utf8'); } catch { prsText = null; }
+  }
+  return { jobs, prsText };
+}
+
+export async function readLeverageReport(opts: ReadLeverageReportOptions = {}): Promise<LeverageReport> {
+  const { jobs, prsText } = await readLeverageInputs(opts);
+  return buildLeverageReport(jobs, prsText, opts.now, opts.hours);
 }

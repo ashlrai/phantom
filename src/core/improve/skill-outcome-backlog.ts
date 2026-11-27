@@ -108,8 +108,7 @@ export const SKILL_OUTCOME_WINDOW_HOURS = 24 * 7;
 export const SKILL_OUTCOME_RECORD_LIMIT = 500;
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
 const MAX_TITLE_CHARS = 200;
-/** The fleet's own repository label: skill evidence is this repo's machinery. */
-const FLEET_REPO_NAME = 'phantom';
+const FLEET_REPO = 'ashlrai/phantom';
 /** Ledger-recorded names are unbounded text; flatten, scrub and cap before use. */
 const MAX_FIELD_CHARS = 96;
 /** Card statuses that still describe a live revision; deprecated/revoked cards were already handled. */
@@ -138,23 +137,21 @@ export interface SkillOutcomeItemsOptions {
   corpus?: SkillCardCorpusReadResult;
 }
 
-/** The repository name both vocabularies record: the last path segment, lowercased. */
-function fleetRepoName(repo: string): string {
-  return (repo.split('/').pop() ?? repo).trim().toLowerCase();
-}
-
 /** Ledger-recorded names are unbounded text; flatten, scrub and cap before use. */
 function fieldText(value: string, max: number = MAX_FIELD_CHARS): string {
   return scrubSecrets(value).replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, max);
 }
 
-/** Newest revision per skillId — the same revision-then-timestamp rule `listSkills` applies. */
-function latestCards(cards: readonly SkillCard[]): Map<string, SkillCard> {
-  const latest = new Map<string, SkillCard>();
+/** Newest revision per skillId, with every observed status for that revision. */
+function latestCards(cards: readonly SkillCard[]) {
+  const latest = new Map<string, { card: SkillCard; statuses: Set<SkillCard['status']> }>();
   for (const card of cards) {
     const old = latest.get(card.skillId);
-    if (!old || card.revision > old.revision || (card.revision === old.revision && card.ts > old.ts)) {
-      latest.set(card.skillId, card);
+    if (!old || card.revision > old.card.revision) {
+      latest.set(card.skillId, { card, statuses: new Set([card.status]) });
+    } else if (card.revision === old.card.revision) {
+      old.statuses.add(card.status);
+      if (card.ts > old.card.ts) old.card = card;
     }
   }
   return latest;
@@ -225,7 +222,8 @@ interface LiveRow {
 export async function skillOutcomeBacklogItems(opts: SkillOutcomeItemsOptions): Promise<CloudBacklogItem[]> {
   try {
     const repo = opts.repo.trim();
-    if (repo === '' || fleetRepoName(repo) !== FLEET_REPO_NAME) return [];
+    const repoKey = repo.toLowerCase();
+    if (repoKey !== FLEET_REPO && repoKey !== 'phantom') return [];
     const windowHours = opts.windowHours ?? SKILL_OUTCOME_WINDOW_HOURS;
     const outcomes = opts.outcomes !== undefined
       ? opts.outcomes
@@ -244,10 +242,10 @@ export async function skillOutcomeBacklogItems(opts: SkillOutcomeItemsOptions): 
       if (typeof row.skillId !== 'string' || row.skillId === '' || !Number.isSafeInteger(row.skillRevision) || row.skillRevision < 1) continue;
       const tally = realizedTally(row);
       if (tally.adverse < SKILL_OUTCOME_ADVERSE_RECURRING) continue;
-      const card = latest.get(row.skillId);
-      // Live revisions only: the exact observed revision must still be the
-      // newest card and not already withdrawn.
-      if (!card || card.revision !== row.skillRevision || !LIVE_STATUSES.has(card.status)) continue;
+      const current = latest.get(row.skillId);
+      if (!current || current.statuses.size !== 1) continue;
+      const { card } = current;
+      if (card.revision !== row.skillRevision || !LIVE_STATUSES.has(card.status)) continue;
       candidates.push({ row, card, tally });
     }
     // Strongest recorded evidence first; identity fields last so the order is total.

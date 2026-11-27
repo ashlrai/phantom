@@ -68,7 +68,7 @@ describe('phm node renew --watch', () => {
 
   it('refuses a bad --every as usage with the renew envelope under --json', async () => {
     for (const args of [
-      ['--every'], ['--every', 'abc'], ['--every', '0'], ['--every', '26'], ['--every', '5', '--every', '6'],
+      ['--every'], ['--every', 'abc'], ['--every', '0'], ['--every', '0.5'], ['--every', '26'], ['--every', '5', '--every', '6'],
     ]) {
       const lines = capture();
       const ac = new AbortController();
@@ -100,12 +100,14 @@ describe('phm node renew --watch', () => {
     expect(lines.at(-1)).toContain('Claim watch stopped');
   });
 
-  it('is reachable through the node dispatcher: a lost lease fails the first renew', async () => {
+  it('is reachable through the node dispatcher: a dead session fails the first renew', async () => {
     const lines = capture();
-    // Hermetic store under the relocated test HOME: job j1 was never claimed.
+    // Hermetic store under the relocated test HOME: node ghost never joined,
+    // so the presented session is dead — session-expired (join first, then
+    // re-pull), not lease-lost, and the watch stops on it at once.
     expect(await cmdNode(['renew', '--job', 'j1', '--node', 'ghost', '--session', '9',
       '--token', '1', '--leader-token', '1', '--watch', '--json'])).toBe(1);
-    expect(lastJson(lines)).toMatchObject({ schemaVersion: 1, command: 'renew', error: { code: 'lease-lost' } });
+    expect(lastJson(lines)).toMatchObject({ schemaVersion: 1, command: 'renew', error: { code: 'session-expired' } });
   });
 
   it('is reachable through the node dispatcher: a bad --every is a watch usage error, not an unknown flag', async () => {

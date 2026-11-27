@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates twenty-one local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates thirty-four local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -122,6 +122,35 @@
  *               truncated item list degrades the source. Act:
  *               `phm bus thread pending|ack`, `phm bus task claim|list`,
  *               `phm bus board pending`.
+ *   work-board  the coordination work board's (`fleet work-board`,
+ *               `listWorkBoard` — the Nov12 `classifyWorkItem` projection
+ *               `phm fleet work-board`, `fleet_work_board` and the cloud
+ *               work-board route all serve) requests still needing a
+ *               decision: every durable bus request envelope classified
+ *               RECEIVED (no named owner or durable claim receipt yet),
+ *               ASSIGNED (owned but its running evidence is stale or
+ *               absent) or BLOCKED (a reply named what it waits on). Items
+ *               the board shows RUNNING (fresh running evidence) or
+ *               VERIFIED (proof of completion) are done or provably
+ *               progressing and never list — this is the board's pending
+ *               surface, not a second copy of the conversations or bus
+ *               sources, which carry no ownership classification. An
+ *               envelope the bus source already represents — claimable work,
+ *               a worker handoff or a `work.post` feed announcement — stays
+ *               under `bus`: one pending thing, one item. `since`
+ *               is the request's recorded `receivedAt`; `expiresAt` stays
+ *               null because a retained receipt has no deadline. An
+ *               unreadable inbox scan is 'unavailable' with a null pending
+ *               — never an empty board passed off as fact — and an
+ *               unreadable claims or coordination table degrades the item
+ *               evidence the same way the board itself reports it (owners
+ *               stay unknown, never guessed). Items name the envelope id,
+ *               channel, owner, claim receipt and missing-evidence list —
+ *               never message bodies — and carry no provable job citation,
+ *               so `--job` never matches. Severity is warn for RECEIVED and
+ *               BLOCKED, info for ASSIGNED; all are agent coordination
+ *               work, never Mason-blocking. Act: `phm fleet work-board
+ *               --state <state>`, `phm fleet work-trace --id <id>`.
  *   conversations  agent-to-agent conversation threads still needing a
  *               person — the same `state:'waiting'` and `state:'blocked'`
  *               threads the one shared conversations projection computes,
@@ -185,6 +214,46 @@
  *               belongs to. An absent journal is 'missing' (dispatch never
  *               ran); an unreadable one 'unavailable', never an empty plan
  *               passed off as fact.
+ *   session-handoff  open session-handoff checkpoints — the same
+ *               `listSessionHandoffs` bounded journal scan
+ *               `phm checkpoint handoff list`, `fleet_session_handoffs`,
+ *               the bus-status probe's `sessionHandoffs` section and
+ *               `work mine`'s `sessions` digest serve, so a checkpointed
+ *               session waiting for a resume or failover pass lists beside
+ *               seat handoffs and feed jobs instead of behind a third
+ *               command. Each open journal lists one warn, non-blocking
+ *               item — checkpointed work is agent work, never
+ *               Mason-blocking — carrying the journal's job id as its
+ *               `--job` citation, `since` the latest revision's recorded
+ *               time and `expiresAt` the 24-hour resume bound
+ *               `planSessionResume` refuses past; a pressure signal —
+ *               rate-limit, quota-exhausted or a budget at its threshold,
+ *               the same `handoffPressure` verdict `planSessionFailover`
+ *               applies — marks the item for failover. Journals that fail
+ *               validation or sit past the bounded scan could hide open
+ *               checkpoints, so the read's `unreadable`/`truncated` flags
+ *               degrade the source — pending stays a stated floor, never a
+ *               complete count passed off as fact. An absent store is
+ *               'missing' (no handoff was ever checkpointed); an
+ *               uninspectable one 'unavailable'. Act:
+ *               `phm checkpoint handoff show`, `phm checkpoint handoff list`.
+ *   org-outbox  org.membership bus events the org plane still owes the bus —
+ *               `<runsDir>/org/agents.json` ledger entries with
+ *               `busDelivered:false`, the exact set `previewOrgOutbox`
+ *               replays and `phm fleet org-sync --apply` posts (one event
+ *               per distinct `(revision, role)` edit, stable id
+ *               `org-<storeId>-<revision>-<roleId>`). Until the apply pass
+ *               runs, the bus cannot see a staffing change the chart already
+ *               recorded and `org-board` reports only a pending count, so
+ *               each event lists as a warn whose acts are the org-sync apply
+ *               and the org-board inspect. `since` is the ledger entry's
+ *               recorded application time; `expiresAt` stays null — the
+ *               event waits for the next sync pass, never a guessed deadline.
+ *               The read applies `readAgentPlane`'s whole acceptance —
+ *               absent store 'missing', any refusal 'unavailable' — and the
+ *               store schema is mirrored locally for the Tier-1 closure, so
+ *               this source and the org-sync/org-board reads can never
+ *               disagree about whether the store is trustworthy.
  *   gmail       one item per inbox in the saved Gmail archive plan whose unread
  *               count is over its target (`phm fleet gmail-archive-plan`). A
  *               read of the saved plan only: no mail is read, moved or deleted.
@@ -250,7 +319,7 @@
  *               `approve`. A truncated or incomplete read reports 'degraded'
  *               with the items it did find — never an empty list passed off
  *               as fact.
- *   slack      Slack requests whose local bus append failed — the one
+ *   slack      Slack requests whose local bus append failed — a
  *               pending-comms class no other source can see. The same
  *               `readSlackJournal` the `phm fleet slack-trace` and
  *               `phm channels slack status` projections read: a journaled
@@ -273,6 +342,249 @@
  *               state is the journal read's own: `ok`, `missing` or
  *               `degraded`, never fabricated. Act: `phm fleet slack-trace`,
  *               `phm channels slack status`.
+ *   slack-sends  outbound Slack sends still unconfirmed — send-store
+ *               receipts the transport journaled as `attempted` and never
+ *               proved. The same `readSlackSendReceipts` the
+ *               `phm channels slack status` `uncertainSends` count and the
+ *               `phm fleet slack-trace` reply binding read: an `attempted`
+ *               receipt is a post whose outcome the transport could not
+ *               prove, kept precisely so a later pass reconciles by
+ *               history scan instead of risking a duplicate post — until
+ *               that lands the recipient may never have seen the message,
+ *               and every other surface reports only the count. Each
+ *               unconfirmed send lists as a warn naming channel and thread
+ *               ids only, never text; receipts keep no attempt timestamp,
+ *               so `since`/`expiresAt` stay null — the send waits until
+ *               reconciled, never a guessed deadline. Reconciliation is a
+ *               bounded `phm channels slack run` pass, which re-drives the
+ *               delivery and marks the receipt `sent` without reposting.
+ *               `sent` receipts are proved deliveries and never list; a
+ *               missing store is verified empty, a degraded one still lists
+ *               the receipts it could read. Act: `phm channels slack
+ *               status`, `phm fleet slack-trace`, `phm channels slack run`.
+ *   leader-delivery  Leader-thread messages whose Telegram delivery the
+ *               drain can no longer finish — `failed` after its retries or
+ *               `pending` past the 72 h offer window — from
+ *               `readLeaderThreadUndelivered`, the read-only scan of the
+ *               same thread log and delivery index `drainLeaderThread`
+ *               drains (every listing path syncs memos first — a write —
+ *               so the inbox reads the store directly). A stuck delivery
+ *               means Mason may never have seen a memo, question, update or
+ *               reply on his phone; until now only the comms cycle's
+ *               one-line outcome for the newest memo and the Verse thread
+ *               showed it. Each lists as a warn naming the message kind and
+ *               state with a scrubbed text snippet, `since` the recorded
+ *               post time and `expiresAt` null — a failed send waits for a
+ *               decision, never a guessed deadline; fresh pending messages
+ *               are the drain's own queue and never list. Source state is
+ *               the read's own — `missing` a verified-absent thread,
+ *               `degraded` a truncated log, `unavailable` an unreadable or
+ *               malformed store — never an empty list passed off as fact.
+ *               Act: `phm channels`, `phm comms cycle`, `phm comms send-owner`.
+ *   leader-network  the leader network's durable route/digest state
+ *               (`<runsDir>/leader/network-state.json`) through
+ *               `readLeaderNetworkState` — the same bounded anchored read
+ *               `readRouteReplyFacts` applies, never the locking
+ *               `pending()` recovery pass. Verified owner requests fully
+ *               ingested for the leader (inbox append and bus mirror
+ *               proven, no delivered or attempted reply) list as warn
+ *               `leader-request` items — the leader's own pending queue,
+ *               invisible to the owner-thread source because network
+ *               replies record to MASON-OUTBOX.md, never the thread store;
+ *               a reply recorded whose delivery failed non-ambiguously
+ *               stays in that queue (the network retries it) and the item
+ *               says "awaiting retry", never "awaiting reply".
+ *               A leader-bound route missing its inbox append or bus
+ *               mirror — or any route whose bus publish never landed —
+ *               lists as `leader-request-incomplete`: the request
+ *               provably did not reach every store the leader reads. A
+ *               reply or away-digest whose delivery attempt ended
+ *               ambiguous (`attempted` without `delivered`/`sent`) lists
+ *               as `leader-reply-unconfirmed`/`leader-digest-unconfirmed`:
+ *               the network never retries an ambiguous attempt —
+ *               "reconcile before retry" — so the owner may never have
+ *               seen the answer and nothing else reported it. Items name
+ *               channel, routing label, timestamps and job citations
+ *               only — owner recipient ids and channel refs never leave
+ *               the reader; request text is scrubbed like every other
+ *               source. `missing` is a verified-absent store,
+ *               `unavailable` any refusal — never an empty backlog passed
+ *               off as fact. Act: `phm leader inbox`, `phm comms thread`.
+ *   leader-replies  leader replies to Mason still owed a proven iMessage
+ *               delivery — the send ledger `<imessageStateDir>/
+ *               leader-sent.jsonl` `sendLeaderReplies` appends
+ *               (`{at, hash, status}` per attempted reply; the hash is a
+ *               content fingerprint, never text) read through
+ *               `readLeaderRepliesLedger`, the same last-status-per-hash
+ *               fold `readClaimed` applies so the projection can never
+ *               disagree with what the next pass does. A hash whose last
+ *               row is `failed` lists as warn `leader-reply-failed` — the
+ *               send provably did not land and the next live `phm
+ *               imessage replies` pass retries it; a hash whose last row
+ *               is `pending` older than the one-hour in-flight bound
+ *               lists as warn `leader-reply-orphaned` — the process died
+ *               between the claim and the outcome append, `readClaimed`
+ *               counts it as sent forever, and no pass ever retries it, so
+ *               the reply is a dead letter until re-posted. Fresh pending
+ *               rows may be in flight and never list; `sent`/`baseline`
+ *               rows are resolved claims. Each item resolves its reply
+ *               text through the same bounded `readOutboxEntries` read the
+ *               sender uses — the ledger claims by text hash, so identical
+ *               texts share one pending unit and the newest posting is the
+ *               identifier — and shows a scrubbed snippet with its outbox
+ *               stamp when the bounded read still holds it, saying "reply
+ *               text not in the current outbox read" when it does not;
+ *               `since` is the first recorded attempt (first pending row,
+ *               else first failed row, else the last row — a truncated
+ *               tail can only raise it, never invent it) and `expiresAt`
+ *               stays null: a failed or orphaned send waits for a pass or
+ *               a decision, never a guessed deadline. `missing` is a
+ *               verified-absent ledger, `degraded` a tail-truncated read
+ *               (older rows unseen — pending is a stated lower bound),
+ *               `unavailable` an unreadable store — never an empty backlog
+ *               passed off as fact. Act: `phm imessage replies`, `phm
+ *               leader replies`, `phm comms send-owner`.
+ *   coordination  the advisory coordination ledger's (`fleet.coordination.v1`,
+ *               `~/.ashlr/fleet/coordination.jsonl`) whole pending surface
+ *               through `readFleetCoordinationPending` — the same replay
+ *               `readFleetBoard` runs, projected fleet-wide in one read:
+ *               live ledger messages (`post` events, addressed to one
+ *               coordination label or `all`, live until their TTL) list as
+ *               `coordination-message` info items — coordination mail no
+ *               bus, mailbox or board source can see, since the ledger is a
+ *               separate store `phm fleet coordination inbox --agent` and
+ *               `board` read; live assignment proposals (`assign` events,
+ *               `executionAuthorized:false` — they propose work and never
+ *               spawn anything) list as `coordination-assignment` info items;
+ *               and durable RESULT intents whose receipt publish never
+ *               landed — the `released-unposted` class `returnFleetClaim`
+ *               reports once and nothing else surfaces, since the claim is
+ *               already released and the intent is invisible on the board
+ *               read until its expiry deletes it — list as warn
+ *               `coordination-return-unposted` items naming claim id,
+ *               returning agent and receipt expiry, with the owner-held
+ *               lease-verified retry as the detail (lease material never
+ *               leaves the store). Items carry coordination labels,
+ *               timestamps and scrubbed body/task/receipt text only.
+ *               `missing` is a verified-absent ledger, `unknown` any
+ *               refusal — never an empty backlog passed off as fact.
+ *               Act: `phm fleet coordination board`,
+ *               `phm fleet coordination inbox --agent`.
+ *   claim-drift  the claim-store drift verdict's (`fleet.claim-drift.v1`)
+ *               disagreeing rows — live bus work claims against the live
+ *               `queue:<id>` coordination leases they are dual-written to,
+ *               through `readClaimStoreDrift`, the same read `phm fleet
+ *               claim-drift` and the bus-status probe's `claimDrift`
+ *               section serve. The verdict's counts were the only surface:
+ *               `agents bus status` reports numbers, and an agent had to
+ *               already know the verb to see WHICH claims disagree. A
+ *               bus-only row is a live lease the coordination overlap
+ *               check cannot see (a second acquire could double-grant), a
+ *               coord-only row a `queue:<id>` lease the bus claims journal
+ *               never recorded, and an owner-mismatch pair the same lease
+ *               showing two different holders — each lists as a warn,
+ *               agent work to reconcile before the lease lapses, never
+ *               Mason-blocking. `since` is the claim coordinate's recorded
+ *               receipt time (null when a coord row's sourceId tail cannot
+ *               be parsed — unknown stays unknown) and `expiresAt` the
+ *               lease deadline that ends the disagreement; items name the
+ *               envelope id, owner labels, cursor and stamps only — no job
+ *               citation is provable from a drift row, so `--job` never
+ *               matches. UNKNOWN — a claim store that could not be read —
+ *               reports 'unavailable' with a null pending, never an empty
+ *               verdict passed off as fact; VERIFIED with both stores
+ *               absent is 'missing' (verified-empty). Act:
+ *               `phm fleet claim-drift`, `phm agents bus show`,
+ *               `phm agents bus claim list --key`.
+ *   send-gate   the outbound send gate every local bus write, claim and
+ *               send passes through — the kill-switch sentinel and the
+ *               comms soft-pause flag `localWriteGate`/`localBusHold`
+ *               consult, read through the same `readKillSwitch` and
+ *               `probePauseState` inspections `agents bus status`'s
+ *               `sendGate` section serves, so the two surfaces can never
+ *               disagree. Until now the gate was invisible here: pending
+ *               items kept listing while every write verb refused, and an
+ *               agent had to already know `agents bus status` to learn
+ *               why nothing could drain. An engaged kill switch lists as
+ *               `send-gate-kill`, a set pause flag as `send-gate-pause` —
+ *               each naming the gate and its verdict, since claims, sends
+ *               and bus writes refuse until it clears; an uninspectable
+ *               or unsafe gate file lists the same kind one band lower,
+ *               because the send path fails closed and refuses as if
+ *               engaged while the probe honestly reports unknown rather
+ *               than calling it a decision someone made. `since` is the
+ *               pause flag's recorded start — the sentinel keeps no
+ *               provable time, so kill items and unparseable flags stay
+ *               null — and `expiresAt` stays null: a gate waits for its
+ *               release, never a guessed deadline. Both gates clear is a
+ *               verified-open source with a real zero; either probe's own
+ *               unknown verdict degrades the source — unknown stays
+ *               unknown, never an open gate passed off as fact. The reads
+ *               are total by contract and each keeps its own try, matching
+ *               the bus-status probe, so one throwing read cannot hide the
+ *               other's verdict — a throw synthesizes the same 'unknown'
+ *               verdict the fail-closed send path applies. Act: `phm agents bus status --json`, `phm fleet
+ *               status`, `phm fleet resume` (the kill item's release —
+ *               the pause flag clears through the owner 'resume' comms
+ *               command or `setPause(false)`, which no CLI verb wraps).
+ *   router-queue  READY jobs in the dispatch router queue
+ *               (`<runsDir>/queue/router-queue.md`) that no recorded
+ *               LAUNCH in `dispatch-events.log` proves ever started —
+ *               the same `readStuckQueue` read `phm queue stuck` and the
+ *               desktop Queue view serve. Until now the dispatch queue's
+ *               stuck backlog had no inbox surface: work an agent could
+ *               claim through every bus, board, feed and coordination
+ *               read still sat READY forever while the unified view —
+ *               the one place an agent looks for work — never named it.
+ *               Each unlaunched READY row lists as a warn
+ *               `router-queue-job` naming the job id — the same label
+ *               `phm queue` verbs take — `since` the enqueue epoch or
+ *               first dispatch-event time the wait is measured from
+ *               (null when neither exists — age unknown stays unknown)
+ *               and `expiresAt` null: a queued job waits for a lane,
+ *               never a guessed deadline. When the events log cannot be
+ *               read the source degrades — every READY row still lists
+ *               but its launch state is unproven, and the detail says
+ *               so — an absent queue file is 'missing' (verified-empty:
+ *               no READY rows can exist) and an unreadable one
+ *               'unavailable', never an empty queue passed off as fact.
+ *               The job id is the item's own citation, so `--job` matches.
+ *               Act: `phm queue stuck`, `phm fleet unfed --json`,
+ *               `phm queue`.
+ *   channel-health  owner-channel transport health — the slack and
+ *               iMessage bridges through `readChannelHealth` (the same
+ *               projection `phm fleet channel-health` and `phm channels`
+ *               serve) and the Telegram poller through `telegramEnabled` +
+ *               `readTelegramHealth` (the same read `phm comms health
+ *               --json` serves). Until now a dead bridge or a stale poller
+ *               was invisible here: `phm channels` could show a channel
+ *               ready while its process was gone, and an agent had to
+ *               already know which diagnostic to run to learn owner traffic
+ *               was not flowing. A configured bridge that is BLOCKED lists
+ *               as `channel-blocked` (high — the transport is provably
+ *               down), DEGRADED as `channel-degraded` and UNKNOWN as
+ *               `channel-unknown` (warn — evidence incomplete or a receipt
+ *               overdue, never called a decision); a channel nobody
+ *               configured (`BLOCKED` with `configured:false`, the
+ *               overview's 'not-set-up' row) and a LIVE one never list —
+ *               setup state is not pending work. The telegram leg lists
+ *               only when `telegramEnabled` — the same gate the comms
+ *               cycle's poll applies — as one `channel-degraded` item
+ *               naming each failed check (a recorded poll error, no poll
+ *               inside the 7-minute liveness window, no successful poll
+ *               yet); an unreadable main config or a throwing poll read
+ *               lists `channel-unknown` instead. `since`/`expiresAt` stay
+ *               null throughout: health keeps no condition-start time and
+ *               a degraded channel waits for repair, never a guessed
+ *               deadline; no item names a job. Either leg's own failure
+ *               degrades the source — a throwing bridge read proves
+ *               nothing about slack/imessage while the telegram verdicts
+ *               still list, and a throwing config or poll read is itself
+ *               the `channel-unknown` evidence — so 'unavailable' and
+ *               'missing' never apply: this is a live probe of running
+ *               transports, not a store that can be absent. Act: `phm fleet channel-health`, `phm channels
+ *               slack status`, `phm imessage doctor`, `phm comms health
+ *               --json`, `phm comms cycle`, `phm channels`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -289,7 +601,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { busWorkFeedHoldIndex, BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedJob, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
 import { busBodyFallbackSummary, busBodyJobIds, busBodySummary, readAllWakes,
   type AgentWakeRow, type AllWakesPage } from '../agents/bus-unified.js';
@@ -308,15 +620,20 @@ import { readAgentRegistry, resolveAgent } from '../agents/bus-identity.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { readNeedsMasonReplyDeliveries, type NeedsMasonReplyDeliveryReport } from '../fleet/needs-mason-relay.js';
-import { loadConfigReadOnly } from '../config.js';
+import { loadConfigReadOnly, loadConfigReadOnlyStrict } from '../config.js';
+import type { AshlrConfig } from '../types.js';
+import { assertMetadata } from '../connectors/profile.js';
 import { readEmailDropConfig, readEmailDropInbox } from './email-drop-config.js';
 import { probeOutboxDir, readEmailOutbox, type EmailOutboxEntry, type EmailOutboxListing } from './email-outbox.js';
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
 import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
 import { readOwnerAwaitingReplies, readOwnerUndeliveredReplies, type OwnerAwaitingReplies, type OwnerUndeliveredReplies } from './owner-thread.js';
 import { commsRequestAgeStartMs, commsRequestTtlMs, DEFAULT_REQUEST_TTL_HOURS, readCommsRequests, type CommsRequestsRead } from './requests.js';
+import { probePauseState, type PauseProbe } from './pause.js';
 import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
 import { readSlackJournal, type SlackJournalRead, type SlackObservation } from '../agents/slack-journal.js';
+import { readSlackSendReceipts, type SlackSendReceiptRead } from '../agents/slack-send-receipts.js';
+import type { SentReceipt } from '../agents/slack-reply-binding.js';
 import { isSlackChannelId, isSlackTs } from '../agents/slack-network.js';
 import { JOB_THREAD_PREFIX } from '../fleet/agent-messages.js';
 import { classifyNeedsYou } from '../needs-you/classify.js';
@@ -331,6 +648,20 @@ import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent, readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
 import { listTeammateTasks } from './imessage-teammate-tasks.js';
 import { imessageStateDir } from '../integrations/imessage.js';
+import { readLeaderThreadUndelivered, type LeaderThreadUndeliveredRead } from '../vision/leader-thread.js';
+import { readLeaderNetworkState, type LeaderNetworkStateRead } from '../agents/leader-network-read.js';
+import { readLeaderRepliesLedger, type LeaderRepliesLedgerRead } from './leader-replies-ledger.js';
+import { readFleetCoordinationPending, type FleetCoordinationPending } from '../fleet/coordination.js';
+import { readClaimStoreDrift, type ClaimDriftRow, type ClaimStoreDrift } from '../fleet/claim-store-drift.js';
+import { listSessionHandoffs, type SessionHandoffList } from '../agents/session-handoff.js';
+import { handoffPressure } from '../agents/session-handoff-schema.js';
+import { ashlrHome } from '../cloud/store.js';
+import { listWorkBoard, WORK_BOARD_MAX_LIMIT, type WorkBoardResult } from './work-board.js';
+import type { WorkItemState } from './work-item-state.js';
+import { readKillSwitch, type KillSwitchReadResult } from '../sandbox/policy.js';
+import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
+import { readChannelHealth } from '../fleet/channel-health.js';
+import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
@@ -342,8 +673,10 @@ const SUGGESTED_LEASE_MS = 600_000;
 /** Every pending-work source the unified view can report, in display order. */
 export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
-  'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats',
-  'peer-dispatch', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
+  'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
+  'peer-dispatch', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
+  'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
+  'send-gate', 'router-queue', 'channel-health',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -355,15 +688,24 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
   (UNIFIED_INBOX_SEVERITIES as readonly string[]).includes(value);
 /** Every pending-item kind the unified view can report. Most kinds are 1:1
  * with their source; the `bus` source splits into
- * `bus-work`/`bus-handoff`/`bus-dead-letter` and the `board` source into
- * `board-delivery`/`board-task`, so `kind` is the finer classification
+ * `bus-work`/`bus-handoff`/`bus-dead-letter`, the `board` source into
+ * `board-delivery`/`board-task`, `work-board` into its three pending
+ * states and `claim-drift` into its three row
+ * classes, so `kind` is the finer classification
  * `--kind` filters on. */
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
   'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
-  'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'gmail-over-target',
+  'board-delivery', 'board-task', 'work-board-received', 'work-board-assigned', 'work-board-blocked',
+  'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'session-handoff', 'org-membership', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
-  'inbox-proposal', 'slack-request',
+  'inbox-proposal', 'slack-request', 'slack-send-unconfirmed', 'leader-message-undelivered',
+  'leader-request', 'leader-request-incomplete', 'leader-reply-unconfirmed', 'leader-digest-unconfirmed',
+  'leader-reply-failed', 'leader-reply-orphaned',
+  'coordination-message', 'coordination-assignment', 'coordination-return-unposted',
+  'claim-drift-bus', 'claim-drift-coordination', 'claim-drift-owner',
+  'send-gate-kill', 'send-gate-pause', 'router-queue-job',
+  'channel-blocked', 'channel-degraded', 'channel-unknown',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -390,7 +732,8 @@ export interface UnifiedInboxItem extends AttentionItem {
    * `itemId` (a delivery carries the itemIds of the tasks on its thread,
    * the job-carrying-thread rule `BusBoard.pendingFor` applies), a
    * conversation thread's `jobs`, a teammate task's `jobId`, a seat handoff's
-   * node-job refs, or a peer-dispatch receipt's peer-announced `jobId`.
+   * node-job refs, a peer-dispatch receipt's peer-announced `jobId`, a
+   * session-handoff journal's job id, or a router-queue row's own READY id.
    * Absent when the item names no job — unknown stays out of a
    * `--job` match rather than being guessed in.
    */
@@ -430,8 +773,9 @@ export interface UnifiedInboxFilter {
   blocking?: boolean;
   /** Keep only items that provably name this job id — the same citation
    * rule every `--job` bus read shares, joined with the feed-id, board
-   * `itemId`, conversation-thread, teammate-task and seat node-job
-   * citations each source already records in `jobIds`. */
+   * `itemId`, conversation-thread, teammate-task, seat node-job,
+   * peer-dispatch `jobId` and session-handoff journal citations each
+   * source already records in `jobIds`. */
   job?: string;
   /** Keep only items whose recorded `since` (ISO appearance time) parses to
    * at or after this epoch-ms cutoff — the same inclusive `>=` match every
@@ -503,11 +847,45 @@ export interface MailboxPendingRead {
   matched: number | null;
 }
 
+/** The resolved router-queue stuck read: `readStuckQueue`'s READY-without-
+ * launch rows mapped onto the unified source states — 'missing' a
+ * verified-absent queue file (no READY rows can exist), 'unavailable' an
+ * unreadable one, 'degraded' a missing dispatch-events log (every READY row
+ * then lists with its launch state unproven — the read may over-report),
+ * 'healthy' the full read. `jobs` stays empty whenever the state is not
+ * 'healthy'/'degraded'. */
+export interface RouterQueueStuckRead {
+  state: UnifiedInboxSourceState;
+  jobs: readonly StuckJob[];
+}
+
 /** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
  * when the store could be read — 'missing' is a verified-empty board (no
  * `state.json` ever written), 'unavailable' an unreadable one, never an
  * empty list passed off as fact. */
 export type BoardPendingRead = BusBoardPendingRead;
+
+/** One org.membership bus event the org-plane ledger recorded but `phm fleet org-sync --apply` has not yet confirmed posted — the same stable envelope id the apply pass would post. */
+export interface OrgOutboxEvent {
+  /** Stable bus envelope id (`org-<storeId>-<revision>-<roleId>`) the apply pass dedupes on. */
+  readonly id: string;
+  /** Ledger revision the event belongs to (contiguous, 1-based). */
+  readonly revision: number;
+  readonly roleId: string;
+  /** The proposing actor recorded on the ledger entry. */
+  readonly actor: string;
+  /** The role's bus-facing tier and status — `edit.after?.status ?? 'retired'`, the same rule `envelopes` applies. */
+  readonly tier: string;
+  readonly status: string;
+  /** ISO time the ledger entry was applied. */
+  readonly at: string;
+}
+
+/** The resolved org-plane outbox read: 'missing' is a verified-absent store, 'unavailable' any refusal `readAgentPlane` would raise — never an empty backlog passed off as fact. */
+export interface OrgOutboxRead {
+  status: 'missing' | 'unavailable' | 'ok';
+  events: readonly OrgOutboxEvent[];
+}
 
 export interface UnifiedInboxOptions {
   /** Shared runs context (`~/.ashlr-runs`): needs-you, teammate text/task and draft stores. */
@@ -531,6 +909,8 @@ export interface UnifiedInboxOptions {
   readMailbox?: (options: { busRoot?: string; now?: () => number }) => MailboxPendingRead;
   /** Shared task board seam; default reads `BusBoard.pendingAll` through the shared `readBusBoardPending` under the same `busBoardStoragePaths` derivation `phm bus board`, `work mine` and `agents bus status` share. */
   readBoard?: (options: { busRoot?: string; now?: () => number }) => BoardPendingRead;
+  /** Coordination work-board seam; default reads `listWorkBoard` — the same `classifyWorkItem` projection `phm fleet work-board`, `fleet_work_board` and the cloud work-board route serve — under the same bus root the board's own readers derive. */
+  readWorkBoard?: typeof listWorkBoard;
   readClaims?: (root?: string) => BusWorkClaimsInspection;
   readCoordination?: typeof listCoordination;
   readFeed?: typeof readBusWorkFeed;
@@ -546,6 +926,10 @@ export interface UnifiedInboxOptions {
   readSeatHandoffs?: typeof planSeatHandoffs;
   /** Peer-dispatch journal seam; default reads `agentnet/work-dispatch.json` under the bus root like `phm agentnet peers dispatch`. */
   readPeerDispatch?: (options: { busRoot?: string }) => WorkDispatchJournal;
+  /** Session-handoff seam; default reads `<runsDir>/handoffs` through `listSessionHandoffs` — the same bounded journal scan `phm checkpoint handoff list`, `fleet_session_handoffs`, the bus-status probe and `work mine`'s sessions section serve. */
+  readSessionHandoffs?: (options: { runsDir?: string }) => SessionHandoffList;
+  /** Org-plane outbox seam; default reads `<runsDir>/org/agents.json` like `phm fleet org-sync`/`org-board`. */
+  readOrgOutbox?: (options: { runsDir?: string }) => OrgOutboxRead;
   readRequests?: typeof readCommsRequests;
   /** Test seam: the request TTL `expiresAt` uses; default resolves cfg.comms.requestTtlHours like dispatch. */
   requestTtlMs?: number;
@@ -557,6 +941,37 @@ export interface UnifiedInboxOptions {
   readInboxProposals?: typeof readPendingProposals;
   /** Slack journal seam; default reads the same bounded journal `phm fleet slack-trace` and `phm channels slack status` project. */
   readSlackJournal?: typeof readSlackJournal;
+  /** Slack send-store seam; default reads the same receipts `phm channels slack status` counts as `uncertainSends` and `phm fleet slack-trace` binds replies from. */
+  readSlackSends?: typeof readSlackSendReceipts;
+  /** Leader-thread delivery seam; default reads the same thread log and delivery index `drainLeaderThread` drains — the read-only scan, never the memo-syncing list paths. */
+  readLeaderUndelivered?: typeof readLeaderThreadUndelivered;
+  /** Leader-network seam; default reads `<runsDir>/leader/network-state.json` through the same bounded anchored read `readRouteReplyFacts` applies — never the locking `pending()` recovery pass. */
+  readLeaderNetwork?: (options: { runsDir?: string }) => LeaderNetworkStateRead;
+  /** Leader-reply ledger seam; default reads `<imessageStateDir>/leader-sent.jsonl` through the same last-status-per-hash fold `readClaimed` applies and resolves reply text through the bounded outbox read the sender uses. */
+  readLeaderReplies?: (options: { runsDir?: string; now?: () => number }) => Promise<LeaderRepliesLedgerRead>;
+  /** Coordination-ledger seam; default reads the advisory `fleet.coordination.v1` ledger through `readFleetCoordinationPending` — the same replay `readFleetBoard` runs, never its reaping mutation path. */
+  readFleetCoordination?: typeof readFleetCoordinationPending;
+  /** Claim-drift seam; default reads the same `fleet.claim-drift.v1` verdict `phm fleet claim-drift` and the bus-status probe's `claimDrift` section serve. */
+  readClaimDrift?: typeof readClaimStoreDrift;
+  /** Kill-switch seam; default reads the sentinel through `readKillSwitch` — the same inspection `agents bus status`'s sendGate section serves. */
+  readKillSwitch?: typeof readKillSwitch;
+  /** Comms-pause seam; default reads `probePauseState` — the same inspection the sendGate pause verdict serves. */
+  probePause?: typeof probePauseState;
+  /** Router-queue seam; default reads `<runsDir>/queue/router-queue.md` and
+   * `dispatch-events.log` through `readStuckQueue` — the same bounded read
+   * `phm queue stuck` and the desktop Queue view serve. */
+  readRouterQueue?: (options: { runsDir?: string; now?: () => number }) => Promise<RouterQueueStuckRead>;
+  /** Channel-health seam; default reads `readChannelHealth` — the same
+   * slack/imessage bridge projection `phm fleet channel-health` and
+   * `phm channels` serve. */
+  readChannelHealth?: typeof readChannelHealth;
+  /** Config seam for the telegram leg; default `loadConfigReadOnlyStrict` —
+   * a malformed config reports the telegram channel unknown, never a
+   * guessed default. */
+  readChannelConfig?: () => AshlrConfig;
+  /** Telegram poll-health seam; default `readTelegramHealth` — the same
+   * read `phm comms health --json` serves. */
+  readTelegramPoll?: typeof readTelegramHealth;
   /** Optional narrowing of the returned item list by stored source, severity,
    * blocking, job citation, appearance time or display text. `total`/`omitted`/`items` then
    * describe the matched view and the applied filter echoes on the report;
@@ -1163,6 +1578,10 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
 interface BusItemCoverage {
   readonly envelopes: ReadonlySet<string>;
   readonly feedJobs: ReadonlySet<string>;
+  /** Envelope ids of live `work.post` announcements — feed traffic the bus
+   * source represents as jobs, so a coordination board reading the same
+   * envelope does not list it a second time. */
+  readonly posts: ReadonlySet<string>;
 }
 
 /** The transport dead-letter sink (docs/AGENT-BUS.md "Dead letters"): the
@@ -1210,7 +1629,7 @@ function deadLetterFacts(body: unknown): DeadLetterFacts | null {
 }
 
 function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[]; covered: BusItemCoverage } {
-  const covered: { envelopes: Set<string>; feedJobs: Set<string> } = { envelopes: new Set(), feedJobs: new Set() };
+  const covered: { envelopes: Set<string>; feedJobs: Set<string>; posts: Set<string> } = { envelopes: new Set(), feedJobs: new Set(), posts: new Set() };
   const bus: BusInboxOptions = { root: options.busRoot, now: options.now };
   let inspection: BusInboxInspection;
   try { inspection = (options.inspectBus ?? inspectBusInbox)(bus); }
@@ -1263,6 +1682,9 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
             // The reader decrements ttl to what remains; expiry is a real deadline.
             expiresAt: now + envelope.ttl,
           });
+          // The feed represents this announcement as a job item, so the
+          // coordination board must not list the same envelope again.
+          covered.posts.add(envelope.id);
         }
         // Cursor order is append order, so the last status seen per job is the
         // one the feed projection credits — the same rule it applies. The
@@ -1549,6 +1971,76 @@ function boardItems(read: NonNullable<UnifiedInboxOptions['readBoard']>, options
   }
   const degraded = pending.claims === 'unreadable' || pending.deliveries.truncated || pending.tasks.truncated;
   return { report: { state: degraded ? 'degraded' : 'healthy', pending: items.length }, items };
+}
+
+/** The work-board states that still need a coordination decision: RECEIVED
+ * (no named owner or durable claim receipt yet), ASSIGNED (owned but its
+ * running evidence is stale or absent) and BLOCKED (a reply named what it
+ * waits on). RUNNING carries fresh running evidence and VERIFIED proof of
+ * completion — done or provably progressing, never pending. */
+const WORK_BOARD_PENDING_STATES: ReadonlySet<WorkItemState> = new Set(['RECEIVED', 'ASSIGNED', 'BLOCKED']);
+
+/**
+ * The coordination work board's (`fleet work-board`) requests still needing a
+ * decision — the same `listWorkBoard`/`classifyWorkItem` projection `phm fleet
+ * work-board`, `fleet_work_board` and the cloud work-board route serve, so the
+ * inbox and those surfaces can never disagree on an item's state, owner,
+ * claim receipt or missing evidence. The board classifies every durable bus
+ * request envelope; only the states above list, so a request that is done
+ * (VERIFIED) or provably progressing (RUNNING) never counts as pending here
+ * even though the conversations and bus sources may still carry its raw
+ * envelope — this source adds the ownership/verification classification those
+ * projections do not compute. `since` is the request's recorded `receivedAt`;
+ * a retained receipt has no deadline, so `expiresAt` stays null. The board
+ * carries no message bodies by design, so items name the envelope id, channel,
+ * owner, claim receipt, missing-evidence list and (for BLOCKED) the named
+ * dependency — and no provable job citation, so `--job` never matches. An
+ * unreadable inbox scan is 'unavailable' with a null pending, never an empty
+ * board passed off as fact; an unreadable claims or coordination table leaves
+ * owners unknown the same way the board reports it, so the source degrades
+ * rather than let partial evidence pass as complete. An envelope the bus
+ * source already represents — a claimable work item, a worker handoff or a
+ * `work.post` feed announcement — stays under `bus`: one pending thing, one
+ * item. What lists here is what only the board computes — a non-work request
+ * no owner or claim receipt has picked up, an assignment whose running
+ * evidence went stale, or a reply naming what it waits on.
+ */
+function workBoardItems(read: NonNullable<UnifiedInboxOptions['readWorkBoard']>,
+  options: UnifiedInboxOptions, covered: BusItemCoverage): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  const root = options.busRoot ?? join(ashlrHome(), 'fleet');
+  let result: WorkBoardResult;
+  try { result = read({ root, now: (options.now ?? Date.now)(), limit: WORK_BOARD_MAX_LIMIT }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.inbox !== 'ok') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const item of result.items) {
+    if (!WORK_BOARD_PENDING_STATES.has(item.state)) continue;
+    if (covered.envelopes.has(item.id) || covered.posts.has(item.id)) continue;
+    const kind = item.state === 'RECEIVED' ? 'work-board-received'
+      : item.state === 'ASSIGNED' ? 'work-board-assigned' : 'work-board-blocked';
+    const missing = item.missing.length === 0 ? 'no missing evidence' : `missing ${item.missing.join(', ')}`;
+    const owner = item.owner ?? 'unowned';
+    const channel = item.channelRef ?? item.channel;
+    const detail = item.state === 'BLOCKED'
+      ? oneLine(`blocked · waiting on ${item.result?.kind === 'blocked' ? item.result.dependency : 'unknown'} · owner ${owner} · ${channel} · ${missing}`, DETAIL_MAX)
+      : item.state === 'ASSIGNED'
+        ? oneLine(`assigned · owner ${owner} · claim ${item.claimReceipt ?? 'unknown'} · ${channel} · ${missing}`, DETAIL_MAX)
+        : oneLine(`unclaimed request · owner ${owner} · ${channel} · ${missing}`, DETAIL_MAX);
+    items.push({
+      id: `work-board:${item.id}`,
+      source: 'work-board',
+      kind,
+      severity: item.state === 'ASSIGNED' ? 'info' : 'warn',
+      blocking: false,
+      title: oneLine(`Work board · ${item.state} · ${item.id}`, TITLE_MAX) || `Work board · ${item.state}`,
+      detail: detail || null,
+      since: item.receivedAt,
+      expiresAt: null,
+      act: [`phm fleet work-board --state ${item.state}`, `phm fleet work-trace --id ${item.id}`],
+    });
+  }
+  const degraded = result.truncated || result.claims === 'unavailable' || result.coordination === 'unavailable';
+  return { report: { state: degraded ? 'degraded' : 'healthy', pending: pendingCount(degraded ? 'degraded' : 'healthy', items.length) }, items };
 }
 
 /** The `--thread` label rule `agents bus post` enforces: printable ASCII, 1-128 chars. */
@@ -1882,6 +2374,239 @@ function peerDispatchItems(read: NonNullable<UnifiedInboxOptions['readPeerDispat
   return { report: { state: 'healthy', pending: items.length }, items };
 }
 
+/** The resume bound `planSessionResume` enforces — a checkpoint older than
+ * 24h refuses resume and failover, so `expiresAt` reports that real deadline. */
+const SESSION_HANDOFF_RESUME_WINDOW_MS = 24 * 3_600_000;
+
+/**
+ * Open session-handoff checkpoints — jobs that yielded mid-run and wait for
+ * a resume or failover pass. The same `listSessionHandoffs` bounded journal
+ * scan `phm checkpoint handoff list`, `fleet_session_handoffs`, the
+ * bus-status probe's `sessionHandoffs` section and `work mine`'s `sessions`
+ * digest serve, so this source and those surfaces can never disagree about
+ * which checkpoints are open. Checkpointed work is agent work, never
+ * Mason-blocking, so items are warn and non-blocking; `since` is the latest
+ * revision's recorded time and `expiresAt` the 24-hour resume bound — both
+ * real journal facts, never invented. A pressure signal — rate-limit,
+ * quota-exhausted or a budget at its threshold, the same `handoffPressure`
+ * verdict `planSessionFailover` applies — marks the item for failover in
+ * its title. The journal's job id is the `--job` citation; the detail
+ * carries the resume facts an agent needs — lane, model, minimum tier,
+ * repo, attempt and revision — scrubbed and single-lined like every other
+ * item. The read's own `unreadable`/`truncated` flags degrade the source:
+ * journals that fail validation or sit past the bounded scan could hide
+ * open checkpoints, so pending stays a stated floor. An absent store is
+ * 'missing' (no handoff was ever checkpointed); an uninspectable one
+ * 'unavailable', never an empty list passed off as fact.
+ */
+function sessionHandoffItems(read: NonNullable<UnifiedInboxOptions['readSessionHandoffs']>,
+  options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let list: SessionHandoffList;
+  try { list = read({ runsDir: options.runsDir }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (list.status === 'unavailable' || list.handoffs === null) {
+    return { report: { state: 'unavailable', pending: null }, items: [] };
+  }
+  if (list.status === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const items = list.handoffs
+    .filter(entry => entry.state === 'open')
+    .map((entry): Omit<UnifiedInboxItem, 'priority'> => {
+      const atMs = Date.parse(entry.at);
+      return {
+        id: `session-handoff:${entry.job}`,
+        source: 'session-handoff',
+        kind: 'session-handoff',
+        severity: 'warn',
+        blocking: false,
+        title: oneLine(`Session handoff ${entry.job}: ${entry.signal.kind}${handoffPressure(entry.signal) ? ' (failover)' : ''}`, TITLE_MAX),
+        detail: oneLine(`${entry.lane} · ${entry.model} · min tier ${entry.minTier} · ${entry.repo}` +
+          ` · attempt ${entry.attempt} rev ${entry.revision} · needs ${entry.needs.join(', ') || 'none'}` +
+          ` · head ${entry.head.slice(0, 12)}`, DETAIL_MAX) || null,
+        since: entry.at,
+        expiresAt: Number.isFinite(atMs) ? new Date(atMs + SESSION_HANDOFF_RESUME_WINDOW_MS).toISOString() : null,
+        ...jobIdsField([entry.job]),
+        act: [
+          `phm checkpoint handoff show ${dir} ${entry.job}`,
+          `phm checkpoint handoff list ${dir} --state open`,
+        ],
+      };
+    });
+  const degraded = list.truncated || (list.unreadable?.length ?? 0) > 0;
+  return { report: { state: degraded ? 'degraded' : 'healthy', pending: items.length }, items };
+}
+
+/**
+ * The org-plane store schema, restated locally: the canonical modules
+ * (`src/core/org/agent-plane-schema.ts`, `agent-plane-reader.ts`,
+ * `agent-plane-outbox.ts`) sit outside the Tier-1 authority import closure
+ * and this file cannot import them without growing that closure, so the
+ * `org.agents.v1` shape — role, proposal, edit and ledger rows plus the
+ * chart invariants `validateChart` enforces and the revision contiguity
+ * `readAgentPlane` requires — is mirrored here field for field, the same
+ * way the peer-dispatch journal mirrors its own schema above. A schema or
+ * validation change on the org side must move this mirror too; until then
+ * both reads agree on what the store says.
+ */
+const orgPlaneId = z.string().regex(/^[a-z][a-z0-9-]{0,63}(?![\s\S])/);
+const orgPlaneCount = z.number().int().nonnegative().safe();
+const orgPlaneNeed = z.string().regex(/^[a-z][a-z0-9._-]{0,63}(?![\s\S])/)
+  .refine(value => !/(^|[._-])(secrets?|credentials?|payments?|billing|2fa|mfa|auth|passwords?)([._-]|$)/.test(value), 'Restricted capability scope');
+const orgPlaneRoleSchema = z.object({
+  id: orgPlaneId, title: z.string().trim().min(1).max(120), charter: z.string().trim().min(1).max(2000),
+  tier: z.enum(['LEADER', 'ORCHESTRATOR', 'WORKER_SESSION']), reportsTo: orgPlaneId.nullable(),
+  status: z.enum(['active', 'retired']), scope: z.enum(['engineering', 'research', 'janitor', 'comms-draft']),
+  needs: z.array(orgPlaneNeed).max(32),
+  laneAffinities: z.array(orgPlaneId).max(32),
+  budget: z.object({ tokens: orgPlaneCount.max(1_000_000_000), sessions: orgPlaneCount.max(1000), maxCostClass: z.enum(['local', 'included', 'metered']) }).strict(),
+  sizing: z.object({ batchDepth: orgPlaneCount.min(10).max(1000), fanOut: orgPlaneCount.max(32) }).strict(),
+  sessionId: z.string().regex(/^[a-z][a-z0-9_-]{0,127}(?![\s\S])/).nullable(),
+}).strict();
+const orgPlaneProposalSchema = z.object({
+  actor: orgPlaneId, reason: z.string().trim().min(1).max(1000), expectedRevision: orgPlaneCount,
+  change: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('upsert'), role: orgPlaneRoleSchema }).strict(),
+    z.object({ kind: z.literal('retire'), id: orgPlaneId }).strict(),
+    z.object({ kind: z.literal('revoke'), revision: orgPlaneCount.min(1) }).strict(),
+  ]),
+}).strict();
+const orgPlaneEditSchema = z.object({ before: orgPlaneRoleSchema.nullable(), after: orgPlaneRoleSchema.nullable() }).strict();
+const orgPlaneSchema = z.object({
+  schema: z.literal('org.agents.v1'), storeId: z.string().uuid(), revision: orgPlaneCount,
+  agents: z.array(orgPlaneRoleSchema).max(256),
+  ledger: z.array(z.object({
+    revision: orgPlaneCount.min(1), at: z.string().datetime(), proposal: orgPlaneProposalSchema,
+    applied: z.boolean(), edits: z.array(orgPlaneEditSchema).max(256), busDelivered: z.boolean(),
+  }).strict()).max(2000),
+}).strict();
+type OrgPlaneRole = z.infer<typeof orgPlaneRoleSchema>;
+type OrgPlane = z.infer<typeof orgPlaneSchema>;
+
+/** `validateChart`, mirrored: the same reporting-tier, budget-ceiling, cost-class and session-staffing invariants `readAgentPlane` enforces before any outbox read trusts the store. */
+function orgPlaneValidateChart(agents: OrgPlaneRole[]): void {
+  const roles = new Map(agents.map(role => [role.id, role]));
+  if (roles.size !== agents.length || roles.has('board')) throw new Error('Duplicate or reserved role id.');
+  const leaders = agents.filter(role => role.tier === 'LEADER');
+  if (leaders.length !== 1 || leaders[0]!.id !== 'leader' || leaders[0]!.status !== 'active' || leaders[0]!.reportsTo !== null) throw new Error('One active leader is required.');
+  for (const role of agents) {
+    if (role.sessionId !== null && role.tier !== 'WORKER_SESSION') throw new Error('Only workers bind sessions.');
+    if (role.tier === 'LEADER' || role.status === 'retired') continue;
+    const parent = roles.get(role.reportsTo ?? '');
+    if (!parent || parent.status !== 'active' || parent.tier !== (role.tier === 'ORCHESTRATOR' ? 'LEADER' : 'ORCHESTRATOR')) throw new Error('Invalid reporting tier or inactive parent.');
+    const siblings = agents.filter(other => other.status === 'active' && other.reportsTo === parent.id);
+    if (siblings.reduce((sum, child) => sum + child.budget.tokens, 0) > parent.budget.tokens || siblings.reduce((sum, child) => sum + child.budget.sessions, 0) > parent.budget.sessions) throw new Error('Child budgets exceed parent planning ceiling.');
+    if (['local', 'included', 'metered'].indexOf(role.budget.maxCostClass) > ['local', 'included', 'metered'].indexOf(parent.budget.maxCostClass)) throw new Error('Child cost class exceeds parent.');
+  }
+  const sessions = agents.filter(role => role.status === 'active' && role.sessionId !== null).map(role => role.sessionId);
+  if (new Set(sessions).size !== sessions.length) throw new Error('Session is already staffed.');
+}
+
+/** Storage cap for `org/agents.json`, as in the source PR (`ORG_STORE_MAX_BYTES`). */
+const ORG_STORE_MAX_BYTES = 4 * 1024 * 1024;
+
+/** The runs root the org store lives under: `options.runsDir`, then `ASHLR_RUNS_DIR`, then `~/.ashlr-runs` — the same resolution every other runsDir source here applies, matching `orgRunsRoot`'s own env/home fallback. */
+function orgOutboxRunsDir(runsDir: string | undefined): string {
+  return runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+}
+
+/**
+ * Read `<runsDir>/org/agents.json` and return the org.membership events its
+ * ledger still owes the bus — `busDelivered:false` entries, one event per
+ * distinct `(revision, role)` edit pair, exactly the set `previewOrgOutbox`
+ * would replay. The read applies `readAgentPlane`'s whole acceptance —
+ * absent store is 'missing', symlink/non-file/oversize/unstable/secret-shaped/
+ * schema-invalid/chart-invalid/non-contiguous-ledger is 'unavailable' — so
+ * this source and `phm fleet org-sync`/`org-board` can never disagree about
+ * whether the store is trustworthy. An undelivered edit with neither a
+ * before nor an after role is one `envelopes` cannot form, which the apply
+ * pass would crash on; it reports 'unavailable' here too rather than
+ * listing a partial backlog the real pass refuses.
+ */
+function readOrgPlaneOutbox(options: { runsDir?: string }): OrgOutboxRead {
+  const anchor = resolve(orgOutboxRunsDir(options.runsDir));
+  const file = join(anchor, 'org', 'agents.json');
+  let stat;
+  try { stat = lstatSync(file); }
+  catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+      ? { status: 'missing', events: [] }
+      : { status: 'unavailable', events: [] };
+  }
+  try {
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > ORG_STORE_MAX_BYTES) {
+      throw new Error('org-store-refused');
+    }
+    const read = readStableRegularFile(file, {
+      anchorPath: anchor, maxFileBytes: ORG_STORE_MAX_BYTES, remainingBytes: ORG_STORE_MAX_BYTES,
+    });
+    if (!read.ok) throw new Error('org-store-refused');
+    const raw: unknown = JSON.parse(read.text);
+    // `metadata(planeSchema, raw)`: the secret-shape gate runs on the raw
+    // JSON text before the schema parse, exactly like the canonical read.
+    assertMetadata(JSON.stringify(raw) ?? '');
+    const plane: OrgPlane = orgPlaneSchema.parse(raw);
+    orgPlaneValidateChart(plane.agents);
+    if (plane.revision !== plane.ledger.length ||
+        plane.ledger.some((entry, index) => entry.revision !== index + 1)) {
+      throw new Error('org-ledger-refused');
+    }
+    const events: OrgOutboxEvent[] = [];
+    const seen = new Set<string>();
+    for (const entry of plane.ledger.filter(row => !row.busDelivered)) {
+      for (const edit of entry.edits) {
+        const role = edit.after ?? edit.before;
+        if (role === null) throw new Error('org-event-refused');
+        const id = `org-${plane.storeId}-${entry.revision}-${role.id}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        events.push({
+          id, revision: entry.revision, roleId: role.id,
+          actor: entry.proposal.actor, tier: role.tier,
+          status: edit.after?.status ?? 'retired', at: entry.at,
+        });
+      }
+    }
+    return { status: 'ok', events };
+  } catch { return { status: 'unavailable', events: [] }; }
+}
+
+/**
+ * Org-membership bus events the org plane recorded but `phm fleet org-sync
+ * --apply` has not yet confirmed posted. `org.membership` envelopes are how
+ * the org chart's staffing changes reach the bus — planning metadata that
+ * grants no execution authority — and until the apply pass replays them no
+ * other surface lists them: `org-board` shows only a `pendingBusEvents`
+ * count, and the bus itself cannot see an event it never received. Each
+ * undelivered ledger edit is one pending delivery; items are warn and
+ * non-blocking because the apply pass is ordinary agent work, and `since`
+ * carries the ledger entry's recorded application time. `expiresAt` stays
+ * null — the event waits until the next org-sync pass, never a guessed
+ * deadline. The store keeps actor callsigns, role ids and revisions only —
+ * never role charters, proposals' free-text reasons or member data — so
+ * titles and details stay inside that vocabulary.
+ */
+function orgOutboxItems(read: NonNullable<UnifiedInboxOptions['readOrgOutbox']>,
+  options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: OrgOutboxRead;
+  try { result = read({ runsDir: options.runsDir }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.status === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  if (result.status === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  const items = result.events.map((event): Omit<UnifiedInboxItem, 'priority'> => ({
+    id: `org-outbox:${event.id}`,
+    source: 'org-outbox',
+    kind: 'org-membership',
+    severity: 'warn',
+    blocking: false,
+    title: oneLine(`org role ${event.roleId} (${event.tier} ${event.status}) awaits bus delivery`, TITLE_MAX),
+    detail: oneLine(`rev ${event.revision} · proposed by ${event.actor} · event ${event.id}`, DETAIL_MAX) || null,
+    since: event.at,
+    expiresAt: null,
+    act: ['phm fleet org-sync --apply', 'phm fleet org-board'],
+  }));
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
 function gmailItems(read: typeof readGmailArchivePlanLatest, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   let latest: ReturnType<typeof readGmailArchivePlanLatest> = null;
@@ -2063,7 +2788,7 @@ function proposalItems(read: NonNullable<UnifiedInboxOptions['readInboxProposals
 }
 
 /**
- * Slack requests whose local bus append failed — the one pending-comms class
+ * Slack requests whose local bus append failed — a pending-comms class
  * no other source can see. `readSlackJournal` is the same bounded journal
  * read `phm fleet slack-trace` and `phm channels slack status` project, so
  * this source can never disagree with them: the trace's `bus-failed` outcome
@@ -2135,6 +2860,801 @@ function slackItems(read: NonNullable<UnifiedInboxOptions['readSlackJournal']>,
     };
   });
   return { report: { state, pending: items.length }, items };
+}
+
+/**
+ * Outbound Slack sends still unconfirmed — send-store receipts the transport
+ * journaled as `attempted` and never proved. `readSlackSendReceipts` is the
+ * same bounded send-store read `phm channels slack status` counts as
+ * `uncertainSends` and `phm fleet slack-trace` binds reply evidence from, so
+ * this source can never disagree with them: an `attempted` receipt is a post
+ * whose outcome the transport could not prove — the intent row is kept
+ * precisely so a later pass reconciles by history scan instead of risking a
+ * duplicate post, and until that reconciliation lands the recipient may
+ * never have seen the message. Every other surface reports only the count;
+ * each unconfirmed send lists here as a warn with its channel/thread
+ * coordinates — ids only, never text. Receipts keep no attempt timestamp
+ * (the store records delivery intent and an expiry bound, not when the send
+ * was first tried), so `since`/`expiresAt` stay null: the send waits until
+ * reconciled, never a guessed deadline. Reconciliation is agent work — a
+ * bounded `phm channels slack run` pass re-drives the delivery, which scans
+ * channel history for the recorded client id and marks the receipt `sent`
+ * without reposting — so items stay non-blocking. `sent` receipts are proved
+ * deliveries and never list; identical unkeyed seam rows collapse to one
+ * item. Source state is the read's own (`ok`, `missing`, `degraded`), never
+ * fabricated; a throwing read reports 'unavailable', never an empty list
+ * passed off as fact.
+ */
+function slackSendItems(read: NonNullable<UnifiedInboxOptions['readSlackSends']>): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let sends: SlackSendReceiptRead;
+  try { sends = read({}); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  const state: UnifiedInboxSourceState = sends.state === 'ok' ? 'healthy'
+    : sends.state === 'missing' ? 'missing' : 'degraded';
+  // The reader always sets the store key; a seam row without one still lists
+  // under a content hash so indistinguishable unkeyed evidence collapses.
+  const attempted = new Map<string, { itemId: string; receipt: SentReceipt }>();
+  for (const receipt of sends.receipts) {
+    if (receipt.state !== 'attempted') continue;
+    const itemId = receipt.key ?? createHash('sha256')
+      .update(JSON.stringify([receipt.channel, receipt.thread ?? null, receipt.state])).digest('hex');
+    if (!attempted.has(itemId)) attempted.set(itemId, { itemId, receipt });
+  }
+  const items = [...attempted.values()].map(({ itemId, receipt }): Omit<UnifiedInboxItem, 'priority'> => {
+    // The reader shape-checks channel and thread on the way in; re-check
+    // before embedding them in a command so a seam or future row shape can
+    // never widen the act into something unsafe — fall back to the bare reads.
+    const channelOk = isSlackChannelId(receipt.channel);
+    const threadOk = receipt.thread !== undefined && isSlackTs(receipt.thread);
+    return {
+      id: `slack-sends:${itemId}`,
+      source: 'slack-sends',
+      kind: 'slack-send-unconfirmed',
+      // An outbound send whose delivery is unproven may be a reply the
+      // recipient never saw — agent work to reconcile, never Mason-blocking.
+      severity: 'warn',
+      blocking: false,
+      title: 'Slack send unconfirmed',
+      detail: oneLine(`channel ${receipt.channel}` + (threadOk ? ` · thread ${receipt.thread}` : ''), DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      act: [
+        'phm channels slack status --json',
+        channelOk
+          ? `phm fleet slack-trace --channel ${receipt.channel}${threadOk ? ` --thread ${receipt.thread}` : ''} --json`
+          : 'phm fleet slack-trace --json',
+        'phm channels slack run --seconds 60 --json',
+      ],
+    };
+  });
+  return { report: { state, pending: items.length }, items };
+}
+
+/**
+ * Leader-thread messages whose Telegram delivery the drain can no longer
+ * finish — `failed` after its retries, or `pending` past the 72 h offer
+ * window — from `readLeaderThreadUndelivered`, the read-only scan of the
+ * same thread log and delivery index `drainLeaderThread` drains (every
+ * listing path syncs memos first — a write — so the inbox reads the store
+ * directly). A stuck delivery means Mason may never have seen a memo,
+ * question, update or reply on his phone, and until now the only surfaces
+ * were the comms cycle's one-line outcome for the newest memo and the Verse
+ * thread — `phm comms inbox`, the API and `fleet_comms_inbox` had no way to
+ * list the backlog. Each lists as a warn naming the message kind and state
+ * with a text snippet — the stored text is already scrubbed and `oneLine`
+ * re-scrubs — `since` the message's recorded post time and `expiresAt` null:
+ * a failed send waits for a decision, never a guessed deadline. Items are
+ * agent work — reposting the content through a proven channel or letting the
+ * next memo carry it — never Mason-blocking. `missing` is a verified-absent
+ * thread; `degraded`/`unavailable` pass the read's own state through, never
+ * an empty list passed off as fact; a throwing seam reports 'unavailable'.
+ */
+function leaderDeliveryItems(read: NonNullable<UnifiedInboxOptions['readLeaderUndelivered']>, now: () => number): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: LeaderThreadUndeliveredRead;
+  try { result = read({ now: () => now() }); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  const state: UnifiedInboxSourceState = result.status === 'ok' ? 'healthy' : result.status;
+  const items = result.items.map((entry): Omit<UnifiedInboxItem, 'priority'> => ({
+    id: `leader-delivery:${entry.id}`,
+    source: 'leader-delivery',
+    kind: 'leader-message-undelivered',
+    // A Leader message Mason never got on Telegram is agent work to surface
+    // another way — warn, never blocking.
+    severity: 'warn',
+    blocking: false,
+    title: oneLine(`Leader ${entry.kind} Telegram delivery ${entry.telegram === 'failed' ? 'failed' : 'stalled'}`, TITLE_MAX),
+    detail: oneLine(
+      `${entry.channel} · Telegram ${entry.telegram === 'failed'
+        ? `failed after ${entry.attempts} send attempt${entry.attempts === 1 ? '' : 's'}`
+        : 'pending past the 72 h drain window — the comms drain no longer offers it'}` +
+      ` · "${oneLine(entry.text, 120)}"`,
+      DETAIL_MAX) || null,
+    since: entry.at,
+    expiresAt: null,
+    act: [
+      'phm channels --json',
+      'phm comms cycle',
+      'phm comms send-owner --text "<same message text>"',
+    ],
+  }));
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
+}
+
+/**
+ * The leader network's durable route/digest state — `<runsDir>/leader/
+ * network-state.json` — read through `readLeaderNetworkState`, the same
+ * bounded anchored read `readRouteReplyFacts` applies, never the locking
+ * `pending()` recovery pass. Until now the only surface was
+ * `hasPendingLeaderNetwork`'s boolean inside the comms wake: an agent could
+ * not tell WHAT the leader owes, and three recorded states had no read at
+ * all. Each verified owner request fully ingested for the leader (inbox and
+ * bus legs proven, no delivered or attempted reply) lists as a warn
+ * `leader-request` — the leader's own pending queue, which the owner-thread
+ * awaiting mark cannot see because network replies record to
+ * MASON-OUTBOX.md, never the thread store; a reply recorded whose delivery
+ * failed non-ambiguously stays in that same pending queue (the network
+ * retries it), so the item's detail says "awaiting retry", never
+ * "awaiting reply". A leader-bound route missing its
+ * inbox append or bus mirror — or any route whose bus publish never landed —
+ * lists as `leader-request-incomplete`: the request provably did not reach
+ * every store the leader reads, and a non-slack inbox leg is never retried.
+ * A reply whose delivery attempt ended ambiguous (`attempted` without
+ * `delivered`) lists as `leader-reply-unconfirmed`: `pending()` and `reply()`
+ * both exclude it forever — "reconcile before retry" — so the owner may
+ * never have seen the answer and nothing else reports it. A digest in the
+ * same state lists as `leader-digest-unconfirmed`. Items name channel,
+ * routing label, timestamps and job citations only — owner recipient ids
+ * and channel refs never leave the reader; request text is scrubbed by
+ * `oneLine` like every other source. `missing` is a verified-absent store,
+ * `unavailable` any refusal — never an empty backlog passed off as fact.
+ */
+function leaderNetworkItems(read: NonNullable<UnifiedInboxOptions['readLeaderNetwork']>,
+  runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: LeaderNetworkStateRead;
+  try { result = read({ runsDir: dir }); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.status !== 'ok') {
+    return { report: { state: result.status === 'missing' ? 'missing' : 'unavailable',
+      pending: result.status === 'missing' ? 0 : null }, items: [] };
+  }
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const request of result.requests) {
+    const via = `via ${request.channel}`;
+    const jobIds = jobIdsField(request.jobIds);
+    if (request.reply !== null && request.reply.attempted && !request.reply.delivered) {
+      items.push({
+        id: `leader-network:reply-${request.requestId}`,
+        source: 'leader-network',
+        kind: 'leader-reply-unconfirmed',
+        // The reply may never have reached the owner and the network never
+        // retries an ambiguous attempt — agent work to reconcile, never
+        // Mason-blocking.
+        severity: 'warn',
+        blocking: false,
+        title: oneLine(`Leader reply delivery unconfirmed ${via}`, TITLE_MAX),
+        detail: oneLine(`reply recorded ${iso(request.reply.at)} · delivery outcome unknown — reconcile before retry`, DETAIL_MAX) || null,
+        since: iso(request.reply.at),
+        expiresAt: null,
+        ...jobIds,
+        act: ['phm leader inbox --json', 'phm comms thread'],
+      });
+      continue;
+    }
+    if (request.to === 'leader' && request.inbox && request.bus &&
+        !(request.reply?.delivered ?? false) && !(request.reply?.attempted ?? false)) {
+      // `pending()` still offers this route: either no reply was recorded,
+      // or one was recorded whose delivery failed non-ambiguously — the
+      // network retries that on the next reply pass, so it is pending
+      // leader work either way, never an ambiguous send.
+      const replyAt = request.reply?.at;
+      items.push({
+        id: `leader-network:request-${request.requestId}`,
+        source: 'leader-network',
+        kind: 'leader-request',
+        // A verified owner request the leader has not finished answering —
+        // the owner is waiting, same warn band the owner-thread source
+        // applies.
+        severity: 'warn',
+        blocking: false,
+        title: oneLine(request.text ?? '', TITLE_MAX) || `Leader request ${via} awaiting reply`,
+        detail: oneLine(
+          `leader network · ${via} · ` +
+          (replyAt === undefined ? 'awaiting reply' : `reply recorded ${iso(replyAt)} · delivery incomplete — awaiting retry`) +
+          ` · received ${iso(request.receivedAt)}`,
+          DETAIL_MAX) || null,
+        since: iso(request.receivedAt),
+        expiresAt: null,
+        ...jobIds,
+        act: ['phm leader inbox --json', 'phm comms thread'],
+      });
+      continue;
+    }
+    const missingLegs = request.to === 'leader'
+      ? [request.inbox ? null : 'inbox append', request.bus ? null : 'bus mirror'].filter((leg): leg is string => leg !== null)
+      : request.bus ? [] : ['bus publish'];
+    if (missingLegs.length === 0) continue;
+    items.push({
+      id: `leader-network:incomplete-${request.requestId}`,
+      source: 'leader-network',
+      kind: 'leader-request-incomplete',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Leader request delivery incomplete ${via}`, TITLE_MAX),
+      detail: oneLine(
+        `leader network · ${via}` +
+        (request.to === 'leader' ? '' : ` · to ${request.to}`) +
+        ` · unproven: ${missingLegs.join(', ')} · received ${iso(request.receivedAt)}`,
+        DETAIL_MAX) || null,
+      since: iso(request.receivedAt),
+      expiresAt: null,
+      ...jobIds,
+      act: ['phm leader inbox --json', 'phm comms thread'],
+    });
+  }
+  for (const digest of result.digests) {
+    if (!digest.attempted || digest.sent) continue;
+    items.push({
+      id: `leader-network:digest-${digest.key}`,
+      source: 'leader-network',
+      kind: 'leader-digest-unconfirmed',
+      // An away-digest whose delivery attempt ended ambiguous is never
+      // retried — the owner may never have seen it; agent work, never
+      // Mason-blocking.
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Leader away-digest delivery unconfirmed via ${digest.channel}`, TITLE_MAX),
+      detail: oneLine(
+        `leader network · via ${digest.channel}` +
+        (digest.day === null ? '' : ` · day ${digest.day}`) +
+        ` · recorded ${iso(digest.at)} · delivery outcome unknown — reconcile before retry`,
+        DETAIL_MAX) || null,
+      since: iso(digest.at),
+      expiresAt: null,
+      act: ['phm leader inbox --json'],
+    });
+  }
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
+/**
+ * Leader replies to Mason still owed a proven iMessage delivery — the send
+ * ledger `<imessageStateDir>/leader-sent.jsonl` `sendLeaderReplies` appends,
+ * read through `readLeaderRepliesLedger`'s last-status-per-hash fold (the
+ * same fold `readClaimed` applies, so the projection can never disagree with
+ * what the next pass does). A `failed` last row lists as warn
+ * `leader-reply-failed` — the send provably did not land and the next live
+ * `phm imessage replies` pass retries it; a stale `pending` last row lists
+ * as warn `leader-reply-orphaned` — the process died between claim and
+ * outcome, `readClaimed` counts it as sent forever, and no pass ever retries
+ * it. Fresh pending rows may be in flight and never list; `sent`/`baseline`
+ * are resolved. Each item names the reply through the bounded outbox read
+ * the sender uses — a scrubbed snippet and outbox stamp when the read still
+ * holds the text, an honest "not in the current outbox read" when it does
+ * not — `since` the first recorded attempt, `expiresAt` null. Agent work —
+ * a pass retry or a deliberate re-post — never Mason-blocking. `missing` is
+ * a verified-absent ledger, `degraded` a truncated read whose pending is a
+ * stated lower bound, `unavailable`/a throwing seam — never an empty list
+ * passed off as fact.
+ */
+async function leaderReplyItems(
+  read: NonNullable<UnifiedInboxOptions['readLeaderReplies']>,
+  options: UnifiedInboxOptions, now: () => number,
+): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  let result: LeaderRepliesLedgerRead;
+  try { result = await read({ runsDir: options.runsDir, now: () => now() }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing' || result.state === 'unavailable') {
+    return { report: { state: result.state, pending: pendingCount(result.state, 0) }, items: [] };
+  }
+  const items = result.items.map((entry): Omit<UnifiedInboxItem, 'priority'> => {
+    const orphaned = entry.state === 'orphaned';
+    const snippet = entry.reply ? oneLine(entry.reply.text, 120) : '';
+    const where = entry.reply
+      ? `${entry.reply.at !== '' ? ` · outbox ${entry.reply.at}` : ''}`
+      : ' · reply text not in the current outbox read';
+    return {
+      id: `leader-replies:${entry.hash}`,
+      source: 'leader-replies',
+      kind: orphaned ? 'leader-reply-orphaned' : 'leader-reply-failed',
+      // A leader reply Mason never provably received on iMessage is agent
+      // work to retry or re-post — warn, never blocking.
+      severity: 'warn',
+      blocking: false,
+      title: orphaned ? 'iMessage leader reply unconfirmed' : 'iMessage leader reply failed',
+      detail: oneLine(
+        (snippet !== '' ? `"${snippet}"` : 'reply text unresolved') + where +
+        (orphaned
+          ? ` · claimed ${entry.claimedAt ?? 'at an unrecorded time'} · no outcome ever recorded — the dedupe read counts it as sent, so no pass retries it`
+          : ` · failed after ${entry.failedAttempts} recorded send attempt${entry.failedAttempts === 1 ? '' : 's'} · awaiting the next live replies pass`),
+        DETAIL_MAX) || null,
+      since: entry.since,
+      expiresAt: null,
+      act: orphaned
+        ? ['phm imessage replies --json', 'phm leader replies --json', 'phm comms send-owner --text "<same reply text>"']
+        : ['phm imessage replies --json', 'phm leader replies --json'],
+    };
+  });
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/**
+ * The advisory coordination ledger's (`fleet.coordination.v1`) whole pending
+ * surface — a store no other source reads: bus, mailbox and board cover the
+ * agent bus and shared board, while coordination mail, assignments and
+ * return intents live only in `~/.ashlr/fleet/coordination.jsonl`, reachable
+ * today solely through `phm fleet coordination inbox|board|returns` and the
+ * fleet_coordination_* MCP tools. `readFleetCoordinationPending` replays the
+ * ledger exactly like `readFleetBoard` but projects all three pending
+ * classes atomically and never takes the reaping mutation path, so the read
+ * cannot append an expiry row. Live messages list as info
+ * `coordination-message` — the body is the mail content, `since`/`expiresAt`
+ * the record's own stamps, and the act is the addressed agent's inbox (or
+ * the board for `all` broadcasts, which every agent inbox carries). Live
+ * assignment proposals list as info `coordination-assignment` — advisory
+ * offers (`executionAuthorized:false`) that never spawn work, so they never
+ * block; the assignee's inbox is the act. Unpublished RESULT intents — a
+ * claim concluded `intended` whose receipt `postFleetMessage` never landed,
+ * the `released-unposted` class `returnFleetClaim` reports once — list as
+ * warn `coordination-return-unposted`: the claim is already released, so no
+ * board, claims or returns read names it, and the intent dies silently at
+ * expiry unless the owner-held lease retries `phm fleet coordination
+ * return`. The item names claim id, returning agent, receipt stamps and a
+ * scrubbed receipt snippet; lease material never enters the projection.
+ * `missing` is a verified-absent ledger, `unknown`/a throwing read
+ * `unavailable` — never an empty backlog passed off as fact.
+ */
+function coordinationItems(read: NonNullable<UnifiedInboxOptions['readFleetCoordination']>): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let pending: FleetCoordinationPending;
+  try { pending = read(); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (pending.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (pending.state !== 'known') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const message of pending.messages) {
+    items.push({
+      id: `coordination:message-${message.id}`,
+      source: 'coordination',
+      kind: 'coordination-message',
+      severity: 'info',
+      blocking: false,
+      title: oneLine(message.body, TITLE_MAX) || `Coordination mail to ${message.to}`,
+      detail: oneLine(`from ${message.from} · to ${message.to}`, DETAIL_MAX) || null,
+      since: iso(message.at),
+      expiresAt: iso(message.expiresAt),
+      act: message.to === 'all'
+        ? ['phm fleet coordination board --json']
+        : [`phm fleet coordination inbox --agent ${message.to} --json`],
+    });
+  }
+  for (const proposal of pending.proposals) {
+    items.push({
+      id: `coordination:assignment-${proposal.id}`,
+      source: 'coordination',
+      kind: 'coordination-assignment',
+      severity: 'info',
+      blocking: false,
+      title: oneLine(proposal.task, TITLE_MAX) || `Coordination assignment ${proposal.id}`,
+      detail: oneLine(`advisory — no execution authority · ${proposal.repo} · to ${proposal.to}`, DETAIL_MAX) || null,
+      since: iso(proposal.at),
+      expiresAt: iso(proposal.expiresAt),
+      act: [`phm fleet coordination inbox --agent ${proposal.to} --json`],
+    });
+  }
+  for (const ret of pending.returns) {
+    items.push({
+      id: `coordination:return-${ret.id}`,
+      source: 'coordination',
+      kind: 'coordination-return-unposted',
+      // A recorded RESULT receipt whose publish never landed — agent work to
+      // reconcile before the intent expires, never Mason-blocking.
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Unposted coordination RESULT · claim ${ret.id}`, TITLE_MAX),
+      detail: oneLine(
+        `returning agent ${ret.agent} · recorded ${iso(ret.at)} · receipt publish never landed — ` +
+        `the claim owner retries \`phm fleet coordination return ${ret.id} --agent ${ret.agent} --lease <lease>\``,
+        DETAIL_MAX) || null,
+      since: iso(ret.at),
+      expiresAt: iso(ret.message.expiresAt),
+      act: ['phm fleet coordination board --json'],
+    });
+  }
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
+/**
+ * The claim-store drift verdict's (`fleet.claim-drift.v1`) disagreeing rows —
+ * the one claim-correctness surface no other source reads: `agents bus
+ * status` reports only the verdict's counts, `phm fleet claim-drift` is a
+ * verb an agent must already know to run, and the bus/mailbox/board sources
+ * each consult ONE of the two claim stores, so a live lease the other store
+ * never recorded — or a pair whose owners disagree — is invisible to every
+ * pending view until the lease lapses. `mutateBusWorkClaim` writes the bus
+ * claims table and the coordination table one after the other, so a crash
+ * or settle failure between the writes leaves them disagreeing: a bus-only
+ * row is a lease the coordination overlap check cannot see (a second
+ * acquire could double-grant), a coord-only row a `queue:<id>` lease the
+ * bus claims journal never recorded, and an owner-mismatch pair the same
+ * lease showing two different holders. `readClaimStoreDrift` compares only
+ * live rows and never throws; UNKNOWN — a store that could not be read —
+ * reports 'unavailable' with a null pending, never an empty verdict passed
+ * off as fact (the row arrays are empty by construction whenever a side is
+ * unreadable), and VERIFIED with both stores absent is 'missing'
+ * (verified-empty). Each row lists as a warn — agent work to reconcile
+ * before the lease expires, never Mason-blocking — `since` the claim
+ * coordinate's recorded receipt time (null when a coord row's sourceId
+ * tail cannot be parsed — unknown stays unknown) and `expiresAt` the
+ * lease deadline that ends the disagreement. Items name the envelope id,
+ * owner labels, cursor and stamps only — claim keys beyond `queue:<id>`
+ * and fencing material never leave the read, and no job citation is
+ * provable from a drift row, so `--job` never matches.
+ */
+function claimDriftItems(read: NonNullable<UnifiedInboxOptions['readClaimDrift']>,
+  options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let drift: ClaimStoreDrift;
+  try { drift = read({ root: options.busRoot, now: (options.now ?? Date.now)() }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (drift.state === 'UNKNOWN') return { report: { state: 'unavailable', pending: null }, items: [] };
+  // The drift read reports an unparseable coord sourceId tail as the epoch;
+  // that is "unknown", not a 1970 appearance time.
+  const EPOCH_ISO = '1970-01-01T00:00:00.000Z';
+  const sinceOf = (row: ClaimDriftRow): string | null => row.receivedAt === EPOCH_ISO ? null : row.receivedAt;
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const row of drift.busOnly) {
+    items.push({
+      id: `claim-drift:bus:${row.id}:${row.cursor}:${row.receivedAt}`,
+      source: 'claim-drift',
+      kind: 'claim-drift-bus',
+      // A live lease only the bus claims table recorded — the coordination
+      // overlap check cannot see it, so a second acquire could double-grant;
+      // agent work to reconcile before the lease lapses, never Mason-blocking.
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Claim drift · bus-only lease on ${row.id}`, TITLE_MAX),
+      detail: oneLine(`bus claims table holds a live lease coordination does not · owner ${row.owner} · cursor ${row.cursor} · lease until ${row.leaseUntil}`, DETAIL_MAX) || null,
+      since: sinceOf(row),
+      expiresAt: row.leaseUntil,
+      act: ['phm fleet claim-drift --json', `phm agents bus show ${row.id}`],
+    });
+  }
+  for (const row of drift.coordOnly) {
+    items.push({
+      id: `claim-drift:coord:${row.id}:${row.cursor}:${row.receivedAt}`,
+      source: 'claim-drift',
+      kind: 'claim-drift-coordination',
+      // A live `queue:<id>` lease only the coordination table recorded — the
+      // bus claims journal never saw the acquire; agent work, never
+      // Mason-blocking.
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Claim drift · coordination-only lease on ${row.id}`, TITLE_MAX),
+      detail: oneLine(`coordination table holds a live queue:${row.id} lease the bus claims table does not · owner ${row.owner} · lease until ${row.leaseUntil}`, DETAIL_MAX) || null,
+      since: sinceOf(row),
+      expiresAt: row.leaseUntil,
+      act: ['phm fleet claim-drift --json', `phm agents bus claim list --key queue:${row.id}`],
+    });
+  }
+  for (const row of drift.ownerMismatch) {
+    items.push({
+      id: `claim-drift:owner:${row.id}:${row.cursor}:${row.receivedAt}`,
+      source: 'claim-drift',
+      kind: 'claim-drift-owner',
+      // The same live lease shows two different holders depending which
+      // store an agent consults — agent work to reconcile, never
+      // Mason-blocking.
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Claim drift · owner mismatch on ${row.id}`, TITLE_MAX),
+      detail: oneLine(`bus owner ${row.busOwner ?? row.owner} vs coordination owner ${row.coordOwner ?? 'unknown'} · lease until ${row.leaseUntil}`, DETAIL_MAX) || null,
+      since: sinceOf(row),
+      expiresAt: row.leaseUntil,
+      act: ['phm fleet claim-drift --json', `phm agents bus show ${row.id}`, `phm agents bus claim list --key queue:${row.id}`],
+    });
+  }
+  // VERIFIED with both claim stores absent is a verified-empty pair — the
+  // same 'missing' state every other never-used store reports.
+  const state: UnifiedInboxSourceState =
+    drift.state === 'VERIFIED' && drift.bus === 'missing' && drift.coordination === 'missing' ? 'missing' : 'healthy';
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
+}
+
+/**
+ * The outbound send gate every local bus write, claim and send passes
+ * through — `localWriteGate`/`localBusHold`'s two inspections: the
+ * kill-switch sentinel (`readKillSwitch`) and the comms soft-pause flag
+ * (`probePauseState`), the same reads `agents bus status`'s `sendGate`
+ * section serves, so the two surfaces can never disagree. Until now the
+ * gate was invisible here: pending items kept listing while every write
+ * verb refused, and an agent had to already know `agents bus status` to
+ * learn why nothing could drain. An engaged kill switch lists as
+ * `send-gate-kill`, a set pause flag as `send-gate-pause` — each naming
+ * the gate and its verdict; an uninspectable or unsafe gate file lists
+ * the same kind one severity band lower, because the send path fails
+ * closed and refuses as if engaged while the probe honestly reports
+ * unknown rather than calling it a decision someone made. `since` is the
+ * pause flag's recorded start — the sentinel keeps no provable time, so
+ * kill items and unparseable flags stay null — and `expiresAt` stays
+ * null: a gate waits for its release, never a guessed deadline. Both
+ * gates clear is a verified-open source with a real zero; either probe's
+ * own unknown verdict degrades the source — unknown stays unknown, never
+ * an open gate passed off as fact. The reads are total by contract and
+ * each keeps its own try, matching the bus-status probe, so one throwing
+ * read cannot hide the other's verdict — a throw synthesizes the same
+ * 'unknown' verdict the fail-closed send path applies.
+ */
+function sendGateItems(readKill: NonNullable<UnifiedInboxOptions['readKillSwitch']>,
+  probePause: NonNullable<UnifiedInboxOptions['probePause']>): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let kill: KillSwitchReadResult;
+  try { kill = readKill(); }
+  catch { kill = { state: 'unknown', sourceState: 'degraded', reason: 'uninspectable', path: '', errorCode: null }; }
+  let pause: PauseProbe;
+  try { pause = probePause(); }
+  catch { pause = { state: 'unknown', since: null, reason: 'could not be checked' }; }
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  if (kill.state !== 'inactive') {
+    const engaged = kill.state === 'active';
+    items.push({
+      id: 'send-gate:kill',
+      source: 'send-gate',
+      kind: 'send-gate-kill',
+      // A positively engaged sentinel halts every claim and send — the
+      // same fleet-wide blockage the refused work feed ranks high; an
+      // unproven one still refuses but cannot be called a decision.
+      severity: engaged ? 'high' : 'warn',
+      blocking: false,
+      title: engaged ? 'Kill switch engaged — bus writes held' : 'Kill switch state unknown — writes refused',
+      detail: oneLine(engaged
+        ? 'the kill-switch sentinel is present — claims, sends and every local bus write refuse until it is released'
+        : `the sentinel could not be inspected (${kill.reason}) — the send gate fails closed and refuses writes as if engaged`, DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      act: engaged
+        ? ['phm fleet resume', 'phm agents bus status --json', 'phm fleet status']
+        : ['phm agents bus status --json', 'phm fleet status'],
+    });
+  }
+  if (pause.state !== 'clear') {
+    const paused = pause.state === 'paused';
+    const sinceMs = paused && pause.since !== null && Number.isFinite(pause.since) ? pause.since : null;
+    items.push({
+      id: 'send-gate:pause',
+      source: 'send-gate',
+      kind: 'send-gate-pause',
+      severity: paused ? 'high' : 'warn',
+      blocking: false,
+      title: paused ? 'Comms pause set — bus writes held' : 'Comms pause state unknown — writes refused',
+      detail: oneLine(paused
+        ? `the comms pause flag is set${sinceMs === null ? '' : ` since ${iso(sinceMs)}`} — claims, sends and every local bus write refuse until it clears`
+        : `pause.json could not be inspected (${pause.reason ?? 'unknown'}) — the send gate fails closed and refuses writes as if paused`, DETAIL_MAX) || null,
+      since: sinceMs === null ? null : iso(sinceMs),
+      expiresAt: null,
+      act: ['phm agents bus status --json', 'phm fleet status'],
+    });
+  }
+  const state: UnifiedInboxSourceState =
+    kill.state === 'unknown' || pause.state === 'unknown' ? 'degraded' : 'healthy';
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
+}
+
+/** Compact wait label for a queue job's recorded age: `42s`, `18m`, `5h12m`, `3d4h`. */
+const queueWaitLabel = (ageS: number): string => {
+  if (ageS < 90) return `${ageS}s`;
+  const minutes = Math.floor(ageS / 60);
+  if (minutes < 90) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return minutes % 60 === 0 ? `${hours}h` : `${hours}h${minutes % 60}m`;
+  const days = Math.floor(hours / 24);
+  return hours % 24 === 0 ? `${days}d` : `${days}d${hours % 24}h`;
+};
+
+/**
+ * READY jobs in the dispatch router queue (`<runsDir>/queue/router-queue.md`)
+ * that no recorded LAUNCH in `dispatch-events.log` proves ever started — the
+ * same `readStuckQueue` read `phm queue stuck` and the desktop Queue view
+ * serve, so this source and those surfaces can never disagree. Until now the
+ * dispatch queue's stuck backlog had no inbox surface: work sitting READY
+ * while every bus, board, feed and coordination read shows nothing was
+ * invisible to the one view an agent checks for work. Each unlaunched READY
+ * row lists as a warn `router-queue-job` — agent coordination work, never
+ * Mason-blocking — naming the job id (the same label `phm queue` verbs
+ * take), `since` the enqueue epoch or first dispatch-event time the wait is
+ * measured from and `expiresAt` null: a queued job waits for a lane, never
+ * a guessed deadline. `age_s` is whole seconds, so `since` reconstructs the
+ * recorded start within a second of rounding; `age: 'unknown'` — neither an
+ * enqueue epoch nor a dispatch event — leaves `since` null rather than
+ * guessing. The job id is the item's own citation, so `--job` matches. A
+ * missing events log degrades the source — every READY row still lists but
+ * its launch state is unproven and the detail says so; a missing queue file
+ * is 'missing' (verified-empty) and an unreadable one 'unavailable', never
+ * an empty queue passed off as fact.
+ */
+async function routerQueueItems(read: NonNullable<UnifiedInboxOptions['readRouterQueue']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: RouterQueueStuckRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const nowMs = (options.now ?? Date.now)();
+  const degraded = result.state === 'degraded';
+  const items = result.jobs.map((job): Omit<UnifiedInboxItem, 'priority'> => {
+    const ageMs = typeof job.age_s === 'number' && Number.isSafeInteger(job.age_s) && job.age_s >= 0
+      ? job.age_s * 1000 : null;
+    return {
+      id: `router-queue:${job.id}`,
+      source: 'router-queue',
+      kind: 'router-queue-job',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Router job ${job.id} has no recorded launch`, TITLE_MAX),
+      detail: oneLine(`READY in queue/router-queue.md · ${ageMs === null ? 'wait age unknown' : `waiting ${queueWaitLabel(job.age_s!)}`}${degraded ? ' · launch evidence unavailable — may already have launched' : ''}`, DETAIL_MAX) || null,
+      since: ageMs === null ? null : iso(nowMs - ageMs),
+      expiresAt: null,
+      jobIds: [job.id],
+      act: ['phm queue stuck', 'phm fleet unfed --json', 'phm queue'],
+    };
+  });
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real router-queue read: `readStuckQueue` on the shared runs dir. An
+ * absent `queue/router-queue.md` is 'missing' — verified-empty, no READY rows
+ * can exist — while any other read failure is 'unavailable', never an empty
+ * queue passed off as fact. A missing `dispatch-events.log` is not a throw:
+ * the read reports `eventsAvailable: false` and the source degrades, since
+ * every listed job's launch state is then unproven. */
+async function readRouterQueueSource(options: { runsDir?: string; now?: () => number }): Promise<RouterQueueStuckRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  try {
+    const { jobs, eventsAvailable } = await readStuckQueue(dir, options.now?.() ?? Date.now());
+    return { state: eventsAvailable ? 'healthy' : 'degraded', jobs };
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? 'missing' : 'unavailable', jobs: [] };
+  }
+}
+
+/** Display label and deep links per channel-health leg; telegram's acts differ because its diagnostic is `phm comms health`, not `phm fleet channel-health`. */
+const channelHealthPresentation = (channel: string): { label: string; acts: readonly string[] } =>
+  channel === 'slack'
+    ? { label: 'Slack', acts: ['phm fleet channel-health', 'phm channels slack status', 'phm channels'] }
+    : channel === 'imessage'
+      ? { label: 'iMessage', acts: ['phm fleet channel-health', 'phm imessage doctor', 'phm channels'] }
+      : { label: 'Telegram', acts: ['phm comms health --json', 'phm comms cycle', 'phm channels'] };
+
+/**
+ * Owner-channel transport health — the slack and iMessage bridges through
+ * `readChannelHealth` (the same projection `phm fleet channel-health` and
+ * `phm channels` serve) and the Telegram poller through `telegramEnabled` +
+ * `readTelegramHealth` (the same read `phm comms health --json` serves), so
+ * this source and those surfaces can never disagree. Until now a dead
+ * bridge or a stale poller was invisible here: `phm channels` could show a
+ * channel ready while its process was gone, and an agent had to already
+ * know which diagnostic to run to learn owner traffic was not flowing. A
+ * configured bridge that is BLOCKED lists as `channel-blocked` (high — the
+ * transport is provably down), DEGRADED as `channel-degraded` and UNKNOWN as
+ * `channel-unknown` (warn — evidence incomplete or a receipt overdue,
+ * never called a decision); a channel nobody configured (`BLOCKED` with
+ * `configured:false`, the overview's 'not-set-up' row) and a LIVE one never
+ * list — setup state is not pending work. The telegram leg lists only when
+ * `telegramEnabled` — the same gate the comms cycle's poll applies — as one
+ * `channel-degraded` item naming each failed check (a recorded poll error,
+ * no poll inside the 7-minute liveness window, no successful poll yet); an
+ * unreadable main config or a throwing poll read lists `channel-unknown`
+ * instead. `since`/`expiresAt` stay null throughout: health keeps no
+ * condition-start time and a degraded channel waits for repair, never a
+ * guessed deadline; no item names a job. Either leg's own failure degrades
+ * the source — a throwing bridge read proves nothing about
+ * slack/imessage while the telegram verdicts still list, and a throwing
+ * config or poll read is itself the `channel-unknown` evidence — so
+ * 'unavailable' and 'missing' never apply: this is a live probe of running
+ * transports, not a store that can be absent.
+ */
+async function channelHealthItems(options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const nowMs = (options.now ?? Date.now)();
+  const runsDir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  let bridgesFailed = false;
+  try {
+    const report = await (options.readChannelHealth ?? readChannelHealth)({ now: () => new Date(nowMs), runsDir });
+    for (const health of report.channels) {
+      // LIVE is verified flow; BLOCKED with configured:false is the
+      // overview's 'not-set-up' row — a channel nobody enabled is not
+      // pending work. Every other verdict lists, including UNKNOWN with
+      // configured:false (the config itself could not be read).
+      if (health.state === 'LIVE' || (health.state === 'BLOCKED' && !health.configured)) continue;
+      const { label, acts } = channelHealthPresentation(health.channel);
+      const kind: UnifiedInboxKind = health.state === 'BLOCKED' ? 'channel-blocked'
+        : health.state === 'DEGRADED' ? 'channel-degraded' : 'channel-unknown';
+      const reasons = health.missing.map((m) => m.trim()).filter((m) => m !== '');
+      // A DEGRADED verdict can arrive with an empty reason list when the
+      // only trigger is an inbound unanswered past the reply grace — say
+      // so rather than reporting an empty detail.
+      if (health.state === 'DEGRADED' && reasons.length === 0) {
+        reasons.push(health.unansweredCount > 0
+          ? `${health.unansweredCount} inbound request${health.unansweredCount === 1 ? '' : 's'} unanswered past the reply grace`
+          : 'a receipt is overdue or a send failed');
+      }
+      if (health.unansweredCount > 0 && !reasons.some((r) => r.includes('unanswered'))) {
+        reasons.push(`${health.unansweredCount} inbound request${health.unansweredCount === 1 ? '' : 's'} unanswered`);
+      }
+      items.push({
+        id: `channel-health:${health.channel}`,
+        source: 'channel-health',
+        kind,
+        severity: health.state === 'BLOCKED' ? 'high' : 'warn',
+        blocking: false,
+        title: oneLine(`${label} channel ${health.state === 'UNKNOWN' ? 'state unknown' : health.state.toLowerCase()}`, TITLE_MAX),
+        detail: oneLine(reasons.join('; ') || 'channel state could not be verified', DETAIL_MAX) || null,
+        since: null,
+        expiresAt: null,
+        act: acts,
+      });
+    }
+  } catch { bridgesFailed = true; }
+
+  let telegramUnknown: string | null = null;
+  let cfg: AshlrConfig | null = null;
+  try { cfg = (options.readChannelConfig ?? loadConfigReadOnlyStrict)(); }
+  catch { telegramUnknown = 'the main config could not be read — the poller health cannot be verified'; }
+  // telegramEnabled gates on the same predicate the comms cycle's poll
+  // applies; it stays inside its own try so a malformed config shape or a
+  // credential-read failure degrades this leg instead of throwing.
+  let telegramActive = false;
+  if (cfg !== null && telegramUnknown === null) {
+    try { telegramActive = telegramEnabled(cfg); }
+    catch { telegramUnknown = 'the telegram configuration could not be verified'; }
+  }
+  if (telegramActive) {
+    let poll: ReturnType<typeof readTelegramHealth> | null = null;
+    try { poll = (options.readTelegramPoll ?? readTelegramHealth)(cfg!); }
+    catch { telegramUnknown = 'the poller health read failed — its state is unknown'; }
+    if (poll !== null) {
+      const issues: string[] = [];
+      const pollError = typeof poll.error === 'string' && poll.error !== '' ? poll.error : null;
+      if (pollError !== null) issues.push(`last recorded poll failed (${pollError})`);
+      const lastPoll = typeof poll.lastPoll === 'string' ? poll.lastPoll : null;
+      if (poll.pollerAlive !== true) {
+        issues.push(lastPoll === null
+          ? 'no poll recorded — the comms cycle has never run'
+          : `no poll within the last 7 minutes (last poll ${lastPoll})`);
+      }
+      if (typeof poll.lastSuccess !== 'string') issues.push('no successful poll recorded');
+      if (issues.length > 0) {
+        const { acts } = channelHealthPresentation('telegram');
+        items.push({
+          id: 'channel-health:telegram',
+          source: 'channel-health',
+          kind: 'channel-degraded',
+          severity: 'warn',
+          blocking: false,
+          title: 'Telegram channel degraded',
+          detail: oneLine(issues.join('; '), DETAIL_MAX) || null,
+          since: null,
+          expiresAt: null,
+          act: acts,
+        });
+      }
+    }
+  }
+  if (telegramUnknown !== null) {
+    const { acts } = channelHealthPresentation('telegram');
+    items.push({
+      id: 'channel-health:telegram',
+      source: 'channel-health',
+      kind: 'channel-unknown',
+      severity: 'warn',
+      blocking: false,
+      title: 'Telegram channel state unknown',
+      detail: oneLine(telegramUnknown, DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      act: acts,
+    });
+  }
+
+  // 'unavailable'/'missing' never apply: every leg resolves to a verdict —
+  // a throwing read is itself the degraded/unknown evidence — so a partial
+  // failure reports 'degraded' and the surviving verdicts still count.
+  const state: UnifiedInboxSourceState = bridgesFailed || telegramUnknown !== null ? 'degraded' : 'healthy';
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
 }
 
 /**
@@ -2282,10 +3802,14 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const bus = busItems(options);
   const mailbox = mailboxItems(options.readMailbox ?? readMailboxPending, options);
   const board = boardItems(options.readBoard ?? readBusBoardPending, options);
+  const workBoard = workBoardItems(options.readWorkBoard ?? listWorkBoard, options, bus.covered);
   const conversations = conversationItems(options.readConversations ?? readAgentConversations, options, now, bus.covered);
   const wakes = wakeItems(options.readWakes ?? ((o) => readAllWakes(undefined, { root: o.root, runsRoot: o.runsRoot, now: o.now })), options);
   const seats = await seatItems(options.readSeatHandoffs ?? planSeatHandoffs, now);
   const peerDispatch = peerDispatchItems(options.readPeerDispatch ?? readPeerDispatchJournal, options);
+  const sessionHandoffs = sessionHandoffItems(options.readSessionHandoffs ?? ((o) => listSessionHandoffs(
+    o.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs'), { state: 'open' })), options);
+  const orgOutbox = orgOutboxItems(options.readOrgOutbox ?? readOrgPlaneOutbox, options);
   const gmail = gmailItems(options.readGmailPlans ?? readGmailArchivePlanLatest, options.runsDir);
   const linkedin = linkedInItems(options.readLinkedIn ?? readLinkedInDrop, options.runsDir, now);
   const requests = requestItems(options.readRequests ?? readCommsRequests, now, options.requestTtlMs);
@@ -2298,6 +3822,15 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const teamApprovals = teamApprovalItems(options.readTeamApprovals ?? readTeamApprovals);
   const proposals = proposalItems(options.readInboxProposals ?? readPendingProposals);
   const slack = slackItems(options.readSlackJournal ?? readSlackJournal, options, now);
+  const slackSends = slackSendItems(options.readSlackSends ?? readSlackSendReceipts);
+  const leaderDelivery = leaderDeliveryItems(options.readLeaderUndelivered ?? readLeaderThreadUndelivered, now);
+  const leaderNetwork = leaderNetworkItems(options.readLeaderNetwork ?? readLeaderNetworkState, options.runsDir);
+  const leaderReplies = await leaderReplyItems(options.readLeaderReplies ?? readLeaderRepliesLedger, options, now);
+  const coordination = coordinationItems(options.readFleetCoordination ?? readFleetCoordinationPending);
+  const claimDrift = claimDriftItems(options.readClaimDrift ?? readClaimStoreDrift, options);
+  const sendGate = sendGateItems(options.readKillSwitch ?? readKillSwitch, options.probePause ?? probePauseState);
+  const routerQueue = await routerQueueItems(options.readRouterQueue ?? readRouterQueueSource, options);
+  const channelHealth = await channelHealthItems(options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -2310,10 +3843,13 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     bus: bus.report,
     mailbox: mailbox.report,
     board: board.report,
+    'work-board': workBoard.report,
     conversations: conversations.report,
     wakes: wakes.report,
     seats: seats.report,
     'peer-dispatch': peerDispatch.report,
+    'session-handoff': sessionHandoffs.report,
+    'org-outbox': orgOutbox.report,
     gmail: gmail.report,
     linkedin: linkedin.report,
     requests: requests.report,
@@ -2322,8 +3858,17 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'team-approvals': teamApprovals.report,
     proposals: proposals.report,
     slack: slack.report,
+    'slack-sends': slackSends.report,
+    'leader-delivery': leaderDelivery.report,
+    'leader-network': leaderNetwork.report,
+    'leader-replies': leaderReplies.report,
+    coordination: coordination.report,
+    'claim-drift': claimDrift.report,
+    'send-gate': sendGate.report,
+    'router-queue': routerQueue.report,
+    'channel-health': channelHealth.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

@@ -39,6 +39,24 @@ it('keeps missing, stale, future, incomplete and invalid files unknown without e
   expect((await readFleetStartStatus({ read: async () => { throw Error('PRIVATE'); } })).reason).toContain('missing or unreadable');
 });
 
+it.each(['2026-11-26T02:26:30-0500', '2026-11-26T02:26:30-05:00', '2026-11-26T07:26:30Z',
+  '2026-11-26T07:26:30+00:00'])('accepts a zoned launch-guard timestamp %s', async ts => {
+  const captured = Date.parse('2026-11-26T07:29:19Z'), written = Date.parse('2026-11-26T07:26:30Z');
+  const guard = JSON.parse(await fixture('blocked'));
+  const text = JSON.stringify({ ...guard, ts, last_admit: written / 1000 - 60 });
+  expect(admissionStatus(text, captured)).toMatchObject({ state: 'blocked', reason: 'host busy', ts: written / 1000 });
+  expect(admissionStatus(text, written - 1).reason).toBe('invalid admission timestamp');
+  expect(admissionStatus(text, written + 300_001).reason).toBe('admission file older than 5 min');
+});
+
+it('does not use a dispatcher load snapshot as a launch-guard verdict', () => {
+  const text = JSON.stringify({ ts: '2026-11-26T02:26:30-0500', admit: true, load1: 37.8, load_max: 36, cap: 34,
+    running: 3, daemon_tick_age_s: 711 });
+  expect(admissionStatus(text, Date.parse('2026-11-26T07:29:19Z'))).toMatchObject({
+    state: 'unknown', reason: 'incomplete admission file', total_running: null,
+  });
+});
+
 it('never treats a positive settle setting alone as waiting, or a full cap as open', async () => {
   const raw = JSON.parse(await fixture('open'));
   expect(admissionStatus(JSON.stringify({ ...raw, total_running: 48 }), now).reason).toBe('running limit reached');

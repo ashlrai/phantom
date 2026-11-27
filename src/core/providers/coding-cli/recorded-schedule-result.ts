@@ -31,6 +31,11 @@ import {
 import type { RecordedGreedyAssignment } from './recorded-greedy-assignment.js';
 import type { NormalizedRecordedSolverResult } from './recorded-solver-result.js';
 import { projectRecordedSolution, type SolutionVariableRow } from './solution-projection.js';
+import {
+  isFiniteNumber,
+  isNonEmptyString as isNonEmpty,
+  isRecord as isPlainObject,
+} from './validation.js';
 
 /** Pinned provenance. Describes a recording, never a live schedule. */
 export const RECORDED_SCHEDULE_RESULT_PROVENANCE = Object.freeze({
@@ -95,10 +100,6 @@ export class RecordedScheduleResultError extends Error {
 const fail: (message: string) => never = (message) => {
   throw new RecordedScheduleResultError(message);
 };
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-const isNonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
-const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
 /**
  * Replay one recorded run into selections and decision rows. Pure and

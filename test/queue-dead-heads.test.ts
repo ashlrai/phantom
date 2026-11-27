@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { queueDeadHeads } from '../src/core/fleet/queue-dead-heads.js';
 import { cmdFleetDeadHeads } from '../src/cli/fleet-dead-heads.js';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +28,35 @@ describe('queue dead heads', () => {
     expect(queueDeadHeads('job\tpool\tstatus\nFAKE-A\tPARKED-AFTER.devin\tREADY\n../bad\tdevin\tREADY\nFAKE-B\tdevin\tRUNNING\nmissing\nFAKE-C\tdevin\tREADY\n', reasons, 4))
       .toEqual([{ lane: 'devin', deadLines: [], firstLaunchablePosition: 1, roundsLost: 0 }]);
   });
+  it('attributes spec-less rows through their router-queue envelope like the market', () => {
+    // The lane column says codex, but each row's envelope names the lane the
+    // market would actually route to; an open envelope leaves the row
+    // lane-unhinted, invisible to every lane's dead-head count.
+    const routerQueue = [
+      '- READY phantom RQ-DEAD-A (preferred_lane=claude): dead on claude',
+      '- READY phantom RQ-LIVE-A (preferred_lane=claude): launchable on claude',
+      '- READY phantom RQ-OPEN-A (P2): open supply',
+    ].join('\n');
+    const specLess = [
+      'RQ-DEAD-A\tphantom\tcodex\twork\tprompts/a.md',
+      'RQ-LIVE-A\tphantom\tcodex\twork\tprompts/b.md',
+      'RQ-OPEN-A\tphantom\tcodex\twork\tprompts/c.md',
+    ].join('\n');
+    const localReasons = new Map([['RQ-DEAD-A', 'after_open_RQ-DEP-1']]);
+    expect(queueDeadHeads(specLess, localReasons, 4, routerQueue)).toEqual([{
+      lane: 'claude',
+      deadLines: [{ job: 'RQ-DEAD-A', position: 1, reason: 'after_open_RQ-DEP-1' }],
+      firstLaunchablePosition: 2,
+      roundsLost: 1,
+    }]);
+    // Without the envelope text the same rows keep their lane-column hints.
+    expect(queueDeadHeads(specLess, localReasons, 4)).toEqual([{
+      lane: 'codex',
+      deadLines: [{ job: 'RQ-DEAD-A', position: 1, reason: 'after_open_RQ-DEP-1' }],
+      firstLaunchablePosition: 2,
+      roundsLost: 1,
+    }]);
+  });
   it('stops after the requested launch cap, counting intervening dead rounds', () => {
     expect(queueDeadHeads(`FAKE-LIVE\tdevin\n${ready}`, reasons, 1)[0]).toMatchObject({ deadLines: [], roundsLost: 0 });
     expect(queueDeadHeads(`FAKE-LIVE\tdevin\n${ready}`, reasons, 2)[0]).toMatchObject({ roundsLost: 8, firstLaunchablePosition: 1 });
@@ -37,6 +69,28 @@ describe('queue dead heads', () => {
     const report = JSON.parse(String(log.mock.calls[0]![0]));
     expect(report.schema).toBe('fleet.dead-heads.v1');
     expect(report.lanes).toEqual(queueDeadHeads(ready, reasons, 4));
+  });
+  it('resolves spec-less envelopes when router-queue.md outgrows the old read bound', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dead-heads-bound-'));
+    try {
+      mkdirSync(join(root, 'queue', 'run'), { recursive: true });
+      writeFileSync(join(root, 'queue', 'ready.tsv'), 'RQ-DEEP-A\tphantom\tcodex\twork\tprompts/a.md\n');
+      writeFileSync(join(root, 'queue', 'run', 'RQ-DEEP-A.skipped-empty'), 'after_open_RQ-DEP-1');
+      const pad = `# ${'y'.repeat(1024)}\n`.repeat(2200);
+      writeFileSync(join(root, 'queue', 'router-queue.md'), pad +
+        '- READY phantom RQ-DEEP-A (preferred_lane=claude): dead on claude\n');
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      expect(await cmdFleetDeadHeads(['--root', root, '--json'])).toBe(0);
+      const report = JSON.parse(String(log.mock.calls.at(-1)![0]));
+      expect(report.lanes).toEqual([{
+        lane: 'claude',
+        deadLines: [{ job: 'RQ-DEEP-A', position: 1, reason: 'after_open_RQ-DEP-1' }],
+        firstLaunchablePosition: null,
+        roundsLost: 1,
+      }]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
   it('rejects invalid options and reports unavailable evidence without filesystem details', async () => {
     expect(await cmdFleetDeadHeads(['--cap', '0'])).toBe(2);

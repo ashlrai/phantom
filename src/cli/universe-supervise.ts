@@ -1,5 +1,5 @@
-import { isAbsolute, parse as parsePath, resolve } from 'node:path';
 import type { UniverseCampaignSupervisorOptions } from '../core/universe/campaign-supervisor.js';
+import { isCanonicalAbsolutePath as canonicalPath } from '../core/universe/input-guards.js';
 
 const USAGE = `usage: ashlr universe campaign supervise <id> [id ...] --root <absolute> --max-duration-ms <N>
   [--max-concurrent <1..4>] [--poll-interval-ms <50..60000>]
@@ -33,13 +33,6 @@ Exit codes: 0 all campaigns completed, 1 incomplete/failed/timed-out,
 `;
 
 class UsageError extends Error {}
-
-function canonicalPath(value: string): boolean {
-  return isAbsolute(value) && resolve(value) === value && parsePath(value).root !== value &&
-    Buffer.byteLength(value) <= 4096 && ![...value].some((character) => {
-      const code = character.charCodeAt(0); return code < 32 || code >= 127 && code <= 159;
-    });
-}
 
 function parse(args: string[]): { ids: string[]; options: UniverseCampaignSupervisorOptions; json: boolean; deliveryPlanPath?: string } {
   const ids: string[] = []; const seen = new Set<string>();

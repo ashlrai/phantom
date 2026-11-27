@@ -13,6 +13,7 @@
 import {
   listTrajectoryRecords,
   summarizeTrajectoryLearning,
+  trajectoryWindowMaxFiles,
   type TrajectoryRecord,
   type TrajectoryRecordListOptions,
   type TrajectorySkillOutcomeSummary,
@@ -50,20 +51,23 @@ export function readSkillTrajectoryOutcomes(
   try {
     const windowHours = opts.windowHours && opts.windowHours > 0 ? opts.windowHours : DEFAULT_WINDOW_HOURS;
     const limit = opts.limit && opts.limit > 0 ? Math.floor(opts.limit) : DEFAULT_LIMIT;
-    const sinceMs = Date.now() - windowHours * 60 * 60 * 1000;
+    const asOfMs = Date.now();
+    const sinceMs = asOfMs - windowHours * 60 * 60 * 1000;
     const readEvents = deps.readSkillUseEvents ?? readSkillUseEventsWithDiagnostics;
     // Mirror the windowed read trajectory-records performs so the health gate
     // and the join see the same skill-use snapshot.
     const skillRead = readEvents({
       sinceMs,
+      asOfMs,
       limit: Math.max(limit * 8, 400),
-      maxFiles: 3,
+      maxFiles: trajectoryWindowMaxFiles(windowHours),
     });
     if (skillRead.eventState === 'degraded') return null;
     const listRecords = deps.listRecords ?? listTrajectoryRecords;
     const records = listRecords({
       windowHours,
       limit,
+      asOfMs,
       deps: { readSkillUseEvents: () => skillRead.events },
     });
     const summarize = deps.summarize ?? summarizeTrajectoryLearning;

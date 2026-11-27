@@ -14,12 +14,12 @@ const now = Date.parse('2026-01-01T12:00:00Z');
 let root = '';
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); });
 
-async function fixture(lastTick = now, paused = false) {
+async function fixture(lastTick = now, paused = false, admission?: Record<string, unknown>) {
   root = await mkdtemp(join(tmpdir(), 'headroom-api-'));
   await mkdir(join(root, 'queue'));
   await mkdir(join(root, 'metrics'));
   await writeFile(join(root, 'queue/status.json'), JSON.stringify({
-    last_tick: new Date(lastTick).toISOString(), paused, mem_free_pct: 50,
+    last_tick: new Date(lastTick).toISOString(), paused, mem_free_pct: 50, admission,
     lanes: {
       held: { running: 1, target: 5, effective_target: 4, queued: 0, held: true },
       shed: { running: 1, target: 5, effective_target: 3, queued: 0, held: false },
@@ -67,4 +67,21 @@ test.each([
   expect(report).toMatchObject({ fresh, paused, schema: 'fleet.status-api.v1' });
   expect(report.lanes).toHaveLength(6);
   expect(report.lanes.every(lane => lane.available === null)).toBe(true);
+});
+
+test.each([
+  ['one shared slot', { cap: 10, running: 9 }, 1],
+  ['at fleet cap', { cap: 10, running: 10 }, 0],
+  ['over fleet cap', { cap: 10, running: 11 }, 0],
+  ['admission stopped below cap', { cap: 10, running: 9, admit: false }, 0],
+  ['load gate', { gate_reason: 'load gate active' }, 0],
+  ['malformed count', { cap: 10, running: '9' }, 3],
+  ['admission from another tick', { ts: new Date(now - 30_000).toISOString(), decision: 'stop' }, 3],
+] as const)('%s bounds lane availability consistently in both views', async (_label, admission, expected) => {
+  const report = await fixture(now, false, { ts: new Date(now).toISOString(), ...admission });
+  for (const lanes of [report.lanes, report.awareness.lanes]) {
+    expect(lanes.find(lane => lane.lane === 'absent')?.available).toBe(expected);
+    expect(lanes.find(lane => lane.lane === 'shed')?.available).toBe(Math.min(2, expected));
+    expect(lanes.find(lane => lane.lane === 'held')?.available).toBe(0);
+  }
 });

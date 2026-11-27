@@ -1,6 +1,7 @@
 /** One read-only health probe over every store the unified `agents bus` verbs
  * touch: the message inbox, the identity registry, the wake queue, the shared
  * coordination table, the message-id claim journal, the v2 work feed, the
+ * bus hop log every wake-enabled send appends, the
  * shared task board and fleet queue `work mine`'s board section reads, the
  * owner-chat share receipts ledger `inbox` consults for `agent-chat-owner`
  * envelopes, the legacy `phm bus` mailbox `work mine` still reads, the
@@ -9,9 +10,19 @@
  * receipts, the agentnet peer work-dispatch
  * journal `consumePeerWork` and the unified inbox peer-dispatch source read,
  * the agentnet peer coordination ledger `sendPeerMessage`, `readPeerInbox`,
- * `peers dispatch` and `phm fleet peer-ledger` parse, the session-handoff
+ * `peers dispatch` and `phm fleet peer-ledger` parse, the agentnet peer
+ * session bindings `peers send|post|read|list|dispatch` authenticate
+ * against and the host-provisioned dispatch policy `consumePeerWork`
+ * requires, the pending peer-mail backlog `peers read` would return for
+ * this host's live-enrolled callsigns, the transport dead-letter sink's
+ * retained delivery-failure reports `phm comms bus read --to
+ * bus.dead-letter` and the unified inbox `bus-dead-letter` items surface,
+ * the session-handoff
  * journal store `phm checkpoint handoff list|show` and
- * `fleet_session_handoffs` read, the claim-store
+ * `fleet_session_handoffs` read, the advisory fleet coordination ledger
+ * (`fleet.coordination.v1`) `work mine`'s coordination section,
+ * `phm fleet coordination` and the unified inbox coordination source
+ * read, the claim-store
  * drift verdict comparing the claim journal with the coordination table it
  * is dual-written to, and the outbound send gate `localWriteGate` applies
  * before every bus write lands. Each
@@ -19,11 +30,15 @@
  * unavailable or null, never zero, and the whole read never throws. Read-only:
  * takes no writer lock, writes nothing, makes no network calls and grants
  * nothing. */
+import { createHash } from 'node:crypto';
+import { lstatSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
-import { inspectBusInbox, busPathMissing, type BusInboxInspection } from '../fleet/bus-inbox.js';
+import { inspectBusInbox, busPathMissing, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
+  type BusInboxInspection, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { readClaimStoreDrift } from '../fleet/claim-store-drift.js';
+import { readFleetCoordinationPending } from '../fleet/coordination.js';
 import { createBusMailbox } from '../fleet/bus-mailbox.js';
 import { BusBoard, busBoardStoragePaths, type BusBoardStateSummary } from '../fleet/bus-board.js';
 import { SharedStore } from '../fleet/shared-store.js';
@@ -32,12 +47,15 @@ import { loadConfigReadOnlyStrict } from '../config.js';
 import type { AshlrConfig } from '../types.js';
 import { listCoordination } from './claim-store.js';
 import { readBusWakes } from '../fleet/bus-wake-queue.js';
+import { BUS_HOPLOG_TAIL_MAX_ROWS, readBusHoplogTail } from '../fleet/bus-hoplog.js';
 import { readAgentRegistry } from './bus-identity.js';
 import { inspectSeatStore } from '../bots/seats.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { ownerChatRoot, ownerReceiptDir, readOwnerChatReceipts } from './chat-owner-receipts.js';
-import { readWorkDispatchJournal } from '../agentnet/work-dispatch-journal.js';
-import { readPeerLedger } from '../agentnet/peer-ledger.js';
+import { readWorkDispatchJournal, workDispatchResultBody } from '../agentnet/work-dispatch-journal.js';
+import { inspectPeerDispatchPolicy } from '../agentnet/work-dispatch.js';
+import { readPeerLedger, readPeerLedgerRows, type PeerLedgerRow } from '../agentnet/peer-ledger.js';
+import { inspectPeerBindings, readPeerBindings } from '../agentnet/slack-identities.js';
 import { listSessionHandoffs } from './session-handoff.js';
 import { handoffPressure } from './session-handoff-schema.js';
 import { probePauseState } from '../comms/pause.js';
@@ -58,6 +76,23 @@ export interface UnifiedBusStatusOptions {
    * runs here: quota evidence, live claims and node jobs stay with the
    * async `planSeatHandoffs` read. */
   seats?: { home?: string };
+  /** Peer bindings path override — the same `PeerBusOptions.bindings`
+   * `peers list` and every authenticated peer verb resolves; default
+   * `agentnetPaths().bindings` under `realHome()`. A `root` override does
+   * NOT relocate it: the peer verbs keep reading the host-enrolled
+   * bindings regardless of which bus root their journals land under, so
+   * the probe follows the same resolution rather than inventing a
+   * bus-root-relative path no verb touches. */
+  agentnetBindings?: string;
+  /** Advisory fleet coordination ledger (`fleet.coordination.v1`) path
+   * override for the `fleetCoordination` section — the same
+   * `BusWorkMineOptions.coordination.path` `work mine`'s coordination
+   * section and the unified inbox coordination source resolve; default the
+   * ledger's own locator (`PHANTOM_FLEET_LEDGER_PATH`, else
+   * `$ASHLR_HOME/fleet/coordination.jsonl`). A `root` override does NOT
+   * relocate it: the consumers never read a bus-root-relative ledger, so
+   * the probe follows the same resolution rather than inventing one. */
+  coordination?: { path?: string };
   now?: () => number;
 }
 
@@ -80,6 +115,33 @@ export interface UnifiedBusStatus {
     /** Hints observed in the bounded queue tail, before the read's row cap; null unless the queue was read. */
     hints: number | null;
     /** Older bytes or hints sit beyond the bounded tail or row cap; null when the queue state is unknown. */
+    truncated: boolean | null;
+  };
+  /** Bus hop log (`<root>/bus/hops.jsonl`, or `busHoplogPath()` when no
+   * root override is set) behind `fleet_bus_hops`, the fleet live-bus
+   * feed's hop pane and the wake-hop recording every `dm`, `post`,
+   * `channel post`, `handoff`, `wake` and channel-mirror send appends —
+   * read by `readBusHoplogTail`, the same bounded tail
+   * `readFleetBusHops` serves under the same path the send path's
+   * `hoplogFile` resolves, so a corrupt, permissive or otherwise
+   * unreadable log is named here instead of leaving status green while
+   * hop reads report unreadable and sends record `hoplog: 'failed'`.
+   * Counts only, never message ids, agent labels or bodies. */
+  hoplog: {
+    state: 'missing' | 'unreadable' | 'ok';
+    /** On-disk byte size when the log passed custody checks; 0 on a
+     * verified-missing log (an absent file holds no bytes), null when
+     * it cannot be read. */
+    bytes: number | null;
+    /** Valid hops inside the bounded tail window — a floor the
+     * `truncated` flag qualifies, never a fleet-wide total; 0 on a
+     * verified-missing log, null when unreadable. */
+    hops: number | null;
+    /** Malformed, torn or unvalidated rows inside the read window —
+     * degraded evidence, never recorded activity; same null rule. */
+    skippedRows: number | null;
+    /** Older bytes or further hops sit beyond the bounded read; null
+     * when the log state is unknown. */
     truncated: boolean | null;
   };
   /** Shared coordination table behind `claim` and feed `--claims` joins. */
@@ -226,6 +288,99 @@ export interface UnifiedBusStatus {
      * counts; 0 on a verified-missing ledger, null when it cannot be read. */
     liveRows: number | null;
   };
+  /** Agentnet peer session bindings (`agentnetPaths().bindings` —
+   * `<realHome>/.ashlr/agentnet/bindings.json` — or the probe's
+   * `agentnetBindings` override) behind `phm agentnet peers
+   * send|post|read|list|dispatch` and `consumePeerWork`'s consumer
+   * authentication — read by `inspectPeerBindings`, the count-only
+   * counterpart of the `readPeerBindings` validation every peer verb
+   * runs. Like `sendGate`, the path resolves under `realHome()` and is
+   * never relocated by the probe's `root` override: the peer verbs keep
+   * authenticating against the host-enrolled file whatever bus root
+   * their journals use, so a corrupt, public-mode or conflicting
+   * bindings file is named here instead of leaving status green while
+   * every peer verb refuses closed. Counts only, never callsigns, lanes,
+   * session ids, hashes or team/user/bot ids. */
+  peerBindings: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Binding rows retained; 0 on a verified-missing file, null when it
+     * cannot be read or validated. */
+    peers: number | null;
+    /** Rows whose `expiresAt` is still ahead of the probe's clock —
+     * sessions that can authenticate now; same null rule. */
+    active: number | null;
+  };
+  /** Agentnet peer dispatch policy (`dispatch.json` beside the resolved
+   * bindings path — the sibling-of-bindings path `consumePeerWork`
+   * resolves) behind `phm agentnet peers dispatch --apply` — read by
+   * `inspectPeerDispatchPolicy`, validated by the same `policySchema`
+   * the consumer enforces, so a missing or invalid policy is named here
+   * instead of leaving status green while dispatch refuses
+   * 'dispatch-unavailable-or-gated'. Counts only, never peer callsigns,
+   * repository names, tier ceilings or path grants. */
+  peerDispatchPolicy: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Peer callsigns the policy allows; 0 on a verified-missing file,
+     * null when it cannot be read or validated. Counts only. */
+    peers: number | null;
+    /** Repository capability rows the policy carries; same null rule. */
+    repositories: number | null;
+  };
+  /** Pending peer mail the `peers read` admission proofs accept for this
+   * host's live-enrolled callsigns — the one peer-inbox signal the probe
+   * used to leave unreported, so an agent can tell admitted peer mail is
+   * waiting without holding a session. The count applies `readPeerInbox`'s
+   * own rules fleet-wide instead of per session: a retained bus envelope
+   * counts when a live coordination-ledger row proves this host sent it to
+   * an enrolled callsign (id, target, send instant, 24h window and body
+   * digest all matching, exactly as the sessioned read requires) or when
+   * the private dispatch journal proves this host published that
+   * work.result outcome to the addressed callsign. It reads the same
+   * stores under the same roots the peer verbs resolve — the bindings
+   * file at `peerBindingsPath`, the ledger, journal and bus store under
+   * `agentnetBusRoot` — so a corrupt file is named here instead of leaving
+   * status green while `peers read` refuses or silently drops admitted
+   * mail. Counts only, never callsigns, digests, threads or bodies;
+   * `pending` is exact inside the bounded scan `truncated` flags — 0 on a
+   * verified-empty peer plane or bus store, null when any admission input
+   * cannot be read (an unreadable journal leaves work.result mail
+   * unprovable, so the total is unknown rather than a ledger-only
+   * undercount). */
+  peerInbox: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Bus envelopes the peer admission proofs accept for a live-enrolled
+     * callsign; same null rule as the other pending counts. */
+    pending: number | null;
+    /** The bounded bus scan did not cover every retained receipt, so
+     * `pending` is a floor; null when the store state is unknown. */
+    truncated: boolean | null;
+  };
+  /** Transport dead-letter sink (`bus.dead-letter`, docs/AGENT-BUS.md
+   * "Dead letters") behind `phm comms bus read --to bus.dead-letter` and
+   * the unified inbox `bus-dead-letter` items — the `status` envelopes the
+   * router files when delivery provably never landed, kept in the same
+   * bus store under their own TTL. Each live letter is mail that never
+   * arrived, so a growing backlog means routing or transports are failing
+   * somewhere the per-message surfaces only show one item at a time. The
+   * probe pages the same bounded live-receipt scan `peerInbox` runs and
+   * counts envelopes addressed to the sink, tallying the reason the router
+   * recorded (`exhausted`, `expired`, `no-route`; `other` for a letter
+   * whose stored body the defensive read cannot parse — stored envelopes
+   * are untrusted data, so an unreadable reason never drops the letter
+   * from `pending`). Counts and reason buckets only, never envelope ids,
+   * original parties or bodies. */
+  deadLetters: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Live envelopes addressed to `bus.dead-letter`; 0 on a
+     * verified-missing or verified-empty store, null when unreadable. */
+    pending: number | null;
+    /** Pending letters by recorded reason — the four buckets always sum
+     * to `pending`; null when `pending` is null. */
+    reasons: { exhausted: number; expired: number; noRoute: number; other: number } | null;
+    /** The bounded scan did not cover every retained receipt, so `pending`
+     * and `reasons` are a floor; null when the store state is unknown. */
+    truncated: boolean | null;
+  };
   /** Session-handoff journal store (`<runsRoot>/handoffs/*.jsonl`) behind
    * `phm checkpoint handoff list|show` and `fleet_session_handoffs` — read
    * by `listSessionHandoffs`,
@@ -254,6 +409,32 @@ export interface UnifiedBusStatus {
     /** More journal files exist than the bounded scan covers; null when
      * the store state is unknown. */
     truncated: boolean | null;
+  };
+  /** Advisory fleet coordination ledger (`fleet.coordination.v1`,
+   * `coordination.jsonl` under the fleet home — `PHANTOM_FLEET_LEDGER_PATH`
+   * or `$ASHLR_HOME/fleet/coordination.jsonl` by default, or the probe's
+   * `coordination.path` override — never relocated by `root`, the same
+   * resolution every consumer applies) behind `work mine`'s coordination
+   * section, `phm fleet coordination inbox|board|returns`, the unified
+   * inbox coordination source and the `fleet_coordination_*` MCP tools —
+   * all served by `readFleetCoordinationPending`, the same pure replay
+   * this probe runs (never the board read's reaping mutation path), so a
+   * corrupt, unsafe or otherwise unreadable ledger is named here instead
+   * of leaving status green while those reads report unavailable. Counts
+   * only — the pending surface's size, never agent labels, repos, task
+   * text, message bodies or record ids. */
+  fleetCoordination: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Live posted coordination messages still inside their TTL; 0 on a
+     * verified-missing ledger, null when it cannot be read. */
+    messages: number | null;
+    /** Live assignment proposals (`executionAuthorized:false`, advisory —
+     * never spawning work); same null rule. */
+    proposals: number | null;
+    /** Unpublished RESULT intents whose receipt is still inside its TTL —
+     * the `released-unposted` class only this projection names; same
+     * null rule. */
+    returns: number | null;
   };
   /** Outbound send gate behind every bus write verb — the kill-switch
    * sentinel and the comms soft-pause flag `localWriteGate` consults
@@ -330,6 +511,148 @@ function probeBusBoard(options: UnifiedBusStatusOptions): UnifiedBusStatus['boar
     pendingDeliveries: summary.pendingDeliveries, claims };
 }
 
+const PEER_INBOX_LIVE_MS = 86_400_000;
+const PEER_WORK_RESULT_ID = /^(pw-[a-f0-9]{32})-(reserved|admitted|complete|failed)$/;
+
+/** Count the bus envelopes `readPeerInbox`'s admission proofs accept for
+ * every live-enrolled callsign at once — the sessioned read's per-peer
+ * filter evaluated fleet-wide. Ledger rows prove peer sends; dispatch
+ * journal receipts prove work.result replies. Anything either proof
+ * cannot verify stays uncounted, matching the sessioned read's own
+ * conservative admission. */
+function probePeerInbox(input: {
+  busRoot: string | undefined; bindingsPath: string | undefined; now: () => number;
+}): UnifiedBusStatus['peerInbox'] {
+  const unavailable: UnifiedBusStatus['peerInbox'] = { source: 'unavailable', pending: null, truncated: null };
+  if (input.busRoot === undefined || input.bindingsPath === undefined) return unavailable;
+  const nowMs = input.now();
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) return unavailable;
+  let enrolled: 'missing' | 'available';
+  try { lstatSync(input.bindingsPath); enrolled = 'available'; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') enrolled = 'missing';
+    else return unavailable;
+  }
+  const callsigns = new Set<string>();
+  if (enrolled === 'available') {
+    try {
+      for (const peer of readPeerBindings(input.bindingsPath)) {
+        if (peer.expiresAt > nowMs) callsigns.add(peer.callsign);
+      }
+    } catch { return unavailable; }
+  }
+  // No live-enrolled callsign can hold admitted mail: 0 is proven without
+  // touching the bus store, ledger or journal.
+  if (callsigns.size === 0) {
+    return { source: enrolled === 'missing' ? 'missing' : 'available', pending: 0, truncated: false };
+  }
+  const store = inspectBusInbox({ root: input.busRoot, now: input.now });
+  if (store.source === 'missing') return { source: 'missing', pending: 0, truncated: false };
+  if (store.source !== 'available') return unavailable;
+  const ledger = readPeerLedgerRows({ busRoot: input.busRoot });
+  if (ledger.status === 'unavailable') return unavailable;
+  const journal = readWorkDispatchJournal(input.busRoot);
+  // work.result replies admit only on journal proof; an unreadable journal
+  // leaves that half of the count unprovable, so the total is unknown.
+  if (journal.status === 'unavailable') return unavailable;
+  const dispatched = new Map(journal.receipts.map(receipt => [receipt.receiptId, receipt]));
+  const admittedRows = new Map<string, PeerLedgerRow[]>();
+  for (const row of ledger.rows) {
+    if (!callsigns.has(row.target) || row.at > nowMs || nowMs - row.at >= PEER_INBOX_LIVE_MS) continue;
+    const list = admittedRows.get(row.id);
+    if (list) list.push(row); else admittedRows.set(row.id, [row]);
+  }
+  const workResultAdmitted = (original: NonNullable<BusInboxReceipt['originalEnvelope']>): boolean => {
+    if (!callsigns.has(original.to)) return false;
+    const match = PEER_WORK_RESULT_ID.exec(original.id);
+    if (!match) return false;
+    const receipt = dispatched.get(match[1]!);
+    return receipt !== undefined && receipt.peer === original.to && receipt.sent === match[2] &&
+      receipt.outcome === match[2] && original.from === receipt.consumer &&
+      JSON.stringify(original.body) === JSON.stringify(workDispatchResultBody(receipt));
+  };
+  let pending = 0, truncated = false, after = 0;
+  const maxPages = Math.ceil(BUS_INBOX_MAX_MESSAGES / BUS_INBOX_MAX_READ);
+  for (let page = 0; page < maxPages; page++) {
+    const result = listBusInboxAfter(after, BUS_INBOX_MAX_READ,
+      { root: input.busRoot, now: input.now, includeOriginalEnvelope: true });
+    if (result.status !== 'ok') {
+      if (page === 0) return unavailable;
+      truncated = true; break;
+    }
+    for (const receipt of result.messages) {
+      const original = receipt.originalEnvelope;
+      if (original === undefined) continue;
+      const ledgerHit = (admittedRows.get(original.id) ?? []).some(row =>
+        receipt.receivedAt === row.at &&
+        row.digest === createHash('sha256').update(JSON.stringify(original)).digest('hex'));
+      if (ledgerHit || workResultAdmitted(original)) pending++;
+    }
+    after = result.nextCursor;
+    if (result.messages.length < BUS_INBOX_MAX_READ) break;
+    if (page === maxPages - 1) truncated = true;
+  }
+  return { source: 'available', pending, truncated };
+}
+
+/** The transport dead-letter sink address (docs/AGENT-BUS.md "Dead
+ * letters"): the router files delivery-failure reports as `status`
+ * envelopes under this `to` label in the same bus store. Kept a literal —
+ * the same convention `fleet-edges` and the unified inbox apply, so this
+ * probe's import closure stays exactly what it was. */
+const BUS_DEAD_LETTER_ADDRESS = 'bus.dead-letter';
+
+/** The reason the router recorded on a dead-letter letter, read
+ * defensively from `body.payload.deadLetter.reason` — the sink's wire
+ * shape in bus-transport-file. Stored envelopes are untrusted data, so a
+ * body that does not carry the summary, or a reason outside the closed
+ * `DeadLetterReason` set, reports 'other' rather than guessing. */
+function deadLetterReason(body: unknown): 'exhausted' | 'expired' | 'no-route' | 'other' {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return 'other';
+  const payload = (body as Record<string, unknown>).payload;
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return 'other';
+  const letter = (payload as Record<string, unknown>).deadLetter;
+  if (letter === null || typeof letter !== 'object' || Array.isArray(letter)) return 'other';
+  const reason = (letter as Record<string, unknown>).reason;
+  return reason === 'exhausted' || reason === 'expired' || reason === 'no-route' ? reason : 'other';
+}
+
+/** Count the live envelopes addressed to the dead-letter sink — the same
+ * bounded live-receipt paging `probePeerInbox` runs over the same store,
+ * so a corrupt snapshot or an unreadable page degrades only this section.
+ * `listBusInboxAfter` already skips expired receipts, so every counted
+ * letter is one the unified inbox would still list as pending attention. */
+function probeDeadLetters(input: { root: string | undefined; now: () => number }): UnifiedBusStatus['deadLetters'] {
+  const unavailable: UnifiedBusStatus['deadLetters'] =
+    { source: 'unavailable', pending: null, reasons: null, truncated: null };
+  const store = inspectBusInbox({ root: input.root, now: input.now });
+  if (store.source === 'missing') {
+    return { source: 'missing', pending: 0,
+      reasons: { exhausted: 0, expired: 0, noRoute: 0, other: 0 }, truncated: false };
+  }
+  if (store.source !== 'available') return unavailable;
+  const reasons = { exhausted: 0, expired: 0, noRoute: 0, other: 0 };
+  let pending = 0, truncated = false, after = 0;
+  const maxPages = Math.ceil(BUS_INBOX_MAX_MESSAGES / BUS_INBOX_MAX_READ);
+  for (let page = 0; page < maxPages; page++) {
+    const result = listBusInboxAfter(after, BUS_INBOX_MAX_READ, { root: input.root, now: input.now });
+    if (result.status !== 'ok') {
+      if (page === 0) return unavailable;
+      truncated = true; break;
+    }
+    for (const receipt of result.messages) {
+      if (receipt.envelope.to !== BUS_DEAD_LETTER_ADDRESS) continue;
+      pending++;
+      const reason = deadLetterReason(receipt.envelope.body);
+      reasons[reason === 'no-route' ? 'noRoute' : reason]++;
+    }
+    after = result.nextCursor;
+    if (result.messages.length < BUS_INBOX_MAX_READ) break;
+    if (page === maxPages - 1) truncated = true;
+  }
+  return { source: 'available', pending, reasons, truncated };
+}
+
 /** Compose the dependency reads. Each probe is isolated: one failing
  * store degrades only its own section. */
 export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): UnifiedBusStatus {
@@ -354,6 +677,30 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     wakes = { state: read.state, hints: read.matched, truncated: read.truncated };
   } catch {
     wakes = { state: 'unreadable', hints: null, truncated: null };
+  }
+
+  // The hop log is the send path's own observability tail: every wake a
+  // bus send requests appends one validated row under
+  // `<root>/bus/hops.jsonl` — the same path `hoplogFile()` resolves for
+  // writes (or `busHoplogPath()` with no root, probed with its full
+  // ancestor custody chain). `readBusHoplogTail` is the same bounded
+  // read `readFleetBusHops` serves, so a sick log is named here instead
+  // of leaving status green while `fleet_bus_hops` reports unreadable
+  // and sends keep recording `hoplog: 'failed'`. Counts only, never
+  // ids, labels or bodies; a verified-missing log reports real zeros,
+  // the same convention the wake queue applies.
+  let hoplog: UnifiedBusStatus['hoplog'];
+  try {
+    const tail = readBusHoplogTail(BUS_HOPLOG_TAIL_MAX_ROWS,
+      options.root === undefined ? undefined : join(options.root, 'bus', 'hops.jsonl'));
+    hoplog = tail.state === 'ok'
+      ? { state: 'ok', bytes: tail.logBytes, hops: tail.hops?.length ?? null,
+          skippedRows: tail.skippedRows, truncated: tail.truncated }
+      : tail.state === 'missing'
+        ? { state: 'missing', bytes: 0, hops: 0, skippedRows: 0, truncated: false }
+        : { state: 'unreadable', bytes: null, hops: null, skippedRows: null, truncated: null };
+  } catch {
+    hoplog = { state: 'unreadable', bytes: null, hops: null, skippedRows: null, truncated: null };
   }
 
   let coordinationRead: ReturnType<typeof listCoordination> | undefined;
@@ -491,6 +838,57 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     peerLedger = { source: 'unavailable', liveRows: null };
   }
 
+  // The peer plane's auth root and dispatch policy resolve exactly as the
+  // peer verbs resolve them: `bindings` is an independent
+  // `PeerBusOptions` field — `agentnetPaths().bindings` under realHome(),
+  // or the probe's `agentnetBindings` override — that a `busRoot`/`root`
+  // override never relocates, and `dispatch.json` is its sibling, the
+  // path `consumePeerWork` derives. A sick file here refuses every peer
+  // call while the journal and ledger sections stay green. Counts only,
+  // never callsigns, session hashes, repo names, tiers or path grants;
+  // each inspector is total by contract but keeps its own try so one
+  // cannot hide the other's verdict.
+  // `agentnetPaths()` itself throws without a real home before any
+  // `PeerBusOptions` override applies, so the verbs refuse there too —
+  // the override only redirects an otherwise resolvable store.
+  const peerBindingsPath = agentnetHome === null ? undefined :
+    options.agentnetBindings ?? join(agentnetHome, '.ashlr', 'agentnet', 'bindings.json');
+  let peerBindings: UnifiedBusStatus['peerBindings'];
+  let peerDispatchPolicy: UnifiedBusStatus['peerDispatchPolicy'];
+  if (peerBindingsPath === undefined) {
+    peerBindings = { source: 'unavailable', peers: null, active: null };
+    peerDispatchPolicy = { source: 'unavailable', peers: null, repositories: null };
+  } else {
+    try {
+      peerBindings = inspectPeerBindings(peerBindingsPath, now());
+    } catch {
+      peerBindings = { source: 'unavailable', peers: null, active: null };
+    }
+    try {
+      peerDispatchPolicy = inspectPeerDispatchPolicy(peerBindingsPath);
+    } catch {
+      peerDispatchPolicy = { source: 'unavailable', peers: null, repositories: null };
+    }
+  }
+
+  let peerInbox: UnifiedBusStatus['peerInbox'];
+  try {
+    peerInbox = probePeerInbox({ busRoot: agentnetBusRoot, bindingsPath: peerBindingsPath, now });
+  } catch {
+    peerInbox = { source: 'unavailable', pending: null, truncated: null };
+  }
+
+  // Dead letters share the bus store `store` already inspected, so the
+  // probe reuses that same root — `options.root`, never the agentnet
+  // override the peer sections resolve — and each keeps its own try so a
+  // throwing page read cannot hide the peer verdict or vice versa.
+  let deadLetters: UnifiedBusStatus['deadLetters'];
+  try {
+    deadLetters = probeDeadLetters({ root: options.root, now });
+  } catch {
+    deadLetters = { source: 'unavailable', pending: null, reasons: null, truncated: null };
+  }
+
   // `phm checkpoint handoff list|show` and `fleet_session_handoffs` both
   // serve `listSessionHandoffs` over `<runsRoot>/handoffs` — the same
   // bounded scan under the same runs root the wake probe resolves
@@ -519,6 +917,35 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
   } catch {
     sessionHandoffs = { source: 'unavailable', journals: null, open: null,
       awaitingFailover: null, unreadable: null, truncated: null };
+  }
+
+  // The advisory fleet coordination ledger behind `work mine`'s
+  // coordination section, `phm fleet coordination inbox|board|returns`,
+  // the unified inbox coordination source and the `fleet_coordination_*`
+  // MCP tools. `readFleetCoordinationPending` is the same pure replay
+  // those surfaces serve — never the board read's reaping mutation path —
+  // under the same locator `fleetCoordinationPath` resolves or the
+  // probe's `coordination.path` override; a `root` override does not
+  // relocate it because the consumers never read a bus-root-relative
+  // ledger either. Its tri-state maps onto the probe's own: 'missing' is
+  // a verified-absent ledger (real zeros), 'known' a parsed one, 'unknown'
+  // or a throwing read reports unavailable with null counts — never an
+  // invented empty backlog. Counts only, never labels, repos, tasks,
+  // bodies or record ids.
+  let fleetCoordination: UnifiedBusStatus['fleetCoordination'];
+  try {
+    const pending = readFleetCoordinationPending({
+      ...(options.coordination?.path === undefined ? {} : { path: options.coordination.path }),
+      now: now(),
+    });
+    fleetCoordination = pending.state === 'missing'
+      ? { source: 'missing', messages: 0, proposals: 0, returns: 0 }
+      : pending.state === 'known'
+        ? { source: 'available', messages: pending.messages.length,
+            proposals: pending.proposals.length, returns: pending.returns.length }
+        : { source: 'unavailable', messages: null, proposals: null, returns: null };
+  } catch {
+    fleetCoordination = { source: 'unavailable', messages: null, proposals: null, returns: null };
   }
 
   // The send gate every bus write passes through. Both readers are total
@@ -552,5 +979,5 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     kill, pause,
   };
 
-  return { asOf, store, registry, wakes, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, sessionHandoffs, sendGate };
+  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, peerInbox, deadLetters, sessionHandoffs, fleetCoordination, sendGate };
 }

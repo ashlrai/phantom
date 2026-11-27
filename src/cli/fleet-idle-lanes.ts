@@ -1,15 +1,17 @@
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import {
   hasPooledDatedEvent,
   idleLaneAges,
   DEFAULT_STUCK_AFTER_MIN,
+  MAX_IDLE_LANE_LEDGER_BYTES,
+  readIdleLaneEvents,
   type IdleLaneAge,
 } from '../core/fleet/idle-lane-age.js';
 import { IDLE_LANES_SCHEMA, parseIdleLanes, type IdleLane } from '../core/fleet/idle-lanes.js';
-import { parseJobsJsonl } from '../core/fleet/lane-console.js';
+import { readLedgerTail } from '../core/router/outcomes.js';
 export type { IdleLane } from '../core/fleet/idle-lanes.js';
 
 export type IdleLaneReader = (path: string) => Promise<string>;
@@ -19,12 +21,13 @@ Read lanes with queued work. Red: room to run. Warn: held. Exit 1 if any lane is
 Each lane shows the age of its last jobs.jsonl event; a red lane quiet for 30 minutes or more is marked STUCK.
 --stuck-after <min>  Mark a red lane STUCK after this many quiet minutes (default 30; the desktop uses 15).`;
 
-// Same bound lane-console puts on jobs.jsonl.
-const MAX_LEDGER_FILE_BYTES = 8 * 1024 * 1024;
-
 async function readBounded(path: string): Promise<string> {
+  if (basename(path) === 'jobs.jsonl') {
+    const ledger = await readLedgerTail(path, MAX_IDLE_LANE_LEDGER_BYTES);
+    return ledger.state === 'read' ? ledger.text : '';
+  }
   const info = await stat(path);
-  if (!info.isFile() || info.size > MAX_LEDGER_FILE_BYTES) throw new Error('unreadable or over read bound');
+  if (!info.isFile() || info.size > MAX_IDLE_LANE_LEDGER_BYTES) throw new Error('unreadable or over read bound');
   return readFile(path, 'utf8');
 }
 
@@ -42,19 +45,11 @@ export async function cmdFleetIdleLanes(
   const stuckAfterMin = stuckAfterArg ?? DEFAULT_STUCK_AFTER_MIN;
   const json = args.includes('--json');
   try {
-    const queueDir = join(homedir(), '.ashlr-runs', 'queue');
-    const lanes = parseIdleLanes(await reader(join(queueDir, 'status.json')));
-    // Age is advisory: a missing, oversized or corrupt ledger never fails the command.
-    let aged: IdleLaneAge[] | null = null;
-    try {
-      const text = await reader(join(queueDir, 'jobs.jsonl'));
-      if (text.length <= MAX_LEDGER_FILE_BYTES) {
-        const { events } = parseJobsJsonl(text);
-        // Without a single dated, pooled event the ledger tells us nothing; keep the plain output.
-        if (hasPooledDatedEvent(events)) aged = idleLaneAges(lanes, events, Date.now(), stuckAfterMin);
-      }
-    } catch { /* ages stay unknown */ }
-    const rows: Array<IdleLane & Partial<IdleLaneAge>> = aged ?? lanes;
+    const runsDir = join(homedir(), '.ashlr-runs');
+    const lanes = parseIdleLanes(await reader(join(runsDir, 'queue', 'status.json')));
+    const events = await readIdleLaneEvents(runsDir, reader);
+    const rows: Array<IdleLane & Partial<IdleLaneAge>> = hasPooledDatedEvent(events)
+      ? idleLaneAges(lanes, events, Date.now(), stuckAfterMin) : lanes;
     if (json) {
       console.log(JSON.stringify({ schema: IDLE_LANES_SCHEMA, lanes: rows, stuckAfterMin }));
     } else {

@@ -114,7 +114,11 @@ phm channels --json   # schema phantom.channels.v1, same as GET /api/channels
 The desktop app's **Channels** pane (⌘K → "Open pane: Channels") draws the
 same JSON as one card per channel. A value no source can prove reads
 `unknown`, never a guessed zero; last outbound is `unknown` for channels
-without a per-channel delivery receipt yet.
+without a per-channel delivery receipt yet. A `~/.ashlr/config.json` that
+exists but cannot be read makes the facts it feeds — Telegram's setup state
+and the iMessage verified-sender count — read `unknown` as well, never a
+guessed "not set up" or 0; the iMessage count itself is the size of the
+`comms.imessageAllow`/`imessageHandle` allowlist, not just the handle.
 
 ## Setup and status from the CLI
 
@@ -137,14 +141,20 @@ source cannot be read. Pairing stores follow the same rule: a missing
 unpaired/zero, while an unreadable or malformed record reports `"unknown"` —
 never a guessed "not paired". `cli`, `desktop`, and `page` need no setup and
 always report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway
-file ([REMOTE-PHONE.md](REMOTE-PHONE.md)).
+file ([REMOTE-PHONE.md](REMOTE-PHONE.md)). The `imessage` row reads
+`comms.enabled`/`comms.imessageHandle` for `configured`, the
+`imessageAllow`/`imessageHandle` allowlist for `paired`, a chat.db probe for
+`ready`, and the `imessage.teammate-tasks.v1` ledger (queued + sending only)
+for `pendingOutbound` — `phm imessage doctor` is its next step when not
+ready. `phm channels add imessage` refuses: iMessage setup needs macOS Full
+Disk Access and handle detection a config write cannot grant.
 
 ## Where to watch it
 
 - **Desktop console** — the Channels pane (one card per channel), the
   Channel activity pane (inbox traffic per channel) and the Inbox pane.
 - **CLI** — `phm channels [--json]` shows every channel's state;
-  `phm channels status [--json]` rolls the six inbox kinds up;
+  `phm channels status [--json]` rolls the seven inbox kinds up;
   `phm comms bus read` shows every accepted bus envelope;
   `phm comms inbox read` reads the inbox file directly.
 - **API** — the `GET /api/verse/fleet/runs/inbox` route exposes the inbox in JSON.
@@ -331,7 +341,28 @@ pending`/`ack` for a delivery and `phm bus task claim`/`list` or `phm bus
 board pending` for a task, an absent board is `missing`, an unreadable
 board, config or queue is `unavailable`, and unreadable claims or a
 truncated item list is `degraded`, never an empty list passed off as fact —
-plus agent
+plus the coordination work board's pending requests (`phm fleet work-board`,
+the `listWorkBoard`/`classifyWorkItem` projection `fleet_work_board` and the
+cloud work-board route also serve): every durable bus request envelope the
+board classifies RECEIVED (no named owner or durable claim receipt yet),
+ASSIGNED (owned but its running evidence stale or absent) or BLOCKED (a
+reply named what it waits on) lists with its state as the kind —
+`work-board-received`/`work-board-assigned`/`work-board-blocked` — while
+RUNNING (fresh running evidence) and VERIFIED (proof of completion) never
+list, since done or provably progressing work is not pending. An envelope
+the bus source already represents — claimable work, a worker handoff or a
+`work.post` feed announcement — stays under `bus`, one pending thing one
+item, so what lists here is only what the board's ownership classification
+adds. `since` is the request's recorded `receivedAt`; `expiresAt` stays
+null (a retained receipt has no deadline). Items name the envelope id,
+channel, owner, claim receipt and missing-evidence list — never message
+bodies — and carry no provable job citation, so `--job` never matches;
+severity is warn for RECEIVED and BLOCKED, info for ASSIGNED, all
+non-blocking agent coordination. An unreadable inbox scan is `unavailable`
+with a null pending — never an empty board passed off as fact — and
+unreadable claims or coordination evidence, or a truncated board, is
+`degraded`. Act: `phm fleet work-board --state <state>`, `phm fleet
+work-trace --id <id>` — plus agent
 conversation threads still needing a person — the same `waiting` and
 `blocked` threads the one shared conversations projection computes,
 fleet-wide: a waiting item names who must answer, how long it has waited
@@ -367,7 +398,40 @@ names the peer, outcome, consumer and receipt with `since`/`expiresAt` null
 because the journal stamps receipt creation, not the last outcome move, and
 deep-links `phm agentnet peers dispatch --apply`; an absent journal is
 `missing`, an unreadable one `unavailable`, never an empty backlog passed off
-as fact) — plus
+as fact) — plus open session-handoff checkpoints (the same
+`listSessionHandoffs` bounded journal scan `phm checkpoint handoff
+list`, `fleet_session_handoffs`, the bus-status probe and `work mine`'s
+`sessions` section serve, so a checkpointed session waiting for a
+resume or failover pass lists beside seat handoffs and feed jobs
+instead of behind a third command; each open journal lists one warn,
+non-blocking item — checkpointed work is agent work, never
+Mason-blocking — with `since` the latest revision's recorded time,
+`expiresAt` the 24-hour resume bound `planSessionResume` refuses past,
+the journal's job id as its `--job` citation and the lane, model,
+minimum tier, repo, attempt, revision, needs and head as its scrubbed
+detail; a pressure signal — rate-limit, quota-exhausted or a budget at
+its threshold, the same `handoffPressure` verdict `planSessionFailover`
+applies — marks the item for failover, journals that fail validation or
+sit past the bounded scan degrade the source so pending stays a stated
+floor, an absent store is `missing` and an uninspectable one
+`unavailable`; items deep-link `phm checkpoint handoff show <runs-dir>
+<job>` and `phm checkpoint handoff list <runs-dir> --state open`) — plus
+org-membership bus events the org plane still owes the bus
+(`<runsDir>/org/agents.json` ledger entries with `busDelivered:false` — the
+exact set `previewOrgOutbox` replays and `phm fleet org-sync --apply` posts,
+one event per distinct `(revision, role)` edit under the stable id
+`org-<storeId>-<revision>-<roleId>`; until the apply pass runs the bus cannot
+see a staffing change the chart already recorded and `phm fleet org-board`
+reports only a pending count, so each warn item names the role, tier,
+status, proposing actor and ledger revision, carries `since` the entry's
+recorded application time and `expiresAt` null — the event waits for the
+next sync pass, never a guessed deadline — and deep-links `phm fleet
+org-sync --apply` and `phm fleet org-board`; the read applies the same
+`readAgentPlane` acceptance the org-sync/org-board reads do — private-file
+gate, `org.agents.v1` schema mirrored locally for the Tier-1 closure,
+chart invariants, secret-shape refusal and ledger contiguity — so an absent
+store is `missing` and any refusal `unavailable`, never an empty backlog
+passed off as fact) — plus
 Gmail archive-plan overages, LinkedIn messages saved as
 JSON files under `<runsDir>/comms/linkedin/inbox/` (answered when a file of the
 same id exists in `.../linkedin/answered/`; replies stay drafts) and live
@@ -419,19 +483,197 @@ time, `expiresAt` null since the request is lost until re-ingested,
 repeated failed ingests of one message collapsing to the newest row, deep
 links `phm fleet slack-trace --channel … --thread … --message …` and `phm
 channels slack status`, and source state the journal read's own — `ok`,
-`missing` or `degraded`, never fabricated) — and each item carries `act` deep-link commands (`phm fleet
+`missing` or `degraded`, never fabricated) — and outbound Slack sends
+still unconfirmed (the same `readSlackSendReceipts` the `phm channels
+slack status` `uncertainSends` count and the `phm fleet slack-trace` reply
+binding read: a send-store receipt journaled `attempted` is a post whose
+outcome the transport could not prove, kept so a later pass reconciles by
+history scan instead of risking a duplicate post — until then the
+recipient may never have seen the message, and every other surface reports
+only the count, so each unconfirmed send lists as a warn naming channel
+and thread ids only, never text; receipts keep no attempt timestamp, so
+`since`/`expiresAt` stay null — the send waits until reconciled, never a
+guessed deadline; `sent` receipts are proved deliveries and never list,
+repeated keys collapsing to one item, deep links `phm channels slack
+status`, `phm fleet slack-trace --channel … [--thread …]` and `phm
+channels slack run --seconds 60` — the bounded pass that re-drives the
+delivery and marks the receipt `sent` without reposting — with source
+state the send-store read's own, never fabricated) — and Leader-thread
+messages whose Telegram delivery the drain can no longer finish (the same
+`readLeaderThreadUndelivered` read-only scan of the thread log and delivery
+index `drainLeaderThread` drains — every listing path syncs memos first, a
+write, so the inbox reads the store directly: a memo, question, update or
+reply `failed` after its retries or `pending` past the 72 h offer window
+means Mason may never have seen it on his phone, a class until now visible
+only as the comms cycle's one-line outcome for the newest memo and in the
+Verse thread; each lists as a warn naming the message kind and state with a
+scrubbed text snippet, `since` the recorded post time and `expiresAt` null —
+a failed send waits for a decision, never a guessed deadline; fresh pending
+messages are the drain's own queue and never list, `sent` and never-queued
+messages are proved or out of scope; source state is the read's own —
+`missing` a verified-absent thread, `degraded` a truncated log,
+`unavailable` an unreadable or malformed store — never an empty list passed
+off as fact; deep links `phm channels`, `phm comms cycle` and `phm comms
+send-owner`) — and the leader network's durable route and digest state
+(the same bounded anchored read `readRouteReplyFacts` applies to
+`<runsDir>/leader/network-state.json`, never the locking `pending()`
+recovery pass: a verified owner request fully ingested for the leader —
+inbox append and bus mirror proven, no delivered or attempted reply —
+lists as a warn `leader-request`, the leader's own pending queue the
+owner-thread source cannot see because network replies record to
+MASON-OUTBOX.md, never the thread store — a reply recorded whose delivery
+failed non-ambiguously stays in that queue (the network retries it) and
+the item says "awaiting retry", never "awaiting reply"; a leader-bound route missing its
+inbox append or bus mirror, or any route whose bus publish never landed,
+lists as `leader-request-incomplete` — the request provably did not reach
+every store the leader reads; a reply or away-digest whose delivery
+attempt ended ambiguous (`attempted` without `delivered`/`sent`) lists as
+`leader-reply-unconfirmed`/`leader-digest-unconfirmed` — the network
+never retries an ambiguous attempt, so the owner may never have seen the
+answer; items name channel, routing label, timestamps and job citations
+only — owner recipient ids and channel refs never leave the reader, and
+request text is scrubbed like every other source; source state is the
+read's own — `missing` a verified-absent store, `unavailable` any
+refusal — never an empty backlog passed off as fact; deep links `phm
+leader inbox` and `phm comms thread`) — and leader replies to Mason
+still owed a proven iMessage delivery (the send ledger
+`<imessageStateDir>/leader-sent.jsonl` `sendLeaderReplies` appends —
+`{at, hash, status}` per attempted reply, the hash a content
+fingerprint, never text — read through the same
+last-status-per-hash fold `readClaimed` applies: a hash whose last row
+is `failed` lists as warn `leader-reply-failed`, the send provably did
+not land and the next live `phm imessage replies` pass retries it; a
+hash whose last row is `pending` older than the one-hour in-flight
+bound lists as warn `leader-reply-orphaned` — the process died between
+claim and outcome, `readClaimed` counts it as sent forever, and no
+pass ever retries it; fresh pending rows may be in flight and never
+list, `sent`/`baseline` rows are resolved claims; each item resolves
+its reply text through the same bounded `readOutboxEntries` read the
+sender uses — the ledger claims by text hash, so identical texts share
+one pending unit — showing a scrubbed snippet with its outbox stamp
+when the read still holds it and saying "reply text not in the current
+outbox read" when it does not, `since` the first recorded attempt and
+`expiresAt` null; source state is the read's own — `missing` a
+verified-absent ledger, `degraded` a tail-truncated read whose pending
+is a stated lower bound, `unavailable` an unreadable store — never an
+empty backlog passed off as fact; deep links `phm imessage replies`,
+`phm leader replies` and `phm comms send-owner`) — and the advisory coordination
+ledger's whole pending surface (the `fleet.coordination.v1` ledger at
+`~/.ashlr/fleet/coordination.jsonl`, through `readFleetCoordinationPending`
+— the same replay `readFleetBoard` runs, projected fleet-wide in one read
+and never its reaping mutation path: live ledger messages — `post` events
+addressed to one coordination label or `all`, live until their TTL — list
+as info `coordination-message` items carrying the scrubbed body as title,
+the routing labels as detail and the record's own `since`/`expiresAt`,
+deep-linking the addressed agent's `inbox` (the board for `all`
+broadcasts); live assignment proposals — `assign` events with
+`executionAuthorized:false`, advisory offers that never spawn work — list
+as info `coordination-assignment` items naming task, repo and assignee;
+and durable RESULT intents whose receipt publish never landed — a claim
+concluded `intended` whose `postFleetMessage` never ran, the
+`released-unposted` class `returnFleetClaim` reports once — list as warn
+`coordination-return-unposted` items naming claim id, returning agent and
+the receipt's expiry, since the released claim leaves the intent
+invisible to every board, claims and returns read until expiry deletes
+it; the owner-held lease-verified `return` retry is the detail, and lease
+material never leaves the store; `missing` is a verified-absent ledger,
+`unknown` any refusal — never an empty backlog passed off as fact; deep
+links `phm fleet coordination board` and `phm fleet coordination inbox
+--agent`) — and the claim-store drift verdict's disagreeing rows (the
+`fleet.claim-drift.v1` read `phm fleet claim-drift` serves — the same
+comparison `agents bus status` reports as counts only: live bus work
+claims against the live `queue:<id>` coordination leases they are
+dual-written to, joined on the `<id>:<cursor>:<receivedAt>` coordinate —
+a bus-only row the coordination overlap check cannot see, a
+coordination-only row the bus claims journal never recorded, and an
+owner-mismatch pair where the same lease shows two holders each list as
+warn `claim-drift-bus`/`claim-drift-coordination`/`claim-drift-owner`
+items naming envelope id, owner labels, cursor and lease deadline,
+`since` the claim coordinate's receipt time and `expiresAt` the lease
+expiry that ends the disagreement; `UNKNOWN` — a claim store that could
+not be read — reports `unavailable` with a null pending, never an empty
+verdict passed off as fact, and VERIFIED with both stores absent is
+`missing`; deep links `phm fleet claim-drift`, `phm agents bus show`,
+`phm agents bus claim list --key`) — and the outbound send gate's held
+verdicts (the kill-switch sentinel and comms soft-pause flag
+`localWriteGate`/`localBusHold` consult, read through the same
+`readKillSwitch` and `probePauseState` inspections `agents bus status`'s
+`sendGate` section serves, so the two surfaces can never disagree:
+pending items kept listing while every write verb refused, and an agent
+had to already know `agents bus status` to learn why nothing could
+drain; an engaged kill switch lists as high `send-gate-kill`, a set
+pause flag as high `send-gate-pause` — claims, sends and every local
+bus write refuse until it clears — while an uninspectable or unsafe
+gate file lists the same kind at warn, since the send path fails closed
+and refuses as if engaged but the probe honestly reports unknown rather
+than calling it a decision someone made; `since` is the pause flag's
+recorded start — the sentinel keeps no provable time, so kill items and
+unparseable flags stay null — `expiresAt` stays null since a gate waits
+for its release, never a guessed deadline; both gates clear is a
+verified-open source with a real zero, and either probe's own unknown
+verdict degrades the source — unknown stays unknown, never an open gate
+passed off as fact; deep links `phm agents bus status --json`, `phm
+fleet status`, `phm fleet resume`) — and READY jobs in the dispatch
+router queue that no recorded launch proves ever started (the same
+`readStuckQueue` read `phm queue stuck` and the desktop Queue view
+serve, so the surfaces can never disagree: work sitting READY in
+`queue/router-queue.md` while every bus, board, feed and coordination
+read shows nothing was invisible to the one view an agent checks for
+work; each unlaunched READY row lists as warn `router-queue-job`
+naming the job id — the same label `phm queue` verbs take — `since`
+the enqueue epoch or first dispatch-event time the wait is measured
+from and `expiresAt` null, since a queued job waits for a lane, never
+a guessed deadline; a missing `dispatch-events.log` degrades the
+source — every READY row still lists but its launch state is
+unproven, and the detail says so — an absent queue file is `missing`
+(verified-empty: no READY rows can exist) and an unreadable one
+`unavailable`, never an empty queue passed off as fact; deep links
+`phm queue stuck`, `phm fleet unfed --json`, `phm queue`) — and owner-channel
+transport health (the slack and iMessage bridges through `readChannelHealth`
+— the same projection `phm fleet channel-health` and `phm channels` serve —
+plus the Telegram poller through `telegramEnabled` + `readTelegramHealth`,
+the same read `phm comms health --json` serves, so the surfaces can never
+disagree: until now a dead bridge or a stale poller was invisible here —
+`phm channels` could show a channel ready while its process was gone, and an
+agent had to already know which diagnostic to run to learn owner traffic
+was not flowing; a configured bridge that is BLOCKED lists as high
+`channel-blocked`, DEGRADED as warn `channel-degraded` and UNKNOWN as warn
+`channel-unknown` — evidence incomplete or a receipt overdue, never called
+a decision — while a channel nobody configured (`BLOCKED` with
+`configured:false`, the overview's `not-set-up` row) and a LIVE one never
+list, since setup state is not pending work; the telegram leg lists only
+when `telegramEnabled` — the same gate the comms cycle's poll applies — as
+one `channel-degraded` item naming each failed check (a recorded poll
+error, no poll inside the 7-minute liveness window, no successful poll
+yet), and an unreadable main config or a throwing poll read lists
+`channel-unknown` instead; `since`/`expiresAt` stay null throughout —
+health keeps no condition-start time and a degraded channel waits for
+repair, never a guessed deadline — and either leg's own failure degrades
+the source, since a throwing read is itself the degraded/unknown evidence
+and `unavailable`/`missing` never apply to a live probe that always
+resolves; deep links `phm fleet channel-health`, `phm channels slack
+status`, `phm imessage doctor`, `phm comms health --json`, `phm comms
+cycle`, `phm channels`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
 `phm drafts approve`, `phm comms-agent drafts`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
-`phm bots handoff`, `phm agentnet peers dispatch`, `phm agents bus post`, `phm comms email-cycle`,
+`phm bots handoff`, `phm agentnet peers dispatch`, `phm checkpoint handoff show|list`, `phm fleet org-sync --apply`, `phm fleet org-board`, `phm agents bus post`, `phm comms email-cycle`,
 `phm fleet email-outbox`,
 `phm bus inbox`, `phm bus ack`, `phm bus thread pending`, `phm bus thread
 ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 `phm team approve|deny`, `phm inbox approve|reject`,
-`phm fleet slack-trace`, `phm channels slack status`). It never claims, replies, or mutates; a source
+`phm fleet slack-trace`, `phm channels slack status`, `phm channels slack
+run`, `phm channels`, `phm comms cycle`, `phm leader inbox`, `phm imessage
+replies`, `phm leader replies`, `phm comms send-owner`, `phm fleet
+coordination board`, `phm fleet coordination inbox --agent`, `phm fleet
+claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`,
+`phm agents bus status`, `phm fleet status`, `phm fleet resume`, `phm
+queue stuck`, `phm fleet unfed --json`, `phm queue`, `phm fleet
+channel-health`, `phm channels slack status`, `phm imessage doctor`, `phm
+comms health --json`, `phm comms cycle`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
@@ -444,8 +686,9 @@ severity band, `--blocking` only items that block, `--job <id>` only items
 that provably name that job — a bus or mailbox body's `busBodyJobMatch`
 citation, a feed job's id, a board task's fleet item or a delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job, a
-seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job) or a
-peer-dispatch receipt's job —
+seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
+peer-dispatch receipt's job, a session-handoff journal's job id or a
+router-queue row's own READY id —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound

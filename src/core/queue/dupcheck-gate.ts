@@ -74,7 +74,11 @@ export async function recordDupcheckGate(runsDir: string, gate: DupcheckGate, no
 export function parseDupcheckEvents(text: string): DupcheckEvent[] {
   const out: DupcheckEvent[] = [];
   for (const l of text.split('\n')) {
-    try { const r = JSON.parse(l) as DupcheckEvent; if (r.schema === EVENT_SCHEMA && typeof r.job === 'string') out.push(r); } catch { /* torn line */ }
+    try {
+      const r = JSON.parse(l) as DupcheckEvent;
+      if (r?.schema !== EVENT_SCHEMA || typeof r.job !== 'string') continue;
+      if (r.action === 'skip' || r.action === 'warn' || r.action === 'launch' || r.action === 'outcome') out.push(r);
+    } catch { /* torn line */ }
   }
   return out;
 }
@@ -109,7 +113,7 @@ export interface DupcheckStats {
   warned_ended_already_done: number;
   /** Plain launches that ended EMPTY already_done: duplicates the check missed. */
   launched_ended_already_done: number;
-  /** Skipped rows that were launched later: the skip was wrong or the row was re-queued. */
+  /** Initially skipped jobs that were launched later: the skip was wrong or the row was re-queued. */
   false_skips: number;
   false_skip_jobs: string[];
   /** (skips - false_skips) / skips; null with no skips. */
@@ -118,16 +122,15 @@ export interface DupcheckStats {
 
 /** Pure: events are in ledger order. Each job counts once, by its first decision. */
 export function summarizeDupcheck(events: readonly DupcheckEvent[]): DupcheckStats {
-  const first = new Map<string, DupcheckAction>(), skipped = new Set<string>(), relaunched = new Set<string>(), outcome = new Set<string>();
+  const first = new Map<string, DupcheckAction>(), relaunched = new Set<string>(), outcome = new Set<string>();
   for (const e of events) {
     if (e.action === 'outcome') { outcome.add(e.job); continue; }
     if (!first.has(e.job)) first.set(e.job, e.action);
-    if (e.action === 'skip') skipped.add(e.job);
-    else if (skipped.has(e.job)) relaunched.add(e.job);
+    if (first.get(e.job) === 'skip' && (e.action === 'warn' || e.action === 'launch')) relaunched.add(e.job);
   }
   const count = (a: DupcheckAction): number => [...first.values()].filter(x => x === a).length;
   const ended = (a: DupcheckAction): number => [...first].filter(([job, x]) => x === a && outcome.has(job)).length;
-  const skips = skipped.size;
+  const skips = count('skip');
   return {
     schema: DUPCHECK_STATS_SCHEMA, checked: first.size, skips, warns: count('warn'), launches: count('launch'),
     warned_ended_already_done: ended('warn'), launched_ended_already_done: ended('launch'),

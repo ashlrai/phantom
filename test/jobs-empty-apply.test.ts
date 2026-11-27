@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyEmptyFamilies, runEmptyApplyTick, undoEmptyFamily, EMPTY_APPLY_SCHEMA } from '../src/core/fleet/empty-family-apply.js';
+import { applyEmptyFamilies, runEmptyApplyTick, undoEmptyFamily, readyJobs, EMPTY_APPLY_SCHEMA } from '../src/core/fleet/empty-family-apply.js';
 import { cmdJobs } from '../src/cli/jobs-empty.js';
 import { summarizeEmptyFamilies } from '../src/core/fleet/empty-families.js';
 import { briefFamilyYield } from '../src/core/fleet/leader-compact-brief.js';
@@ -90,6 +90,34 @@ it('stop: writes the exact READY ids with an expiry; other lanes, claimed and gu
   expect(stop).toMatchObject({ family: 'RQ-MD*', lane: 'devin-flash', ids: ['RQ-MD6A111806Q8', 'RQ-MD7A111807Q8'], until: now / 1000 + 48 * HOUR });
   expect(stop.reason).toContain('5of5-empty');
   expect(await get('RETIRED')).toBe('RQ-OLD1\nRQ-MD6A111806Q8\nRQ-MD7A111807Q8\n');
+});
+
+it('readyJobs resolves the market lane hint: preferred_lane, else lane, else pool; any and no envelope are open', () => {
+  expect(readyJobs([
+    '- READY RQ-A (P1, pool=any, tier=work, repo=phantom, preferred_lane=claude): x',
+    '- READY RQ-B (P1, lane=codex-personal, pool=devin): x',
+    '- READY RQ-C (P1, pool=codex-personal): x',
+    '- READY RQ-D (P1): x',
+    '- READY RQ-E pool=claude: prose outside the envelope names no lane',
+  ].join('\n'))).toEqual([
+    { id: 'RQ-A', pool: 'claude' },
+    { id: 'RQ-B', pool: 'codex-personal' },
+    { id: 'RQ-C', pool: 'codex-personal' },
+    { id: 'RQ-D', pool: null },
+    { id: 'RQ-E', pool: null },
+  ]);
+});
+
+it('stop: lane hints resolve like the market — preferred_lane beats pool, lane beats pool, any stays open', async () => {
+  await put('router-queue.md', [
+    '- READY RQ-MD6A111806Q8 (P2, pool=devin-flash, preferred_lane=claude, tier=fast, repo=ashlr-md)',
+    '- READY RQ-MD7A111807Q8 (P2, lane=claude, pool=codex-cmp, tier=fast, repo=ashlr-md)',
+    '- READY RQ-MD8A111808Q8 (P2, pool=any, tier=fast, repo=ashlr-md)',
+  ].join('\n') + '\n');
+  const result = await applyEmptyFamilies({ runsDir: dir, apply: true, now, readReport });
+  const stop = result.rows.find(r => r.action === 'stop')!;
+  expect(stop).toMatchObject({ family: 'RQ-MD*', lane: 'devin-flash', ids: ['RQ-MD8A111808Q8'] });
+  expect(await get('RETIRED')).toBe('RQ-MD8A111808Q8\n');
 });
 
 it('sign-in empties alone write no lane-avoid hint', async () => {

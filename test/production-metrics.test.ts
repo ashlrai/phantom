@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { collectProduction, type ProductionReads } from '../src/core/metrics/production.js';
+import { collectProduction, isProductionRepo, type ProductionReads } from '../src/core/metrics/production.js';
 import { cmdMetrics } from '../src/cli/metrics.js';
 import { cmdMetricsProd } from '../src/cli/metrics-prod.js';
 
@@ -159,5 +159,12 @@ describe('production metrics with offline fixtures', () => {
     const out = vi.fn();
     expect(await cmdMetrics(['prod', '--help'], { out, err: vi.fn() })).toBe(0);
     expect(out.mock.calls.flat().join('')).toContain('phm metrics prod');
+  });
+  it('validates owner/repo identifiers consistently between core and CLI', () => {
+    expect(isProductionRepo('example/repo')).toBe(true);
+    expect(isProductionRepo('org_1/pkg.name-2')).toBe(true);
+    expect(isProductionRepo('../bad')).toBe(false);
+    expect(isProductionRepo('no-slash')).toBe(false);
+    expect(isProductionRepo('-bad/repo')).toBe(false);
   });
 });

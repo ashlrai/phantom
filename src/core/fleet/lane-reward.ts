@@ -11,7 +11,9 @@ import { join, resolve } from 'node:path';
 import { loadProposal } from '../inbox/store.js';
 import { readLedgerTail } from '../router/outcomes.js';
 import type { Proposal } from '../types.js';
+import { prKeyOf } from './eval-report.js';
 import { inspectOneAskReward, type OneAskReward } from './one-ask-reward.js';
+import { isNodePoolLedgerRow, ledgerEventTs } from './jobs-ledger-dialect.js';
 
 export const LANE_REWARD_SCHEMA = 'fleet.lane-reward.v1' as const;
 /** Uniform caller weight: every recorded attempt counts the same. */
@@ -85,31 +87,36 @@ const pickString = (row: Row, ...names: string[]): string | null => {
 };
 const boundedId = (value: string | null, re: RegExp): string | null =>
   value !== null && re.test(value) ? value : null;
-/**
- * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
- * recordedAt|updatedAt, with mergedAt/closedAt preferred on terminal rows —
- * the same field set dispatchd `_vc_pick` and metrics/loop accept.
- */
-const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
-/** Terminal outcome stamp; MERGED prefers mergedAt, CLOSED closedAt. */
-const terminalTsMs = (row: Row, phase: string): number => {
-  const preferred = phase === 'MERGED' ? 'mergedAt' : 'closedAt';
-  const keys = [preferred, ...LEDGER_TS_KEYS.filter(k => k !== preferred)];
-  return Date.parse(pickString(row, ...keys) ?? '') || 0;
-};
 const jobOf = (row: Row): string | null => boundedId(pickString(row, 'job', 'job_id', 'jobId', 'id'), JOB_ID);
-const laneOf = (row: Row): string | null => boundedId(pickString(row, 'lane', 'pool', 'arm'), LANE_ID);
+const laneOf = (row: Row): string | null => {
+  for (const key of ['lane', 'pool', 'arm']) {
+    const lane = boundedId(pickString(row, key), LANE_ID);
+    if (lane !== null && lane.toLowerCase() !== 'unknown') return lane;
+  }
+  return null;
+};
 const urlOf = (row: Row): string | null => pickString(row, 'url', 'pr_url', 'prUrl', 'pr', 'html_url');
 const eventOf = (row: Row): string => (pickString(row, 'event', 'type', 'kind') ?? '').toLowerCase();
-const phaseOf = (row: Row): string => (pickString(row, 'state', 'outcome', 'status', 'phase', 'result', 'conclusion') ?? '').toUpperCase();
+function phaseOf(row: Row, event: string): string {
+  let published = false;
+  for (const key of ['state', 'outcome', 'status', 'phase', 'result', 'conclusion']) {
+    const phase = pickString(row, key)?.toUpperCase();
+    if (phase === undefined) continue;
+    if (TERMINAL_PHASES.has(phase)) return phase;
+    published ||= phase === 'PUBLISHED';
+  }
+  const eventPhase = event.toUpperCase();
+  if (TERMINAL_PHASES.has(eventPhase)) return eventPhase;
+  return published ? 'PUBLISHED' : '';
+}
 const tokensOf = (row: Row): number | null => {
   const value = row['tokens_total'] ?? row['tokens'] ?? row['total_tokens'];
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000 ? value : null;
 };
 
 /** Fold a jobs ledger into attempts; malformed lines are counted, never thrown. */
-export function foldLaneRewardAttempts(text: string): { attempts: Map<string, LaneRewardAttempt>; dropped: number } {
-  const rows: Row[] = [];
+export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attempts: Map<string, LaneRewardAttempt>; dropped: number } {
+  const rows: { row: Row; job: string | null; event: string; phase: string; receiptAt: number | null; prKey: string | null }[] = [];
   let dropped = 0;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -117,36 +124,69 @@ export function foldLaneRewardAttempts(text: string): { attempts: Map<string, La
     let row: Row | null;
     try { row = asRow(JSON.parse(line)); } catch { dropped++; continue; }
     if (!row) { dropped++; continue; }
-    rows.push(row);
+    const job = jobOf(row);
+    if (job?.startsWith('RQ-BATCH-') || isNodePoolLedgerRow(row)) continue;
+    const event = eventOf(row);
+    const phase = phaseOf(row, event);
+    const receiptAt = ledgerEventTs(row, null);
+    const outcomeAt = TERMINAL_PHASES.has(phase) ? ledgerEventTs(row, phase) : null;
+    if ((receiptAt !== null && receiptAt > asOfMs) || (outcomeAt !== null && outcomeAt > asOfMs)) continue;
+    const url = urlOf(row);
+    rows.push({ row, job, event, phase, receiptAt, prKey: prKeyOf(url)?.key ?? url });
   }
-  // Publish rows bind a job to its PR url; outcome rows may carry only the url.
-  const jobByUrl = new Map<string, string>();
-  for (const row of rows) {
-    const job = jobOf(row), url = urlOf(row);
-    if (job && url) jobByUrl.set(url, job);
+  // URL-only rows can resolve only against a unique recorded job.
+  const jobByPr = new Map<string, string | null>();
+  for (const { prKey, job } of rows) {
+    if (job === null || prKey === null) continue;
+    const previous = jobByPr.get(prKey);
+    if (previous === undefined) jobByPr.set(prKey, job);
+    else if (previous !== job) jobByPr.set(prKey, null);
   }
   const attempts = new Map<string, LaneRewardAttempt>();
-  for (const row of rows) {
-    const event = eventOf(row), phase = phaseOf(row);
+  const batchClaimLanes = new Map<string, string>();
+  const usageTimes = new Map<string, number>();
+  for (const { row, job: explicitJob, event, phase, receiptAt, prKey } of rows) {
     const launch = LAUNCH_EVENTS.has(event), finish = FINISH_EVENTS.has(event);
-    if (!launch && !finish && !PUBLISH_EVENTS.has(event) && phase !== 'PUBLISHED' &&
+    const batchClaim = event === 'batch_claim';
+    if (!batchClaim && !launch && !finish && !PUBLISH_EVENTS.has(event) && phase !== 'PUBLISHED' &&
         !OUTCOME_EVENTS.has(event) && !TERMINAL_PHASES.has(phase)) continue;
-    const url = urlOf(row);
-    const job = jobOf(row) ?? (url !== null ? jobByUrl.get(url) ?? null : null);
+    const job = explicitJob ?? (prKey !== null ? jobByPr.get(prKey) ?? null : null);
     if (job === null) continue;
     const attempt = attempts.get(job) ??
       { lane: null, tokens: null, published: false, outcome: null, outcomeTsMs: -1 };
-    attempt.lane = laneOf(row) ?? attempt.lane;
-    if (finish) attempt.tokens = tokensOf(row) ?? attempt.tokens;
-    attempt.published ||= PUBLISH_EVENTS.has(event) || phase === 'PUBLISHED' || url !== null;
+    const lane = laneOf(row);
+    if (batchClaim) {
+      if (lane !== null) batchClaimLanes.set(job, lane);
+    } else {
+      attempt.lane = lane ?? attempt.lane;
+    }
+    if (finish) {
+      const tokens = tokensOf(row);
+      const previousAt = usageTimes.get(job);
+      if (tokens !== null) {
+        if (receiptAt !== null && (previousAt === undefined || receiptAt > previousAt)) {
+          usageTimes.set(job, receiptAt);
+          attempt.tokens = tokens;
+        } else if (previousAt === undefined) {
+          attempt.tokens = tokens;
+        } else if (receiptAt === previousAt && tokens !== attempt.tokens) {
+          attempt.tokens = null;
+        }
+      }
+    }
+    attempt.published ||= PUBLISH_EVENTS.has(event) || phase === 'PUBLISHED' || prKey !== null;
     if (TERMINAL_PHASES.has(phase)) {
-      const tsMs = terminalTsMs(row, phase);
+      const tsMs = ledgerEventTs(row, phase) ?? 0;
       if (tsMs >= attempt.outcomeTsMs) {
         attempt.outcome = phase === 'MERGED' ? 'merged' : 'closed';
         attempt.outcomeTsMs = tsMs;
       }
     }
     attempts.set(job, attempt);
+  }
+  for (const [job, lane] of batchClaimLanes) {
+    const attempt = attempts.get(job);
+    if (attempt?.lane === null) attempt.lane = lane;
   }
   return { attempts, dropped };
 }
@@ -198,7 +238,7 @@ export async function readLaneReward(opts: {
     tokensMeasured: 0, verifiedResults: 0, tokensPerVerifiedResult: null };
   if (ledger === null) return { ...base, source: 'missing' };
 
-  const fold = foldLaneRewardAttempts(ledger.text);
+  const fold = foldLaneRewardAttempts(ledger.text, nowMs);
   const lanes = new Map<string, LaneRewardLane & { rewardSum: number }>();
   let rewardSum = 0;
   for (const [job, attempt] of fold.attempts) {

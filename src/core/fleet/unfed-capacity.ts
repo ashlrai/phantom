@@ -6,14 +6,11 @@
  */
 import { parseLedgerTs } from '../metrics/loop.js';
 import { foldRouterOutcomes } from '../router/outcomes.js';
-import { derivedRowCodes, marketContext, marketLaneView, parseReadyMarketRows, stoppedReadyHints, type ReadyMarketRow, type UnfedMarketInputs } from './unfed-market.js';
+import { laneLaunchTarget } from './lane-launch-target.js';
+import { derivedRowCodes, marketContext, marketLaneView, marketBlockedCodes as codes, MARKET_REASON_CODE as CODE, MARKET_RECORDED_LANE as LANE, MAX_MARKET_CODES as MAX_CODES, unfedTickLanes, parseReadyMarketRows, stoppedReadyHints, type ReadyMarketRow, type UnfedMarketInputs } from './unfed-market.js';
 
 export const FLEET_UNFED_SCHEMA = 'fleet.unfed.v1';
 
-/** Reason codes are short lowercase identifiers written by the dispatcher. */
-const CODE = /^[a-z][a-z0-9_]{0,63}$/;
-const LANE = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
-const MAX_CODES = 32;
 /** Same freshness rule as the spend projection: a dispatcher tick in the last two minutes. */
 const STATUS_FRESH_MS = 120_000;
 
@@ -27,10 +24,10 @@ export interface UnfedResource {
   /** Free slots: target minus running, never negative. */
   headroom: number;
   /** Ready rows whose lane hint names this resource. */
-  readyHinted: number;
+  readyHinted: number | null;
   /** Ready rows hinted elsewhere (or unhinted) while this resource had headroom. */
-  waitingElsewhere: number;
-  unfed: boolean;
+  waitingElsewhere: number | null;
+  unfed: boolean | null;
   /** Why those rows did not run here, by reason code. Empty when neither the dispatcher nor derivable market inputs say. */
   blocked: Record<string, number>;
 }
@@ -98,7 +95,7 @@ export interface UnfedClaims {
   available: boolean;
   /** True when the ledger exceeded the retained tail: counts are a lower bound. */
   truncated: boolean;
-  /** Claim launches in the window (claim + batch_claim events). */
+  /** Job claim events in the window, including batch members. */
   claimed: number;
   /** Of those, launches that left their hinted lane (a lane_override was recorded). */
   overridden: number;
@@ -216,14 +213,13 @@ export interface UnfedReport {
    * The fleet-wide stop in effect this tick, in the dispatcher's own codes:
    * `admission_stopped` when the launch gate (pause, disk hard stop or a
    * tripped load gate) kept the market from running, `global_admission` when
-   * the per-tick launch budget or fleet-wide cap was spent. Read back from
-   * published blocked codes for a dispatcher report, or from status.json's
-   * own admission verdict for a derived one. Null when the market ran
-   * normally or no verdict exists.
+   * the per-tick launch budget or fleet-wide cap was spent. Read from
+   * status.json's own admission verdict, with published blocked codes as
+   * fallback evidence. Null when no stop is recorded.
    */
   fleetStop: FleetStopCode | null;
   /** Ready rows still waiting (market-evaluated rows; see invalidRows). */
-  waiting: number;
+  waiting: number | null;
   /**
    * Ready rows the work market cannot evaluate — a malformed job id, tier or
    * requirements spec, including a router-queue envelope that fails
@@ -233,10 +229,10 @@ export interface UnfedReport {
    * `_waiting` never parses requirements), so they can appear in `waiting`
    * while still being listed here.
    */
-  invalidRows: number;
+  invalidRows: number | null;
   unfedLanes: string[];
-  /** Slots that could be filled now: sum of min(headroom, waiting rows) over unfed lanes. */
-  unfedSlots: number;
+  /** Upper bound from lane headroom and waiting rows, capped by total waiting work. */
+  unfedSlots: number | null;
   resources: UnfedResource[];
   /** Whether older work-market journal bytes were omitted from the window folds. */
   marketTruncated: boolean;
@@ -257,17 +253,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const count = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 
-/** Keep only well-formed reason codes with nonnegative counts. */
-function codes(value: unknown): Record<string, number> {
-  const out: Record<string, number> = {};
-  if (!isRecord(value)) return out;
-  for (const [code, n] of Object.entries(value)) {
-    if (Object.keys(out).length >= MAX_CODES) break;
-    if (CODE.test(code) && count(n) && n > 0) out[code] = n;
-  }
-  return out;
-}
-
 function utilization(running: number, target: number): number | null {
   return target > 0 ? Math.round(Math.min(1, running / target) * 1000) / 1000 : null;
 }
@@ -278,14 +263,18 @@ function utilization(running: number, target: number): number | null {
  * (the requirements column — or the router-queue.md envelope for a spec-less
  * row — may override the lane column), matching the dispatcher's own unfed
  * accounting. Rows the market would reject (bad job id, tier or spec) are
- * counted in `invalid` and left out of waiting/byLane/rows, like the
- * dispatcher's `_waiting` set.
+ * counted in `invalid`. Each job contributes once, using its first valid row.
  */
 export function readyHints(readyTsv: string, routerQueue?: string | null):
   { waiting: number; byLane: Map<string, number>; rows: ReadyMarketRow[]; invalid: number } {
-  const { rows, invalid } = parseReadyMarketRows(readyTsv, routerQueue);
+  const { rows: parsed, invalid } = parseReadyMarketRows(readyTsv, routerQueue);
+  const jobs = new Set<string>();
+  const rows: ReadyMarketRow[] = [];
   const byLane = new Map<string, number>();
-  for (const row of rows) {
+  for (const row of parsed) {
+    if (jobs.has(row.id)) continue;
+    jobs.add(row.id);
+    rows.push(row);
     const lane = row.hint ?? '';
     byLane.set(lane, (byLane.get(lane) ?? 0) + 1);
   }
@@ -305,9 +294,9 @@ export function readyHints(readyTsv: string, routerQueue?: string | null):
 function fleetStopVerdict(data: Record<string, unknown>): FleetStopCode | null {
   if (data.paused) return 'admission_stopped';
   const admission = isRecord(data.admission) ? data.admission : null;
-  const gateReason = admission?.gate_reason;
+  if (admission === null || (admission.ts !== undefined && admission.ts !== data.last_tick)) return null;
+  const gateReason = admission.gate_reason;
   if (typeof gateReason === 'string' && gateReason.trim().length > 0) return 'admission_stopped';
-  if (admission === null) return null;
   const cap = count(admission.cap) ? admission.cap : null;
   const running = count(admission.running) ? admission.running : null;
   const launched = Array.isArray(data.launched_this_tick) ? data.launched_this_tick.length : null;
@@ -331,12 +320,12 @@ function publishedFleetStop(resources: readonly UnfedResource[]): FleetStopCode 
 }
 
 /**
- * The current picture from queue/status.json and queue/ready.tsv ('' when absent).
+ * The current picture from queue/status.json and queue/ready.tsv (null when unavailable).
  * Throws when status.json has no usable lanes map. `market` carries the
  * dispatcher's own input files; when present and slots.json parses, a derived
  * report recomputes per-lane reason codes instead of leaving them unknown.
  */
-export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'marketTruncated' | 'history' | 'overrides' | 'claims' | 'decisionOutcomes' | 'rejections'> {
+export function currentUnfed(statusJson: string, readyTsv: string | null, market?: UnfedMarketInputs): Omit<UnfedReport, 'marketTruncated' | 'history' | 'overrides' | 'claims' | 'decisionOutcomes' | 'rejections'> {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
   const tickMs = typeof data.last_tick === 'string' ? Date.parse(data.last_tick) : NaN;
@@ -344,103 +333,123 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
   const nowMs = market?.nowMs;
   const statusFresh = nowMs === undefined || !Number.isFinite(nowMs) ? null
     : data.schema === 'dispatchd.status.v1' && Number.isFinite(tickMs) && nowMs >= tickMs && nowMs - tickMs <= STATUS_FRESH_MS;
-  const published = isRecord(data.unfed_capacity) && isRecord(data.unfed_capacity.lanes) ? data.unfed_capacity : null;
+  const published = isRecord(data.unfed_capacity) ? data.unfed_capacity : null;
   const ctx = published === null ? marketContext(market) : null;
-  const stop = published === null ? fleetStopVerdict(data) : null;
+  const operatorHolds = published === null && ctx === null
+    ? new Set((market?.hold ?? '').split(/\s+/u).filter(Boolean)) : null;
+  const stop = fleetStopVerdict(data);
   // An admission-stopped tick never ran the market: the dispatcher's own
-  // _waiting then counts every JID+tier-valid row by its raw lane column.
-  const strict = readyHints(readyTsv, market?.routerQueue);
-  const hints = published === null && stop === 'admission_stopped'
+  // _waiting then uses the raw lane column from JID+tier-valid rows.
+  const strict = readyTsv === null ? null : readyHints(readyTsv, market?.routerQueue);
+  const hints = strict !== null && readyTsv !== null && published === null && stop === 'admission_stopped'
     ? { ...stoppedReadyHints(readyTsv), rows: strict.rows, invalid: strict.invalid }
     : strict;
   const publishedLanes = published && isRecord(published.lanes) ? published.lanes : {};
-  const waiting = published && count(published.waiting) ? published.waiting : hints.waiting;
+  const waiting = published === null ? hints?.waiting ?? null
+    : count(published.waiting) ? published.waiting : null;
   const resources: UnfedResource[] = [];
   for (const [lane, value] of Object.entries(data.lanes)) {
     if (!LANE.test(lane) || !isRecord(value) || !count(value.running)) throw new Error('invalid lane');
-    // The effective target is what the lane may launch against after load shedding.
-    const target = count(value.effective_target) ? value.effective_target : value.target;
-    if (!count(target)) throw new Error('invalid lane');
-    const held = value.held === true;
+    if (!count(value.target)) throw new Error('invalid lane');
+    const tickTarget = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
+    const slot = ctx?.slots[lane];
+    const configuredTarget = isRecord(slot) && count(slot.target) ? slot.target : null;
+    const target = laneLaunchTarget(tickTarget, configuredTarget);
+    const statusHeld = value.held === true;
+    const view = ctx === null ? null : marketLaneView(lane, value.running, target, statusHeld, ctx);
+    const held = view?.held ?? (statusHeld || operatorHolds?.has(lane) === true);
     const headroom = Math.max(0, target - value.running);
-    const readyHinted = hints.byLane.get(lane) ?? 0;
+    const readyHinted = hints === null ? null : hints.byLane.get(lane) ?? 0;
     const entry = publishedLanes[lane];
-    let waitingElsewhere = 0;
+    const canBeUnfed = headroom > 0 && !held;
+    // The live ready file may already differ from the dispatcher's tick.
+    let waitingElsewhere: number | null = canBeUnfed && waiting !== 0 ? null : 0;
     let blocked: Record<string, number> = {};
-    if (isRecord(entry) && count(entry.waiting_elsewhere)) {
+    if (isRecord(entry) && count(entry.waiting_elsewhere) &&
+        (waiting === null || entry.waiting_elsewhere <= waiting)) {
       waitingElsewhere = entry.waiting_elsewhere;
-      blocked = codes(entry.blocked);
-    } else if (!published) {
-      if (headroom > 0 && !held) {
-        waitingElsewhere = hints.waiting - readyHinted;
-        // A fleet stop outranks every per-lane code: the dispatcher never ran
-        // (or never launched past) the market, so eligibility was not the
-        // binding constraint for the rows still waiting.
-        if (stop !== null) {
-          if (waitingElsewhere > 0) blocked[stop] = waitingElsewhere;
-        } else if (ctx !== null) {
-          const view = marketLaneView(lane, value.running, target, held, ctx);
-          for (const row of hints.rows) {
-            if (row.hint === lane) continue;
-            for (const code of derivedRowCodes(row, lane, view)) blocked[code] = (blocked[code] ?? 0) + 1;
-          }
+      blocked = codes(entry.blocked, waitingElsewhere);
+    } else if (!published && hints !== null && readyHinted !== null && canBeUnfed) {
+      waitingElsewhere = hints.waiting - readyHinted;
+      // A fleet stop outranks every per-lane code: the dispatcher never ran
+      // (or never launched past) the market, so eligibility was not the
+      // binding constraint for the rows still waiting.
+      if (stop !== null) {
+        if (waitingElsewhere > 0) blocked[stop] = waitingElsewhere;
+      } else if (view !== null) {
+        for (const row of hints.rows) {
+          if (row.hint === lane) continue;
+          for (const code of derivedRowCodes(row, lane, view)) blocked[code] = (blocked[code] ?? 0) + 1;
         }
       }
     }
     resources.push({
       lane, running: value.running, target, held, utilization: utilization(value.running, target), headroom,
-      readyHinted, waitingElsewhere, unfed: headroom > 0 && !held && waitingElsewhere > 0, blocked,
+      readyHinted, waitingElsewhere, unfed: canBeUnfed && (waitingElsewhere === null ? null : waitingElsewhere > 0), blocked,
     });
   }
   resources.sort((a, b) => a.lane.localeCompare(b.lane));
-  const unfed = resources.filter(r => r.unfed);
+  const unfed = resources.filter(r => r.unfed === true);
+  const slotBound = unfed.reduce((sum, r) => sum + Math.min(r.headroom, r.waitingElsewhere ?? 0), 0);
   return {
     schema: FLEET_UNFED_SCHEMA,
     readOnly: true,
     source: published ? 'dispatcher' : 'derived',
-    derivedReasons: ctx !== null,
+    derivedReasons: ctx !== null && readyTsv !== null,
     statusAsOf,
     statusFresh,
     fleetStop: stop ?? publishedFleetStop(resources),
     waiting,
-    invalidRows: strict.invalid,
+    invalidRows: strict?.invalid ?? null,
     unfedLanes: unfed.map(r => r.lane),
-    unfedSlots: unfed.reduce((sum, r) => sum + Math.min(r.headroom, r.waitingElsewhere), 0),
+    unfedSlots: resources.some(r => r.unfed === null) ? null
+      : waiting === null ? (slotBound === 0 ? 0 : null) : Math.min(waiting, slotBound),
     resources,
   };
+}
+
+/** Exit status for the live verdict in a successfully read unfed report. */
+export function unfedExitCode(report: UnfedReport): 0 | 1 | 2 {
+  if (report.statusFresh !== true) return 2;
+  if (report.unfedLanes.length > 0) return 1;
+  return report.unfedSlots === null ? 2 : 0;
 }
 
 /**
  * Fold `unfed_capacity` rows from metrics/work-market.jsonl over a window.
  * Null text means the file was absent or unreadable. Malformed rows are skipped.
+ * The last usable snapshot for each dispatcher tick wins.
  */
 export function foldUnfedHistory(jsonl: string | null, nowMs: number, windowHours: number): UnfedHistory {
   const history: UnfedHistory = { windowHours, available: jsonl !== null, ticks: 0, lanes: [] };
   if (jsonl === null) return history;
-  const since = nowMs / 1000 - windowHours * 3600;
+  const until = nowMs / 1000;
+  const since = until - windowHours * 3600;
+  const ticks = new Map<number, ReturnType<typeof unfedTickLanes>>();
   const lanes = new Map<string, UnfedHistoryLane & { last: number }>();
   for (const line of jsonl.split('\n')) {
     // Cheap prefilter: the file is mostly route decisions.
     if (!line.includes('"unfed_capacity"')) continue;
     let row: unknown;
     try { row = JSON.parse(line); } catch { continue; }
-    if (!isRecord(row) || row.schema !== 'work-market.v1' || row.event !== 'unfed_capacity' || !isRecord(row.lanes)) continue;
+    if (!isRecord(row) || row.schema !== 'work-market.v1' || row.event !== 'unfed_capacity') continue;
     const ts = row.ts;
-    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > nowMs / 1000 + 300) continue;
-    let any = false;
-    for (const [lane, value] of Object.entries(row.lanes)) {
-      if (!LANE.test(lane) || !isRecord(value) || value.unfed !== true || !count(value.headroom) || !count(value.waiting_elsewhere)) continue;
-      any = true;
+    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > until) continue;
+    const snapshot = unfedTickLanes(row);
+    if (snapshot.length > 0) ticks.set(ts, snapshot);
+  }
+  history.ticks = ticks.size;
+  for (const [ts, snapshot] of ticks) {
+    for (const { lane, slots, blocked } of snapshot) {
       const entry = lanes.get(lane) ?? { lane, unfedTicks: 0, slotTicks: 0, lastUnfedAt: null, blocked: {}, last: 0 };
       entry.unfedTicks++;
-      entry.slotTicks += Math.min(value.headroom, value.waiting_elsewhere);
+      entry.slotTicks += slots;
       entry.last = Math.max(entry.last, ts);
-      for (const [code, n] of Object.entries(codes(value.blocked))) {
+      for (const [code, n] of Object.entries(blocked)) {
         if (code in entry.blocked || Object.keys(entry.blocked).length < MAX_CODES) entry.blocked[code] = (entry.blocked[code] ?? 0) + n;
       }
       lanes.set(lane, entry);
     }
-    if (any) history.ticks++;
   }
   history.lanes = [...lanes.values()]
     .map(({ last, ...entry }) => ({ ...entry, lastUnfedAt: new Date(last * 1000).toISOString() }))
@@ -503,11 +512,14 @@ const rejectedLanes = (value: unknown): { lane: string; codes: string[] }[] => {
  * Collapse work-market.jsonl route_decision rows to each job's latest
  * in-window decision. The dispatcher re-decides every waiting job each tick,
  * so rows collapse before counting — a job that waited for hours counts once,
- * by where the market currently sends it. Rows outside the window, malformed
- * JSON, non-route_decision events and missing job/timestamps are skipped.
+ * by where the market currently sends it. For equal tick timestamps, the
+ * later valid append wins. Rows outside the window, malformed
+ * JSON, non-route_decision events and missing or malformed decision fields
+ * are skipped. An explicit null lane is valid evidence.
  */
 function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number): Map<string, LatestRouteDecision> {
-  const since = nowMs / 1000 - windowHours * 3600;
+  const until = nowMs / 1000;
+  const since = until - windowHours * 3600;
   const latest = new Map<string, LatestRouteDecision>();
   for (const line of jsonl.split('\n')) {
     // Cheap prefilter: route decisions are the bulk of the file.
@@ -516,13 +528,18 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
     try { row = JSON.parse(line); } catch { continue; }
     if (!isRecord(row) || row.schema !== 'work-market.v1' || row.event !== 'route_decision') continue;
     const ts = row.ts;
-    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > nowMs / 1000 + 300) continue;
+    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > until) continue;
     const job = row.job;
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const prev = latest.get(job);
-    if (prev !== undefined && prev.ts >= ts) continue;
+    if (prev !== undefined && prev.ts > ts) continue;
     const preferred = laneField(row.preferred_lane);
     const chosen = laneField(row.chosen_lane);
+    if (chosen === null && row.chosen_lane !== null) continue;
+    // Requirements validation fails before the dispatcher can decode a lane hint.
+    const invalidRequirements = row.chosen_lane === null && row.preferred_lane === undefined
+      && Array.isArray(row.reason_codes) && row.reason_codes.includes('invalid_requirements');
+    if (preferred === null && row.preferred_lane !== null && !invalidRequirements) continue;
     let override: LatestRouteDecision['override'] = null;
     if (preferred !== null && chosen !== null && preferred !== chosen && isRecord(row.override)) {
       const { from, to, reason } = row.override;
@@ -580,8 +597,9 @@ export function foldMarketOverrides(jsonl: string | null, nowMs: number, windowH
  * lane_override accounting at launch time — the record the dispatcher writes
  * when a claim actually leaves its hinted lane. `overrides` counts market
  * decisions; this counts what launched, including `batch_session` moves a
- * combined session makes after each member's own decision. Claim events, not
- * distinct jobs: a re-launched attempt is another real launch. Timestamps are
+ * combined session makes after each member's own decision. The synthetic
+ * RQ-BATCH-* session claim is excluded because members have their own events.
+ * Each re-launched job attempt counts again. Timestamps are
  * the ledger's ISO strings (parseLedgerTs handles dispatchd's %z offset);
  * rows outside the window, malformed fields and non-claim events are skipped.
  * Null text means the file was absent or unreadable. Counts and lane/reason
@@ -596,7 +614,6 @@ export function foldClaimOverrides(
   };
   if (jsonl === null) return tally;
   const since = nowMs - windowHours * 3_600_000;
-  const until = nowMs + 300_000;
   const pairs = new Map<string, UnfedClaimLane>();
   for (const line of jsonl.split('\n')) {
     // Cheap prefilter: claim events are a minority of the ledger.
@@ -605,11 +622,11 @@ export function foldClaimOverrides(
     try { row = JSON.parse(line); } catch { continue; }
     if (!isRecord(row) || (row.event !== 'claim' && row.event !== 'batch_claim')) continue;
     const job = row.job;
-    if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
+    if (typeof job !== 'string' || job.length === 0 || job.length > 200 || job.startsWith('RQ-BATCH-')) continue;
     const lane = row.lane;
     if (typeof lane !== 'string' || !LANE.test(lane)) continue;
     const at = parseLedgerTs(row.ts);
-    if (at === null || at < since || at > until) continue;
+    if (at === null || at < since || at > nowMs) continue;
     tally.claimed++;
     const reason = row.lane_override;
     if (typeof reason !== 'string' || !CODE.test(reason)) continue;
@@ -656,7 +673,8 @@ const tallyOutcome = (
  * outcome correlation for market routing. Each waiting job counts once, by
  * its latest in-window decision (the same collapse foldMarketOverrides
  * uses), then joins the job id to the newest recorded outcome — merged,
- * closed-unmerged or unresolved — through the router outcome fold, so revert
+ * closed-unmerged or unresolved — dated from that decision through report
+ * time via the router outcome fold, so revert
  * evidence keeps the same sticky-true semantics as `phm router outcomes`.
  * Groups partition the decided jobs: `hinted` chose the declared preferred
  * lane, `overridden` recorded a well-formed lane_override, `open` chose a
@@ -691,9 +709,16 @@ export function foldDecisionOutcomes(
     byClass: {},
   };
   if (marketJsonl === null) return report;
+  const decisions = latestRouteDecisions(marketJsonl, nowMs, windowHours);
   const outcomes = new Map<string, { merged: boolean | null; reverted: boolean | null }>();
-  if (jobsJsonl !== null) {
-    for (const outcome of foldRouterOutcomes(jobsJsonl).outcomes) {
+  if (jobsJsonl !== null && decisions.size > 0) {
+    for (const outcome of foldRouterOutcomes(jobsJsonl, {
+      verdictAsOfMs: nowMs,
+      verdictSinceMsFor: job => {
+        const decision = decisions.get(job);
+        return decision === undefined ? undefined : decision.ts * 1000;
+      },
+    }).outcomes) {
       outcomes.set(outcome.job_id, { merged: outcome.merged, reverted: outcome.reverted });
     }
   }
@@ -703,7 +728,7 @@ export function foldDecisionOutcomes(
     const tally = report.byClass[key] ??= emptyOutcomeTally();
     tallyOutcome(tally, outcome);
   };
-  for (const [job, decision] of latestRouteDecisions(marketJsonl, nowMs, windowHours)) {
+  for (const [job, decision] of decisions) {
     report.decided++;
     const outcome = outcomes.get(job);
     const group = decision.chosen === null
@@ -786,22 +811,24 @@ export function renderUnfed(report: UnfedReport): string[] {
   for (const r of report.resources) {
     const use = r.utilization === null ? 'no target' : `${Math.round(r.utilization * 100)}%`;
     const state = r.held ? '  HELD' : r.unfed ? `  UNFED: ${r.headroom} free, ${r.waitingElsewhere} rows waiting elsewhere${Object.keys(r.blocked).length ? ` (${topCodes(r.blocked)})` : ''}` : '';
-    lines.push(`${r.lane}  ${r.running}/${r.target} running (${use}), ${r.readyHinted} hinted here${state}`);
+    lines.push(`${r.lane}  ${r.running}/${r.target} running (${use}), ${r.readyHinted ?? 'unknown'} hinted here${state}`);
   }
   for (const lane of report.resourcePlan ?? []) {
     if (lane.target === null) continue;
     lines.push(`plan ${lane.lane}: ${lane.running ?? 'unknown'}/${lane.target ?? 'unknown'} running, ${lane.unfedSlots ?? 'unknown'} unfilled plan slots with waiting work`);
   }
   if (report.resources.length === 0) lines.push('No lanes in queue/status.json.');
-  lines.push(report.unfedLanes.length === 0
-    ? `No unfed capacity: ${report.waiting} rows waiting.`
-    : `${report.unfedSlots} slot(s) could be filled now across ${report.unfedLanes.join(', ')}; ${report.waiting} rows waiting.`);
+  lines.push(report.unfedSlots === null
+    ? `Unfed capacity unknown: ${report.waiting ?? 'unknown'} rows waiting.`
+    : report.unfedLanes.length === 0
+    ? `No unfed capacity: ${report.waiting ?? 'unknown'} rows waiting.`
+    : `Up to ${report.unfedSlots} unfed slot(s) across ${report.unfedLanes.join(', ')}; ${report.waiting ?? 'unknown'} rows waiting.`);
   if (report.statusFresh === false) {
     lines.push(report.statusAsOf === null
       ? 'Status snapshot age unknown: status.json has no readable last_tick; counts above are the last published state.'
       : `Status snapshot is stale: last dispatcher tick ${report.statusAsOf}; counts above are the last published state, not live.`);
   }
-  if (report.invalidRows > 0) {
+  if (report.invalidRows !== null && report.invalidRows > 0) {
     lines.push(`${report.invalidRows} ready row(s) fail work-market validation (job id, tier or requirements) and can never launch; fix or drop them.`);
   }
   if (report.fleetStop !== null) {

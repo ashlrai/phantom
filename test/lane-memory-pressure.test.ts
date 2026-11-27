@@ -37,6 +37,13 @@ describe('lane memory class', () => {
 });
 
 describe('decideLaneMemory', () => {
+  it('applies local memory limits to oMLX by default and honors explicit configuration', () => {
+    const omlx = { lane: 'omlx', target: 8, floor: 1 };
+    expect(decideLaneMemory('warning', omlx)).toMatchObject({ class: 'local', allowed: 4 });
+    expect(decideLaneMemory('critical', omlx)).toMatchObject({ class: 'local', allowed: 0 });
+    expect(decideLaneMemory('critical', { ...omlx, memoryClass: 'cloud' }))
+      .toMatchObject({ class: 'cloud', allowed: 4 });
+  });
   it('warning throttles local only: half first, then the floor', () => {
     expect(decideLaneMemory('warning', codexLocal)).toMatchObject({ allowed: 4, throttled: true, class: 'local' });
     expect(decideLaneMemory('warning', codexLocal, { warningMinutes: 10 })).toMatchObject({ allowed: 1, throttled: true });

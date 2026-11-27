@@ -26,6 +26,8 @@
  * - Reasons are fixed codes. Captured stdout/stderr is never echoed.
  */
 
+import { isExitCode } from './validation.js';
+
 export const RECORDED_MODEL_PROBE_PROVENANCE = {
   sourcePr: 5952,
   sourceSha: '3d6c8fb7c7f7d52655fb3e0f13ef239686f7b886',
@@ -44,8 +46,6 @@ export const UNPROVEN_CLAIMS = Object.freeze([
 
 /** Source rejection pattern, copied verbatim from adapters.ts interpretModelProbe. */
 const SOURCE_REJECTION_PATTERN = /not available|unknown model|does not exist|rejected|model .*not found|invalid model/i;
-
-const MAX_EXIT_CODE = 0xffff_ffff;
 
 /**
  * Caller-supplied record of one probe. `observed` must be true only when an
@@ -87,10 +87,6 @@ function classification(outcome: RecordedModelProbeOutcome, reason: RecordedMode
     acceptance: outcome === 'accepted' ? 'historical-probe-only' : null,
     unprovenClaims: UNPROVEN_CLAIMS,
   });
-}
-
-function isExitCode(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= MAX_EXIT_CODE;
 }
 
 /**

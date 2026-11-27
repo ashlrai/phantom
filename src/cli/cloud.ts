@@ -26,18 +26,21 @@
  */
 import { execFileSync } from 'node:child_process';
 
-import type {
-  CloudBacklogView,
-  CloudLaunchFailureCode,
-  CloudBudgetUpdate,
-  CloudBudgetV1,
-  CloudBudgetView,
-  CloudImproveResponse,
-  CloudLaunchRequest,
-  CloudLaunchResponse,
-  CloudSeatStatus,
-  CloudTaskState,
-  CloudTaskV1,
+import {
+  CLOUD_IMPROVE_MAX_COUNT,
+  CLOUD_TERMINAL_STATES,
+  pluralize,
+  type CloudBacklogView,
+  type CloudLaunchFailureCode,
+  type CloudBudgetUpdate,
+  type CloudBudgetV1,
+  type CloudBudgetView,
+  type CloudImproveResponse,
+  type CloudLaunchRequest,
+  type CloudLaunchResponse,
+  type CloudSeatStatus,
+  type CloudTaskState,
+  type CloudTaskV1,
 } from '../core/cloud/types.js';
 import { makeColors, isTty } from './ui.js';
 
@@ -170,7 +173,7 @@ export function usd(value: number): string {
   return `$${value.toFixed(2)}`;
 }
 
-const TERMINAL: ReadonlySet<CloudTaskState> = new Set(['merged', 'closed', 'failed', 'expired']);
+const TERMINAL: ReadonlySet<CloudTaskState> = new Set(CLOUD_TERMINAL_STATES);
 /** Default `list` window for finished tasks. */
 const RECENT_MS = 3 * 24 * 60 * 60 * 1000;
 
@@ -433,7 +436,7 @@ async function cmdRefresh(deps: CloudCliDeps, args: string[]): Promise<number> {
   rejectLeftovers(args);
   const result = await deps.refresh();
   if (asJson) json(deps, result);
-  else deps.out(`Checked ${result.checked} ${result.checked === 1 ? 'task' : 'tasks'} on GitHub; ${result.updated} changed.`);
+  else deps.out(`Checked ${result.checked} ${pluralize(result.checked, 'task', 'tasks')} on GitHub; ${result.updated} changed.`);
   return 0;
 }
 
@@ -441,7 +444,9 @@ async function cmdImprove(deps: CloudCliDeps, args: string[]): Promise<number> {
   const asJson = takeFlag(args, '--json');
   const count = takeNumber(args, '--count', true);
   rejectLeftovers(args);
-  if (count !== null && (count < 1 || count > 5)) throw new UsageError('--count must be from 1 to 5.');
+  if (count !== null && (count < 1 || count > CLOUD_IMPROVE_MAX_COUNT)) {
+    throw new UsageError(`--count must be from 1 to ${CLOUD_IMPROVE_MAX_COUNT}.`);
+  }
   const result = await deps.improve({ count: count ?? 1, auto: false });
   if (asJson) {
     json(deps, result);
@@ -509,13 +514,13 @@ function cmdStats(deps: CloudCliDeps, args: string[]): number {
     json(deps, stats);
     return 0;
   }
-  const window = days === null ? '' : ` started in the last ${days} ${days === 1 ? 'day' : 'days'}`;
+  const window = days === null ? '' : ` started in the last ${days} ${pluralize(days, 'day', 'days')}`;
   if (stats.tasks === 0) {
     deps.out(`No cloud tasks${window}.`);
     return 0;
   }
   const c = makeColors(deps.color);
-  deps.out(`Cloud delivery · ${stats.tasks} ${stats.tasks === 1 ? 'task' : 'tasks'}${window}`);
+  deps.out(`Cloud delivery · ${stats.tasks} ${pluralize(stats.tasks, 'task', 'tasks')}${window}`);
   deps.out(`  Merged     ${stats.merged}`);
   deps.out(`  Closed     ${stats.closed}${stats.closedNoChange > 0 ? c.dim(` (${stats.closedNoChange} reported no change needed)`) : ''}`);
   const failures = Object.entries(stats.failures).map(([code, n]) => `${code} ${n}`).join(', ');
@@ -524,7 +529,7 @@ function cmdStats(deps: CloudCliDeps, args: string[]): number {
   deps.out(`  In flight  ${stats.inFlight}${stats.prOpen > 0 ? c.dim(` (${stats.prOpen} with a PR open)`) : ''}`);
   deps.out(stats.mergedRate === null
     ? 'Merged rate: no PR with a change has finished yet.'
-    : `Merged rate: ${stats.merged} of ${stats.finishedPrs} finished ${stats.finishedPrs === 1 ? 'PR' : 'PRs'} with a change merged (${Math.round(stats.mergedRate * 100)}%).`);
+    : `Merged rate: ${stats.merged} of ${stats.finishedPrs} finished ${pluralize(stats.finishedPrs, 'PR', 'PRs')} with a change merged (${Math.round(stats.mergedRate * 100)}%).`);
   return 0;
 }
 

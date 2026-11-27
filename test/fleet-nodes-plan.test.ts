@@ -86,24 +86,53 @@ describe('readNodesPlan', () => {
     const plan = await readNodesPlan({ view, readQueue: async () => queueOf([job('c1', 'claude', 1), job('g1', 'gemini', 2), job('g2', 'gemini', 3)]) });
     expect(plan.assignable.map(a => a.job)).toEqual(['c1']);
     expect(plan.unassigned).toBe(2);
-    expect(plan.unassigned_reasons).toEqual([{ lane: 'gemini', jobs: 2, why: 'no computer advertises the gemini lane' }]);
+    expect(plan.unassigned_reasons).toEqual([{ lane: 'gemini', jobs: 2, why: 'the gemini lane cannot run on another computer' }]);
   });
 
   it('says when this plan spent the last suggested slot of an advertised lane', async () => {
     const view = deps(() => tailnet([]), registry([node('node-a', { slots: 1 })]));
     const plan = await readNodesPlan({ view, readQueue: async () => queueOf([job('c1', 'claude', 1), job('c2', 'claude', 2)]) });
     expect(plan.assignable.map(a => a.job)).toEqual(['c1']);
-    expect(plan.unassigned_reasons).toEqual([{ lane: 'claude', jobs: 1, why: 'computers advertising claude: no free slots left in this plan' }]);
+    expect(plan.unassigned_reasons).toEqual([{ lane: 'claude', jobs: 1, why: 'computers that can run claude: no free slots left in this plan' }]);
   });
 
   it('reports the plain state of computers that advertise a lane but cannot take work', async () => {
     const view = deps(() => tailnet([peer('node-b', false)]),
-      registry([node('node-a'), node('node-b', { caps: ['gemini'], slots: 1, hostStats: stats(8, 1) })]));
-    const plan = await readNodesPlan({ view, readQueue: async () => queueOf([job('g1', 'gemini', 1)]) });
+      registry([node('node-a', { caps: ['claude'] }), node('node-b', { caps: ['codex'], slots: 1, hostStats: stats(8, 1) })]));
+    const plan = await readNodesPlan({ view, readQueue: async () => queueOf([job('p1', 'codex-personal', 1)]) });
     expect(plan.unassigned).toBe(1);
     expect(plan.unassigned_reasons).toHaveLength(1);
-    expect(plan.unassigned_reasons[0]).toMatchObject({ lane: 'gemini', jobs: 1 });
+    expect(plan.unassigned_reasons[0]).toMatchObject({ lane: 'codex-personal', jobs: 1 });
     expect(plan.unassigned_reasons[0]!.why).toContain('offline since');
+  });
+
+  it('resolves a market lane to the node cap the claim bridge requires', async () => {
+    // ready.tsv lanes are market lanes; a computer advertises provider caps.
+    // codex-personal jobs need the codex cap — the same map the claim bridge
+    // applies (remoteLaneCap in unfed-market) before a row can leave this host.
+    const view = deps(() => tailnet([peer('node-b', true)]),
+      registry([node('node-a'), node('node-b', { caps: ['codex'] })]));
+    const plan = await readNodesPlan({ view, readQueue: async () => queueOf([
+      job('p1', 'codex-personal', 1), job('p2', 'codex-personal', 2), job('p3', 'codex-personal', 3)]) });
+    expect(plan.assignable.map(a => [a.job, a.node])).toEqual([['p1', 'node-b'], ['p2', 'node-b'], ['p3', 'node-a']]);
+    expect(plan.unassigned).toBe(0);
+  });
+
+  it('keeps a host-bound lane off remote computers even when a cap name matches', async () => {
+    // `omlx` only runs on this host (local_execution_required in the market);
+    // a remote node's omlx cap serves pool jobs, never ready.tsv rows.
+    const view = deps(() => tailnet([peer('node-b', true)]),
+      registry([node('node-a'), node('node-b', { caps: ['omlx'] })]));
+    const plan = await readNodesPlan({ view, readQueue: async () => queueOf([job('m1', 'omlx', 1)]) });
+    expect(plan.assignable).toEqual([]);
+    expect(plan.unassigned_reasons).toEqual([{ lane: 'omlx', jobs: 1, why: 'the omlx lane cannot run on another computer' }]);
+  });
+
+  it('lets this computer take a host-bound lane it advertises', async () => {
+    const view = deps(() => tailnet([peer('node-b', true)]),
+      registry([node('node-a', { caps: ['omlx'] }), node('node-b', { caps: ['omlx'] })]));
+    const plan = await readNodesPlan({ view, readQueue: async () => queueOf([job('m1', 'omlx', 1)]) });
+    expect(plan.assignable).toEqual([{ job: 'm1', node: 'node-a', lane: 'omlx', why: expect.stringContaining('omlx lane') }]);
   });
 
   it('keeps unassigned_reasons empty when the queue is unreadable', async () => {
@@ -158,6 +187,6 @@ describe('phm nodes plan', () => {
     const view = deps(() => tailnet([]), registry([node('node-a')]));
     expect(await cmdNodes(['plan'], view, async () => queueOf([job('g1', 'gemini', 1)]))).toBe(0);
     const text = String(log.mock.calls[0]![0]);
-    expect(text).toContain('waiting: 1 gemini job (no computer advertises the gemini lane)');
+    expect(text).toContain('waiting: 1 gemini job (the gemini lane cannot run on another computer)');
   });
 });

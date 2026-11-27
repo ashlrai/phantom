@@ -113,10 +113,21 @@ task records the included node IDs and bytes under its existing task ID.
 The Fleet drop-job writer uses the same context builder and adds its slice to
 the queued prompt only if the enriched job still passes the ingest contract.
 It records bytes and node IDs in the existing job metrics ledger.
+Cloud and Fleet slices compare their pinned commit with the checkout's local
+`origin/HEAD` and record the same comparison in `wikiSlice.freshness`.
+`commit` is the source pin, `defaultCommit` is the resolved local default
+branch tip, and `ahead`/`behind` count each side's unique commits. A missing
+default ref or incomplete history produces unknown distances, not zero.
+This does not fetch or assert that the local remote-tracking tip is current.
 `phm wiki brain stats --json` compares the merge fraction of explicitly
 measured, resolved Fleet and Cloud jobs with and without slices, separately.
-It excludes open jobs, unmeasured jobs, and Fleet outcomes outside the
-bounded ledger tail. This is observational, not a causal estimate.
+Only an explicit zero-byte receipt counts as without a slice. Missing
+receipts are reported separately in `fleet.unmeasuredResolved` and
+`cloud.unmeasuredResolved`, not included in either merge-rate denominator.
+`fleet.measuredJobs` counts retained receipt IDs, including unresolved jobs.
+`fleet.window` names the source and its 16 MiB byte cap. `fleet.truncated`
+means older ledger bytes were skipped, not that a date cutoff or job count
+was reached. This is observational, not a causal estimate.
 
 **After an unmerged close:** The direct Cloud tracker writes a lesson about
 the close and any scrubbed failed-check names. The observed commit is the
@@ -150,8 +161,15 @@ GitHub origin, then a matching enrolled checkout. There is no cloning,
 checkout switching, or fetching from a read: a missing checkout is shown as
 not indexed. Each repository reuses its own incremental Git snapshot.
 
-The bounded graph links unique root npm package identities via dependency
-declarations, versioned `npx` MCP declarations, and static JS/TS imports.
+The bounded graph links unambiguous npm package identities (root and common
+workspace locations) via dependency declarations, `npx` MCP declarations,
+and static JS/TS imports. It also links Cargo and PEP 621 dependencies, Git
+submodule declarations, GitHub Actions `uses`, and Homebrew formula sources.
+Explicit GitHub repository targets can be cited even if the target's local
+checkout is missing. The Git source map refresh remains incremental; a read
+checks the committed manifests, with a cap of 128 additional manifest files
+per repository. Generic HTTP URLs are not inferred to be shared API edges:
+a host alone does not establish repository ownership or an API contract.
 Edges point to the importing repository, file, line, and exact commit as
 provenance; they do not claim live runtime connectivity. In desktop **System
 map**, open **Ecosystem** and select a repository to see its direct incoming
