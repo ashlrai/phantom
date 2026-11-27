@@ -521,7 +521,8 @@ describe('CI baseline evidence', () => {
       'src/web-ui/design/tokens.tsx > (typecheck)',
     ]);
     expect(failures[0]?.names).toBe('(typecheck)');
-    expect(failures[0]?.excerpt).toContain('TS2322').toContain('TS2304');
+    expect(failures[0]?.excerpt).toContain('TS2322');
+    expect(failures[0]?.excerpt).toContain('TS2304');
     expect(failures[1]?.file).toBe('src/web-ui/design/tokens.tsx');
   });
   it('groups TypeScript diagnostics and queues master fixes for typecheck breaks', async () => {
