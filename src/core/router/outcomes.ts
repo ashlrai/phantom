@@ -1987,6 +1987,7 @@ function foldRouterOutcomesWithCiCoverage(
   const unlaunchedLanes = new Map<string, string>();
   const mergedAt = new Map<string, number>();
   const disputedCiFirstPass = new Set<string>();
+  const reviewFindings: { job: string; pr: string | null; findings: NonNullable<RouterOutcome['review_findings']> }[] = [];
   let unattached = 0;
   let sessionRows = 0;
   for (const r of rows) {
@@ -2116,7 +2117,9 @@ function foldRouterOutcomesWithCiCoverage(
     const f = r['review_findings'];
     if (f !== null && typeof f === 'object' && !Array.isArray(f)) {
       const fixed = count((f as Row)['fixed']), rejected = count((f as Row)['rejected']), ignored = count((f as Row)['ignored']);
-      if (fixed !== null && rejected !== null && ignored !== null) o.review_findings = { fixed, rejected, ignored };
+      if (fixed !== null && rejected !== null && ignored !== null && (u === null || rowPrKey !== null)) {
+        reviewFindings.push({ job: j, pr: rowPrKey, findings: { fixed, rejected, ignored } });
+      }
     }
     // The same claim rows carry the hinted lane's recorded blocking
     // codes — the third field of the dispatch override record. The
@@ -2316,6 +2319,17 @@ function foldRouterOutcomesWithCiCoverage(
       }
     }
     outcomes.set(j, o);
+  }
+  for (const { job, pr, findings } of reviewFindings) {
+    const verdictPr = verdictPrKeys.get(job);
+    const soleClaim = soleClaimByJob.get(job);
+    const standingPr = verdictPr === undefined && !(mergedAt.has(job) && soleClaim === null)
+      ? jobPrKeys.get(job) : verdictPr ?? null;
+    // Legacy job-only counts can stand with no PR claim or a single verified
+    // PR identity. Explicit counts must match the standing PR.
+    const matches = pr !== null ? pr === standingPr
+      : standingPr !== null && (soleClaim === undefined || soleClaim === `pr:${standingPr}`);
+    if (matches) outcomes.get(job)!.review_findings = findings;
   }
   for (const o of outcomes.values()) {
     o.lane ??= unlaunchedLanes.get(o.job_id) ?? null;

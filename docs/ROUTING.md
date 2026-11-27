@@ -971,6 +971,15 @@ vocabulary and `cross_review_truncated` marks a cut tail, in which
 case joined verdicts cover only the newest bytes; anything but
 `read` leaves every `cross_review` `null` — unknown, never a guessed
 verdict — while an empty readable ledger means zero recorded joins.
+
+Jobs-ledger `review_findings` counts follow the standing PR. The winning
+merge or close verdict selects the PR, and an unresolved job uses its latest
+unambiguous canonical PR claim. A terminal verdict without a URL can use a
+sole canonical claim. The last eligible count in ledger order stands.
+Legacy job-only counts remain eligible for jobs with no PR claim or one
+uncontested canonical claim. Counts stay unknown when the available receipts
+cannot establish which PR the counts describe.
+
 `reverted`
 folds explicit revert evidence — a `reverted` boolean, a revert event name
 or terminal REVERT/REVERTED state, or a parseable `reverted_at`/`revertedAt`
