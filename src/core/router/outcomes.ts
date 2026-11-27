@@ -1654,13 +1654,6 @@ const hasRevertStamp = (r: Row): boolean =>
   });
 
 /**
- * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
- * recordedAt|updatedAt, with mergedAt/closedAt preferred on terminal rows —
- * the same field set dispatchd `_vc_pick` and metrics/loop accept.
- */
-const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
-
-/**
  * Event names that carry a terminal merge verdict when no phase field
  * resolves — the job-outcomes convention ('merged'/'closed'). A resolved
  * phase always stays authoritative over the event name, and every other
@@ -2725,7 +2718,7 @@ export function foldMarketHandoffAdvisories(text: string, throughEpochSeconds = 
  * The parseable timestamp of each job's standing jobs-ledger
  * session-handoff advisory — the last recognized advisory row in
  * append order, the same row the fold's wholesale-replace rule keeps,
- * with its `ts` read through the shared ledger timestamp keys. The
+ * with its timestamp parsed by the same ledger reader as the report cutoff. The
  * market-side advisory join orders against this: a market advisory
  * supersedes the jobs-ledger triple only when its recorded ts is
  * strictly newer. A job whose standing advisory carries no parseable
@@ -2740,11 +2733,11 @@ function latestJobsHandoffAdvisoryMs(text: string, throughMs: number): Map<strin
     const row = parseJsonObjectLine(line);
     if (row === null) continue;
     if (handoffAdvisory(row) === null) continue;
-    if ((ledgerEventTs(row, null) ?? -Infinity) > throughMs) continue;
+    const at = ledgerEventTs(row, null);
+    if (at !== null && at > throughMs) continue;
     const job = str(row, 'job', 'job_id', 'jobId', 'id');
     if (job === null) continue;
-    const at = Date.parse(str(row, ...LEDGER_TS_KEYS) ?? '');
-    latest.set(job, Number.isFinite(at) ? at : null);
+    latest.set(job, at);
   }
   return latest;
 }

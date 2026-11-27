@@ -590,7 +590,9 @@ job's lane measured zero quota, carrying the market's chosen lane as
 `foldMarketHandoffAdvisories` read under the `market_state` health:
 each job's newest recorded advisory supersedes the jobs-ledger
 triple only when its recorded `ts` is strictly newer than the
-standing jobs-ledger advisory's parseable timestamp — no jobs
+standing jobs-ledger advisory's parseable timestamp. The comparison uses
+the same timestamp parser as the report cutoff, including fallback fields
+when an earlier field cannot be parsed. No jobs
 advisory means the market verdict fills the triple, an unorderable
 jobs advisory leaves the jobs verdict standing, and market rows
 naming jobs outside the jobs window join nothing. This fold keeps
