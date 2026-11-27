@@ -20,6 +20,21 @@ const BRIDGE_BRANCH = new RegExp(`^codex-bridge/(${JOB})$`);
 export const isPullUrl = (url: string): boolean => PR_URL.test(url);
 export const isCommitId = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
 
+/** Process env stripped of inherited GIT_* overrides before daemon git hardening. */
+export function sanitizedGitProcessEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string | undefined> {
+  return Object.fromEntries(Object.entries(base).filter(([key]) => !key.startsWith('GIT_')));
+}
+
+/** Non-interactive, hardened git environment shared across worktree probes. */
+export function hardenedGitEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string | undefined> {
+  return {
+    ...withDaemonGitHardening(sanitizedGitProcessEnv(base)),
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_NO_LAZY_FETCH: '1',
+    GIT_NO_REPLACE_OBJECTS: '1',
+  };
+}
+
 export type BridgeVerdict = { at: number; prHead?: string };
 export type BridgeCommit = BridgeVerdict & { prUrl?: string; mergeSha?: string };
 type PullVerdict = BridgeVerdict & { url: string; state: 'OPEN' | 'CLOSED' | 'MERGED'; mergeSha?: string };
@@ -56,8 +71,12 @@ function validBridge(value: BridgeVerdict | undefined): value is BridgeVerdict {
   return !!value && validAt(value.at) && (value.prHead === undefined || isCommitId(value.prHead));
 }
 
+function isPullState(value: unknown): value is PullVerdict['state'] {
+  return value === 'OPEN' || value === 'CLOSED' || value === 'MERGED';
+}
+
 function validPull(value: PullVerdict | undefined): value is PullVerdict {
-  return !!value && validBridge(value) && ['OPEN', 'CLOSED', 'MERGED'].includes(value.state) &&
+  return !!value && validBridge(value) && isPullState(value.state) &&
     typeof value.url === 'string' && isPullUrl(value.url);
 }
 
@@ -67,7 +86,7 @@ type GhPull = {
 };
 
 function githubPull(row: GhPull | null | undefined): PullVerdict | null {
-  if (!row?.url || !isPullUrl(row.url) || !row.state || !['OPEN', 'CLOSED', 'MERGED'].includes(row.state)) return null;
+  if (!row?.url || !isPullUrl(row.url) || !isPullState(row.state)) return null;
   const at = parseLedgerTs(row.state === 'MERGED' ? row.mergedAt : row.state === 'CLOSED' ? row.closedAt : row.createdAt);
   if (at === null) return null;
   return { url: row.url, at, state: row.state, prHead: isCommitId(row.headRefOid) ? row.headRefOid : undefined,
@@ -147,8 +166,7 @@ export async function readWorktreePulls(roots: MaintRoots, urls: readonly string
 export async function readWorktreeBridgeCommits(roots: MaintRoots): Promise<Map<string, BridgeCommit>> {
   const repo = process.env.ASHLR_LANDED_REPO || join(dirname(roots.wtDir), 'phantom');
   const path = join(roots.runsDir, 'disk-maint-bridges.json');
-  const env = { ...withDaemonGitHardening(Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')))),
-    GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1' };
+  const env = hardenedGitEnv();
   const git = async (...args: string[]) => (await run('git', ['-C', repo, ...args], {
     timeout: 3_000, maxBuffer: 8 * 1024 * 1024, env,
   })).stdout;

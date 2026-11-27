@@ -9,7 +9,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { dailyUserSchedule, type ScheduleUnit } from '../steward/schedule.js';
 
-export const DISK_MAINT_LABEL = 'ai.ashlr.phm.disk-maint';
+const DISK_MAINT_LABEL = 'ai.ashlr.phm.disk-maint';
 
 export function diskMaintSchedule(opts: { phmPath: string; nodePath?: string; apply: boolean; hour?: number; worktrees?: boolean; platform?: NodeJS.Platform; home?: string }): ScheduleUnit[] {
   const home = opts.home ?? homedir();
