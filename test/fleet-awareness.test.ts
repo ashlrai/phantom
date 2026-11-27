@@ -58,6 +58,29 @@ test('unknown, stale, future and expired reports never become pool capacity; exa
   expect(projectFleetAwareness(legacy.state, legacy.now()).hosts[0]?.freeSlots).toBeNull();
 });
 
+test('a delayed capacity heartbeat preserves the latest host hold and slot budget', () => {
+  const f = fixture();
+  const worker = f.add('worker', { slots: 2 });
+  const readyAt = f.now();
+  f.enqueue();
+  f.advance(1000);
+  const heldAt = f.now();
+  f.beat('worker', { slots: 0, held: 'memory-pressure' });
+  f.advance(1000);
+  const pull = () => f.run('pull', ['--node', worker.nodeId, '--session', String(worker.session)]);
+  f.run('beat', ['--node', worker.nodeId, '--session', String(worker.session), '--slots', '2',
+    '--capacity', JSON.stringify({ ...worker.capacity, sampledAtMs: readyAt, slots: 2, held: null })]);
+  expect(worker).toMatchObject({ heartbeatAt: f.now(), slots: 0, capacity: { sampledAtMs: heldAt, held: 'memory-pressure' } });
+  expect(f.plan()[0]?.nodeId).toBeNull();
+  expect(pull().pulled).toBe(false);
+
+  f.beat('worker', { slots: 2 });
+  f.advance(1000);
+  f.beat('worker', { sampledAtMs: heldAt, slots: 0, held: 'memory-pressure' });
+  expect(f.plan()[0]?.nodeId).toBe('worker');
+  expect(pull().pulled).toBe(true);
+});
+
 test.each([
   { paused: 'disk guard' },
   { admission: { admit: false } },
