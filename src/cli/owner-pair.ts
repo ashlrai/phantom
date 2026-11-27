@@ -5,7 +5,7 @@
  */
 import { loadConfigAt } from '../core/config.js';
 import { fixedOwnerConfigDir } from '../core/comms/owner-channel.js';
-import { checkOwnerPair, loopbackPairBridge, readOwnerPairStatus, startOwnerPair, unpairOwner, type PairDeps } from '../core/comms/owner-pair.js';
+import { checkOwnerPair, loopbackPairBridge, readOwnerPairStatus, readPairState, startOwnerPair, unpairOwner, type PairDeps } from '../core/comms/owner-pair.js';
 
 export const OWNER_PAIR_USAGE = 'Usage: phm owner pair imessage [--handle <handle>] [--json]\n       phm owner pair status [--json]\n       phm owner unpair imessage [--json]';
 
@@ -55,8 +55,22 @@ export async function cmdOwnerPair(args: string[], deps: OwnerPairCliDeps = {}):
     else if (tail.length !== 0) { error(OWNER_PAIR_USAGE); return 2; }
     const live = pairDeps();
     // A waiting pair is checked first, so running this again after replying YES finishes the pairing.
-    if (handle === undefined) {
-      const checked = await checkOwnerPair(live);
+    const pending = readPairState(configDir).pending;
+    const explicit = handle?.trim().toLowerCase();
+    const matching = explicit !== undefined && pending && pending.expiresAt > (live.now ?? Date.now)()
+      && pending.handles.some(h => h.toLowerCase() === explicit);
+    if (handle === undefined || matching) {
+      const scoped = explicit === undefined ? live : { ...live, bridge: { ...live.bridge,
+        replies: async (after: number, handles: string[]) => {
+          const replies = await live.bridge.replies(after, handles.filter(h => h.toLowerCase() === explicit));
+          return replies?.filter(reply => reply.handle.toLowerCase() === explicit) ?? null;
+        },
+      } };
+      const checked = await checkOwnerPair(scoped);
+      if (checked.status === 'unreadable') {
+        emit({ status: 'messages-unreadable' }, MESSAGES['messages-unreadable']!);
+        return 1;
+      }
       if (checked.status === 'bound') {
         emit({ status: 'paired', confirmed: checked.confirmed, ...(checked.reason ? { reason: checked.reason } : {}) },
           `Paired. ${checked.confirmed ? 'Fleet updates will come here.' : `Not confirmed yet: ${checked.reason ?? 'see comms.toml'}`}`);
