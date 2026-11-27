@@ -58,6 +58,8 @@ import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSumm
   busBodySummary, busInboxJobMarker, busReadContains, busReadContainsMatch, jobAnnotationFromFeed, readAgentInbox, readAgentWakes,
   type AgentWakeRow, type BusEnvelopeLookupJob, type InboxKind } from './bus-unified.js';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
+import { BUS_DEAD_LETTER_ADDRESS, busDeadLetterContainsText, busDeadLetterReport, busDeadLetterSummary,
+  type BusDeadLetterReport } from './bus-dead-letter.js';
 import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
   type BusPriority } from '../fleet/bus-envelope.js';
 import { inspectBusWorkClaims, type BusWorkClaimView } from '../fleet/bus-work-claims.js';
@@ -1752,47 +1754,6 @@ interface HandoffCandidate {
 /** One bounded-walk failure shared by the `next`, `handoffs` and `deadLetters` sections — same store, same read. */
 type PendingWorkScanFail = { status: 'unavailable' | 'retryable' | 'invalid'; reason: string };
 
-/** The transport dead-letter sink (docs/AGENT-BUS.md "Dead letters"): the
- * router files delivery-failure reports under this address. Kept a literal —
- * the shared constant lives in bus-transport-file, whose import would pull
- * the transport router into this read projection's closure (the same call
- * the unified inbox makes). */
-const BUS_DEAD_LETTER_ADDRESS = 'bus.dead-letter';
-
-/** The delivery-failure summary a dead-letter letter carries under
- * `body.payload.deadLetter` (the sink's wire shape in bus-transport-file),
- * read defensively: stored envelopes are untrusted data, so every field is
- * optional and a missing one stays absent rather than guessed. */
-interface BusDeadLetterReport {
-  readonly id: string | null;
-  readonly from: string | null;
-  readonly to: string | null;
-  readonly kind: string | null;
-  readonly reason: string | null;
-  readonly attempts: number | null;
-  readonly payloadDropped: boolean;
-}
-
-function deadLetterReport(body: unknown): BusDeadLetterReport | null {
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
-  const outer = body as Record<string, unknown>;
-  const payload = outer.payload;
-  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  const letter = (payload as Record<string, unknown>).deadLetter;
-  if (letter === null || typeof letter !== 'object' || Array.isArray(letter)) return null;
-  const record = letter as Record<string, unknown>;
-  const text = (key: string): string | null => {
-    const value = record[key];
-    return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
-  };
-  const attempts = record.attempts;
-  return {
-    id: text('id'), from: text('from'), to: text('to'), kind: text('kind'), reason: text('reason'),
-    attempts: Array.isArray(attempts) ? attempts.length : null,
-    payloadDropped: (payload as Record<string, unknown>).payloadDropped === true,
-  };
-}
-
 /** One live dead-letter letter whose original mail provably addresses the agent. */
 interface DeadLetterCandidate {
   cursor: number;
@@ -1808,45 +1769,6 @@ interface DeadLetterCandidate {
   summary: string;
   /** Normalized `--contains` haystack — the report facts, never labels or ids. */
   containsText: string;
-}
-
-/**
- * The one-line report text a dead-letter item displays — the same facts
- * the unified inbox's `bus-dead-letter` item composes (reason, parties,
- * attempt count, original kind/id, dropped payload), scrubbed and clipped
- * like every other digest summary. Facts the letter never recorded stay
- * absent rather than guessed. `--contains` matches `deadLetterContainsText`
- * instead — the facts without the routing labels and wire ids.
- */
-function deadLetterSummary(report: BusDeadLetterReport): string {
-  const parties = report.from !== null || report.to !== null
-    ? `${report.from ?? 'unknown'} → ${report.to ?? 'unknown'}` : 'delivery failure';
-  const detail = [
-    report.attempts !== null ? `${report.attempts} attempt${report.attempts === 1 ? '' : 's'}` : null,
-    report.kind !== null ? `kind ${report.kind}` : null,
-    report.id !== null ? `original ${report.id}` : null,
-    report.payloadDropped ? 'payload dropped' : null,
-  ].filter((part): part is string => part !== null).join(' · ');
-  const head = `dead letter${report.reason !== null ? ` ${report.reason}` : ''}: ${parties}`;
-  return mineField(detail === '' ? head : `${head} · ${detail}`, WORK_MINE_SUMMARY_MAX);
-}
-
-/**
- * The `--contains` haystack for a dead-letter report — the descriptive
- * facts only: the failure reason, attempt count, original kind and the
- * dropped-payload flag. The parties and the original envelope id stay out
- * for the same reason `next`/`handoffs` keep routing labels and wire ids
- * out of their body-summary match — those have their own filters (`from`,
- * `channel`, `id`), and a report whose payload was dropped still matches
- * on what the letter itself recorded.
- */
-function deadLetterContainsText(report: BusDeadLetterReport): string {
-  return [
-    report.reason !== null ? `dead letter ${report.reason}` : 'dead letter',
-    report.attempts !== null ? `${report.attempts} attempt${report.attempts === 1 ? '' : 's'}` : null,
-    report.kind !== null ? `kind ${report.kind}` : null,
-    report.payloadDropped ? 'payload dropped' : null,
-  ].filter((part): part is string => part !== null).join(' · ');
 }
 
 /**
@@ -1927,13 +1849,13 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
       // summary cannot be read, or whose original `to` is absent, names no
       // provable addressee and never lists.
       if (envelope.to === BUS_DEAD_LETTER_ADDRESS) {
-        const report = deadLetterReport(envelope.body);
+        const report = busDeadLetterReport(envelope.body);
         if (report !== null && report.to !== null && pendingAddress(report.to, report.from ?? '')) {
           deadLetterCandidates.push({
             cursor: row.cursor, receivedAt: row.receivedAt, priority: envelope.priority,
             id: envelope.id, expiresAt: nowMs + envelope.ttl, to: report.to,
-            report, summary: deadLetterSummary(report),
-            containsText: deadLetterContainsText(report).toLowerCase().replace(/\s+/g, ' '),
+            report, summary: busDeadLetterSummary(report),
+            containsText: busDeadLetterContainsText(report).toLowerCase().replace(/\s+/g, ' '),
           });
         }
         continue;
@@ -3068,7 +2990,7 @@ function coordinationSection(agent: string, identity: AgentIdentity | undefined,
 /** The board states that still need a coordination decision — the same pending set the unified inbox's work-board source lists. */
 const WORK_BOARD_PENDING_STATES: ReadonlySet<WorkItemState> = new Set(['RECEIVED', 'ASSIGNED', 'BLOCKED']);
 
-/** The `--contains` haystack for one board item — the classifier's descriptive facts only: state, channel, missing evidence and the blocked dependency. The envelope id, routing labels, owner and claim receipt stay out — those have their own fields and filters, the same rule `deadLetterContainsText` follows. */
+/** The `--contains` haystack for one board item — the classifier's descriptive facts only: state, channel, missing evidence and the blocked dependency. The envelope id, routing labels, owner and claim receipt stay out — those have their own fields and filters, the same rule `busDeadLetterContainsText` follows. */
 function workBoardContainsText(item: WorkBoardItem): string {
   return scrubSecrets([item.state, item.channel, item.channelRef ?? '',
     item.missing.join(' '),
