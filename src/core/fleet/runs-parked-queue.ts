@@ -417,6 +417,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
   let malformed = dropped;
   let unhinted = 0;
   const seenReady = new Set<string>();
+  const seenParked = new Set<string>();
   for (const parsed of parsedRows) {
     if ('openJobId' in parsed) {
       if (!seenReady.has(parsed.openJobId)) {
@@ -435,6 +436,12 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     if (!parkedState.parked) {
       if (seenReady.has(row.id)) continue;
       seenReady.add(row.id);
+    } else {
+      // A job parked twice — a duplicated hold row or two parked encodings —
+      // is one parked job: the first valid parked row supplies its reason,
+      // lane and group, the same first-valid-row rule ready rows follow.
+      if (seenParked.has(row.id)) continue;
+      seenParked.add(row.id);
     }
     // The parser uppercases the whole PARKED marker inside `status`, so its
     // lane capture can differ in case from the lane the row's own pool cell
