@@ -8,10 +8,11 @@ import {
   BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter,
 } from '../core/fleet/bus-inbox.js';
 import { BUS_PRIORITIES, validateBusEnvelope, type BusPriority, type BusProtocolKind } from '../core/fleet/bus-envelope.js';
-import { BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
-import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
-import { busBodyKind, busBodyResultOutcome, busBodyThread, WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
-import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
+import { BUS_PROTOCOL_KINDS, isTopicPattern } from '../core/fleet/bus-protocol.js';
+import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
+import { WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
+import { busReadContains } from '../core/agents/bus-unified.js';
+import { busPageAddressMatchers, filterBusInboxPage, type BusPageFilters } from '../core/fleet/bus-page-filters.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
 export const MAX_FLEET_BUS_INBOX_READ = BUS_INBOX_MAX_READ;
@@ -19,58 +20,15 @@ export const DEFAULT_FLEET_BUS_INBOX_READ = 50;
 
 /**
  * The `phm comms bus read` filter set resolved for one page — every field
- * narrows the scanned page, none fabricates: the same predicates the CLI's
- * `filterPage` applies, so an MCP read and a CLI read can never disagree
- * about what a filter keeps.
+ * narrows the scanned page, none fabricates. The scalar and body fields are
+ * the shared `BusPageFilters` the CLI and the verse raw page apply through
+ * `filterBusInboxPage`; `excludeFrom` stays an address ref resolved through
+ * `busPageAddressMatchers` beside `to`/`from`, so an MCP read, a CLI read
+ * and an HTTP read can never disagree about what a filter keeps.
  */
-export interface FleetBusInboxFilters {
-  /** Exact envelope id. */
-  id?: string;
-  /** Exact `inReplyTo` field on object bodies. */
-  inReplyTo?: string;
+export interface FleetBusInboxFilters extends BusPageFilters {
   /** Sender routing label excluded under every label of one registered identity. */
   excludeFrom?: string;
-  /** Exact P0..P3 priority band. */
-  priority?: BusPriority;
-  /** Protocol-v1 body kind (task, result, review, status, question). */
-  kind?: BusProtocolKind;
-  /** Topic name or namespace prefix the body's protocol topic must match. */
-  topic?: string;
-  /** v2 thread label — matches `note`/`context` bodies only. */
-  thread?: string;
-  /** Room filter: keeps only envelopes addressed to `group:<channel>:*` —
-   * the same raw `to`-prefix rule `phm comms bus read --channel`,
-   * `fleet bus-follow --channel`, `phm messages --channel`,
-   * `agents bus wakes --channel` and the work feed's `--channel` apply; the
-   * strict channel-name grammar, decided on the `to` label with no registry
-   * dependence — the addressed `agents bus inbox --channel` resolves the
-   * same prefix only across channels the agent belongs to. */
-  channel?: string;
-  /** One job id the body must name (the shared `busBodyJobMatch` rule). */
-  job?: string;
-  /** Exact body-kind discriminator the body must carry (the shared
-   * `busBodyKind` own-field match): the v2 `kind` field, else a
-   * bus-transport v1 `protocol.kind`, else the `type`/`schema` a kindless
-   * notice keys on — matched exactly and case-sensitively, so a body
-   * carrying no discriminator never matches and an unrecognized but
-   * printable value is an honest empty page, never an error and never a
-   * widened one. */
-  bodyKind?: string;
-  /** `work.result` outcome code the `busBodyResultOutcome` own-field match
-   * reads — the same `WORK_RESULT_OUTCOMES` vocabulary every bus read's
-   * `result` filter validates, so a `work.release` body's own
-   * released/completed outcome, every other body kind and a `work.result`
-   * carrying no outcome never match. */
-  result?: WorkResultOutcome;
-  /** Epoch-ms cutoff resolved at parse time; keeps `receivedAt >= since`. */
-  since?: number;
-  /** Epoch-ms cutoff resolved at parse time; keeps `receivedAt < before` —
-   * the exclusive upper bound composing with `since` into one
-   * `[since, before)` window, the same rule `phm comms bus read|watch
-   * --before` and `fleet bus-follow --before` apply. */
-  before?: number;
-  /** Normalized `--contains` needle over the scrubbed one-line summary. */
-  contains?: string;
 }
 
 export interface FleetBusInboxArgs {
@@ -219,29 +177,9 @@ export async function readFleetBusInbox(input: FleetBusInboxArgs, deps: FleetBus
   if (page.status !== 'ok') {
     return { ...base, sourceState: page.status, messages: null, returnedMessages: null, nextCursor: null };
   }
-  const registryRead = input.to === undefined && input.from === undefined && filters?.excludeFrom === undefined
-    ? undefined : readAgentRegistry();
-  const registry = registryRead?.status === 'ok' ? registryRead.registry : undefined;
-  const to = input.to === undefined ? undefined : agentRefAddressMatcher(input.to, registry);
-  const from = input.from === undefined ? undefined : agentRefAddressMatcher(input.from, registry);
-  const excludeFrom = filters?.excludeFrom === undefined ? undefined : agentRefAddressMatcher(filters.excludeFrom, registry);
-  const messages = page.messages.filter(({ envelope, receivedAt }) =>
-    (to === undefined || to(envelope.to)) &&
-    (from === undefined || from(envelope.from)) &&
-    (excludeFrom === undefined || !excludeFrom(envelope.from)) &&
-    (filters?.id === undefined || envelope.id === filters.id) &&
-    (filters?.inReplyTo === undefined || busBodyInReplyToMatch(envelope.body, filters.inReplyTo)) &&
-    (filters?.priority === undefined || envelope.priority === filters.priority) &&
-    (filters?.kind === undefined || protocolOf(envelope.body)?.kind === filters.kind) &&
-    (filters?.topic === undefined || topicMatches(filters.topic, protocolOf(envelope.body)?.topic ?? '')) &&
-    (filters?.thread === undefined || busBodyThread(envelope.body) === filters.thread) &&
-    (filters?.job === undefined || busBodyJobMatch(envelope.body, filters.job)) &&
-    (filters?.bodyKind === undefined || busBodyKind(envelope.body) === filters.bodyKind) &&
-    (filters?.result === undefined || busBodyResultOutcome(envelope.body) === filters.result) &&
-    (filters?.channel === undefined || envelope.to.startsWith(`group:${filters.channel}:`)) &&
-    (filters?.since === undefined || receivedAt >= filters.since) &&
-    (filters?.before === undefined || receivedAt < filters.before) &&
-    (filters?.contains === undefined || busReadContainsMatch(envelope.body, filters.contains)));
+  const matchers = busPageAddressMatchers({ to: input.to, from: input.from, excludeFrom: filters?.excludeFrom });
+  const filtered = filterBusInboxPage(page, filters ?? {}, matchers);
+  const messages = filtered.status === 'ok' ? filtered.messages : [];
   return {
     ...base, sourceState: 'ok' as const, messages,
     returnedMessages: messages.length, nextCursor: page.nextCursor,

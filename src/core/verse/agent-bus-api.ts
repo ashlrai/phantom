@@ -1,6 +1,13 @@
 /**
  * Durable local bus, shared with `phm comms bus`:
- * GET /api/verse/agent-bus[?after=0&limit=50] reads a cursor page (limit 1..100).
+ * GET /api/verse/agent-bus[?after=0&limit=50&to=…&from=…&excludeFrom=…&id=…&inReplyTo=…&priority=P1&kind=task&topic=eng.*&thread=t-1&job=RQ-1&channel=eng&bodyKind=work.post&result=complete&since=15m&before=2h&contains=text]
+ * reads a cursor page (limit 1..100) narrowed by the shared bus page filter
+ * set — the same predicates `phm comms bus read|watch`, `fleet bus-follow`
+ * and the fleet MCP `fleet_bus_inbox` apply, resolved through
+ * `parseBusPageQuery`/`filterBusInboxPage`/`busPageAddressMatchers` so an
+ * HTTP read, a CLI read and an MCP read can never disagree about what a
+ * filter keeps; the limit still counts scanned records before filtering, so
+ * an unmatched page advances `nextCursor` without replay.
  * POST /api/verse/agent-bus appends exactly one BusEnvelope, with the normal
  * dispatch/token gate. GET /api/verse/agent-bus/status inspects retained capacity.
  * GET /api/verse/agent-bus/work-feed is the v2 work projection (`phm fleet
@@ -51,7 +58,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFleetEdges } from '../fleet/fleet-edges.js';
 import { parseBusEnvelope } from '../fleet/bus-envelope.js';
-import { appendBusInbox, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
+import { appendBusInbox, inspectBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
+import { busPageAddressMatchers, BUS_PAGE_QUERY_PARAMS, filterBusInboxPage, parseBusPageQuery, type BusPageQueryInput } from '../fleet/bus-page-filters.js';
 import { projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../agents/bus-work-feed-read.js';
 import { parseBusWorkFeedQuery, type BusWorkFeedQueryInput } from '../agents/bus-work-feed-query.js';
 import { parseAgentMessagesQuery, readAgentMessages } from '../fleet/agent-messages.js';
@@ -143,7 +151,7 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     let params: URLSearchParams;
     try { params = new URL(req.url ?? path, 'http://localhost').searchParams; }
     catch { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
-    const allowed = method === 'GET' && path === PATH ? ['after', 'limit']
+    const allowed = method === 'GET' && path === PATH ? [...BUS_PAGE_QUERY_PARAMS]
       : method === 'GET' && path === MESSAGES ? ['since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'topic', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to', 'result', 'limit']
       : method === 'GET' && path === WORK_FEED ? [...WORK_FEED_PARAMS] : [];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) {
@@ -236,12 +244,17 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
         sendJson(res, result.source === 'unavailable' ? 503 : 200,
           { v: 1, ...result, mirror: getBusMirrorState() });
       } else if (method === 'GET') {
-        const after = params.get('after') ?? '0', limit = params.get('limit') ?? '50';
-        if (![after, limit].every(value => /^(0|[1-9][0-9]*)$/.test(value) && Number.isSafeInteger(Number(value))) ||
-          Number(limit) < 1 || Number(limit) > BUS_INBOX_MAX_READ) {
-          sendJson(res, 400, { error: 'Invalid cursor or limit.' }); return true;
+        const query: BusPageQueryInput = {};
+        for (const key of BUS_PAGE_QUERY_PARAMS) {
+          const value = params.get(key);
+          if (value !== null) query[key] = value;
         }
-        const result = (deps.list ?? listBusInboxAfter)(Number(after), Number(limit));
+        const parsed = parseBusPageQuery(query);
+        if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
+        const page = (deps.list ?? listBusInboxAfter)(parsed.after, parsed.limit);
+        const result = page.status === 'ok'
+          ? filterBusInboxPage(page, parsed.filters, busPageAddressMatchers(parsed.refs))
+          : page;
         sendJson(res, result.status === 'ok' ? 200 : result.status === 'invalid' ? 400 : 503, { v: 1, ...result });
       } else {
         let raw: string;
