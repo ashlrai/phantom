@@ -15,15 +15,16 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { extractJobPaths } from '../fleet/job-precheck.js';
-import { commandNouns, dupcheckGoal } from './dupcheck.js';
+import { commandNouns, dupcheckGoal, flagNouns } from './dupcheck.js';
+import { escapeRegExp } from './schema.js';
 
 const run = promisify(execFile);
-export const GIT_DUPCHECK_SCHEMA = 'jobs.dupcheck.v1';
+const GIT_DUPCHECK_SCHEMA = 'jobs.dupcheck.v1' as const;
 export type GitDupcheckVerdict = 'new' | 'partly on master' | 'likely done';
 export type GitAnchorKind = 'command' | 'flag' | 'file' | 'name';
 export interface GitAnchor { kind: GitAnchorKind; text: string; found: boolean; where: string | null }
 export interface GitDupcheckReport {
-  schema: typeof GIT_DUPCHECK_SCHEMA;
+  schema: 'jobs.dupcheck.v1';
   verdict: GitDupcheckVerdict;
   summary: string;
   /** The ref that was searched, e.g. origin/master; null when the repo has none of the candidates. */
@@ -34,7 +35,6 @@ export interface GitDupcheckReport {
 }
 
 const NAME_RE = /`([A-Za-z_$][\w$]*)`/g;
-const FLAG_RE = /(?<![\w-])(--[a-z][a-z0-9-]*)/g;
 const MAX_ANCHORS = 40;
 
 /** Backticked identifiers that look like exports (camelCase or PascalCase, not a plain word or a flag). */
@@ -55,10 +55,8 @@ export async function resolveRef(repo: string): Promise<string | null> {
   return null;
 }
 
-const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 /** Pure shape of the report from checked anchors. */
-export function gitDupcheckVerdict(anchors: GitAnchor[], ref: string | null): GitDupcheckReport {
+function gitDupcheckVerdict(anchors: GitAnchor[], ref: string | null): GitDupcheckReport {
   const found = anchors.filter(a => a.found).map(a => a.text), missing = anchors.filter(a => !a.found).map(a => a.text);
   const at = ref ?? 'the repo';
   let verdict: GitDupcheckVerdict, summary: string;
@@ -83,9 +81,9 @@ export async function gitDupcheck(promptText: string, opts: { repo?: string } = 
     return hit ? hit.replace(`${ref}:`, '') : null;
   };
 
-  const flags = [...new Set([...goal.matchAll(FLAG_RE)].map(m => m[1]!))];
+  const flags = flagNouns(goal);
   for (const noun of commandNouns(goal)) {
-    const words = noun.split(' ').map(escapeRe).join('[ -]');
+    const words = noun.split(' ').map(escapeRegExp).join('[ -]');
     // The command as typed (`phm x y`), or a help-table row that starts with it (cmd: 'x y ...).
     const where = await firstHit([`(phm|ashlr) ${words}([^a-z0-9-]|$)`, `(cmd|usage): '(phm |ashlr )?${words}([^a-z0-9-]|$)`], true);
     anchors.push({ kind: 'command', text: `phm ${noun}`, found: where !== null, where });
@@ -99,7 +97,7 @@ export async function gitDupcheck(promptText: string, opts: { repo?: string } = 
     anchors.push({ kind: 'file', text: path, found: there, where: there ? path : null });
   }
   for (const name of exportedNames(goal)) {
-    const where = await firstHit([`export (declare )?(async )?(function\\*?|const|let|class|interface|type|enum) ${escapeRe(name)}([^A-Za-z0-9_$]|$)`], true);
+    const where = await firstHit([`export (declare )?(async )?(function\\*?|const|let|class|interface|type|enum) ${escapeRegExp(name)}([^A-Za-z0-9_$]|$)`], true);
     anchors.push({ kind: 'name', text: name, found: where !== null, where });
   }
   return gitDupcheckVerdict(anchors.slice(0, MAX_ANCHORS), ref);

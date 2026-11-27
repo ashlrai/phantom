@@ -4,8 +4,11 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { z } from 'zod';
+import { ledgerJobId } from '../fleet/jobs-ledger-dialect.js';
+import { firstLedgerString, LEDGER_EVENT_KEYS } from '../metrics/loop.js';
 import { scrubPrivateText } from '../util/scrub.js';
 import { fitRoute, type RouteSkipCode } from '../fleet/lane-capabilities.js';
+import { isQueueRecord } from './schema.js';
 import { supersedeQueue } from './supersede.js';
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/).refine(value => scrubPrivateText(value) === value);
@@ -84,12 +87,12 @@ async function readEmptyPrefixes(root: string, now: number): Promise<EmptyPrefix
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line);
-      if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error();
+      const row: unknown = JSON.parse(line);
+      if (!isQueueRecord(row)) throw new Error();
       // jobs.jsonl event names arrive as event|type|kind; stamps as
       // ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt.
-      if ((row.event ?? row.type ?? row.kind) !== 'finish') continue;
-      const job = id.parse(row.job ?? row.job_id ?? row.jobId ?? row.id);
+      if (firstLedgerString(row, LEDGER_EVENT_KEYS) !== 'finish') continue;
+      const job = id.parse(ledgerJobId(row));
       const stamp = row.ts ?? row.timestamp ?? row.at ?? row.time ?? row.mergedAt ?? row.closedAt ?? row.recordedAt ?? row.updatedAt;
       const at = typeof stamp === 'string' && /(?:Z|[+-]\d{2}:?\d{2})$/.test(stamp) ? Date.parse(stamp) : NaN;
       if (!Number.isFinite(at)) throw new Error();

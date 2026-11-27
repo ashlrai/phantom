@@ -1,6 +1,10 @@
 import { join } from 'node:path';
+import { ledgerPhase } from '../fleet/empty-cause.js';
+import { ledgerJobId } from '../fleet/jobs-ledger-dialect.js';
 import { readJobsTail } from '../fleet/report-ledger.js';
+import { firstLedgerString, LEDGER_EVENT_KEYS } from '../metrics/loop.js';
 import { readTelemetryFile } from '../resources/telemetry.js';
+import { isQueueRecord, parseUnixOrIsoMs } from './schema.js';
 
 export interface SettleInputs {
   load1: number | null; ncpu: number | null; memoryFreePercent: number | null;
@@ -10,7 +14,7 @@ export interface SettleInputs {
 export interface SettleConfig { enabled?: boolean; legacySeconds?: number }
 const numeric = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 const count = (v: unknown): number | null => numeric(v) !== null && Number.isSafeInteger(v) ? v as number : null;
-const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
+const asRecord = (v: unknown): Record<string, unknown> => isQueueRecord(v) ? v : {};
 const clamp = (v: number): number => Math.max(0, Math.min(1, v));
 
 /** Pure interval policy, not permission to launch. Missing evidence keeps the old interval. */
@@ -45,28 +49,16 @@ export function adaptiveSettle(raw: SettleInputs, config: SettleConfig = {}) {
 }
 export type SettleDecision = ReturnType<typeof adaptiveSettle>;
 
-const timestamp = (v: unknown): number => typeof v === 'number' && Number.isFinite(v) ? v * 1000 : typeof v === 'string' ? Date.parse(v) : NaN;
 /** A short settle needs fresh evidence, even when the older admission report remains usable. */
-const fresh = (v: unknown, now: number): boolean => now - timestamp(v) >= 0 && now - timestamp(v) <= 60_000;
-
-/** jobs.jsonl field dialects, the same sets dispatchd `_vc_pick` accepts:
- * ids job|job_id|jobId|id, events event|type|kind, phases
- * outcome|state|status plus producer aliases, timestamps
- * ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt. */
-const LEDGER_JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
-const LEDGER_EVENT_KEYS = ['event', 'type', 'kind'] as const;
-const LEDGER_PHASE_KEYS = ['outcome', 'state', 'status', 'phase', 'result', 'conclusion'] as const;
-const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
-const ledgerPick = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
-  for (const key of keys) {
-    const value = row[key];
-    if (typeof value === 'string' && value.trim() !== '') return value.trim();
-  }
-  return null;
+const fresh = (v: unknown, now: number): boolean => {
+  const at = parseUnixOrIsoMs(v);
+  return now - at >= 0 && now - at <= 60_000;
 };
+
+const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const ledgerTs = (row: Record<string, unknown>): number => {
   for (const key of LEDGER_TS_KEYS) {
-    const at = timestamp(row[key]);
+    const at = parseUnixOrIsoMs(row[key]);
     if (Number.isFinite(at)) return at;
   }
   return NaN;
@@ -78,11 +70,11 @@ export function recentLaunches(text: string | null, truncated: boolean, now: num
   let previous = -Infinity; let covered = !truncated;
   for (const line of text.split('\n').filter(line => line.trim())) {
     try {
-      const row = record(JSON.parse(line));
+      const row = asRecord(JSON.parse(line));
       // Eventless rows carrying a phase marker are outcome rows (the
       // batcher/_vc_event inference); a row with neither stays unknown.
-      let event = ledgerPick(row, LEDGER_EVENT_KEYS);
-      if (event === null && ledgerPick(row, LEDGER_PHASE_KEYS) !== null) event = 'outcome';
+      let event = firstLedgerString(row, LEDGER_EVENT_KEYS);
+      if (event === null && ledgerPhase(row) !== null) event = 'outcome';
       if (event === null) return null;
       if (event !== 'launch') continue; // Reconciled outcomes legitimately carry older event times.
       const at = ledgerTs(row);
@@ -90,7 +82,7 @@ export function recentLaunches(text: string | null, truncated: boolean, now: num
       previous = at;
       if (at <= now - 600_000) covered = true;
       if (at > now - 600_000) {
-        const job = ledgerPick(row, LEDGER_JOB_KEYS);
+        const job = ledgerJobId(row);
         if (!job) return null;
         launches.add(`${at}:${job}`);
       }
@@ -102,8 +94,8 @@ export function recentLaunches(text: string | null, truncated: boolean, now: num
 /** Reuse the dispatcher's existing observations; never guess admission-ctl.json's private schema. */
 export async function readAdaptiveSettle(root: string, now: number, snapshot: unknown, config?: SettleConfig): Promise<SettleDecision> {
   let status: Record<string, unknown> = {};
-  try { status = record(JSON.parse(await readTelemetryFile(join(root, 'queue/status.json')) ?? '{}')); } catch { /* unknown */ }
-  const a = record(snapshot); const current = fresh(a.ts, now);
+  try { status = asRecord(JSON.parse(await readTelemetryFile(join(root, 'queue/status.json')) ?? '{}')); } catch { /* unknown */ }
+  const a = asRecord(snapshot); const current = fresh(a.ts, now);
   const jobs = await readJobsTail(join(root, 'metrics/jobs.jsonl'));
   // A zero growth reported without two swap samples is an unmeasured baseline, not calm swap.
   const samples = Array.isArray(a.swap_samples) ? a.swap_samples.filter(v => Array.isArray(v) && v.length === 2 &&
