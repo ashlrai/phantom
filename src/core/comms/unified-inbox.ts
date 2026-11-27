@@ -662,6 +662,36 @@
  *               transports, not a store that can be absent. Act: `phm fleet channel-health`, `phm channels
  *               slack status`, `phm imessage doctor`, `phm comms health
  *               --json`, `phm comms cycle`, `phm channels`.
+ *   queue-parked  PARKED-DEP rows in the dispatch ready queue
+ *               (`<runsDir>/queue/ready.tsv`) — dependency-gated jobs the
+ *               same `readFleetQueue` projection `phm fleet queue-parked`,
+ *               `phm fleet parked` and the autopilot's `stale-parked-deps`
+ *               gap serve, so this source and those surfaces can never
+ *               disagree. Until now the parked dependency backlog had no
+ *               inbox surface: the router-queue source lists only READY
+ *               rows in `queue/router-queue.md`, so a job parked on
+ *               `DEPENDENCY GATE` ids was invisible to the one view an
+ *               agent checks for work. Each parked row lists once under
+ *               its own state: gates still lacking a MERGED outcome in
+ *               `metrics/jobs.jsonl` list as info `parked-dep-waiting`
+ *               naming the unmet gate ids — queued work correctly
+ *               waiting on named jobs — while a row whose gate ids ALL
+ *               show MERGED yet was never unparked lists as warn
+ *               `parked-dep-stale` — the auto-unpark pass should have
+ *               freed it already, so it is stuck work, not a wait.
+ *               `jobIds` carries the parked job's own id plus the gate
+ *               ids its detail names, so `--job` finds the row under the
+ *               parked job and under every job it waits on. `since`/
+ *               `expiresAt` stay null throughout: ready.tsv rows keep no
+ *               park timestamp and a parked job waits for its gates or an
+ *               unpark pass, never a guessed deadline; no item is
+ *               Mason-blocking. A missing `ready.tsv` is 'missing'
+ *               (verified-empty — no parked rows can exist), an
+ *               unreadable or malformed one 'degraded' — the listed rows
+ *               are a floor, never a complete set — and a throwing read
+ *               'unavailable', never an empty queue passed off as fact.
+ *               Act: `phm fleet queue-parked`, `phm fleet parked`,
+ *               `phm fleet autopilot --once`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -740,6 +770,7 @@ import type { WorkItemState } from './work-item-state.js';
 import { readKillSwitch, type KillSwitchReadResult } from '../sandbox/policy.js';
 import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
 import { readStuckJobs, type StuckJob as RunningStuckJob, type StuckJobsReport } from '../fleet/running-stuck.js';
+import { readFleetQueue, type FleetQueueV1, type ParkedMetDep, type ParkedUnmetDep } from '../fleet/runs-parked-queue.js';
 import { readChannelHealth } from '../fleet/channel-health.js';
 import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
 
@@ -756,7 +787,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'owner-delivery', 'owner-pair', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'peer-inbox', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
-  'send-gate', 'router-queue', 'jobs-stuck', 'channel-health',
+  'send-gate', 'router-queue', 'jobs-stuck', 'channel-health', 'queue-parked',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -787,6 +818,7 @@ export const UNIFIED_INBOX_KINDS = [
   'send-gate-kill', 'send-gate-pause', 'router-queue-job',
   'stuck-ghost', 'stuck-job',
   'channel-blocked', 'channel-degraded', 'channel-unknown',
+  'parked-dep-waiting', 'parked-dep-stale',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -952,6 +984,19 @@ export interface JobsStuckSourceRead {
   jobs: readonly RunningStuckJob[];
 }
 
+/** The resolved queue-parked read: `readFleetQueue`'s dependency-gated
+ * rows mapped onto the unified source states — 'missing' a verified-absent
+ * `queue/ready.tsv` (no parked rows can exist), 'unavailable' any read
+ * failure (the parked set is unknown, never an empty queue), 'degraded' a
+ * partial read (listed rows are a floor), 'healthy' the full read.
+ * `waiting`/`stale` stay empty whenever the state is 'missing'/
+ * 'unavailable'. */
+export interface QueueParkedRead {
+  state: UnifiedInboxSourceState;
+  waiting: readonly ParkedUnmetDep[];
+  stale: readonly ParkedMetDep[];
+}
+
 /** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
  * when the store could be read — 'missing' is a verified-empty board (no
  * `state.json` ever written), 'unavailable' an unreadable one, never an
@@ -1101,6 +1146,11 @@ export interface UnifiedInboxOptions {
    * `readStuckJobs` — the same bounded read `phm jobs stuck` and the
    * `--stuck` pass of `phm fleet stray-stop` serve. */
   readJobsStuck?: (options: { runsDir?: string; now?: () => number }) => Promise<JobsStuckSourceRead>;
+  /** Queue-parked seam; default reads `<runsDir>/queue/ready.tsv` plus
+   * `metrics/jobs.jsonl` through `readFleetQueue` with `depDetail` — the
+   * same bounded read `phm fleet queue-parked` and the autopilot's
+   * `stale-parked-deps` gap serve. */
+  readQueueParked?: (options: { runsDir?: string; now?: () => number }) => Promise<QueueParkedRead>;
   /** Channel-health seam; default reads `readChannelHealth` — the same
    * slack/imessage bridge projection `phm fleet channel-health` and
    * `phm channels` serve. */
@@ -4017,6 +4067,82 @@ async function readJobsStuckSource(options: { runsDir?: string; now?: () => numb
   }
 }
 
+/**
+ * PARKED-DEP rows in the dispatch ready queue — the same `readFleetQueue`
+ * `depDetail` projection `phm fleet queue-parked`, `phm fleet parked` and
+ * the autopilot's `stale-parked-deps` gap serve, so this source and those
+ * surfaces can never disagree. Each row lists once under its own state:
+ * gates still lacking a MERGED outcome list as info `parked-dep-waiting`
+ * (queued work correctly waiting on named jobs), a row whose gates ALL
+ * merged yet was never unparked lists as warn `parked-dep-stale` (stuck
+ * work — the auto-unpark pass should have freed it). `jobIds` carries the
+ * parked job's own id plus the gate ids the detail names, so `--job`
+ * finds the row under the parked job and under every job it waits on.
+ * `since`/`expiresAt` stay null throughout: ready.tsv rows keep no park
+ * timestamp and a parked job waits for its gates or an unpark pass, never
+ * a guessed deadline; no item is Mason-blocking.
+ */
+async function queueParkedItems(read: NonNullable<UnifiedInboxOptions['readQueueParked']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: QueueParkedRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const degraded = result.state === 'degraded'
+    ? ' · ready.tsv read degraded — the parked set may be incomplete' : '';
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [
+    ...result.waiting.map((row): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `queue-parked:${row.job}`,
+      source: 'queue-parked',
+      kind: 'parked-dep-waiting',
+      severity: 'info',
+      blocking: false,
+      title: oneLine(`Job ${row.job} parked on unmet dependency gates`, TITLE_MAX),
+      detail: oneLine(`lane ${row.lane ?? 'unknown'} · waiting on gates ${row.unmet.join(', ')} — no MERGED outcome recorded${degraded}`, DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      ...jobIdsField([row.job, ...row.unmet]),
+      act: ['phm fleet queue-parked', 'phm fleet autopilot --once'],
+    })),
+    ...result.stale.map((row): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `queue-parked:${row.job}`,
+      source: 'queue-parked',
+      kind: 'parked-dep-stale',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Job ${row.job} parked past merged dependency gates`, TITLE_MAX),
+      detail: oneLine(`lane ${row.lane ?? 'unknown'} · all gates MERGED (${row.gates.join(', ')}) yet the row was never unparked — a stale-park signal${degraded}`, DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      ...jobIdsField([row.job, ...row.gates]),
+      act: ['phm fleet queue-parked', 'phm fleet autopilot --once'],
+    })),
+  ];
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real queue-parked read: `readFleetQueue` with `depDetail` on the
+ * shared runs dir — the same bounded read `phm fleet queue-parked` and the
+ * autopilot's `stale-parked-deps` gap serve. The projection never throws
+ * on an absent or unreadable store: `sources.ready` carries the verdict —
+ * 'missing' a verified-absent `ready.tsv` (no parked rows can exist),
+ * 'degraded' a partial read (the listed rows are a floor) — and any throw
+ * is 'unavailable', never an empty queue passed off as fact. */
+async function readQueueParkedSource(options: { runsDir?: string; now?: () => number }): Promise<QueueParkedRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  try {
+    const view: FleetQueueV1 = await readFleetQueue({ runsDir: dir, depDetail: true, now: options.now });
+    const ready = view.sources.ready;
+    const state: UnifiedInboxSourceState = ready === 'missing' ? 'missing'
+      : ready === 'degraded' ? 'degraded' : 'healthy';
+    return { state, waiting: view.unmetDeps ?? [], stale: view.metDeps ?? [] };
+  } catch {
+    return { state: 'unavailable', waiting: [], stale: [] };
+  }
+}
+
 /** Display label and deep links per channel-health leg; telegram's acts differ because its diagnostic is `phm comms health`, not `phm fleet channel-health`. */
 const channelHealthPresentation = (channel: string): { label: string; acts: readonly string[] } =>
   channel === 'slack'
@@ -4341,6 +4467,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const routerQueue = await routerQueueItems(options.readRouterQueue ?? readRouterQueueSource, options);
   const jobsStuck = await jobsStuckItems(options.readJobsStuck ?? readJobsStuckSource, options);
   const channelHealth = await channelHealthItems(options);
+  const queueParked = await queueParkedItems(options.readQueueParked ?? readQueueParkedSource, options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -4380,8 +4507,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'router-queue': routerQueue.report,
     'jobs-stuck': jobsStuck.report,
     'channel-health': channelHealth.report,
+    'queue-parked': queueParked.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
