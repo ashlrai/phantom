@@ -317,7 +317,8 @@ describe('cmdOrg', () => {
     const dir = tmp(), invalid = join(dir, 'org.toml');
     writeFileSync(invalid, 'version = [');
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    for (const [file, message] of [[invalid, 'org.toml is not valid TOML.'], [dir, 'Could not read org.toml.']] as const) {
+    for (const [file, message] of [[invalid, expect.stringContaining('org.toml is not valid TOML at line 1.')],
+      [dir, 'Could not read org.toml.']] as const) {
       expect(await cmdOrg(['plan', '--file', file, '--json'])).toBe(1);
       expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ schema: 'org.error.v1', error: { code: 'rejected', message } });
     }
