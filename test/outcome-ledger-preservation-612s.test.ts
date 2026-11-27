@@ -461,6 +461,25 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.has('RQ-BATCH-c7')).toBe(false);
   });
 
+  it.each([
+    ['matching PR aliases', { prUrl: 'https://github.com/AshlrAI/Phantom/pull/1/' }, {}, {}, 1200],
+    ['different PR on finish', { html_url: 'https://github.com/ashlrai/phantom/pull/2' }, {}, {}, null],
+    ['different PR at the same publish timestamp', {}, { pr_url: 'https://github.com/ashlrai/phantom/pull/2' }, {}, null],
+    ['different PR on the standing verdict', {}, {}, { url: 'https://github.com/ashlrai/phantom/pull/2' }, null],
+    ['legacy verdict without a PR', {}, {}, { url: undefined }, 1200],
+  ] as const)('attributes publish wait with %s', (_name, finishFields, replayFields, verdictFields, expected) => {
+    const url = 'https://github.com/ashlrai/phantom/pull/1';
+    const publish = { event: 'publish', ts: '2026-11-01T10:20:00Z', url };
+    const rows = [
+      { event: 'finish', ts: '2026-11-01T10:00:00Z', ...finishFields },
+      publish,
+      { ...publish, ...replayFields },
+      { ...publish, outcome: 'MERGED', mergedAt: '2026-11-01T11:00:00Z', ...verdictFields },
+    ];
+    const report = foldRouterOutcomes(rows.map(row => JSON.stringify({ job: 'publish-pr', ...row })).join('\n'));
+    expect(report.outcomes[0]).toMatchObject({ merged: true, publish_wait_s: expected });
+  });
+
   it('folds publish-station wait from the recorded finish/publish pair, unknown when ambiguous', () => {
     const fold = foldRouterOutcomes([
       // P1: finished 10:00, published 10:20 -> 1200s of publish wait.

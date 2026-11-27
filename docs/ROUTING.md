@@ -1258,7 +1258,10 @@ single recorded `finish`/`publish` boundary pair — the same pair
 job-latency's publish_wait phase and visit-sync's publish station
 read. Queue, CI and publish timing use the first parseable jobs-ledger
 timestamp alias on each boundary or claim. A missing, repeated or reversed pair, or any boundary with a
-missing or invalid timestamp, leaves the duration unknown. Both durations
+missing or invalid timestamp, leaves the duration unknown. Publish timing is
+also unknown when its boundary receipts name conflicting PRs, even at the
+same timestamp, or when a named boundary PR cannot be matched to the URL on
+the standing merge or close verdict. Both durations
 exclude pairs with a `launch` or `batch_claim` at or between their boundaries
 or with an undated receipt for either event. CI timing in those cases also stays out of the reward
 fallback), mean
