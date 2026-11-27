@@ -1680,6 +1680,28 @@ describe('router outcome work_class join', () => {
     expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
   });
 
+  it('uses only usable class evidence from the jobs and market ledgers', async () => {
+    const root = runsDir([
+      { job: 'fallback', phase: 'MERGED', work_class: ' UnKnOwN ' },
+      { job: 'retained', work_class: 'docs' },
+      { job: 'retained', phase: 'MERGED', work_class: 'bad class!' },
+      { job: 'unclassified', phase: 'MERGED', work_class: 'unknown' },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    writeMarket(root, [
+      decision('fallback', 'bulk', 100),
+      decision('retained', 'bulk', 100),
+      decision('unclassified', 'bulk', 100),
+      decision('unclassified', 'UNKNOWN', 200),
+    ]);
+
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null });
+    expect(Object.fromEntries(result.outcomes.map(o => [o.job_id, o.work_class]))).toEqual({
+      fallback: 'bulk',
+      retained: 'docs',
+      unclassified: null,
+    });
+  });
+
   it('keeps work_class null and reports market_state when the market ledger is absent or refused', async () => {
     const missing = await readRouterOutcomes({ runsDir: runsDir('{"job":"J1","phase":"MERGED"}\n') });
     expect(missing).toMatchObject({ state: 'read', market_state: 'missing', market_truncated: false });

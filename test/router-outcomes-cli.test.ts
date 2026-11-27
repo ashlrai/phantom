@@ -349,7 +349,7 @@ describe('phm router outcomes', () => {
     writeFileSync(join(root, 'metrics', 'work-market.jsonl'), [
       '{"schema":"work-market.v1","event":"route_decision","job":"waiting","ts":1,"work_class":"repair"}',
       '{"schema":"work-market.v1","event":"route_decision","job":"waiting","ts":2,"work_class":"feature"}',
-      '{"schema":"work-market.v1","event":"route_decision","job":"unknown","ts":2}',
+      '{"schema":"work-market.v1","event":"route_decision","job":"unknown","ts":2,"work_class":"Unknown"}',
       '{"schema":"work-market.v1","event":"route_decision","job":"waiting","ts":4102444800,"work_class":"repair"}',
     ].join('\n'));
     const onRecordedWorkClasses = vi.fn();
