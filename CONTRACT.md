@@ -22,6 +22,11 @@ and the dates quoted in discovery briefs.
 
 ## Fleet lane ledger
 
+`parseUsageJournals(texts, asOfMs?)` (`src/core/fleet/lane-console.ts`) selects
+the latest journal row per pool. The optional cutoff is inclusive and uses
+epoch milliseconds. Rows after the cutoff are omitted without counting as
+malformed. With no cutoff, all observation times are eligible.
+
 `laneSupplyLane(view, nowMs, openRows?, launchHeadroom?)`
 (`src/core/fleet/lane-supply.ts`) accepts an optional projected launch headroom.
 Zero suppresses idle alarms and null preserves unknown headroom. When the

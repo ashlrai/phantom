@@ -56,6 +56,10 @@ between the current phase start and report time, inclusive.
 
 ## Lane truth quota evidence
 
+Fleet lane cards select the latest usage journal reading at or before report
+time. Future readings cannot hide measured quota or mark a lane as drained.
+When the usage journal has only future readings, it supplies no credit evidence.
+
 `phm fleet lane-truth --json` compares dated quota readings within each
 provider window. Ordering and reset detection use readable observation times
 at or before report time. If a window has no such reading, the lane verdict
