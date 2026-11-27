@@ -2198,8 +2198,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     // still applies when every listed job reached a verdict. A failed
     // workflow without a failed job has an unexplained failure.
     const incomplete = data.jobs.some(job => INCOMPLETE_CONCLUSIONS.has(job.conclusion)) ||
-      (run.conclusion !== undefined && INCOMPLETE_CONCLUSIONS.has(run.conclusion)) ||
-      (run.conclusion === 'failure' && !data.jobs.some(job => job.conclusion === 'failure'));
+      (run.conclusion !== undefined && INCOMPLETE_CONCLUSIONS.has(run.conclusion));
     const result: { conclusion: string; text: string }[] = [];
     for (const job of data.jobs) {
       if (job.conclusion === 'skipped') continue;
@@ -2243,7 +2242,13 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // unattributed evidence pass as head-verified.
       if (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line))) return null;
     }
-    return { entries: result, incomplete };
+    // An inert checkout-free aggregator can accompany a verified failure,
+    // but its conclusion alone cannot explain why a run failed at this head.
+    const reportedFailure = run.conclusion === 'failure' || data.jobs.some(job => job.conclusion === 'failure');
+    return {
+      entries: result,
+      incomplete: incomplete || (reportedFailure && !result.some(job => job.conclusion === 'failure')),
+    };
   }
   const branch = await json<{ commit: { sha: string } }>(`repos/${repo}/branches/master`);
   const masterRuns = branch?.commit?.sha ? await masterRunsAt(branch.commit.sha) : null;

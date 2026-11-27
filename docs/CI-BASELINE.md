@@ -42,9 +42,10 @@ workflow run itself mark it incomplete even when every listed job reached
 a verdict. Verified master failures still contribute evidence. A missing log for a job that
 reached a verdict still makes the run's logs unusable. `skipped` and `neutral` conclusions are
 deliberate non-verdicts. A workflow whose conclusion is `failure` is also
-incomplete when it lists no failed job, including when it lists no jobs
-at all. A passing job in such a workflow cannot supply master pass
-evidence for a flake rerun.
+incomplete when it has no checkout-verified failed job. A checkout-free
+aggregator failure can accompany a checkout-verified failure but cannot
+establish one by itself. When only the aggregator failed, PR freshness is
+unknown and a passing master job cannot supply pass evidence for a flake rerun.
 Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
 identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
 and capped at 2,000 characters per failure, with at most 100 failures per log.
