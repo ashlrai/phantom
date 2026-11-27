@@ -2505,6 +2505,32 @@ describe('router outcome merge-events join', () => {
     ]));
   });
 
+  it('attributes first-pass CI verdicts to the standing PR', async () => {
+    const pr = (n: number) => `https://github.com/ashlrai/phantom/pull/${n}`;
+    const root = runsDir([
+      { job: 'replacement', pr_url: pr(51), ci_first_pass: false },
+      { job: 'replacement', ci_first_pass: false },
+      { job: 'replacement', pr_url: pr(52), phase: 'MERGED' },
+      { pr_url: 'https://github.com/AshlrAI/Phantom/pull/52/', ci_first_pass: true },
+      { job: 'fallback', pr_url: pr(53), ci_first_pass: false },
+      { job: 'fallback', pr_url: pr(54), phase: 'MERGED' },
+      { job: 'fallback', pr_url: pr(53), ci_first_pass: false },
+      { job: 'ambiguous', pr_url: pr(55), ci_first_pass: true },
+      { job: 'ambiguous', ci_first_pass: true },
+      { job: 'other-claimant', pr_url: pr(55) },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    writeMergeEvents(root, [mergeEvent(54, 'checks_passed'), mergeEvent(55, 'checks_passed')]);
+
+    const { outcomes } = await readRouterOutcomes({ runsDir: root });
+    expect(outcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ job_id: 'replacement', ci_first_pass: true }),
+      expect.objectContaining({
+        job_id: 'fallback', ci_first_pass: true, merge_queue: expect.objectContaining({ checks_passed: 1 }),
+      }),
+      expect.objectContaining({ job_id: 'ambiguous', ci_first_pass: null, merge_queue: null }),
+    ]));
+  });
+
   it('joins only merge-queue receipts dated through the report time', async () => {
     const root = runsDir([58, 59, 60].map(pr => JSON.stringify({
       job: `J${pr}`, pr_url: `https://github.com/ashlrai/phantom/pull/${pr}`,
