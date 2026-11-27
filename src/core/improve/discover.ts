@@ -601,6 +601,15 @@
  *     precondition never became satisfiable, pinned files that kept
  *     being hand-edited, and incident classes that kept ending
  *     failed or refused never became work;
+ *   - the bridge source-heal journal's recurring repair failures:
+ *     the {schema, at, event, ok, reason} rows bridge-heal.mjs
+ *     appends to <source>/.git/bridge-source-repair.jsonl on every
+ *     worktree node_modules bridge, folded per event kind — 'failed',
+ *     'skipped', 'repaired' — inside the 7-day window
+ *     (bridgeHealBacklogItems below). Until now the journal's only
+ *     reader was `phm doctor worktree`'s newest-five-lines report,
+ *     so a source checkout whose self-heal kept failing or churning
+ *     never became work;
  *   - the Claude CLI rate-limit journal's recurring adverse pressure:
  *     the sanitized {type, status, rateLimitType, utilization,
  *     resetsAt, capturedAt} rows recordClaudeRateLimitEventLine
@@ -1628,6 +1637,7 @@ import { gatewayActivityBacklogItems } from './gateway-activity-backlog.js';
 import { frictionFlagBacklogItems } from './friction-flag-backlog.js';
 import { routineBacklogItems } from './routine-backlog.js';
 import { autofixBacklogItems } from './autofix-backlog.js';
+import { bridgeHealBacklogItems } from './bridge-heal-backlog.js';
 import { rateLimitBacklogItems } from './rate-limit-backlog.js';
 import { asksLedgerBacklogItems } from './asks-backlog.js';
 import { queueVisitBacklogItems } from './queue-visit-backlog.js';
@@ -2672,6 +2682,17 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the ledgers describe this
   // install's machinery and carry no repository column.
   items.push(...await autofixBacklogItems({ repo }));
+  // The bridge source-heal journal's only reader until now was
+  // `phm doctor worktree` — the newest five lines for a person — so a
+  // fleet source checkout whose self-heal kept failing, skipping or
+  // churning repairs never became work even though every bridged
+  // worktree inherits its node_modules. Same bounded no-follow tail
+  // read; the source is resolved read-only through findSource +
+  // repoIdentityOfPath and must prove it belongs to the backlog's
+  // repository, an event kind emits only at the recurring bar inside
+  // the window, and only the fleet's own repository inherits the
+  // items since the journal describes this install's worktree bridge.
+  items.push(...await bridgeHealBacklogItems({ repo }));
   // The Claude rate-limit journal's only reader until now was the
   // resource monitor's live snapshot — the newest unexpired event per
   // window type, a point-in-time verdict that resets every poll — so

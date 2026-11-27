@@ -305,6 +305,7 @@
 /test/autonomy-contracts-310b.test.ts @masonwyatt23
 /test/autopilot.test.ts @masonwyatt23
 /test/backpressure-310b.test.ts @masonwyatt23
+/test/bridge-heal-backlog.test.ts @masonwyatt23
 /test/bridge-reply-section-provenance-419s.test.ts @masonwyatt23
 /test/build-sea-worker.test.ts @masonwyatt23
 /test/bus-loop-active-control-01sole2.test.ts @masonwyatt23
