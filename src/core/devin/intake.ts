@@ -23,7 +23,7 @@ import { listDevinTasks, readDevinTask, writeDevinTask } from './store.js';
 import { DEVIN_BRANCH_PREFIX, DEVIN_REPORT_FENCE, type DevinTaskV1 } from './types.js';
 
 /** The engine prefix every Devin proposal is signed with. */
-export const DEVIN_INTAKE_ENGINE = 'devin' as const;
+const DEVIN_INTAKE_ENGINE = 'devin' as const;
 
 export const DEVIN_INTAKE_SOURCE: CloudIntakeSource<DevinTaskV1> = Object.freeze({
   kind: 'devin',

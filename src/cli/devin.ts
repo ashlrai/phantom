@@ -23,17 +23,22 @@
  * var — and goes straight to the Keychain. Output is for people; `--json`
  * prints the service's shapes. Exit codes: 0 ok, 1 error / refused, 2 usage.
  */
-import type {
-  DevinBudgetUpdate,
-  DevinBudgetV1,
-  DevinBudgetView,
-  DevinLaunchRequest,
-  DevinLaunchResponse,
-  DevinStatus,
-  DevinTaskState,
-  DevinTaskV1,
+import {
+  formatDevinAcu as acu,
+  redactDevinKeys,
+  type DevinBudgetUpdate,
+  type DevinBudgetV1,
+  type DevinBudgetView,
+  type DevinLaunchRequest,
+  type DevinLaunchResponse,
+  type DevinRefreshResult,
+  type DevinStatus,
+  type DevinTaskSourceState,
+  type DevinTaskState,
+  type DevinTaskV1,
 } from '../core/devin/types.js';
 import type { DevinConnectResult, DevinMessageResult } from '../core/devin/service.js';
+import type { DevinTaskInventory } from '../core/devin/store.js';
 import { localWhen, readOriginRepo } from './cloud.js';
 import { isTty } from './ui.js';
 import { rejectUnknownOptions } from './args.js';
@@ -102,12 +107,12 @@ export interface DevinCliDeps {
   status: () => Promise<DevinStatus>;
   launch: (req: DevinLaunchRequest) => Promise<DevinLaunchResponse>;
   listTasks: (limit?: number) => DevinTaskV1[];
-  refresh: () => Promise<import('../core/devin/types.js').DevinRefreshResult>;
-  taskInventory?: () => import('../core/devin/store.js').DevinTaskInventory;
+  refresh: () => Promise<DevinRefreshResult>;
+  taskInventory?: () => DevinTaskInventory;
   message: (taskId: string, text: string) => Promise<DevinMessageResult>;
   readBudget: () => DevinBudgetV1;
   updateBudget: (update: DevinBudgetUpdate) => DevinBudgetV1;
-  budgetView: (tasks: readonly DevinTaskV1[], budget: DevinBudgetV1, now: Date, sourceState?: import('../core/devin/types.js').DevinTaskSourceState) => DevinBudgetView;
+  budgetView: (tasks: readonly DevinTaskV1[], budget: DevinBudgetV1, now: Date, sourceState?: DevinTaskSourceState) => DevinBudgetView;
   /** Hidden terminal input (raw mode, no echo). */
   readSecret: (prompt: string) => Promise<string>;
   /** Host platform; the Devin key store (core/devin/secret.ts) is macOS Keychain only. */
@@ -233,8 +238,6 @@ function json(deps: DevinCliDeps, value: unknown): void {
   deps.out(JSON.stringify(value, null, 2));
 }
 
-const acu = (n: number): string => `${Math.round(n * 100) / 100} ACU${Math.round(n * 100) / 100 === 1 ? '' : 's'}`;
-
 const STATE_WORDS: Readonly<Record<DevinTaskState, string>> = {
   queued: 'queued',
   launching: 'starting',
@@ -248,7 +251,7 @@ const STATE_WORDS: Readonly<Record<DevinTaskState, string>> = {
 };
 
 /** Recent or unfinished tasks unless `all`. */
-export function devinTasksToList(tasks: readonly DevinTaskV1[], now: Date, all: boolean): DevinTaskV1[] {
+function devinTasksToList(tasks: readonly DevinTaskV1[], now: Date, all: boolean): DevinTaskV1[] {
   if (all) return [...tasks];
   const cutoff = now.getTime() - 3 * 24 * 60 * 60 * 1000;
   return tasks.filter((task) => !['merged', 'closed', 'failed', 'expired'].includes(task.state) || Date.parse(task.updatedAt) >= cutoff);
@@ -444,8 +447,7 @@ async function cmdReview(deps: DevinCliDeps, args: string[]): Promise<number> {
   const ref = review.parseDevinPrRef(args[0]!, repo);
   if (!ref) { deps.err('invalid-pr'); return 1; }
   if (!apply) {
-    const plan = review.planDevinPrReview(ref, null);
-    if (asJson) json(deps, plan); else deps.out(JSON.stringify(plan, null, 2));
+    json(deps, review.planDevinPrReview(ref, null));
     return 0;
   }
   if (!head) {
@@ -618,7 +620,7 @@ function isComplete(deps: Partial<DevinCliDeps>): deps is DevinCliDeps {
 function clean(text: string): string {
   const home = process.env['HOME'];
   const noHome = home && home.length > 1 ? text.split(home).join('~') : text;
-  return noHome.replace(/\bcog_[A-Za-z0-9_-]+/g, '[REDACTED]');
+  return redactDevinKeys(noHome);
 }
 
 const HELP_VALUE_OPTIONS = new Set([

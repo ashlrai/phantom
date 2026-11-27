@@ -29,7 +29,7 @@ import { DEVIN_KEY_PATTERN } from './types.js';
 
 export const DEVIN_KEYCHAIN_SERVICE = 'ai.ashlr.devin' as const;
 export const DEVIN_KEYCHAIN_ACCOUNT = 'api-key' as const;
-export const SECURITY_BIN = '/usr/bin/security' as const;
+const SECURITY_BIN = '/usr/bin/security' as const;
 const TIMEOUT_MS = 10_000;
 const MAX_OUTPUT_BYTES = 16 * 1024;
 
@@ -40,7 +40,7 @@ export interface DevinKeyStoreDeps {
   platform?: NodeJS.Platform;
 }
 
-export class DevinKeyError extends Error {
+class DevinKeyError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'DevinKeyError';
@@ -48,7 +48,7 @@ export class DevinKeyError extends Error {
 }
 
 /** Production runner: argv only (never a shell), empty environment beyond PATH/HOME, bounded. */
-export const defaultSecurityRunner: SecurityRunner = (args, stdin) => new Promise((resolve) => {
+const defaultSecurityRunner: SecurityRunner = (args, stdin) => new Promise((resolve) => {
   let child: ReturnType<typeof spawn>;
   const chunks: Buffer[] = [];
   let bytes = 0;
@@ -93,7 +93,7 @@ function supported(deps: DevinKeyStoreDeps): boolean {
 }
 
 /** True when the key is well formed: `cog_` + the documented charset. */
-export function isDevinApiKey(value: unknown): value is string {
+function isDevinApiKey(value: unknown): value is string {
   return typeof value === 'string' && DEVIN_KEY_PATTERN.test(value);
 }
 

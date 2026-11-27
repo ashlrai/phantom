@@ -18,15 +18,23 @@
  * `reserveAcu` for the operator.
  */
 import { localDayKey } from '../cloud/budget.js';
-import { DEVIN_USAGE_URL, type DevinBudgetV1, type DevinBudgetView, type DevinGate, type DevinTaskV1 } from './types.js';
+import {
+  DEVIN_USAGE_URL,
+  formatDevinAcu,
+  isValidDevinAcu,
+  roundDevinAcu,
+  type DevinBudgetV1,
+  type DevinBudgetView,
+  type DevinGate,
+  type DevinTaskSourceState,
+  type DevinTaskV1,
+} from './types.js';
 
 export const DEVIN_ACCOUNTING_UNAVAILABLE = 'The Devin task inventory is incomplete or unavailable; local spending capacity is unknown.';
 
 const OK: DevinGate = Object.freeze({ ok: true, reason: null });
 const refuse = (reason: string): DevinGate => ({ ok: false, reason });
-const round2 = (value: number): number => Math.round(value * 100) / 100;
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
-const acu = (n: number): string => `${round2(n)} ACU${round2(n) === 1 ? '' : 's'}`;
 
 const ACTIVE_SESSION_STATUSES = new Set(['new', 'claimed', 'running', 'resuming']);
 const TERMINAL_SESSION_STATUSES = new Set(['exit', 'error']);
@@ -53,7 +61,7 @@ export function devinTaskActive(task: DevinTaskV1): boolean {
 /** ACUs the task has used, fail-closed for a session whose usage was never read. */
 export function devinTaskAcuUsed(task: DevinTaskV1): number {
   const known = task.session?.acusConsumed;
-  if (typeof known === 'number' && Number.isFinite(known) && known >= 0) return known;
+  if (isValidDevinAcu(known)) return known;
   if (task.sessionId === null) {
     // A create whose outcome was unknown may have started a session we never
     // heard back from. Its full cap remains a conservative reservation even
@@ -71,7 +79,7 @@ export function devinTaskAcuHeadroom(task: DevinTaskV1): number {
   return Math.max(0, task.maxAcu - devinTaskAcuUsed(task));
 }
 
-export function devinBudgetView(tasks: readonly DevinTaskV1[], budget: DevinBudgetV1, now: Date, sourceState?: import('./types.js').DevinTaskSourceState): DevinBudgetView {
+export function devinBudgetView(tasks: readonly DevinTaskV1[], budget: DevinBudgetV1, now: Date, sourceState?: DevinTaskSourceState): DevinBudgetView {
   const today = localDayKey(now);
   let used = budget.acuSpentAdjustment;
   let reported = budget.acuSpentAdjustment;
@@ -86,7 +94,8 @@ export function devinBudgetView(tasks: readonly DevinTaskV1[], budget: DevinBudg
     const taskUsed = devinTaskAcuUsed(task);
     const headroom = devinTaskAcuHeadroom(task);
     const known = task.session?.acusConsumed;
-    const reportedTask = typeof known === 'number' && Number.isFinite(known) && known >= 0 ? known : 0;
+    const knownAcu = isValidDevinAcu(known);
+    const reportedTask = knownAcu ? known : 0;
     used += taskUsed;
     reported += reportedTask;
     // Existing admission totals book unknown usage at its cap. Expose that
@@ -111,15 +120,14 @@ export function devinBudgetView(tasks: readonly DevinTaskV1[], budget: DevinBudg
     // An unresolved create from yesterday can still spend today. Include its
     // conservative cap in today's admission bound without claiming a new
     // session or actual usage reading today (or double-counting today's hold).
-    if (!launchedToday && hasUnsettledExposure(task)
-      && !(typeof known === 'number' && Number.isFinite(known) && known >= 0)) {
+    if (!launchedToday && hasUnsettledExposure(task) && !knownAcu) {
       usedToday += taskUsed;
     }
   }
-  const acuUsed = round2(used);
-  const acuInFlight = round2(inFlight);
-  const acuRemaining = Math.max(0, round2(budget.acuBudgetTotal - acuUsed));
-  const acuToday = round2(usedToday + inFlight);
+  const acuUsed = roundDevinAcu(used);
+  const acuInFlight = roundDevinAcu(inFlight);
+  const acuRemaining = Math.max(0, roundDevinAcu(budget.acuBudgetTotal - acuUsed));
+  const acuToday = roundDevinAcu(usedToday + inFlight);
   const perSession = budget.maxAcuPerSession;
   const paused = budget.acuBudgetTotal > 0 && acuUsed >= budget.acuBudgetTotal * budget.pauseAtFraction;
   const free = acuRemaining - acuInFlight;
@@ -128,11 +136,11 @@ export function devinBudgetView(tasks: readonly DevinTaskV1[], budget: DevinBudg
   if (budget.acuBudgetTotal <= 0) {
     canLaunch = refuse('No Devin ACU budget is set. Set one with `ashlr devin budget --acu <n>`.');
   } else if (paused) {
-    canLaunch = refuse(`Paused: ${acu(acuUsed)} of ${acu(budget.acuBudgetTotal)} used (the lane pauses at ${Math.round(budget.pauseAtFraction * 100)}%). Raise the budget to resume.`);
+    canLaunch = refuse(`Paused: ${formatDevinAcu(acuUsed)} of ${formatDevinAcu(budget.acuBudgetTotal)} used (the lane pauses at ${Math.round(budget.pauseAtFraction * 100)}%). Raise the budget to resume.`);
   } else if (free < perSession) {
-    canLaunch = refuse(`About ${acu(Math.max(0, free))} is free after running sessions — not enough for another session capped at ${acu(perSession)}.`);
+    canLaunch = refuse(`About ${formatDevinAcu(Math.max(0, free))} is free after running sessions — not enough for another session capped at ${formatDevinAcu(perSession)}.`);
   } else if (acuToday + perSession > budget.maxAcuPerDay) {
-    canLaunch = refuse(`Another session could take today past the ${acu(budget.maxAcuPerDay)} daily cap (${acu(acuToday)} used or held).`);
+    canLaunch = refuse(`Another session could take today past the ${formatDevinAcu(budget.maxAcuPerDay)} daily cap (${formatDevinAcu(acuToday)} used or held).`);
   } else if (sessionsToday >= budget.maxSessionsPerDay) {
     canLaunch = refuse(`${sessionsToday} of ${budget.maxSessionsPerDay} Devin ${plural(budget.maxSessionsPerDay, 'session', 'sessions')} used today.`);
   } else if (running >= budget.maxConcurrent) {
@@ -142,7 +150,7 @@ export function devinBudgetView(tasks: readonly DevinTaskV1[], budget: DevinBudg
   let canFleetLaunch: DevinGate = canLaunch;
   if (canLaunch.ok && free - perSession < budget.reserveAcu) {
     // The reserve is the operator's: the fleet stops BEFORE a launch would dip into it.
-    canFleetLaunch = refuse(`Another fleet session would dip into the ${acu(budget.reserveAcu)} kept for you.`);
+    canFleetLaunch = refuse(`Another fleet session would dip into the ${formatDevinAcu(budget.reserveAcu)} kept for you.`);
   } else if (canLaunch.ok && fleetRunning >= budget.fleetMaxConcurrent) {
     canFleetLaunch = refuse(budget.fleetMaxConcurrent === 0
       ? 'The fleet may run no Devin sessions at once (fleet concurrency is 0).'
@@ -165,9 +173,9 @@ export function devinBudgetView(tasks: readonly DevinTaskV1[], budget: DevinBudg
     acuRemaining,
     acuToday,
     acuInFlight,
-    reportedAcuUsed: round2(reported),
-    unconfirmedAcuExposure: round2(unconfirmed),
-    estimatedUsdUsed: round2(reported * budget.usdPerAcu),
+    reportedAcuUsed: roundDevinAcu(reported),
+    unconfirmedAcuExposure: roundDevinAcu(unconfirmed),
+    estimatedUsdUsed: roundDevinAcu(reported * budget.usdPerAcu),
     sessionsToday,
     running,
     paused,
@@ -175,7 +183,7 @@ export function devinBudgetView(tasks: readonly DevinTaskV1[], budget: DevinBudg
     fleetSessionsToday,
     canLaunch,
     canFleetLaunch,
-    estimateNote: `Reported usage includes Devin session readings plus your usage adjustment; dollars estimate that reported portion at $${round2(budget.usdPerAcu)} per ACU, not a total invoice. Held exposure is possible remaining spend or unknown consumption bounded by the session cap, not an observed usage reading. Check real usage on app.devin.ai.`,
+    estimateNote: `Reported usage includes Devin session readings plus your usage adjustment; dollars estimate that reported portion at $${roundDevinAcu(budget.usdPerAcu)} per ACU, not a total invoice. Held exposure is possible remaining spend or unknown consumption bounded by the session cap, not an observed usage reading. Check real usage on app.devin.ai.`,
     usageUrl: DEVIN_USAGE_URL,
     budget,
   };

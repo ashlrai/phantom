@@ -70,7 +70,7 @@ import type { DevinBudgetV1, DevinBudgetView, DevinLaunchResponse, DevinTaskV1 }
  * `leader` = the Leader's work.dispatch suggestions (class A/B, already
  * scoped by the Leader to one repo and one change).
  */
-export const DEVIN_FLEET_AREAS: ReadonlySet<string> = new Set([
+const DEVIN_FLEET_AREAS: ReadonlySet<string> = new Set([
   'leader',
   'bug',
   'bugs',
@@ -122,9 +122,9 @@ export interface DevinLaneQuestion {
 export type DevinLaneAdvisor = (question: DevinLaneQuestion) => DevinLaneAdvice | null | Promise<DevinLaneAdvice | null>;
 
 /** A "not Devin" answer below this confidence is ignored (the heuristic stands). */
-export const DEVIN_LANE_ADVICE_MIN_CONFIDENCE = 0.6;
+const DEVIN_LANE_ADVICE_MIN_CONFIDENCE = 0.6;
 /** Candidates the advisor may turn away in one tick before the tick holds. */
-export const DEVIN_LANE_ADVICE_MAX_ASKS = 5;
+const DEVIN_LANE_ADVICE_MAX_ASKS = 5;
 
 export type DevinFleetDecision =
   | { kind: 'launch'; item: CloudBacklogItem; repo: string }
@@ -172,7 +172,7 @@ export function planDevinFleetLaunch(input: DevinFleetPlanInput): DevinFleetDeci
 }
 
 /** The brief the fleet sends: the item's own prompt plus why the fleet chose it. The delivery contract is added by service.ts. */
-export function devinFleetPrompt(item: CloudBacklogItem): string {
+function devinFleetPrompt(item: CloudBacklogItem): string {
   return [
     item.prompt.trim(),
     `This task was chosen by the Phantom fleet from its backlog (item ${item.id}, area ${item.area}). `
@@ -373,7 +373,7 @@ function safeValue<T>(fn: () => T, fallback: T): T {
 }
 
 /** Production wiring, loaded lazily so the daemon's static graph stays light. */
-export async function defaultDevinFleetTickDeps(): Promise<DevinFleetTickDeps> {
+async function defaultDevinFleetTickDeps(): Promise<DevinFleetTickDeps> {
   const [effective, backlog, cloudStore, budgetStore, policyMod, store, budgetMod, service, ledger, sandbox, config] = await Promise.all([
     import('../authority/effective-config.js'),
     import('../cloud/backlog.js'),
