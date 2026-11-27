@@ -42,8 +42,10 @@ describe('fleet comms inbox', () => {
       .toEqual({ limit: 50, filter: { before: 1735689600000 } });
     expect(parseFleetCommsInboxArgs({ contains: 'fake' }))
       .toEqual({ limit: 50, filter: { contains: 'fake' } });
-    expect(parseFleetCommsInboxArgs({ source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: '2h', before: '1h', contains: 'x', limit: 10 }))
-      .toEqual({ limit: 10, filter: { source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: expect.any(Number), before: expect.any(Number), contains: 'x' } });
+    expect(parseFleetCommsInboxArgs({ id: 'bus:fake' }))
+      .toEqual({ limit: 50, filter: { id: 'bus:fake' } });
+    expect(parseFleetCommsInboxArgs({ source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: '2h', before: '1h', contains: 'x', id: 'needs-you:fake', limit: 10 }))
+      .toEqual({ limit: 10, filter: { source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: expect.any(Number), before: expect.any(Number), contains: 'x', id: 'needs-you:fake' } });
   });
 
   it('rejects malformed filter values', () => {
@@ -54,6 +56,7 @@ describe('fleet comms inbox', () => {
       { since: 'not-a-time' }, { since: '' }, { since: 1735689600000 },
       { before: 'not-a-time' }, { before: '' }, { before: 1735689600000 }, { before: true },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
+      { id: '' }, { id: 'has space' }, { id: 5 }, { id: 'x'.repeat(257) }, { id: null },
     ]) expect(parseFleetCommsInboxArgs(bad)).toBeNull();
   });
 
@@ -94,7 +97,7 @@ it('lists and routes the tool through the fleet server', async () => {
   const tool = (await client.listTools()).tools.find(tool => tool.name === 'fleet_comms_inbox');
   expect(tool).toBeDefined();
   expect(Object.keys((tool!.inputSchema as { properties: Record<string, unknown> }).properties))
-    .toEqual(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains']);
+    .toEqual(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains', 'id']);
   const result = await client.callTool({ name: 'fleet_comms_inbox', arguments: { limit: 1 } });
   expect(JSON.parse((result.content as Array<{ text: string }>)[0].text)).toMatchObject({ items: [item], omitted: 2 });
   const filtered = await client.callTool({ name: 'fleet_comms_inbox',

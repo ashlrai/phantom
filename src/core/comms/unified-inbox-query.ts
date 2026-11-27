@@ -9,7 +9,7 @@
  */
 import {
   isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource,
-  UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_SOURCES, UNIFIED_INBOX_KINDS,
+  UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_ITEM_ID, UNIFIED_INBOX_SOURCES, UNIFIED_INBOX_KINDS,
   type UnifiedInboxFilter,
 } from './unified-inbox.js';
 import { parseSince } from '../fleet/agent-messages.js';
@@ -20,7 +20,7 @@ export const UNIFIED_INBOX_QUERY_LIMIT_DEFAULT = 50;
 
 /** The query keys the read accepts — the CLI/MCP filter dimensions plus `limit`. */
 export const UNIFIED_INBOX_QUERY_PARAMS = [
-  'limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains',
+  'limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains', 'id',
 ] as const;
 
 export interface UnifiedInboxQuery {
@@ -47,8 +47,10 @@ const invalid = (error: string): UnifiedInboxQueryResult => ({ ok: false, error 
  * label rule, `since` and `before` the shared `parseSince` grammar (15m, 2h,
  * 1d, epoch ms or an ISO time, resolved against `options.now`) — `since`
  * the inclusive lower bound, `before` the exclusive upper bound composing
- * into one `[since, before)` window — and `contains` a
- * non-empty needle of at most `UNIFIED_INBOX_CONTAINS_MAX` characters.
+ * into one `[since, before)` window — `contains` a
+ * non-empty needle of at most `UNIFIED_INBOX_CONTAINS_MAX` characters —
+ * and `id` the item's stable `<source>:<ref>` id under
+ * UNIFIED_INBOX_ITEM_ID, matched strictly, never as a substring.
  * Repeated keys are the caller's concern: this parser sees `URLSearchParams`
  * values one key at a time and takes the first, so callers enforcing
  * once-each semantics check `getAll` themselves — the same split
@@ -125,6 +127,11 @@ export function parseUnifiedInboxQuery(
       return invalid(`contains takes a non-empty search text of at most ${UNIFIED_INBOX_CONTAINS_MAX} characters.`);
     }
     filter.contains = contains;
+  }
+  const id = params.get('id');
+  if (id !== null) {
+    if (!UNIFIED_INBOX_ITEM_ID.test(id)) return invalid('id takes an item id (printable label, 1-256 chars).');
+    filter.id = id;
   }
   return { ok: true, query: { limit, ...(Object.keys(filter).length === 0 ? {} : { filter }) } };
 }
