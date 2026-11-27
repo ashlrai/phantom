@@ -142,14 +142,34 @@ describe('readNodesView', () => {
     // The standalone store is single-host, so the record is this computer:
     // the self row reports Phantom running and the peer named laptop stays
     // not joined instead of inheriting the local heartbeat. With no node pool
-    // the peer cannot join this computer's list at all, so no command is shown.
+    // the peer cannot join this computer's list at all, so no command is
+    // shown — and the single-host registry cannot see whether the peer runs
+    // its own Phantom, so its status is unknown, never a claimed
+    // "not running".
     const view = readNodesView(deps(tailnet([peer('laptop', true)]), local([node('laptop', { caps: ['build', 'gh'], slots: undefined })])));
     expect(view.nodes.map(row => [row.name, row.isSelf, row.phantom, row.state])).toEqual([
       ['node-a', true, 'running', 'Phantom running; free slots unknown'],
-      ['laptop', false, 'not-running', 'reachable but Phantom not running'],
+      ['laptop', false, 'unknown', 'reachable; Phantom status unknown'],
     ]);
     expect(view.nodes[0]).toMatchObject({ joined: true, joinCommand: null, lanes: ['build', 'gh'], jobsRunning: [], freeSlots: 'unknown' });
     expect(view.nodes[1]).toMatchObject({ joined: false, joinCommand: null, reachable: true, lanes: 'unknown' });
+  });
+
+  it('standalone registry: a peer\'s Phantom status is unknown, never a claimed not-running', () => {
+    // The standalone store is single-host: it holds only this computer's
+    // sessions, so a tailnet peer's silence proves nothing about whether the
+    // peer runs its own Phantom — reachable or not. 'none' and 'elsewhere'
+    // already answer unknown for the same reason; joining locally must not
+    // make other computers' status more known. Offline still wins on
+    // reachability alone.
+    const local: NodesRegistry = { source: 'local', selfNode: null, pool: null, state: {
+      version: 'drive.nodes.v1', sequence: 3, observedAt: NOW - 1_000, nodes: [], leader: null, jobs: [] } };
+    const view = readNodesView(deps(tailnet([peer('studio-mac', true), peer('old-mini', false)]), local));
+    expect(view.nodes.map(row => [row.name, row.phantom, row.stateCode, row.state])).toEqual([
+      ['node-a', 'not-running', 'not-running', 'reachable but Phantom not running: run `phm node join --owner <scope> --watch` here'],
+      ['old-mini', 'unknown', 'offline', 'offline since 10:42'],
+      ['studio-mac', 'unknown', 'unknown', 'reachable; Phantom status unknown'],
+    ]);
   });
 
   it('standalone registry: an expired local session is told the rejoin its record proves', () => {
