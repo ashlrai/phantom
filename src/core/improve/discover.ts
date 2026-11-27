@@ -1829,6 +1829,26 @@
  *     context (host-local counts, never cells), and items emit only
  *     for the fleet's own repository since the journal describes
  *     this install's lanes and carries no repo column;
+ *   - the resolution-witness ledger's recurring self-resolved scanner
+ *     flags and contract failures: the ResolutionWitness rows
+ *     recordResolutionWitness appends to
+ *     ~/.ashlr/fleet/resolution-witnesses.jsonl when the daemon's
+ *     resolution observer watches a scanner-flagged 'present'
+ *     objective later confirm 'absent' — a ledger that deliberately
+ *     has no lifecycle, proposal, verification or merge consumer and
+ *     until now had only the point-in-time readResolutionWitnesses
+ *     reader (which creates directories, takes the store lock and
+ *     mints the provenance key — none of which a read-only fold may
+ *     do), so a scanner whose positive verdicts keep self-resolving
+ *     across days never became work (resolutionWitnessBacklogItems
+ *     below). Cells emit per (scannerId, scannerRevision) so a scanner
+ *     retune restarts the count on its own build; the corrupt cell
+ *     emits at three contract-failing lines inside the retained tail;
+ *     rows re-validate under the writer's contract with
+ *     resolutionDigest recomputed by the writer's own pure function,
+ *     same-digest rows dedupe as replays, truncated tails are stated
+ *     as lower bounds, and items emit only for the fleet's own
+ *     repository since the ledger describes this install's scanners;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1990,6 +2010,7 @@ import { fleetHopSpoolBacklogItems } from './fleet-hop-spool-backlog.js';
 import { botHandoffBacklogItems } from './bot-handoff-backlog.js';
 import { installsBacklogItems } from './installs-backlog.js';
 import { runsHistoryBacklogItems } from './runs-history-backlog.js';
+import { resolutionWitnessBacklogItems } from './resolution-witness-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4227,6 +4248,22 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // since the journal describes this install's lanes and carries no
   // repo column.
   items.push(...await runsHistoryBacklogItems({ repo }));
+
+  // Resolution-witness ledger (~/.ashlr/fleet/resolution-witnesses.jsonl):
+  // the advisory ResolutionWitness rows the daemon's resolution observer
+  // appends when a scanner-flagged 'present' objective later confirms
+  // 'absent' — a ledger that deliberately has no consumer, so recurring
+  // self-resolved scanner flags and contract-failing rows never became
+  // work (resolutionWitnessBacklogItems below). Cells emit per
+  // (scannerId, scannerRevision) at three rows across two distinct UTC
+  // days inside the 7-day window; corrupt-lines emits at three contract
+  // failures inside the retained tail; same-digest rows dedupe as
+  // replays, witnessAttestation stays unverified (its key is never
+  // minted by a read-only fold), truncated tails are stated as lower
+  // bounds, and only the fleet's own repository inherits the items
+  // since the ledger describes this install's scanners and carries no
+  // repo column of its own.
+  items.push(...await resolutionWitnessBacklogItems({ repo }));
   return { items, errors };
 }
 
