@@ -1302,8 +1302,10 @@ recorded `ci_start`/`ci_complete` boundary pair. The reward feed reads
 the same boundary events within the rewarded dispatch's window. The router
 can fill timing from a reward when the retained jobs ledger is missing a
 boundary. Multiple distinct starts or completions, a completion before its
-start, or an undated CI boundary block reward fallback. Replayed timestamps
-count once per boundary. Conflicting PR identities on
+start, or an undated CI boundary block reward fallback. When parseable
+event-time aliases (`ts`, `timestamp`, `at`, `time`) on one CI boundary
+disagree, the router withholds the duration and blocks reward fallback.
+Replayed timestamps count once per boundary. Conflicting PR identities on
 CI boundary receipts also make the duration ambiguous and block reward
 fallback, even when the receipts share a timestamp. When CI names a PR and
 the standing merge or close verdict includes a PR URL, the router requires
@@ -1311,7 +1313,7 @@ that URL to resolve to the same PR for CI timing or reward fallback), mean
 recorded `publish_wait_s` (the job's publish-station wait from its
 single recorded `finish`/`publish` boundary pair — the same pair
 job-latency's publish_wait phase and visit-sync's publish station
-read. Queue, CI and publish timing use the first parseable jobs-ledger
+read. Queue, CI and publish timing start with the first parseable jobs-ledger
 timestamp alias on each boundary or claim. A missing, repeated or reversed pair, or any boundary with a
 missing or invalid timestamp, leaves the duration unknown. Publish timing is
 also unknown when its boundary receipts name conflicting PRs, even at the

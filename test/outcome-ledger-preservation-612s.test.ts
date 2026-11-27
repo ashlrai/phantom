@@ -3175,6 +3175,24 @@ describe('router outcome reward-signals join', () => {
   });
 
   it.each([
+    ['ci_start', '2026-11-01T00:01:00Z', null],
+    ['ci_complete', '2026-11-01T00:06:00Z', null],
+    ['ci_start', '2026-10-31T20:00:00-04:00', 300],
+  ] as const)('checks timestamp agreement on %s with alias %s', async (event, at, seconds) => {
+    const rows = [
+      { job: 'J1', event: 'ci_start', ts: '2026-11-01T00:00:00Z' },
+      { job: 'J1', event: 'ci_complete', ts: '2026-11-01T00:05:00Z' },
+    ].map(row => JSON.stringify(row.event === event ? { ...row, at } : row)).join('\n');
+    expect(foldRouterOutcomes(rows).outcomes[0]?.ci_wall_s).toBe(seconds);
+    const result = await readRouterOutcomes({
+      runsDir: runsDir(rows),
+      ashlarDir: rewardLedger([rewardRow('J1', true, { ciWallMs: 60_000 })]),
+      authorityEvidence: null,
+    });
+    expect(result.outcomes[0]).toMatchObject({ merged: true, ci_wall_s: seconds });
+  });
+
+  it.each([
     ['distinct starts', ['00:01:00', '00:02:00'], ['00:05:00'], null, null],
     ['distinct completions', ['00:01:00'], ['00:04:00', '00:05:00'], null, null],
     ['reversed boundaries', ['00:05:00'], ['00:01:00'], null, null],
