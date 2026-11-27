@@ -80,6 +80,12 @@ describe('lane supply verdicts', () => {
     expect(report.alarm).toBeNull();
   });
 
+  it.each(['codex-local', 'omlx'])('keeps the idle alarm for %s when only open work waits', local => {
+    const report = buildLaneSupply(snapshot([lane(local, { credit: credit(68) })], 12), null, NOW);
+    expect(report.lanes[0]).toMatchObject({ verdict: 'idle-with-usage-left', leftPct: 68 });
+    expect(report.idle).toEqual([local]);
+  });
+
   it('withholds the idle alarm when lane-open supply is unknown despite a known empty lane queue', () => {
     const report = buildLaneSupply(snapshot([lane('claude', { liveJobs: 2, slotTarget: 8, credit: credit(68) })], null), null, NOW);
     expect(report.lanes[0]).toMatchObject({ verdict: 'unknown', queued: 0, freeSlots: 6, leftPct: 68, detail: 'lane-open supply unknown' });

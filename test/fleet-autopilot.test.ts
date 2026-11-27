@@ -246,6 +246,15 @@ describe('planFleetAutopilot', () => {
     expect(report.action).toMatchObject({ kind: 'no-op', reason: 'fleet-healthy' });
   });
 
+  it.each(['codex-local', 'omlx'])('proposes restock for %s while open work feeds cloud lanes', local => {
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 0, 3, 0), admissionLane(local, 0, 2, 0)], 18, 0),
+      queue: queueView({ ready: 2, total: 2, unhinted: 2 }),
+    }));
+    expect(report.gaps.map(gap => [gap.kind, gap.lane])).toEqual([['missing-restock', local]]);
+    expect(report.action).toMatchObject({ kind: 'enqueue', type: 'restock', count: 2, lane: local });
+  });
+
   it('proposes rebase jobs for uncovered conflicting PRs, capped', () => {
     const report = planFleetAutopilot(state({
       sources: { status: 'healthy', queue: 'healthy', slots: 'healthy', rebase: 'ok' },

@@ -1148,7 +1148,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   });
 
   // Starved = free slots and no ready rows. A held lane is waiting, not starved; a drained one cannot run what it is given.
-  // Lane-open rows are open supply the market may place on any lane, so they keep a free lane from reading as starved.
+  // Lane-open rows suppress starvation for executors that accept open work.
   let stateText: string | null = null;
   try { stateText = await readBounded(join(options.starvedStateDir ?? join(homedir(), '.ashlr', 'vision', 'leader'), STARVED_STATE_FILE), 16 * 1024); } catch { /* no record yet */ }
   const freshAdmission = tick <= now.getTime() && now.getTime() - tick <= 60_000;

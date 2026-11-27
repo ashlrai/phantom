@@ -11,6 +11,7 @@
  */
 import type { FleetLaneSnapshot, FleetLaneView } from './lane-console.js';
 import { hooksFromPlannerReport, type SelfTickHook } from './self-tick-hooks.js';
+import { LOCAL_LANES } from './unfed-market.js';
 
 export const LANE_SUPPLY_SCHEMA = 'fleet.lane-supply.v1' as const;
 export const LANE_SUPPLY_PATH = '/api/verse/fleet/lane-supply';
@@ -79,7 +80,7 @@ function resetWords(resetAt: string | null): string {
   return Number.isFinite(at) ? new Date(at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'its next reset (time unknown)';
 }
 
-/** The verdict and plain sentence for one lane. `openRows` is the snapshot's lane-open READY count: supply the market may place on any lane, so a positive count keeps a free lane from reading as idle. */
+/** The verdict and plain sentence for one lane. Open READY rows only feed executors that accept open work. */
 export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: number | null = null, launchHeadroom?: number | null): LaneSupplyLane {
   const running = view.liveJobs;
   const target = view.slotTarget;
@@ -96,7 +97,7 @@ export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: num
     resetAt: view.credit.resetAt, hoursToReset,
   };
   const idle = free !== null && free > 0 && view.queueDepth === 0;
-  const openSupply = typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows > 0;
+  const openSupply = !LOCAL_LANES.has(view.lane) && typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows > 0;
   let verdict: LaneSupplyVerdict;
   let text: string;
   let detail: string | null = null;
