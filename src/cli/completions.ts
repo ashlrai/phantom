@@ -100,7 +100,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   disk: ['--wt-dir', '--runs-dir', '--tmp-dir', '--json', '--help'],
   nodes: ['plan', 'doctor', 'pool', '--json', '--can-take', '--node', '--help'],
   map: ['--json', '--help'],
-  'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--help'],
+  'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--worktree-failed-hours', '--help'],
   autofix: ['--apply', '--dry-run', '--json', '--only', '--older-than', '--stuck-minutes', 'release-stuck-draft', 'launchd-crashloop', 'stuck-lane', 'outside-load', '--help'],
   desktop: ['install', 'list-apps', 'windows', 'focus', 'read', 'scroll', 'type', 'click', 'screenshot', 'doctor', '--upgrade', '--rollback', '--require-app', '--to', '--apply', '--json', '--app', '--window', '--text', '--x', '--y', '--dx', '--dy', '--ref', '--help'],
   'desktop-update': ['inspect', 'prepare', 'apply', '--help'],

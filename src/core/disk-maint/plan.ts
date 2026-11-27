@@ -65,6 +65,14 @@ export interface MaintCandidate {
   reason: string;
 }
 
+interface WorktreeCounts {
+  scanned: number;
+  reapable: number;
+  protected: number;
+  reapReasons: Record<string, number>;
+  protectReasons: Record<string, number>;
+}
+
 export interface MaintClassPlan {
   id: MaintClassId;
   /** true means the class only applies when enabled by --allow <id>. */
@@ -79,6 +87,7 @@ export interface MaintClassPlan {
   protected?: number;
   reapReasons?: Record<string, number>;
   protectReasons?: Record<string, number>;
+  prefixes?: Record<string, WorktreeCounts>;
 }
 
 export interface MaintPolicy {
@@ -92,6 +101,7 @@ export interface MaintPolicy {
   recoveryDays: number;
   cacheDays: number;
   worktreeMinAgeHours: number;
+  worktreeFailedAgeHours: number;
   venvDays: number;
   hubClaudeDays: number;
   bridgeTargetDays: number;
@@ -109,6 +119,7 @@ export const DEFAULT_POLICY: MaintPolicy = {
   recoveryDays: 30,
   cacheDays: 14,
   worktreeMinAgeHours: 1,
+  worktreeFailedAgeHours: 24,
   venvDays: 14,
   hubClaudeDays: 30,
   bridgeTargetDays: 30,
@@ -513,55 +524,67 @@ function scanCaches(ctx: ScanCtx): MaintCandidate[] {
   return out;
 }
 
-async function scanWorktrees(ctx: ScanCtx, root: string, outcomes: ReturnType<typeof worktreeOutcomes>,
+function listWorktrees(ctx: ScanCtx, root: string, job?: string): { names: string[]; complete: boolean } {
+  if (refused(ctx, root)) return { names: [], complete: false };
+  try {
+    const names = job === undefined
+      ? readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()
+      : lstatSync(join(root, job)).isDirectory() ? [job] : [];
+    return { names, complete: true };
+  } catch (error) { return { names: [], complete: (error as NodeJS.ErrnoException).code === 'ENOENT' }; }
+}
+
+async function scanWorktrees(ctx: ScanCtx, root: string, listing: ReturnType<typeof listWorktrees>, outcomes: Awaited<ReturnType<typeof worktreeOutcomes>>,
   activity: Awaited<ReturnType<typeof worktreeActivity>>, deps: MaintDeps): Promise<Pick<MaintClassPlan,
-    'candidates' | 'complete' | 'scanned' | 'reapable' | 'protected' | 'reapReasons' | 'protectReasons'>> {
+    'candidates' | 'complete' | keyof WorktreeCounts | 'prefixes'>> {
   const candidates: MaintCandidate[] = [];
   const reapReasons: Record<string, number> = {};
   const protectReasons: Record<string, number> = {};
+  const prefixes = new Map<string, WorktreeCounts>();
   const bump = (counts: Record<string, number>, reason: string) => { counts[reason] = (counts[reason] ?? 0) + 1; };
   let next = 0;
-  let complete = outcomes !== null && activity !== null;
-  let names: string[] = [];
-  if (refused(ctx, root)) complete = false;
-  else {
-    try {
-      if (deps.worktree !== undefined) {
-        if (lstatSync(join(root, deps.worktree)).isDirectory()) names = [deps.worktree];
-      } else {
-        names = readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
-      }
-    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') complete = false; }
-  }
+  const { names } = listing;
+  let complete = listing.complete && outcomes !== null && activity !== null;
   await Promise.all(Array.from({ length: Math.min(4, names.length) }, async () => {
     while (next < names.length) {
       const name = names[next++]!;
       const path = join(root, name);
-      if (/\.keep$/i.test(name) || refused(ctx, path)) { bump(protectReasons, 'protected'); continue; }
+      const prefix = name.replace(/(?:-(?:\d+|N\d+))+$/i, '') || name;
+      const counts = prefixes.get(prefix) ?? { scanned: 0, reapable: 0, protected: 0, reapReasons: {}, protectReasons: {} };
+      prefixes.set(prefix, counts);
+      counts.scanned++;
+      const protect = (reason: string) => {
+        counts.protected++;
+        bump(counts.protectReasons, reason);
+        bump(protectReasons, reason);
+      };
+      if (/\.keep$/i.test(name) || refused(ctx, path)) { protect('protected'); continue; }
       const hold = worktreeHold(ctx.roots, name, activity);
-      if (hold) { bump(protectReasons, hold); continue; }
+      if (hold) { protect(hold); continue; }
+      if (ctx.kept(path)) { protect('kept'); continue; }
       const record = outcomes?.get(name);
-      if (!record) { bump(protectReasons, 'state-unknown'); continue; }
+      if (!record || record.hold) { protect(record?.reason ?? 'state-unknown'); continue; }
       const ageHours = (ctx.now - record.at) / HOUR_MS;
-      const afterPublish = deps.worktree === name && record.reason === 'publisher-pushed' && record.prHead !== undefined;
-      if (ageHours < 0 || (!afterPublish && ageHours <= ctx.policy.worktreeMinAgeHours)) {
-        bump(protectReasons, 'too-new'); continue;
+      if (ageHours <= (record.failed ? ctx.policy.worktreeFailedAgeHours : ctx.policy.worktreeMinAgeHours)) {
+        protect('too-new'); continue;
       }
-      if (ctx.kept(path)) { bump(protectReasons, 'kept'); continue; }
-      if (Date.now() >= ctx.deadlineMs) { bump(protectReasons, 'budget'); complete = false; continue; }
+      if (Date.now() >= ctx.deadlineMs) { protect('budget'); complete = false; continue; }
       const unpushed = await (deps.worktreeHasUnpushed ?? worktreeHasUnpushed)(path, record.prHead).catch(() => null);
-      if (unpushed !== false) { bump(protectReasons, unpushed ? 'unpushed-commits' : 'git-unknown'); continue; }
+      if (unpushed !== false) { protect(unpushed ? 'unpushed-commits' : 'git-unknown'); continue; }
       const payloadHold = await worktreePayloadHold(path, ctx.roots, ctx.protectedRoots, Math.min(ctx.deadlineMs, Date.now() + 500));
-      if (payloadHold) { bump(protectReasons, payloadHold); complete &&= payloadHold !== 'payload-unknown'; continue; }
+      if (payloadHold) { protect(payloadHold); complete &&= payloadHold !== 'payload-unknown'; continue; }
       const measured = ctx.measure(path);
       complete &&= measured.complete;
       bump(reapReasons, record.reason);
+      bump(counts.reapReasons, record.reason);
+      counts.reapable++;
       candidates.push({ path, action: 'worktree-remove', bytes: measured.bytes, ageDays: Math.floor(ageHours / 24), mtimeMs: record.at,
         reason: `${record.reason} worktree, terminal evidence ${Math.floor(ageHours)}h ago` });
     }
   }));
   return { candidates: candidates.sort((a, b) => a.path.localeCompare(b.path)), complete,
-    scanned: names.length, reapable: candidates.length, protected: names.length - candidates.length, reapReasons, protectReasons };
+    scanned: names.length, reapable: candidates.length, protected: names.length - candidates.length, reapReasons, protectReasons,
+    prefixes: Object.fromEntries(prefixes) };
 }
 
 function scanBridgeTargets(ctx: ScanCtx): MaintCandidate[] {
@@ -676,8 +699,11 @@ export async function planDiskMaint(deps: MaintDeps = {}): Promise<DiskMaintPlan
     refused: [],
   };
   const classes: MaintClassPlan[] = [];
-  let activity: ReturnType<typeof worktreeActivity> | undefined;
-  let outcomes: ReturnType<typeof worktreeOutcomes> | undefined;
+  const wtRoots = { 'worktrees-runs': join(roots.runsDir, 'wt'), 'worktrees-jobs': roots.wtDir };
+  const listings = new Map(Object.entries(wtRoots).flatMap(([id, root]) =>
+    !deps.only || deps.only.has(id as MaintClassId) ? [[id, listWorktrees(ctx, root, deps.worktree)] as const] : []));
+  const names = new Set([...listings.values()].flatMap(listing => listing.names));
+  const worktrees = listings.size ? Promise.all([worktreeActivity(roots, deps), worktreeOutcomes(jobs, names, roots, deps)]) : undefined;
   for (const id of ALL_CLASSES) {
     if (deps.only && !deps.only.has(id)) continue;
     if (deps.worktree !== undefined && id !== 'worktrees-runs' && id !== 'worktrees-jobs') continue;
@@ -687,9 +713,8 @@ export async function planDiskMaint(deps: MaintDeps = {}): Promise<DiskMaintPlan
     let complete = true;
     const note = CLASS_NOTES[id];
     if (id === 'worktrees-runs' || id === 'worktrees-jobs') {
-      activity ??= worktreeActivity(roots, deps);
-      if (outcomes === undefined) outcomes = worktreeOutcomes(jobs);
-      const scan = await scanWorktrees(ctx, id === 'worktrees-runs' ? join(roots.runsDir, 'wt') : roots.wtDir, outcomes, await activity, deps);
+      const [activity, outcomes] = (await worktrees)!;
+      const scan = await scanWorktrees(ctx, wtRoots[id], listings.get(id)!, outcomes, activity, deps);
       classes.push({ id, gated, enabled, ...scan, bytes: scan.candidates.reduce((s, c) => s + c.bytes, 0) });
       continue;
     }
