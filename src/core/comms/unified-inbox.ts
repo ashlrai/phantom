@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirty-seven local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates thirty-eight local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -71,6 +71,26 @@
  *               (every non-email transport, or an email mirror that failed to
  *               write; a mirrored copy already lists through the cos draft, so
  *               one pending reply is one item), act: `phm comms-agent drafts`.
+ *   comms-mail  mail in the Comms agent's inbox (`<runsDir>/comms-agent/
+ *               inbox.json`, the document `phm comms-agent run` triages)
+ *               that no reply-draft record covers — kept mail still
+ *               awaiting a pass, plus mail whose send the policy refused
+ *               and mail no sender identity let the triage draft, the
+ *               pending work `phm comms-agent status` counts as `inbox`
+ *               depth but no item-level surface ever listed. A Comms
+ *               draft — pending (the reply waits on the owner, already
+ *               listed under `drafts`) or sent (the reply was delivered;
+ *               archiving the row is the next pass's own bookkeeping) —
+ *               covers its `messageId`, so one pending reply stays one
+ *               item. The schema keeps no timestamp and `from` is a
+ *               handle, so `since`/`expiresAt` stay null and items carry
+ *               the transport plus the scrubbed subject only — never
+ *               `from`, body or labels. An unreadable or malformed inbox
+ *               reports 'unavailable' — the pending set is unknown,
+ *               never an empty inbox; an unreadable drafts store degrades
+ *               the read, coverage then unproven so every message lists
+ *               rather than suppressing on a guess. Act:
+ *               `phm comms-agent run`, `phm comms-agent drafts`.
  *   bus         live envelopes whose body the claim contract accepts
  *               (`isClaimableWork`: a `kind:'work'` body, or a protocol-v1
  *               transport `task` body) with no live claim row — an expired
@@ -727,7 +747,7 @@ import { busBodyFallbackSummary, busBodyJobIds, busBodySummary, readAllWakes,
 import { coordinationRowBlocks, listCoordination } from '../agents/claim-store.js';
 import { readPendingProposals, readTeamApprovals, type ProposalApprovalItem, type TeamApprovalItem } from '../approvals/surface.js';
 import { listDrafts, type Draft } from '../cos/drafts.js';
-import { listDrafts as listCommsAgentDrafts, type CommsDraft } from '../comms-agent/store.js';
+import { commsRunsRoot, listDrafts as listCommsAgentDrafts, readInbox as readCommsAgentInbox, type CommsDraft, type InboxRead } from '../comms-agent/store.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../fleet/bus-mailbox.js';
@@ -796,7 +816,7 @@ const SUGGESTED_LEASE_MS = 600_000;
 /** Every pending-work source the unified view can report, in display order. */
 export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
-  'owner-delivery', 'owner-pair', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
+  'owner-delivery', 'owner-pair', 'drafts', 'comms-mail', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'peer-inbox', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
   'send-gate', 'router-queue', 'jobs-stuck', 'channel-health', 'queue-parked',
@@ -820,7 +840,7 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
  * `--kind` filters on. */
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
-  'owner-reply-undelivered', 'owner-pair-waiting', 'draft-approval', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
+  'owner-reply-undelivered', 'owner-pair-waiting', 'draft-approval', 'comms-mail', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
   'board-delivery', 'board-task', 'work-board-received', 'work-board-assigned', 'work-board-blocked',
   'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'peer-message', 'session-handoff', 'org-membership', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
@@ -1093,6 +1113,9 @@ export interface UnifiedInboxOptions {
   listPendingDrafts?: typeof listDrafts;
   /** Comms-agent draft store seam; default reads `<runsDir>/comms-agent/drafts.jsonl`. */
   listCommsDrafts?: (runsDir: string) => Promise<CommsDraft[]>;
+  /** Comms-agent inbox seam; default reads `<runsDir>/comms-agent/inbox.json`
+   * through `readInbox` — the same document `phm comms-agent run` triages. */
+  readCommsInbox?: (runsDir: string) => Promise<InboxRead>;
   listBus?: typeof listBusInboxAfter;
   inspectBus?: typeof inspectBusInbox;
   /** Legacy `phm bus` mailbox seam; default reads `pendingAll` under the fleet root's parent. */
@@ -1575,6 +1598,52 @@ async function draftItems(
   ];
   const merged: UnifiedInboxSourceState = state === 'unavailable' ? 'unavailable' : commsFailed ? 'degraded' : 'healthy';
   return { report: { state: merged, pending: pendingCount(merged, items.length) }, items };
+}
+
+/**
+ * Comms-agent inbound mail no reply-draft record covers — the kept half of
+ * `<runsDir>/comms-agent/inbox.json` (`phm comms-agent run`'s triage input)
+ * still awaiting a pass. Mail whose Comms draft exists — pending, already
+ * listed under `drafts`, or sent, already answered — suppresses its row so
+ * one pending reply stays one item; a refused send leaves no draft, so that
+ * mail lists here — the pending work `phm comms-agent status` counts as
+ * `inbox` depth but no item-level surface ever showed. The schema keeps no
+ * timestamp and `from` is a handle, so `since`/`expiresAt` stay null and
+ * items carry the transport plus the scrubbed subject only. An unreadable
+ * or malformed inbox is 'unavailable' — the pending set is unknown, never
+ * an empty inbox; an unreadable drafts store degrades the read, coverage
+ * then unproven so every message lists rather than suppressing on a guess.
+ */
+async function commsMailItems(
+  readInboxFn: (runsDir: string) => Promise<InboxRead>,
+  listComms: (runsDir: string) => Promise<CommsDraft[]>,
+  runsDir: string | undefined,
+): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const runs = commsRunsRoot(runsDir);
+  let inbox: InboxRead;
+  try { inbox = await readInboxFn(runs); } catch {
+    return { report: { state: 'unavailable', pending: null }, items: [] };
+  }
+  let drafts: CommsDraft[] = [];
+  let draftsFailed = false;
+  try { drafts = await listComms(runs); } catch { draftsFailed = true; }
+  const covered = new Set(drafts.map(draft => draft.messageId));
+  const items = inbox.messages
+    .filter(message => !covered.has(message.id))
+    .map((message): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `comms-mail:${message.id}`,
+      source: 'comms-mail',
+      kind: 'comms-mail',
+      severity: 'info',
+      blocking: false,
+      title: oneLine(`Comms mail via ${message.transport}`, TITLE_MAX),
+      detail: oneLine(message.subject || '(no subject)', DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      act: ['phm comms-agent run', 'phm comms-agent drafts'],
+    }));
+  const state: UnifiedInboxSourceState = draftsFailed ? 'degraded' : 'healthy';
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
 }
 
 /**
@@ -4474,6 +4543,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const ownerPair = ownerPairItems(options.readOwnerPair ?? ((o) => readOwnerPairPending(o.configDir)),
     fixedOwnerConfigDir(), now);
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
+  const commsMail = await commsMailItems(options.readCommsInbox ?? readCommsAgentInbox, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
   const bus = busItems(options);
   const mailbox = mailboxItems(options.readMailbox ?? readMailboxPending, options);
   const board = boardItems(options.readBoard ?? readBusBoardPending, options);
@@ -4519,6 +4589,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'owner-delivery': ownerDelivery.report,
     'owner-pair': ownerPair.report,
     drafts: drafts.report,
+    'comms-mail': commsMail.report,
     bus: bus.report,
     mailbox: mailbox.report,
     board: board.report,
@@ -4550,7 +4621,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'channel-health': channelHealth.report,
     'queue-parked': queueParked.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...commsMail.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createDraft } from '../src/core/cos/drafts.js';
-import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/comms-agent/store.js';
+import { appendDraft as appendCommsDraft, writeInbox as writeCommsInbox, type CommsDraft } from '../src/core/comms-agent/store.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
@@ -145,6 +145,7 @@ describe('readUnifiedInbox sources', () => {
         imessage: { state: 'missing', pending: 0 },
         'teammate-tasks': { state: 'missing', pending: 0 },
         drafts: { state: 'healthy', pending: 0 },
+        'comms-mail': { state: 'healthy', pending: 0 },
         bus: { state: 'missing', pending: 0 },
         mailbox: { state: 'missing', pending: 0 },
         board: { state: 'missing', pending: 0 },
@@ -259,6 +260,49 @@ describe('readUnifiedInbox sources', () => {
       listCommsDrafts: async () => { throw new Error('unreadable'); },
     });
     expect(inbox.sources.drafts.state).toBe('degraded');
+  });
+
+  it('lists comms-agent inbox mail no reply draft covers, deduped against draft records', async () => {
+    await writeCommsInbox(runsDir, [
+      { id: 'm-1', transport: 'email', from: 'person@example.com', subject: 'fake hello', body: 'fake body one' },
+      { id: 'm-2', transport: 'imessage', from: '+1555handle', subject: 'fake unclassed', body: 'fake body two' },
+      { id: 'm-3', transport: 'linkedin', from: 'pw@example.com', subject: 'fake answered', body: 'fake body three' },
+    ]);
+    // m-1's pending draft already lists under `drafts`; m-3's sent draft means
+    // the reply was delivered — both suppress their inbox row here.
+    await appendCommsDraft(runsDir, { id: 'c-1', status: 'pending', transport: 'email', recipient: 'person@example.com', subject: 'Re: fake hello', body: 'fake reply', messageId: 'm-1', createdAt: new Date(now - 60_000).toISOString() });
+    await appendCommsDraft(runsDir, { id: 'c-2', status: 'sent', transport: 'linkedin', recipient: 'pw@example.com', subject: 'Re: fake answered', body: 'fake reply', messageId: 'm-3', createdAt: new Date(now - 120_000).toISOString(), resolvedAt: new Date(now - 30_000).toISOString() });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'comms-mail');
+    expect(items.map(i => i.id)).toEqual(['comms-mail:m-2']);
+    expect(items[0]).toMatchObject({
+      kind: 'comms-mail', severity: 'info', blocking: false,
+      title: 'Comms mail via imessage', detail: 'fake unclassed',
+      since: null, expiresAt: null,
+      act: ['phm comms-agent run', 'phm comms-agent drafts'],
+    });
+    // The sender is a handle and the body stays private: neither reaches the item.
+    expect(JSON.stringify(items)).not.toContain('+1555handle');
+    expect(JSON.stringify(items)).not.toContain('fake body');
+    expect(inbox.sources['comms-mail']).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('reports the comms-mail source unavailable on a malformed inbox and degraded when draft coverage cannot be read', async () => {
+    mkdirSync(join(runsDir, 'comms-agent'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(runsDir, 'comms-agent', 'inbox.json'), 'not json', { mode: 0o600 });
+    const bad = await read();
+    expect(bad.sources['comms-mail']).toEqual({ state: 'unavailable', pending: null });
+    expect(bad.items.filter(i => i.source === 'comms-mail')).toHaveLength(0);
+
+    // A drafts-store failure leaves coverage unproven: the message lists
+    // even though a draft record names it — degraded, never suppressed on a guess.
+    await writeCommsInbox(runsDir, [
+      { id: 'm-9', transport: 'email', from: 'a@example.com', subject: 'fake pending', body: 'fake body' },
+    ]);
+    await appendCommsDraft(runsDir, { id: 'c-9', status: 'pending', transport: 'email', recipient: 'a@example.com', subject: 'Re: fake pending', body: 'fake reply', messageId: 'm-9', createdAt: new Date(now).toISOString() });
+    const degraded = await read({ listCommsDrafts: async () => { throw new Error('unreadable'); } });
+    expect(degraded.sources['comms-mail']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'comms-mail').map(i => i.id)).toEqual(['comms-mail:m-9']);
   });
 
   it('lists live unclaimed work envelopes and hides claimed, completed, expired and non-work records', async () => {
@@ -1215,7 +1259,7 @@ describe('bot seat handoffs in the unified inbox', () => {
     branch: null, pr: null, createdAt: new Date(now).toISOString(),
   });
   const seat = (over: Partial<SeatHandoffPlanEntry> = {}): SeatHandoffPlanEntry => ({
-    seatId: 'devin-review', state: 'draining', eligible: true,
+    seatId: 'devin-review', participantId: 'devin-review', state: 'draining', eligible: true,
     handoffs: [handoff('devin-review', 'bus-claim', 'queue:RQ-SEAT-1')], ...over,
   });
   const plan = (seats: SeatHandoffPlanEntry[]): SeatHandoffsPlan =>
@@ -3730,7 +3774,7 @@ describe('readUnifiedInbox job filter', () => {
   const seatPlan = (seats: SeatHandoffPlanEntry[]): SeatHandoffsPlan =>
     ({ schema: 'phantom-bot-handoffs-plan.v1', apply: false, seats });
   const seatEntry = (over: Partial<SeatHandoffPlanEntry> = {}): SeatHandoffPlanEntry => ({
-    seatId: 'devin-review', state: 'draining', eligible: true,
+    seatId: 'devin-review', participantId: 'devin-review', state: 'draining', eligible: true,
     handoffs: [seatHandoff('devin-review', 'node-job', 'RQ-JS-1'),
       seatHandoff('devin-review', 'bus-claim', 'queue:RQ-claim-1', 1)], ...over,
   });
