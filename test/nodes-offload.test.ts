@@ -73,6 +73,17 @@ describe('nodes offload', () => {
     expect(d.recorded).toEqual([]);
   });
 
+  it('an unreadable queue is unknown, never "nothing is queued"; an empty one still is', async () => {
+    const unreadable = await readNodesOffload(deps(busy, { readQueue: async () => { throw new Error('no order file'); } }), { dryRun: true });
+    expect(unreadable.moves).toEqual([]);
+    expect(unreadable.stays).toEqual([]);
+    expect(unreadable.summary).not.toMatch(/nothing is queued/);
+    expect(unreadable.summary).toMatch(/ready queue could not be read/);
+    expect(unreadable.reasons).toContain('queue unreadable; ready jobs unknown');
+    const empty = await readNodesOffload(deps(busy, { jobs: [] }), { dryRun: true });
+    expect(empty.summary).toMatch(/nothing is queued/);
+  });
+
   it('host fine: nothing moves', async () => {
     const d = deps(fine);
     const report = await readNodesOffload(d, { dryRun: false });
