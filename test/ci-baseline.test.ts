@@ -254,6 +254,21 @@ describe('CI baseline evidence', () => {
     expect(report.master.known).toBe(false);
     expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline', master: 'fail' });
   });
+  it('ignores neutral jobs when determining master failures and PR freshness', async () => {
+    const { gh } = github({ count: 1, pass: true, extraMasterJob: 'neutral', extraPrJob: 'neutral' });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      if (args[1]?.endsWith('/jobs/30/logs')) {
+        return { ok: true, stdout: `/usr/bin/git log -1 --format=%H\n${master}\n${fixture('shared')}`, stderr: '' };
+      }
+      if (args[1]?.endsWith('/jobs/40/logs')) {
+        return { ok: false, stdout: '', stderr: 'HTTP 404: Not Found' };
+      }
+      return gh(args);
+    });
+    expect(report.master.known).toBe(true);
+    expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
+    expect(report.groups[0]).toMatchObject({ classification: 'probable-flake', master: 'pass' });
+  });
   it('reports incomplete PR checks even when their logs are unavailable', async () => {
     const { gh } = github({ extraPrJob: 'cancelled' });
     const report = await analyzeCiBaseline('owner/repo', async args => {
