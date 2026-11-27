@@ -1072,6 +1072,12 @@ exit 0 otherwise and 2 for invalid arguments or unreadable required data.
 Their JSON schemas are `fleet.lane-starve.v1` and `fleet.launchable.v1`.
 Neither report launches work or removes a hold.
 
+`phm fleet dead-heads --json` reports skip-marker evidence near the head of
+each lane. The first valid READY row for a job determines its lane, including
+lane-open jobs that contribute to no individual lane. Positions, lost rounds
+and the `--cap` scan limit count each job at most once. A missing skip marker
+only means the report has no skip evidence for that job.
+
 ## Inspect the processes using this computer
 
 ```sh

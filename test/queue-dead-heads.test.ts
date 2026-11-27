@@ -62,6 +62,26 @@ describe('queue dead heads', () => {
     expect(queueDeadHeads(`FAKE-LIVE\tdevin\n${ready}`, reasons, 2)[0]).toMatchObject({ roundsLost: 8, firstLaunchablePosition: 1 });
     expect(() => queueDeadHeads(ready, reasons, 0)).toThrow(RangeError);
   });
+  it('counts only the first valid READY row per job before applying the lane cap', () => {
+    const duplicated = [
+      'FAKE-LIVE\tdevin',
+      'FAKE-LIVE\tdevin',
+      'FAKE-LIVE\tcodex',
+      'FAKE-DEAD-01\tdevin',
+      'FAKE-DEAD-01\tdevin',
+      'FAKE-OPEN\tphantom\t\twork\tprompts/open.md',
+      'FAKE-OPEN\tcodex',
+      'FAKE-NEXT\tdevin',
+      'FAKE-DEAD-02\tdevin',
+    ].join('\n');
+
+    expect(queueDeadHeads(duplicated, reasons, 2)).toEqual([{
+      lane: 'devin',
+      deadLines: [{ job: 'FAKE-DEAD-01', position: 2, reason: reasons.get('FAKE-DEAD-01') }],
+      firstLaunchablePosition: 1,
+      roundsLost: 1,
+    }]);
+  });
   it('prints the eight fake devin lines through the read-only CLI', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const root = fileURLToPath(new URL('./fixtures/queue-dead-heads', import.meta.url));
