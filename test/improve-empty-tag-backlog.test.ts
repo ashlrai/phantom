@@ -203,6 +203,18 @@ describe('emptyTagBacklogItems', () => {
     })).toEqual([]);
   });
 
+  it('ignores duplicate tags that would create a false recurring blocker', async () => {
+    const ids = Array.from({ length: EMPTY_TAG_RECURRING }, (_, i) => `RQ-DUP-${i + 1}`);
+    const jobs = ids.map(id => finishRow(id, 4)).join('\n');
+    const tags = [
+      ...ids.map(id => tagRow(id, 'already_done')),
+      ...ids.map(id => tagRow(id, 'blocked')),
+    ].join('\n');
+    expect(await emptyTagBacklogItems({
+      repo: 'ashlrai/phantom', runsDir: writeRuns('runs-duplicates', jobs, tags), now: NOW,
+    })).toEqual([]);
+  });
+
   it('never counts gate-skipped finishes toward a tag bucket', async () => {
     // The sync tags skipped jobs 'unknown' (they have no log); the feed must
     // not inherit that noise — a skip is a gate decision, not a worker empty.

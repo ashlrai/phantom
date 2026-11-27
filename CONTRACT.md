@@ -853,7 +853,7 @@ rows — the `{schema, job, lane, tag, ts?}` records the daemon's
 append from the fleet's final-output verdict (src/core/fleet/
 empty-tags.ts, src/core/fleet/empty-tag-sync.ts) — to each job's recorded tag in the closed
 `already_done`/`pool_cap`/`blocked`/`no_change_needed`/`unknown`
-vocabulary, with the last eligible append winning a repeat. New rows carry
+vocabulary, with the first eligible append in the retained bytes winning a repeat. New rows carry
 a recording timestamp `ts`. The fold skips invalid timestamps and timestamps
 after the optional epoch-millisecond cutoff. Legacy rows without `ts` remain
 eligible. Router reports and discovery use their start time as the cutoff. Only rows with the exact
