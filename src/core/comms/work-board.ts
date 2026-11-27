@@ -9,7 +9,7 @@
  * claims inspection, so a board response is one internally consistent
  * evidence projection even while the fleet churns; nothing is cached across
  * calls. */
-import { isGroupPresenceBody } from '../fleet/bus-group.js';
+import { groupAddressTopicOf, isGroupPresenceBody } from '../fleet/bus-group.js';
 import { inspectBusWorkClaims, type BusWorkClaimView, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import type { BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { deriveBusWorkItemEvidence, readBusClaimAuthority, readBusInboxEvidence,
@@ -91,9 +91,11 @@ export interface WorkBoardResult {
   state?: WorkItemState;
   /** The true filtered total across the whole settled scan before the
    * display cap: requests passing every applied filter — the channel_ref
-   * scope, the `since`/`before` receivedAt window and the `state` match —
+   * scope, the `since`/`before` receivedAt window, the `channel`/`topic`/`id`
+   * address filters and the `state` match —
    * counted before the newest-first slice, so `items` may be a slice of it.
-   * Present whenever `state` or a `since`/`before` bound narrowed the read;
+   * Present whenever `state`, a `since`/`before` bound or one of the address
+   * filters narrowed the read;
    * a `channelRef`-only read keeps the unfiltered shape. Never a count of
    * just the shown window. */
   matched?: number;
@@ -133,6 +135,27 @@ export function listWorkBoard(opts: {
    * exclusive `receivedAt < before` rule every bus read's `--before`
    * applies, composing with `since` into one `[since, before)` window. */
   before?: number;
+  /** Bus channel name whose `group:<name>:*` traffic is kept — the same
+   * raw `to`-prefix rule every bus read's `--channel` applies, decided on
+   * each request envelope's own `to` label with no registry dependence:
+   * an agent address, a bare `group:<room>` or a malformed group label
+   * simply never matches, so unknown address state never widens the
+   * filter. Callers validate the strict channel-name grammar; a value
+   * that reaches here unmatched is an honest empty match, never an error.
+   * Composes with `topic` into one room AND one topic. */
+  channel?: string;
+  /** Exact topic component a well-formed `group:<room>:<topic>` `to` must
+   * carry — the same `groupAddressTopicOf` match every bus read's
+   * `--topic` applies, decided on the request envelope's own `to` label
+   * with no registry dependence and composing with `channel` into one
+   * room AND one topic exactly as every other bus read's channel/topic
+   * pair applies. */
+  topic?: string;
+  /** Keep only the request whose own wire id is strictly equal — the same
+   * exact-envelope match every bus read's `--id` applies and the id
+   * `agents bus show <id>` resolves, decided on the retained envelope id
+   * alone. */
+  id?: string;
 }): WorkBoardResult {
   const now = Number.isSafeInteger(opts.now) && opts.now >= 0 ? opts.now : 0;
   // One claims inspection for the whole board, taken even when the inbox
@@ -167,6 +190,7 @@ export function listWorkBoard(opts: {
     const read = readBusInboxEvidence(opts.root);
     if (read.status !== 'ok') return empty;
     const requests: BusInboxReceipt[] = [];
+    const channelPrefix = opts.channel === undefined ? undefined : `group:${opts.channel}:`;
     for (const row of read.receipts) {
       if (!isRequest(row)) continue;
       if (opts.channelRef !== undefined && row.envelope.channel_ref !== opts.channelRef) continue;
@@ -175,6 +199,13 @@ export function listWorkBoard(opts: {
       // strictly before its own — a request exactly on `before` is outside.
       if (opts.since !== undefined && row.receivedAt < opts.since) continue;
       if (opts.before !== undefined && row.receivedAt >= opts.before) continue;
+      // The room, topic and wire-id filters decide on the request
+      // envelope's own `to`/`id` fields — the same raw-label rules every
+      // bus read's --channel/--topic/--id applies, registry-free so an
+      // unresolvable or absent address simply never matches.
+      if (channelPrefix !== undefined && !row.envelope.to.startsWith(channelPrefix)) continue;
+      if (opts.topic !== undefined && groupAddressTopicOf(row.envelope.to) !== opts.topic) continue;
+      if (opts.id !== undefined && row.envelope.id !== opts.id) continue;
       requests.push(row);
     }
     requests.sort((a, b) => b.receivedAt - a.receivedAt || b.cursor - a.cursor);
@@ -199,10 +230,12 @@ export function listWorkBoard(opts: {
         ...(result ? { result } : {}),
       };
     };
-    // A time bound narrows the read exactly like a state filter does, so it
-    // earns the same `matched` total: the count of requests inside the
-    // window before the display cap, never just the shown slice.
-    const bounded = opts.since !== undefined || opts.before !== undefined;
+    // A narrowing filter — a time bound or one of the address filters —
+    // narrows the read exactly like a state filter does, so it earns the
+    // same `matched` total: the count of requests inside the window
+    // before the display cap, never just the shown slice.
+    const bounded = opts.since !== undefined || opts.before !== undefined
+      || opts.channel !== undefined || opts.topic !== undefined || opts.id !== undefined;
     if (opts.state === undefined) {
       const kept = requests.slice(0, limit(opts));
       return { items: kept.map(toItem), inbox: 'ok', truncated: requests.length > kept.length,
