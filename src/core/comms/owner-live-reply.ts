@@ -96,7 +96,7 @@ export async function sendLeaderReplyToPhone(
   const hashes = (known ? state.hashes : [...state.hashes, hash]).slice(-KEEP_HASHES);
   const delivered = Object.fromEntries(hashes.filter(h => Object.hasOwn(state.delivered, h)).map(h => [h, state.delivered[h]!]));
   delivered[hash] = [...(state.delivered[hash] ?? []), ...sent];
-  writeState(dir, { lastSentAt: now, hashes, delivered });
+  writeState(dir, { lastSentAt: sent.length > 0 ? now : state.lastSentAt, hashes, delivered });
   if (sent.length === 0) return done('not-delivered');
   return done('sent', sent);
 }
