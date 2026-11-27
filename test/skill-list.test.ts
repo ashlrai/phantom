@@ -15,9 +15,12 @@ vi.mock('../src/core/fleet/skill-outcomes.js', async importOriginal => {
   return { ...actual, readSkillTrajectoryOutcomes: vi.fn(() => null) };
 });
 
+const digest = 'a'.repeat(64);
+const otherDigest = 'b'.repeat(64);
+
 const card = (skillId: string, extra: Partial<SkillCard> = {}): SkillCard => ({
   schemaVersion: 1, skillId, revision: 1, ts: '2026-01-01T00:00:00.000Z', name: skillId, summary: 'does a thing',
-  status: 'verified', source: 'verified-proposal', ...extra,
+  status: 'verified', source: 'verified-proposal', contentHash: digest, ...extra,
 });
 let cards: SkillCard[];
 let invalidRows: number;
@@ -69,8 +72,8 @@ describe('listSkills outcomes join', () => {
     skills: 2,
     selections: 4,
     perSkill: [
-      { skillId: 'a', skillRevision: 2, selections: 3, outcomes: { merged: 2, failed: 1 }, realized: { reverted: 1 } },
-      { skillId: 'b', skillRevision: 1, selections: 1, outcomes: { rejected: 1 } },
+      { skillId: 'a', skillRevision: 2, skillContentHash: digest, selections: 3, outcomes: { merged: 2, failed: 1 }, realized: { reverted: 1 } },
+      { skillId: 'b', skillRevision: 1, skillContentHash: digest, selections: 1, outcomes: { rejected: 1 } },
     ],
   };
 
@@ -87,10 +90,47 @@ describe('listSkills outcomes join', () => {
   it('leaves outcomes absent when only an older revision was observed', () => {
     cards = [card('a', { revision: 1 }), card('a', { revision: 3, ts: '2026-02-01T00:00:00.000Z' })];
     const report = listSkills({ skillOutcomes: { skills: 1, selections: 1, perSkill: [
-      { skillId: 'a', skillRevision: 1, selections: 1, outcomes: { merged: 1 } },
+      { skillId: 'a', skillRevision: 1, skillContentHash: digest, selections: 1, outcomes: { merged: 1 } },
     ] } });
     expect(report.outcomeState).toBe('observed');
     expect(report.skills[0]!.outcomes).toBeUndefined();
+  });
+
+  it.each([undefined, otherDigest])('omits tallies with an unbound digest (%s)', (skillContentHash) => {
+    cards = [card('a', { revision: 2 }), card('b')];
+    const report = listSkills({ skillOutcomes: {
+      ...outcomes,
+      perSkill: [{ ...outcomes.perSkill[0]!, skillContentHash }, outcomes.perSkill[1]!],
+    } });
+    expect(report.skills.find((s) => s.skillId === 'a')?.outcomes).toBeUndefined();
+    expect(report.skills.find((s) => s.skillId === 'b')?.outcomes).toBeDefined();
+  });
+
+  it('omits tallies when the displayed card lacks a recorded digest', () => {
+    cards = [card('a', { revision: 2, contentHash: undefined })];
+    expect(listSkills({ skillOutcomes: outcomes }).skills[0]?.outcomes).toBeUndefined();
+  });
+
+  it.each([
+    { contentHash: otherDigest },
+    { status: 'revoked' as const },
+  ])('omits tallies when the newest revision has conflicting records (%o)', (conflict) => {
+    cards = [card('a', { revision: 2 }), card('a', { revision: 2, ts: '2025-12-31T00:00:00.000Z', ...conflict })];
+    expect(listSkills({ skillOutcomes: outcomes, status: 'verified' }).skills[0]?.outcomes).toBeUndefined();
+  });
+
+  it('joins tallies when a conflict affects only a superseded revision', () => {
+    cards = [card('a'), card('a', { contentHash: otherDigest }), card('a', { revision: 2 })];
+    expect(listSkills({ skillOutcomes: outcomes }).skills[0]?.outcomes).toMatchObject({ selections: 3 });
+  });
+
+  it('omits card tallies when the corpus is degraded', () => {
+    const read = vi.mocked(readSkillCardCorpus);
+    const corpus = read();
+    read.mockReturnValue({ ...corpus, sourceState: 'degraded', cards: [card('a', { revision: 2 })] });
+    const report = listSkills({ skillOutcomes: outcomes });
+    expect(report).toMatchObject({ corpus: 'degraded', outcomeState: 'observed' });
+    expect(report.skills[0]?.outcomes).toBeUndefined();
   });
 
   it('marks withheld when outcomes were requested but unpublished', () => {
@@ -110,7 +150,7 @@ describe('listSkills outcomes join', () => {
   it('renders per-skill tallies in plain text', () => {
     cards = [card('a')];
     const report = listSkills({ skillOutcomes: { skills: 1, selections: 2, perSkill: [
-      { skillId: 'a', skillRevision: 1, selections: 2, outcomes: { merged: 1, failed: 1 }, realized: { reverted: 1 } },
+      { skillId: 'a', skillRevision: 1, skillContentHash: digest, selections: 2, outcomes: { merged: 1, failed: 1 }, realized: { reverted: 1 } },
     ] } });
     const text = formatSkillList(report);
     expect(text).toContain('outcomes: 2 trajectories (failed 1, merged 1); realized reverted 1');
@@ -135,7 +175,7 @@ describe('skills list CLI', () => {
     cards = [card('a')];
     vi.mocked(readSkillTrajectoryOutcomes).mockReturnValue({
       skills: 1, selections: 2,
-      perSkill: [{ skillId: 'a', skillRevision: 1, selections: 2, outcomes: { merged: 2 } }],
+      perSkill: [{ skillId: 'a', skillRevision: 1, skillContentHash: digest, selections: 2, outcomes: { merged: 2 } }],
     });
     const { code, out } = await run(['list', '--outcomes', '--json']);
     expect(code).toBe(0);
