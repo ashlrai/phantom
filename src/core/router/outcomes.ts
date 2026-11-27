@@ -2434,7 +2434,9 @@ function foldRouterOutcomesWithCiCoverage(
  * An undecodable nonblank receipt leaves every job total unknown because
  * it cannot be attributed or dated. Decoded rows that name no job are
  * skipped. A job with any attributed call that lacks a usable price stays
- * absent from the map.
+ * absent from the map. An attributed call with timestamp fields but no
+ * parseable timestamp also leaves that job's total unknown. Legacy calls
+ * without any timestamp field remain eligible.
  * Estimated costs (cost_estimated) report a USD figure and count toward the sum.
  * Dated receipts after asOfMs are excluded before checking price coverage.
  */
@@ -2449,8 +2451,9 @@ export function foldSpendCosts(text: string, asOfMs = Infinity): Map<string, num
     if (at !== null && at > asOfMs) continue;
     const j = str(r, 'job', 'job_id', 'id');
     if (!j || incomplete.has(j)) continue;
+    const invalidTimestamp = at === null && ('ts' in r || 'at' in r || 'timestamp' in r);
     const cost = num(r['cost_usd']) ?? num(r['usd']) ?? num(r['cost']);
-    const total = cost === null ? null : (costs.get(j) ?? 0) + cost;
+    const total = cost === null || invalidTimestamp ? null : (costs.get(j) ?? 0) + cost;
     if (total === null || !Number.isFinite(total)) {
       incomplete.add(j);
       costs.delete(j);

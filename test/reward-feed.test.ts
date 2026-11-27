@@ -1246,7 +1246,7 @@ describe('syncRewardSignalsFromJobsLedger', () => {
   });
 
   it('records spend through the sync start before checking price coverage', async () => {
-    writeJobs([launch('RQ-A'), merged('RQ-A'), claim('RQ-C'), closed('RQ-C')].join('\n'));
+    writeJobs([launch('RQ-A'), merged('RQ-A'), claim('RQ-C'), closed('RQ-C'), launch('RQ-D'), merged('RQ-D')].join('\n'));
     const cutoff = NOW().toISOString();
     const future = new Date(NOW_MS + 1).toISOString();
     writeSpend([
@@ -1255,13 +1255,16 @@ describe('syncRewardSignalsFromJobsLedger', () => {
       line({ job: 'RQ-A', cost_usd: 10, at: future }),
       line({ job: 'RQ-A', timestamp: future }),
       line({ job: 'RQ-C', cost_usd: 4, ts: future }),
+      line({ job: 'RQ-D', cost_usd: 2, ts: cutoff }),
+      line({ job: 'RQ-D', cost_usd: 3, ts: 'invalid' }),
     ].join('\n'));
 
     const result = await syncRewardSignalsFromJobsLedger({ runsDir, home, now: NOW });
-    expect(result).toMatchObject({ state: 'read', recorded: 2 });
+    expect(result).toMatchObject({ state: 'read', recorded: 3 });
     expect(rewardRows().map((row) => [row.jobId, row.cost.costUsd])).toEqual([
       ['RQ-A', 3.5],
       ['RQ-C', null],
+      ['RQ-D', null],
     ]);
   });
 
