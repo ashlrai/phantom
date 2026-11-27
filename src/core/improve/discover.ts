@@ -1572,6 +1572,24 @@
  *     own series bound; truncated tails are stated as lower bounds
  *     and items emit only for the fleet's own repository since the
  *     journal describes this install's seats;
+ *   - the agent bus dead-letter sink's recurring per-(reason,
+ *     recipient) cells: the `status` envelopes addressed to
+ *     `bus.dead-letter` that createFileDeadLetterSink in
+ *     src/core/fleet/bus-transport-file.ts files into the bus inbox
+ *     store when the transport router gives up — 'exhausted',
+ *     'expired' or 'no-route' per the closed DeadLetterReason set —
+ *     until now read only by point-in-time surfaces (`agents bus
+ *     dead-letters`, the `agents bus status` deadLetters probe, the
+ *     unified inbox's bus-dead-letter items and work mine's
+ *     deadLetters section), so a recipient whose mail kept
+ *     dead-lettering never became work (busDeadLetterBacklogItems
+ *     below). A cell emits only at the recurring bars of three live
+ *     letters for one (reason, original-recipient) pair across two
+ *     distinct UTC days inside the retained window, unparseable
+ *     letters folding as 'other'/'(unrecorded)' cells of their own,
+ *     truncated walks stated as lower bounds, and only the fleet's
+ *     own repository inheriting the items since the bus carries no
+ *     repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1717,6 +1735,7 @@ import { nodesOffloadBacklogItems } from './nodes-offload-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 import { reviewBlocksBacklogItems } from './review-blocks-backlog.js';
 import { capacityHistoryBacklogItems } from './capacity-history-backlog.js';
+import { busDeadLetterBacklogItems } from './bus-dead-letter-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -3663,6 +3682,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // since the journal describes this install's seats and carries no
   // repository column.
   items.push(...await capacityHistoryBacklogItems({ repo }));
+
+  // Agent Bus dead-letter sink: every envelope the transport router
+  // gives up on is filed as a `status` letter addressed to
+  // `bus.dead-letter` in the bus inbox store — 'exhausted',
+  // 'expired' or 'no-route' per the closed DeadLetterReason set, one
+  // letter per distinct lost envelope (the wire id hashes the
+  // original's). Until now the sink's only readers were point-in-time
+  // surfaces — `agents bus dead-letters`, the `agents bus status`
+  // deadLetters probe, the unified inbox's bus-dead-letter items and
+  // work mine's deadLetters section — so a recipient whose mail kept
+  // dead-lettering never became work. A cell emits only at the
+  // recurring bars of three live letters for one (reason,
+  // original-recipient) pair across two distinct UTC days inside the
+  // retained window, letters whose bodies carry no parseable report
+  // folding as 'other'/'(unrecorded)' cells, truncated walks stated
+  // as lower bounds, and only the fleet's own repository inherits the
+  // items since the bus carries no repo column.
+  items.push(...await busDeadLetterBacklogItems({ repo }));
   return { items, errors };
 }
 
