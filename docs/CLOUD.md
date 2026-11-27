@@ -1474,11 +1474,11 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   visible through `phm fleet job-latency`'s git_contention section — a
   report someone had to run and read, so recurring Git contention
   never became work). A cell emits only at the recurring bars of three
-  adverse rows across two distinct UTC days inside the 7-day window —
-  identical receipt lines (ignoring surrounding whitespace) count once
-  toward both recurrence and recorded retry totals. Distinct lines can
-  contribute even when they share a timestamp. The job latency report also
-  counts identical timestamped Git-operation receipts once in its timing,
+  adverse rows across two distinct UTC days inside the 7-day window.
+  Timestamped receipts with identical JSON fields count once toward both
+  recurrence and recorded retry totals regardless of field order or whitespace.
+  Receipts with different fields can contribute even when they share a timestamp.
+  The job latency report uses the same rule in its timing,
   failure, retry, and cross-lane overlap tallies. Undated observations
   retain their per-row counts and supply no overlap evidence. For recurrence,
   index.lock cells count rows recorded `failed`, fetch/push cells

@@ -2744,6 +2744,9 @@ record `failed` as a boolean; for fetch/push record `retries` as the count
 of additional attempts. Concurrent retries include only intervals that
 positively overlap another recorded Git interval on the same machine in a
 different lane; this does not imply a retry was caused by the overlap.
+Timestamped Git receipts with identical JSON fields count once despite
+differences in field order or whitespace. Distinct receipts can share a
+timestamp. Undated receipts count per row and supply no overlap evidence.
 Unknown fields and sample counts are `null`; observed zero is valid.
 
 The report neither instruments Git nor starts an experiment. Existing ledgers

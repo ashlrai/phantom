@@ -201,7 +201,9 @@ describe('gitContentionBacklogItems', () => {
     const distinct = gitRow('fetch', DAY1, { elapsed_ms: 950, retries: 2 });
     const repo = 'ashlrai/phantom';
     const now = new Date(NOW);
-    const replayed = await runsDir('runs-replayed', [first, second, ` ${first} `]);
+    const reserialized = JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(first)).reverse()));
+    expect(reserialized).not.toBe(first);
+    const replayed = await runsDir('runs-replayed', [first, second, ` ${first} `, reserialized]);
     expect(await gitContentionBacklogItems({ repo, now, runsDir: replayed })).toEqual([]);
 
     const recurring = await runsDir('runs-distinct', [first, second, first, distinct]);
