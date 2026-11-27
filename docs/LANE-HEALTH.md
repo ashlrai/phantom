@@ -56,6 +56,12 @@ between the current phase start and report time, inclusive.
 
 ## Lane truth quota evidence
 
+`phm fleet pace` and `phm pool why` use the quota reading's own
+`observed_at` or `as_of` to date percentages from dispatcher status. A fresh
+dispatcher tick cannot refresh a cached percentage. A nested `use_it_all`
+percentage needs its own timestamp. Undated and future readings leave pace
+unknown unless a dated provider file or usage history supplies evidence.
+
 Fleet lane cards select the latest usage journal reading at or before report
 time. Future readings cannot hide measured quota or mark a lane as drained.
 When the usage journal has only future readings, it supplies no credit evidence.
