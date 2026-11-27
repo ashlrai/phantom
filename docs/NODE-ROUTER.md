@@ -588,10 +588,13 @@ A baseline must be strictly older than the current sample to carry its
 footprints forward, even if the original learning timestamp predates both.
 A measured host-wide stop can still establish zero for a reported count.
 Each live session of a harness needs a positive memory reading to refresh its
-footprint. A zero RSS total leaves that harness on its eligible learned
-footprint, or leaves its footprint and runnable count unknown if no usable
-measurement exists and no host-wide stop applies. Other harnesses keep their
-own measurements.
+footprint. A session-tree total below 1 MiB cannot hold a vendor CLI plus its
+children — it is a process caught mid-exec, not a session cost — so it is
+ignored the same way. A zero RSS total or an implausibly small one leaves that
+harness on its eligible learned footprint, or leaves its footprint and runnable
+count unknown if no usable measurement exists and no host-wide stop applies.
+Other harnesses keep their own measurements, and a capacity file carrying an
+implausibly small footprint is not a valid document.
 
 `phm node route` scores each job's feasible placements by learned lane merge
 rate per token and per minute, using one or more capacity documents, a
