@@ -82,7 +82,9 @@ lane even when it has no event name. The learner takes the first usable
 leave the last observed lane intact. Jobs without an observed lane supply
 neither recurrence evidence nor recovery drafts.
 Receipts explicitly marked `launched: false` can resolve the lifecycle
-verdict while leaving the last observed lane and its failure class intact.
+verdict. They preserve the last observed lane and failure class and supply
+neither an attempt nor a retry. Only a dispatch without that marker can
+consume recut readiness as a dispatched recut.
 
 These cards are `candidate`/`imported` shadow records: they persist to the
 same card ledger, are deduplicated by content hash across ticks, and stay out
