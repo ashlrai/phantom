@@ -353,6 +353,10 @@ export function sanitizeSkillCard(card: SkillCard): SkillCard {
 }
 
 export function sanitizeSkillUseEvent(event: SkillUseEvent): SkillUseEvent {
+  const skillRevision = event.skillRevision;
+  if (!Number.isSafeInteger(skillRevision) || skillRevision < 1) {
+    throw new Error('invalid skill use revision');
+  }
   const ts = eventTimestamp(event.ts);
   const proposalId = boundedOptionalText(event.proposalId, MAX_TEXT.id);
   const runId = boundedOptionalText(event.runId, MAX_TEXT.id);
@@ -377,7 +381,7 @@ export function sanitizeSkillUseEvent(event: SkillUseEvent): SkillUseEvent {
     eventId: requiredText(event.eventId, MAX_TEXT.id, 'eventId'),
     ts,
     skillId: requiredText(event.skillId, MAX_TEXT.id, 'skillId'),
-    skillRevision: Math.max(1, nonNegativeInteger(event.skillRevision, 1)),
+    skillRevision,
     ...(contentHash ? { contentHash } : {}),
     ...(selectedAt ? { selectedAt } : {}),
     ...(skillPolicyVersion ? { skillPolicyVersion } : {}),
