@@ -26,7 +26,12 @@ terminal phases `phase|state|outcome|status|result|conclusion`, and
 `merged`/`closed`/`revert`/`reverted` event names when no phase field
 resolves. Other event names leave the standing terminal verdict and its
 evidence intact unless the row carries a recognized terminal phase.
-Reverted covers the ledger's own revert spellings plus the
+An explicit ledger revert with one PR reference applies to that PR. A
+delayed standalone revert for an older PR leaves the recovery verdict and
+execution evidence for the current PR intact. A standalone revert with
+conflicting PR references supplies no verdict. Reverts without a PR
+reference retain job-wide attribution.
+Reverted also covers the
 standing revert set the daemon supplies (`revertedPrKeys` — outcome-ledger,
 cloud-task and `phm fleet reverts --record` detections): a merged job whose
 standing verdict row identifies a PR claimed by exactly that job and whose

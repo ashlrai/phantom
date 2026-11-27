@@ -232,6 +232,47 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(skillNudgeJobsFromLedger(text)[0]).toMatchObject({ outcome: 'merged', reverted: true });
   });
 
+  it.each(['before launch', 'after launch', 'after merge'])(
+    'keeps a newer recovery eligible when an older PR is reverted %s', (position) => {
+      const job = 'RQ-RECOVERY-REUSED';
+      const oldUrl = 'https://github.com/ashlrai/phantom/pull/780';
+      const newUrl = 'https://github.com/ashlrai/phantom/pull/781';
+      const revert = line({
+        event: 'reverted', job, lane: 'claude', html_url: oldUrl, ts: '2026-10-28T17:00:00Z',
+      });
+      const rows = [
+        launch(job, 'claude'),
+        outcome(job, 'MERGED', { url: oldUrl, lane: 'claude' }),
+        ...(position === 'before launch' ? [revert] : []),
+        launch(job, 'codex', '2026-10-28T11:30:00-0400'),
+        ...(position === 'after launch' ? [revert] : []),
+        outcome(job, 'MERGED', { url: newUrl, ts: '2026-10-28T16:30:00Z', lane: undefined }),
+        ...(position === 'after merge' ? [revert] : []),
+      ];
+      expect(skillNudgeJobsFromLedger(rows.join('\n'))).toEqual([
+        { id: job, lane: 'codex', outcome: 'merged', retries: 1 },
+      ]);
+
+      const currentRevert = line({ phase: 'REVERTED', job, pr_url: newUrl, ts: '2026-10-28T18:00:00Z' });
+      expect(skillNudgeJobsFromLedger([...rows, currentRevert].join('\n'))).toMatchObject([
+        { id: job, outcome: 'merged', reverted: true },
+      ]);
+    });
+
+  it('leaves the current recovery verdict intact when a revert names several PRs', () => {
+    const job = 'RQ-RECOVERY-AMBIGUOUS';
+    const url = 'https://github.com/ashlrai/phantom/pull/781';
+    const rows = [
+      launch(job),
+      outcome(job, 'MERGED', { url }),
+      line({ event: 'revert', job, lane: 'claude', url,
+        html_url: 'https://github.com/ashlrai/phantom/pull/780', ts: '2026-10-28T17:00:00Z' }),
+    ];
+    expect(skillNudgeJobsFromLedger(rows.join('\n'))).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged' },
+    ]);
+  });
+
   it.each([
     ['standalone event', { event: 'revert', reverted_at: '2026-10-28T17:00:00Z' }],
     ['standalone phase', { phase: 'REVERTED', revertedAt: '2026-10-28T17:00:00Z' }],
