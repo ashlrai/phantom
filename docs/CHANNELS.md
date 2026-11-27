@@ -411,7 +411,32 @@ names the peer, outcome, consumer and receipt with `since`/`expiresAt` null
 because the journal stamps receipt creation, not the last outcome move, and
 deep-links `phm agentnet peers dispatch --apply`; an absent journal is
 `missing`, an unreadable one `unavailable`, never an empty backlog passed off
-as fact) — plus open session-handoff checkpoints (the same
+as fact) — plus peer mail this host's live-enrolled callsigns are admitted
+to read (the same admission proofs `phm agentnet peers read` runs per session
+and the `peerInbox` section of `phm agents bus status` counts fleet-wide: a
+retained bus envelope counts when a live coordination-ledger row proves this
+host sent it to an enrolled callsign — id, target, send instant, 24h window
+and body digest all matching — or when the private dispatch journal proves
+this host published that work.result outcome to the addressed callsign; until
+now the only surfaces were that bare count and the sessioned `peers read`,
+so admitted mail — a peer's question, review ask or task — was invisible to
+this one pending view. Each admitted envelope whose body the bus source does
+not already own — claimable work, a worker handoff or a
+`work.post`/`work.status`/`work.claim`/`work.release`/`wake` feed body, which
+list under `bus`/`wakes` instead, one pending thing one item (a published
+`work.result` reply stays, since the feed reads it as job evidence and the
+peer-dispatch source lists only unpublished outcomes) —
+lists as a warn `peer-message` naming the enrolled callsigns whose session
+admits it, a scrubbed body summary, `since` the store receipt time and
+`expiresAt` the envelope's own TTL deadline, with
+`phm agentnet peers read --id`, `phm agents bus show` and bare
+`phm agentnet peers read` acts; an absent bindings file or bus store is
+`missing`, an unreadable bindings, ledger, journal or bus store
+`unavailable` — an unreadable journal leaves work.result mail unprovable, so
+the total is unknown rather than a ledger-only undercount — and a bounded
+scan that could not cover every retained receipt degrades the source,
+pending a stated floor, never a complete count passed off as fact) — plus
+open session-handoff checkpoints (the same
 `listSessionHandoffs` bounded journal scan `phm checkpoint handoff
 list`, `fleet_session_handoffs`, the bus-status probe and `work mine`'s
 `sessions` section serve, so a checkpointed session waiting for a
@@ -673,7 +698,7 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 `phm drafts approve`, `phm comms-agent drafts`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
-`phm bots handoff`, `phm agentnet peers dispatch`, `phm checkpoint handoff show|list`, `phm fleet org-sync --apply`, `phm fleet org-board`, `phm agents bus post`, `phm comms email-cycle`,
+`phm bots handoff`, `phm agentnet peers dispatch`, `phm agentnet peers read`, `phm checkpoint handoff show|list`, `phm fleet org-sync --apply`, `phm fleet org-board`, `phm agents bus post`, `phm comms email-cycle`,
 `phm fleet email-outbox`,
 `phm bus inbox`, `phm bus ack`, `phm bus thread pending`, `phm bus thread
 ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
@@ -697,8 +722,9 @@ several kinds (the `bus` source's `bus-work`/`bus-handoff`/`bus-dead-letter`
 split, the `board` source's `board-delivery`/`board-task` split) — `--severity
 <info|warn|high>` one
 severity band, `--blocking` only items that block, `--job <id>` only items
-that provably name that job — a bus or mailbox body's `busBodyJobMatch`
-citation, a feed job's id, a board task's fleet item or a delivery on a
+that provably name that job — a bus, mailbox or peer-mail body's
+`busBodyJobMatch` citation, a feed job's id, a board task's fleet item or a
+delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job, a
 seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
 peer-dispatch receipt's job, a session-handoff journal's job id or a
