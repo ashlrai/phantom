@@ -5074,7 +5074,7 @@ turn as untrusted data. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the nineteen dependencies the unified verbs touch — the
+read-only probe over the twenty dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
@@ -5182,7 +5182,21 @@ path; `source` plus `messages`/`proposals`/`returns` counts of the live
 pending surface — posted coordination mail, advisory assignment proposals
 and unpublished RESULT intents still inside their TTLs; 0 on a
 verified-missing ledger, null when unreadable, never agent labels, repos,
-task text, bodies or record ids), and — as a verdict over the claim journal and
+task text, bodies or record ids), the channel adapter registry
+(`listChannelRegistry` over the process-local adapter table — the same
+read `agents bus channels list`, `agents bus channels test` and the
+comms-agent adapter probe serve — under the probe's `root` and clock;
+`source` plus one `adapters` row per fixed channel id in CHANNEL_IDS
+order carrying `adapterRegistered` and the adapter's own `healthy`
+verdict — `true` usable, `false` confirmed down, `'unknown'` when nothing
+can assess it, never collapsed to a boolean and never guessed for an
+unregistered channel; the bus and handoff adapters probe the same inbox
+store `store` reports, so their health tracks it, and the section
+describes this process's adapter table, never a fleet-wide channel
+census; `adapters` is null only when the registry cannot be read —
+`source:'unavailable'`, never an invented empty table — channel ids and
+verdicts only, never adapter internals or message data), and — as a
+verdict over the claim journal and
 coordination table rather than another dependency — the claim-store drift
 comparison (`readClaimStoreDrift` run over the probe's own two reads, the
 same `fleet.claim-drift.v1` read `ashlr fleet claim-drift` serves:
