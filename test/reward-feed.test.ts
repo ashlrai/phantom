@@ -475,6 +475,11 @@ describe('foldJobsLedgerRewards', () => {
   it.each([
     { repo: 'ashlrai/companion', held: true },
     { repo: 'AshlrAI/Phantom', held: false },
+    { repo: 'unknown', held: true },
+    { repo: 'phantom', held: true },
+    { repo: 42, held: true },
+    { repo: ' ', held: false },
+    { repo: null, held: false },
     { repo: undefined, held: false },
   ])('scopes URL-free reverts by repository (%o)', ({ repo, held }) => {
     const job = 'RQ-REVERT-REPO';
@@ -483,6 +488,15 @@ describe('foldJobsLedgerRewards', () => {
       expect(foldJobsLedgerRewards([launch(job), merge, revert].join('\n'), NOW_MS))
         .toMatchObject([{ jobId: job, repo: 'ashlrai/phantom', merged: held }]);
     }
+  });
+
+  it('requires usable scope for a standalone revert unless it has no identity metadata', () => {
+    const job = 'RQ-STANDALONE-REVERT-SCOPE';
+    const revert = { job, event: 'reverted', ts: MERGED_ISO, repo: 'unknown' };
+    expect(foldJobsLedgerRewards([launch(job), line(revert)].join('\n'), NOW_MS)).toEqual([]);
+    const scoped = line({ ...revert, url: 'https://github.com/ashlrai/phantom/pull/101' });
+    expect(foldJobsLedgerRewards([launch(job), scoped].join('\n'), NOW_MS))
+      .toMatchObject([{ jobId: job, repo: 'ashlrai/phantom', merged: false }]);
   });
 
   it.each(['MERGED', 'CLOSED'])('attributes %s rewards to the PR repository across URL aliases', (state) => {

@@ -23,7 +23,8 @@
  *     vocabulary: reverted:true, reverted_at/revertedAt, revert event/state
  *     names) at or after the latest effective merge resolves the job as merged:false —
  *     the v1 schema has no revert dimension and consumers score held merges.
- *     A revert that names a PR can only discount that PR's merge.
+ *     A revert that names a PR can only discount that PR's merge. An
+ *     unusable repository label cannot make a revert job-wide.
  *     A later merge is a fresh held merge. For a known merge, its merge time
  *     bounds dispatch and CI evidence even when a revert changes the verdict.
  *     Reverts only git history or the
@@ -360,7 +361,10 @@ export function foldJobsLedgerRewards(
     if (revertedAtMs !== null && revertedAtMs <= nowMs) {
       const repo = repoOf(row, prKeys);
       const pr = prKeys.length === 1 ? prKeys[0]! : null;
-      if (pr !== null || firstLedgerString(row, LEDGER_URL_KEYS) === null) {
+      const repoLabel = row['repo'];
+      const repoOmitted = repoLabel == null || (typeof repoLabel === 'string' && repoLabel.trim() === '');
+      if (pr !== null || (firstLedgerString(row, LEDGER_URL_KEYS) === null
+          && (typeof repo === 'string' || repoOmitted))) {
         const key = pr ?? repo ?? null;
         acc.reverts.set(key, Math.max(acc.reverts.get(key) ?? 0, revertedAtMs));
         acc.latestRevert = latestResolution(acc.latestRevert, {
