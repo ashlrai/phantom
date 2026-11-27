@@ -163,6 +163,29 @@ describe('resident CI reruns', () => {
     expect(status.repos[report.repo]).toMatchObject({ recurringFlakes: 0, flakeFixesQueued: 0 });
   });
 
+  it.each([
+    ['matching singleton aliases', ['test/a.test.ts > a'], 1],
+    ['conflicting singleton aliases', ['test/b.test.ts > b'], 0],
+    ['singleton and multiple tests', ['test/a.test.ts > a', 'test/b.test.ts > b'], 0],
+    ['partially invalid array', ['test/a.test.ts > a', null], 0],
+    ['malformed array field', 'test/a.test.ts > a', 0],
+  ] as const)('attributes recurrence with %s only when the test identity agrees', async (_case, tests, expected) => {
+    const { opts, report } = setup();
+    const test = 'test/a.test.ts > a';
+    const rows = ['a', 'b', 'c'].map((head, i) => ({
+      at: '2026-01-01T11:30:00Z', repo: report.repo, head: head.repeat(40),
+      runId: 123 + i, pr: i + 1, outcome: 'attempt', test,
+      ...(i === 0 ? { tests } : {}),
+    }));
+    appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.counts.attempted).toBe(3);
+    expect(read.recurringFlakes.map(flake => flake.test)).toEqual(expected ? [test] : []);
+    report.groups[0]!.runs = [];
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos[report.repo]).toMatchObject({ recurringFlakes: expected, flakeFixesQueued: expected });
+  });
+
   it('records a workflow-only verdict when the attempt belongs to a different head', async () => {
     const { opts, gh } = setup();
     await runCiRerunMaintenance(opts);
