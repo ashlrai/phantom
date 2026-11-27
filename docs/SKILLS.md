@@ -59,6 +59,10 @@ verdict. Receipts without a parseable timestamp retain their ledger order.
 Exact replays of timestamped dispatch receipts count once and cannot consume
 a later recut admission. Dispatch receipts without a parseable timestamp
 retain their ledger order.
+Timestamped launch reservations (`claim` with `launch_dedupe: true`) can
+supply lane context for failures that omit the lane. Exact replays keep the
+reservation's original position, so they cannot overwrite a later attempt's
+lane or clear its failure classification.
 Exact replays of timestamped `launch_failed`, `launch_terminal`, and `finish`
 receipts keep their original position. They contribute retry evidence once
 and cannot overwrite a later lane or failure classification. Receipts without

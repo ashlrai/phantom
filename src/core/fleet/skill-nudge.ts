@@ -311,7 +311,10 @@ export function skillNudgeJobsFromLedger(
     // A replay must not move a verdict past later failures or capture
     // execution evidence recorded after the original verdict.
     const datedVerdict = outcome !== undefined && (rowAt !== null || terminalAt !== null);
-    const datedRecovery = rowAt !== null && (dispatched || event === 'recut_admission'
+    // A launch-dedupe claim is only a reservation, but its lane can still
+    // contextualize a subsequent launch failure that has no lane of its own.
+    const claimReservation = executionEvidence && event === 'claim' && row['launch_dedupe'] === true;
+    const datedRecovery = rowAt !== null && (dispatched || claimReservation || event === 'recut_admission'
       || event === 'launch_failed' || event === 'launch_terminal' || event === 'finish');
     if (datedVerdict || datedRecovery) {
       let receipt = line.trim();

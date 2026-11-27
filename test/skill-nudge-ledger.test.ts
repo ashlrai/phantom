@@ -39,6 +39,25 @@ beforeEach(() => {
 afterEach(() => rmSync(directory, { recursive: true, force: true }));
 
 describe('skillNudgeJobsFromLedger', () => {
+  it('keeps a replayed launch reservation from changing a later attempt\'s lane', () => {
+    const job = 'RQ-RESERVATION';
+    const ts = '2026-10-28T09:59:00-0400';
+    const reservation = claim(job, 'claude', ts);
+    const replay = line({ ts, launch_dedupe: true, tier: 'work', lane: 'claude', repo: 'ashlrai/phantom', job, event: 'claim' });
+    const terminal = outcome(job, 'MERGED', { lane: undefined });
+    expect(skillNudgeJobsFromLedger([
+      reservation, launch(job), finish(job, { failure_class: 'quota' }), replay, terminal,
+    ].join('\n'))).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', failureClass: 'quota' },
+    ]);
+    expect(skillNudgeJobsFromLedger([
+      reservation, line({ event: 'launch_terminal', job, reason: 'spawn-failed' }),
+      outcome(job, 'CLOSED', { lane: undefined }),
+    ].join('\n'))).toEqual([
+      { id: job, lane: 'claude', outcome: 'failed', failureClass: 'spawn-failed' },
+    ]);
+  });
+
   it('keeps the standing merge evidence when an unknown event follows it', () => {
     const job = 'RQ-RECOVERY';
     const text = [
