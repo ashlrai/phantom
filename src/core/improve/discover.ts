@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Eighty-four sources, all of which Phantom
+ * evidence instead of a hand-kept list. Eighty-five sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -1547,6 +1547,31 @@
  *     own merge, truncated tails stated as lower bounds, and each
  *     item self-targets the repository its blocked PRs named since
  *     the journal carries the repo per row;
+ *   - the seat capacity-history journal's recurring dark-series,
+ *     stale-recorder, corrupt-line and series-overflow evidence: the
+ *     {ts, seat, window, usedPct, resetsAt?, source} rows
+ *     appendCapacityHistory/appendCapacitySamples
+ *     (src/core/routing/capacity-history.ts) appends to
+ *     ~/.ashlr/routing/capacity-history.jsonl on every capacity
+ *     publish — written by the daemon's capacity publisher and the
+ *     Verse server's budget-read/60 s follow, compacted past 2 MiB
+ *     or the eight-day keep horizon — until now read only by
+ *     GET /api/verse/budget/history (buildCapacityHistoryResponse →
+ *     the Command burn-downs, a surface someone had to open), so seat
+ *     window series that kept missing whole recorded UTC days, a
+ *     recorder that kept going quiet past a day, contract-failing
+ *     lines the store's readers silently skip and a series count
+ *     past the response's 32-series truncation bound never became
+ *     work (capacityHistoryBacklogItems below). Rows count only
+ *     under the store's own parseHistoryLine contract inside its
+ *     eight-day keep window; a series-dark cell emits only at two
+ *     missed file-active UTC days after the series' first row, the
+ *     recorder-stale cell only when the newest valid row is over a
+ *     day old, the corrupt-lines cell at three contract failures
+ *     inside the retained tail and the overflow cell past the API's
+ *     own series bound; truncated tails are stated as lower bounds
+ *     and items emit only for the fleet's own repository since the
+ *     journal describes this install's seats;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1691,6 +1716,7 @@ import { resetReleaseBacklogItems } from './reset-release-backlog.js';
 import { nodesOffloadBacklogItems } from './nodes-offload-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 import { reviewBlocksBacklogItems } from './review-blocks-backlog.js';
+import { capacityHistoryBacklogItems } from './capacity-history-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -3616,6 +3642,27 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // lower bounds, and each item self-targets the repository its
   // blocked PRs named.
   items.push(...await reviewBlocksBacklogItems());
+
+  // Seat capacity-history journal (~/.ashlr/routing/
+  // capacity-history.jsonl): the per-seat window-usage rows the two
+  // capacity recorders append on every publish — until now the
+  // file's only reader was GET /api/verse/budget/history, the
+  // burn-down charts on Command, a surface someone had to open, so
+  // seat-window series that kept missing whole recorded UTC days, a
+  // recorder that kept going quiet, contract-failing lines the
+  // store's readers skip and a series count past the response's
+  // truncation bound never became work. Rows count only under the
+  // store's own parseHistoryLine contract; a series-dark cell emits
+  // only at the recurring bar of two missed file-active UTC days
+  // after the series' first row inside the store's eight-day keep
+  // horizon, the recorder-stale cell only when the newest valid row
+  // is over a day old, the corrupt-lines cell at three contract
+  // failures inside the retained tail and the overflow cell past the
+  // API's own series bound — truncated tails are stated as lower
+  // bounds, and only the fleet's own repository inherits the items
+  // since the journal describes this install's seats and carries no
+  // repository column.
+  items.push(...await capacityHistoryBacklogItems({ repo }));
   return { items, errors };
 }
 
