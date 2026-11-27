@@ -9,12 +9,12 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { readLaneTargets, setLaneTarget } from '../fleet/runs-lane-targets.js';
-import { forbiddenPath, isForbiddenExecArgv } from './guard.js';
+import { REFUSED_EXEC, assertAllowedPath, forbiddenPath, isForbiddenExecArgv } from './guard.js';
 import type { AutofixHost, ExecResult } from './types.js';
 
-function runsRoot(): string {
+function runsRoot(home: string): string {
   const fromEnv = process.env.ASHLR_RUNS_DIR;
-  return fromEnv && fromEnv.startsWith('/') ? fromEnv : join(homedir(), '.ashlr-runs');
+  return fromEnv && fromEnv.startsWith('/') ? fromEnv : join(home, '.ashlr-runs');
 }
 
 function safeStat(path: string): { mtimeMs: number } | null {
@@ -44,8 +44,6 @@ function readRegular(path: string): string | null {
 }
 
 function ensureDir(path: string): void {
-  const stat = safeStat(path);
-  if (stat) return;
   try {
     const current = lstatSync(path);
     if (!current.isDirectory() || current.isSymbolicLink()) throw new Error('ledger path is not a directory');
@@ -56,8 +54,8 @@ function ensureDir(path: string): void {
 }
 
 export function createNodeHost(now: () => Date = () => new Date()): AutofixHost {
-  const runsDir = runsRoot();
   const home = homedir();
+  const runsDir = runsRoot(home);
   return {
     now,
     uid: () => typeof process.getuid === 'function' ? process.getuid() : 501,
@@ -67,7 +65,7 @@ export function createNodeHost(now: () => Date = () => new Date()): AutofixHost 
     exists: (path) => safeStat(path) !== null,
     readText: (path) => readRegular(path),
     writeFile: (path, text) => {
-      if (forbiddenPath(path)) throw new Error('refused path');
+      assertAllowedPath(path);
       ensureDir(dirname(path));
       const temp = `${path}.tmp-${process.pid}`;
       const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
@@ -75,13 +73,13 @@ export function createNodeHost(now: () => Date = () => new Date()): AutofixHost 
       renameSync(temp, path);
     },
     appendFile: (path, text) => {
-      if (forbiddenPath(path)) throw new Error('refused path');
+      assertAllowedPath(path);
       ensureDir(dirname(path));
       const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
       try { writeSync(fd, text); } finally { closeSync(fd); }
     },
     unlink: (path) => {
-      if (forbiddenPath(path)) throw new Error('refused path');
+      assertAllowedPath(path);
       const stat = lstatSync(path);
       if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('refused unlink');
       unlinkSync(path);
@@ -108,7 +106,7 @@ export function createNodeHost(now: () => Date = () => new Date()): AutofixHost 
 
 function execChecked(argv: readonly string[]): ExecResult {
   if (isForbiddenExecArgv(argv)) {
-    return { code: 1, stdout: '', stderr: 'refused' };
+    return { ...REFUSED_EXEC };
   }
   try {
     const stdout = execFileSync(argv[0]!, argv.slice(1), {
