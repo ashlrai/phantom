@@ -142,6 +142,14 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       continue;
     }
     const requires = job.requires ?? [];
+    // Name only the caps no live node in the owner scope advertises: nodes can
+    // hold part of a job's requirements and still miss others, so listing every
+    // required cap would report gaps that do not exist. When each cap is held
+    // by some node but no single node holds them all, the combination is the
+    // gap and the full requires list is the honest answer.
+    const ownedLive = nodes.filter(n => n.owners?.includes(job.owner!));
+    const uncovered = requires.filter(c => !ownedLive.some(n => (n.caps ?? []).includes(c)));
+    const missing = uncovered.length ? uncovered.join(',') : requires.join(',');
     const fix = !nodes.some(n => n.owners?.includes(job.owner!))
       ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
       : reasons.has('capacity')
@@ -149,7 +157,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       : reasons.has('declined') && !reasons.has('caps')
         ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
       : reasons.has('caps')
-        ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
+        ? `No node owned by '${job.owner}' advertises ${missing}. Rejoin a node with --caps including them.`
         : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }

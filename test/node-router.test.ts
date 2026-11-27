@@ -83,6 +83,24 @@ describe('node router', () => {
     expect(plan.find(r => r.jobId === 'j-plain')).toMatchObject({ nodeId: null,
       fix: "No live node belongs to owner 'o'. Run: phm node join --owner o" });
   });
+
+  it('the caps fix names only the caps no live node advertises', () => {
+    const f = fixture();
+    // One node holds the lane but not the pack: the fix must name the pack cap
+    // alone, not claim the lane is missing too.
+    f.box.join('lane-only', { owners: ['o'], caps: ['codex'] });
+    f.box.enqueue('j-pack', { owner: 'o', requires: ['codex', 'pack:codex-file'] });
+    expect(f.box.plan().find(r => r.jobId === 'j-pack')).toMatchObject({ nodeId: null,
+      fix: "No node owned by 'o' advertises pack:codex-file. Rejoin a node with --caps including them." });
+    // When each cap is held by some node but no single node holds them all, the
+    // combination is the gap and the full requires list is the honest answer.
+    f.mac.join('pack-only', { owners: ['o'], caps: ['pack:codex-file'] });
+    expect(f.box.plan().find(r => r.jobId === 'j-pack')).toMatchObject({ nodeId: null,
+      fix: "No node owned by 'o' advertises codex,pack:codex-file. Rejoin a node with --caps including them." });
+    // A node advertising the whole set takes the job.
+    f.box.join('full', { owners: ['o'], caps: ['codex', 'pack:codex-file'] });
+    expect(f.box.plan().find(r => r.jobId === 'j-pack')!.nodeId).not.toBeNull();
+  });
 });
 
 describe('job leases: no job runs twice', () => {
