@@ -160,6 +160,26 @@ describe('authenticated fleet projection across two homes', () => {
     expect(log.mock.lastCall?.[0]).not.toContain('leader unreachable');
   });
 
+  it('withholds counts after a worker clock rollback and retries on the next read', async () => {
+    useHost('muse');
+    await syncFleetReplica({ leader: 'leader-mac', ssh: leaderRpc });
+    vi.setSystemTime(NOW - 60_000);
+    expect(fleetReplicaStatus().source).toMatchObject({
+      stale: true, ageSeconds: null, reason: 'leader replica receipt is ahead of the worker clock',
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await cmdFleetLaneSlots(['--json']);
+    expect(readOnlySsh).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(log.mock.lastCall![0]).lanes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ lane: 'claude-cli', slots: null, busy: null }),
+    ]));
+    vi.setSystemTime(NOW - 1_000);
+    readOnlySsh.mockImplementation(leaderRpc);
+    await cmdFleetLaneSlots(['--json']);
+    expect(readOnlySsh).toHaveBeenCalledTimes(2);
+    expect(fleetReplicaStatus().source).toMatchObject({ stale: false, ageSeconds: 0 });
+  });
+
   it('abandons an unresponsive replica pull at five seconds and retains the observation', async () => {
     useHost('muse');
     await syncFleetReplica({ leader: 'leader-mac', ssh: leaderRpc });

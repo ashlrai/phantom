@@ -11,7 +11,8 @@
  * second store. Read-only: no claims, no mutations.
  */
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
-import { agentRefAddressMatcher, readAgentRegistry, resolveAgent, type AgentRegistry } from './bus-identity.js';
+import { groupAddressTopicOf } from '../fleet/bus-group.js';
+import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry, resolveAgent, type AgentRegistry } from './bus-identity.js';
 import { busReadContains } from './bus-unified.js';
 import { BUS_DEAD_LETTER_ADDRESS, BUS_DEAD_LETTER_REASONS, busDeadLetterContainsText, busDeadLetterReason,
   busDeadLetterReport, busDeadLetterSummary, type BusDeadLetterReason, type BusDeadLetterReport } from './bus-dead-letter.js';
@@ -53,6 +54,15 @@ export interface BusDeadLettersOptions {
   /** Keep only letters whose ORIGINAL recipient carries `group:<name>:` —
    * the same raw room prefix every bus read's `--channel` matches. */
   channel?: string;
+  /** Keep only letters whose ORIGINAL recipient is a well-formed
+   * `group:<room>:<topic>` address carrying this exact topic component —
+   * the same `groupAddressTopicOf` match every bus read's `--topic`
+   * applies, composing with `channel` into one room AND one topic while a
+   * report naming an agent address, a bare label or a `group:<room>`
+   * without a topic never matches. The value takes the strict
+   * channel-name grammar; a report proving no group-address recipient
+   * never matches either. */
+  topic?: string;
   /** Keep only letters whose ORIGINAL envelope kind equals the value. */
   bodyKind?: string;
   /** Cap the returned `letters`; `matched` still reports the filtered total. */
@@ -139,6 +149,13 @@ export function readBusDeadLetters(options: BusDeadLettersOptions = {}): BusDead
   if (options.reason !== undefined && !(BUS_DEAD_LETTER_REASONS as readonly string[]).includes(options.reason)) {
     return invalid(`--reason must be one of ${BUS_DEAD_LETTER_REASONS.join(', ')}.`);
   }
+  // The same strict channel-name grammar every bus read's `--topic`
+  // validates; matching itself is the shared `groupAddressTopicOf` parse,
+  // so an unknown topic is an honest empty match, never an error and
+  // never a widened one.
+  if (options.topic !== undefined && !agentChannelNameSchema.safeParse(options.topic).success) {
+    return invalid('--topic takes a bus channel topic (a-z, 0-9, _ -; 1-32 chars).');
+  }
 
   const store = inspectBusInbox({ root: options.root, now: () => nowMs });
   if (store.source === 'missing') {
@@ -203,6 +220,8 @@ export function readBusDeadLetters(options: BusDeadLettersOptions = {}): BusDead
     if (options.bodyKind !== undefined && report?.kind !== options.bodyKind) return false;
     if (channelPrefix !== undefined && (report?.to === null || report?.to === undefined ||
         !report.to.startsWith(channelPrefix))) return false;
+    if (options.topic !== undefined && (report?.to === null || report?.to === undefined ||
+        groupAddressTopicOf(report.to) !== options.topic)) return false;
     if (fromMatch !== undefined && (report?.from === null || report?.from === undefined || !fromMatch(report.from))) return false;
     if (excludeFromMatch !== undefined && (report?.from === null || report?.from === undefined || excludeFromMatch(report.from))) return false;
     if (toMatch !== undefined && (report?.to === null || report?.to === undefined || !toMatch(report.to))) return false;

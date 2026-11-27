@@ -53,7 +53,7 @@ ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
 ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> [--interval-ms <100..60000>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] --json
 ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
-ashlr agents bus dead-letters [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--priority P0..P3] [--id <id>] [--reason <${BUS_DEAD_LETTER_REASONS.join('|')}>] [--from <agent>] [--exclude-from <agent>] [--to <agent>] [--channel <name>] [--body-kind <kind>] [--limit <1-100>]
+ashlr agents bus dead-letters [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--priority P0..P3] [--id <id>] [--reason <${BUS_DEAD_LETTER_REASONS.join('|')}>] [--from <agent>] [--exclude-from <agent>] [--to <agent>] [--channel <name>] [--topic <topic>] [--body-kind <kind>] [--limit <1-100>]
 ashlr agents bus show <id>
 ashlr agents bus thread <id>
 ashlr agents bus adapters
@@ -705,7 +705,11 @@ no-route or other for a body the defensive read cannot classify; --from,
 the registry exactly like every bus sender filter, an unresolvable ref or
 unreadable registry keeping literal-label matching and a letter whose
 report proves no such label never matching; --channel keeps reports whose
-original recipient carries group:<name>:; --body-kind keeps the original
+original recipient carries group:<name>: and --topic keeps reports whose
+original recipient is a well-formed group:<room>:<topic> address carrying
+that exact topic component — the same groupAddressTopicOf match every bus
+read's --topic applies, composing with --channel into one room and one
+topic; --body-kind keeps the original
 envelope kind; --limit caps the page while matched reports the filtered
 total and truncated marks the cut. A verified-missing store reports real
 zeros, an unreadable one unavailable and a scan that cannot finish
@@ -1306,7 +1310,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         since: sinceArg(), before: beforeArg(), contains: one('--contains'),
         priority: priorityArg(), id: one('--id'), reason: reasonArg(),
         from: one('--from'), excludeFrom: one('--exclude-from'), to: one('--to'),
-        channel: one('--channel'), bodyKind: one('--body-kind'),
+        channel: one('--channel'), topic: one('--topic'), bodyKind: one('--body-kind'),
         limit: integer(one('--limit'), '--limit') });
       if (result.status !== 'ok') {
         if (result.status === 'invalid') {

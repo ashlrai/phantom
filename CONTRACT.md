@@ -1007,7 +1007,10 @@ parseable review time, conflicting verdicts or distinct valid
 `reviewedHeadSha` values leave the review evidence unknown. A missing or
 invalid head supplies no identity and cannot settle a conflict. The fold's
 `crossReviews` option joins each outcome's `cross_review` through the
-same PR identity as the merge-queue join. Review rows never create
+same PR identity as the merge-queue join. For a dated standing merge or close,
+the latest review must have a recorded time at or before the verdict.
+A later or undated latest review leaves the join unknown without falling
+back to an earlier review. Review rows never create
 outcomes. The join is fill-only
 diagnostic context: it explains what the review gate recorded while
 the merge verdict stayed unrecorded, and it never feeds routing,
@@ -5109,7 +5112,11 @@ recipient through `agentRefAddressMatcher` (unreadable registry keeps
 literal-label matching; a report proving no such label never matches, and
 `excludeFrom` drops unprovable senders the same way `work mine` does),
 `channel` keeps reports whose original recipient carries `group:<name>:`,
-`bodyKind` the original envelope kind, `limit` (1..100, default the max)
+`topic` keeps reports whose original recipient is a well-formed
+`group:<room>:<topic>` address carrying that exact topic component — the
+same `groupAddressTopicOf` match every bus read's `--topic` applies,
+composing with `channel` into one room and one topic — `bodyKind` the
+original envelope kind, `limit` (1..100, default the max)
 caps `letters` while `matched` reports the filtered total and `truncated`
 marks the cut. Items sort in the same claim order `work mine`'s deadLetters
 section uses — priority band, then cursor. `source` is `missing` with real
