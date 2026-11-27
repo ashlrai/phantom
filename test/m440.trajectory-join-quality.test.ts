@@ -474,6 +474,41 @@ describe('trajectory join quality', () => {
     expect(trajectory?.timeline.some((row) => row.kind === 'post-merge')).toBe(joined);
   });
 
+  it.each([
+    [NOW, true],
+    ['2026-07-28T20:05:01.001Z', false],
+    ['invalid', false],
+    ['', false],
+  ])('uses evidence pack generation time %j for verification and coverage', (generatedAt, observed) => {
+    const outcomes = listOutcomeRecordsDetailed({ deps: outcomeDeps() });
+    const result = listTrajectoryJoinQuality({
+      deps: {
+        readDispatchProductionEventsDetailed: () => dispatchRead(),
+        listOutcomeRecordsDetailed: () => ({
+          ...outcomes,
+          records: outcomes.records.map((outcome) => ({
+            ...outcome,
+            proposal: { ...outcome.proposal, verifyResult: undefined },
+            evidencePacks: outcome.evidencePacks.map((evidence) => ({ ...evidence, generatedAt })),
+          })),
+        }),
+        readAgentActionsDetailed: () => actionRead(),
+        loadProposal: () => proposal(),
+      },
+    });
+
+    expect(result.edges.proposalToVerification).toMatchObject({
+      denominator: 1,
+      joined: observed ? 1 : 0,
+      unjoined: observed ? 0 : 1,
+    });
+    const trajectory = result.records.find((record) => record.proposalId === PROPOSAL_ID);
+    expect(trajectory?.coverage.evidence).toBe(observed);
+    expect(trajectory?.timeline.filter((row) => row.kind === 'evidence').map((row) => row.ts))
+      .toEqual(observed ? [generatedAt] : []);
+    expect(trajectory?.latestAt).toBe(observed ? NOW : TS5);
+  });
+
   it('excludes historical outcomes from join indices and every outcome edge denominator', () => {
     const outcomes = listOutcomeRecordsDetailed({ deps: outcomeDeps() });
     const current = outcomes.records[0];
