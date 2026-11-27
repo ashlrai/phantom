@@ -69,6 +69,25 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs[0]!.dispatchedAt).toBe('2026-10-28T13:30:00.000Z');
   });
 
+  it('requires dispatch evidence beyond a pre-spawn reservation', () => {
+    const job = 'RQ-A';
+    const reservation = line({
+      event: 'claim', job, lane: 'devin', launch_dedupe: true, ts: DISPATCH_ISO,
+    });
+    expect(foldJobsLedgerRewards([reservation, merged(job)].join('\n'), NOW_MS)).toEqual([]);
+  });
+
+  it.each(['2026-10-28T15:15:00.000Z', undefined])(
+    'preserves observed dispatch evidence after a reservation with timestamp %s', (ts) => {
+      const job = 'RQ-A';
+      const reservation = line({ event: 'claim', job, lane: 'devin', launch_dedupe: true, ts });
+      const rows = [launch(job), reservation, merged(job)];
+      expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toMatchObject([
+        { jobId: job, pool: 'codex-cmp', dispatchedAt: DISPATCH_ISO, merged: true },
+      ]);
+    },
+  );
+
   it('keeps batch member rewards and excludes wrapper rewards for the same PR', () => {
     const batch = 'RQ-BATCH-17';
     const member = 'RQ-MEMBER17'; // Same length gives both verdict receipts the same PR URL.
