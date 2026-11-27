@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DriveNodes, LocalNodesStore, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { probeLocalAuth } from '../src/core/drive/nodes/auth-probe.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
+import { initializePool } from '../src/core/drive/nodes/pool.js';
 import { localPhmVersion, versionCap } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNode } from '../src/cli/node.js';
 import { cmdNodeFleet } from '../src/cli/node-fleet.js';
@@ -30,6 +31,42 @@ function fixture() {
 }
 
 describe('node router', () => {
+  it('keeps a newer host hold through delayed and same-time capacity reports', () => {
+    const f = fixture();
+    initializePool(f.store, 'primary', 'backup', 1_000);
+    const worker = f.mac.join('worker', { owners: ['o'] })!;
+    const available = { hostId: 'host', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000 };
+    f.mac.heartbeat(worker, { capacity: available });
+    f.advance(10);
+    const held = { ...available, slots: 0, held: 'memory-pressure' as const, sampledAtMs: 1_010 };
+    f.mac.heartbeat(worker, { capacity: held });
+    f.box.enqueue('job', { owner: 'o' });
+
+    for (const sampledAtMs of [1_000, 1_010]) {
+      f.advance(1);
+      expect(f.mac.heartbeat(worker, { capacity: { ...available, sampledAtMs }, slots: 1 })).not.toBeNull();
+      expect(f.box.view(['o']).nodes[0]).toMatchObject({ slots: 0, capacity: held });
+      expect(f.mac.pull(worker)).toBeNull();
+    }
+    expect(f.box.view(['o']).nodes[0]?.heartbeatAt).toBe(1_012);
+
+    f.mac.heartbeat(worker, { capacity: { ...available, sampledAtMs: 1_012 } });
+    expect(f.mac.pull(worker)?.job.id).toBe('job');
+  });
+
+  it('lets a current capacity sample supersede a future-dated one', () => {
+    const f = fixture();
+    initializePool(f.store, 'primary', 'backup', 1_000);
+    const worker = f.mac.join('worker', { owners: ['o'] })!;
+    const available = { hostId: 'host', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000 };
+    f.mac.heartbeat(worker, { capacity: { ...available, sampledAtMs: 1_500 } });
+    f.box.enqueue('job', { owner: 'o' });
+    expect(f.mac.pull(worker)).toBeNull();
+
+    f.mac.heartbeat(worker, { capacity: available });
+    expect(f.mac.pull(worker)?.job.id).toBe('job');
+  });
+
   it('routes by caps and live usage, deterministically, with the box as one more node', () => {
     const f = fixture();
     f.box.join('box-coordinator', { owners: ['acme'], caps: ['gh', 'build'] });

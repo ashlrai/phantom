@@ -1089,7 +1089,7 @@ describe('text output names outcomes in plain words', () => {
     } finally { vi.restoreAllMocks(); }
   });
   it('status names each node\'s advertised slots and last measured hold', async () => {
-    const { deps, nodes, lines } = harness();
+    const { deps, nodes, lines, advance } = harness();
     try {
       const session = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
       // No slot report yet: unbounded, never a fabricated number.
@@ -1102,7 +1102,8 @@ describe('text output names outcomes in plain words', () => {
       expect(last(lines)).toContain('slots=4');
       expect(last(lines)).not.toContain('held=');
       // A held sample reads slots=0 with the measured reason, and list agrees.
-      const held = { ...ready, slots: 0, held: 'memory-pressure' };
+      advance(1);
+      const held = { ...ready, slots: 0, held: 'memory-pressure', sampledAtMs: 1_001 };
       executeNodeFleet('beat', ['--node', 'box', '--session', session, '--capacity', JSON.stringify(held)], nodes());
       expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
       expect(last(lines)).toContain('slots=0 held=memory-pressure');
