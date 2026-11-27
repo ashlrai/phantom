@@ -105,6 +105,22 @@ describe('currentUnfed', () => {
     });
   });
 
+  it.each([
+    { hardCap: 0, target: 0, headroom: 0 },
+    { hardCap: 2, target: 2, headroom: 1 },
+    { hardCap: 6, target: 3, headroom: 2 },
+    { hardCap: -1, target: 3, headroom: 2 },
+    { hardCap: 1.5, target: 3, headroom: 2 },
+  ])('bounds derived unfed capacity with slots.json hard_cap $hardCap', ({ hardCap, target, headroom }) => {
+    const slots = JSON.stringify({ 'codex-cmp': { target: 3, hard_cap: hardCap } });
+    const report = currentUnfed(JSON.stringify({ lanes: LANES }), READY, { slots });
+
+    expect(report.unfedSlots).toBe(headroom);
+    expect(report.resources.find(r => r.lane === 'codex-cmp')).toMatchObject({
+      target, headroom, unfed: headroom > 0,
+    });
+  });
+
   it('prefers the dispatcher verdict and keeps only well-formed reason codes', () => {
     const status = JSON.stringify({
       lanes: LANES,
@@ -116,7 +132,7 @@ describe('currentUnfed', () => {
         },
       },
     });
-    const report = currentUnfed(status, READY, { slots: JSON.stringify({ 'codex-cmp': { target: 0 } }) });
+    const report = currentUnfed(status, READY, { slots: JSON.stringify({ 'codex-cmp': { target: 0, hard_cap: 0 } }) });
     expect(report.source).toBe('dispatcher');
     expect(report.waiting).toBe(2);
     expect(report.unfedSlots).toBe(2);
