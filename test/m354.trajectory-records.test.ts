@@ -2531,6 +2531,38 @@ describe('Trajectory records', () => {
     expect(readRecords(TEST_NOW_MS)[0]).toMatchObject({ terminalOutcome: 'merged', coverage: { proposal: true } });
   });
 
+  it('withholds proposal decisions until their recorded time', () => {
+    const outcome = outcomeRecord();
+    const readRecords = (decisionMs: number) => listTrajectoryRecords({
+      asOfMs: TEST_NOW_MS,
+      deps: deps({
+        listOutcomeRecords: () => [{
+          ...outcome,
+          decisions: outcome.decisions.map((decision) => ({
+            ...decision,
+            action: 'rejected',
+            ts: new Date(decisionMs).toISOString(),
+          })),
+        }],
+        readAgentActions: () => [],
+        loadProposal: () => null,
+      }),
+    });
+
+    const [future] = readRecords(TEST_NOW_MS + 1);
+    expect(future).toMatchObject({
+      latestAt: TS2,
+      terminalOutcome: 'pending',
+      coverage: { decision: false },
+    });
+    expect(future?.timeline.some((event) => event.kind === 'decision')).toBe(false);
+    expect(readRecords(TEST_NOW_MS)[0]).toMatchObject({
+      latestAt: new Date(TEST_NOW_MS).toISOString(),
+      terminalOutcome: 'rejected',
+      coverage: { decision: true },
+    });
+  });
+
   it('excludes future dispatches from the skill outcome sample', () => {
     const at = (ms: number) => new Date(ms).toISOString();
     const trajectoryIds = ['traj-a', 'traj-b', 'traj-c'];
