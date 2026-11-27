@@ -155,23 +155,10 @@ export async function requireLocalQuiescence(io) {
   }
   // A closed app is not proof that its native quota child registered or exited.
   // Preserve the collector's own same-boot recovery fence across an app switch.
-  // A fence whose recorded owner is provably gone cannot own in-flight work:
-  // pid reuse only ever holds (the safe direction), and the collector's own
-  // recovery reconciles the record on its next run. Unreadable ownership stays
-  // authoritative.
   for (const name of ['.resource-quota-refresh-pending.json', '.resource-quota-refresh.lock']) {
-    const fencePath = join(ledgerRoot, name);
     let stat;
-    try { stat = io.lstat(fencePath); } catch { hold('collector-storage-unsafe', 'quota collector storage is unsafe or uncertain'); }
-    if (!stat) continue;
-    let ownerPid = null;
-    try {
-      const record = JSON.parse(io.readBoundedFile(fencePath, 16_384));
-      const pid = name === '.resource-quota-refresh.lock' ? record?.pid : record?.ownerPid;
-      if (Number.isSafeInteger(pid) && pid > 1) ownerPid = pid;
-    } catch { /* an unreadable fence stays authoritative */ }
-    if (ownerPid !== null && !processes.has(ownerPid)) continue;
-    hold('collector-pending', 'quota collector work or ownership is unresolved; use supported collector recovery before installation');
+    try { stat = io.lstat(join(ledgerRoot, name)); } catch { hold('collector-storage-unsafe', 'quota collector storage is unsafe or uncertain'); }
+    if (stat) hold('collector-pending', 'quota collector work or ownership is unresolved; use supported collector recovery before installation');
   }
 }
 
