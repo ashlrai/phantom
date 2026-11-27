@@ -146,9 +146,13 @@ for example `Sent to Devin because CMP Codex resets in 40 min with 5% left.`
 
 `learnedSeatPenalty` turns the same posterior means into seat-router penalties
 for one (job type, repo) cell. `learnedFleetSeatPenalty` pools every recorded
-cell per resource instead — attempts, good merges and usage summed across
-models, job types and repos — because a seat-router request carries no fleet
-job type or repo, so the resource's whole dispatch record is the honest prior.
+cell per resource across models, job types and repos because a seat-router
+request carries no fleet job type or repo. It scores the posterior good-merge
+rate and includes an allowance cost factor only when every pooled resource
+has at least one recorded allowance reading. The cost factor uses the sum
+and count of those readings. Jobs-ledger token totals and imputed usage
+contribute no allowance evidence. When any resource's allowance is unknown,
+all resources are scored on the posterior good-merge rate alone.
 Both normalize the same way: the best resource's penalty is 0 and every other
 resource's stays inside [0, 1].
 
