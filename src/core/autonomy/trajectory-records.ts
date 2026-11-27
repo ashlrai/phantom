@@ -1178,10 +1178,10 @@ function fillRecordMetadata(
   if (!record.learningEpoch && meta.learningEpoch) record.learningEpoch = bounded(meta.learningEpoch, 120);
 }
 
-function evidenceEvent(evidence: OutcomeRecordEvidence, proposalId: string, tsFallback: string): TrajectoryTimelineEvent {
+function evidenceEvent(evidence: OutcomeRecordEvidence, proposalId: string): TrajectoryTimelineEvent {
   const verification = evidence.verification;
   return {
-    ts: evidence.generatedAt || tsFallback,
+    ts: evidence.generatedAt,
     kind: 'evidence',
     outcome: verification.passed ? 'passed' : 'failed',
     proposalId,
@@ -1472,6 +1472,7 @@ function listTrajectoryRecordsAt(
     });
 
     for (const evidence of outcome.evidencePacks) {
+      if (!evidencePackObserved(evidence, asOfMs)) continue;
       record.coverage.evidence = true;
       fillRecordMetadata(record, {
         trajectoryId: evidence.trajectoryId,
@@ -1483,7 +1484,7 @@ function listTrajectoryRecordsAt(
         routerPolicyVersion: evidence.routerPolicyVersion,
         learningEpoch: evidence.learningEpoch,
       });
-      noteTimeline(record, evidenceEvent(evidence, proposal.id, proposal.createdAt));
+      noteTimeline(record, evidenceEvent(evidence, proposal.id));
     }
 
     for (const decision of outcome.decisions) {
@@ -1917,10 +1918,16 @@ function aliasMatches(index: Map<string, Set<number>>, aliases: string[]): Set<n
   return matches;
 }
 
-function verificationStates(outcome: OutcomeRecord): Set<boolean> {
+function evidencePackObserved(evidence: OutcomeRecordEvidence, asOfMs: number): boolean {
+  return Date.parse(evidence.generatedAt) <= asOfMs;
+}
+
+function verificationStates(outcome: OutcomeRecord, asOfMs: number): Set<boolean> {
   const states = new Set<boolean>();
   if (outcome.proposal.verifyResult) states.add(outcome.proposal.verifyResult.passed);
-  for (const evidence of outcome.evidencePacks) states.add(evidence.verification.passed);
+  for (const evidence of outcome.evidencePacks) {
+    if (evidencePackObserved(evidence, asOfMs)) states.add(evidence.verification.passed);
+  }
   return states;
 }
 
@@ -2027,7 +2034,7 @@ export function listTrajectoryJoinQuality(
   const proposalToVerification = emptyJoinEdge();
   const verifiedOutcomes: OutcomeRecord[] = [];
   for (const outcome of outcomesInWindow) {
-    const states = verificationStates(outcome);
+    const states = verificationStates(outcome, asOfMs);
     noteJoin(
       proposalToVerification,
       states.size,
