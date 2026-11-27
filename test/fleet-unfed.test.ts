@@ -125,6 +125,23 @@ describe('currentUnfed', () => {
     expect(report.resources.find(r => r.lane === 'devin')?.waitingElsewhere).toBe(0);
   });
 
+  it('applies new operator holds to a published summary while retaining tick evidence', () => {
+    const status = JSON.stringify({
+      lanes: LANES,
+      unfed_capacity: {
+        waiting: 2,
+        lanes: { 'codex-cmp': { waiting_elsewhere: 2, blocked: { missing_capability: 2 } } },
+      },
+    });
+    const report = currentUnfed(status, READY, { hold: '\nclaude\tcodex-cmp\n' });
+
+    expect(report).toMatchObject({ source: 'dispatcher', waiting: 2, unfedLanes: [], unfedSlots: 0 });
+    expect(report.resources.find(r => r.lane === 'codex-cmp')).toMatchObject({
+      held: true, headroom: 3, unfed: false, waitingElsewhere: 2, blocked: { missing_capability: 2 },
+    });
+    expect(report.resources.find(r => r.lane === 'devin')).toMatchObject({ held: true });
+  });
+
   it('reports nothing unfed when every waiting row is hinted at the idle lane', () => {
     const report = currentUnfed(JSON.stringify({ lanes: { a: { running: 0, target: 2 } } }), row('RQ-A', 'a'));
     expect(report.unfedLanes).toEqual([]);
@@ -1278,7 +1295,7 @@ describe('derived market reasons', () => {
     expect(report.source).toBe('dispatcher');
     expect(report.derivedReasons).toBe(false);
     expect(report.resources.find(r => r.lane === 'codex-personal')).toMatchObject({
-      held: false, unfed: true, readyHinted: 1, waitingElsewhere: 1, blocked: { saturated: 1 },
+      held: true, unfed: false, readyHinted: 1, waitingElsewhere: 1, blocked: { saturated: 1 },
     });
   });
 });

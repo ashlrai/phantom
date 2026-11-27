@@ -440,10 +440,12 @@ missing. A tick counts when at least one lane has usable evidence.
 If several snapshots share a tick timestamp, the last one with usable unfed
 lane evidence supplies that tick's lane counts, slot-ticks and blocker counts.
 
-When the dispatcher omits its unfed summary, the derived report also honors
-holds in `queue/slots.json` and the operator's `HOLD` file. Held lanes can
-show physical headroom but contribute zero unfed slots. Published unfed
-summaries use the lane holds from the same dispatcher tick.
+The live report applies the operator's `HOLD` file to both published and
+derived summaries, so a newly held lane stops contributing to unfed capacity
+before the next dispatcher tick. A hold recorded in the dispatcher tick
+still applies until a later tick clears it. The derived report also honors
+holds in `queue/slots.json`. Held lanes can show physical headroom, and the
+published waiting counts and blocker reasons still describe the observed tick.
 An embedded admission record with a `ts` must match the status `last_tick`
 to supply the fleet stop verdict. The status pause marker and published
 blocked reasons can still supply evidence when the timestamps differ.

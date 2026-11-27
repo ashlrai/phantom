@@ -338,7 +338,7 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     : data.schema === 'dispatchd.status.v1' && Number.isFinite(tickMs) && nowMs >= tickMs && nowMs - tickMs <= STATUS_FRESH_MS;
   const published = isRecord(data.unfed_capacity) ? data.unfed_capacity : null;
   const ctx = published === null ? marketContext(market) : null;
-  const operatorHolds = published === null && ctx === null
+  const operatorHolds = ctx === null
     ? new Set((market?.hold ?? '').split(/\s+/u).filter(Boolean)) : null;
   const stop = fleetStopVerdict(data);
   // An admission-stopped tick never ran the market: the dispatcher's own
