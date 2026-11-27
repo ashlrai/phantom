@@ -143,15 +143,18 @@ function qualityReceiptLine(r: ControllerQualityReceipt): string {
 
 /**
  * One compact text rendering of a community-seat tally; agent null prints
- * as the unattributed bucket. Latency and review tallies print 'unknown'
- * when their journaled-evidence denominator is empty — rows written
- * before the fields existed never read as zero reviews or zero minutes.
+ * as the unattributed bucket. Latency, review and CI tallies print
+ * 'unknown' when their journaled-evidence denominator is empty — rows
+ * written before the fields existed never read as zero reviews, zero CI
+ * or zero minutes.
  */
 function seatLine(s: CommunitySeatOutcome): string {
   const ttm = s.ttm_known === 0 ? 'unknown' : `${s.ttm_minutes_mean}m mean over ${s.ttm_known} merges`;
   const reviews = s.reviews_known === 0 ? 'unknown'
     : `${s.reviewed} reviewed/${s.unreviewed} unreviewed/${s.approved} approved/${s.changes_requested} changes-requested/${s.review_required} review-required over ${s.reviews_known} merges`;
-  return `  ${s.agent ?? 'unattributed'}: prs=${s.prs} reverted=${s.reverted} kept=${s.kept} unknown=${s.unknown} repos=${s.repos} ttm=${ttm} reviews=${reviews}`;
+  const ci = s.ci_known === 0 ? 'unknown'
+    : `${s.ci_passed} green/${s.ci_failed} red/${s.ci_pending} pending/${s.ci_none} no-checks over ${s.ci_known} merges`;
+  return `  ${s.agent ?? 'unattributed'}: prs=${s.prs} reverted=${s.reverted} kept=${s.kept} unknown=${s.unknown} repos=${s.repos} ttm=${ttm} reviews=${reviews} ci=${ci}`;
 }
 
 /**

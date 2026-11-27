@@ -98,17 +98,19 @@ function skipped(
 
 /**
  * The mutable evidence one outcome row records, as the dedup compares it:
- * the revert verdict plus the merge's open timestamp and review evidence.
- * gh's fields are frozen at merge except reviews (a review can land
- * after merge), so any change here is a real evidence change worth a new
- * row — last-line-wins keeps the newest.
+ * the revert verdict plus the merge's open timestamp, review evidence and
+ * CI verdict. gh's fields are frozen at merge except reviews (a review can
+ * land after merge) and ci (the bounded per-PR rollup read can fail or
+ * arrive after the row was first journaled), so any change here is a real
+ * evidence change worth a new row — last-line-wins keeps the newest.
  */
 function outcomeEvidence(row: {
   reverted: OutsidePrOutcomeJournalRow['reverted'];
   createdAt: string | null;
   reviews: OutsidePrReviewEvidence | null;
+  ci: OutsidePrOutcomeJournalRow['ci'];
 }): string {
-  return JSON.stringify([row.reverted, row.createdAt, row.reviews?.decision ?? null, row.reviews?.latest ?? null]);
+  return JSON.stringify([row.reverted, row.createdAt, row.reviews?.decision ?? null, row.reviews?.latest ?? null, row.ci ?? null]);
 }
 
 function outcomeJournalRow(at: string, repo: string, pr: OutsidePrOutcomeV1): OutsidePrOutcomeJournalRow {
@@ -128,6 +130,7 @@ function outcomeJournalRow(at: string, repo: string, pr: OutsidePrOutcomeV1): Ou
     mergedAt: pr.mergedAt,
     createdAt: pr.createdAt,
     reviews: pr.reviews,
+    ci: pr.ci,
     reverted: pr.reverted,
   };
 }

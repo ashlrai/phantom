@@ -68,7 +68,7 @@ const row = (
 ): OutsidePrOutcomeJournalRow => ({
   v: 1, kind: OUTSIDE_PR_OUTCOME_SCHEMA, at: AT,
   repo, number, title: `fix ${number}`, author: 'ext-dev', agent: null, model: null,
-  mergedAt, createdAt: null, reviews: null, reverted: verdict, ...over,
+  mergedAt, createdAt: null, reviews: null, ci: null, reverted: verdict, ...over,
 });
 
 describe('foldOutsidePrCells', () => {

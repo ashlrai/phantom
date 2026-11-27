@@ -7,7 +7,9 @@
  * reverted community change is visible evidence. Each row also carries
  * gh's recorded open timestamp and review evidence (open→merge minutes,
  * reviewer count, review decision) when gh returned them — null when
- * unrecorded; a real empty review list stays a real "unreviewed" signal.
+ * unrecorded; a real empty review list stays a real "unreviewed" signal —
+ * plus the bounded per-PR `gh pr view` check-rollup verdict (`ci`) when
+ * the read returned one.
  * Read-only: it runs `gh pr
  * list` and reads the local revert ledger; it never merges, records or
  * dispatches. Agent is convention attribution (recorded branch/login
@@ -21,8 +23,8 @@ const usage = `Usage: phm fleet outside-outcomes [--days <n>] [--json]
 Merged outside-PR outcomes on fleet repos (default window: 30 days).
 Per repo: merged PRs outside work touched, each marked reverted yes/no/
 unknown against the standing revert ledger (unreadable ledger → unknown,
-never "not reverted") plus its recorded open→merge minutes and review
-evidence when gh returned them. Per author: merged and reverted counts;
+never "not reverted") plus its recorded open→merge minutes, review
+evidence and check-rollup CI verdict when gh returned them. Per author: merged and reverted counts;
 per agent:
 the same tallies attributed by recorded branch/login convention (unmatched
 → unattributed, never guessed); model is always null — gh records none.
@@ -64,6 +66,7 @@ function renderText(r: OutsidePrOutcomesV1): string {
           ? 'unreviewed'
           : `reviewed ${pr.reviews.latest}${pr.reviews.decision === null ? '' : ` ${pr.reviews.decision.toLowerCase().replaceAll('_', '-')}`}`);
       }
+      if (pr.ci !== null) bits.push(`ci ${pr.ci}`);
       lines.push(`  #${pr.number} ${pr.title} — ${pr.author ?? 'unknown author'}${pr.agent !== null ? ` [${pr.agent}]` : ''} — ${bits.join(' — ')}`);
     }
   }

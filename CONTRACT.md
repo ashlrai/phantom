@@ -1526,7 +1526,14 @@ when none qualify), while `reviews_known` counts rows carrying a
 `reviews` object and `reviewed`/`unreviewed`/`approved`/
 `changes_requested`/`review_required` tally its contents — journal rows
 written before the fields existed, or gh rows missing them, read as
-unknown denominators, never as zero reviews or zero latency.
+unknown denominators, never as zero reviews or zero latency. `ci_known`
+counts rows carrying a journaled `ci` verdict (the check-rollup outcome
+the sync's bounded per-PR `gh pr view` read recorded — `success`/
+`failure`/`pending`/`none`, the same closed vocabulary
+cloud/tracker.ts reports) and `ci_passed`/`ci_failed`/`ci_pending`/
+`ci_none` tally its contents; a null `ci` — pre-fields rows, a failed
+or capped read — never counts toward any verdict, matching the reviews
+rule.
 `coverage` carries the
 newest scan row's `source_state`, `revert_ledger` and bounded
 `degraded_repos`; `truncated`/`ignored_rows` mark a cut tail and
