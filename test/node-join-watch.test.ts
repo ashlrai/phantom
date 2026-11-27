@@ -170,7 +170,7 @@ describe('phm node join --watch', () => {
     const lines = capture();
     // No --owner: the join itself is refused, so no session exists to hold.
     expect(await cmdNodeFleet('join', ['--node', 'laptop', '--watch', '--json'],
-      { store, watch: watchDeps(ac, { run }) })).toBe(2);
+      { store, watch: watchDeps(ac, { run }), providerLanes: () => [] })).toBe(2);
     expect(run).not.toHaveBeenCalled();
     expect(store.state.nodes).toEqual([]);
     expect(lastJson(lines)).toMatchObject({ command: 'join', error: { code: 'missing-flag' } });

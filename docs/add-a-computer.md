@@ -34,12 +34,19 @@ every command then uses that home, and symlinks in the path are fine.
 
 ## Pick a role
 
-Roles are expressed as capabilities, not a `--role` flag. Advertise only what
-this computer can actually do: use `--caps build` for build jobs, `--caps gh`
-for GitHub jobs, or `--caps build,gh` for both. Jobs select nodes that advertise
-all their required capabilities and share their owner scope. For `gh` jobs,
-sign in locally with `gh auth login` and report that login with `--probe-auth`;
-credentials stay on this computer.
+Roles are expressed as capabilities, not a `--role` flag. A bare join — no
+`--caps` — auto-detects the lanes this computer's own sign-ins support: it
+probes the `codex` and `claude` CLIs' login status and the `gh` login exactly
+the way a pool worker does (exit codes only; no credential is read or sent),
+then advertises those lanes plus any local-model caps. The join reply names
+the detected set under `autoCaps` in `--json` and in a plain-words line in
+text mode. Pass `--caps` to choose the advertisement yourself instead — an
+explicit list replaces the sign-in detection entirely (local-model and
+version caps still merge in). Either way, advertise only what this computer
+can actually do: jobs select nodes that advertise all their required
+capabilities and share their owner scope. For `gh` jobs, sign in locally
+with `gh auth login`; the keep-alive beat's `--probe-auth` reports that login
+so GitHub jobs can route here.
 
 A computer serving a local model through oMLX needs no `--caps` entry: opt in
 with `~/.ashlr/local-lanes.json` (`{"schemaVersion":1,"enabled":true}`), check

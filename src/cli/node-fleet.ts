@@ -24,6 +24,10 @@ export interface NodeFleetDeps {
   /** Test seam for `join --watch`: forwarded to the beat watch loop (run, sleep,
    * signal, capacity/host-stats measurement). */
   watch?: NodeBeatWatchDeps;
+  /** Test seam for the bare join's sign-in lane probe (provider CLIs plus the
+   * gh login check, exit codes only); defaults to this machine's real probe.
+   * An explicit --caps skips the probe entirely. */
+  providerLanes?: () => string[];
 }
 
 
@@ -90,6 +94,15 @@ function planEmptyNote(nodes: DriveNodes, owner: string | undefined): string {
   } catch { return 'No routable jobs.'; }
 }
 
+/** Lanes a bare standalone join advertises from this machine's own sign-ins:
+ * the same exit-code-only provider probe a pool worker runs, plus `gh` when
+ * the local gh login check passes. Sign-in state is read on this machine only —
+ * no credential, token or auth file leaves it. */
+async function joinSignInLanes(probeAuth: () => NodeAuth): Promise<string[]> {
+  const { probeProviderBinaries } = await import('../core/drive/nodes/worker.js');
+  return [...Object.keys(probeProviderBinaries()), ...(probeAuth() === 'ok' ? ['gh'] : [])].sort();
+}
+
 function text(verb: string, out: Record<string, unknown>, notes?: {
   rejoin?: ReadonlyMap<string, string>;
   drift?: SelfUpdatePlan;
@@ -131,6 +144,13 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
       ].filter((part): part is string => part !== null);
       lines.push(`This join replaces the profile the node last advertised and drops ${lost.join('; ')}. Name them again to keep them:`,
         `  ${String(dropped.restore)}`);
+    }
+    // A bare join advertises whatever this machine's sign-ins support; name
+    // the detected set so the caps line never reads as a choice the operator
+    // made, and point at --caps for a different advertisement.
+    const auto = out['autoCaps'] as string[] | undefined;
+    if (auto !== undefined && auto.length) {
+      lines.push(`Caps auto-detected from this machine's sign-ins: ${auto.join(', ')}. Pass --caps to advertise a different set.`);
     }
     return lines.join('\n');
   }
@@ -337,6 +357,9 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     // Join's lane probe runs once; a malformed local-lanes.json rides the reply
     // as a diagnostic below instead of silently costing the node its lane caps.
     let localLaneError: string | null = null;
+    // The sign-in lanes a bare join advertised, named in the reply so the caps
+    // list never reads as a choice the operator made.
+    let autoCaps: string[] | undefined;
     if (verb === 'join') {
       // A standalone join defaults --node to this computer's sanitized hostname,
       // the same default a pool join applies. Like the version cap below it stays
@@ -347,6 +370,15 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       if (!flags.has('--node')) {
         const id = (deps.hostname ?? hostname)().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100);
         if (validId(id)) flags.set('--node', id);
+      }
+      // A bare join (no --caps) advertises the lanes this machine's own
+      // sign-ins support — the same exit-code-only probe a pool worker runs —
+      // so a first node does not have to know the cap names: sign in to codex,
+      // claude or gh here and the join advertises that lane. An explicit
+      // --caps stays the complete manual advertisement and skips the probe.
+      if (!flags.has('--caps')) {
+        const lanes = [...new Set(deps.providerLanes?.() ?? await joinSignInLanes(deps.probeAuth ?? probeLocalAuth))].sort();
+        if (lanes.length > 0) { flags.set('--caps', lanes.join(',')); autoCaps = lanes; }
       }
       // A standalone join advertises this build as a `phm-<version>` cap, the same
       // report a pool worker sends, so `phm node self-update` reads a real version
@@ -401,6 +433,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // that boundary in the reply instead of letting a first-time node
       // assume it joined a shared fleet.
       out['registry'] = 'local';
+      if (autoCaps !== undefined) out['autoCaps'] = autoCaps;
       // The node joined without its lane caps; name the broken file so the
       // first-run output says why instead of looking never-configured.
       if (localLaneError !== null) {
