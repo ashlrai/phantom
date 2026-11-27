@@ -301,6 +301,19 @@ describe('capacity model', () => {
     },
   );
 
+  it.each([0, 60_000])('rejects carried footprints from a baseline %d ms ahead of the current sample', offset => {
+    const measured = computeNodeCapacity(snap({ measuredAtMs: T0 - 60_000 }));
+    const baseline = computeNodeCapacity(snap({ measuredAtMs: T0 + offset, sessions: [] }), measured);
+    expect(baseline.per_harness_footprint.codex).toMatchObject({ source: 'learned', learned_at: measured.measured_at });
+
+    const current = computeNodeCapacity(snap({
+      sessions: snap().sessions!.filter(session => session.harness !== 'codex'),
+    }), baseline);
+    expect(current.per_harness_footprint.codex).toBeUndefined();
+    expect(current.agents_runnable_now.codex).toBeNull();
+    expect(current.per_harness_footprint.grok?.source).toBe('measured');
+  });
+
   it.each([false, true])('handles zero RSS without invalidating the capacity document (previous sample: %s)', usePrevious => {
     const baseline = snap();
     const previous = usePrevious ? computeNodeCapacity(baseline) : null;
