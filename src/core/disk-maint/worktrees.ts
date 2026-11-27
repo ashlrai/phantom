@@ -88,7 +88,11 @@ function ledgerWorktreeOutcomes(jobs: { state: Source; text: string }, names: Re
         const stamp = at ?? finish?.at;
         current = stamp !== undefined && stamp > 0 && TERMINAL.has(outcome)
           ? { reason: outcome.toLowerCase(), at: stamp, prHead: isPr ? head ?? (published?.url === url ? published.head : undefined) : undefined }
-          : unknown;
+          // An open PR is a live hold, not an unknown state: keep the reason
+          // distinct so cleanup never treats it as checkable state-unknown.
+          : outcome === 'OPEN' && stamp !== undefined && stamp > 0
+            ? { reason: 'pr-open', at: stamp, hold: true }
+            : unknown;
       }
     }
     result.set(job, supervisorReview ? { reason: 'supervisor-review', at: current.at, hold: true } : current);

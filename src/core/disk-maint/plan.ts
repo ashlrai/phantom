@@ -563,7 +563,14 @@ async function scanWorktrees(ctx: ScanCtx, root: string, listing: ReturnType<typ
       if (hold) { protect(hold); continue; }
       if (ctx.kept(path)) { protect('kept'); continue; }
       const record = outcomes?.get(name);
-      if (!record || record.hold) { protect(record?.reason ?? 'state-unknown'); continue; }
+      if (!record) { protect('state-unknown'); continue; }
+      // state-unknown means the ledger never recorded a verdict. It is not a
+      // reason to keep the tree by itself: the unpushed-commits and payload
+      // checks below are the real safety gate, and open PRs stay held by the
+      // pr-open/pr-state-unknown/supervisor-review records. Require a real
+      // last-event time so the age gate still applies.
+      const unknownCheckable = record.hold && record.reason === 'state-unknown' && record.at > 0;
+      if (record.hold && !unknownCheckable) { protect(record.reason); continue; }
       const ageHours = (ctx.now - record.at) / HOUR_MS;
       if (ageHours <= (record.failed ? ctx.policy.worktreeFailedAgeHours : ctx.policy.worktreeMinAgeHours)) {
         protect('too-new'); continue;
@@ -579,7 +586,9 @@ async function scanWorktrees(ctx: ScanCtx, root: string, listing: ReturnType<typ
       bump(counts.reapReasons, record.reason);
       counts.reapable++;
       candidates.push({ path, action: 'worktree-remove', bytes: measured.bytes, ageDays: Math.floor(ageHours / 24), mtimeMs: record.at,
-        reason: `${record.reason} worktree, terminal evidence ${Math.floor(ageHours)}h ago` });
+        reason: unknownCheckable
+          ? `state-unknown worktree, no unpushed commits, last ledger event ${Math.floor(ageHours)}h ago`
+          : `${record.reason} worktree, terminal evidence ${Math.floor(ageHours)}h ago` });
     }
   }));
   return { candidates: candidates.sort((a, b) => a.path.localeCompare(b.path)), complete,
