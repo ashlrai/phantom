@@ -587,6 +587,10 @@ The Leader board estimates the number of conflicting PRs from rebase job IDs
 in `ready.tsv`. It includes parked rebase jobs, expands batches into their
 member PRs, and counts each PR once across job IDs. References in titles,
 prompts, and requirements do not contribute to the estimate.
+The conflict trend uses distinct observation times in chronological order.
+Samples dated after the current tick are discarded. A successful repeat at
+the same timestamp replaces that sample. A trend requires two distinct
+observation times.
 
 `phm queue` owns the separate `queue.v1` coordination snapshot at
 `~/.ashlr-runs/queue/queue.v1.json`. `--dir <directory>` selects an isolated store.
