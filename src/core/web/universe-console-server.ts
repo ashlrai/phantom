@@ -3,10 +3,20 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createReadSessionBoundary, headerValue, requestUrl, sendJson } from './read-session.js';
-import { serveStatic } from './static.js';
+import { SCOPED_CONSOLE_ID_RE } from './bounded-read-worker.js';
+import {
+  applyScopedConsoleSecurityHeaders, isLoopbackPortHost, listenLoopbackServer, serveScopedConsoleAsset,
+} from './scoped-console-http.js';
 import { createUniverseConsoleReader, validateUniverseConsoleRoot } from './universe-console-reads.js';
 import type { UniverseConsoleServerHandle, UniverseConsoleServerOptions } from './universe-console-types.js';
 export type { UniverseConsoleServerHandle, UniverseConsoleServerOptions } from './universe-console-types.js';
+
+function singleIdQueryParam(url: URL, name: string): string | null {
+  const ids = url.searchParams.getAll(name);
+  if (ids.length !== 1 || !SCOPED_CONSOLE_ID_RE.test(ids[0]!)
+    || [...url.searchParams.keys()].some((key) => key !== name)) return null;
+  return ids[0]!;
+}
 
 function sendProjection(res: ServerResponse, json: string): void {
   res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
@@ -27,13 +37,8 @@ export async function startUniverseConsoleServer(options: UniverseConsoleServerO
   let closing: Promise<void> | null = null;
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'");
-    res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-    const host = headerValue(req, 'host');
-    if (![`127.0.0.1:${boundPort}`, `localhost:${boundPort}`, `[::1]:${boundPort}`].includes(host)) {
+    applyScopedConsoleSecurityHeaders(res);
+    if (!isLoopbackPortHost(headerValue(req, 'host'), boundPort)) {
       sendJson(res, 403, { error: 'Forbidden: invalid Host header' }); return;
     }
     // Native raw-header clients need no Origin. Browser requests must match the
@@ -64,41 +69,25 @@ export async function startUniverseConsoleServer(options: UniverseConsoleServerO
         } else sendProjection(res, await reader.overview());
         return;
       }
-      if (url.pathname === '/api/universe/graph') {
-        const ids = url.searchParams.getAll('universeId');
-        if (ids.length !== 1 || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(ids[0]!) ||
-          [...url.searchParams.keys()].some((key) => key !== 'universeId')) {
-          sendJson(res, 400, { error: 'Expected exactly one universeId and no other parameters' }); return;
-        }
-        sendProjection(res, await reader.graph(ids[0]!)); return;
-      }
-      if (url.pathname === '/api/universe/campaign-readiness') {
-        const ids = url.searchParams.getAll('campaignId');
-        if (ids.length !== 1 || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(ids[0]!) ||
-          [...url.searchParams.keys()].some((key) => key !== 'campaignId')) {
-          sendJson(res, 400, { error: 'Expected exactly one campaignId and no other parameters' }); return;
-        }
-        sendProjection(res, await reader.campaignReadiness(ids[0]!)); return;
-      }
-      if (url.pathname === '/api/universe/controller-status') {
-        const ids = url.searchParams.getAll('controllerId');
-        if (ids.length !== 1 || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(ids[0]!) ||
-          [...url.searchParams.keys()].some((key) => key !== 'controllerId')) {
-          sendJson(res, 400, { error: 'Expected exactly one controllerId and no other parameters' }); return;
-        }
-        sendProjection(res, await reader.controllerStatus(ids[0]!)); return;
+      const idRoutes: ReadonlyArray<readonly [string, string, (id: string) => Promise<string>]> = [
+        ['/api/universe/graph', 'universeId', (id) => reader.graph(id)],
+        ['/api/universe/campaign-readiness', 'campaignId', (id) => reader.campaignReadiness(id)],
+        ['/api/universe/controller-status', 'controllerId', (id) => reader.controllerStatus(id)],
+      ];
+      const matched = idRoutes.find(([pathname]) => pathname === url.pathname);
+      if (matched) {
+        const [, param, read] = matched;
+        const id = singleIdQueryParam(url, param);
+        if (!id) { sendJson(res, 400, { error: `Expected exactly one ${param} and no other parameters` }); return; }
+        sendProjection(res, await read(id)); return;
       }
       sendJson(res, 404, { error: 'Route unavailable in this scoped console' }); return;
     }
     if (method !== 'GET' && method !== 'HEAD') { sendJson(res, 405, { error: 'Method not allowed' }); return; }
     if (url.search) { sendJson(res, 400, { error: 'Static resources do not accept query parameters' }); return; }
     if (url.pathname === '/universe') { res.writeHead(308, { Location: '/universe/' }); res.end(); return; }
-    if (url.pathname === '/universe/' || url.pathname.startsWith('/next/assets/')) {
-      // Reuse packaged assets without ASHLR_WEB_PUBLIC or a caller-selected path.
-      const staticRequest = Object.create(req) as IncomingMessage;
-      staticRequest.url = url.pathname === '/universe/' ? '/next/index.html' : url.pathname;
-      if (serveStatic(staticRequest, res, assets)) return;
-    }
+    // Reuse packaged assets without ASHLR_WEB_PUBLIC or a caller-selected path.
+    if (serveScopedConsoleAsset(req, res, url.pathname, '/universe/', assets)) return;
     sendJson(res, 404, { error: 'Not found' });
   }
 
@@ -112,16 +101,7 @@ export async function startUniverseConsoleServer(options: UniverseConsoleServerO
   server.requestTimeout = 30_000;
   server.headersTimeout = 10_000;
   try {
-    await new Promise<void>((resolveListening, reject) => {
-      const fail = (error: Error): void => { server.removeListener('listening', ready); reject(error); };
-      const ready = (): void => { server.removeListener('error', fail); resolveListening(); };
-      server.once('error', fail); server.once('listening', ready);
-      server.listen(requestedPort, '127.0.0.1');
-    });
-    const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('Console address is unavailable');
-    boundPort = address.port;
-    origin = `http://127.0.0.1:${boundPort}`;
+    ({ port: boundPort, origin } = await listenLoopbackServer(server, requestedPort, 'Console address is unavailable'));
   } catch (error) {
     await reader.close(); sessions.clear(); server.closeAllConnections();
     if (server.listening) await new Promise<void>((done) => server.close(() => done()));

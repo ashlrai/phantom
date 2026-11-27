@@ -1,4 +1,44 @@
+import { createRequire } from 'node:module';
+import { isAbsolute, parse, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Worker, type WorkerOptions } from 'node:worker_threads';
+
+export const SCOPED_CONSOLE_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/** Resolve a fixed sibling worker entrypoint for both `.ts` dev runs and compiled `.js`/SEA builds. */
+export function createSiblingWorkerEntrypoint(callerUrl: string, workerBaseName: string): () => URL {
+  return () => {
+    const moduleUrl = new URL(callerUrl);
+    if (moduleUrl.protocol === 'file:' && moduleUrl.pathname.endsWith('.ts')) {
+      const loader = pathToFileURL(createRequire(callerUrl).resolve('tsx/esm/api')).href;
+      const source = new URL(`./${workerBaseName}.ts`, callerUrl).href;
+      const bootstrap = `import { register } from ${JSON.stringify(loader)}; register(); await import(${JSON.stringify(source)});`;
+      return new URL(`data:text/javascript,${encodeURIComponent(bootstrap)}`);
+    }
+    return new URL(`./${workerBaseName}.js`, callerUrl);
+  };
+}
+
+/** Validate an explicit absolute non-root path without C0/C1 control characters. */
+export function validateScopedConsolePath(value: unknown, errorMessage: string, useByteLength = false): string {
+  if (typeof value !== 'string' || !isAbsolute(value)
+    || (useByteLength ? Buffer.byteLength(value) : value.length) > 4_096
+    || [...value].some((char) => char.charCodeAt(0) < 32 || (char.charCodeAt(0) >= 127 && char.charCodeAt(0) <= 159))
+    || resolve(value) === parse(value).root) {
+    throw new Error(errorMessage);
+  }
+  return resolve(value);
+}
+
+/** Validate a single-key payload `{ [key]: scopedId }` without extra properties. */
+export function validateSingleIdPayload<K extends string>(payload: unknown, key: K): Record<K, string> | null {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const value = payload as Record<string, unknown>;
+  if (Object.keys(value).length !== 1 || !Object.hasOwn(value, key)) return null;
+  const id = value[key];
+  if (typeof id !== 'string' || !SCOPED_CONSOLE_ID_RE.test(id)) return null;
+  return { [key]: id } as Record<K, string>;
+}
 
 export class ReadProjectionError extends Error {
   constructor(message: string, readonly code = 'READ_PROJECTION_UNAVAILABLE') {

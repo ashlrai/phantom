@@ -3,10 +3,12 @@
  * authentication challenge is persisted here. Each read reloads the file so a
  * revocation in another store instance is visible before the next operation.
  */
-import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { defaultVerseRoot } from '../verse/preferences.js';
 import { writePrivateFileAtomically } from '../verse/session-store.js';
+import {
+  assertPrivatePath, BASE64URL_RE, lstatOrNull, readPrivateJsonRecord, withPrivateFileLock,
+} from './remote-store-helpers.js';
 
 export interface RemoteDevice {
   id: string;
@@ -28,16 +30,13 @@ export interface RemoteDevice {
 interface Registry { v: 1; devices: RemoteDevice[] }
 const FILE = 'remote-devices.json';
 const MAX_BYTES = 1_048_576;
-const ENCODED = /^[A-Za-z0-9_-]+$/;
 const TRANSPORTS = new Set(['ble', 'cable', 'hybrid', 'internal', 'nfc', 'smart-card', 'usb']);
-
-function privatePath(path: string, directory: boolean): void {
-  const stat = lstatSync(path);
-  if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile())
-    || (stat.mode & 0o077) !== 0 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
-    throw new Error('Remote device registry is not private');
-  }
-}
+const STORE_LABELS = {
+  notPrivate: 'Remote device registry is not private',
+  tooLarge: 'Remote device registry is too large',
+  unreadable: 'Remote device registry is unreadable',
+  invalid: 'Remote device registry is invalid',
+};
 
 function validDevice(value: unknown): value is RemoteDevice {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -48,8 +47,8 @@ function validDevice(value: unknown): value is RemoteDevice {
     && typeof d.subject === 'string' && d.subject.length > 0 && d.subject.length <= 256
     && typeof d.email === 'string' && d.email.length > 0 && d.email.length <= 320
     && scopes?.read === true && typeof scopes.act === 'boolean'
-    && typeof d.credentialId === 'string' && d.credentialId.length >= 16 && d.credentialId.length <= 1024 && ENCODED.test(d.credentialId)
-    && typeof d.publicKey === 'string' && d.publicKey.length >= 16 && d.publicKey.length <= 8192 && ENCODED.test(d.publicKey)
+    && typeof d.credentialId === 'string' && d.credentialId.length >= 16 && d.credentialId.length <= 1024 && BASE64URL_RE.test(d.credentialId)
+    && typeof d.publicKey === 'string' && d.publicKey.length >= 16 && d.publicKey.length <= 8192 && BASE64URL_RE.test(d.publicKey)
     && Number.isSafeInteger(d.counter) && (d.counter as number) >= 0
     && Array.isArray(d.transports) && d.transports.every((t: unknown) => typeof t === 'string' && TRANSPORTS.has(t))
     && (d.deviceType === 'singleDevice' || d.deviceType === 'multiDevice') && typeof d.backedUp === 'boolean'
@@ -71,50 +70,27 @@ export function createRemoteDeviceStore(root = defaultVerseRoot()) {
   const path = join(root, FILE);
   const lockPath = `${path}.lock`;
   const revokeListeners = new Set<(id: string) => void>();
-  function statOrNull(target: string) {
-    try { return lstatSync(target); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      throw error;
-    }
-  }
   function read(): Registry {
-    if (!statOrNull(root)) return { v: 1, devices: [] };
-    privatePath(root, true);
-    if (!statOrNull(path)) return { v: 1, devices: [] };
-    privatePath(path, false);
-    if (lstatSync(path).size > MAX_BYTES) throw new Error('Remote device registry is too large');
-    let data: unknown;
-    try { data = JSON.parse(readFileSync(path, 'utf8')) as unknown; }
-    catch { throw new Error('Remote device registry is unreadable'); }
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Remote device registry is invalid');
-    const registry = data as Record<string, unknown>;
+    if (!lstatOrNull(root)) return { v: 1, devices: [] };
+    assertPrivatePath(root, 'directory', STORE_LABELS.notPrivate);
+    if (!lstatOrNull(path)) return { v: 1, devices: [] };
+    const registry = readPrivateJsonRecord(path, MAX_BYTES, STORE_LABELS);
     if (registry.v !== 1 || !Array.isArray(registry.devices) || registry.devices.length > 256
-      || !registry.devices.every(validDevice)) throw new Error('Remote device registry is invalid');
+      || !registry.devices.every(validDevice)) throw new Error(STORE_LABELS.invalid);
     const devices = registry.devices as RemoteDevice[];
     if (new Set(devices.map((d) => d.id)).size !== devices.length
       || new Set(devices.map((d) => d.credentialId)).size !== devices.length) throw new Error('Remote device registry has duplicate credentials');
     return { v: 1, devices };
   }
   function mutate<T>(update: (registry: Registry) => T): T {
-    mkdirSync(root, { recursive: true, mode: 0o700 });
-    privatePath(root, true);
-    const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
-    const fd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow, 0o600);
-    try {
-      writeSync(fd, `${process.pid}\n`);
-      fsyncSync(fd);
-      if ((fstatSync(fd).mode & 0o077) !== 0) throw new Error('Remote device registry lock is not private');
+    return withPrivateFileLock(root, lockPath, STORE_LABELS.notPrivate, 'Remote device registry lock is not private', () => {
       const registry = read();
       const result = update(registry);
       const bytes = `${JSON.stringify(registry)}\n`;
-      if (Buffer.byteLength(bytes) > MAX_BYTES) throw new Error('Remote device registry is too large');
+      if (Buffer.byteLength(bytes) > MAX_BYTES) throw new Error(STORE_LABELS.tooLarge);
       writePrivateFileAtomically(root, path, bytes);
       return result;
-    } finally {
-      closeSync(fd);
-      rmSync(lockPath, { force: true });
-    }
+    });
   }
   return {
     list(): RemoteDevice[] { return read().devices.map(clone); },

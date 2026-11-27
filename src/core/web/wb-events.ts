@@ -54,17 +54,16 @@ import { readWbSnapshot } from './wb-read-api.js';
 // ---------------------------------------------------------------------------
 
 export const WB_EVENTS_PATH = '/api/wb/v1/events';
-export const WB_EVENTS_POLL_MS = 2_000;
-export const WB_EVENTS_KEEPALIVE_MS = 15_000;
+const WB_EVENTS_POLL_MS = 2_000;
+const WB_EVENTS_KEEPALIVE_MS = 15_000;
 /** Queued-but-unsent bytes past which a stalled wb stream is closed. */
-export const WB_EVENTS_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
+const WB_EVENTS_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // wb.* event kinds (schema/workbench.v1/event.schema.json)
 // ---------------------------------------------------------------------------
 
-export const WB_EVENT_KINDS = ['wb.snapshot', 'wb.action', 'wb.gh'] as const;
-export type WbEventKind = (typeof WB_EVENT_KINDS)[number];
+export type WbEventKind = 'wb.snapshot' | 'wb.action' | 'wb.gh';
 
 /** event.schema.json `repo` — ashlrai-org only, lowercase. */
 const WB_EVENT_REPO_RE = /^ashlrai\/[a-z0-9][a-z0-9-]{0,60}$/;

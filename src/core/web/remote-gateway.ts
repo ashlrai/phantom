@@ -19,6 +19,7 @@ import type { PhoneSessionCustody } from './phone-session-custody.js';
 import type { createRemotePairing } from './remote-pairing.js';
 import type { createRemotePush } from './remote-push.js';
 import { isImmutableAssetPath, serveStatic } from './static.js';
+import { readBoundedResponseBody } from './remote-store-helpers.js';
 
 const READ_SESSION_ROUTES = new Set(['/api/verse/agent-bus', '/api/verse/agent-bus/status']);
 const COOKIE_NAME = '__Host-ashlr-remote';
@@ -97,23 +98,7 @@ async function jsonBody(req: IncomingMessage): Promise<Record<string, unknown> |
   try { const parsed: unknown = JSON.parse(text); return object(parsed) ? parsed : null; }
   catch { return null; }
 }
-async function boundedResponse(response: Response, maxBytes: number): Promise<Buffer | null> {
-  const declared = Number(response.headers.get('content-length') ?? '0');
-  if (declared > maxBytes || !response.body) return null;
-  const reader = response.body.getReader();
-  const chunks: Buffer[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) { await reader.cancel(); return null; }
-      chunks.push(Buffer.from(value));
-    }
-    return Buffer.concat(chunks, total);
-  } finally { reader.releaseLock(); }
-}
+const boundedResponse = readBoundedResponseBody;
 function parsedMutation(decision: RemoteRouteDecision, body: string): unknown | null {
   try {
     const parsed: unknown = body.length ? JSON.parse(body) : undefined;

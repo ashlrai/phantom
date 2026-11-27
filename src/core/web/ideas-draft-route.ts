@@ -40,7 +40,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { passesMutationGate, readBody, sendJson } from './api.js';
 
 export const IDEAS_DRAFT_PATH = '/api/ideas/draft';
-export const IDEAS_DRAFT_MAX = 8;
+const IDEAS_DRAFT_MAX = 8;
 const DRAFT_LANE = 'claude';
 const DRAFT_TIER = 'work';
 const TITLE_CHARS = 160;

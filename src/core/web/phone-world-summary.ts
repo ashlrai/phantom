@@ -22,25 +22,21 @@ export interface PhoneWorldSummary {
   bottlenecks: PhoneMeter;
 }
 
-function meterNumber(field: Field<number> | undefined): PhoneMeter {
+function meterField<T>(field: Field<T> | undefined, isValid: (value: unknown) => value is T): { value: T | null; freshness: Freshness } {
   if (!field || (field.freshness !== 'fresh' && field.freshness !== 'stale' && field.freshness !== 'unknown')) {
     return { value: null, freshness: 'unknown' };
   }
-  if (field.freshness === 'unknown' || typeof field.value !== 'number' || !Number.isFinite(field.value)) {
-    return { value: null, freshness: field.freshness === 'unknown' ? 'unknown' : field.freshness };
+  if (field.freshness === 'unknown' || !isValid(field.value)) {
+    return { value: null, freshness: field.freshness };
   }
   return { value: field.value, freshness: field.freshness };
 }
 
-function meterText(field: Field<string> | undefined): PhoneTextMeter {
-  if (!field || (field.freshness !== 'fresh' && field.freshness !== 'stale' && field.freshness !== 'unknown')) {
-    return { value: null, freshness: 'unknown' };
-  }
-  if (field.freshness === 'unknown' || typeof field.value !== 'string' || field.value.length === 0) {
-    return { value: null, freshness: field.freshness === 'unknown' ? 'unknown' : field.freshness };
-  }
-  return { value: field.value, freshness: field.freshness };
-}
+const meterNumber = (field: Field<number> | undefined): PhoneMeter =>
+  meterField(field, (value): value is number => typeof value === 'number' && Number.isFinite(value));
+
+const meterText = (field: Field<string> | undefined): PhoneTextMeter =>
+  meterField(field, (value): value is string => typeof value === 'string' && value.length > 0);
 
 /** Null when the payload is not a world-model snapshot. */
 export function summarizeWorldForPhone(raw: unknown): PhoneWorldSummary | null {
