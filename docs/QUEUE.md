@@ -450,8 +450,10 @@ still applies until a later tick clears it. The derived report also honors
 holds in `queue/slots.json`. Held lanes can show physical headroom, and the
 published waiting counts and blocker reasons still describe the observed tick.
 An embedded admission record with a `ts` must match the status `last_tick`
-to supply the fleet stop verdict. The status pause marker and published
-blocked reasons can still supply evidence when the timestamps differ.
+to supply the fleet stop verdict. When supplied, `admit` must be a boolean and
+`decision` must be `admit` or `stop`. Both fields must agree when present
+together. If the embedded record fails these checks, the status pause marker
+and published blocked reasons can still supply evidence.
 Live ready-file counts use the first valid row per job ID, including when
 estimating waiting work and blockers without a dispatcher summary. If
 admission stopped before the market ran, the fallback uses the first row per
