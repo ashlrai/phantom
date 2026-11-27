@@ -195,6 +195,27 @@ describe('drive node leases', () => {
     expect(f.a.snapshot().jobs[0].result).toBe('winner');
   });
 
+  it('only names a live claimant while its leader epoch can accept completion', () => {
+    const f = fixture();
+    const profile = { owners: ['team'], caps: [] };
+    const worker = f.a.join('worker', profile)!;
+    const successor = f.b.join('successor', profile)!;
+    const oldLeader = f.a.heartbeat(f.alice)!.leader!;
+    f.a.enqueue('job', { owner: 'team' });
+    const oldClaim = f.a.claim(oldLeader, worker, 'job')!;
+    expect(f.a.jobOutcome('job', 'team')).toEqual({ state: 'running', claimedBy: 'worker' });
+
+    f.advance(20);
+    expect(f.a.jobOutcome('job', 'team')).toEqual({ state: 'running' });
+    const newLeader = f.b.heartbeat(successor)!.leader!;
+    expect(f.a.renewClaim(oldClaim)).toBeNull();
+    expect(f.a.jobOutcome('job', 'team')).toEqual({ state: 'running' });
+
+    const newClaim = f.b.claim(newLeader, successor, 'job')!;
+    expect(f.a.jobOutcome('job', 'team')).toEqual({ state: 'running', claimedBy: 'successor' });
+    expect(f.b.complete(newClaim, 'done')).toBe(true);
+  });
+
   it('does not trust caller expiry, owner, epoch or a fabricated higher token', () => {
     const f = fixture();
     const leader = f.a.heartbeat(f.alice)!.leader!;

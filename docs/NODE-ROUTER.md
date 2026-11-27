@@ -106,8 +106,10 @@ runner executes, not a requirement on the result.
 
 `phm node result --job <id> --owner <scope>` is the read-only way back to a
 job's outcome: `pending`, `running` (naming the node whose live claim can act,
-or `no live claim` once the claim lapsed or was fenced — the same words
-`status` prints), `completed` with the accepted `--result` text, executor and
+or `no live claim` once the claim lapses or is fenced). A live claimant
+requires an unexpired job lease and worker
+session under the current live leader epoch. The outcome can also be
+`completed` with the accepted `--result` text, executor and
 completion time, or `absent` for an unknown id or another owner's job. It never
 mutates state — `withdraw` stays the only fence, and a producer withdrawal reads back as
 `completed` with `producerWithdrawn` set, not as node work.
