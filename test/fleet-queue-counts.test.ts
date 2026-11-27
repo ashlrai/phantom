@@ -263,6 +263,22 @@ it('prints text and JSON from the CLI and rejects bad arguments', async () => {
   expect(FLEET_SUBCOMMAND_LOADERS['queue-counts']).toBeTypeOf('function');
 });
 
+it('includes lane-open jobs once in the fleet total without assigning them to a lane', async () => {
+  const openJob = 'RQ-OPEN\tphantom\t\twork\tprompts/open.md';
+  const readyPath = join(queueDir, 'ready.tsv');
+  await writeFile(readyPath, [openJob, openJob].join('\n'));
+  const openOnly = await getLaneQueueCounts({ runsDir: root, now });
+  expect(openOnly.sources.ready).toBe('healthy');
+  expect(openOnly.lanes).toEqual([]);
+  expect(openOnly.totals.ready).toBe(1);
+
+  await writeFile(readyPath, [openJob, row('READY', 'RQ-OPEN', 'codex'), row('READY', 'RQ-HINTED', 'codex')].join('\n'));
+  const mixed = await getLaneQueueCounts({ runsDir: root, now });
+  expect(mixed.sources.ready).toBe('healthy');
+  expect(mixed.lanes).toMatchObject([{ lane: 'codex', ready: 1 }]);
+  expect(mixed.totals.ready).toBe(2);
+});
+
 it('reports a healthy empty queue as zeros with no notes', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), '');
   await writeFile(join(queueDir, 'jobs.jsonl'), '');
