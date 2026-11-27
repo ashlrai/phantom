@@ -7,6 +7,7 @@ import { projectLaneHistory } from './resource-live/history.js';
 import { planBurnDown } from './resource-live/burn-down.js';
 import { readCustomResources, type CustomResource } from './resource-live/custom.js';
 import { DEVIN_FLASH_EXPIRES_AT, RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_STALE_MS, type LaneHistory, type ResourceLiveTier, type ResourceLiveUnit } from './resource-live/types.js';
+import { asNonNegativeNumber } from './resource-usage-types.js';
 
 type Posture = NonNullable<Awaited<ReturnType<typeof postureEvidence>>>;
 export interface LaneAllowanceInputs {
@@ -32,7 +33,6 @@ export interface LaneAllowanceRow {
       evidence?: { observedAt: string; accountId: string; model: string } } | null } | null;
 }
 export interface LaneAllowanceSnapshot { v: 1; asOf: string; lanes: LaneAllowanceRow[] }
-const amount = (n: unknown): number | null => typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null;
 const named = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 const fresh = (at: string | null | undefined, now: number): boolean => {
   const observed = at ? Date.parse(at) : NaN;
@@ -60,8 +60,8 @@ export function projectLaneAllowance(inputs: LaneAllowanceInputs, nowMs: number)
     const measured = ageSeconds !== null && (useWeekly || reading?.verified === true);
     const stale = measured && (ageSeconds * 1000 > RESOURCE_LIVE_STALE_MS || weekly?.state === 'stale'
       || (!useWeekly && reading?.stale_after != null && Date.parse(reading.stale_after) < nowMs));
-    const used = measured ? amount(useWeekly ? weekly.used : reading?.used) : null;
-    const limit = measured ? amount(useWeekly ? weekly.limit : reading?.limit) : null;
+    const used = measured ? asNonNegativeNumber(useWeekly ? weekly.used : reading?.used) : null;
+    const limit = measured ? asNonNegativeNumber(useWeekly ? weekly.limit : reading?.limit) : null;
     const unit = useWeekly ? 'acu' : reading?.unit ?? null;
     const resetAt = useWeekly ? weekly.reset_at : reading?.reset_at ?? null;
     const reset = resetAt ? Date.parse(resetAt) : NaN;
@@ -88,7 +88,7 @@ export function projectLaneAllowance(inputs: LaneAllowanceInputs, nowMs: number)
     const previewEvidence = !future && previewReading?.verified && previewReading.unit === 'models'
       && previewReading.source === 'devin-cli-models-list' && previewReading.account_id && previewReading.model
       && /^swe-2[\w.-]*(?:lightning|flash)[\w.-]*$/i.test(previewReading.model)
-      && amount(previewReading.limit) !== null && previewReading.limit! > 0
+      && asNonNegativeNumber(previewReading.limit) !== null && previewReading.limit! > 0
       && previewReading.account_id === scope?.account_id && fresh(scope?.observed_at, nowMs) && !stale
       && fresh(previewReading.observed_at, nowMs)
       && (!previewReading.window_start || Date.parse(previewReading.window_start) <= Date.parse(previewReading.observed_at!))
@@ -116,9 +116,9 @@ export function projectLaneAllowance(inputs: LaneAllowanceInputs, nowMs: number)
         : p?.costClass === 'included' || p?.costClass === 'metered' ? p.costClass : 'unknown',
       projectedUnusedPct: posture === 'unknown' ? null : p?.projectedUnusedPct ?? null, history: histories[allowance?.sensor_lane ?? lane] ?? null,
       reason: future ? 'invalid-future' : !measured ? 'reading-missing' : stale ? 'reading-stale' : used === null || limit === null ? 'reading-incomplete' : !Number.isFinite(reset) ? 'reset-unknown' : reset <= nowMs ? 'reset-passed' : null,
-      devin: previewLane ? { weeklyUsedAcu: fresh(inputs.weekly?.observed_at, nowMs) ? amount(inputs.weekly?.used) : null,
-        weeklyAllowanceAcu: fresh(inputs.weekly?.observed_at, nowMs) ? amount(inputs.weekly?.limit) : null,
-        inFlightReservations: amount(p?.allowance?.in_flight), preview: { models: ['SWE-2 Lightning', 'SWE-2 Flash'],
+      devin: previewLane ? { weeklyUsedAcu: fresh(inputs.weekly?.observed_at, nowMs) ? asNonNegativeNumber(inputs.weekly?.used) : null,
+        weeklyAllowanceAcu: fresh(inputs.weekly?.observed_at, nowMs) ? asNonNegativeNumber(inputs.weekly?.limit) : null,
+        inFlightReservations: asNonNegativeNumber(p?.allowance?.in_flight), preview: { models: ['SWE-2 Lightning', 'SWE-2 Flash'],
           expiresAt, expired, free, ...(previewEvidence ? { evidence: previewEvidence } : {}) } } : null };
   });
   return { v: 1, asOf: new Date(nowMs).toISOString(), lanes };

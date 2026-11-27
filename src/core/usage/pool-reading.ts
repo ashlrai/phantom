@@ -24,7 +24,7 @@ export interface PoolReading { pct: number; ts: number; reset_at: number; src: s
 export interface PoolReadingView { pool: string; reading: PoolReading | null; ageSeconds: number | null; stale: boolean; error?: string }
 
 /** A record this old (by its recorded capture time) is stale. */
-export const POOL_READING_STALE_SECONDS = 8 * 3600;
+const POOL_READING_STALE_SECONDS = 8 * 3600;
 
 const directory = (root?: string) => join(root ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue');
 const fileName = (pool: string) => `${poolName.parse(pool)}-reading.json`;

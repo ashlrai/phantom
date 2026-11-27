@@ -5,7 +5,7 @@
  * the binding window as a usage record, or a refusal. A number is reported
  * only when the page states it; nothing is guessed, defaulted or inferred.
  */
-import type { UsageResourceUnit } from '../resource-usage-types.js';
+import { roundTo, type UsageResourceUnit } from '../resource-usage-types.js';
 
 export const BROWSER_PROVIDERS = ['claude', 'chatgpt', 'devin', 'zai', 'gemini'] as const;
 export type BrowserProvider = (typeof BROWSER_PROVIDERS)[number];
@@ -85,7 +85,7 @@ function readWindow(slice: string, spec: Spec, observedAtMs: number): Window | n
   const used = /(\d{1,3}(?:\.\d+)?)\s*%\s*used/i.exec(body);
   if (used && num(used[1]) <= 100) return { used: num(used[1]), limit: 100, unit: 'percent', resetAt };
   const left = /(\d{1,3}(?:\.\d+)?)\s*%\s*(?:remaining|left)/i.exec(body);
-  if (left && num(left[1]) <= 100) return { used: Math.round((100 - num(left[1])) * 100) / 100, limit: 100, unit: 'percent', resetAt };
+  if (left && num(left[1]) <= 100) return { used: roundTo(100 - num(left[1]), 2), limit: 100, unit: 'percent', resetAt };
   const count = /(\d[\d,]*(?:\.\d+)?)\s*(?:\/|of)\s*(\d[\d,]*(?:\.\d+)?)/i.exec(body);
   if (count && (!spec.countNeeds || spec.countNeeds.test(body))) {
     const [u, l] = [num(count[1]), num(count[2])];
@@ -95,7 +95,7 @@ function readWindow(slice: string, spec: Spec, observedAtMs: number): Window | n
 }
 
 /** Every window the page states, each sliced from its heading to the next heading. */
-export function parseWindows(provider: BrowserProvider, text: string, observedAtMs: number): Window[] {
+function parseWindows(provider: BrowserProvider, text: string, observedAtMs: number): Window[] {
   const spec = SPECS[provider];
   const hits: number[] = [];
   for (const re of spec.labels) {
