@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { calibrateRouting, calibrationMarkdown, readCalibration } from '../src/core/routing/calibration.js';
 import { cmdRouterCalibration } from '../src/cli/router-calibration.js';
+import type { RewardSignalV1 } from '../src/core/metrics/reward-signal.js';
 
 const jobsPath = 'test/fixtures/calibration/jobs.jsonl';
 const exportPath = 'test/fixtures/calibration/posthog.json';
@@ -218,6 +219,26 @@ describe('router calibration', () => {
     expect(report.arms).toMatchObject([
       { arm: 'codex', jobs: 2 },
       { arm: 'unknown', jobs: 1, observedMergeRate: null },
+    ]);
+  });
+  it.each([false, true])('uses dispatch arms independently of reward pools (rewards first: %s)', (rewardsFirst) => {
+    const dispatches = row({ event: 'launch', job: 'RQ-SOLO', lane: 'codex', predicted_merge_rate: 0.8 }) +
+      row({ job: 'RQ-SOLO', outcome: 'MERGED' }) +
+      row({ event: 'launch', job: 'RQ-UNLABELED' }) +
+      row({ event: 'batch_claim', job: 'RQ-MEMBER', lane: 'codex' }) +
+      row({ event: 'batch_claim', job: 'RQ-AMBIGUOUS', lane: 'codex' }) +
+      row({ event: 'batch_claim', job: 'RQ-AMBIGUOUS', lane: 'other' });
+    const rewards = ['RQ-SOLO', 'RQ-UNLABELED', 'RQ-MEMBER', 'RQ-AMBIGUOUS', 'RQ-REWARD-ONLY'].map((jobId) => row({
+      v: 1, jobId, pool: 'other', repo: null, merged: false,
+      dispatchedAt: '2026-01-01T00:00:00.000Z', recordedAt: '2026-01-01T00:01:00.000Z',
+      mergedAt: null, timeToMergeMs: null, ciWallMs: null,
+      cost: { pool: null, pctUsedStart: null, pctUsedEnd: null, pctUsedDelta: null, costUsd: null },
+    } satisfies RewardSignalV1)).join('');
+    const report = calibrateRouting(rewardsFirst ? rewards + dispatches : dispatches + rewards);
+    expect(report.arms).toMatchObject([
+      { arm: 'codex', jobs: 2, resolved: 2, mergeRate: { actual: 0, paired: 1 } },
+      { arm: 'other', jobs: 1, resolved: 1 },
+      { arm: 'unknown', jobs: 2, resolved: 2 },
     ]);
   });
   it('rejects reverse time and escapes markdown arm names', () => {
