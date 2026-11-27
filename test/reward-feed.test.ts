@@ -104,6 +104,49 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs[0]).toMatchObject({ pool: 'omlx', dispatchedAt: '2026-10-28T15:00:00.000Z' });
   });
 
+  it.each(['MERGED', 'CLOSED', 'REVERTED'])('withholds a %s reward when the latest dispatch identifies another PR', (state) => {
+    const job = 'RQ-DISPATCH-PR';
+    const url = 'https://github.com/ashlrai/phantom/pull/101';
+    const matching = line({ event: 'claim', job, ts: DISPATCH_ISO, url, lane: 'codex-cmp' });
+    const other = line({
+      event: 'launch', job, ts: '2026-10-28T15:00:00Z',
+      pr_url: 'https://github.com/ashlrai/phantom/pull/102', lane: 'devin',
+    });
+    const verdict = line({ job, state, ts: MERGED_ISO, url });
+    expect(foldJobsLedgerRewards([matching, verdict].join('\n'), NOW_MS)).toMatchObject([
+      { jobId: job, pool: 'codex-cmp', merged: state === 'MERGED' },
+    ]);
+    expect(foldJobsLedgerRewards([matching, other, verdict].join('\n'), NOW_MS)).toEqual([]);
+  });
+
+  it('withholds rewards when latest dispatch receipts disagree on the PR in either order', () => {
+    const job = 'RQ-DISPATCH-PR-TIE';
+    const dispatch = { event: 'launch', job, ts: DISPATCH_ISO, lane: 'codex-cmp' };
+    const first = line({ ...dispatch, url: 'https://github.com/ashlrai/phantom/pull/101' });
+    const second = line({ ...dispatch, prUrl: 'https://github.com/ashlrai/phantom/pull/102' });
+    const verdict = line({ job, state: 'MERGED', ts: MERGED_ISO, url: 'https://github.com/ashlrai/phantom/pull/101' });
+    for (const rows of [[first, second], [second, first]]) {
+      expect(foldJobsLedgerRewards([...rows, verdict].join('\n'), NOW_MS)).toEqual([]);
+    }
+  });
+
+  it('uses the dispatch PR to bind CI timing when the verdict omits its PR', () => {
+    const job = 'RQ-DISPATCH-CI-PR';
+    const dispatch = line({
+      event: 'launch', job, ts: DISPATCH_ISO, lane: 'codex-cmp',
+      url: 'https://github.com/AshlrAI/Phantom/pull/101/',
+    });
+    const verdict = line({ job, state: 'MERGED', ts: MERGED_ISO });
+    for (const pull of [101, 102]) {
+      const url = `https://github.com/ashlrai/phantom/pull/${pull}`;
+      const start = line({ job, event: 'ci_start', ts: '2026-10-28T14:30:00Z', url });
+      const complete = line({ job, event: 'ci_complete', ts: '2026-10-28T14:45:00Z', url });
+      const inputs = foldJobsLedgerRewards([dispatch, start, complete, verdict].join('\n'), NOW_MS);
+      expect(inputs).toMatchObject([{ jobId: job, pool: 'codex-cmp', merged: true }]);
+      expect(inputs[0]?.ciWallMs).toBe(pull === 101 ? 900_000 : undefined);
+    }
+  });
+
   it.each([
     [{ lane: ' UNKNOWN ', pool: 'devin', arm: 'claude' }, 'devin'],
     [{ lane: 'invalid lane', pool: 'unknown', arm: 'claude' }, 'claude'],
