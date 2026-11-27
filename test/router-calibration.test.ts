@@ -85,6 +85,9 @@ describe('router calibration', () => {
     ]);
   });
   it.each([
+    { event: 'closed', phase: 'MERGED' },
+    { event: 'closed', phase: 'OPEN', merged: true },
+    { event: 'merged', result: 'failed' },
     { event: 'outcome', merged: false, phase: 'MERGED' },
     { event: 'result', merged: false, phase: 'MERGED' },
     { type: 'resolved', outcome: 'REJECTED', phase: 'MERGED' },
@@ -101,6 +104,8 @@ describe('router calibration', () => {
       .toThrow('Conflicting merged verdicts on a job receipt');
   });
   it.each([
+    { event: 'closed', phase: 'OPEN' },
+    { kind: 'closed', status: 'PUBLISHED', result: 'pending' },
     { event: 'result', merged: false },
     { type: 'resolved', result: 'FAILED' },
     { kind: 'resolution', status: 'not_merged' },

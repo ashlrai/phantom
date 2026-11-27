@@ -10,6 +10,9 @@ The fleet's `result`, `resolved`, and `resolution` events use the same
 verdict rules as `outcome`. Verdict strings are case-insensitive.
 Calibration checks `merged`, `outcome`, `result` and `status` on these
 events. Unresolved values leave other fields eligible to supply the verdict.
+Named `merged` and `closed` events also supply their own verdict, even when
+the receipt still carries a nonterminal phase. Calibration checks those
+events against the same verdict fields.
 Conflicts between recognized values or with a terminal merge or close phase
 cause an error.
 
