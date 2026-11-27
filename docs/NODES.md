@@ -36,7 +36,8 @@ executable regular file among `/opt/homebrew/bin`, `/usr/local/bin`,
 `~/.local/bin`, `~/.npm-global/bin` and the running Node's `bin` directory
 (`resolveProviderBinary` in `src/core/drive/nodes/provider-binary.ts`). A lane is
 advertised only when that exact path exits 0 for `login status` (Codex) or
-`auth status --json` (Claude); output and auth files are never read. They check host-local PAUSE and KILL and stop the runner process group
+`auth status --json` (Claude); output and auth files are never read. They check the host-local PAUSE and KILL
+sentinels in the runs directory (`ASHLR_RUNS_DIR`, else `~/.ashlr-runs`) and stop the runner process group
 when a lease cannot be renewed. Auth stays device-bound: never copy `~/.codex`,
 `~/.claude` or any auth directory. Publication remains exclusively on the primary
 through the existing `publish.sh` path. Backup promotion grants compute admission,
