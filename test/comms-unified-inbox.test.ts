@@ -2944,6 +2944,141 @@ describe('readUnifiedInbox teammate tasks', () => {
   });
 });
 
+describe('readUnifiedInbox teammate responder', () => {
+  const ledgerDir = () => join(runsDir, 'imessage');
+  const SENDER = `imessage:${'a'.repeat(16)}`;
+  /** A schema-valid stored reply receipt; `over` replaces fields (undefined drops the key). */
+  const reply = (over: Record<string, unknown> = {}) => ({
+    rowid: 5000, senderId: SENDER, state: 'drafted', at: now - 600_000, claimUntil: now + 60_000,
+    ...over,
+  });
+  /** A schema-valid stored work receipt; `over` replaces fields. */
+  const job = (over: Record<string, unknown> = {}) => ({
+    hash: 'b'.repeat(64), id: 'RQ-DOT-fake-work-1700000000000', repo: 'phantom', lane: 'codex-personal',
+    at: now - 300_000, state: 'prepared', ...over,
+  });
+  const writeReceipts = (store: unknown) => {
+    mkdirSync(ledgerDir(), { recursive: true, mode: 0o700 });
+    writeFileSync(join(ledgerDir(), 'teammate-replies.json'), JSON.stringify(store), { mode: 0o600 });
+  };
+
+  it('lists unsettled reply attempts and unconfirmed work receipts with honest severity, times and acts', async () => {
+    writeReceipts({
+      v: 1,
+      replies: [
+        reply({ rowid: 41, state: 'claimed', at: now - 30_000, claimUntil: now + 90_000 }),
+        reply({ rowid: 42, state: 'claimed', at: now - 400_000, claimUntil: now - 60_000 }),
+        reply({ rowid: 43, state: 'drafted', at: now - 900_000, text: 'fake drafted reply body' }),
+        reply({ rowid: 44, state: 'sending', at: now - 3_600_000, attemptedAt: now - 3_300_000, sendAttempts: 2, text: 'fake sending body' }),
+        reply({ rowid: 45, state: 'sent', at: now - 7_200_000 }),
+        reply({ rowid: 46, state: 'suppressed', at: now - 7_200_000 }),
+      ],
+      jobs: [
+        job({ id: 'RQ-DOT-alpha-1', state: 'prepared', at: now - 1_800_000 }),
+        job({ id: 'RQ-DOT-beta-2', state: 'appending', at: now - 600_000 }),
+        job({ id: 'RQ-DOT-gamma-3', state: 'queued', at: now - 600_000 }),
+      ],
+      scanAfter: 46,
+    });
+    const inbox = await read();
+    expect(inbox.sources['teammate-responder']).toEqual({ state: 'healthy', pending: 6 });
+    const items = inbox.items.filter(i => i.source === 'teammate-responder');
+    expect(items.map(i => i.id).sort()).toEqual([
+      'teammate-responder:job-RQ-DOT-alpha-1', 'teammate-responder:job-RQ-DOT-beta-2',
+      'teammate-responder:reply-41', 'teammate-responder:reply-42',
+      'teammate-responder:reply-43', 'teammate-responder:reply-44',
+    ].sort());
+    const byId = (id: string) => items.find(i => i.id === id)!;
+    const replyActs = ['phm fleet teammate-texts', 'phm fleet teammate-latency'];
+    expect(byId('teammate-responder:reply-41')).toMatchObject({
+      kind: 'teammate-reply', severity: 'info', blocking: false,
+      title: 'teammate reply claimed · text 41',
+      since: '2026-11-07T11:59:30.000Z', expiresAt: null, act: replyActs,
+    });
+    expect(byId('teammate-responder:reply-41').detail).toContain('reply claimed, awaiting draft');
+    expect(byId('teammate-responder:reply-41').detail).not.toContain('claim lease ended');
+    expect(byId('teammate-responder:reply-42').detail).toContain('claim lease ended');
+    expect(byId('teammate-responder:reply-43')).toMatchObject({
+      kind: 'teammate-reply', severity: 'info',
+      detail: expect.stringContaining('reply drafted, awaiting send'),
+      since: '2026-11-07T11:45:00.000Z',
+    });
+    expect(byId('teammate-responder:reply-44')).toMatchObject({
+      kind: 'teammate-reply', severity: 'warn',
+      detail: expect.stringContaining('send in flight, outcome unconfirmed'),
+      // 'sending' cites the send attempt time, not the claim open.
+      since: '2026-11-07T11:05:00.000Z', expiresAt: null,
+    });
+    expect(byId('teammate-responder:reply-44').detail).toContain('2 stale send attempts re-queued');
+    expect(byId('teammate-responder:job-RQ-DOT-alpha-1')).toMatchObject({
+      kind: 'teammate-work', severity: 'info', blocking: false,
+      title: 'teammate work RQ-DOT-alpha-1 prepared',
+      since: '2026-11-07T11:30:00.000Z', expiresAt: null,
+      jobIds: ['RQ-DOT-alpha-1'],
+      act: ['phm queue list', 'phm queue dupcheck RQ-DOT-alpha-1'],
+    });
+    expect(byId('teammate-responder:job-RQ-DOT-alpha-1').detail).toContain('prompt recorded, queue append never ran');
+    expect(byId('teammate-responder:job-RQ-DOT-beta-2')).toMatchObject({
+      kind: 'teammate-work', severity: 'warn',
+      detail: expect.stringContaining('queue append outcome unknown'),
+      jobIds: ['RQ-DOT-beta-2'], since: '2026-11-07T11:50:00.000Z',
+    });
+    // The drafted reply body and send receipt never reach an item.
+    const serialized = JSON.stringify(items);
+    for (const secret of ['fake drafted reply body', 'fake sending body']) expect(serialized).not.toContain(secret);
+  });
+
+  it('reports missing, verified-empty and unreadable stores honestly', async () => {
+    expect((await read()).sources['teammate-responder']).toEqual({ state: 'missing', pending: 0 });
+    writeReceipts({ v: 1, replies: [], jobs: [] });
+    expect((await read()).sources['teammate-responder']).toEqual({ state: 'healthy', pending: 0 });
+    writeFileSync(join(ledgerDir(), 'teammate-replies.json'), '{oops', { mode: 0o600 });
+    const broken = await read();
+    expect(broken.sources['teammate-responder']).toEqual({ state: 'unavailable', pending: null });
+    expect(broken.items.filter(i => i.source === 'teammate-responder')).toHaveLength(0);
+    writeReceipts({ v: 1, replies: [{ rowid: 'bad' }] });
+    expect((await read()).sources['teammate-responder']).toEqual({ state: 'unavailable', pending: null });
+    writeReceipts({ v: 2, replies: [] });
+    expect((await read()).sources['teammate-responder']).toEqual({ state: 'unavailable', pending: null });
+    writeReceipts({ v: 1, replies: [], jobs: [{ hash: 'bad', id: 'RQ-DOT-x-1', repo: 'phantom', lane: 'codex-personal', at: now, state: 'queued' }] });
+    expect((await read()).sources['teammate-responder']).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('filters by source, kind and --job; reply attempts never match a job filter', async () => {
+    writeReceipts({
+      v: 1,
+      replies: [reply({ rowid: 50 })],
+      jobs: [job({ id: 'RQ-DOT-jobfilter-9' })],
+    });
+    const bySource = await read({ filter: { source: 'teammate-responder' } });
+    expect(bySource.total).toBe(2);
+    expect(bySource.items.every(i => i.source === 'teammate-responder')).toBe(true);
+    const byKind = await read({ filter: { kind: 'teammate-work' } });
+    expect(byKind.items.filter(i => i.source === 'teammate-responder').map(i => i.id)).toEqual(['teammate-responder:job-RQ-DOT-jobfilter-9']);
+    const byJob = await read({ filter: { job: 'RQ-DOT-jobfilter-9' } });
+    expect(byJob.items.filter(i => i.source === 'teammate-responder').map(i => i.id)).toEqual(['teammate-responder:job-RQ-DOT-jobfilter-9']);
+    const byReplyKind = await read({ filter: { kind: 'teammate-reply' } });
+    expect(byReplyKind.items.filter(i => i.source === 'teammate-responder').map(i => i.id)).toEqual(['teammate-responder:reply-50']);
+  });
+
+  it('builds items from an injected read and reports seam states while other sources list', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const throwing = await read({ readTeammateResponder: () => { throw new Error('boom'); } });
+    expect(throwing.sources['teammate-responder']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+    const injected = await read({
+      readTeammateResponder: () => ({
+        state: 'ok' as const, jobs: [],
+        replies: [{ rowid: 77, senderId: `imessage:${'c'.repeat(16)}`, state: 'sending' as const, at: now - 2_000, claimUntil: now + 60_000, attemptedAt: now - 1_000 }],
+      }),
+    });
+    expect(injected.sources['teammate-responder']).toEqual({ state: 'healthy', pending: 1 });
+    expect(injected.items.find(i => i.id === 'teammate-responder:reply-77')).toMatchObject({ kind: 'teammate-reply', severity: 'warn' });
+    const missing = await read({ readTeammateResponder: () => ({ state: 'missing' as const, replies: [], jobs: [] }) });
+    expect(missing.sources['teammate-responder']).toEqual({ state: 'missing', pending: 0 });
+  });
+});
+
 describe('legacy phm bus mailbox in the unified inbox', () => {
   // The mailbox store lives at <dirname(busRoot)>/bus-mailbox — `root` here —
   // the same home `agents bus status` and `work mine` derive from the fleet root.

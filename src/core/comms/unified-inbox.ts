@@ -612,6 +612,7 @@ import { DEFAULT_TEAM } from '../teams/tools.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent, readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
 import { listTeammateTasks } from './imessage-teammate-tasks.js';
+import { readTeammateResponderReceipts, type TeammateResponderRead } from './imessage-teammate-receipts.js';
 import { imessageStateDir } from '../integrations/imessage.js';
 import { readLeaderThreadUndelivered, type LeaderThreadUndeliveredRead } from '../vision/leader-thread.js';
 import { readLeaderNetworkState, type LeaderNetworkStateRead } from '../agents/leader-network-read.js';
@@ -635,7 +636,7 @@ const SUGGESTED_LEASE_MS = 600_000;
 
 /** Every pending-work source the unified view can report, in display order. */
 export const UNIFIED_INBOX_SOURCES = [
-  'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
+  'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'teammate-responder', 'owner-thread',
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
@@ -657,7 +658,7 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
  * classes, so `kind` is the finer classification
  * `--kind` filters on. */
 export const UNIFIED_INBOX_KINDS = [
-  'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
+  'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'teammate-reply', 'teammate-work', 'owner-message',
   'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
   'board-delivery', 'board-task', 'work-board-received', 'work-board-assigned', 'work-board-blocked',
   'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'session-handoff', 'org-membership', 'gmail-over-target',
@@ -862,6 +863,8 @@ export interface UnifiedInboxOptions {
   readTexts?: typeof readTeammateTexts;
   /** Teammate-task ledger seam; default reads `<imessageStateDir>/teammate-tasks.json` like `phm fleet imessage-tasks list`. */
   readTeammateTasks?: (options: { runsDir?: string }) => TeammateTaskLedgerRead;
+  /** Teammate-responder receipts seam; default reads `<imessageStateDir>/teammate-replies.json` — the same store `runTeammateResponder` validates and rewrites each pass. */
+  readTeammateResponder?: (options: { runsDir?: string }) => TeammateResponderRead;
   listPendingDrafts?: typeof listDrafts;
   /** Comms-agent draft store seam; default reads `<runsDir>/comms-agent/drafts.jsonl`. */
   listCommsDrafts?: (runsDir: string) => Promise<CommsDraft[]>;
@@ -1130,6 +1133,87 @@ function teammateTaskItems(read: NonNullable<UnifiedInboxOptions['readTeammateTa
     };
   });
   return { report: { state: result.state, pending: items.length }, items, coveredResultRowids };
+}
+
+/** Reply-receipt states still owed a send outcome; sent and suppressed rows are settled bookkeeping kept for dedupe. */
+const TEAMMATE_RESPONDER_OPEN_REPLIES: ReadonlySet<string> = new Set(['claimed', 'drafted', 'sending']);
+/** Work receipts whose queue append never confirmed 'queued' — a 'queued' row is ready.tsv's own pending work, already visible to the queue reads. */
+const TEAMMATE_RESPONDER_OPEN_JOBS: ReadonlySet<string> = new Set(['prepared', 'appending']);
+
+/**
+ * Unsettled teammate-responder receipts — the same `teammate-replies.json`
+ * store `runTeammateResponder` validates and rewrites each pass, read through
+ * the leaf receipts module so this source and the responder can never
+ * disagree about what a valid store is. A reply row still claimed, drafted
+ * or sending is an attempt the responder has not settled: 'sending' lists
+ * warn because the send outcome stays unconfirmed until chat.db reconcile
+ * proves it, while claimed/drafted list info as ordinary in-flight work —
+ * the unanswered text itself already lists under `imessage`, so these items
+ * carry the attempt state and never a second copy of the text. A job row
+ * still 'prepared' or 'appending' is a teammate work request whose RQ-DOT
+ * queue append never confirmed — 'prepared' provably never reached
+ * ready.tsv, 'appending' leaves the append outcome unknown (the responder's
+ * own recovery raises on an absent line, so a stale one can wedge every
+ * later pass) — warn for the ambiguous append, info for the pre-append
+ * receipt, `jobIds` carrying the RQ-DOT id so `--job` matches. `since` is
+ * the state's own real timestamp (the send attempt for 'sending', the
+ * claim open otherwise, the request time for jobs — never invented);
+ * `expiresAt` stays null: a receipt waits for the next responder pass or a
+ * decision, never a guessed deadline. The drafted reply body and the send
+ * receipt never reach an item.
+ */
+function teammateResponderItems(read: NonNullable<UnifiedInboxOptions['readTeammateResponder']>,
+  runsDir: string | undefined, now: () => number,
+): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: TeammateResponderRead;
+  try { result = read({ runsDir }); } catch { result = { state: 'unavailable', replies: [], jobs: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state !== 'ok') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const nowMs = now();
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const row of result.replies) {
+    if (!TEAMMATE_RESPONDER_OPEN_REPLIES.has(row.state)) continue;
+    const sinceMs = row.state === 'sending' ? row.attemptedAt ?? row.at : row.at;
+    const phrase = row.state === 'claimed'
+      ? `reply claimed${row.claimUntil <= nowMs ? ', claim lease ended' : ''}, awaiting draft`
+      : row.state === 'drafted'
+        ? 'reply drafted, awaiting send'
+        : 'send in flight, outcome unconfirmed';
+    const reentries = row.sendAttempts !== undefined && row.sendAttempts > 0
+      ? ` · ${row.sendAttempts} stale send attempt${row.sendAttempts === 1 ? '' : 's'} re-queued` : '';
+    items.push({
+      id: `teammate-responder:reply-${row.rowid}`,
+      source: 'teammate-responder',
+      kind: 'teammate-reply',
+      severity: row.state === 'sending' ? 'warn' : 'info',
+      // A stuck send is agent work; nothing here blocks Mason.
+      blocking: false,
+      title: oneLine(`teammate reply ${row.state} · text ${row.rowid}`, TITLE_MAX),
+      detail: oneLine(`${row.senderId} · ${phrase}${reentries} · waiting ${plainAge(nowMs - sinceMs)}`, DETAIL_MAX) || null,
+      since: Number.isFinite(sinceMs) ? iso(sinceMs) : null,
+      expiresAt: null,
+      act: ['phm fleet teammate-texts', 'phm fleet teammate-latency'],
+    });
+  }
+  for (const job of result.jobs) {
+    if (!TEAMMATE_RESPONDER_OPEN_JOBS.has(job.state)) continue;
+    items.push({
+      id: `teammate-responder:job-${job.id}`,
+      source: 'teammate-responder',
+      kind: 'teammate-work',
+      severity: job.state === 'appending' ? 'warn' : 'info',
+      blocking: false,
+      title: oneLine(`teammate work ${job.id} ${job.state}`, TITLE_MAX),
+      detail: oneLine(`${job.repo} · ${job.lane} · ${job.state === 'prepared'
+        ? 'prompt recorded, queue append never ran'
+        : 'queue append outcome unknown — the row may already be queued'} · requested ${plainAge(nowMs - job.at)} ago`, DETAIL_MAX) || null,
+      since: Number.isFinite(job.at) ? iso(job.at) : null,
+      expiresAt: null,
+      jobIds: [job.id],
+      act: ['phm queue list', `phm queue dupcheck ${job.id}`],
+    });
+  }
+  return { report: { state: 'healthy', pending: items.length }, items };
 }
 
 /**
@@ -3601,6 +3685,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const needsDelivery = needsYouDeliveryItems(options.readNeedsDeliveries ?? readNeedsMasonReplyDeliveries, options.runsDir);
   const teammateTasks = teammateTaskItems(options.readTeammateTasks ?? readTeammateTaskLedger, options.runsDir, now);
   const teammates = teammateItems(options.readTexts ?? readTeammateTexts, options.runsDir, now, teammateTasks.coveredResultRowids);
+  const teammateResponder = teammateResponderItems(options.readTeammateResponder ?? readTeammateResponderReceipts, options.runsDir, now);
   const ownerThread = ownerThreadItems(options.readOwnerAwaiting ?? readOwnerAwaitingReplies, options.runsDir);
   const ownerDelivery = ownerDeliveryItems(options.readOwnerUndelivered ?? readOwnerUndeliveredReplies, options.runsDir);
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
@@ -3641,6 +3726,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'needs-you-delivery': needsDelivery.report,
     imessage: teammates.report,
     'teammate-tasks': teammateTasks.report,
+    'teammate-responder': teammateResponder.report,
     'owner-thread': ownerThread.report,
     'owner-delivery': ownerDelivery.report,
     drafts: drafts.report,
@@ -3671,7 +3757,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'send-gate': sendGate.report,
     'router-queue': routerQueue.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...teammateResponder.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

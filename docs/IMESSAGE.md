@@ -166,6 +166,11 @@ updates produce no reply (see the next section). Requests for approval, decision
 pending for leader review; they do not prevent later replyable messages in the
 same pass from being examined. Pending and uncertain records are preserved when
 storage is full. A native transport return alone does not prove delivery.
+The unified comms inbox's `teammate-responder` source lists every receipt
+still owed an outcome — reply rows still claimed, drafted or sending, and
+work receipts still prepared or appending — so a stuck send attempt or an
+unconfirmed queue append shows as pending work beside the unanswered texts
+without reading the journal by hand.
 
 A healthy pass with an empty inbox establishes that the worker ran. Qualify a
 live route with a fresh teammate task question, then inspect the private reply

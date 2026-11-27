@@ -505,6 +505,7 @@
     "src/core/comms/imessage-patch-transfer.ts",
     "src/core/comms/imessage-teammate-composer.ts",
     "src/core/comms/imessage-teammate-inbox.ts",
+    "src/core/comms/imessage-teammate-receipts.ts",
     "src/core/comms/imessage-teammate-tasks.ts",
     "src/core/comms/imessage-teammate-transport.ts",
     "src/core/comms/imessage-teammate-worker.ts",
