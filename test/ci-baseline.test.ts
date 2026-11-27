@@ -102,8 +102,10 @@ function github(options: { count?: number; sameHead?: boolean; touched?: string;
       }
     } else if (endpoint.includes('/actions/runs?')) {
       const isMaster = endpoint.includes(master);
-      const conclusion = (isMaster ? options.masterRunConclusion : undefined) ?? options.runConclusion;
-      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : secondPr ? 102 : 2, workflow_id: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : prHead, ...(conclusion !== undefined ? { conclusion } : {}) }] };
+      const jobConclusion = isMaster ? options.masterJobConclusion : options.prJobConclusion;
+      const defaultConclusion = jobConclusion ?? (isMaster && options.pass ? 'success' : 'failure');
+      const conclusion = (isMaster ? options.masterRunConclusion : undefined) ?? options.runConclusion ?? defaultConclusion;
+      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : secondPr ? 102 : 2, workflow_id: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : prHead, conclusion }] };
     } else throw new Error(`unexpected call ${args.join(' ')}`);
     return success(JSON.stringify(value));
   };
@@ -308,6 +310,30 @@ describe('CI baseline evidence', () => {
     ]);
     expect(report.groups).toEqual([]);
   });
+  it.each([undefined, null, '', 'unrecognized'])(
+    'withholds freshness when a job or workflow conclusion is %j',
+    async conclusion => {
+      const { gh } = github({ count: 1 });
+      const report = await analyzeCiBaseline('owner/repo', async args => {
+        const response = await gh(args);
+        const endpoint = args[1] ?? '';
+        if (endpoint.includes('/actions/runs?') && endpoint.includes('branch=master')) {
+          const payload = JSON.parse(response.stdout);
+          payload.workflow_runs[0].conclusion = conclusion;
+          return { ...response, stdout: JSON.stringify(payload) };
+        }
+        if (endpoint.includes('/runs/2/jobs?')) {
+          const payload = JSON.parse(response.stdout);
+          payload.jobs[0].conclusion = conclusion;
+          return { ...response, stdout: JSON.stringify(payload) };
+        }
+        return response;
+      });
+      expect(report.master.known).toBe(false);
+      expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'incomplete-check' }]);
+      expect(report.groups).toEqual([]);
+    },
+  );
   it.each(['startup_failure', 'cancelled', 'timed_out', 'action_required', 'stale'])(
     'withholds PR freshness when the workflow concluded %s after a job finished',
     async conclusion => {
