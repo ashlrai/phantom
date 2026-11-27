@@ -51,6 +51,12 @@
  *     read recorded; 'none' inside that vocabulary is a real empty
  *     rollup (no CI ran), while a null `ci` (pre-fields rows, a failed
  *     or capped read) never counts toward any verdict.
+ *   - Diff size stays honest the same way. `diff_known` counts only
+ *     rows carrying a journaled `diff` triple — gh's recorded
+ *     additions/deletions/changedFiles, frozen at merge; pre-fields
+ *     rows and malformed records never count, and
+ *     `diff_lines_mean`/`diff_files_mean` are means over that
+ *     denominator (null when it is empty), never guessed zeros.
  *   - Windowed on the merge. mergedAt is when the outside PR landed —
  *     the same evidence clock the improve fold applies; rows whose
  *     mergedAt does not parse or sits past the evaluation-time skew
@@ -149,6 +155,17 @@ export interface CommunitySeatOutcome {
   ci_pending: number;
   /** ci_known rows gh returned an empty rollup for — a real no-CI signal ('none'). */
   ci_none: number;
+  /**
+   * Merges carrying a journaled `diff` triple — gh's recorded
+   * additions/deletions/changedFiles merge size, frozen at merge. Rows
+   * journaled before the field existed, gh rows missing it, and
+   * malformed records never count.
+   */
+  diff_known: number;
+  /** Mean additions+deletions lines over diff_known, one decimal; null when diff_known is 0. */
+  diff_lines_mean: number | null;
+  /** Mean changedFiles over diff_known, one decimal; null when diff_known is 0. */
+  diff_files_mean: number | null;
 }
 
 /** Coverage context from the journal's newest scan receipt; null when none parsed. */
@@ -203,6 +220,7 @@ export function foldCommunitySeats(
     reviewsKnown: number; reviewed: number; unreviewed: number;
     approved: number; changesRequested: number; reviewRequired: number;
     ciKnown: number; ciPassed: number; ciFailed: number; ciPending: number; ciNone: number;
+    diffKnown: number; diffLines: number; diffFiles: number;
   }>();
   for (const row of rows) {
     const mergedAtMs = mergedMs(row);
@@ -213,6 +231,7 @@ export function foldCommunitySeats(
       reviewsKnown: 0, reviewed: 0, unreviewed: 0,
       approved: 0, changesRequested: 0, reviewRequired: 0,
       ciKnown: 0, ciPassed: 0, ciFailed: 0, ciPending: 0, ciNone: 0,
+      diffKnown: 0, diffLines: 0, diffFiles: 0,
     };
     cell.prs += 1;
     cell.repos.add(row.repo);
@@ -239,6 +258,11 @@ export function foldCommunitySeats(
       else if (row.ci === 'pending') cell.ciPending += 1;
       else if (row.ci === 'none') cell.ciNone += 1;
     }
+    if (row.diff !== null) {
+      cell.diffKnown += 1;
+      cell.diffLines += row.diff.additions + row.diff.deletions;
+      cell.diffFiles += row.diff.changedFiles;
+    }
     byAgent.set(row.agent, cell);
   }
   return [...byAgent.entries()]
@@ -263,6 +287,9 @@ export function foldCommunitySeats(
       ci_failed: c.ciFailed,
       ci_pending: c.ciPending,
       ci_none: c.ciNone,
+      diff_known: c.diffKnown,
+      diff_lines_mean: c.diffKnown === 0 ? null : Math.round((c.diffLines / c.diffKnown) * 10) / 10,
+      diff_files_mean: c.diffKnown === 0 ? null : Math.round((c.diffFiles / c.diffKnown) * 10) / 10,
     }))
     .sort((a, b) => b.prs - a.prs || (a.agent ?? '').localeCompare(b.agent ?? ''))
     .slice(0, COMMUNITY_SEATS_MAX_SEATS);

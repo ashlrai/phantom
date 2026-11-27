@@ -57,7 +57,7 @@ const MERGED_ROWS = [
     number: 7, title: 'outside fix', author: { login: 'ext-dev' }, headRefName: 'fix/thing',
     mergedAt: '2026-11-15T00:00:00Z', createdAt: '2026-11-14T00:00:00Z',
     latestReviews: [{ author: { login: 'rev-a' } }, { author: { login: 'rev-b' } }],
-    reviewDecision: 'APPROVED',
+    reviewDecision: 'APPROVED', additions: 42, deletions: 7, changedFiles: 3,
   },
   { number: 8, title: 'fleet bridge', author: { login: 'ext-dev' }, headRefName: 'codex-bridge/RQ-FAKE-1', mergedAt: '2026-11-16T00:00:00Z' },
   { number: 9, title: 'fleet bot', author: { login: 'ashlr-fleet[bot]' }, headRefName: 'fix/bot', mergedAt: '2026-11-16T00:00:00Z' },
@@ -118,6 +118,7 @@ describe('listOutsidePrOutcomes', () => {
     expect(byNumber.get(7)).toMatchObject({
       author: 'ext-dev', agent: null, model: null, reverted: 'no', mergedAt: '2026-11-15T00:00:00.000Z',
       createdAt: '2026-11-14T00:00:00.000Z', reviews: { decision: 'APPROVED', latest: 2 },
+      diff: { additions: 42, deletions: 7, changedFiles: 3 },
     });
     expect(byNumber.get(11)).toMatchObject({ author: 'other-dev', reverted: 'yes' });
     // gh's empty latestReviews is a real "merged unreviewed" signal, not missing evidence.
@@ -127,8 +128,8 @@ describe('listOutsidePrOutcomes', () => {
       author: 'other-dev', reverted: 'no',
       reviews: { decision: 'CHANGES_REQUESTED', latest: 1 },
     });
-    // No recorded open/review fields → honest nulls, never a guessed zero.
-    expect(byNumber.get(13)).toMatchObject({ author: null, reverted: 'no', createdAt: null, reviews: null });
+    // No recorded open/review/diff fields → honest nulls, never guessed zeros.
+    expect(byNumber.get(13)).toMatchObject({ author: null, reverted: 'no', createdAt: null, reviews: null, diff: null });
     // Author rollup stays per-login: agent/model are always null there —
     // one login pushes work for many agents.
     expect(result.authors).toEqual([
@@ -213,6 +214,46 @@ describe('listOutsidePrOutcomes', () => {
     expect(byNumber.get(32)).toMatchObject({ createdAt: '2026-11-14T00:00:00.000Z', reviews: null });
     expect(byNumber.get(33)).toMatchObject({ createdAt: '2026-11-14T00:00:00.000Z', reviews: null });
     expect(byNumber.get(34)).toMatchObject({ createdAt: null, reviews: { decision: null, latest: 1 } });
+  });
+
+  it('parses gh\'s recorded diff size and drops partial or malformed triples', async () => {
+    const rows = [
+      {
+        number: 50, title: 'sized', author: { login: 'ext-dev' }, headRefName: 'fix/a',
+        mergedAt: '2026-11-15T00:00:00Z', additions: 100, deletions: 25, changedFiles: 6,
+      },
+      // An empty diff is still recorded evidence — real zeros, not missing.
+      {
+        number: 51, title: 'empty diff', author: { login: 'ext-dev' }, headRefName: 'fix/b',
+        mergedAt: '2026-11-15T00:00:00Z', additions: 0, deletions: 0, changedFiles: 0,
+      },
+      // A partial triple never counts — the whole record reads null.
+      {
+        number: 52, title: 'partial', author: { login: 'ext-dev' }, headRefName: 'fix/c',
+        mergedAt: '2026-11-15T00:00:00Z', additions: 10, deletions: 2,
+      },
+      {
+        number: 53, title: 'negative', author: { login: 'ext-dev' }, headRefName: 'fix/d',
+        mergedAt: '2026-11-15T00:00:00Z', additions: -1, deletions: 2, changedFiles: 1,
+      },
+      {
+        number: 54, title: 'float', author: { login: 'ext-dev' }, headRefName: 'fix/e',
+        mergedAt: '2026-11-15T00:00:00Z', additions: 1.5, deletions: 2, changedFiles: 1,
+      },
+      // No diff fields at all → honest null, never a guessed zero.
+      {
+        number: 55, title: 'no fields', author: { login: 'ext-dev' }, headRefName: 'fix/f',
+        mergedAt: '2026-11-15T00:00:00Z',
+      },
+    ];
+    const result = await listOutsidePrOutcomes(await fixtureOpts({ gh: fakeGh(rows) }));
+    const byNumber = new Map(result.repos[0]!.prs.map((pr) => [pr.number, pr]));
+    expect(byNumber.get(50)?.diff).toEqual({ additions: 100, deletions: 25, changedFiles: 6 });
+    expect(byNumber.get(51)?.diff).toEqual({ additions: 0, deletions: 0, changedFiles: 0 });
+    expect(byNumber.get(52)?.diff).toBeNull();
+    expect(byNumber.get(53)?.diff).toBeNull();
+    expect(byNumber.get(54)?.diff).toBeNull();
+    expect(byNumber.get(55)?.diff).toBeNull();
   });
 
   it('reads bounded per-PR check-rollup CI verdicts for surviving outside PRs only', async () => {

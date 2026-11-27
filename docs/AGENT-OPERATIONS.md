@@ -1230,7 +1230,10 @@ real zero-reviewer list stays a real "merged unreviewed" signal) and `ci`
 vocabulary the cloud tracker reports — read per surviving outside PR
 through a bounded `gh pr view --json statusCheckRollup` pass capped at 120
 reads per run; `null` when gh returned no parseable rollup, an honest
-unknown distinct from a real empty-rollup `none`). An
+unknown distinct from a real empty-rollup `none`) and `diff` (gh's
+recorded merge size — `additions`, `deletions` and `changedFiles`,
+frozen at merge; `null` when gh returned no parseable triple, an honest
+unknown distinct from a real empty diff). An
 unreadable revert ledger
 marks every verdict `unknown`, never "not reverted"; a missing `gh` reports
 `sourceState: 'missing'`. Read-only — `gh pr list`, bounded `gh pr view`
@@ -1242,7 +1245,8 @@ The cloud scheduler's hourly improve tick also journals each read into
 `fleet.outside-pr-scan.v1` rows via
 [core/fleet/outside-outcome-sync.ts](../src/core/fleet/outside-outcome-sync.ts);
 the sync re-journals a PR only when its recorded evidence — verdict, open
-timestamp, review evidence or CI verdict — changes, so steady state costs one scan row
+timestamp, review evidence, CI verdict or merge-size triple — changes,
+so steady state costs one scan row
 per pass),
 and `phm improve discover` folds repos whose outside merges keep carrying
 standing revert verdicts into self-targeted backlog items — see
