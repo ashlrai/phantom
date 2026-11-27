@@ -23,9 +23,9 @@ deleting it, and keep its tests green either way.
 | `forum/mcp.ts` | One MCP call for the fleet forum (`forumToolIsRead`, `handleForumTool`): read ops stay available when the kill switch is on, writes are refused by the native-tool gate. |
 | `goal-drift-ideas.ts` | Pure: turns a goal that is falling off track into one Idea from caller-supplied bound metrics and the ideas still open; unknown data never produces an idea. |
 | `kept-landed.ts` | Read-only `fleet.kept-landed.v1` report: which kept worktrees already landed, with evidence (`post-image`, `patch-id`, `none`, `unknown`), change sizes and byte totals. |
-| `lane-route-eligibility.ts` | Pure: picks which queue lane may take the next job from a lane-targets snapshot and usage windows, with a plain reason for every lane it skipped. Never writes slots, changes a target or touches billing. |
 | `merge-bisect.ts` | Pure, probe-injected bisect planners for the merge pipeline: decides which revisions or subsets to probe; the caller runs the probes. |
 | `merge-plan-rework.ts` | Rework edges and superseded-PR proposals for the merge plan: reads `RQ-FIX-`, `RQ-RECUT-`, `RQ-REBASE-BATCH-` titles and body markers across open PRs, with bounded secret-scrubbed text. |
 | `nodes-dispatch.ts` | The `phm nodes dispatch` decision: probe gates (reachable, CLI installed, signed in) then one adapter start. The default adapter is plan-only, so every answer is a dry run with the reason until a remote runner is connected. |
 | `process-vitals.ts` | Process-vitals IO seam: ps-based owner and process sampling behind an injectable interface (home, uid, clock, run, read, signal). |
+| `signed-queue-scope.ts` | Pure: the signed repository scope queue work may be generated from — `ashlrai/*` repos at propose or merge stage, lowercased, deduped and sorted; empty when the policy is missing or has none. |
 | `status-grade.ts` | Pure grader for the status-reply contract: a reply may say RECEIVED, ASSIGNED, RUNNING, BLOCKED or VERIFIED only when structured evidence proves it; every grade carries an as-of timestamp and the evidence source. |
