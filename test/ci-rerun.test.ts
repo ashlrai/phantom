@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -169,6 +169,35 @@ describe('resident CI reruns', () => {
     expect(read.verdicts).toMatchObject({ pass: 1, pending: 0 });
     expect(read.recent.at(-1)?.test).toBe(conflict ? undefined : report.groups[0]!.testId);
   });
+
+  it.each(['different test', 'multiple tests', 'conflicting replay'])(
+    'records a workflow-only verdict when the attempt has %s', async evidence => {
+      const { opts, gh } = setup();
+      await runCiRerunMaintenance(opts);
+      const attempt = readCiReruns(opts.journalPath!, opts.now!()).recent.find(row => row.outcome === 'attempt')!;
+      const otherTest = 'test/b.test.ts > b';
+      const changed = evidence === 'multiple tests'
+        ? { ...attempt, test: undefined, tests: [attempt.test!, otherTest] }
+        : { ...attempt, test: otherTest };
+      const rows = readCiReruns(opts.journalPath!, opts.now!()).recent;
+      const journal = evidence === 'conflicting replay'
+        ? [...rows, changed]
+        : rows.map(row => row.outcome === 'attempt' ? changed : row);
+      writeFileSync(opts.journalPath!, journal.map(row => JSON.stringify(row)).join('\n') + '\n');
+      opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+      gh.mockResolvedValue({ ok: true, stdout: JSON.stringify({
+        id: attempt.runId, head_sha: attempt.head, status: 'completed', conclusion: 'failure',
+        run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z', updated_at: '2026-01-01T12:08:00Z',
+      }), stderr: '' });
+
+      await runCiRerunMaintenance(opts);
+
+      const read = readCiReruns(opts.journalPath!, opts.now!());
+      expect(read.verdicts).toMatchObject({ fail: 1, pending: 0 });
+      expect(read.recent.at(-1)).toMatchObject({ outcome: 'verdict', verdict: 'fail' });
+      expect(read.recent.at(-1)).not.toHaveProperty('test');
+    },
+  );
 
   it('does not reopen the pending window when an expired successful call is replayed', async () => {
     const { opts, gh } = setup();
