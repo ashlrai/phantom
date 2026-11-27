@@ -535,6 +535,35 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(snapshot.lanes.find(l => l.lane === 'devin')!.mergesPerHour).toBe(1); // observed merge still reports
   });
 
+  it('uses only quota observations through report time for credit and starvation', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'ready.tsv'), '');
+    await writeFile(join(dir, 'status.json'), JSON.stringify({
+      last_tick: ANCHOR.toISOString(),
+      lanes: { claude: { running: 0, target: 4 }, codex: { running: 0, target: 4 } },
+    }));
+    const usagePath = join(dir, 'usage-readings.jsonl');
+    const future = new Date(ANCHOR.getTime() + 1).toISOString();
+    await writeFile(usagePath, [
+      { pool: 'claude', observedAt: future, pctUsed: 10 },
+      { pool: 'claude', observedAt: ANCHOR.toISOString(), pctUsed: 100 },
+      { pool: 'codex', observedAt: future, pctUsed: 100 },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [usagePath], now: () => ANCHOR,
+    });
+    expect(snapshot.lanes.find(lane => lane.lane === 'claude')).toMatchObject({
+      credit: { state: 'observed', remainingPct: 0, observedAt: ANCHOR.toISOString() },
+      health: { state: 'drained' },
+    });
+    expect(snapshot.starved.lanes.claude?.starved).toBe(false);
+    expect(snapshot.lanes.find(lane => lane.lane === 'codex')?.credit).toMatchObject({
+      state: 'unknown', remainingPct: null, observedAt: null,
+    });
+    expect(snapshot.sources.usage.dropped).toBe(0);
+  });
+
   it('projects credit, queue depth, live jobs and merges per lane', async () => {
     const snapshot = await getFleetLaneSnapshot(fixtureOptions);
     expect(snapshot.schema).toBe('fleet.lanes.v1');
