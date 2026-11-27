@@ -1468,7 +1468,9 @@ same job, source, event, reason and recorded instant count once in both the
 recurrence threshold and the refusal share. Later observations for the
 same job still count. When the bounded journal read clips older decisions,
 the brief labels the counts as retained evidence and withholds the
-full-window refusal share.
+full-window refusal share. Malformed JSON lines and generation decisions
+with missing, invalid or unattributed evidence also withhold the share when
+they could affect the window. Valid decisions still establish recurrence.
 
 Run `phm fleet lane-reward --json` to see reward and measured token usage by
 lane. The report attributes a PR outcome that carries only a URL when exactly

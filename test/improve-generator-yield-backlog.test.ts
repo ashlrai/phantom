@@ -270,6 +270,29 @@ describe('generatorYieldBacklogItems', () => {
     expect(clipped?.prompt).not.toMatch(/4 of \d+ recorded/);
   });
 
+  it.each([
+    ['torn JSON', '{"schema":'],
+    ['invalid timestamp', draft('bad-time', 'autofill:bet', 'invalid')],
+    ['missing job', draft('', 'autofill:bet', at(2))],
+    ['unknown source', draft('unattributed', 'unknown', at(2))],
+  ])('keeps observed recurrence but withholds the share for %s', async (_label, malformed) => {
+    const rows = recurringRows('autofill:bet', 'duplicate', 4, [4, 3], 'partial');
+    const [item] = await generatorYieldBacklogItems({
+      repo: REPO, now: NOW, ledgerText: [...rows, malformed].join('\n'),
+    });
+    expect(item?.prompt).toContain('4 rejections');
+    expect(item?.prompt).toContain('full-window refusal share is unknown');
+    expect(item?.prompt).not.toMatch(/4 of \d+ recorded/);
+  });
+
+  it('keeps the share when an incomplete decision is outside the window', async () => {
+    const rows = recurringRows('autofill:bet', 'duplicate', 4, [4, 3], 'complete');
+    const [item] = await generatorYieldBacklogItems({
+      repo: REPO, now: NOW, ledgerText: [...rows, draft('', 'unknown', at(8))].join('\n'),
+    });
+    expect(item?.prompt).toContain('4 of 4 recorded autofill:bet decisions');
+  });
+
   it('reads the real ledger under a runs dir', async () => {
     mkdirSync(join(runsDir, 'metrics'), { recursive: true });
     writeFileSync(join(runsDir, 'metrics', 'generation.jsonl'), `${recurringRows('autofill:bet', 'stopped_family', 4, [4, 3, 4, 3], 'bet-r').join('\n')}\n`);
