@@ -992,7 +992,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 [--exclude-owner <agent>]
 [--channel <name>] [--topic <topic>] [--result <reserved|admitted|complete|failed>] [--id <envelope-id>]
 [--claims] [--open] [--claimable]
-[--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-200>]`
+[--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-200>] [--frame <cli>]`
 reads the
 same projection back — jobs newest-first, optionally filtered by status,
 exact job id, announced repo, provider, declared dispatch tier,
@@ -1083,7 +1083,14 @@ true filtered total before the cap and `omitted` as the rest — the same
 page `fleet_work_feed`'s `limit` argument (default 50 there) and the
 endpoint's `limit` parameter serve through the shared
 `sliceBusWorkFeedView`, with claims holds regrouped under the shown jobs
-only. The filters narrow
+only. `--frame <cli>` prints the same feed — job rows, hold rows and the
+`jobs=… feed=…` summary line — as one bounded block marked untrusted under
+BEGIN/END UNTRUSTED AGENT BUS WORK FEED markers, the same scrub and 32 KiB
+clip bound the inbox, channel-read, wakes and `work mine --frame` reads
+apply with the cut stated, so a host can hand the fleet's whole work board
+to a CLI's next turn as data in a single block; `--json` carries it as
+`framed` beside the full projection, and a refused or unavailable feed
+frames its own state line, never an invented job list. The filters narrow
 the fleet view, they never widen
 it. `phm fleet work-feed` accepts the same flags.
 
