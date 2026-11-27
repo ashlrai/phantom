@@ -349,6 +349,9 @@ slots and independent dependency or rebase evidence remain available.
 When the embedded admission record includes `ts`, it must match the
 dispatcher snapshot's `last_tick`. A mismatch degrades the dispatcher
 source even when `last_tick` is fresh.
+The admission record must carry a boolean `admit` or a `decision` of `admit`
+or `stop`. When both are present, they must agree. Missing, invalid or
+contradictory decisions also degrade the dispatcher source.
 Autopilot honors holds from dispatcher status, configured slots and the
 operator's `HOLD` file at the runs root. The file lists whitespace-separated
 lane names. A newly held lane is excluded from starvation, restock and
