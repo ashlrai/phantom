@@ -13,8 +13,18 @@
  * empty-cause.ts; the event/phase/url key sets are the canonical ones
  * metrics/loop, slot-yield and dispatchd `_vc_pick`/`_vc_event` accept.
  */
+import { canonicalJson } from '../authority/canonical-json.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 import { ledgerEventName } from './empty-cause.js';
+
+/** Identity of a parsed Git-operation receipt, including any producer metadata. */
+export function gitOperationReceiptKey(row: Record<string, unknown>, line: string): string {
+  try {
+    return canonicalJson(row);
+  } catch {
+    return line.trim();
+  }
+}
 
 /** job|job_id|jobId|id — the same set empty-cause.ledgerRows folds on. */
 const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;

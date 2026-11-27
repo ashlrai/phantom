@@ -184,6 +184,11 @@ it('counts exact dated Git-operation replays once in the contention report', asy
 
   const replayed = [original, ...datedReceipts.map(line => `  ${line}  `)].join('\n');
   expect(jobLatency(replayed)).toEqual(jobLatency(original));
+
+  const reformatted = datedReceipts.map(line =>
+    JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(line)).reverse()), null, 1)
+      .replace(/\n/g, ' '));
+  expect(jobLatency([original, ...reformatted].join('\n'))).toEqual(jobLatency(original));
 });
 
 const start = '2026-01-01T00:00:00Z', end = '2026-01-01T00:01:00Z';

@@ -2686,6 +2686,11 @@ fence. The owner match is `withdraw`'s, so another scope's job answers
 
 ## Fleet job latency Git observations (`fleet.job-latency.v1`)
 
+Git contention reporting and improvement discovery count timestamped
+Git-operation receipts with identical JSON fields and values once, regardless
+of field order or whitespace. `gitOperationReceiptKey(row, line)` uses the
+trimmed input line when the parsed row cannot be canonically encoded.
+
 `phm fleet job-latency --json` and `phm pulse merge-latency --json` read
 only the local jobs ledger. They use the first non-blank string from
 `job|job_id|jobId|id` and `event|type|kind`, trim both values, and
