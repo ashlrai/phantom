@@ -215,6 +215,52 @@ describe('listOutsidePrOutcomes', () => {
     expect(byNumber.get(34)).toMatchObject({ createdAt: null, reviews: { decision: null, latest: 1 } });
   });
 
+  it('reads bounded per-PR check-rollup CI verdicts for surviving outside PRs only', async () => {
+    const rows = [
+      { number: 40, title: 'green', author: { login: 'ext-dev' }, headRefName: 'fix/a', mergedAt: '2026-11-15T00:00:00Z' },
+      { number: 41, title: 'red', author: { login: 'ext-dev' }, headRefName: 'fix/b', mergedAt: '2026-11-14T00:00:00Z' },
+      { number: 42, title: 'pending', author: { login: 'ext-dev' }, headRefName: 'fix/c', mergedAt: '2026-11-13T00:00:00Z' },
+      { number: 43, title: 'no checks', author: { login: 'ext-dev' }, headRefName: 'fix/d', mergedAt: '2026-11-12T00:00:00Z' },
+      { number: 44, title: 'non-array rollup', author: { login: 'ext-dev' }, headRefName: 'fix/e', mergedAt: '2026-11-11T00:00:00Z' },
+      { number: 45, title: 'fleet bridge', author: { login: 'ext-dev' }, headRefName: 'codex-bridge/RQ-X', mergedAt: '2026-11-10T00:00:00Z' },
+      { number: 46, title: 'missing field', author: { login: 'ext-dev' }, headRefName: 'fix/f', mergedAt: '2026-11-09T00:00:00Z' },
+    ];
+    const views: string[] = [];
+    const gh: NonNullable<ListOutsidePrOutcomesOptions['gh']> = async (_cwd, args) => {
+      const key = args.join(' ');
+      if (key === '--version') return 'gh version 2.99.0';
+      if (key.startsWith('pr list')) return JSON.stringify(rows);
+      if (key.startsWith('pr view')) {
+        const n = args[2]!;
+        views.push(n);
+        if (n === '44') return JSON.stringify({ statusCheckRollup: 'oops' });
+        if (n === '46') return '{}';
+        const rollups: Record<string, unknown> = {
+          '40': [{ name: 'Merge Gate', conclusion: 'SUCCESS', status: 'COMPLETED' }],
+          '41': [
+            { name: 'Merge Gate', conclusion: 'FAILURE', status: 'COMPLETED' },
+            { name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED' },
+          ],
+          '42': [{ name: 'test', status: 'IN_PROGRESS' }],
+          '43': [],
+        };
+        return JSON.stringify({ statusCheckRollup: rollups[n] });
+      }
+      return null;
+    };
+    const result = await listOutsidePrOutcomes(await fixtureOpts({ gh }));
+    const byNumber = new Map(result.repos[0]!.prs.map((pr) => [pr.number, pr]));
+    expect(byNumber.get(40)?.ci).toBe('success');
+    expect(byNumber.get(41)?.ci).toBe('failure');
+    expect(byNumber.get(42)?.ci).toBe('pending');
+    // An empty rollup is the real "no CI ran" signal, distinct from unreadable evidence.
+    expect(byNumber.get(43)?.ci).toBe('none');
+    expect(byNumber.get(44)?.ci).toBeNull();
+    expect(byNumber.get(46)?.ci).toBeNull();
+    // Fleet-branch rows are filtered before the CI pass — they never cost a pr view call.
+    expect(views.sort()).toEqual(['40', '41', '42', '43', '44', '46']);
+  });
+
   it('honours --days window and drops malformed rows', async () => {
     const rows = [
       ...MERGED_ROWS,

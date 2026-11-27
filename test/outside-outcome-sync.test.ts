@@ -19,7 +19,7 @@ const AT = NOW.toISOString();
 const pr = (number: number, reverted: OutsidePrOutcomeV1['reverted'], over: Partial<OutsidePrOutcomeV1> = {}): OutsidePrOutcomeV1 => ({
   repo: 'acme/widgets', number, title: `outside fix ${number}`,
   author: 'ext-dev', head: 'fix/x', mergedAt: '2026-11-15T00:00:00.000Z',
-  createdAt: null, reviews: null, agent: null, model: null, reverted, ...over,
+  createdAt: null, reviews: null, ci: null, agent: null, model: null, reverted, ...over,
 });
 
 const outcomes = (prs: OutsidePrOutcomeV1[], over: Partial<OutsidePrOutcomesV1> = {}): OutsidePrOutcomesV1 => ({
@@ -150,6 +150,33 @@ describe('syncOutsidePrOutcomes', () => {
     expect(parsed.outcomes.at(-1)).toMatchObject({ number: 7, createdAt: null, reviews: null });
   });
 
+  it('re-journals a PR when its CI verdict arrives or changes', async () => {
+    const first = await syncOutsidePrOutcomes({
+      runsDir, now: () => NOW,
+      list: async () => outcomes([pr(7, 'no')]),
+    });
+    expect(first.appended).toBe(1);
+
+    // The bounded per-PR rollup read lands after the first journal: same
+    // revert verdict, new ci evidence → one new row, then quiet.
+    const second = await syncOutsidePrOutcomes({
+      runsDir, now: () => NOW,
+      list: async () => outcomes([pr(7, 'no', { ci: 'failure' })]),
+    });
+    expect(second.appended).toBe(1);
+    const rows = readJournal(runsDir).filter((r) => r['kind'] === OUTSIDE_PR_OUTCOME_SCHEMA && r['number'] === 7);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ reverted: 'no', ci: 'failure' });
+    const parsed = parseOutsidePrOutcomeJournal(readFileSync(join(runsDir, JOURNAL), 'utf8'));
+    expect(parsed.outcomes.at(-1)).toMatchObject({ number: 7, reverted: 'no', ci: 'failure' });
+
+    const third = await syncOutsidePrOutcomes({
+      runsDir, now: () => NOW,
+      list: async () => outcomes([pr(7, 'no', { ci: 'failure' })]),
+    });
+    expect(third.appended).toBe(0);
+  });
+
   it('writes nothing when gh is absent — no tool, no evidence', async () => {
     const out = await syncOutsidePrOutcomes({
       runsDir, now: () => NOW,
@@ -258,6 +285,27 @@ describe('parseOutsidePrOutcomeJournal', () => {
     // Out-of-vocabulary decision and negative latest both reject honestly.
     expect(parsed.outcomes[3]).toMatchObject({ reviews: null });
     expect(parsed.outcomes[4]).toMatchObject({ reviews: null });
+  });
+
+  it('parses journaled CI verdicts tolerantly', () => {
+    const row = (number: number, ci: unknown): string => JSON.stringify({
+      v: 1, kind: OUTSIDE_PR_OUTCOME_SCHEMA, at: AT, repo: 'acme/widgets', number,
+      title: 't', author: 'ext-dev', agent: null, model: null,
+      mergedAt: '2026-11-15T00:00:00.000Z', reverted: 'yes', ci,
+    });
+    const parsed = parseOutsidePrOutcomeJournal([
+      row(61, 'success'), row(62, 'failure'), row(63, 'pending'), row(64, 'none'),
+      row(65, 'bogus'), row(66, 42),
+      // A pre-fields row carries no ci key at all — honest null, never a guessed verdict.
+      JSON.stringify({
+        v: 1, kind: OUTSIDE_PR_OUTCOME_SCHEMA, at: AT, repo: 'acme/widgets', number: 67,
+        title: 't', author: 'ext-dev', agent: null, model: null,
+        mergedAt: '2026-11-15T00:00:00.000Z', reverted: 'yes',
+      }),
+    ].join('\n'));
+    expect(parsed.outcomes.map((r) => r.ci)).toEqual([
+      'success', 'failure', 'pending', 'none', null, null, null,
+    ]);
   });
 
   it('returns an empty parse for an empty journal', () => {
