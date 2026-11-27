@@ -781,8 +781,10 @@ marks a cut spend tail. Phantom withholds spend-derived costs when earlier
 calls may be missing. Explicit jobs-ledger costs and the reward-signal
 fallback still apply.
 The spend join includes calls at the report start time and excludes calls
-dated after it, including future calls with missing prices. Calls without
-a parseable `ts`, `at`, or `timestamp` retain their existing eligibility.
+dated after it, including future calls with missing prices. Legacy calls
+with no timestamp fields remain eligible. When a call names a job and
+carries `ts`, `at`, or `timestamp` but none can be parsed, the spend join
+and reward sync leave that job's spend-derived total unknown.
 Both the router outcomes and the daemon's reward feed withhold a job's
 spend-derived total if any call attributed to that job lacks a usable USD
 price or the sum is non-finite. Spend totals for other jobs can still be

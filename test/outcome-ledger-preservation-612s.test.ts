@@ -1599,7 +1599,7 @@ describe('router outcome spend join', () => {
     const asOfMs = Date.parse('2026-11-25T12:00:00.000Z');
     const boundary = new Date(asOfMs).toISOString();
     const future = new Date(asOfMs + 1).toISOString();
-    const root = runsDir(['J1', 'J2', 'J3'].map(job => JSON.stringify({ job, phase: 'MERGED' })).join('\n'));
+    const root = runsDir(['J1', 'J2', 'J3', 'J4', 'J5'].map(job => JSON.stringify({ job, phase: 'MERGED' })).join('\n'));
     writeSpend(root, [
       { job: 'J1', ts: boundary, cost_usd: 0.5 },
       { job: 'J1', cost_usd: 0.25 },
@@ -1607,13 +1607,17 @@ describe('router outcome spend join', () => {
       { job: 'J2', timestamp: boundary, cost_usd: 1 },
       { job: 'J2', ts: 'invalid', timestamp: future },
       { job: 'J3', ts: future, cost_usd: 2 },
+      { job: 'J4', ts: boundary, cost_usd: 1 },
+      { job: 'J4', timestamp: 'invalid', cost_usd: 2 },
+      { job: 'J5', at: null, cost_usd: 2 },
+      { job: 'J5', ts: boundary, cost_usd: 1 },
     ].map(row => JSON.stringify(row)).join('\n'));
 
     const clock = vi.spyOn(Date, 'now').mockReturnValue(asOfMs);
     try {
       const result = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null });
       expect(Object.fromEntries(result.outcomes.map(o => [o.job_id, o.cost_usd])))
-        .toEqual({ J1: 0.75, J2: 1, J3: null });
+        .toEqual({ J1: 0.75, J2: 1, J3: null, J4: null, J5: null });
     } finally {
       clock.mockRestore();
     }
