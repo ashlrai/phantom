@@ -72,7 +72,12 @@ phm node status --owner acme --json
 
 To report measured capacity, generate the sample on this computer and pass it to
 each beat: `--capacity "$(phm node measure)"`. When `phm node measure` exits 1
-the node is held; omit `--capacity` on that beat. See the
+the measured hold is one the sample cannot express (`cpu-*` or `host-slots-*`),
+so the node is held; on that beat omit `--capacity` and pass `--slots 0`, as
+the pool worker does, so the node holds admission rather than keeping its last
+advertised slots and reading wrongly ready. (A different exit 1 — the
+measurement itself failed — means retry after checking this node can read its
+own memory, disk and process tables.) See the
 [node router guide](NODE-ROUTER.md). Memory headroom is measured on macOS and
 Linux; on a platform with no reader the sample reports `memory-unmeasured`, so
 the router keeps work away from that node until one exists.

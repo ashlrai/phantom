@@ -50,6 +50,10 @@ describe('node slot admission', () => {
     expect(nodes.pull(air)).toBeNull();
     expect(nodes.pull(pro)).toBeNull();
     expect(nodes.plan()[0]?.fix).toContain('no free job slots');
+    // The capacity fix names capacity, not one resource: slot exhaustion and
+    // measured holds (memory, disk, cpu, host slots) share this reason.
+    expect(nodes.plan()[0]?.fix).toContain('capacity to recover');
+    expect(nodes.plan()[0]?.fix).not.toContain('memory headroom');
   });
 
   it('holds immediately at zero slots and resumes from a fresh heartbeat', () => {
