@@ -27,6 +27,7 @@ import { isMirrorPath } from '../fleet/mirrors.js';
 import { scrubSecrets as scrubSharedSecrets } from '../util/scrub.js';
 import { writePrivateFileAtomically } from '../verse/session-store.js';
 import { localOllamaBase } from '../providers.js';
+import { isPlainRecord } from './wiki/store.js';
 
 /**
  * 3.10: drop the fleet's own mirror clones from a DEFAULT scan set. A standing
@@ -39,7 +40,7 @@ import { localOllamaBase } from '../providers.js';
  * is filtered. Any failure keeps the list as it was (the pre-3.10 behaviour):
  * a duplicate is a nuisance, an empty scan is an outage.
  */
-function withoutFleetMirrors(enrolled: string[]): string[] {
+export function withoutFleetMirrors(enrolled: string[]): string[] {
   try {
     if (activeEnrollmentLenses().length > 0) return enrolled;
     return enrolled.filter((repo) => {
@@ -82,9 +83,18 @@ const EMBED_TIMEOUT_MS = 10_000;
 /** Upper bound on the number of components in a local embedding. */
 const MAX_VECTOR_DIMENSIONS = 16_384;
 
-function isValidVector(value: unknown): value is number[] {
-  return Array.isArray(value) && value.length > 0 && value.length <= MAX_VECTOR_DIMENSIONS &&
-    value.every((component: unknown) => typeof component === 'number' && Number.isFinite(component));
+export function isValidVector(
+  value: unknown,
+  opts: { requireNonZero?: boolean; maxDimensions?: number } = {},
+): value is number[] {
+  const maxDimensions = opts.maxDimensions ?? MAX_VECTOR_DIMENSIONS;
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= maxDimensions &&
+    Array.from(value).every((component: unknown) => typeof component === 'number' && Number.isFinite(component)) &&
+    (!opts.requireNonZero || value.some((component) => component !== 0))
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -283,13 +293,12 @@ export function readAgentMemory(agentId: string): AgentMemory | null {
     }
     if (size !== stat.size) throw new Error('Agent memory changed during read');
     const value: unknown = JSON.parse(raw.subarray(0, size).toString('utf8'));
-    if (typeof value !== 'object' || value === null) throw new Error('Invalid agent memory');
-    const record = value as Record<string, unknown>;
-    if (record['version'] !== 1 || record['agentId'] !== agentId ||
-        typeof record['text'] !== 'string' || typeof record['updatedAt'] !== 'string' ||
-        !Number.isFinite(Date.parse(record['updatedAt']))) throw new Error('Invalid agent memory');
-    validateMemoryText(record['text']);
-    return { agentId, text: record['text'], updatedAt: record['updatedAt'] };
+    if (!isPlainRecord(value)) throw new Error('Invalid agent memory');
+    if (value['version'] !== 1 || value['agentId'] !== agentId ||
+        typeof value['text'] !== 'string' || typeof value['updatedAt'] !== 'string' ||
+        !Number.isFinite(Date.parse(value['updatedAt']))) throw new Error('Invalid agent memory');
+    validateMemoryText(value['text']);
+    return { agentId, text: value['text'], updatedAt: value['updatedAt'] };
   } catch {
     throw new Error('Unable to read agent memory safely');
   } finally {
@@ -328,7 +337,7 @@ function repoHash(repoPath: string): string {
 }
 
 /** Path to the JSONL chunks file for a given repo. */
-function chunksFile(repoPath: string): string {
+export function knowledgeChunksPath(repoPath: string): string {
   return path.join(knowledgeDir(), repoHash(repoPath), 'chunks.jsonl');
 }
 
@@ -350,12 +359,8 @@ function readMeta(repoPath: string): RepoMeta | null {
   try {
     const raw = fs.readFileSync(metaFile(repoPath), 'utf8');
     const parsed = JSON.parse(raw) as unknown;
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      typeof (parsed as Record<string, unknown>)['lastIndexedAt'] === 'number'
-    ) {
-      return parsed as RepoMeta;
+    if (isPlainRecord(parsed) && typeof parsed['lastIndexedAt'] === 'number') {
+      return parsed as unknown as RepoMeta;
     }
   } catch {
     // absent or malformed
@@ -466,7 +471,7 @@ function chunkText(text: string): Array<{ startLine: number; endLine: number; te
  * Detect an embedding-capable model at the local Ollama base URL.
  * Mirrors the approach in genome/recall.ts. Never throws.
  */
-async function detectEmbeddingModel(
+export async function detectEmbeddingModel(
   ollamaBase: string,
 ): Promise<{ available: false } | { available: true; model: string }> {
   const controller = new AbortController();
@@ -478,14 +483,10 @@ async function detectEmbeddingModel(
     });
     if (!res.ok) return { available: false };
     const body = (await res.json()) as unknown;
-    if (
-      typeof body !== 'object' ||
-      body === null ||
-      !Array.isArray((body as Record<string, unknown>)['models'])
-    ) {
+    if (!isPlainRecord(body) || !Array.isArray(body['models'])) {
       return { available: false };
     }
-    const models = (body as { models: { name: string }[] }).models;
+    const models = body['models'] as { name: string }[];
     const EMBED_HINTS = ['bge', 'nomic-embed', 'mxbai-embed', 'all-minilm', 'embed'];
     for (const hint of EMBED_HINTS) {
       const found = models.find((m) => m.name.toLowerCase().includes(hint));
@@ -504,13 +505,14 @@ async function detectEmbeddingModel(
  * Returns null on any error (network, model unavailable, timeout).
  * NEVER sends to a cloud endpoint — only ever hits ollamaBase (localhost).
  */
-async function fetchEmbedding(
+export async function fetchEmbedding(
   ollamaBase: string,
   model: string,
   text: string,
+  opts: { timeoutMs?: number; requireNonZero?: boolean; maxDimensions?: number } = {},
 ): Promise<number[] | null> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), EMBED_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? EMBED_TIMEOUT_MS);
   try {
     const res = await fetch(`${ollamaBase.replace(/\/+$/, '')}/api/embeddings`, {
       method: 'POST',
@@ -520,15 +522,10 @@ async function fetchEmbedding(
     });
     if (!res.ok) return null;
     const body = (await res.json()) as unknown;
-    if (
-      typeof body !== 'object' ||
-      body === null ||
-      !Array.isArray((body as Record<string, unknown>)['embedding'])
-    ) {
+    if (!isPlainRecord(body) || !Array.isArray(body['embedding'])) {
       return null;
     }
-    const embedding = (body as { embedding: unknown[] }).embedding;
-    return isValidVector(embedding) ? embedding : null;
+    return isValidVector(body['embedding'], opts) ? body['embedding'] : null;
   } catch {
     return null;
   } finally {
@@ -542,7 +539,7 @@ async function fetchEmbedding(
 
 /** Overwrite the repo's JSONL file with the provided chunks. */
 function writeChunks(repoPath: string, chunks: KnowledgeChunk[]): void {
-  const file = chunksFile(repoPath);
+  const file = knowledgeChunksPath(repoPath);
   const lines = chunks.length === 0 ? '' : chunks.map((c) => JSON.stringify(c)).join('\n') + '\n';
   // Reuse the private store's exclusive-temp/fsync/rename publication. A
   // failed write reaches buildKnowledge's per-repo catch, never advances meta.
@@ -563,7 +560,7 @@ export function loadChunks(repo?: string): KnowledgeChunk[] {
 
   if (repo !== undefined) {
     // Scoped to a single repo
-    const file = chunksFile(repo);
+    const file = knowledgeChunksPath(repo);
     return readChunksFile(file);
   }
 
@@ -619,14 +616,13 @@ function readChunksFile(file: string, onInvalidVector?: () => void): KnowledgeCh
 
 /** Type guard for KnowledgeChunk. */
 function isKnowledgeChunk(v: unknown): v is KnowledgeChunk {
-  if (typeof v !== 'object' || v === null) return false;
-  const obj = v as Record<string, unknown>;
+  if (!isPlainRecord(v)) return false;
   return (
-    typeof obj['repo'] === 'string' && obj['repo'].trim().length > 0 &&
-    typeof obj['file'] === 'string' && obj['file'].trim().length > 0 &&
-    typeof obj['startLine'] === 'number' && Number.isInteger(obj['startLine']) && obj['startLine'] > 0 &&
-    typeof obj['endLine'] === 'number' && Number.isInteger(obj['endLine']) && obj['endLine'] >= obj['startLine'] &&
-    typeof obj['text'] === 'string'
+    typeof v['repo'] === 'string' && v['repo'].trim().length > 0 &&
+    typeof v['file'] === 'string' && v['file'].trim().length > 0 &&
+    typeof v['startLine'] === 'number' && Number.isInteger(v['startLine']) && v['startLine'] > 0 &&
+    typeof v['endLine'] === 'number' && Number.isInteger(v['endLine']) && v['endLine'] >= v['startLine'] &&
+    typeof v['text'] === 'string'
   );
 }
 
@@ -762,7 +758,7 @@ export async function buildKnowledge(
     try {
       repoChunks = await indexRepo(repoPath, embedModel, ollamaBase, dimensions);
       totalChunks += repoChunks;
-      if (repoChunks >= 0) indexedRepos++;
+      indexedRepos++;
     } catch {
       // one bad repo never crashes the whole run
     }
@@ -807,7 +803,7 @@ async function indexRepo(
   });
 
   let invalidVectorFound = false;
-  const existingChunks = readChunksFile(chunksFile(repoPath), () => { invalidVectorFound = true; });
+  const existingChunks = readChunksFile(knowledgeChunksPath(repoPath), () => { invalidVectorFound = true; });
   const liveFiles = new Set(allFiles.map((f) => path.relative(repoPath, f)));
 
   if (changedFiles.length === 0) {
