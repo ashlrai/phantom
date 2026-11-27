@@ -18,7 +18,7 @@ import {
   type AgentIdentity, type AgentRegistryOptions, type BusCli, type BusProvider, type RegisterAgentResult,
 } from './bus-identity.js';
 import { busBodyFallbackSummary, busBodySummary, busInboxJobMarker,
-  type BusEnvelopeLookupJob, type ChannelReadMessage, type InboxMessage } from './bus-unified.js';
+  type AgentWakeRow, type BusEnvelopeLookupJob, type ChannelReadMessage, type InboxMessage } from './bus-unified.js';
 
 export interface BusCliAdapter {
   readonly cli: BusCli;
@@ -252,6 +252,81 @@ export function frameBusChannelRead(cli: BusCli, channel: string, messages: read
     shown += 1;
   }
   if (shown < messages.length) lines.push(`(${messages.length - shown} more messages not shown; read the channel again)`);
+  lines.push(BUS_INBOX_FRAME_END);
+  return lines.join('\n');
+}
+
+/**
+ * The `agent:<handle>` or `label <label>` a wake line's `from` takes — the
+ * same resolved-handle/label distinction `frameBusInbox` applies. A resolved
+ * `bus.send` referent reports its sender's registered handle; a claim-holder
+ * `wh-…` hint's `from` is already the posting identity's `agent:<handle>`
+ * address (only a registered identity's terminal `work.status` fans out
+ * holder hints), and every other sender stays a bare routing label.
+ */
+function wakeFrameFrom(wake: AgentWakeRow): string {
+  const message = wake.message;
+  if (message?.status === 'resolved') {
+    return message.fromAgent ? `agent:${message.fromAgent}` : `label ${message.from}`;
+  }
+  return wake.claimHolder !== undefined && wake.from.startsWith('agent:')
+    ? wake.from
+    : `label ${wake.from}`;
+}
+
+/**
+ * One framed wake-hint line: `[<band> wake id=… from … to … <evidence>] <payload>`.
+ * A resolved `bus.send` hint leads with its live message's own priority and
+ * carries the same held/holder/job bracket evidence an inbox row does; a
+ * resolved claim-holder hint leads with its citing `work.status` receipt's
+ * band and names the `job`/`status`/`receipt` the hint cites, its optional
+ * detail as the payload. A hint whose referent is `unresolved` or `unknown`
+ * — or a claim-holder citation that cannot be re-derived — names no provable
+ * band, summary or evidence, so its line shows the referent state and stops:
+ * unknown stays unknown, never an invented priority or payload.
+ */
+function wakeFrameLine(wake: AgentWakeRow): string {
+  const head = `wake id=${wake.id} from ${wakeFrameFrom(wake)} to ${wake.to}`;
+  const holder = wake.claimHolder;
+  if (holder !== undefined) {
+    if (holder === 'unknown') return `[${head} claim-holder=unknown]`;
+    if (holder === 'unresolved') return `[${head} claim-holder=unresolved]`;
+    const detail = holder.detail === undefined ? '' : ` ${holder.detail}`;
+    return `[${holder.priority} ${head} claim-holder job=${holder.jobId} status=${holder.status} receipt=${holder.statusId}]${detail}`;
+  }
+  const message = wake.message;
+  if (message === undefined || message.status === 'unknown') return `[${head} referent=unknown]`;
+  if (message.status === 'unresolved') return `[${head} referent=unresolved]`;
+  return `[${message.priority} ${head}${frameEvidence(message)}] ${message.summary}`;
+}
+
+/**
+ * The same bounded untrusted-data block `frameBusInbox` produces, rendered
+ * for one agent's wake-hint page (`agents bus wakes [--all] --frame <cli>`).
+ * A wake is only a hint to read the inbox — routing ids, never a body — so
+ * each line carries the hint id, its recorded sender and addressee labels
+ * and the resolved referent's own priority, held/holder and job evidence:
+ * the live message a `bus.send` hint points at, or the citing `work.status`
+ * receipt behind a claim-holder `wh-…` hint. Claim-holder hints are the one
+ * wake an inbox `--frame` read can never carry — they cite a status receipt,
+ * not an addressed envelope — so this is the only framed view of them a
+ * CLI's next turn can take. Same markers, same scrub and clip bounds; a hint
+ * whose referent cannot be resolved reports `referent=unresolved`/`unknown`
+ * rather than an invented summary. Identical for every CLI.
+ */
+export function frameBusWakes(cli: BusCli, wakes: readonly AgentWakeRow[]): string {
+  if (!getBusCliAdapter(cli)) throw new Error('Unknown CLI.');
+  const lines = [BUS_INBOX_FRAME_BEGIN];
+  let used = BUS_INBOX_FRAME_BEGIN.length + BUS_INBOX_FRAME_END.length + 64;
+  let shown = 0;
+  for (const wake of wakes) {
+    const line = clean(wakeFrameLine(wake));
+    if (used + line.length + 1 > BUS_INBOX_FRAME_MAX) break;
+    lines.push(line);
+    used += line.length + 1;
+    shown += 1;
+  }
+  if (shown < wakes.length) lines.push(`(${wakes.length - shown} more wake hints not shown; read the wakes again)`);
   lines.push(BUS_INBOX_FRAME_END);
   return lines.join('\n');
 }
