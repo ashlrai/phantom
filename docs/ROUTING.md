@@ -941,8 +941,12 @@ for the same job. Timestamp spellings for the same instant are equivalent.
 An older recorded start cannot supersede a newer start for the same job
 when its probe arrives late. Distinct receipts with the same start time and
 receipts without a recorded start retain their append order. The join skips
-receipts whose recorded start is after the report began. Starts exactly at
-report time and receipts with no recorded start remain eligible. Rows resolving
+receipts whose recorded start is after the report began. A measured probe
+becomes eligible 60 seconds after launch. For a partial probe, the recorded
+sampling duration sets the earliest possible completion because attachment
+can occur after launch. Probes that could only complete after the report
+began leave earlier eligible evidence available. The cutoff is inclusive,
+and receipts with no recorded start remain eligible. Rows resolving
 outside the jobs window join nothing and
 never create outcomes. The report's `launch_cost_state` mirrors the
 jobs `state` vocabulary and `launch_cost_truncated` marks a cut

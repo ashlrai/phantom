@@ -3573,14 +3573,13 @@ function unionRevertKeys(authority: ReadonlySet<string> | undefined, scan: Reado
  * <runsDir>/metrics/launch-cost.jsonl, the bounded fleet.launch-cost.v1
  * journal: `foldLaunchCosts` validates each row under the producer's
  * closed contract and the read resolves each launchId to a folded job
- * id — a launchId that is itself a job id keys itself, a
- * measured/partial row's `-<12hex>` attempt suffix strips to the job
- * it measured, and an unknown-status row prefers an exact job-id
- * match before the stripped prefix — then fills launch_cost_status,
+ * id by stripping the `-<12hex>` attempt suffix from dated receipts
+ * and preserving the whole ID on undated receipts. The read fills launch_cost_status,
  * launch_peak_processes, launch_mean_cpu_pct and launch_peak_cpu_pct,
  * fields no jobs-ledger row supplies. Rows resolving outside the jobs
  * window join nothing and never create outcomes; the last appended
- * row for a resolved job stands. `launch_cost_state` reports the
+ * eligible row for a resolved job stands, preferring newer recorded starts.
+ * Sampling must fit within the report cutoff. `launch_cost_state` reports the
  * ledger's health and `launch_cost_truncated` marks a cut tail;
  * anything but 'read' leaves every launch_cost_* field null —
  * unknown, never a zeroed or guessed resource figure.
@@ -3702,12 +3701,16 @@ export async function readRouterOutcomes(opts: {
     const latestStartByJob = new Map<string, number>();
     const seen = new Set<string>();
     for (const receipt of launchCostReceipts(launchCostRead.text)) {
-      const { launchId, startedAtMs, evidence } = receipt;
+      const { launchId, startedAtMs, sampledSeconds, evidence } = receipt;
       // Resolve before folding so a bare job ID and a claim ID can coexist.
       const job = startedAtMs !== null ? launchId.replace(LAUNCH_ATTEMPT_SUFFIX, '') : launchId;
       if (startedAtMs !== null) {
+        // Measured probes run through the full window. For a partial probe,
+        // the recorded duration is a lower bound because attachment may lag.
+        const elapsedMs = evidence.status === 'measured' ? 60_000 : sampledSeconds * 1000;
+        if (startedAtMs + elapsedMs > reportStartedAt) continue;
         const latestStart = latestStartByJob.get(job);
-        if (startedAtMs > reportStartedAt || (latestStart !== undefined && startedAtMs < latestStart)) continue;
+        if (latestStart !== undefined && startedAtMs < latestStart) continue;
         const key = JSON.stringify(receipt);
         if (seen.has(key)) continue;
         seen.add(key);
