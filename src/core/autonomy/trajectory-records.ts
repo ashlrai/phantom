@@ -1481,6 +1481,7 @@ function listTrajectoryRecordsAt(
     }
 
     for (const decision of outcome.decisions) {
+      if (!(Date.parse(decision.ts) <= asOfMs)) continue;
       record.coverage.decision = true;
       fillRecordMetadata(record, {
         itemId: decision.workItemId,
