@@ -2,8 +2,8 @@ import { basename, join } from 'node:path';
 import { readdirSync } from 'node:fs';
 import { loadConfigReadOnly } from '../core/config.js';
 import { localMerges, readRank, updateRank } from '../core/fleet/repo-rank.js';
-import { canonicalMarketRepo, isRepoPriority, setRepoPriority } from '../core/fleet/repo-market.js';
-import { listManagedRepos, planRepoChange } from '../core/fleet/repos-manager.js';
+import { canonicalMarketRepo, isRepoPriority } from '../core/fleet/repo-market.js';
+import { listManagedRepos, planRepoChange, requestRepoPriority } from '../core/fleet/repos-manager.js';
 
 export async function cmdReposRank(args: string[]): Promise<number> {
   const [verb, ...rest] = args;
@@ -14,9 +14,12 @@ export async function cmdReposRank(args: string[]): Promise<number> {
     const result = await listManagedRepos();
     if (json) emit(result);
     else {
-      console.log('Priority: local only (not synced)');
+      const source = result.prioritySource;
+      console.log(result.prioritySync === 'leader' ? 'Priority: leader scheduler'
+        : result.prioritySync === 'synced' ? `Priority: ${source?.machine} (${source?.ageSeconds}s old, read-only)`
+          : 'Priority: not synced (read-only)');
       console.table(result.repos.map(({ repo, enrolled, grantStage, priority, queueDepth, allocation }) => ({
-        repo, enrolled, grantStage, priority, queueDepth, share: `${(allocation.share * 100).toFixed(1)}%`,
+        repo, enrolled, grantStage, priority, queueDepth, share: allocation ? `${(allocation.share * 100).toFixed(1)}%` : null,
       })));
     }
     return 0;
@@ -31,9 +34,13 @@ export async function cmdReposRank(args: string[]): Promise<number> {
       return 0;
     }
     if (name && verb === 'priority' && isRepoPriority(value)) {
-      setRepoPriority(name, value);
-      if (json) emit({ repo: name, priority: value, prioritySync: 'local-only' });
-      else console.log(`${name}: ${value} (not synced)`);
+      if (!requestRepoPriority(name, value)) {
+        if (json) emit({ code: 'priority-leader-only', error: 'Request priority changes on the fleet leader.' });
+        else console.error('Request priority changes on the fleet leader.');
+        return 1;
+      }
+      if (json) emit({ repo: name, priority: value, status: 'pending-scheduler' });
+      else console.log(`${name}: ${value} requested (pending leader scheduler)`);
       return 0;
     }
   }

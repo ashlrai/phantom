@@ -148,6 +148,28 @@ class DispatchRepoRank(unittest.TestCase):
         self.assertNotIn('Z', launched)
         self.assertIn('RQ-FIX-MAIN-X', launched)
 
+    def test_only_leader_tick_applies_priority_before_claims(self):
+        for role in ('primary', 'worker', 'backup'):
+            with self.subTest(role=role), build(slots={'codex-personal': lane_slot()}) as tmp:
+                home = Path(tmp).resolve()
+                env = launch_stubs(home)
+                queue_job(home, 'Z', 'codex-personal', repo='locus')
+                config = home / '.ashlr/node-pool/config.json'
+                config.parent.mkdir(parents=True)
+                config.write_text(json.dumps({'role': role, 'node': 'test', 'owner': 'test',
+                                              'primary': 'leader-mac', 'backup': 'backup-mac'}))
+                pending = home / '.ashlr/repo-priority-requests/ashlrai@locus'
+                pending.parent.mkdir()
+                pending.write_text('pause\n')
+                applied = home / '.ashlr/repo-priority/ashlrai@locus'
+                result = tick(home, env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(pending.exists(), role != 'primary')
+                self.assertEqual(applied.exists(), role == 'primary')
+                if role == 'primary':
+                    self.assertEqual(applied.read_text(), 'pause\n')
+                    self.assertFalse(dispatched(home, 'Z'))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1260,14 +1260,18 @@ export async function handleApi(
       let body: { repo?: unknown; priority?: unknown } | null;
       try { body = JSON.parse(await readBody(req)); }
       catch { body = null; }
-      const { canonicalMarketRepo, isRepoPriority, setRepoPriority } = await import('../fleet/repo-market.js');
+      const { canonicalMarketRepo, isRepoPriority } = await import('../fleet/repo-market.js');
       const repo = typeof body?.repo === 'string' ? canonicalMarketRepo(body.repo) : null;
       if (!repo || !body || !isRepoPriority(body.priority)) {
         sendJson(res, 400, { error: 'Use a GitHub owner/name and a priority of boost, normal, or pause.' });
         return true;
       }
-      setRepoPriority(repo, body.priority);
-      sendJson(res, 200, { repo, priority: body.priority, prioritySync: 'local-only' });
+      const { requestRepoPriority } = await import('../fleet/repos-manager.js');
+      if (!requestRepoPriority(repo, body.priority)) {
+        sendJson(res, 403, { error: 'Request priority changes on the fleet leader.', code: 'priority-leader-only' });
+        return true;
+      }
+      sendJson(res, 202, { repo, priority: body.priority, status: 'pending-scheduler' });
       return true;
     }
 

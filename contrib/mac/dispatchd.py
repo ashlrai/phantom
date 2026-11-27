@@ -434,6 +434,12 @@ slots = jload(Q + "/slots.json", {})
 slots.pop(work_market.RETIRED_LANE, None)
 _ashlr_home = os.environ.get("ASHLR_HOME", "")
 if not os.path.isabs(_ashlr_home): _ashlr_home = H + "/.ashlr"
+_absent = object()
+_pool = profile_json(_ashlr_home + "/node-pool/config.json", 4096, _absent)
+_leader = profile_json(_ashlr_home + "/fleet-leader.json", 4096, _absent)
+if _leader is _absent and (_pool is _absent or isinstance(_pool, dict) and _pool.get("role") == "primary"):
+    try: work_market.apply_repo_priority_requests(H)
+    except OSError as exc: ev("repo priority requests unavailable: " + type(exc).__name__)
 _missing_profile = object()
 _profile = profile_json(_ashlr_home + "/fleet-profile.json", 64 * 1024, _missing_profile)
 _profile_floors = None if _profile is _missing_profile else configured_floors(
