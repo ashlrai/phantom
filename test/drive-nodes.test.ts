@@ -1392,6 +1392,14 @@ describe('fleet flag value validation', () => {
     // masked store refusal.
     expect(run('enqueue', taskArgs('shell-check', `sha256:${sha('do the thing')}`), f)).toMatchObject({ code: 'bad-pack', exit: 2 });
     expect(run('enqueue', taskArgs('codex-file', sha('do the thing')), f)).toMatchObject({ code: 'bad-task-sha256', exit: 2 });
+    // The pair is required both ways: codex-file's only input is the embedded
+    // task text, so a taskless codex-file job would be claimed but never run —
+    // refused as usage before anything is recorded. Other packs stay taskless.
+    const taskless = run('enqueue', ['--job', 'j1', '--owner', 'acme', '--pack', 'codex-file'], f);
+    expect(taskless).toMatchObject({ code: 'bad-pack', exit: 2 });
+    expect(taskless.fix).toContain('--task-part');
+    expect(executeNodeFleet('enqueue', ['--job', 'j2', '--owner', 'acme', '--pack', 'shell-check'], f.a))
+      .toEqual({ jobId: 'j2', enqueued: true });
     // The valid form still enqueues.
     expect(executeNodeFleet('enqueue', taskArgs('codex-file', `sha256:${sha('do the thing')}`), f.a))
       .toEqual({ jobId: 'j1', enqueued: true });
@@ -1408,6 +1416,9 @@ describe('fleet flag value validation', () => {
       const enqueue = await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme,ops', '--json'], { store });
       expect(enqueue).toBe(2);
       expect(JSON.parse(lines.at(-1)!).error).toMatchObject({ code: 'bad-owner' });
+      const taskless = await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--pack', 'codex-file', '--json'], { store });
+      expect(taskless).toBe(2);
+      expect(JSON.parse(lines.at(-1)!).error).toMatchObject({ code: 'bad-pack' });
     } finally { vi.restoreAllMocks(); }
   });
 });

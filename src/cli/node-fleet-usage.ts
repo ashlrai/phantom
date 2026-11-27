@@ -40,7 +40,9 @@ runner executes, which the claiming node's \`pull\` prints. Repeat \`--task-part
 for long text (the parts join in order; each at most 4000 characters, 16 KiB
 joined). \`--task-sha256\` is \`sha256:\` plus the lowercase hex sha256 of the
 exact joined text (\`sha256sum\` on Linux, \`shasum -a 256\` on macOS). An embedded
-task requires \`--pack codex-file\`, and the two flags together or neither.
+task requires \`--pack codex-file\`, \`--pack codex-file\` requires the embedded
+task (the pack's only input is the task text), and the two flags together or
+neither — enqueue refuses the pair split either way.
 
 \`beat --watch\` repeats the beat every --every seconds (default 10, at most 25 — sessions
 expire 30 s after the last beat) until Ctrl-C, re-measuring capacity and host stats on this

@@ -98,7 +98,9 @@ phm node enqueue --job review-1 --owner acme --requires codex,pack:codex-file \
 4000 characters and 16 KiB joined — and `--task-sha256` is `sha256:` plus the
 lowercase hex sha256 of the exact joined text (`printf %s "$TASK" |
 sha256sum`, or `shasum -a 256` on macOS). An embedded task requires
-`--pack codex-file`, and the two flags together or neither. The claiming
+`--pack codex-file`, `--pack codex-file` requires the embedded task (the pack's
+only input is the task text), and the two flags together or neither — enqueue
+refuses the pair split either way. The claiming
 node's `pull` prints the task text; the `codex-file` pack runs it through
 `codex exec` in a fresh scratch directory, so `codex,pack:codex-file` in
 `--requires` routes only to nodes with codex signed in and the pack

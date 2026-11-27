@@ -389,6 +389,14 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
             'Add --pack codex-file, or drop --task-part/--task-sha256. Run: phm node --help');
         }
       }
+      // The pair is required both ways: codex-file's only input is the embedded
+      // task text — the runner refuses an empty one — so a taskless codex-file
+      // job could be claimed but never run. Refuse it here instead of letting a
+      // node discover the dead job after pull.
+      if (pack === 'codex-file' && task === undefined) {
+        throw new UsageError('bad-pack', 'Invalid embedded node task: --pack codex-file requires --task-part and --task-sha256.',
+          'Add --task-part <text> and --task-sha256 sha256:<hex> to embed the task the pack runs, or drop --pack. Run: phm node --help');
+      }
       const added = nodes.enqueue(jobId, { owner, requires,
         ...(pack === undefined ? {} : { pack }), secrets, ...(task ? { task } : {}) });
       return { jobId, enqueued: added };
