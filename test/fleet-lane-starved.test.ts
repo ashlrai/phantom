@@ -76,12 +76,14 @@ describe('readStarved', () => {
       input({ lane: 'blind', ready: null }), input({ lane: 'notarget', target: null }),
     ], {}, NOW);
     expect(Object.values(read.lanes).some(row => row.starved)).toBe(false);
+    expect(read.lanes.dry).toMatchObject({ free_slots: 0, ready_rows: 0 });
     expect(read.lanes.blind!.ready_rows).toBeNull();
     expect(read.lanes.notarget!.free_slots).toBeNull();
   });
 
   it('counts rows waiting on a drained pool only while some lane is starved', () => {
-    const drained = input({ lane: 'dry', drained: true, ready: 4 });
+    const drained = input({ lane: 'dry', drained: true, ready: 4, target: null, running: null });
+    expect(readStarved([drained], {}, NOW).lanes.dry).toMatchObject({ free_slots: 0, ready_rows: 4 });
     expect(readStarved([input(), drained], {}, NOW).waiting_elsewhere).toBe(4);
     expect(readStarved([input({ ready: 1 }), drained], {}, NOW).waiting_elsewhere).toBe(0);
   });
