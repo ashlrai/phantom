@@ -397,9 +397,12 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         throw new UsageError('bad-pack', 'Invalid embedded node task: --pack codex-file requires --task-part and --task-sha256.',
           'Add --task-part <text> and --task-sha256 sha256:<hex> to embed the task the pack runs, or drop --pack. Run: phm node --help');
       }
-      const added = nodes.enqueue(jobId, { owner, requires,
+      const result = nodes.enqueueChecked(jobId, { owner, requires,
         ...(pack === undefined ? {} : { pack }), secrets, ...(task ? { task } : {}) });
-      return { jobId, enqueued: added };
+      // enqueued:false means the job id is already taken; specMatches tells an
+      // identical retry apart from one whose flags the store ignored.
+      return { jobId, enqueued: result.enqueued,
+        ...(result.specMatches === undefined ? {} : { specMatches: result.specMatches }) };
     }
     case 'plan': return { routes: routesWithJoinWatch(nodes.plan(optId(flags, '--owner')), opts.rejoinWatch === true) };
     case 'pull': {
