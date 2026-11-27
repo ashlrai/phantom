@@ -1375,7 +1375,10 @@ count jobs with recorded PRs and merges. A batch member counts as launched
 when the window contains its `batch_claim` and the matching worker's launch
 receipt has an equal or later recorded timestamp. Each member counts once.
 Batch worker totals and node-pool attempt
-telemetry are excluded from generator yield. Empty rate uses jobs with a recorded
+telemetry are excluded from generator yield. Jobs-ledger receipts explicitly
+marked `launched: false` do not create jobs or contribute execution evidence.
+Other receipts for the same job and generation-journal decisions still count.
+Empty rate uses jobs with a recorded
 empty or nonempty result on their latest observed attempt. A launch or batch
 claim supersedes earlier results. Exact receipt replays keep their first
 position when timestamps tie. Median diff lines uses recorded `diff_lines`.

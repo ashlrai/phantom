@@ -29,6 +29,24 @@ describe('generator yield', () => {
     const report = generatorYield([row({ job: 'RQ-DRAIN-1', state: 'MERGED' }), row({ job: 'RQ-DRAIN-2', empty: true }), JSON.stringify({ job: 'OLD', ts: '2026-11-01T00:00:00Z' })].join('\n'), 24, now);
     expect(report.generators).toMatchObject([{ generator: 'drain', jobs: 2, merged: 1, tokensPerMergedPr: null }]);
   });
+  it('excludes dispatcher no-ops from execution measures while retaining generator decisions', () => {
+    const job = 'RQ-DRAIN-1';
+    const skipped = 'RQ-DRAIN-2';
+    const report = generatorYield([
+      row({ job, event: 'launch' }),
+      row({ job, event: 'finish', empty: false, tokens_total: 100, diff_lines: 8 }),
+      row({ job, event: 'publish', state: 'MERGED' }),
+      row({ job: skipped, event: 'outcome', state: 'DONE-NOOP', launched: false, reason: 'already_completed' }),
+      row({ job, event: 'outcome', state: 'DONE-NOOP', launched: false, src: 'other', empty: true }),
+    ].join('\n'), 24, now, [
+      row({ job, event: 'drafted', src: 'drain' }),
+      row({ job: skipped, event: 'drafted', src: 'drain' }),
+    ].join('\n'));
+    expect(report.generators).toMatchObject([
+      { generator: 'drain', jobs: 1, drafted: 2, launched: 1, prs: 1, merged: 1,
+        emptyRate: 0, medianDiffLines: 8, tokensPerMergedPr: 100 },
+    ]);
+  });
   it('uses the newest recorded measurements when older receipts are appended late', () => {
     const job = 'RQ-DRAIN-1';
     const report = generatorYield([

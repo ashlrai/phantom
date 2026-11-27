@@ -71,6 +71,7 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
       const event = pickString(r, EVENT_KEYS)?.toLowerCase();
       const isDecision = event === 'drafted' || event === 'rejected';
       if (isGenerationJournal !== isDecision) continue;
+      if (!isDecision && r.launched === false) continue;
       const id = pickString(r, JOB_ID_KEYS);
       const terminal = isDecision ? null : terminalVerdict(r, event);
       // Reconciled outcomes can retain the original publish timestamp.
