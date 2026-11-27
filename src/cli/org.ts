@@ -55,6 +55,15 @@ function one(args: string[], name: string): string | undefined {
   return values[0];
 }
 
+/** --lane takes <lane> or <lane>=<share>; a comma separates lanes too, the same
+ * list spelling --caps uses, so `--lane a,b` and `--lane a --lane b` opt in
+ * identically. Lane ids and shares never contain a comma, so the split is
+ * unambiguous; each item still parses (and refuses) on its own, so a stray
+ * comma lands on the empty-name error rather than being silently dropped. */
+function takeLanes(args: string[]): string[] {
+  return take(args, '--lane').flatMap((s) => s.split(',').map((part) => part.trim()));
+}
+
 /** Once every known flag is taken nothing may remain: a stray word or an unknown
  * flag is refused, never ignored — a typo must not read as "no lanes" or "no queue". */
 function noLeftovers(args: string[]): void {
@@ -133,7 +142,7 @@ export async function cmdOrg(argv: string[]): Promise<number> {
     command = sub;
     if (sub === 'init') {
       const member = one(rest, '--member'), machine = one(rest, '--machine'), name = one(rest, '--name');
-      const laneArgs = take(rest, '--lane');
+      const laneArgs = takeLanes(rest);
       const agentArgs = take(rest, '--agent');
       noLeftovers(rest);
       if (!member || !machine) throw new OrgError('init needs --member and --machine.');
@@ -198,7 +207,7 @@ export async function cmdOrg(argv: string[]): Promise<number> {
     }
     if (sub === 'join') {
       const member = one(rest, '--member'), machine = one(rest, '--machine');
-      const laneArgs = take(rest, '--lane');
+      const laneArgs = takeLanes(rest);
       noLeftovers(rest);
       if (!member || !machine) {
         // --machine asserts which of the member's declared computers this join
