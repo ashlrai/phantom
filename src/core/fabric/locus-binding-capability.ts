@@ -11,7 +11,6 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { TextDecoder } from 'node:util';
 
 import { loadExistingProvenanceKeyReadOnly } from '../foundry/provenance.js';
 import {
@@ -22,6 +21,8 @@ import {
   exactKeys,
   hmacSha256Hex,
   isCanonicalIsoTimestamp as canonicalTimestamp,
+  pickRecordKeys,
+  strictExactRecord,
   strictPlainRecord as record,
   timingSafeUtf8Equal,
 } from './external-contract-codec.js';
@@ -47,8 +48,7 @@ const AUDIENCE_DOMAIN = 'ashlr:locus-binding-capability:audience:v1\0';
 const WORKSPACE_DOMAIN = 'ashlr:locus-binding-capability:workspace:v1\0';
 const IDENTITY_DOMAIN = 'ashlr:locus-binding-capability:identity:v1\0';
 const ATTESTATION_DOMAIN = 'ashlr:locus-binding-capability:attestation:v1\0';
-const CAPABILITY_ID_RE = /^hmac-sha256:[a-f0-9]{64}$/;
-const ATTESTATION_RE = /^hmac-sha256:[a-f0-9]{64}$/;
+const HMAC_SHA256_PREFIXED_RE = /^hmac-sha256:[a-f0-9]{64}$/;
 const NONCE_RE = /^[A-Za-z0-9_-]{43}$/;
 const CANONICAL_BOUNDS = {
   maxDepth: 4,
@@ -205,10 +205,6 @@ function validLineage(sequence: unknown, previous: unknown): sequence is number 
     ((sequence === 1) === (previous === LOCUS_WORKSPACE_IDENTITY_OBSERVATION_GENESIS_DIGEST));
 }
 
-function unsignedCapability(value: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(UNSIGNED_KEYS.map((key) => [key, value[key]]));
-}
-
 function validCapability(
   value: Record<string, unknown>,
 ): value is Record<string, unknown> & LocusBindingCapabilityV1 {
@@ -223,8 +219,8 @@ function validCapability(
       typeof value['audienceDigest'] !== 'string' || !DIGEST_RE.test(value['audienceDigest']) ||
       typeof value['workspaceDigest'] !== 'string' || !DIGEST_RE.test(value['workspaceDigest']) ||
       typeof value['nonce'] !== 'string' || !NONCE_RE.test(value['nonce']) ||
-      typeof value['capabilityId'] !== 'string' || !CAPABILITY_ID_RE.test(value['capabilityId']) ||
-      typeof value['attestation'] !== 'string' || !ATTESTATION_RE.test(value['attestation'])) return false;
+      typeof value['capabilityId'] !== 'string' || !HMAC_SHA256_PREFIXED_RE.test(value['capabilityId']) ||
+      typeof value['attestation'] !== 'string' || !HMAC_SHA256_PREFIXED_RE.test(value['attestation'])) return false;
   for (const key of [
     'sameUserTamperResistant', 'rollbackProtected', 'truthVerified',
     'releaseProvenanceVerified', 'policyGenerationVerified', 'trusted', 'planningAuthority',
@@ -246,11 +242,11 @@ export function mintLocusBindingCapabilityV1(
   candidate: MintLocusBindingCapabilityInputV1,
   dependencies: LocusBindingCapabilityDependenciesV1 = DEFAULT_DEPENDENCIES,
 ): MintLocusBindingCapabilityResultV1 {
-  const input = record(candidate);
-  if (!input || !exactKeys(input, [
+  const input = strictExactRecord(candidate, [
     'audienceLabel', 'workspaceLocator', 'purpose', 'policyGeneration', 'sequence',
     'previousObservationDigest', 'lifetimeMs',
-  ]) || !boundedPrivateString(input['audienceLabel'], LOCUS_BINDING_CAPABILITY_MAX_AUDIENCE_BYTES) ||
+  ]);
+  if (!input || !boundedPrivateString(input['audienceLabel'], LOCUS_BINDING_CAPABILITY_MAX_AUDIENCE_BYTES) ||
       !boundedPrivateString(input['workspaceLocator'], LOCUS_BINDING_CAPABILITY_MAX_WORKSPACE_BYTES) ||
       input['purpose'] !== LOCUS_BINDING_CAPABILITY_PURPOSE ||
       !Number.isSafeInteger(input['policyGeneration']) || Number(input['policyGeneration']) < 1 ||
@@ -384,10 +380,10 @@ export function verifyLocusBindingCapabilityV1(
   if (!canonical) return verifyFailure('invalid-capability');
   if (!canonical.equals(owned)) return verifyFailure('non-canonical-json');
 
-  const verificationContext = record(context);
-  if (!verificationContext || !exactKeys(verificationContext, ['capabilityId', 'purpose', 'policyGeneration']) ||
+  const verificationContext = strictExactRecord(context, ['capabilityId', 'purpose', 'policyGeneration']);
+  if (!verificationContext ||
       typeof verificationContext['capabilityId'] !== 'string' ||
-      !CAPABILITY_ID_RE.test(verificationContext['capabilityId']) ||
+      !HMAC_SHA256_PREFIXED_RE.test(verificationContext['capabilityId']) ||
       verificationContext['purpose'] !== LOCUS_BINDING_CAPABILITY_PURPOSE ||
       !Number.isSafeInteger(verificationContext['policyGeneration']) ||
       Number(verificationContext['policyGeneration']) < 1 ||
@@ -412,7 +408,7 @@ export function verifyLocusBindingCapabilityV1(
   if (!validKey(key)) return verifyFailure('key-unavailable');
   key = Buffer.from(key);
 
-  const unsigned = unsignedCapability(candidate);
+  const unsigned = pickRecordKeys(candidate, UNSIGNED_KEYS);
   const expectedId = `hmac-sha256:${hmac(key, IDENTITY_DOMAIN, unsigned)}`;
   if (!timingSafeUtf8Equal(candidate['capabilityId'], expectedId)) return verifyFailure('capability-id-mismatch');
   const expectedAttestation = `hmac-sha256:${hmac(key, ATTESTATION_DOMAIN, [candidate['capabilityId'], unsigned])}`;

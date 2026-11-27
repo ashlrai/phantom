@@ -29,21 +29,25 @@ import {
   SHA256_PREFIXED_DIGEST_RE as DIGEST_RE,
   canonicalJsonString,
   deepFreeze,
-  exactKeys,
   hmacSha256Hex,
-  isCanonicalIsoTimestamp,
+  isCanonicalIsoTimestamp24 as canonicalIso,
+  isEnumValue,
   isSafeIntegerInRange as safeInteger,
   sha256Prefixed,
-  strictPlainRecord as object,
+  strictExactRecord,
   timingSafeUtf8Equal as same,
 } from './external-contract-codec.js';
 import {
   compileExternalLocusWorkspaceIdentityObservationV1,
+  EXTERNAL_LOCUS_OBSERVATION_DIGEST_DOMAIN,
   EXTERNAL_LOCUS_WORKSPACE_IDENTITY_PROTOCOL,
+  LOCUS_OBSERVATION_DIGEST_DOMAIN,
+  LOCUS_SOURCE_VERSION_RE,
   LOCUS_WORKSPACE_IDENTITY_OBSERVATION_GENESIS_DIGEST,
   LOCUS_WORKSPACE_IDENTITY_OBSERVATION_MAX_FUTURE_SKEW_MS,
   LOCUS_WORKSPACE_IDENTITY_OBSERVATION_MAX_LIFETIME_MS,
   LOCUS_WORKSPACE_IDENTITY_OBSERVATION_MAX_SEQUENCE,
+  LOCUS_WORKSPACE_IDENTITY_OBSERVATION_PROTOCOL,
   type ExternalLocusWorkspaceIdentityObservationV1,
 } from './external-locus-workspace-identity.js';
 import {
@@ -61,11 +65,8 @@ const RECORD_DIGEST_DOMAIN = 'ashlr:locus-workspace-identity-ledger:record:v1\0'
 const ATTESTATION_DOMAIN = 'ashlr:locus-workspace-identity-ledger:attestation:v1\0';
 const CHAIN_KEY_DOMAIN = 'ashlr:locus-workspace-identity-ledger:chain-key:v1\0';
 const STAGE_DOMAIN = 'ashlr:locus-workspace-identity-ledger:stage:v1\0';
-const LOCUS_SOURCE_DIGEST_DOMAIN = 'ashlr:locus-workspace-identity-observation:v1\0';
-const EXTERNAL_DIGEST_DOMAIN = 'ashlr:external-locus-workspace-identity-observation:v1\0';
 const GENESIS_RECORD_DIGEST = `sha256:${'0'.repeat(64)}`;
 const PLAIN_DIGEST_RE = /^[a-f0-9]{64}$/;
-const LOCUS_VERSION_RE = /^0\.5\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const RECORD_FILE_RE = /^[a-f0-9]{64}\.[0-9]{16}\.[a-f0-9]{64}\.json$/;
 const MAX_RECORD_BYTES = 32 * 1024;
 const MAX_RECORDS = 4_096;
@@ -301,17 +302,13 @@ function hmac(key: Buffer, domain: string, values: readonly unknown[]): string {
   return hmacSha256Hex(key, domain, canonicalBytes(values));
 }
 
-function canonicalIso(value: unknown): value is string {
-  return isCanonicalIsoTimestamp(value, 24);
-}
-
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function validExternalObservation(value: unknown): value is ExternalLocusWorkspaceIdentityObservationV1 {
-  const row = object(value);
-  if (!row || !exactKeys(row, EXTERNAL_KEYS) || row['schemaVersion'] !== 1 ||
+  const row = strictExactRecord(value, EXTERNAL_KEYS);
+  if (!row || row['schemaVersion'] !== 1 ||
     row['protocol'] !== EXTERNAL_LOCUS_WORKSPACE_IDENTITY_PROTOCOL ||
     row['recordType'] !== 'external-locus-workspace-identity-observation' ||
     row['authority'] !== 'observation-only' || row['sourceState'] !== 'local-unverified' ||
@@ -330,34 +327,29 @@ function validExternalObservation(value: unknown): value is ExternalLocusWorkspa
     typeof row['phantomAvailable'] !== 'boolean' ||
     !safeInteger(row['unresolvedCredentials'], 0, MAX_AGGREGATE_COUNT)) return false;
 
-  const producer = object(row['producer']);
-  const posture = object(row['reportedPosture']);
-  const policy = object(posture?.['workspacePolicy']);
-  const mcp = object(row['mcpRegistered']);
-  const approval = object(row['approvalStore']);
-  const effects = object(row['effects']);
-  if (!producer || !exactKeys(producer, ['product', 'version', 'commit']) ||
+  const producer = strictExactRecord(row['producer'], ['product', 'version', 'commit']);
+  const posture = strictExactRecord(row['reportedPosture'], ['identity', 'pin', 'authorityAnchor', 'workspacePolicy']);
+  const policy = strictExactRecord(posture?.['workspacePolicy'], ['state', 'requirePin', 'pinAllowed']);
+  const mcp = strictExactRecord(row['mcpRegistered'], ['claude', 'cursor', 'codex', 'grok']);
+  const approval = strictExactRecord(row['approvalStore'], ['state', 'pending', 'dualControlWaiting']);
+  const effects = strictExactRecord(row['effects'], EFFECT_KEYS);
+  if (!producer ||
     producer['product'] !== 'locus' || typeof producer['version'] !== 'string' ||
-    producer['version'].length > 32 || !LOCUS_VERSION_RE.test(producer['version']) ||
+    producer['version'].length > 32 || !LOCUS_SOURCE_VERSION_RE.test(producer['version']) ||
     typeof producer['commit'] !== 'string' ||
     !COMMIT_RE.test(producer['commit']) || !posture ||
-    !exactKeys(posture, ['identity', 'pin', 'authorityAnchor', 'workspacePolicy']) ||
-    typeof posture['identity'] !== 'string' || !['ready', 'protected', 'unsafe', 'unknown'].includes(posture['identity']) ||
-    typeof posture['pin'] !== 'string' || !['absent', 'valid', 'frozen', 'expired', 'invalid', 'unknown'].includes(posture['pin']) ||
-    typeof posture['authorityAnchor'] !== 'string' ||
-    !['verified', 'unverified', 'unavailable'].includes(posture['authorityAnchor']) ||
-    !policy || !exactKeys(policy, ['state', 'requirePin', 'pinAllowed']) ||
-    typeof policy['state'] !== 'string' || !['valid', 'missing', 'invalid'].includes(policy['state']) ||
+    !isEnumValue(posture['identity'], ['ready', 'protected', 'unsafe', 'unknown']) ||
+    !isEnumValue(posture['pin'], ['absent', 'valid', 'frozen', 'expired', 'invalid', 'unknown']) ||
+    !isEnumValue(posture['authorityAnchor'], ['verified', 'unverified', 'unavailable']) ||
+    !policy || !isEnumValue(policy['state'], ['valid', 'missing', 'invalid']) ||
     typeof policy['requirePin'] !== 'boolean' ||
     (policy['pinAllowed'] !== null && typeof policy['pinAllowed'] !== 'boolean') ||
-    !mcp || !exactKeys(mcp, ['claude', 'cursor', 'codex', 'grok']) ||
-    Object.values(mcp).some((entry) => typeof entry !== 'boolean') ||
-    !approval || !exactKeys(approval, ['state', 'pending', 'dualControlWaiting']) ||
-    typeof approval['state'] !== 'string' || !['healthy', 'degraded', 'unavailable'].includes(approval['state']) ||
+    !mcp || Object.values(mcp).some((entry) => typeof entry !== 'boolean') ||
+    !approval || !isEnumValue(approval['state'], ['healthy', 'degraded', 'unavailable']) ||
     !safeInteger(approval['pending'], 0, MAX_AGGREGATE_COUNT) ||
     !safeInteger(approval['dualControlWaiting'], 0, MAX_AGGREGATE_COUNT) ||
     Number(approval['dualControlWaiting']) > Number(approval['pending']) ||
-    !effects || !exactKeys(effects, EFFECT_KEYS) || EFFECT_KEYS.some((key) => effects[key] !== false)) return false;
+    !effects || EFFECT_KEYS.some((key) => effects[key] !== false)) return false;
 
   if ((policy['state'] !== 'valid' &&
       (policy['requirePin'] !== false || policy['pinAllowed'] !== null)) ||
@@ -379,7 +371,7 @@ function validExternalObservation(value: unknown): value is ExternalLocusWorkspa
 
   const sourceUnsigned = {
     schemaVersion: 1,
-    protocol: 'ashlr-locus-workspace-identity-observation-v1',
+    protocol: LOCUS_WORKSPACE_IDENTITY_OBSERVATION_PROTOCOL,
     recordType: 'locus-workspace-identity-observation',
     authority: 'observation_only',
     sourceState: 'local_unverified',
@@ -420,16 +412,16 @@ function validExternalObservation(value: unknown): value is ExternalLocusWorkspa
       learning: false,
     },
   };
-  if (!same(row['sourceObservationDigest'], sha(LOCUS_SOURCE_DIGEST_DOMAIN, sourceUnsigned))) return false;
+  if (!same(row['sourceObservationDigest'], sha(LOCUS_OBSERVATION_DIGEST_DOMAIN, sourceUnsigned))) return false;
 
   const unsigned = { ...row };
   delete unsigned['observationDigest'];
-  return same(row['observationDigest'], sha(EXTERNAL_DIGEST_DOMAIN, unsigned));
+  return same(row['observationDigest'], sha(EXTERNAL_LOCUS_OBSERVATION_DIGEST_DOMAIN, unsigned));
 }
 
 function validChain(value: unknown): value is LocusWorkspaceIdentityChainV1 {
-  const row = object(value);
-  return Boolean(row && exactKeys(row, ['audienceDigest', 'workspaceDigest']) &&
+  const row = strictExactRecord(value, ['audienceDigest', 'workspaceDigest']);
+  return Boolean(row &&
     typeof row['audienceDigest'] === 'string' && DIGEST_RE.test(row['audienceDigest']) &&
     typeof row['workspaceDigest'] === 'string' && DIGEST_RE.test(row['workspaceDigest']));
 }
@@ -497,10 +489,10 @@ const DIRECT_UNVERIFIED_ADMISSION = Object.freeze({
 });
 
 function validBindingAdmission(value: unknown): value is LocusWorkspaceIdentityBindingAdmissionV1 {
-  const row = object(value);
-  if (!row || !exactKeys(row, [
+  const row = strictExactRecord(value, [
     'mode', 'capabilityId', 'purpose', 'policyGeneration', 'issuedAt', 'expiresAt',
-  ])) return false;
+  ]);
+  if (!row) return false;
   if (row['mode'] === 'direct-unverified') {
     return row['capabilityId'] === null && row['purpose'] === null &&
       row['policyGeneration'] === null && row['issuedAt'] === null && row['expiresAt'] === null;
@@ -550,8 +542,8 @@ function sealRecord(
 }
 
 function reconstructRecord(value: unknown, key: Buffer): LocusWorkspaceIdentityLedgerRecordV1 | null {
-  const row = object(value);
-  if (!row || key.length !== 32 || !exactKeys(row, RECORD_KEYS) || row['schemaVersion'] !== 1 ||
+  const row = strictExactRecord(value, RECORD_KEYS);
+  if (!row || key.length !== 32 || row['schemaVersion'] !== 1 ||
     row['protocol'] !== PROTOCOL || row['recordType'] !== RECORD_TYPE ||
     row['authority'] !== 'observation-only' || row['effectAuthority'] !== 'none' ||
     row['consistencyAssurance'] !== 'host-authenticated-local-lineage-only' ||
@@ -991,8 +983,8 @@ export function admitLocusWorkspaceIdentityObservationV1(
     defaultLocusWorkspaceIdentityLedgerDependenciesV1(),
   options: { lockWaitMs?: number } = {},
 ): LocusWorkspaceIdentityLedgerWriteResultV1 {
-  const row = object(input);
-  if (!row || !exactKeys(row, ['capabilityBytes', 'capabilityContext', 'observationBytes']) ||
+  const row = strictExactRecord(input, ['capabilityBytes', 'capabilityContext', 'observationBytes']);
+  if (!row ||
       !(row['capabilityBytes'] instanceof Uint8Array) || !(row['observationBytes'] instanceof Uint8Array)) {
     return failure('invalid-capability');
   }
@@ -1000,8 +992,8 @@ export function admitLocusWorkspaceIdentityObservationV1(
   const observationBytes = Buffer.from(row['observationBytes']);
   const capability = canonicalCapabilityFromBytes(capabilityBytes);
   if (!capability) return failure('invalid-capability');
-  const context = object(row['capabilityContext']);
-  if (!context || !exactKeys(context, ['capabilityId', 'purpose', 'policyGeneration'])) {
+  const context = strictExactRecord(row['capabilityContext'], ['capabilityId', 'purpose', 'policyGeneration']);
+  if (!context) {
     return failure('invalid-capability');
   }
   if (context['policyGeneration'] !== capability.policyGeneration) return failure('generation-mismatch');

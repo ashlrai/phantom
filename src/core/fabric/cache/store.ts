@@ -38,11 +38,11 @@ import {
   lstatSync,
   unlinkSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 import type { AshlrConfig } from '../../types.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
+import { fabricDir } from '../claude-rate-limit-event.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -117,7 +117,7 @@ const _lineCounts = new Map<string, number>();
 
 /** Resolve the cache directory (~/.ashlr/fabric/cache/). */
 function cacheBaseDir(): string {
-  return join(homedir(), '.ashlr', 'fabric', 'cache');
+  return join(fabricDir(), 'cache');
 }
 
 /**

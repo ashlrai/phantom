@@ -77,7 +77,7 @@ export interface ReaderOptions {
   fetchImpl?: typeof fetch;
 }
 
-export function defaultReaders(o: ReaderOptions): Partial<Record<SelfLane, SanctionedReader>> {
+function defaultReaders(o: ReaderOptions): Partial<Record<SelfLane, SanctionedReader>> {
   const readers: Partial<Record<SelfLane, SanctionedReader>> = {
     // Claude: Phantom's own parsed `/usage` reading, else its sanitized stream-json rate_limit_event store.
     claude: async () => {

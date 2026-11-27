@@ -12,10 +12,12 @@ import {
   decodeStrictUtf8JsonBytes,
   deepFreeze as immutable,
   exactKeys,
-  isCanonicalIsoTimestamp,
+  isCanonicalIsoTimestamp24 as canonicalIso,
   isEnumValue as enumValue,
   isSafeIntegerInRange as integer,
+  pickRecordKeys,
   sha256Prefixed as sha,
+  strictExactRecord,
   strictPlainRecord as record,
   timingSafeUtf8Equal as sameText,
 } from './external-contract-codec.js';
@@ -29,6 +31,10 @@ export const LOCUS_WORKSPACE_IDENTITY_OBSERVATION_MAX_LIFETIME_MS = 5 * 60_000;
 export const LOCUS_WORKSPACE_IDENTITY_OBSERVATION_MAX_FUTURE_SKEW_MS = 60_000;
 export const LOCUS_WORKSPACE_IDENTITY_OBSERVATION_MAX_SEQUENCE = Number.MAX_SAFE_INTEGER;
 export const LOCUS_WORKSPACE_IDENTITY_OBSERVATION_GENESIS_DIGEST = `sha256:${'0'.repeat(64)}`;
+export const LOCUS_SOURCE_VERSION_RE =
+  /^0\.5\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+export const LOCUS_OBSERVATION_DIGEST_DOMAIN = 'ashlr:locus-workspace-identity-observation:v1\0';
+export const EXTERNAL_LOCUS_OBSERVATION_DIGEST_DOMAIN = 'ashlr:external-locus-workspace-identity-observation:v1\0';
 
 const PRODUCER_RECORD_TYPE = 'locus-workspace-identity-observation' as const;
 const MAX_AGGREGATE_COUNT = 1_000_000;
@@ -37,9 +43,6 @@ const CANONICAL_BOUNDS = {
   maxNodes: 256,
   maxBytes: LOCUS_WORKSPACE_IDENTITY_OBSERVATION_MAX_BYTES,
 };
-const LOCUS_SOURCE_VERSION_RE = /^0\.5\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-const DIGEST_DOMAIN = 'ashlr:locus-workspace-identity-observation:v1\0';
-const OUTPUT_DIGEST_DOMAIN = 'ashlr:external-locus-workspace-identity-observation:v1\0';
 
 const TOP_LEVEL_KEYS = [
   'adapterManifestDigest', 'approvalStore', 'audienceDigest', 'authority', 'authorityAnchor',
@@ -225,29 +228,27 @@ function canonicalBytes(value: unknown): Buffer | null {
   return canonicalJsonBytes(value, CANONICAL_BOUNDS);
 }
 
-function canonicalIso(value: unknown): value is string {
-  return isCanonicalIsoTimestamp(value, 24);
+function locusProducerVersion(value: unknown): string | null {
+  const producer = strictExactRecord(value, PRODUCER_KEYS);
+  if (!producer || producer['product'] !== 'locus' ||
+    typeof producer['version'] !== 'string' || producer['version'].length > 32 ||
+    typeof producer['commit'] !== 'string' || !COMMIT_RE.test(producer['commit'])) return null;
+  return producer['version'];
 }
 
 function validProducer(value: unknown): value is LocusWorkspaceIdentityObservationV1['producer'] {
-  const producer = record(value);
-  return Boolean(producer && exactKeys(producer, PRODUCER_KEYS) && producer['product'] === 'locus' &&
-    typeof producer['version'] === 'string' && producer['version'].length <= 32 &&
-    LOCUS_SOURCE_VERSION_RE.test(producer['version']) &&
-    typeof producer['commit'] === 'string' && COMMIT_RE.test(producer['commit']));
+  const version = locusProducerVersion(value);
+  return version !== null && LOCUS_SOURCE_VERSION_RE.test(version);
 }
 
 function unsupportedProducer(value: unknown): boolean {
-  const producer = record(value);
-  return Boolean(producer && exactKeys(producer, PRODUCER_KEYS) && producer['product'] === 'locus' &&
-    typeof producer['version'] === 'string' && producer['version'].length <= 32 && SEMVER_RE.test(producer['version']) &&
-    !LOCUS_SOURCE_VERSION_RE.test(producer['version']) && typeof producer['commit'] === 'string' &&
-    COMMIT_RE.test(producer['commit']));
+  const version = locusProducerVersion(value);
+  return version !== null && SEMVER_RE.test(version) && !LOCUS_SOURCE_VERSION_RE.test(version);
 }
 
 function validWorkspacePolicy(value: unknown): value is LocusWorkspaceIdentityObservationV1['workspacePolicy'] {
-  const policy = record(value);
-  if (!policy || !exactKeys(policy, WORKSPACE_POLICY_KEYS) ||
+  const policy = strictExactRecord(value, WORKSPACE_POLICY_KEYS);
+  if (!policy ||
     !enumValue(policy['state'], ['valid', 'missing', 'invalid']) ||
     typeof policy['requirePin'] !== 'boolean' ||
     (policy['pinAllowed'] !== null && typeof policy['pinAllowed'] !== 'boolean')) return false;
@@ -256,14 +257,13 @@ function validWorkspacePolicy(value: unknown): value is LocusWorkspaceIdentityOb
 }
 
 function validMcp(value: unknown): value is LocusWorkspaceIdentityObservationV1['mcpRegistered'] {
-  const mcp = record(value);
-  return Boolean(mcp && exactKeys(mcp, MCP_REGISTERED_KEYS) &&
-    MCP_REGISTERED_KEYS.every((key) => typeof mcp[key] === 'boolean'));
+  const mcp = strictExactRecord(value, MCP_REGISTERED_KEYS);
+  return Boolean(mcp && MCP_REGISTERED_KEYS.every((key) => typeof mcp[key] === 'boolean'));
 }
 
 function validApprovalStore(value: unknown): value is LocusWorkspaceIdentityObservationV1['approvalStore'] {
-  const approval = record(value);
-  return Boolean(approval && exactKeys(approval, APPROVAL_STORE_KEYS) &&
+  const approval = strictExactRecord(value, APPROVAL_STORE_KEYS);
+  return Boolean(approval &&
     enumValue(approval['state'], ['healthy', 'degraded', 'unavailable']) &&
     integer(approval['pending'], 0, MAX_AGGREGATE_COUNT) &&
     integer(approval['dualControlWaiting'], 0, MAX_AGGREGATE_COUNT) &&
@@ -273,13 +273,13 @@ function validApprovalStore(value: unknown): value is LocusWorkspaceIdentityObse
 }
 
 function validEffects(value: unknown): value is LocusWorkspaceIdentityObservationV1['effects'] {
-  const effects = record(value);
-  return Boolean(effects && exactKeys(effects, EFFECT_KEYS) && EFFECT_KEYS.every((key) => effects[key] === false));
+  const effects = strictExactRecord(value, EFFECT_KEYS);
+  return Boolean(effects && EFFECT_KEYS.every((key) => effects[key] === false));
 }
 
 function structuralIssue(value: unknown): ExternalLocusWorkspaceIdentityIssueV1 | null {
-  const observation = record(value);
-  if (!observation || !exactKeys(observation, TOP_LEVEL_KEYS)) return 'invalid-observation';
+  const observation = strictExactRecord(value, TOP_LEVEL_KEYS);
+  if (!observation) return 'invalid-observation';
   if (observation['schemaVersion'] !== 1 || observation['protocol'] !== LOCUS_WORKSPACE_IDENTITY_OBSERVATION_PROTOCOL ||
     observation['recordType'] !== PRODUCER_RECORD_TYPE) return 'unsupported-version';
   if (unsupportedProducer(observation['producer'])) return 'unsupported-version';
@@ -328,10 +328,6 @@ function structuralIssue(value: unknown): ExternalLocusWorkspaceIdentityIssueV1 
     : null;
 }
 
-function unsignedProjection(value: LocusWorkspaceIdentityObservationV1): Record<string, unknown> {
-  return Object.fromEntries(UNSIGNED_KEYS.map((key) => [key, value[key]]));
-}
-
 /** Canonical bytes for one structurally valid producer observation. */
 export function canonicalLocusWorkspaceIdentityObservationBytesV1(value: unknown): Buffer | null {
   return structuralIssue(value) === null ? canonicalBytes(value) : null;
@@ -345,11 +341,11 @@ export function locusWorkspaceIdentityObservationDigestV1(value: unknown): strin
     const full = exactKeys(row, TOP_LEVEL_KEYS);
     const unsigned = exactKeys(row, UNSIGNED_KEYS);
     if (!full && !unsigned) return null;
-    const candidate = full ? unsignedProjection(value as LocusWorkspaceIdentityObservationV1) : row;
+    const candidate = full ? pickRecordKeys(value as LocusWorkspaceIdentityObservationV1, UNSIGNED_KEYS) : row;
     const synthetic = { ...candidate, observationDigest: `sha256:${'0'.repeat(64)}` };
     if (structuralIssue(synthetic) !== null) return null;
     const bytes = canonicalBytes(candidate);
-    return bytes ? sha(DIGEST_DOMAIN, bytes) : null;
+    return bytes ? sha(LOCUS_OBSERVATION_DIGEST_DOMAIN, bytes) : null;
   } catch {
     return null;
   }
@@ -436,7 +432,7 @@ function observationOf(source: LocusWorkspaceIdentityObservationV1): ExternalLoc
   };
   return immutable({
     ...unsigned,
-    observationDigest: sha(OUTPUT_DIGEST_DOMAIN, canonicalBytes(unsigned)!),
+    observationDigest: sha(EXTERNAL_LOCUS_OBSERVATION_DIGEST_DOMAIN, canonicalBytes(unsigned)!),
   });
 }
 

@@ -5,18 +5,24 @@ import { describe, expect, it } from 'vitest';
 import {
   canonicalJsonBytes,
   canonicalJsonString,
+  compareText,
   decodeStrictUtf8JsonBytes,
   deepFreeze,
+  digestUnsignedRecordV1,
   exactKeys,
   hmacSha256Hex,
   isCanonicalIsoTimestamp,
+  isCanonicalIsoTimestamp24,
   isEnumValue,
   isSafeIntegerInRange,
   isUnsupportedStackSourceVersionV1,
   isValidStackSourceV1,
+  pickRecordKeys,
   sha256Hex,
   sha256Prefixed,
+  strictExactRecord,
   strictPlainRecord,
+  timingSafeBufferEqual,
   timingSafeUtf8Equal,
 } from '../src/core/fabric/external-contract-codec.js';
 
@@ -38,6 +44,13 @@ describe('external-contract-codec', () => {
     expect(strictPlainRecord({ [Symbol('k')]: 1 })).toBeNull();
     expect(exactKeys({ b: 1, a: 2 }, ['a', 'b'])).toBe(true);
     expect(exactKeys({ a: 1 }, ['a', 'b'])).toBe(false);
+    expect(strictExactRecord({ b: 1, a: 2 }, ['a', 'b'])).toEqual({ b: 1, a: 2 });
+    expect(strictExactRecord({ a: 1 }, ['a', 'b'])).toBeNull();
+    expect(strictExactRecord({ get a() { return 1; } }, ['a'])).toBeNull();
+    expect(pickRecordKeys({ a: 1, b: 2, c: 3 }, ['a', 'c'])).toEqual({ a: 1, c: 3 });
+    expect(compareText('a', 'b')).toBe(-1);
+    expect(compareText('b', 'a')).toBe(1);
+    expect(compareText('a', 'a')).toBe(0);
   });
 
   it('canonicalizes bounded JSON values and rejects hostile or oversized inputs', () => {
@@ -67,13 +80,27 @@ describe('external-contract-codec', () => {
     expect(hmacSha256Hex(key, 'ashlr:test:v1', payload)).toBe(hmacSha256Hex(key, 'ashlr:test:v1\0', '{"ok":true}'));
     expect(hmacSha256Hex(key, 'ashlr:test:v1', payload)).not.toBe(hmacSha256Hex(otherKey, 'ashlr:test:v1', payload));
     expect(hmacSha256Hex(key, 'ashlr:test:v1', payload)).not.toBe(hmacSha256Hex(key, 'ashlr:test:v2', payload));
+    expect(timingSafeBufferEqual(Buffer.from('abc'), Buffer.from('abc'))).toBe(true);
+    expect(timingSafeBufferEqual(Buffer.from('abc'), Buffer.from('abd'))).toBe(false);
+    expect(timingSafeBufferEqual(Buffer.from('abc'), Buffer.from('ab'))).toBe(false);
     expect(timingSafeUtf8Equal('abc', 'abc')).toBe(true);
     expect(timingSafeUtf8Equal('abc', 'abd')).toBe(false);
     expect(timingSafeUtf8Equal('abc', 123)).toBe(false);
+
+    const unsigned = { a: 1, b: 'ok' };
+    const expected = sha256Prefixed('ashlr:test-record:v1', canonicalJsonBytes(unsigned, BOUNDS)!);
+    expect(digestUnsignedRecordV1(unsigned, ['a', 'b', 'digest'], ['a', 'b'], BOUNDS, 'ashlr:test-record:v1'))
+      .toBe(expected);
+    expect(digestUnsignedRecordV1({ ...unsigned, digest: expected }, ['a', 'b', 'digest'], ['a', 'b'], BOUNDS, 'ashlr:test-record:v1'))
+      .toBe(expected);
+    expect(digestUnsignedRecordV1({ a: 1 }, ['a', 'b', 'digest'], ['a', 'b'], BOUNDS, 'ashlr:test-record:v1'))
+      .toBeNull();
   });
 
   it('validates timestamps, ranges, enums, Stack 0.2.x sources, and deep-freezes graphs', () => {
     expect(isCanonicalIsoTimestamp('2026-11-26T00:00:00.000Z', 24)).toBe(true);
+    expect(isCanonicalIsoTimestamp24('2026-11-26T00:00:00.000Z')).toBe(true);
+    expect(isCanonicalIsoTimestamp24('+010000-01-01T00:00:00.000Z')).toBe(false);
     expect(isCanonicalIsoTimestamp('2026-11-26T00:00:00Z', 24)).toBe(false);
     expect(isCanonicalIsoTimestamp('+010000-01-01T00:00:00.000Z', 24)).toBe(false);
     expect(isCanonicalIsoTimestamp('+010000-01-01T00:00:00.000Z')).toBe(true);
