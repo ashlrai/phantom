@@ -115,30 +115,65 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n, now)]));
   const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
+  const jobs = state.jobs.filter(j => j.owner && (owner === undefined || j.owner === owner) && routable(j, now));
+  const nodeHasRoom = (node: NodeRecord) => node.slots === undefined || claims.get(node.nodeId)! < node.slots;
+  const hostRoom = (hostId: string, freeSlots: number | null) => (freeSlots ?? 0) - (reserved.get(hostId) ?? 0);
+  const soleHost = new Map<string, string>();
+  const demand = new Map<string, number>();
+  if (state.pool) {
+    // Count jobs with exactly one feasible physical host before making any
+    // reservations. Running claims have already reduced the available slots.
+    const available = nodes.filter(node => {
+      const host = hosts.get(node.nodeId);
+      return nodeHasRoom(node) && host?.eligibleNodeIds.includes(node.nodeId) && (host.freeSlots ?? 0) > 0;
+    });
+    for (const job of jobs) {
+      let onlyHost: string | undefined;
+      for (const node of available) {
+        if (shortfall(node, job)) continue;
+        const hostId = hosts.get(node.nodeId)!.hostId;
+        if (onlyHost !== undefined && onlyHost !== hostId) {
+          onlyHost = undefined;
+          break;
+        }
+        onlyHost = hostId;
+      }
+      if (onlyHost === undefined) continue;
+      soleHost.set(job.id, onlyHost);
+      demand.set(onlyHost, (demand.get(onlyHost) ?? 0) + 1);
+    }
+  }
   const plan: RouteAssignment[] = [];
-  for (const job of state.jobs) {
-    if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
+  for (const job of jobs) {
+    const onlyHost = soleHost.get(job.id);
+    if (onlyHost !== undefined) demand.set(onlyHost, demand.get(onlyHost)! - 1);
     const reasons = new Map<string, number>();
     let best: NodeRecord | null = null;
+    let bestProtected = false;
+    let bestScore = -Infinity;
     for (const node of nodes) {
       const why = shortfall(node, job);
       if (why) { reasons.set(why.split(':')[0]!, 1); continue; }
-      if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) { reasons.set('capacity', 1); continue; }
+      if (!nodeHasRoom(node)) { reasons.set('capacity', 1); continue; }
       const host = hosts.get(node.nodeId);
       if (state.pool && (!host || !host.eligibleNodeIds.includes(node.nodeId) ||
-          (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) { reasons.set('capacity', 1); continue; }
-      const score = (n: NodeRecord) => {
-        const h = hosts.get(n.nodeId)!;
-        return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency) : -load.get(n.nodeId)!;
-      };
-      if (!best || score(node) > score(best)) best = node;
+          hostRoom(host.hostId, host.freeSlots) <= 0)) { reasons.set('capacity', 1); continue; }
+      const poolHost = state.pool ? host : undefined;
+      const room = poolHost ? hostRoom(poolHost.hostId, poolHost.freeSlots) : 0;
+      const protectedSlot = poolHost !== undefined && room <= (demand.get(poolHost.hostId) ?? 0);
+      const score = poolHost ? room / Math.max(1, poolHost.latency.medianMs ?? neutralLatency) : -load.get(node.nodeId)!;
+      if (!best || (bestProtected && !protectedSlot) || (protectedSlot === bestProtected && score > bestScore)) {
+        best = node;
+        bestProtected = protectedSlot;
+        bestScore = score;
+      }
     }
     if (best) {
       const host = hosts.get(best.nodeId);
       if (host) reserved.set(host.hostId, (reserved.get(host.hostId) ?? 0) + 1);
       load.set(best.nodeId, load.get(best.nodeId)! + CLAIM_LOAD);
       claims.set(best.nodeId, claims.get(best.nodeId)! + 1);
-      plan.push({ jobId: job.id, owner: job.owner, nodeId: best.nodeId });
+      plan.push({ jobId: job.id, owner: job.owner!, nodeId: best.nodeId });
       continue;
     }
     const requires = job.requires ?? [];
@@ -151,7 +186,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       : reasons.has('caps')
         ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
         : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
-    plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
+    plan.push({ jobId: job.id, owner: job.owner!, nodeId: null, fix });
   }
   return plan;
 }

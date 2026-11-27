@@ -19,8 +19,8 @@ function fixture() {
     run('beat', ['--node', nodeId, '--session', String(node.session), '--capacity', JSON.stringify({
       ramBytes: 128 * 1024 ** 3, slots: 22, held: null, hostId: nodeId, sampledAtMs: now, ...sample })]);
   };
-  const add = (nodeId: string, sample: Partial<NodeCapacitySample> = {}) => {
-    run('join', ['--node', nodeId, '--caps', 'codex', '--slots', '64']); beat(nodeId, sample);
+  const add = (nodeId: string, sample: Partial<NodeCapacitySample> = {}, caps = 'codex') => {
+    run('join', ['--node', nodeId, '--caps', caps, '--slots', '64']); beat(nodeId, sample);
     return state.nodes.find(n => n.nodeId === nodeId)!;
   };
   const enqueue = (id = 'job') => run('enqueue', ['--job', id, '--requires', 'codex']);
@@ -42,6 +42,24 @@ test('pool dispatch prefers measured free slots and shares one host budget acros
   expect(report.lanes[0]).toMatchObject({ running: 2, target: 5, effectiveTarget: 4, floor: 1, queued: 6, available: 2 });
   expect(report.queue).toEqual({ nodePending: 5, laneQueued: 6 });
   expect(f.plan().filter(r => r.nodeId)).toHaveLength(3);
+});
+
+test.each([1, 2])('pool protects a specialist host with %i shared slot(s) only as needed', slots => {
+  const f = fixture();
+  const specialist = f.add('a-worker', { hostId: 'specialist', slots }, 'codex,build');
+  f.add('b-worker', { hostId: 'specialist', slots }, 'codex,build');
+  const general = f.add('z-worker', { slots: 1 });
+  f.enqueue('flexible');
+  f.run('enqueue', ['--job', 'specialized', '--requires', 'build']);
+
+  const first = slots === 1 ? general : specialist;
+  expect(f.plan().map(({ jobId, nodeId }) => [jobId, nodeId])).toEqual([
+    ['flexible', first.nodeId],
+    ['specialized', specialist.nodeId],
+  ]);
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  expect(nodes.pull(first)?.job.id).toBe('flexible');
+  expect(nodes.pull(specialist)?.job.id).toBe('specialized');
 });
 
 test('unknown, stale, future and expired reports never become pool capacity; exact two-interval boundary is fresh', () => {
