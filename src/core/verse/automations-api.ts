@@ -48,15 +48,12 @@ import {
 } from '../automations/index.js';
 import { refreshAutomationsNeedsYou } from '../automations/needs-you.js';
 import { automationsSchedulerRunning } from '../automations/scheduler.js';
+import { AUTOMATION_INPUT_KEYS, isRecord } from '../automations/validate.js';
 
 const DEFINITION_BODY_MAX = 32 * 1024;
 const SMALL_BODY_MAX = 4 * 1024;
 const WEBHOOK_BODY_MAX = 32 * 1024;
 
-const DEFINITION_KEYS = [
-  'id', 'name', 'enabled', 'trigger', 'lane', 'playbookId', 'repos', 'instructions',
-  'maxConcurrent', 'maxPerDay', 'queueDepth', 'spendCapUsd', 'dedupeKey', 'triage',
-] as const;
 const FIRE_KEYS = ['dryRun', 'repo', 'title', 'text'] as const;
 const WEBHOOK_KEYS = ['repo', 'title', 'text', 'key', 'url'] as const;
 
@@ -119,7 +116,7 @@ async function readMutationBody(
     sendInvalid(res, 'invalid JSON body');
     return null;
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+  if (!isRecord(parsed)) {
     sendInvalid(res, 'body must be a JSON object');
     return null;
   }
@@ -129,7 +126,7 @@ async function readMutationBody(
       return null;
     }
   }
-  return parsed as Record<string, unknown>;
+  return parsed;
 }
 
 const defaultIsLoopback = (req: IncomingMessage): boolean => LOOPBACK.has(req.socket?.remoteAddress ?? '');
@@ -163,7 +160,7 @@ export function createAutomationsApi(deps: AutomationsApiDeps = {}): ApiModule {
 
       // ── POST /api/verse/automations (create) ─────────────────────────────
       if (p === VERSE_AUTOMATIONS_PATH) {
-        const body = await readMutationBody(ctx, req, res, DEFINITION_KEYS, DEFINITION_BODY_MAX);
+        const body = await readMutationBody(ctx, req, res, AUTOMATION_INPUT_KEYS, DEFINITION_BODY_MAX);
         if (!body) return true;
         const automation = await createAutomation(body);
         sendJson(res, 201, { automation });
@@ -195,7 +192,7 @@ export function createAutomationsApi(deps: AutomationsApiDeps = {}): ApiModule {
 
       // ── POST /api/verse/automations/<id> (update) ────────────────────────
       if (verb === undefined) {
-        const body = await readMutationBody(ctx, req, res, DEFINITION_KEYS, DEFINITION_BODY_MAX);
+        const body = await readMutationBody(ctx, req, res, AUTOMATION_INPUT_KEYS, DEFINITION_BODY_MAX);
         if (!body) return true;
         const automation = await updateAutomation(id, body);
         if (!automation) return (sendNotFound(res, `automation ${id}`), true);
@@ -249,15 +246,20 @@ export function createAutomationsApi(deps: AutomationsApiDeps = {}): ApiModule {
           if (!body) return true;
           const text = optionalString(body, 'text');
           if (typeof text !== 'string') return (sendInvalid(res, 'text is required'), true);
-          for (const key of ['repo', 'title', 'key', 'url'] as const) {
-            if (optionalString(body, key) === null) return (sendInvalid(res, `${key} must be text`), true);
-          }
+          const repo = optionalString(body, 'repo');
+          if (repo === null) return (sendInvalid(res, 'repo must be text'), true);
+          const title = optionalString(body, 'title');
+          if (title === null) return (sendInvalid(res, 'title must be text'), true);
+          const key = optionalString(body, 'key');
+          if (key === null) return (sendInvalid(res, 'key must be text'), true);
+          const url = optionalString(body, 'url');
+          if (url === null) return (sendInvalid(res, 'url must be text'), true);
           const result = await receiveWebhook(id, {
             text,
-            ...(typeof body['repo'] === 'string' ? { repo: body['repo'] } : {}),
-            ...(typeof body['title'] === 'string' ? { title: body['title'] } : {}),
-            ...(typeof body['key'] === 'string' ? { key: body['key'] } : {}),
-            ...(typeof body['url'] === 'string' ? { url: body['url'] } : {}),
+            ...(repo !== undefined ? { repo } : {}),
+            ...(title !== undefined ? { title } : {}),
+            ...(key !== undefined ? { key } : {}),
+            ...(url !== undefined ? { url } : {}),
           }, engine);
           await refreshAutomationsNeedsYou();
           sendJson(res, result.status, { ok: result.ok, firing: result.firing, deduped: result.deduped, error: result.error });

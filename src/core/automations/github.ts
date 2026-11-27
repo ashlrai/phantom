@@ -10,7 +10,7 @@
  * reaches a lane only as DATA inside the task prompt.
  */
 import { scrubSecrets } from '../util/scrub.js';
-import { cleanText } from './validate.js';
+import { cleanText, isRecord, isValidBranchName, parseIsoDate } from './validate.js';
 import { AUTOMATION_LIMITS, type CiRedTrigger, type GithubIssuesTrigger } from './types.js';
 
 export type AutomationGh = (args: string[]) => Promise<{ ok: boolean; stdout: string; stderr: string }>;
@@ -42,7 +42,7 @@ const FAILING_CONCLUSIONS = new Set(['failure', 'timed_out', 'startup_failure'])
  */
 const TRUSTED_AUTHORS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
-export function safeGithubUrl(value: unknown): string | null {
+function safeGithubUrl(value: unknown): string | null {
   return typeof value === 'string' && GITHUB_HTML_URL.test(value) ? value : null;
 }
 
@@ -75,7 +75,7 @@ export function parseGhInclude(stdout: string): GhHttpResult | null {
 }
 
 /** GET via `gh api -i`, with If-None-Match when an ETag is known. */
-export async function ghGet(gh: AutomationGh, path: string, params: Record<string, string>, etag: string | null): Promise<GhHttpResult | { error: string }> {
+async function ghGet(gh: AutomationGh, path: string, params: Record<string, string>, etag: string | null): Promise<GhHttpResult | { error: string }> {
   const args = ['api', '-i', '-X', 'GET', path];
   for (const [key, value] of Object.entries(params)) args.push('-f', `${key}=${value}`);
   if (etag) args.push('-H', `If-None-Match: ${etag}`);
@@ -88,7 +88,8 @@ export async function ghGet(gh: AutomationGh, path: string, params: Record<strin
   const parsed = parseGhInclude(res.stdout);
   if (parsed && (parsed.status === 304 || (parsed.status >= 200 && parsed.status < 300))) return parsed;
   if (/\b304\b/.test(res.stderr) && etag) return { status: 304, etag, body: null };
-  const status = parsed?.status ?? (/HTTP (\d{3})/.exec(res.stderr)?.[1] ? Number(/HTTP (\d{3})/.exec(res.stderr)![1]) : null);
+  const stderrStatus = /HTTP (\d{3})/.exec(res.stderr)?.[1];
+  const status = parsed?.status ?? (stderrStatus ? Number(stderrStatus) : null);
   if (status === 404) return { error: `GitHub answered 404 for ${path.split('/').slice(0, 3).join('/')} (repo missing or not visible to gh).` };
   if (status === 403 || status === 429) return { error: 'GitHub rate-limited or refused the poll; it will retry on the next interval.' };
   return { error: `GitHub poll failed${status ? ` (HTTP ${status})` : ''}; it will retry on the next interval.` };
@@ -157,14 +158,15 @@ export async function pollIssues(
     }, cursor.etag);
   if ('error' in result) return { events: [], since: cursor.since, etag: cursor.etag, error: result.error };
   if (result.status === 304) return { events: [], since: cursor.since, etag: cursor.etag, error: null };
-  const list: unknown = searchMode ? (result.body as { items?: unknown } | null)?.items : result.body;
+  const list: unknown = searchMode ? (isRecord(result.body) ? result.body['items'] : undefined) : result.body;
   if (!Array.isArray(list)) return { events: [], since: cursor.since, etag: cursor.etag, error: 'GitHub answered with an unexpected shape.' };
 
   let since = cursor.since;
   const events: TriggerEvent[] = [];
-  for (const raw of list.slice(0, AUTOMATION_LIMITS.issuesPerPoll) as RawIssue[]) {
-    if (!raw || typeof raw !== 'object') continue;
-    const updated = typeof raw.updated_at === 'string' && !Number.isNaN(Date.parse(raw.updated_at)) ? raw.updated_at : null;
+  for (const entry of list.slice(0, AUTOMATION_LIMITS.issuesPerPoll)) {
+    if (!isRecord(entry)) continue;
+    const raw = entry as RawIssue;
+    const updated = parseIsoDate(raw.updated_at) ? (raw.updated_at as string) : null;
     if (updated && (since === null || updated > since)) since = updated;
     if (typeof raw.number !== 'number' || !Number.isInteger(raw.number) || raw.number <= 0) continue;
     if (raw.state !== undefined && raw.state !== 'open') continue;
@@ -203,11 +205,11 @@ interface RawCheckRun {
   html_url?: unknown;
 }
 
-export async function resolveDefaultBranch(gh: AutomationGh, repo: string): Promise<string | { error: string }> {
+async function resolveDefaultBranch(gh: AutomationGh, repo: string): Promise<string | { error: string }> {
   const res = await ghGet(gh, `repos/${repo}`, {}, null);
   if ('error' in res) return res;
-  const name = (res.body as { default_branch?: unknown } | null)?.default_branch;
-  if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(name)) return { error: `GitHub did not say what ${repo}'s default branch is.` };
+  const name = isRecord(res.body) ? res.body['default_branch'] : undefined;
+  if (!isValidBranchName(name)) return { error: `GitHub did not say what ${repo}'s default branch is.` };
   return name;
 }
 
@@ -226,12 +228,13 @@ export async function pollRedBranch(
   const res = await ghGet(gh, `repos/${repo}/commits/${encodeURIComponent(branch)}/check-runs`, { per_page: '100', filter: 'latest' }, cursor.etag);
   if ('error' in res) return { events: [], branch, etag: cursor.etag, error: res.error };
   if (res.status === 304) return { events: [], branch, etag: cursor.etag, error: null };
-  const runs = (res.body as { check_runs?: unknown } | null)?.check_runs;
+  const runs = isRecord(res.body) ? res.body['check_runs'] : undefined;
   if (!Array.isArray(runs)) return { events: [], branch, etag: cursor.etag, error: 'GitHub answered with an unexpected shape.' };
 
   const failing: Array<{ name: string; url: string | null; sha: string }> = [];
-  for (const raw of runs as RawCheckRun[]) {
-    if (!raw || typeof raw !== 'object') continue;
+  for (const entry of runs) {
+    if (!isRecord(entry)) continue;
+    const raw = entry as RawCheckRun;
     if (raw.status !== 'completed' || typeof raw.conclusion !== 'string' || !FAILING_CONCLUSIONS.has(raw.conclusion)) continue;
     if (typeof raw.head_sha !== 'string' || !/^[0-9a-f]{40}$/.test(raw.head_sha)) continue;
     failing.push({ name: untrustedTitle(raw.name) || 'a check', url: safeGithubUrl(raw.html_url), sha: raw.head_sha });
