@@ -1004,7 +1004,9 @@ so it can differ from `ready`. When `ready.tsv` is missing, the split reads
 `unknown` in text, all three counts (`ready`, `filler`, `real`) are `null`
 in JSON, and `open_rows` is `null`. An empty file yields zero counts. Lane
 selection and the exit code still use the status snapshot.
-Lanes with `held: true` in the dispatcher snapshot are excluded.
+The report excludes lanes held in the dispatcher snapshot or named in the
+runs root's whitespace-separated `HOLD` file. Operator holds take effect
+between ticks. If the file exists but cannot be read, the command exits 2.
 A dispatcher pause, an explicit admission stop, or a full shared fleet cap
 suppresses all lane verdicts and yields exit 0. The lane-open row count is
 still reported. Legacy snapshots without usable fleet admission evidence

@@ -236,6 +236,33 @@ describe('findStarvedLanes', () => {
 });
 
 describe('cmdFleetLaneStarve', () => {
+  it('withholds lane verdicts when the operator HOLD file cannot be read', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), STATUS);
+    mkdirSync(join(dir, 'HOLD'));
+    const { code, lines } = await run();
+    expect(code).toBe(2);
+    const report = JSON.parse(lines[0]!);
+    expect(report.error).toContain('HOLD');
+    expect(report).not.toHaveProperty('lanes');
+  });
+
+  it.each([
+    { hold: 'other\tclaude-api\n', lanes: ['devin'], code: 1 },
+    { hold: 'claude-api\tdevin\n', lanes: [], code: 0 },
+  ])('honors operator holds between dispatcher ticks (%j)', async ({ hold, lanes, code }) => {
+    const status = JSON.parse(STATUS);
+    status.lanes.devin.queued = 2;
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify(status));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), 'RQ-OPEN\tphantom\t\twork\t/prompt');
+    writeFileSync(join(dir, 'HOLD'), hold);
+
+    const result = await run();
+    expect(result.code).toBe(code);
+    const report = JSON.parse(result.lines[0]!);
+    expect(report.lanes.map((lane: { lane: string }) => lane.lane)).toEqual(lanes);
+    expect(report).toMatchObject({ filler_hold: false, open_rows: 1 });
+  });
+
   it('prints JSON and exits 1 with FILLER_HOLD reported', async () => {
     writeFileSync(join(dir, 'queue', 'status.json'), STATUS);
     writeFileSync(join(dir, 'queue', 'ready.tsv'), READY);
