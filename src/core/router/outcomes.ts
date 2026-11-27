@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+import { canonicalJson } from '../authority/canonical-json.js';
 import { ashlrHome } from '../cloud/store.js';
 import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 import { ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
@@ -2895,7 +2896,7 @@ function parseMergeEvents(text: string, throughMs = Infinity): { evidence: Map<s
   const coverage: MergeEventCoverage = { unattributed: false, incompletePrs: new Set() };
   const seenTimedReceipts = new Set<string>();
   for (const line of text.split('\n')) {
-    const receipt = line.trim();
+    let receipt = line.trim();
     if (!receipt) continue;
     const row = parseJsonObjectLine(line);
     if (row === null) {
@@ -2941,6 +2942,11 @@ function parseMergeEvents(text: string, throughMs = Infinity): { evidence: Map<s
       continue;
     }
     if (atOk) {
+      try {
+        receipt = canonicalJson(row);
+      } catch {
+        // Keep exact-text deduplication for receipts outside canonical JSON.
+      }
       if (seenTimedReceipts.has(receipt)) continue;
       seenTimedReceipts.add(receipt);
     }

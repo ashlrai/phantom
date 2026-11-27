@@ -726,9 +726,10 @@ check observations split on recorded `required: true`),
 the coverage `check_failures` counts the failure subset of),
 `retries`/`retry_failures` (distinct `at`+`head_sha` pairs, so a
 replayed append counts once), `recuts` and `auto_merge` (the last
-recorded toggle in append order). A timestamped receipt replayed as an
-identical JSONL line counts once at its first position in the retained
-ledger, so a replay cannot change the standing toggle. Untimed receipts
+recorded toggle in append order). Timestamped receipts with identical JSON
+content count once at their first position in the retained ledger, even if
+field order or whitespace changes. A replay cannot change the standing
+toggle. Untimed receipts
 keep their append order and count. The router outcome report uses the same
 inclusive report-start cutoff for job and merge-queue receipts, including
 merge-queue receipts used to infer first-pass CI. The evidence is post-publish
