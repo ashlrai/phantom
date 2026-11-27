@@ -1,45 +1,36 @@
 /** Mac-only Unix socket for pairing custody. Never route this through Tunnel. */
-import { chmodSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
+import { chmodSync, lstatSync, unlinkSync, type Stats } from 'node:fs';
 import { createConnection, createServer, type Server } from 'node:net';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { defaultVerseRoot } from '../verse/preferences.js';
+import { REMOTE_UUID_RE, ensurePrivateDirectory, isPrivateOwnedStat, isRemoteRecord, lstatOrNull } from './remote-access.js';
 import type { createRemotePairing } from './remote-pairing.js';
 import type { RemoteDeviceStore } from './remote-device-store.js';
 
 const SOCKET_NAME = 'remote-admin.sock';
 const MAX_COMMAND = 4096;
+const OPERATOR_DIR_ERROR = 'Remote operator directory is not private';
 type Pairing = ReturnType<typeof createRemotePairing>;
 type OperatorAction = 'invite' | 'approve' | 'deny' | 'revoke';
 export type ConfirmMacOperator = (action: OperatorAction, id: string) => Promise<boolean>;
 
 export function remoteAdminSocketPath(root = defaultVerseRoot()): string { return join(root, SOCKET_NAME); }
 
-function privateDirectory(root: string): void {
-  mkdirSync(root, { recursive: true, mode: 0o700 });
-  const stat = lstatSync(root);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
-    || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
-    throw new Error('Remote operator directory is not private');
-  }
-}
-
-function existingSocket(path: string) {
-  try { return lstatSync(path); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
-  }
+function unlinkIfSameSocket(path: string, identity: Pick<Stats, 'ino' | 'dev'>): void {
+  try {
+    const current = lstatSync(path);
+    if (current.ino === identity.ino && current.dev === identity.dev) unlinkSync(path);
+  } catch { /* a replaced path is never removed */ }
 }
 
 /** A killed sidecar leaves its Unix socket pathname behind. Reclaim only a
  * private socket owned by this user after a connection proves no listener is
  * alive; never remove a regular file, symlink, or another process's socket. */
 async function clearStaleSocket(root: string, path: string): Promise<void> {
-  const before = existingSocket(path);
+  const before = lstatOrNull(path);
   if (!before) return;
-  if (!before.isSocket() || (before.mode & 0o077) !== 0
-    || (typeof process.getuid === 'function' && before.uid !== process.getuid())) {
+  if (!isPrivateOwnedStat(before, 'socket')) {
     throw new Error('Remote admin socket path is not a private owned socket');
   }
   const stale = await new Promise<boolean>((resolve, reject) => {
@@ -54,12 +45,10 @@ async function clearStaleSocket(root: string, path: string): Promise<void> {
     });
   });
   if (!stale) throw new Error('Remote admin socket already has a live listener');
-  privateDirectory(root);
-  const after = existingSocket(path);
+  ensurePrivateDirectory(root, OPERATOR_DIR_ERROR);
+  const after = lstatOrNull(path);
   if (!after) return;
-  if (!after.isSocket() || (after.mode & 0o077) !== 0
-    || (typeof process.getuid === 'function' && after.uid !== process.getuid())
-    || after.ino !== before.ino || after.dev !== before.dev) {
+  if (!isPrivateOwnedStat(after, 'socket') || after.ino !== before.ino || after.dev !== before.dev) {
     throw new Error('Remote admin socket changed during stale recovery');
   }
   unlinkSync(path);
@@ -76,8 +65,8 @@ async function confirmMacOperator(action: OperatorAction, id: string): Promise<b
 }
 
 async function command(pairing: Pairing, devices: RemoteDeviceStore, input: unknown, confirm: ConfirmMacOperator, info?: { publicOrigin: string }): Promise<unknown> {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: 'Invalid operator command' };
-  const value = input as Record<string, unknown>;
+  if (!isRemoteRecord(input)) return { error: 'Invalid operator command' };
+  const value = input;
   switch (value.action) {
     case 'invite': {
       if (typeof value.subject !== 'string' || (value.scope !== 'read' && value.scope !== 'act')) return { error: 'Invalid invitation' };
@@ -94,21 +83,20 @@ async function command(pairing: Pairing, devices: RemoteDeviceStore, input: unkn
     case 'pending': return { approvals: pairing.mac.pendingApprovals() };
     case 'devices': return { devices: devices.list().map((d) => ({ id: d.id, label: d.label, email: d.email,
       subject: d.subject, scopes: d.scopes, createdAt: d.createdAt, revokedAt: d.revokedAt })) };
-    case 'approve': {
-      if (typeof value.id !== 'string' || !/^[0-9a-f-]{36}$/.test(value.id)) return { error: 'Invalid pairing ID' };
-      if (!(await confirm('approve', value.id))) return { error: 'Mac operator confirmation required' };
-      const approved = pairing.mac.approvePairing(value.id, { approved: true });
-      return approved ? { approved: true, deviceId: approved.id } : { error: 'Pairing unavailable' };
-    }
-    case 'deny': {
-      if (typeof value.id !== 'string' || !/^[0-9a-f-]{36}$/.test(value.id)) return { error: 'Invalid pairing ID' };
-      if (!(await confirm('deny', value.id))) return { error: 'Mac operator confirmation required' };
-      pairing.mac.denyPairing(value.id); return { denied: true };
-    }
+    case 'approve':
+    case 'deny':
     case 'revoke': {
-      if (typeof value.id !== 'string' || !/^[0-9a-f-]{36}$/.test(value.id)) return { error: 'Invalid device ID' };
-      if (!(await confirm('revoke', value.id))) return { error: 'Mac operator confirmation required' };
-      return { revoked: pairing.mac.revokeDevice(value.id) };
+      const id = value.id;
+      if (typeof id !== 'string' || !REMOTE_UUID_RE.test(id)) {
+        return { error: value.action === 'revoke' ? 'Invalid device ID' : 'Invalid pairing ID' };
+      }
+      if (!(await confirm(value.action, id))) return { error: 'Mac operator confirmation required' };
+      if (value.action === 'approve') {
+        const approved = pairing.mac.approvePairing(id, { approved: true });
+        return approved ? { approved: true, deviceId: approved.id } : { error: 'Pairing unavailable' };
+      }
+      if (value.action === 'deny') { pairing.mac.denyPairing(id); return { denied: true }; }
+      return { revoked: pairing.mac.revokeDevice(id) };
     }
     default: return { error: 'Unknown operator command' };
   }
@@ -117,7 +105,7 @@ async function command(pairing: Pairing, devices: RemoteDeviceStore, input: unkn
 /** The socket is mode 0600 in a private directory; never expose it through the phone gateway. */
 export async function startRemoteAdminSocket(pairing: Pairing, devices: RemoteDeviceStore, root = defaultVerseRoot(),
   confirmOperator: ConfirmMacOperator = confirmMacOperator, info?: { publicOrigin: string }) {
-  privateDirectory(root);
+  ensurePrivateDirectory(root, OPERATOR_DIR_ERROR);
   const path = remoteAdminSocketPath(root);
   await clearStaleSocket(root, path);
   let confirmationBusy = false;
@@ -153,30 +141,24 @@ export async function startRemoteAdminSocket(pairing: Pairing, devices: RemoteDe
   try {
     chmodSync(path, 0o600);
     const secured = lstatSync(path);
-    if (!secured.isSocket() || (secured.mode & 0o077) !== 0
+    if (!isPrivateOwnedStat(secured, 'socket')
       || secured.ino !== identity.ino || secured.dev !== identity.dev) throw new Error('Remote admin socket is not private');
   } catch (error) {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    try {
-      const current = lstatSync(path);
-      if (current.ino === identity.ino && current.dev === identity.dev) unlinkSync(path);
-    } catch { /* a replaced path is never removed */ }
+    unlinkIfSameSocket(path, identity);
     throw error;
   }
   return {
     path,
     async close() {
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      try {
-        const current = lstatSync(path);
-        if (current.ino === identity.ino && current.dev === identity.dev) unlinkSync(path);
-      } catch { /* preserve a replaced path */ }
+      unlinkIfSameSocket(path, identity);
     },
   };
 }
 
 export async function sendRemoteAdminCommand(input: unknown, root = defaultVerseRoot()): Promise<unknown> {
-  privateDirectory(root);
+  ensurePrivateDirectory(root, OPERATOR_DIR_ERROR);
   return new Promise((resolve, reject) => {
     const socket = createConnection(remoteAdminSocketPath(root));
     let text = '';
