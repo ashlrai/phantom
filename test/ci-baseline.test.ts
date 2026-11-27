@@ -342,6 +342,35 @@ describe('CI baseline evidence', () => {
     expect(mismatch.groups).toEqual([]);
     expect(mismatch.freshness.every(p => p.state === 'unknown')).toBe(true);
   });
+  it.each([
+    ['a later git echo', false, `/usr/bin/git log -1 --format=%H\n${merged}`],
+    ['a later binding receipt', true, `Bound candidate ${merged} to event tree ${master}`],
+    ['a binding receipt alongside a git echo', false, `Bound candidate ${merged} to event tree ${master}`],
+  ] as const)('withholds checkout evidence contradicted by %s', async (_label, bound, receipt) => {
+    const { gh } = github({ pass: true, bound });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      return /\/jobs\/(10|20)\/logs$/.test(args[1] ?? '')
+        ? { ...result, stdout: `${result.stdout}\n${receipt}\n` }
+        : result;
+    });
+    expect(report.master.known).toBe(false);
+    expect(report.freshness).toMatchObject([
+      { pr: 1, state: 'unknown', reason: 'unreadable-log-or-unverified-checkout' },
+      { pr: 2, state: 'fresh' },
+    ]);
+    expect(report.groups).toMatchObject([{ prs: [2], master: 'unknown', action: 'unknown' }]);
+  });
+  it('accepts agreeing git echoes and binding receipts in the same job', async () => {
+    const { gh } = github({ count: 1, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      return args[1]?.endsWith('/jobs/10/logs')
+        ? { ...result, stdout: `${result.stdout}\nBound candidate ${master} to event tree ${merged}\n` }
+        : result;
+    });
+    expect(report.groups).toMatchObject([{ master: 'pass', action: 'rerun-failed' }]);
+  });
   it('verifies unbound gate jobs through the checkout ref echo', async () => {
     // secret-shape, quick, clean-tree, authority-drift, fast-gate,
     // secret-scan and the dependency-audit job never run
