@@ -850,6 +850,7 @@
     "src/core/fleet/main-health.ts",
     "src/core/fleet/main-red-age.ts",
     "src/core/fleet/maintainer-cargo-dependencies.ts",
+    "src/core/fleet/maintainer-node-dependencies.ts",
     "src/core/fleet/maintainer-pr-runner.ts",
     "src/core/fleet/maintainer-pr-verification.ts",
     "src/core/fleet/manager.ts",

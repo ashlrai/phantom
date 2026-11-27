@@ -15,6 +15,7 @@ import { mirrorLeaseKey } from './mirrors.js';
 import type { MaintainerPrPins, MaintainerRunEvidence } from './maintainer-pr-verification.js';
 import { runSafeGitSync, verifyGitTarget, type SafeGitTarget } from '../sandbox/safe-git.js';
 import { needsMaintainerCargo, prepareMaintainerCargoDependencies, type MaintainerCargoAttachment } from './maintainer-cargo-dependencies.js';
+import { needsMaintainerNode, prepareMaintainerNodeDependencies, type MaintainerNodeAttachment } from './maintainer-node-dependencies.js';
 
 const OID = /^[0-9a-f]{40}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
@@ -40,11 +41,13 @@ interface RunnerDependencies {
   lease: <T>(repo: string, fn: () => Promise<T>, signal?: AbortSignal) => Promise<T>;
   slot: <T>(repo: string, fn: () => Promise<T>, signal?: AbortSignal) => Promise<T>;
   prepareCargo: typeof prepareMaintainerCargoDependencies;
+  prepareNode: typeof prepareMaintainerNodeDependencies;
 }
 const defaults: RunnerDependencies = {
   openConfinement: openStandingVerificationConfinement,
   runCommand: runVerifyCommandAsync,
   prepareCargo: prepareMaintainerCargoDependencies,
+  prepareNode: prepareMaintainerNodeDependencies,
   lease: async (repo, fn, signal) => {
     const result = await withRepoLease(mirrorLeaseKey(repo), fn, { signal });
     if (!result.ok) throw new Error(`repository lease unavailable: ${result.reason}`);
@@ -176,6 +179,7 @@ export async function runMaintainerPr(input: MaintainerRunInput, _deps: Partial<
   let worktree: string | null = null;
   let confined: Awaited<ReturnType<typeof openStandingVerificationConfinement>> = null;
   let cargo: MaintainerCargoAttachment | null = null;
+  let node: MaintainerNodeAttachment | null = null;
   try {
     if (![input.diffSha256, input.contractSha256].every((digest) => DIGEST.test(digest)) || !OID.test(input.mergeBaseSha)) throw new Error('invalid verification binding');
     await deps.slot(input.mirrorPath, async () => {
@@ -200,16 +204,28 @@ export async function runMaintainerPr(input: MaintainerRunInput, _deps: Partial<
         await input.assertAuthorized();
         if (input.signal?.aborted) throw new Error('verification cancelled');
       }
-      confined = await deps.openConfinement(worktree!, cargo ? { cargoAttachment: cargo } : {});
+      if (needsMaintainerNode(prepared.expectedCommands)) {
+        node = await deps.prepareNode({ worktree: worktree!, sourceTree: input.treeSha, commands: prepared.expectedCommands, signal: input.signal, assertAuthorized: input.assertAuthorized });
+        result.nodeDependencies = node.receipts;
+        result.dependenciesRemoved = false;
+        await input.assertAuthorized();
+        if (input.signal?.aborted) throw new Error('verification cancelled');
+      }
+      confined = await deps.openConfinement(worktree!, {
+        ...(cargo ? { cargoAttachment: cargo } : {}),
+        ...(node ? { nodeAttachment: node } : {}),
+      });
       if (!confined) throw new Error('required verification confinement is unavailable');
       for (const command of prepared.expectedCommands) {
         if (input.signal?.aborted) throw new Error('verification cancelled');
         await input.assertAuthorized();
         cargo?.assertCurrent(worktree!);
+        node?.assertCurrent(worktree!);
         const startedAt = new Date().toISOString(); const started = performance.now();
         const commandResult = await deps.runCommand(command, worktree!, input.cfg, { signal: input.signal, _runSubprocess: confined.runSubprocess });
         executed.push({ command, result: commandResult, startedAt, durationMs: performance.now() - started, outputSha256: hash(commandResult.output) });
         cargo?.assertCurrent(worktree!);
+        node?.assertCurrent(worktree!);
         if (!commandResult.ok) throw new Error(`required command failed: ${command.id ?? command.kind}`);
       }
       await input.assertAuthorized();
@@ -224,19 +240,31 @@ export async function runMaintainerPr(input: MaintainerRunInput, _deps: Partial<
   } catch (error) {
     result.ok = false; result.reason = scrubSecrets(error instanceof Error ? error.message : String(error));
   } finally {
+    let dependencyCleanupFailed = false;
     try { (confined as Awaited<ReturnType<typeof openStandingVerificationConfinement>>)?.close(); }
     catch (error) { result.ok = false; result.reason = `confinement cleanup failed: ${scrubSecrets(error instanceof Error ? error.message : String(error))}`; }
     try {
-      if (cargo) { (cargo as MaintainerCargoAttachment).close(); result.dependenciesRemoved = true; }
-    } catch (error) { result.ok = false; result.reason = `dependency cleanup failed: ${scrubSecrets(error instanceof Error ? error.message : String(error))}`; }
+      if (cargo) (cargo as MaintainerCargoAttachment).close();
+    } catch (error) {
+      dependencyCleanupFailed = true;
+      result.ok = false; result.reason = `dependency cleanup failed: ${scrubSecrets(error instanceof Error ? error.message : String(error))}`;
+    }
+    try {
+      (node as MaintainerNodeAttachment | null)?.close();
+    } catch (error) {
+      dependencyCleanupFailed = true;
+      result.ok = false; result.reason = `dependency cleanup failed: ${scrubSecrets(error instanceof Error ? error.message : String(error))}`;
+    }
     try {
       if (worktree && !result.worktreeRemoved) await deps.lease(input.mirrorPath, async () => {
         removeScratchWorktree(input.mirrorPath, worktree!); result.worktreeRemoved = true;
       });
       if (worktree) scratchTargets.delete(worktree);
       if (scratch) rmSync(scratch, { recursive: true, force: true });
+      if (cargo || node) result.dependenciesRemoved = !dependencyCleanupFailed && result.worktreeRemoved;
     } catch (error) {
       result.ok = false; result.reason = `verification cleanup failed: ${scrubSecrets(error instanceof Error ? error.message : String(error))}`;
+      if (cargo || node) result.dependenciesRemoved = false;
     }
   }
   return result;
