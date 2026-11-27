@@ -1016,6 +1016,8 @@ Jobs-ledger `review_findings` counts follow the standing PR. The winning
 merge or close verdict selects the PR, and an unresolved job uses its latest
 unambiguous canonical PR claim. A terminal verdict without a URL can use a
 sole canonical claim. The newest eligible timestamped count stands.
+For a dated merge or close in the jobs ledger, only counts dated at or
+before that resolution are eligible.
 Conflicting counts at that timestamp stay unknown, while identical counts
 agree. When no eligible count has a parseable timestamp, the last eligible
 count in ledger order stands.

@@ -2345,6 +2345,8 @@ function foldRouterOutcomesWithCiCoverage(
   const latestReviewAt = new Map<string, number>();
   for (const { job, pr, at, findings } of reviewFindings) {
     if (!matchesStandingPr(job, pr)) continue;
+    const resolvedAt = mergedAt.get(job);
+    if (resolvedAt !== undefined && Number.isFinite(resolvedAt) && (at === null || at > resolvedAt)) continue;
     const latest = latestReviewAt.get(job);
     const outcome = outcomes.get(job)!;
     if (latest === undefined || (at !== null && at > latest)) {
