@@ -27,6 +27,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join } from 'node:path';
+import { isNonNegativeFinite, isPlainRecord } from './hop-events.js';
 
 export const AGENT_READINESS_SCHEMA = 'agent-readiness.v1' as const;
 
@@ -664,42 +665,37 @@ export function agentReadinessArtifactName(report: Pick<AgentReadinessReport, 't
 const ISO_STAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/;
 
 function assertReadiness(value: unknown, context: string): asserts value is AgentReadinessReport {
-  const fail = (): never => { throw new Error(`Invalid agent-readiness artifact (${context}).`); };
-  if (!value || typeof value !== 'object' || Array.isArray(value)) fail();
-  const row = value as Record<string, unknown>;
-  if (row['schema'] !== AGENT_READINESS_SCHEMA) fail();
-  if (typeof row['generatedAt'] !== 'string' || !ISO_STAMP.test(row['generatedAt'])) fail();
-  const target = row['target'];
-  if (!target || typeof target !== 'object' || Array.isArray(target)) fail();
-  const t = target as Record<string, unknown>;
-  if (!['site', 'repo'].includes(t['kind'] as string)) fail();
-  if (typeof t['path'] !== 'string' || typeof t['label'] !== 'string' || !t['label']) fail();
-  if (typeof row['score'] !== 'number' || !Number.isFinite(row['score']) || row['score'] < 0 || row['score'] > 100) fail();
-  const totals = row['totals'];
-  if (!totals || typeof totals !== 'object') fail();
-  const tt = totals as Record<string, number>;
-  if ([tt['earned'], tt['applicable'], tt['possible']].some((n) => typeof n !== 'number' || !Number.isFinite(n) || n < 0)) fail();
-  const checkRows = row['checks'];
+  const fail: () => never = () => { throw new Error(`Invalid agent-readiness artifact (${context}).`); };
+  if (!isPlainRecord(value)) fail();
+  if (value['schema'] !== AGENT_READINESS_SCHEMA) fail();
+  if (typeof value['generatedAt'] !== 'string' || !ISO_STAMP.test(value['generatedAt'])) fail();
+  const target = value['target'];
+  if (!isPlainRecord(target)) fail();
+  if (!['site', 'repo'].includes(target['kind'] as string)) fail();
+  if (typeof target['path'] !== 'string' || typeof target['label'] !== 'string' || !target['label']) fail();
+  if (!isNonNegativeFinite(value['score']) || value['score'] > 100) fail();
+  const totals = value['totals'];
+  if (!isPlainRecord(totals)) fail();
+  if ([totals['earned'], totals['applicable'], totals['possible']].some((n) => !isNonNegativeFinite(n))) fail();
+  const checkRows = value['checks'];
   if (!Array.isArray(checkRows)) fail();
   const seen = new Set<string>();
   for (const check of checkRows as unknown[]) {
-    if (!check || typeof check !== 'object' || Array.isArray(check)) fail();
-    const c = check as Record<string, unknown>;
-    const id = c['id'];
+    if (!isPlainRecord(check)) fail();
+    const id = check['id'];
     if (typeof id !== 'string' || seen.has(id) || !(AGENT_READINESS_CHECK_IDS as readonly string[]).includes(id)) fail();
     seen.add(id as string);
-    if (typeof c['weight'] !== 'number' || typeof c['score'] !== 'number' || c['score'] < 0 || c['score'] > 1) fail();
-    if (typeof c['applicable'] !== 'boolean' || typeof c['points'] !== 'number') fail();
-    if (!Array.isArray(c['findings']) || c['findings'].some((f) => typeof f !== 'string')) fail();
+    if (typeof check['weight'] !== 'number' || typeof check['score'] !== 'number' || check['score'] < 0 || check['score'] > 1) fail();
+    if (typeof check['applicable'] !== 'boolean' || typeof check['points'] !== 'number') fail();
+    if (!Array.isArray(check['findings']) || check['findings'].some((f) => typeof f !== 'string')) fail();
   }
   if (seen.size !== AGENT_READINESS_CHECK_IDS.length) fail();
-  if (row['previous'] !== null) {
-    const p = row['previous'];
-    if (!p || typeof p !== 'object') fail();
-    const pr = p as Record<string, unknown>;
-    if (typeof pr['score'] !== 'number' || typeof pr['generatedAt'] !== 'string' || !ISO_STAMP.test(pr['generatedAt'])) fail();
+  if (value['previous'] !== null) {
+    const prev = value['previous'];
+    if (!isPlainRecord(prev)) fail();
+    if (typeof prev['score'] !== 'number' || typeof prev['generatedAt'] !== 'string' || !ISO_STAMP.test(prev['generatedAt'])) fail();
   }
-  if (row['delta'] !== null && (typeof row['delta'] !== 'number' || !Number.isFinite(row['delta']))) fail();
+  if (value['delta'] !== null && (typeof value['delta'] !== 'number' || !Number.isFinite(value['delta']))) fail();
 }
 
 /** Parse an agent-readiness.v1 artifact; throws on any shape violation. */

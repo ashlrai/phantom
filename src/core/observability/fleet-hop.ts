@@ -21,15 +21,16 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { isNonNegativeFinite, isPositiveSafeInt, withAbortTimeout } from './hop-events.js';
 
 export const FLEET_HOP_EVENT = 'fleet_hop';
-export const FLEET_HOP_SCHEMA = 'queue.v1';
-export const FLEET_HOP_KEY_ENV = 'POSTHOG_AGENT_FLEET_TOKEN';
-export const FLEET_HOP_HOST_ENV = 'POSTHOG_HOST';
+export const FLEET_HOP_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,119}$/;
+const FLEET_HOP_SCHEMA = 'queue.v1';
+const FLEET_HOP_KEY_ENV = 'POSTHOG_AGENT_FLEET_TOKEN';
+const FLEET_HOP_HOST_ENV = 'POSTHOG_HOST';
 const DEFAULT_HOST = 'https://us.i.posthog.com';
 const FETCH_TIMEOUT_MS = 3_000;
 
-const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,119}$/;
 const TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const STRING_FIELDS = ['job_id', 'station', 'pool', 'tier', 'node', 'engine', 'job', 'agent', 'repo'] as const;
 const NUMBER_FIELDS = ['tokens', 'usd'] as const;
@@ -66,7 +67,7 @@ export function fleetHopSpoolPath(): string {
 }
 
 function idOrNull(v: unknown): string | null {
-  return typeof v === 'string' && ID_RE.test(v) ? v : null;
+  return typeof v === 'string' && FLEET_HOP_ID_RE.test(v) ? v : null;
 }
 
 function tsOrNull(v: unknown): string | null {
@@ -75,7 +76,7 @@ function tsOrNull(v: unknown): string | null {
 
 function numOrNull(v: unknown): number | null {
   const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
-  return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null;
+  return isNonNegativeFinite(n) ? n : null;
 }
 
 export function fleetHopInsertId(jobId: string | null, pr: number | null, station: string, enterTs: string): string {
@@ -92,7 +93,7 @@ export function buildFleetHop(input: FleetHopInput, now: () => Date = () => new 
   if (!station || !enterTs) return null;
   const exitTs = tsOrNull(input.exit_ts) ?? now().toISOString().replace(/\.\d{3}Z$/, 'Z');
   const prNum = numOrNull(input.pr);
-  const pr = prNum !== null && Number.isInteger(prNum) && prNum > 0 ? prNum : null;
+  const pr = isPositiveSafeInt(prNum) ? prNum : null;
 
   const props: Record<string, string | number | boolean | null> = { schema: FLEET_HOP_SCHEMA };
   for (const f of STRING_FIELDS) props[f] = idOrNull(input[f]);
@@ -128,20 +129,18 @@ function spool(event: FleetHopEvent, path: string): boolean {
 }
 
 async function post(event: FleetHopEvent, key: string, host: string, fetchImpl: typeof fetch): Promise<string | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetchImpl(`${host.replace(/\/+$/, '')}/i/v0/e/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key: key, ...event }),
-      signal: controller.signal,
-    });
+    const res = await withAbortTimeout(FETCH_TIMEOUT_MS, (signal) =>
+      fetchImpl(`${host.replace(/\/+$/, '')}/i/v0/e/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: key, ...event }),
+        signal,
+      }),
+    );
     return res.ok ? null : `HTTP ${res.status}`;
   } catch (err) {
     return err instanceof Error && err.name === 'AbortError' ? 'timeout' : 'network error';
-  } finally {
-    clearTimeout(timer);
   }
 }
 

@@ -20,6 +20,11 @@
  */
 
 import type { AshlrConfig, TelemetryEmitResult, GovernanceStatus, GenAiSpan } from '../core/types.js';
+import {
+  isPlainRecord,
+  isStrictUtcIsoTimestamp,
+  readBoundedRegularFileUtf8,
+} from '../core/observability/hop-events.js';
 import { ansi as C, makeColors, isTty, pad } from './ui.js';
 
 const { bold, dim, green, yellow, red, cyan, gray } = makeColors(isTty());
@@ -391,10 +396,11 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
       };
     }
 
+    // detail must never contain PAT — the contract guarantees this, but
+    // we sanitize defensively (strip anything that looks like a Bearer token)
+    const safeDetail = result.detail.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
+
     if (parsed.json) {
-      // detail must never contain PAT — the contract guarantees this, but
-      // we sanitize defensively (strip anything that looks like a Bearer token)
-      const safeDetail = result.detail.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
       process.stdout.write(JSON.stringify({ ...result, detail: safeDetail }, null, 2) + '\n');
       return result.ok ? 0 : 1;
     }
@@ -406,8 +412,6 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
     const sinkLabel  = result.sink === 'otlp' ? cyan('otlp') : dim('local');
     console.log(`  ${statusIcon} sink=${sinkLabel}  ok=${result.ok ? green('true') : red('false')}`);
     if (result.detail) {
-      // Defensively strip any accidental Bearer value before printing
-      const safeDetail = result.detail.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
       console.log(`  ${dim(safeDetail)}`);
     }
     console.log('');
@@ -422,8 +426,6 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
 // ---------------------------------------------------------------------------
 
 function printTelemetryHelp(): void {
-  const { bold, dim, cyan } = makeColors(isTty());
-
   console.log('');
   console.log(bold('  ashlr telemetry') + dim(' — M19 telemetry status and test'));
   console.log('');
@@ -492,25 +494,21 @@ function printTelemetryHelp(): void {
 /** Captured evidence only: completeness must be asserted by the collector. */
 export function diagnoseMergeThroughput(input: unknown) {
   const invalid = () => new Error('Invalid merge snapshot; see merge-throughput --help.');
-  if (!input || typeof input !== 'object') throw invalid();
-  const data = input as Record<string, unknown>;
+  if (!isPlainRecord(input)) throw invalid();
   const timestamp = (value: unknown): number => {
-    if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(value)) throw invalid();
-    const time = Date.parse(value);
-    if (!Number.isFinite(time) || new Date(time).toISOString().replace('.000Z', 'Z') !== value.replace('.000Z', 'Z')) throw invalid();
-    return time;
+    if (!isStrictUtcIsoTimestamp(value)) throw invalid();
+    return Date.parse(value);
   };
-  const start = timestamp(data.start);
-  const end = timestamp(data.end);
-  if (end <= start || typeof data.complete !== 'boolean' || !Array.isArray(data.observations)) throw invalid();
-  if (data.observations.length > 20_000) throw invalid();
+  const start = timestamp(input.start);
+  const end = timestamp(input.end);
+  if (end <= start || typeof input.complete !== 'boolean' || !Array.isArray(input.observations)) throw invalid();
+  if (input.observations.length > 20_000) throw invalid();
   let completed = 0;
   let waiting = 0;
   let unknown = 0;
   const ids = new Set<string>();
-  for (const value of data.observations) {
-    if (!value || typeof value !== 'object') throw invalid();
-    const row = value as Record<string, unknown>;
+  for (const row of input.observations) {
+    if (!isPlainRecord(row)) throw invalid();
     if (typeof row.id !== 'string' || !row.id.trim() || ids.has(row.id)) throw invalid();
     ids.add(row.id);
     if (row.state === 'merged') {
@@ -524,10 +522,10 @@ export function diagnoseMergeThroughput(input: unknown) {
       throw invalid();
     }
   }
-  const known = data.complete && unknown === 0;
+  const known = input.complete && unknown === 0;
   return {
     schema: 'merge-throughput.v1',
-    window: { start: data.start, end: data.end, hours: (end - start) / 3_600_000 },
+    window: { start: input.start, end: input.end, hours: (end - start) / 3_600_000 },
     coverage: known ? 'complete' : 'partial',
     completedMergesObserved: completed,
     waitingObservedAtEnd: waiting,
@@ -562,23 +560,7 @@ export async function cmdMergeThroughput(args: string[]): Promise<number> {
     return 2;
   }
   try {
-    const { open } = await import('node:fs/promises');
-    const file = await open(path, 'r');
-    let raw: string;
-    try {
-      if (!(await file.stat()).isFile()) throw new Error('not a file');
-      const buffer = Buffer.alloc(1_048_577);
-      let length = 0;
-      while (length < buffer.length) {
-        const { bytesRead } = await file.read(buffer, length, buffer.length - length, null);
-        if (bytesRead === 0) break;
-        length += bytesRead;
-      }
-      if (length > 1_048_576) throw new Error('too large');
-      raw = buffer.subarray(0, length).toString('utf8');
-    } finally {
-      await file.close();
-    }
+    const raw = await readBoundedRegularFileUtf8(path, 1_048_576);
     const result = diagnoseMergeThroughput(JSON.parse(raw));
     if (json) console.log(JSON.stringify(result, null, 2));
     else {
