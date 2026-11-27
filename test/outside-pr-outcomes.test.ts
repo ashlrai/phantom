@@ -12,6 +12,10 @@
  *   - agent is convention attribution only (recorded branch/login
  *     convention, null when unmatched); model is always null — gh records
  *     no model.
+ *   - createdAt and reviews carry gh's recorded open timestamp and review
+ *     evidence (latestReviews count + reviewDecision); absent or
+ *     unparseable fields read null, a real empty latestReviews stays a
+ *     real "unreviewed" signal — never a guessed zero.
  *   - No path, URL, token or hostname is ever emitted.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -49,12 +53,26 @@ function revertRecord(number: number, relandedBy: string | null = null): RevertO
 }
 
 const MERGED_ROWS = [
-  { number: 7, title: 'outside fix', author: { login: 'ext-dev' }, headRefName: 'fix/thing', mergedAt: '2026-11-15T00:00:00Z' },
+  {
+    number: 7, title: 'outside fix', author: { login: 'ext-dev' }, headRefName: 'fix/thing',
+    mergedAt: '2026-11-15T00:00:00Z', createdAt: '2026-11-14T00:00:00Z',
+    latestReviews: [{ author: { login: 'rev-a' } }, { author: { login: 'rev-b' } }],
+    reviewDecision: 'APPROVED',
+  },
   { number: 8, title: 'fleet bridge', author: { login: 'ext-dev' }, headRefName: 'codex-bridge/RQ-FAKE-1', mergedAt: '2026-11-16T00:00:00Z' },
   { number: 9, title: 'fleet bot', author: { login: 'ashlr-fleet[bot]' }, headRefName: 'fix/bot', mergedAt: '2026-11-16T00:00:00Z' },
   { number: 10, title: 'old outside', author: { login: 'ext-dev' }, headRefName: 'old/branch', mergedAt: '2026-09-01T00:00:00Z' },
-  { number: 11, title: 'reverted outside', author: { login: 'other-dev' }, headRefName: 'feat/x', mergedAt: '2026-11-14T00:00:00Z' },
-  { number: 12, title: 'relanded outside', author: { login: 'other-dev' }, headRefName: 'feat/y', mergedAt: '2026-11-13T00:00:00Z' },
+  {
+    number: 11, title: 'reverted outside', author: { login: 'other-dev' }, headRefName: 'feat/x',
+    mergedAt: '2026-11-14T00:00:00Z', createdAt: '2026-11-13T12:00:00Z',
+    latestReviews: [], reviewDecision: null,
+  },
+  {
+    number: 12, title: 'relanded outside', author: { login: 'other-dev' }, headRefName: 'feat/y',
+    mergedAt: '2026-11-13T00:00:00Z', createdAt: '2026-11-12T00:00:00Z',
+    latestReviews: [{ author: { login: 'rev-c' } }], reviewDecision: 'CHANGES_REQUESTED',
+  },
+  // #13 carries no open/review fields at all — a pre-enrichment gh row reads them as null.
   { number: 13, title: 'ghost author', author: null, headRefName: 'feat/z', mergedAt: '2026-11-12T00:00:00Z' },
 ];
 
@@ -97,11 +115,20 @@ describe('listOutsidePrOutcomes', () => {
     // Fleet-branch, fleet-bot and out-of-window rows are excluded; mergedAt desc.
     expect(repo.prs.map((pr) => pr.number)).toEqual([7, 11, 12, 13]);
     const byNumber = new Map(repo.prs.map((pr) => [pr.number, pr]));
-    expect(byNumber.get(7)).toMatchObject({ author: 'ext-dev', agent: null, model: null, reverted: 'no', mergedAt: '2026-11-15T00:00:00.000Z' });
+    expect(byNumber.get(7)).toMatchObject({
+      author: 'ext-dev', agent: null, model: null, reverted: 'no', mergedAt: '2026-11-15T00:00:00.000Z',
+      createdAt: '2026-11-14T00:00:00.000Z', reviews: { decision: 'APPROVED', latest: 2 },
+    });
     expect(byNumber.get(11)).toMatchObject({ author: 'other-dev', reverted: 'yes' });
+    // gh's empty latestReviews is a real "merged unreviewed" signal, not missing evidence.
+    expect(byNumber.get(11)).toMatchObject({ createdAt: '2026-11-13T12:00:00.000Z', reviews: { decision: null, latest: 0 } });
     // A reland clears the standing revert: newest record wins.
-    expect(byNumber.get(12)).toMatchObject({ author: 'other-dev', reverted: 'no' });
-    expect(byNumber.get(13)).toMatchObject({ author: null, reverted: 'no' });
+    expect(byNumber.get(12)).toMatchObject({
+      author: 'other-dev', reverted: 'no',
+      reviews: { decision: 'CHANGES_REQUESTED', latest: 1 },
+    });
+    // No recorded open/review fields → honest nulls, never a guessed zero.
+    expect(byNumber.get(13)).toMatchObject({ author: null, reverted: 'no', createdAt: null, reviews: null });
     // Author rollup stays per-login: agent/model are always null there —
     // one login pushes work for many agents.
     expect(result.authors).toEqual([
@@ -145,6 +172,47 @@ describe('listOutsidePrOutcomes', () => {
     const result = await listOutsidePrOutcomes(await fixtureOpts({ gh }));
     expect(result.sourceState).toBe('degraded');
     expect(result.repos[0]).toMatchObject({ state: 'degraded', prs: [] });
+  });
+
+  it('parses open/review evidence per field and drops only what gh did not record', async () => {
+    const rows = [
+      {
+        number: 30, title: 'reviewed', author: { login: 'ext-dev' }, headRefName: 'fix/a',
+        mergedAt: '2026-11-15T00:00:00Z', createdAt: '2026-11-14T00:00:00Z',
+        latestReviews: [{ author: { login: 'r1' } }, { author: { login: 'r2' } }], reviewDecision: 'APPROVED',
+      },
+      {
+        number: 31, title: 'unreviewed', author: { login: 'ext-dev' }, headRefName: 'fix/b',
+        mergedAt: '2026-11-15T00:00:00Z', createdAt: '2026-11-14T00:00:00Z',
+        latestReviews: [], reviewDecision: null,
+      },
+      // No review fields at all → reviews null; createdAt still parses on its own.
+      {
+        number: 32, title: 'no evidence', author: { login: 'ext-dev' }, headRefName: 'fix/c',
+        mergedAt: '2026-11-15T00:00:00Z', createdAt: '2026-11-14T00:00:00Z',
+      },
+      // latestReviews not an array → the whole review evidence is unknown, never partial.
+      {
+        number: 33, title: 'bogus reviews', author: { login: 'ext-dev' }, headRefName: 'fix/d',
+        mergedAt: '2026-11-15T00:00:00Z', createdAt: '2026-11-14T00:00:00Z',
+        latestReviews: 'oops', reviewDecision: 'APPROVED',
+      },
+      // An out-of-vocabulary decision reads null while the reviewer count still stands.
+      {
+        number: 34, title: 'odd decision', author: { login: 'ext-dev' }, headRefName: 'fix/e',
+        mergedAt: '2026-11-15T00:00:00Z', createdAt: 'not a date',
+        latestReviews: [{}], reviewDecision: 'MAYBE',
+      },
+    ];
+    const result = await listOutsidePrOutcomes(await fixtureOpts({ gh: fakeGh(rows) }));
+    const byNumber = new Map(result.repos[0]!.prs.map((pr) => [pr.number, pr]));
+    expect(byNumber.get(30)).toMatchObject({
+      createdAt: '2026-11-14T00:00:00.000Z', reviews: { decision: 'APPROVED', latest: 2 },
+    });
+    expect(byNumber.get(31)).toMatchObject({ reviews: { decision: null, latest: 0 } });
+    expect(byNumber.get(32)).toMatchObject({ createdAt: '2026-11-14T00:00:00.000Z', reviews: null });
+    expect(byNumber.get(33)).toMatchObject({ createdAt: '2026-11-14T00:00:00.000Z', reviews: null });
+    expect(byNumber.get(34)).toMatchObject({ createdAt: null, reviews: { decision: null, latest: 1 } });
   });
 
   it('honours --days window and drops malformed rows', async () => {

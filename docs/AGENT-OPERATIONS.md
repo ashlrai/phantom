@@ -1213,7 +1213,13 @@ counts plus a per-agent rollup. `agent` is convention attribution only — the
 head branch's first path segment against known agent branch namespaces
 (`devin/…`, `cursor/…`, `claude/…`, `copilot/…`, …) or a known agent-bot
 author login; unmatched stays null (an honest unknown, never a guess), and
-`model` is always null since gh records none. An unreadable revert ledger
+`model` is always null since gh records none. Each PR row also carries the
+merge's own evidence — `createdAt` (the PR's open timestamp, so open→merge
+latency is computable) and `reviews` (gh's `latestReviews` count plus its
+computed `reviewDecision`, the same fields the cloud tracker reads for
+fleet outcomes; `null` when gh returned no parseable review fields, and a
+real zero-reviewer list stays a real "merged unreviewed" signal). An
+unreadable revert ledger
 marks every verdict `unknown`, never "not reverted"; a missing `gh` reports
 `sourceState: 'missing'`. Read-only — `gh pr list` and the local ledger
 only; see
@@ -1221,7 +1227,10 @@ only; see
 The cloud scheduler's hourly improve tick also journals each read into
 `metrics/outside-pr-outcomes.jsonl` (`fleet.outside-pr-outcome.v1` /
 `fleet.outside-pr-scan.v1` rows via
-[core/fleet/outside-outcome-sync.ts](../src/core/fleet/outside-outcome-sync.ts)),
+[core/fleet/outside-outcome-sync.ts](../src/core/fleet/outside-outcome-sync.ts);
+the sync re-journals a PR only when its recorded evidence — verdict, open
+timestamp or review evidence — changes, so steady state costs one scan row
+per pass),
 and `phm improve discover` folds repos whose outside merges keep carrying
 standing revert verdicts into self-targeted backlog items — see
 [core/improve/outside-pr-backlog.ts](../src/core/improve/outside-pr-backlog.ts).

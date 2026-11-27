@@ -1491,7 +1491,16 @@ keeps each PR's newest outcome row inside the `windowDays` window keyed
 on `mergedAt` (unparseable stamps and stamps past `now` plus the
 future-skew bound are skipped, never counted), tallies them per recorded
 `agent` attribution (`null` = the unattributed bucket, `model` always
-`null`), sorts by PR count and caps at 32 seats. `coverage` carries the
+`null`), sorts by PR count and caps at 32 seats. Each seat also carries
+the journaled merge evidence with honest denominators: `ttm_known`
+counts rows whose `createdAt` parses at or before `mergedAt` and
+`ttm_minutes_mean` is the mean open→merge minutes over them (`null`
+when none qualify), while `reviews_known` counts rows carrying a
+`reviews` object and `reviewed`/`unreviewed`/`approved`/
+`changes_requested`/`review_required` tally its contents — journal rows
+written before the fields existed, or gh rows missing them, read as
+unknown denominators, never as zero reviews or zero latency.
+`coverage` carries the
 newest scan row's `source_state`, `revert_ledger` and bounded
 `degraded_repos`; `truncated`/`ignored_rows` mark a cut tail and
 contract-rejected lines. The read feeds the advisory

@@ -31,10 +31,16 @@
  * lowercase slug or null, never a model/runtime claim — and `model` is
  * always null because gh records none. `reverted: 'unknown'` marks a
  * verdict the revert ledger could not support, never a guess at 'no'.
+ * `createdAt` is the PR's open timestamp (null when gh recorded none)
+ * and `reviews` is gh's review evidence — a bounded `latest` reviewer
+ * count plus the closed-vocabulary `decision`, or null when the row
+ * carries none (pre-fields rows read as null until the sync's next pass
+ * rewrites them; the dedup treats a changed evidence tuple as a new
+ * verdict).
  */
 import { join } from 'node:path';
 
-import type { OutsidePrRevertVerdict } from './outside-pr-outcomes.js';
+import type { OutsidePrReviewDecision, OutsidePrReviewEvidence, OutsidePrRevertVerdict } from './outside-pr-outcomes.js';
 
 export const OUTSIDE_PR_OUTCOME_SCHEMA = 'fleet.outside-pr-outcome.v1';
 export const OUTSIDE_PR_SCAN_SCHEMA = 'fleet.outside-pr-scan.v1';
@@ -72,6 +78,10 @@ export interface OutsidePrOutcomeJournalRow {
   /** gh never records which model produced the change — always null. */
   model: null;
   mergedAt: string;
+  /** When the PR opened, or null when gh recorded none — open→merge latency needs both stamps. */
+  createdAt: string | null;
+  /** gh's review evidence for the merge; null when the row carries none. */
+  reviews: OutsidePrReviewEvidence | null;
   reverted: OutsidePrRevertVerdict;
 }
 
@@ -104,6 +114,8 @@ const AGENT_SLUG = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SOURCE_STATES: ReadonlySet<string> = new Set(['healthy', 'missing', 'degraded']);
 const REPO_STATES: ReadonlySet<string> = new Set(['healthy', 'degraded']);
 const REVERT_LEDGER_STATES: ReadonlySet<string> = new Set(['read', 'missing', 'unreadable']);
+/** gh's reviewDecision vocabulary (same closed set cloud/tracker.ts validates). */
+const REVIEW_DECISIONS: ReadonlySet<string> = new Set(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']);
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -111,6 +123,21 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 const int = (v: unknown): number | null =>
   typeof v === 'number' && Number.isSafeInteger(v) ? v : null;
+
+/**
+ * The journaled review evidence, or null when the row carries none or the
+ * shape is malformed — a partial record never counts as a real zero. An
+ * out-of-vocabulary decision reads as null (gh recorded no usable
+ * decision); a non-integer or negative `latest` rejects the whole object.
+ */
+function parseReviewEvidenceRow(raw: unknown): OutsidePrReviewEvidence | null {
+  if (!isRecord(raw)) return null;
+  const latest = int(raw['latest']);
+  if (latest === null || latest < 0) return null;
+  const d = raw['decision'];
+  const decision = typeof d === 'string' && REVIEW_DECISIONS.has(d) ? d as OutsidePrReviewDecision : null;
+  return { decision, latest };
+}
 
 function parseOutcomeRow(row: Record<string, unknown>): OutsidePrOutcomeJournalRow | null {
   const repo = str(row['repo']);
@@ -125,6 +152,8 @@ function parseOutcomeRow(row: Record<string, unknown>): OutsidePrOutcomeJournalR
   const title = str(row['title']);
   const author = row['author'];
   const agent = row['agent'];
+  const createdAt = str(row['createdAt']);
+  const reviews = row['reviews'] === undefined || row['reviews'] === null ? null : parseReviewEvidenceRow(row['reviews']);
   return {
     v: 1,
     kind: OUTSIDE_PR_OUTCOME_SCHEMA,
@@ -136,6 +165,8 @@ function parseOutcomeRow(row: Record<string, unknown>): OutsidePrOutcomeJournalR
     agent: typeof agent === 'string' && AGENT_SLUG.test(agent) ? agent : null,
     model: null,
     mergedAt,
+    createdAt,
+    reviews,
     reverted: reverted as OutsidePrRevertVerdict,
   };
 }

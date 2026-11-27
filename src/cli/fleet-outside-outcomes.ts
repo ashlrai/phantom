@@ -4,7 +4,11 @@
  * Lists recently-merged PRs on the repos fleet jobs touch (plus the
  * workspace checkout), keeps the ones outside-prs.ts's rules call outside
  * work, and joins each against the standing revert set so a merged-then-
- * reverted community change is visible evidence. Read-only: it runs `gh pr
+ * reverted community change is visible evidence. Each row also carries
+ * gh's recorded open timestamp and review evidence (open→merge minutes,
+ * reviewer count, review decision) when gh returned them — null when
+ * unrecorded; a real empty review list stays a real "unreviewed" signal.
+ * Read-only: it runs `gh pr
  * list` and reads the local revert ledger; it never merges, records or
  * dispatches. Agent is convention attribution (recorded branch/login
  * convention, null when unmatched); model is always null — gh never
@@ -17,7 +21,9 @@ const usage = `Usage: phm fleet outside-outcomes [--days <n>] [--json]
 Merged outside-PR outcomes on fleet repos (default window: 30 days).
 Per repo: merged PRs outside work touched, each marked reverted yes/no/
 unknown against the standing revert ledger (unreadable ledger → unknown,
-never "not reverted"). Per author: merged and reverted counts; per agent:
+never "not reverted") plus its recorded open→merge minutes and review
+evidence when gh returned them. Per author: merged and reverted counts;
+per agent:
 the same tallies attributed by recorded branch/login convention (unmatched
 → unattributed, never guessed); model is always null — gh records none.
 gh absent → sourceState "missing". Read-only.`;
@@ -47,7 +53,18 @@ function renderText(r: OutsidePrOutcomesV1): string {
     const reverted = repo.prs.filter((p) => p.reverted === 'yes').length;
     lines.push(`${repo.repo}: ${repo.prs.length} merged outside PR(s)${repo.state === 'degraded' ? ' (degraded)' : ''}${repo.hitLimit ? ' (hit gh limit)' : ''}, ${reverted} reverted.`);
     for (const pr of repo.prs) {
-      lines.push(`  #${pr.number} ${pr.title} — ${pr.author ?? 'unknown author'}${pr.agent !== null ? ` [${pr.agent}]` : ''} — merged ${pr.mergedAt.slice(0, 10)} — reverted ${pr.reverted}`);
+      const bits = [`merged ${pr.mergedAt.slice(0, 10)}`, `reverted ${pr.reverted}`];
+      const openedMs = pr.createdAt === null ? NaN : Date.parse(pr.createdAt);
+      const mergedMs = Date.parse(pr.mergedAt);
+      if (Number.isFinite(openedMs) && Number.isFinite(mergedMs) && openedMs <= mergedMs) {
+        bits.push(`open→merge ${Math.round((mergedMs - openedMs) / 60_000)}m`);
+      }
+      if (pr.reviews !== null) {
+        bits.push(pr.reviews.latest === 0
+          ? 'unreviewed'
+          : `reviewed ${pr.reviews.latest}${pr.reviews.decision === null ? '' : ` ${pr.reviews.decision.toLowerCase().replaceAll('_', '-')}`}`);
+      }
+      lines.push(`  #${pr.number} ${pr.title} — ${pr.author ?? 'unknown author'}${pr.agent !== null ? ` [${pr.agent}]` : ''} — ${bits.join(' — ')}`);
     }
   }
   if (r.authors.length > 0) {
