@@ -6,11 +6,12 @@
  * The GitHub call sits behind `PrSource`; tests pass fixtures, the CLI passes `ghPrSource`.
  */
 import { runGhAsync } from '../integrations/github.js';
-import { internal } from './notes.js';
+import { asReleaseRecord, isValidReleaseDate, releaseCount } from './cadence.js';
+import { escapeReleaseMarkdown, internal } from './notes.js';
 
 export const PR_NOTES_SCHEMA = 'phantom.release-notes-prs.v1';
-export const NOTE_SECTIONS = ['Added', 'Changed', 'Fixed', 'Security'] as const;
-export type NoteSectionName = typeof NOTE_SECTIONS[number];
+export type NoteSectionName = 'Added' | 'Changed' | 'Fixed' | 'Security';
+const NOTE_SECTIONS: readonly NoteSectionName[] = ['Added', 'Changed', 'Fixed', 'Security'];
 export const NOTHING_TO_RELEASE = 'Nothing to release.';
 /** Shown when a PR has no readable title or body. Never guessed; also listed under `unknown`. */
 export const UNKNOWN_CHANGE = 'Change details unknown';
@@ -114,11 +115,9 @@ export function buildPrNotes(repo: string | undefined, since: string, source: Me
     else { const created = { text, prs: [pr.number] }; lines.set(key, created); sections[section].push(created); }
   }
   const count = NOTE_SECTIONS.reduce((sum, name) => sum + sections[name].length, 0);
-  const summary = count ? `${count} ${count === 1 ? 'change' : 'changes'} since ${since}.` : NOTHING_TO_RELEASE;
+  const summary = count ? `${releaseCount(count, 'change')} since ${since}.` : NOTHING_TO_RELEASE;
   return { schema: PR_NOTES_SCHEMA, repo: repo ?? null, since, summary, sections, skipped, unknown, complete: source.complete };
 }
-
-const escape = (text: string): string => text.replace(/[\\`*_[\]<>]/g, '\\$&');
 
 /** A CHANGELOG.md section ready to paste. Unknown wording is marked, never guessed. */
 export function formatPrNotesMarkdown(notes: PrReleaseNotes): string {
@@ -127,7 +126,7 @@ export function formatPrNotesMarkdown(notes: PrReleaseNotes): string {
   for (const name of NOTE_SECTIONS) {
     if (!notes.sections[name].length) continue;
     out.push('', `### ${name}`, '');
-    for (const line of notes.sections[name]) out.push(`- ${escape(line.text)} (${line.prs.map(pr => `#${pr}`).join(', ')})`);
+    for (const line of notes.sections[name]) out.push(`- ${escapeReleaseMarkdown(line.text)} (${line.prs.map(pr => `#${pr}`).join(', ')})`);
   }
   if (!notes.complete) out.push('', '<!-- The PR list was cut off; some changes may be missing. -->');
   return `${out.join('\n')}\n`;
@@ -153,7 +152,7 @@ export const ghPrSource: PrSource = {
     const cwd = process.cwd();
     const slug = repo ?? '{owner}/{repo}';
     const stamp = await runGhAsync(cwd, ['api', `repos/${slug}/commits/${since}`, '--jq', '.commit.committer.date']);
-    if (!stamp || Number.isNaN(Date.parse(stamp))) {
+    if (!isValidReleaseDate(stamp)) {
       // A null answer conflates "gh cannot run or read" with "the ref is
       // missing". Probe the repo itself: an unreadable repo means the gh
       // transport failed (missing binary, sign-in, network), while a readable
@@ -172,8 +171,8 @@ export const ghPrSource: PrSource = {
     const cut = Date.parse(stamp);
     const prs: MergedPr[] = [];
     for (const item of list) {
-      if (!item || typeof item !== 'object') continue;
-      const row = item as Record<string, unknown>;
+      const row = asReleaseRecord(item);
+      if (!row) continue;
       if (!Number.isSafeInteger(row.number) || typeof row.title !== 'string') continue;
       if (typeof row.mergedAt === 'string' && Date.parse(row.mergedAt) <= cut) continue;
       const files = Array.isArray(row.files) ? row.files.flatMap(file => file && typeof (file as { path?: unknown }).path === 'string' ? [(file as { path: string }).path] : []) : undefined;

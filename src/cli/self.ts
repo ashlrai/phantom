@@ -2,7 +2,7 @@
 import { formatSelfDrift, readSelfDrift, SELF_DRIFT_SCHEMA, type SelfDriftV1 } from '../core/release/drift.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-export const SELF_USAGE = `Usage: phm self drift [--json] [--repo <phantom clone>]
+const SELF_USAGE = `Usage: phm self drift [--json] [--repo <phantom clone>]
 Is the installed phm (the one on PATH, which the fleet runs) behind the latest release and master, and which
 merged fleet capabilities are not live in it yet? A capability is live when the installed phm answers its
 subcommand's --help with exit 0 within 5 s and shows the flag or verb that proves it. Read-only, no network.
