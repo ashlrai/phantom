@@ -17,9 +17,8 @@ import { existsSync, readdirSync, statfsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { binaryCandidates } from '../drive/nodes/provider-binary.js';
-import { aliasMatches } from './pool-reach.js';
 import { UNKNOWN } from './runtime-identity.js';
-import { capServesLane, MIRROR_FRESH_MS, readNodesRegistry, readNodesView, type NodeRow, type NodesViewDeps } from './nodes-view.js';
+import { capServesLane, readNodesRegistry, readNodesView, registryDiskFree, type NodeRow, type NodesViewDeps } from './nodes-view.js';
 
 export const NODES_DOCTOR_SCHEMA = 'phantom.nodes-doctor.v1';
 /** Below this the node pool already holds jobs (see drive/nodes/capacity.ts). */
@@ -109,13 +108,7 @@ export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Pro
   const view = readNodesView(deps.view);
   let registry: ReturnType<typeof readNodesRegistry> | null = null;
   try { registry = deps.view.readRegistry(); } catch { /* disk stays unknown */ }
-  const state = registry?.state ?? null;
-  // hostStats vouch for disk only while their session is live — the same rule
-  // the nodes view applies before showing memory/load. An expired record or a
-  // stale pool mirror leaves its last disk figure behind, not a measurement.
   const nowMs = Date.parse(view.asOf);
-  const mirrorStale = registry?.source === 'pool-mirror' && state !== null && nowMs - state.observedAt > MIRROR_FRESH_MS;
-  const live = (record: { expiresAt: number }): boolean => !mirrorStale && record.expiresAt > nowMs;
   const safeProbe = async (row: NodeRow) => { try { return await deps.probe(row.name, row.isSelf); } catch { return null; } };
   const rows = view.nodes.filter(n => only === undefined || n.name === only);
   const selfProbe = await safeProbe(view.nodes.find(n => n.isSelf) ?? { name: view.self, isSelf: true } as NodeRow);
@@ -137,15 +130,7 @@ export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Pro
       else if (c.status === 'signed-out') note(gaps, `${row.name}: ${c.lane} is not signed in. ${login ? `Run \`${login}\`` : `Sign in to ${c.lane}`} on that Mac.`);
       else if (c.status === 'unknown' && c.reason) note(unknowns, `${row.name}: ${c.reason}`);
     }
-    // The standalone registry is single-host: under it every record is this
-    // computer's, so only the self row reads host stats from it (newest
-    // session first) — a peer sharing a local node id's name must not
-    // inherit this machine's disk measurement.
-    const record = registry?.source === 'local'
-      ? (row.isSelf ? [...(state?.nodes ?? [])].filter(live).sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0] : undefined)
-      : state?.nodes.filter(r => live(r) && [r.nodeId, r.capacity?.hostId].some(id => typeof id === 'string' && aliasMatches(id, row.name)))
-        .sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
-    const diskBytes = probe?.diskFreeBytes ?? (row.reachable === false ? null : record?.hostStats?.diskFree ?? null);
+    const diskBytes = probe?.diskFreeBytes ?? registryDiskFree(registry, row, nowMs);
     const diskFreeGb = diskBytes === null ? UNKNOWN : gb(diskBytes);
     if (diskFreeGb === UNKNOWN) note(unknowns, `${row.name}: free disk unknown (no measurement from that computer)`);
     else if (diskFreeGb < DOCTOR_MIN_DISK_GB) note(gaps, `${row.name}: only ${diskFreeGb} GB free; jobs hold under ${DOCTOR_MIN_DISK_GB} GB. Free space on that Mac.`);

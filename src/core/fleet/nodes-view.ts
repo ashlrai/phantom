@@ -17,6 +17,7 @@ import { ashlrHome } from '../cloud/store.js';
 import { sampleHostStats } from '../drive/nodes/capacity.js';
 import { joinHintCommand } from '../drive/nodes/commands.js';
 import { readPoolConfig } from '../drive/nodes/pool-host.js';
+import { NODE_OFFLINE_MS, nodeCanAcceptWork } from '../drive/nodes/router.js';
 import { isHostStats, parseState, type HostStats, type NodeRecord, type NodesState } from '../drive/nodes/state.js';
 import { isVersionCap } from '../drive/nodes/phm-version.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
@@ -96,6 +97,22 @@ export interface NodesViewDeps {
 
 /** A mirror older than this cannot prove a node stopped; its silence is unknown. */
 export const MIRROR_FRESH_MS = 120_000;
+
+/** Registry disk fallback shared by the pool and doctor reports. */
+export function registryDiskFree(registry: NodesRegistry | null, row: NodeRow, now: number): number | null {
+  const state = registry?.state;
+  if (!state || row.reachable === false || !Number.isFinite(now)) return null;
+  if (registry.source === 'pool-mirror' && (state.observedAt > now || now - state.observedAt > MIRROR_FRESH_MS)) return null;
+  const latest = state.nodes.flatMap(record => {
+    const stats = record.hostStats;
+    if (!nodeCanAcceptWork(record, now) || !isHostStats(stats) || stats.sampledAtMs <= 0 ||
+        stats.sampledAtMs > now || now - stats.sampledAtMs >= NODE_OFFLINE_MS) return [];
+    const matches = registry.source === 'local' ? row.isSelf
+      : aliasMatches(record.nodeId, row.name) || (record.capacity && aliasMatches(record.capacity.hostId, row.name));
+    return matches ? [stats] : [];
+  }).sort((a, b) => b.sampledAtMs - a.sampledAtMs)[0];
+  return latest?.diskFree ?? null;
+}
 const HELD_WORDS: Record<string, string> = {
   'memory-pressure': 'low memory', 'memory-unmeasured': 'memory not measured',
   'disk-pressure': 'low disk space', 'disk-unmeasured': 'disk not measured',
