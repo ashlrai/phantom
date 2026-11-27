@@ -1040,7 +1040,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         `claimDrift ${result.claimDrift.state} matched=${result.claimDrift.matched ?? unknown} ` +
           `busOnly=${result.claimDrift.busOnly ?? unknown} coordOnly=${result.claimDrift.coordOnly ?? unknown} ` +
           `ownerMismatch=${result.claimDrift.ownerMismatch ?? unknown}`,
-        `feed ${result.feed.status}${result.feed.reason === undefined ? '' : `:${result.feed.reason}`} jobs=${result.feed.jobs ?? unknown}`,
+        `feed ${result.feed.status}${result.feed.reason === undefined ? '' : `:${result.feed.reason}`} ` +
+          `jobs=${result.feed.jobs ?? unknown}` +
+          `${result.feed.receipt === undefined ? '' : ` receipt=${result.feed.receipt}`}`,
         `mailbox ${result.mailbox.source} pending=${result.mailbox.pending ?? unknown}`,
         `ownerChat ${result.ownerChat.source} receipts=${result.ownerChat.receipts ?? unknown}`,
         `board ${result.board.source} threads=${result.board.threads ?? unknown} ` +

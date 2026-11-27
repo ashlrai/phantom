@@ -2015,8 +2015,9 @@ unreadable, never message ids, agent labels or bodies), the shared
 coordination table
 (live claims and status rows), the message-id claim journal behind `fleet
 bus-next`/`bus-claim` and the `work mine` hold state (retained claim records),
-the work-feed projection (job count, or the refusal reason when the feed
-is poisoned), the legacy `phm bus` mailbox store `work mine` still reads
+the work-feed projection (job count, or the refusal reason plus the blamed
+receipt's wire id — `receipt=<id>` on the human line, `feed.receipt` in JSON —
+when the projection named one), the legacy `phm bus` mailbox store `work mine` still reads
 (`source` plus a store-wide `pending` count of unacked, unexpired messages
 across every recipient label — totals only, never labels; 0 on a
 verified-missing store, null when unreadable), the owner-chat share
@@ -2806,8 +2807,9 @@ receipt stay in the body — while `unavailable`, `retryable` and `invalid`
 storage answer 503. A missing store reads as an empty `ok` feed. Status
 filtering stays client-side; a missing provider stays a refusal, never a
 fabricated owner. Every refused-feed read names the receipt when the
-projection could attribute one: the feed CLIs print it as `receipt=<id>`,
-`agents bus status` reports it as `feed.receipt`, `agents bus work mine`
+projection could attribute one: the feed CLIs and the `agents bus status`
+human line print it as `receipt=<id>`, `agents bus status --json` reports it
+as `feed.receipt`, `agents bus work mine`
 carries it on the refused `jobs`/`announced` sections, the work send verbs
 refuse `at receipt <id>`, and the unified comms inbox lists the refusal
 itself as a high-severity bus item deep-linking `agents bus show <id>` —
