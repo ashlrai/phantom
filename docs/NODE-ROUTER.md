@@ -534,8 +534,9 @@ The runnable count and route planner use CPU headroom and per-session cost
 without rounding either to a fixed number of decimal places.
 The runnable count and placement planner allow for arithmetic roundoff at
 exact CPU fits, so 0.30 cores of headroom can fit three 0.10-core sessions.
-It also reduces measured runnable counts to zero, including in fleet totals
-that read older capacity documents. Unmeasured harness counts remain null.
+Zero CPU or memory headroom reduces reported runnable counts to zero in fleet
+totals, even when a capacity document advertises positive counts. Unmeasured
+harness counts remain null.
 Kernel pressure above normal or swap growth stop placements and reduce
 measured runnable counts to zero in fleet totals. Both reads honor direct
 measurements and recorded limiter labels. The capacity sample computes and

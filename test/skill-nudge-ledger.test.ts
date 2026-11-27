@@ -92,6 +92,37 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(cards.map(card => card.trigger)).toEqual(['codex: recover from quota']);
   });
 
+  it('withholds recovery drafts when the only retry and recut evidence is marked no-launch', async () => {
+    const job = 'RQ-NO-LAUNCH-EVIDENCE';
+    const text = [
+      launch(job), finish(job, { failure_class: 'quota' }),
+      line({ event: 'recut_admission', job, action: 'ready' }),
+      ...['launch', 'claim', 'batch_claim', 'launch_failed', 'finish'].map(event =>
+        line({ event, job, lane: 'claude', launched: false, action: 'retry',
+          reason: 'timeout', failure_class: 'timeout' })),
+      outcome(job, 'MERGED'),
+    ].join('\n');
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', failureClass: 'quota' },
+    ]);
+    const result = await syncSkillNudgesFromJobsLedger({
+      jobsText: text, now: () => new Date('2026-10-28T20:00:00Z'),
+    });
+    expect(result).toMatchObject({ state: 'read', folded: 1, candidates: 0 });
+  });
+
+  it('leaves recut readiness pending until a real dispatch follows a no-launch claim', () => {
+    const job = 'RQ-RECUT-AFTER-SKIP';
+    const text = [
+      line({ event: 'recut_admission', job, action: 'ready' }),
+      line({ event: 'claim', job, lane: 'claude', launched: false }),
+      launch(job), outcome(job, 'MERGED'),
+    ].join('\n');
+    expect(skillNudgeJobsFromLedger(text)).toEqual([
+      { id: job, lane: 'codex', outcome: 'merged', recuts: 1 },
+    ]);
+  });
+
   it('counts launch_failed retry receipts as retries and keeps their reason as the class', () => {
     const text = [
       launch('RQ-C'),

@@ -82,6 +82,30 @@ describe('fleet outcome measurement', () => {
     expect(m.unknownMergeTimes).toBe(1);
     expect(m.byRepo[0]).toMatchObject({ merged: 1, revertRate: null, timeToMerge: { p50: 3600 } });
   });
+  it('counts reconciled merges without crediting a publication to the current retry', () => {
+    const source = 'metrics-outcomes-reconciler';
+    const m = build([
+      launch('A', 5),
+      event('publish', 4, { job: 'A', url: pr(1) }),
+      launch('A', 3),
+      event('published', 2, { jobId: 'A', prUrl: pr(1), source, outcome: 'MERGED', mergedAt: stamp(1) }),
+      event('publish', 2, { jobId: 'A', prUrl: pr(2), source, outcome: 'CLOSED', closedAt: stamp(1) }),
+      event('publish', 2, { jobId: 'A', prUrl: pr(3), source, outcome: 'MERGED', mergedAt: stamp(1) }),
+    ]);
+    expect(m.totals).toMatchObject({ jobs: 2, samples: { pr: 1, published: 1 } });
+    expect(m.byRepo[0]).toMatchObject({ merged: 2, timeToMerge: { p50: 10_800, samples: 1 } });
+  });
+
+  it('reads eventless lifecycle rows and keeps ordinary publish claims from proving a merge', () => {
+    const m = build([
+      launch('A', 5),
+      { jobId: 'A', prUrl: pr(1), outcome: 'PUBLISHED', ts: stamp(4) },
+      { jobId: 'A', prUrl: pr(1), outcome: 'MERGED', mergedAt: stamp(1) },
+      event('publish', 2, { job: 'A', url: pr(2), outcome: 'MERGED', mergedAt: stamp(1) }),
+    ]);
+    expect(m.totals).toMatchObject({ samples: { pr: 1, published: 1 } });
+    expect(m.byRepo[0]).toMatchObject({ merged: 1, timeToMerge: { p50: 10_800, samples: 1 } });
+  });
   it('counts batch members as attempts and never the RQ-BATCH session id as a job', () => {
     const claim = (job: string, hours = 3, extra = {}) => event('batch_claim', hours,
       { job, batch: 'RQ-BATCH-ABC123', lane: 'codex', model: 'model-a', tier: 'work', ...extra });
