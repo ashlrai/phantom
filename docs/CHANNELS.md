@@ -745,7 +745,37 @@ is `missing` (verified-empty: no parked rows can exist), an unreadable or
 malformed one `degraded` — the listed rows are a floor, never a complete
 set — and a throwing read `unavailable`, never an empty queue passed off
 as fact; deep links `phm fleet queue-parked`, `phm fleet parked`, `phm
-fleet autopilot --once`) — and each item carries `act` deep-link commands (`phm fleet
+fleet autopilot --once`) — and launched-or-staffed fleet work that is not
+actually running (the same `readFleetRunsDirState` `notRunning` rows `phm
+fleet held` (`fleet.held.v1`), the fleet API, the desktop fleet view, the
+telegram/email fleet status and the leader digest serve, so the surfaces
+can never disagree: until now the held backlog had no inbox surface — the
+jobs-stuck source reads run markers, queue-parked reads ready.tsv gates
+and router-queue reads READY rows, but a launch record held before it ever
+ran, a lane whose target says work should flow while nothing runs or
+queues, a launch with no finish past the hour mark and a finish with no
+publish record were visible only to an agent that already knew to run
+`phm fleet held`; each row lists once under its own kind — a non-
+`launched` launch record (HELD/PAUSED first line) as warn `held-launch`,
+a lane with launch target above zero but running and queued both zero as
+info `idle-lane` (a load-shed curtailed lane is not idle — the
+projection's own check decides), a `launched` record over 60 minutes old
+with no finish or publish in the metrics tail as warn
+`launched-no-finish`, and a finish 10 minutes to a day old with no
+publish record or event as warn `finished-no-publish` — `since` the
+row's own recorded start, null when the projection keeps none, and
+`expiresAt` null throughout, since a held launch waits for its unblock,
+a starving lane for queued work, a silent launch for a stop or requeue
+and an unpublished finish for a republish, never a guessed deadline; no
+item is Mason-blocking; job rows cite their own job id for `--job` while
+an idle-lane row names a lane, never a job, so it cites none; a
+verified-absent runs dir is `missing` (no launch records, lanes or
+metrics can exist, so nothing can count as not-running), a partial fleet
+read `degraded` — the listed rows are a floor, since an unreadable
+metrics tail leaves finish and publish states unproven — and a throwing
+read `unavailable`, never an empty fleet passed off as fact; deep links
+`phm fleet held`, `phm fleet lanes`, `phm fleet unfed --json`, `phm jobs
+stuck`, `phm fleet republish`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -768,7 +798,8 @@ queue stuck`, `phm fleet unfed --json`, `phm queue`, `phm jobs stuck`,
 `phm fleet stray-stop --stuck --apply`, `phm fleet
 channel-health`, `phm channels slack status`, `phm imessage doctor`, `phm
 comms health --json`, `phm comms cycle`, `phm fleet queue-parked`, `phm
-fleet parked`, `phm fleet autopilot --once`). It never claims, replies, or mutates; a source
+fleet parked`, `phm fleet autopilot --once`, `phm fleet held`, `phm fleet
+lanes`, `phm fleet republish`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
@@ -784,9 +815,9 @@ delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job, a
 seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
 peer-dispatch receipt's job, a session-handoff journal's job id, a
-router-queue row's own READY id, a jobs-stuck marker's own job id, or a
-queue-parked row's own job id, one of the gate ids its detail names, or
-one of a parked group's listed job ids —
+router-queue row's own READY id, a jobs-stuck marker's own job id, a
+queue-parked row's own job id, one of the gate ids its detail names, one
+of a parked group's listed job ids, or a fleet-held job row's own job id —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound

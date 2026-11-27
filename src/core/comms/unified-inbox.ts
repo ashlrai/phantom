@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirty-seven local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates thirty-nine local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -704,6 +704,48 @@
  *               read 'unavailable', never an empty queue passed off as
  *               fact. Act: `phm fleet queue-parked`, `phm fleet parked`,
  *               `phm fleet autopilot --once`.
+ *   fleet-held  launched-or-staffed fleet work that is not actually
+ *               running — the same `readFleetRunsDirState` `notRunning`
+ *               rows `phm fleet held` (`fleet.held.v1`), the fleet API,
+ *               the desktop fleet view, the telegram/email fleet status
+ *               and the leader digest all serve, so this source and those
+ *               surfaces can never disagree. Until now the held backlog
+ *               had no inbox surface: the jobs-stuck source reads run
+ *               markers, queue-parked reads ready.tsv gates and
+ *               router-queue reads READY rows, but a launch record held
+ *               before it ever ran, a lane whose target says work should
+ *               flow while nothing runs or queues, a launch with no
+ *               finish past the hour mark and a finish with no publish
+ *               record were visible only to an agent that already knew to
+ *               run `phm fleet held`. Each row lists once under its own
+ *               kind: a non-`launched` launch record (HELD/PAUSED first
+ *               line) as warn `held-launch`, a lane with launch target
+ *               above zero but running and queued both zero as info
+ *               `idle-lane` (a curtailed lane is not idle — the
+ *               projection's own load-shed check decides), a `launched`
+ *               record over 60 minutes old with no finish or publish in
+ *               the metrics tail as warn `launched-no-finish`, and a
+ *               finish 10 minutes to a day old with no publish record or
+ *               event as warn `finished-no-publish`. `since` is the
+ *               row's own recorded start — the launch record's first
+ *               unfinished metrics stamp, the finish stamp, or the
+ *               lane's last metrics event — null when the projection
+ *               keeps none; `expiresAt` stays null throughout: a held
+ *               launch waits for its unblock, a starving lane for queued
+ *               work, a silent launch for a stop or requeue and an
+ *               unpublished finish for a republish, never a guessed
+ *               deadline; no item is Mason-blocking. Job rows carry
+ *               `jobIds` their own job id so `--job` finds them; an
+ *               idle-lane row names a lane, never a job, so it carries
+ *               none. A verified-absent runs dir is 'missing' (no launch
+ *               records, lanes or metrics can exist, so nothing can
+ *               count as not-running), a partial fleet read 'degraded' —
+ *               the listed rows are a floor, since an unreadable metrics
+ *               tail leaves finish and publish states unproven — and a
+ *               throwing read 'unavailable', never an empty fleet passed
+ *               off as fact. Act: `phm fleet held`, `phm fleet lanes`,
+ *               `phm fleet unfed --json`, `phm jobs stuck`, `phm fleet
+ *               republish`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -784,6 +826,8 @@ import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
 import { readStuckJobs, type StuckJob as RunningStuckJob, type StuckJobsReport } from '../fleet/running-stuck.js';
 import { isDependencyParkedReason, readFleetQueue, type FleetQueueV1, type ParkedGroup, type ParkedMetDep, type ParkedUnmetDep } from '../fleet/runs-parked-queue.js';
 import { readChannelHealth } from '../fleet/channel-health.js';
+import { readFleetRunsDirState } from '../fleet/runs-dir-state.js';
+import type { NotRunningKind, NotRunningRow } from '../fleet/fleet-held.js';
 import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
@@ -799,7 +843,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'owner-delivery', 'owner-pair', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'peer-inbox', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
-  'send-gate', 'router-queue', 'jobs-stuck', 'channel-health', 'queue-parked',
+  'send-gate', 'router-queue', 'jobs-stuck', 'channel-health', 'queue-parked', 'fleet-held',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -816,7 +860,8 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
  * states and `claim-drift` into its three row
  * classes, the `queue-parked` source into its dependency-gate
  * waiting/stale split plus one `parked-group` item per non-dependency
- * parked reason and lane, so `kind` is the finer classification
+ * parked reason and lane, and the `fleet-held` source into its four
+ * not-running row kinds, so `kind` is the finer classification
  * `--kind` filters on. */
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
@@ -833,6 +878,7 @@ export const UNIFIED_INBOX_KINDS = [
   'stuck-ghost', 'stuck-job',
   'channel-blocked', 'channel-degraded', 'channel-unknown',
   'parked-dep-waiting', 'parked-dep-stale', 'parked-group',
+  'held-launch', 'idle-lane', 'launched-no-finish', 'finished-no-publish',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -1015,6 +1061,20 @@ export interface QueueParkedRead {
   groups: readonly ParkedGroup[];
 }
 
+/** The resolved fleet-held read: `readFleetRunsDirState`'s `notRunning`
+ * rows mapped onto the unified source states — 'missing' a verified-absent
+ * runs dir (no launch records, lanes or metrics can exist, so nothing can
+ * count as launched-or-staffed-but-not-running), 'unavailable' a throwing
+ * read (the not-running set is unknown, never an empty fleet), 'degraded'
+ * a partial fleet read (the listed rows are a floor — an unreadable
+ * metrics tail leaves finish and publish states unproven), 'healthy' the
+ * full read. `rows` stays empty whenever the state is 'missing'/
+ * 'unavailable'. */
+export interface FleetHeldRead {
+  state: UnifiedInboxSourceState;
+  rows: readonly NotRunningRow[];
+}
+
 /** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
  * when the store could be read — 'missing' is a verified-empty board (no
  * `state.json` ever written), 'unavailable' an unreadable one, never an
@@ -1169,6 +1229,11 @@ export interface UnifiedInboxOptions {
    * same bounded read `phm fleet queue-parked` and the autopilot's
    * `stale-parked-deps` gap serve. */
   readQueueParked?: (options: { runsDir?: string; now?: () => number }) => Promise<QueueParkedRead>;
+  /** Fleet-held seam; default reads `readFleetRunsDirState`'s `notRunning`
+   * on the shared runs dir — the same bounded fleet projection `phm fleet
+   * held`, the fleet API, the desktop fleet view and the leader digest
+   * serve. */
+  readFleetHeld?: (options: { runsDir?: string; now?: () => number }) => Promise<FleetHeldRead>;
   /** Channel-health seam; default reads `readChannelHealth` — the same
    * slack/imessage bridge projection `phm fleet channel-health` and
    * `phm channels` serve. */
@@ -4184,6 +4249,88 @@ async function readQueueParkedSource(options: { runsDir?: string; now?: () => nu
   }
 }
 
+/** Per-kind presentation for the fleet-held rows: the unified kind, its
+ * severity band, the title and the deep links — the `phm fleet held`
+ * diagnostic first, then the read or remediation that kind's unblock
+ * points at. */
+const FLEET_HELD_KIND: Record<NotRunningKind, {
+  kind: UnifiedInboxKind; severity: UnifiedInboxSeverity; acts: readonly string[];
+  title: (name: string) => string;
+}> = {
+  held_launch: { kind: 'held-launch', severity: 'warn', acts: ['phm fleet held', 'phm fleet lanes'],
+    title: (job) => `Job ${job} launch held` },
+  idle_lane: { kind: 'idle-lane', severity: 'info', acts: ['phm fleet held', 'phm fleet unfed --json'],
+    title: (lane) => `Lane ${lane} idle` },
+  launched_no_finish: { kind: 'launched-no-finish', severity: 'warn', acts: ['phm fleet held', 'phm jobs stuck'],
+    title: (job) => `Job ${job} launched with no finish` },
+  finished_no_publish: { kind: 'finished-no-publish', severity: 'warn', acts: ['phm fleet held', 'phm fleet republish'],
+    title: (job) => `Job ${job} finished with no publish` },
+};
+
+/**
+ * Launched-or-staffed fleet work that is not actually running — the
+ * `notRunning` rows of the same `readFleetRunsDirState` projection `phm
+ * fleet held`, the fleet API, the desktop fleet view, the telegram/email
+ * fleet status and the leader digest serve, so this source and those
+ * surfaces can never disagree. Each row lists once under its own kind —
+ * `held-launch`, `idle-lane`, `launched-no-finish` or
+ * `finished-no-publish` — carrying the projection's own reason and unblock
+ * step in the detail. `since` is the row's recorded start, `expiresAt`
+ * stays null (a held launch, a starving lane, a silent launch and an
+ * unpublished finish each wait for their unblock, never a guessed
+ * deadline), and no item is Mason-blocking. Job rows cite their own job
+ * id for `--job`; an idle-lane row names a lane, never a job, so it cites
+ * none. The read itself never writes: unholding a lane, draining a queue,
+ * stopping a stale launch or republishing finished work is the fleet
+ * verbs' job, which the acts name.
+ */
+async function fleetHeldItems(read: NonNullable<UnifiedInboxOptions['readFleetHeld']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: FleetHeldRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const degraded = result.state === 'degraded'
+    ? ' · fleet state read degraded — the not-running set may be incomplete' : '';
+  const items = result.rows.map((row): Omit<UnifiedInboxItem, 'priority'> => {
+    const spec = FLEET_HELD_KIND[row.kind];
+    return {
+      id: `fleet-held:${row.kind}:${row.job_or_lane}`,
+      source: 'fleet-held',
+      kind: spec.kind,
+      severity: spec.severity,
+      blocking: false,
+      title: oneLine(spec.title(row.job_or_lane), TITLE_MAX),
+      detail: oneLine(`${row.reason} · next: ${row.unblock}${degraded}`, DETAIL_MAX) || null,
+      since: row.since,
+      expiresAt: null,
+      // A lane row names a lane, never a job — only job rows cite one.
+      ...jobIdsField(row.kind === 'idle_lane' ? [] : [row.job_or_lane]),
+      act: spec.acts,
+    };
+  });
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real fleet-held read: `readFleetRunsDirState` on the shared runs
+ * dir — the same bounded fleet projection `phm fleet held` and the fleet
+ * API serve. The projection never throws on an absent or unreadable
+ * store: `sourceState` carries the verdict — 'missing' a verified-absent
+ * runs dir (no launch records, lanes or metrics can exist), 'degraded' a
+ * partial read (the listed rows are a floor) — and any throw is
+ * 'unavailable', never an empty fleet passed off as fact. */
+async function readFleetHeldSource(options: { runsDir?: string; now?: () => number }): Promise<FleetHeldRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  try {
+    const state = await readFleetRunsDirState({ runsDir: dir, now: options.now });
+    return { state: state.sourceState, rows: state.notRunning ?? [] };
+  } catch {
+    return { state: 'unavailable', rows: [] };
+  }
+}
+
 /** Display label and deep links per channel-health leg; telegram's acts differ because its diagnostic is `phm comms health`, not `phm fleet channel-health`. */
 const channelHealthPresentation = (channel: string): { label: string; acts: readonly string[] } =>
   channel === 'slack'
@@ -4509,6 +4656,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const jobsStuck = await jobsStuckItems(options.readJobsStuck ?? readJobsStuckSource, options);
   const channelHealth = await channelHealthItems(options);
   const queueParked = await queueParkedItems(options.readQueueParked ?? readQueueParkedSource, options);
+  const fleetHeld = await fleetHeldItems(options.readFleetHeld ?? readFleetHeldSource, options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -4549,8 +4697,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'jobs-stuck': jobsStuck.report,
     'channel-health': channelHealth.report,
     'queue-parked': queueParked.report,
+    'fleet-held': fleetHeld.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items, ...fleetHeld.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
