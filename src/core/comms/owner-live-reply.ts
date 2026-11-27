@@ -11,14 +11,14 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LeaderReply } from '../fleet/mason-outbox.js';
 import type { OwnerChannel } from './leader-mailbox.js';
-import { readOwnerLiveStatus, type PhoneChannel } from './owner-live-status.js';
+import { PHONE_CHANNELS, readOwnerLiveStatus, type PhoneChannel } from './owner-live-status.js';
 import { readOwnerThread, type OwnerThreadOptions } from './owner-thread.js';
 
 export const OWNER_LIVE_REPLY_INTERVAL_MS = 60 * 60 * 1000;
 const KEEP_HASHES = 50;
 const STATE_FILE = 'owner-live-reply.json';
 
-interface ReplyState { lastSentAt: number; hashes: string[] }
+interface ReplyState { lastSentAt: number; hashes: string[]; delivered: Record<string, PhoneChannel[]> }
 
 export type OwnerLiveReplyReason = 'sent' | 'planned' | 'no-channel-on' | 'no-reply' | 'already-sent' | 'too-soon' | 'not-delivered' | 'halted';
 
@@ -36,9 +36,17 @@ function readState(path: string): ReplyState {
   try {
     const raw: unknown = JSON.parse(readFileSync(path, 'utf8'));
     const o = raw as Partial<ReplyState>;
-    if (typeof o.lastSentAt === 'number' && Array.isArray(o.hashes)) return { lastSentAt: o.lastSentAt, hashes: o.hashes.filter((h): h is string => typeof h === 'string') };
+    if (typeof o.lastSentAt === 'number' && Array.isArray(o.hashes)) {
+      const hashes = o.hashes.filter((h): h is string => typeof h === 'string').slice(-KEEP_HASHES);
+      const delivered: ReplyState['delivered'] = {};
+      for (const hash of hashes) {
+        const channels = o.delivered?.[hash];
+        if (Array.isArray(channels)) delivered[hash] = PHONE_CHANNELS.filter(c => channels.includes(c));
+      }
+      return { lastSentAt: o.lastSentAt, hashes, delivered };
+    }
   } catch { /* first run or unreadable: nothing sent yet */ }
-  return { lastSentAt: 0, hashes: [] };
+  return { lastSentAt: 0, hashes: [], delivered: {} };
 }
 
 function writeState(dir: string, state: ReplyState): void {
@@ -64,14 +72,18 @@ export async function sendLeaderReplyToPhone(
   const hash = replyHash(newest.text);
   const dir = join(options.runsDir, 'leader');
   const state = readState(join(dir, STATE_FILE));
-  if (state.hashes.includes(hash)) return done('already-sent');
+  const known = state.hashes.includes(hash);
+  // A legacy hash has no destination evidence and must retain global dedupe.
+  if (known && !Object.hasOwn(state.delivered, hash)) return done('already-sent');
+  const pending = on.filter(channel => !state.delivered[hash]?.includes(channel));
+  if (known && pending.length === 0) return done('already-sent');
   if (now - state.lastSentAt < OWNER_LIVE_REPLY_INTERVAL_MS) return done('too-soon');
-  if (!input.apply) return done('planned', [], on);
+  if (!input.apply) return done('planned', [], pending);
   // Slack needs the DM it last spoke in; every other channel needs only the owner id.
   const refs = new Map<OwnerChannel, string>();
   for (const m of readOwnerThread(options).messages) if (m.direction === 'inbound' && m.channelRef) refs.set(m.channel, m.channelRef);
   const sent: PhoneChannel[] = [];
-  for (const channel of on) {
+  for (const channel of pending) {
     const transport = options.transports?.[channel];
     const ownerId = options.settings.owners[channel];
     if (!transport || !ownerId) continue;
@@ -81,7 +93,10 @@ export async function sendLeaderReplyToPhone(
       if (result.status === 'sent' || result.status === 'duplicate') sent.push(channel);
     } catch { /* a failed channel is simply not counted */ }
   }
+  const hashes = (known ? state.hashes : [...state.hashes, hash]).slice(-KEEP_HASHES);
+  const delivered = Object.fromEntries(hashes.filter(h => Object.hasOwn(state.delivered, h)).map(h => [h, state.delivered[h]!]));
+  delivered[hash] = [...(state.delivered[hash] ?? []), ...sent];
+  writeState(dir, { lastSentAt: now, hashes, delivered });
   if (sent.length === 0) return done('not-delivered');
-  writeState(dir, { lastSentAt: now, hashes: [...state.hashes, hash].slice(-KEEP_HASHES) });
   return done('sent', sent);
 }
