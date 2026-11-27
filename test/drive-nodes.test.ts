@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
+import { nodeCapacityView } from '../src/core/drive/nodes/router.js';
 import { versionFromCaps } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNodeFleet } from '../src/cli/node-fleet.js';
 
@@ -287,6 +288,35 @@ describe('drive node leases', () => {
     const again = f.a.join('worker', { owners: ['o'], slots: 1 })!;
     f.a.heartbeat(again);
     expect(f.a.pull(again)!.claim.jobId).toBe('job2');
+  });
+
+  it.each(['pull', 'claim'] as const)('%s reuses capacity fenced by a leader change', method => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    f.a.heartbeat(worker, { capacity: {
+      hostId: 'worker-host', ramBytes: 1_000_000, slots: 1, held: null, sampledAtMs: 1_000,
+    } });
+    f.a.enqueue('job1', { owner: 'o' });
+    f.a.enqueue('job2', { owner: 'o' });
+    const first = f.a.pull(worker)!.claim;
+    const host = () => nodeCapacityView(f.store.state, f.store.state.observedAt)
+      .find(h => h.hostId === 'worker-host');
+    expect(first.leaderToken).toBe(leader.token);
+    expect(host()).toMatchObject({ running: 1, freeSlots: 0 });
+    expect(f.a.plan('o')).toMatchObject([{ jobId: 'job2', nodeId: null }]);
+
+    f.advance(20);
+    const next = f.b.heartbeat(f.bob)!.leader!;
+    expect(next.token).toBeGreaterThan(leader.token);
+    expect(host()).toMatchObject({ running: 0, freeSlots: 1 });
+    expect(f.a.plan('o')).toEqual([{ jobId: 'job2', owner: 'o', nodeId: 'worker' }]);
+    const second = method === 'pull' ? f.a.pull(worker)?.claim : f.a.claim(next, worker, 'job2');
+    expect(second).toMatchObject({ jobId: 'job2', leaderToken: next.token });
+    expect(host()).toMatchObject({ running: 1, freeSlots: 0 });
+    expect(f.a.renewClaim(first)).toBeNull();
+    expect(f.a.complete(first, 'stale')).toBe(false);
+    expect(f.a.complete(second!, 'finished')).toBe(true);
   });
 });
 
