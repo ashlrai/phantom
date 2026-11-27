@@ -249,10 +249,11 @@ function noteCiBoundary(
 /**
  * CI wall time requires one unambiguous pair inside the rewarded execution's
  * dispatch-to-outcome window. Reused job ids can carry CI from earlier runs.
+ * A null repository indicates disputed evidence. Undefined means no label was observed.
  */
 function ciWallEvidence(
   acc: RewardJobAccum, dispatchMs: number, outcomeMs: number, outcomePrKeys: readonly string[],
-  outcomeRepo: string | null,
+  outcomeRepo: string | null | undefined,
 ): { ciWallMs?: number } {
   if (acc.ciBoundaryUndated) return {};
   const inWindow = (at: number): boolean => at >= dispatchMs && at <= outcomeMs;
@@ -269,7 +270,7 @@ function ciWallEvidence(
   const completeMark = acc.ciCompletions.get(complete)!;
   const keys = new Set([...outcomePrKeys, ...startMark.prKeys, ...completeMark.prKeys]);
   const repos = new Set([...startMark.repos, ...completeMark.repos]);
-  if (outcomeRepo !== null) repos.add(outcomeRepo);
+  if (outcomeRepo !== undefined) repos.add(outcomeRepo);
   if (keys.size > 1 || repos.size > 1 || repos.has(null)) return {};
   return { ciWallMs: complete - start };
 }
@@ -408,7 +409,7 @@ function dispatchBefore(acc: RewardJobAccum, boundMs: number) {
   return latestMs === null ? null : {
     ms: latestMs,
     lane: lanes.size === 1 ? [...lanes][0]! : null,
-    repo: repos.size === 1 ? [...repos][0] ?? null : null,
+    repo: repos.size > 1 ? null : repos.values().next().value,
   };
 }
 
@@ -432,7 +433,7 @@ function rewardInput(
     if (dispatch === null) return null;
     const repo = merge.repo === undefined ? dispatch.repo : merge.repo;
     return {
-      jobId: id, pool: dispatch.lane, repo,
+      jobId: id, pool: dispatch.lane, repo: repo ?? null,
       merged: heldMerge, dispatchedAt: iso(dispatch.ms), mergedAt: heldMerge ? iso(merge.resolvedMs) : null,
       costUsd: cost,
       ...ciWallEvidence(acc, dispatch.ms, merge.resolvedMs, merge.prKeys, repo),
@@ -447,7 +448,7 @@ function rewardInput(
     if (dispatch === null) return null;
     const repo = resolution.repo === undefined ? dispatch.repo : resolution.repo;
     return {
-      jobId: id, pool: dispatch.lane, repo,
+      jobId: id, pool: dispatch.lane, repo: repo ?? null,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
       costUsd: cost,
       ...ciWallEvidence(acc, dispatch.ms, resolutionMs, resolution.prKeys, repo),

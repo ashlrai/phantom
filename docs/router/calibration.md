@@ -65,6 +65,10 @@ its verdict and leaves the repository null.
 The feed leaves CI wall time unknown when a batch claim falls at or between
 the paired CI timestamps. A batch claim strictly before CI starts can still
 supply dispatch evidence for a reward with measured CI wall time.
+Conflicting repository labels at the effective resolution time also leave
+CI wall time unknown. When the resolution supplies no repository, the same
+rule applies to conflicting labels on the selected dispatch. Missing
+repository labels alone do not prevent an otherwise valid CI measurement.
 
 Each predicted / actual average uses only jobs with both values, with the paired count shown alongside it. Brier is the mean squared difference between each recorded merge probability and its binary resolved outcome for that same population. `resolved` counts all known outcomes, including jobs without predictions. Missing pairs produce null in JSON and `n/a` in Markdown. These are descriptive statistics of recorded evidence, not proof that the sample is representative. The files supplied by the operator determine schema compatibility and coverage.
 
