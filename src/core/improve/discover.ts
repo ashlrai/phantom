@@ -1802,6 +1802,33 @@
  *     only as healthy context, truncated tails are stated as lower
  *     bounds, and items emit only for the fleet's own repository
  *     since the journal describes this install's updater;
+ *   - the fleet runs-history journal's recurring occupancy evidence:
+ *     the RunsSample rows sampleIfDue appends to
+ *     $ASHLR_HOME/fleet/runs-history.jsonl (runsHistoryFile() in
+ *     src/core/fleet/runs-history.ts) on every read of
+ *     GET /api/verse/runs-history — per-lane {running, target,
+ *     queued, held} plus workers, leaders and the dispatcher's paused
+ *     flag, counts only, at most one sample per minute while the API
+ *     is read, the file compacting past 2 MiB to a seven-day
+ *     retention (runsHistoryBacklogItems below). Until now the file's
+ *     only readers were the API window itself and display
+ *     projections — the Command capacity panes, lane-streaks and
+ *     stall windows — reports someone had to open, so a lane that
+ *     kept queued work it never filled, a lane held while its queue
+ *     waited, or a fleet paused for days with work outstanding never
+ *     became work. A lane-starved cell emits per lane at eight
+ *     recorded queued-but-unfilled samples across two distinct UTC
+ *     days (under-target or zero-target, split in the prompt), a
+ *     lane-held cell per lane at eight held-with-queue samples across
+ *     two days, fleet-paused at eight paused samples across two days
+ *     with at least two recording queued work, and corrupt-lines at
+ *     three contract failures inside the retained tail; rows count
+ *     only under the writer's own parseRunsSample contract inside the
+ *     store's seven-day window plus skew tolerance, truncated tails
+ *     are stated as lower bounds, workers/leaders stay quoted
+ *     context (host-local counts, never cells), and items emit only
+ *     for the fleet's own repository since the journal describes
+ *     this install's lanes and carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1962,6 +1989,7 @@ import { amplifyBacklogItems } from './amplify-backlog.js';
 import { fleetHopSpoolBacklogItems } from './fleet-hop-spool-backlog.js';
 import { botHandoffBacklogItems } from './bot-handoff-backlog.js';
 import { installsBacklogItems } from './installs-backlog.js';
+import { runsHistoryBacklogItems } from './runs-history-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4176,6 +4204,29 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // and only the fleet's own repository inherits the items since the
   // journal describes this install's updater.
   items.push(...await installsBacklogItems({ repo }));
+
+  // Fleet runs-history journal ($ASHLR_HOME/fleet/runs-history.jsonl):
+  // the RunsSample rows sampleIfDue appends on every read of
+  // GET /api/verse/runs-history — per-lane {running, target, queued,
+  // held} plus workers, leaders and the dispatcher's paused flag
+  // (runsHistoryBacklogItems below). Until now the file's only readers
+  // were the API window and display projections — capacity panes,
+  // lane-streaks, stall windows — reports someone had to open, so a
+  // lane that kept queued work it never filled, a lane held while its
+  // queue waited, or a fleet paused for days with work outstanding
+  // never became work. A lane-starved cell emits per lane at eight
+  // recorded queued-but-unfilled samples across two distinct UTC days;
+  // a lane-held cell per lane at eight held-with-queue samples across
+  // two days; fleet-paused at eight paused samples across two days
+  // with at least two recording queued work; corrupt-lines at three
+  // contract failures inside the retained tail. Rows count only under
+  // the writer's own parseRunsSample contract inside the store's
+  // seven-day window plus skew tolerance, truncated tails are stated
+  // as lower bounds, workers/leaders stay quoted context (host-local
+  // counts), and only the fleet's own repository inherits the items
+  // since the journal describes this install's lanes and carries no
+  // repo column.
+  items.push(...await runsHistoryBacklogItems({ repo }));
   return { items, errors };
 }
 
