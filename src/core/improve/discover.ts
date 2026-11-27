@@ -174,6 +174,18 @@
  *     work instead of sitting in `phm fleet precheck-repeats`,
  *     `phm fleet parked` and `phm fleet queue`, reports someone had to
  *     run;
+ *   - the jobs ledger's precheck_parked defer evidence: the rows the
+ *     dispatcher's claim loop appends to metrics/jobs.jsonl each time a
+ *     queued job's empty-run precheck returns the unproven-completion
+ *     verdict and the job stays parked on exponential backoff —
+ *     recurring park reasons across distinct jobs and job ids the
+ *     queue keeps deferring for days
+ *     (precheckParkBacklogItems below), so producers that keep minting
+ *     work the precheck cannot prove done, a precheck receipt contract
+ *     that drifted, or one job cycling the backoff ladder forever
+ *     become work instead of sitting in `phm fleet parked`, the
+ *     friction feed's holds tally and the router outcome fold's defer
+ *     accounting, reports someone had to run;
  *   - the producer-yield scoreboard's recurring no-land sources: the
  *     per-source launches, PRs, merges, empties and aborts
  *     `phm jobs yield --by source` folds from metrics/jobs.jsonl and the
@@ -1789,6 +1801,7 @@ import { skillOutcomeBacklogItems } from './skill-outcome-backlog.js';
 import { trajectoryGapBacklogItems } from './trajectory-gap-backlog.js';
 import { skillEvidenceBacklogItems } from './skill-evidence-backlog.js';
 import { precheckSkipBacklogItems } from './precheck-skip-backlog.js';
+import { precheckParkBacklogItems } from './precheck-park-backlog.js';
 import { recheckBacklogItems } from './recheck-backlog.js';
 import { sourceYieldBacklogItems } from './source-yield-backlog.js';
 import { gatewayShadowBacklogItems } from './gateway-shadow-backlog.js';
@@ -2181,6 +2194,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // own row validation; an item emits only at the recurring bar inside
   // the window and only for the fleet's own repository.
   items.push(...await precheckSkipBacklogItems({ repo }));
+
+  // Jobs-ledger precheck_parked defers: the rows the dispatcher's claim
+  // loop appends each time a queued job's empty-run precheck returns
+  // the unproven-completion verdict and the job stays parked on
+  // exponential backoff — recurring park reasons across distinct jobs
+  // and job ids the queue keeps deferring — become backlog items too.
+  // Until now the rows only ever fed `phm fleet parked --json`'s
+  // queue-health tallies, the friction feed's 'holds' category and the
+  // router outcome fold's defer accounting, reports someone had to run
+  // and read. Same bounded tail read the router outcome and usage-gap
+  // folds use, the jobs-ledger dialect's own row validation, each cell
+  // emitting only at the recurring bars inside the 7-day window and
+  // only for the fleet's own repository since the park decision is
+  // this install's dispatcher.
+  items.push(...await precheckParkBacklogItems({ repo }));
 
   // Producer yield: the jobs.yield-by.v1 scoreboard's recurring no-land
   // sources — launches attributed to each producer (leader bets, Core
