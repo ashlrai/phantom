@@ -1331,6 +1331,44 @@ describe('phm agents bus (unified)', () => {
     expect(claimJobsText.join('\n')).toContain('feed=ok');
   });
 
+  it('filters claim list to the live claims blocking one feed job', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-SCOPED', '--title', 'Scoped work',
+      '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-SCOPED', '--claim', 'path:ashlrai/phantom:src/**',
+      '--id', 'cj-post'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['claim', 'acquire', '--key', 'queue:RQ-SCOPED', '--lease-ms', '600000',
+      '--owner', 'atlas', '--id', 'cj-1'])).json).toMatchObject({ status: 'acquired' });
+    expect((await run(['claim', 'acquire', '--key', 'path:ashlrai/phantom:src/**', '--lease-ms', '600000',
+      '--owner', 'worker', '--id', 'cj-2'])).json).toMatchObject({ status: 'acquired' });
+    expect((await run(['claim', 'acquire', '--key', 'repo:other/repo', '--lease-ms', '600000',
+      '--owner', 'atlas', '--id', 'cj-3'])).json).toMatchObject({ status: 'acquired' });
+
+    // --job keeps only the claims overlapping the job's declared keys and
+    // reports how the id resolved; the unrelated repo claim stays out.
+    const scoped = await run(['claim', 'list', '--job', 'RQ-SCOPED']);
+    expect(scoped.code).toBe(0);
+    expect(scoped.json).toMatchObject({ status: 'ok', source: 'available', feed: 'ok',
+      job: { id: 'RQ-SCOPED', announced: true, claimKeys: 2 } });
+    expect(scoped.json.claims.map((row: { key: string }) => row.key).sort())
+      .toEqual(['path:ashlrai/phantom:src/**', 'queue:RQ-SCOPED']);
+    // --job composes with --jobs: the filtered claims still carry the join.
+    const joined = await run(['claim', 'list', '--job', 'RQ-SCOPED', '--jobs']);
+    expect(joined.json.claims.every((row: { jobs?: { id: string }[] }) =>
+      row.jobs?.length === 1 && row.jobs[0]!.id === 'RQ-SCOPED')).toBe(true);
+    // An unannounced id is a proven-empty list, and a malformed one is usage.
+    expect((await run(['claim', 'list', '--job', 'RQ-MISSING'])).json)
+      .toMatchObject({ status: 'ok', claims: [], job: { id: 'RQ-MISSING', announced: false, claimKeys: 0 } });
+    expect(await run(['claim', 'list', '--job', 'bad job'])).toMatchObject({ code: 2 });
+
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['claim', 'list', '--job', 'RQ-SCOPED', '--root', root],
+      t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('job=RQ-SCOPED announced=true keys=2');
+    expect(text.join('\n')).toContain('claims=2 source=available feed=ok');
+    // Without --jobs the per-claim jobs suffix stays off even though --job read the feed.
+    expect(text.join('\n')).not.toContain('jobs=');
+  });
+
   it('filters the work feed by --since on last activity', async () => {
     const spy = vi.spyOn(Date, 'now');
     let clock = 1_800_000_000_000;

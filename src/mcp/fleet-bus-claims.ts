@@ -11,7 +11,7 @@
  * store keeps, narrowed by the same `key` overlap preview, `owner`
  * identity-label match and `excludeOwner` sender-exclusion, `contains`
  * row-text search, `origin` class filter, `since`/`before` start-time
- * window and `jobs` feed join the
+ * window, `job` feed-job scope filter and `jobs` feed join the
  * CLI flags apply, with `source` keeping a missing table verified-empty
  * and an unreadable one `unavailable` — never an invented empty list.
  *
@@ -41,7 +41,10 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The claim store's own owner-label bound — printable ASCII, 1–256 chars. */
 const CLAIM_OWNER = /^[\x21-\x7e]{1,256}$/;
 
-const CLAIMS_KEYS = new Set(['key', 'owner', 'excludeOwner', 'contains', 'origin', 'since', 'before', 'jobs']);
+const CLAIMS_KEYS = new Set(['key', 'owner', 'excludeOwner', 'contains', 'origin', 'since', 'before', 'job', 'jobs']);
+
+/** The feed `--job` grammar `claim list --job` shares: a printable routing label of 1-128 characters. */
+const JOB_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 export interface FleetBusClaimsArgs {
   /** Keep only live claims that would block an acquire of this v2 claim key — the same overlap rule `claim list --key` applies. */
@@ -58,6 +61,8 @@ export interface FleetBusClaimsArgs {
   since?: number;
   /** Keep only live claims whose recorded `started` is strictly before this cutoff on the same grammar — the exclusive upper bound composing with `since` into one [since, before) window, the same rule `claim list --before` applies. */
   before?: number;
+  /** Keep only live claims that block the named feed job — the same declared-claim-key overlap `claim list --job` applies, resolved through the server-side work-feed read. */
+  job?: string;
   /** Also join each claim with the announced feed jobs its keys block and report the feed read state. */
   jobs?: boolean;
 }
@@ -69,7 +74,8 @@ export interface FleetBusClaimsArgs {
  * `claim list --key` enforce, `owner` and `excludeOwner` the claim
  * store's printable-label bound, `contains` the shared bus `--contains`
  * bound (non-empty, at most `BUS_READ_CONTAINS_MAX`), `origin` the
- * COORDINATION_ORIGINS enum, `since`/`before` the shared bus time grammar
+ * COORDINATION_ORIGINS enum, `job` the feed `--job` printable-label
+ * grammar, `since`/`before` the shared bus time grammar
  * resolved through `parseSince` — `since` inclusive and `before` exclusive
  * on the claim's recorded `started`, one [since, before) window — and
  * `jobs` a JSON boolean.
@@ -83,6 +89,11 @@ export function parseFleetBusClaimsArgs(args: Record<string, unknown>): FleetBus
   if (key !== undefined) {
     if (typeof key !== 'string' || parseClaimKey(key) === undefined) return null;
     parsed.key = key;
+  }
+  const job = args.job;
+  if (job !== undefined) {
+    if (typeof job !== 'string' || !JOB_LABEL.test(job)) return null;
+    parsed.job = job;
   }
   const owner = args.owner;
   if (owner !== undefined) {
@@ -144,12 +155,14 @@ export type FleetBusClaimsResult = FleetBusClaimsMeta & BusClaimsListResult;
  * One claims listing through the shared `listBusClaims` read — the
  * identical read `phm agents bus claim list` runs, so live-row filtering,
  * owner identity matching, origin classes, the `started` time window,
- * the `jobs` feed join and the
+ * the `job` feed-job scope filter, the `jobs` feed join and the
  * `missing`/`available`/`unavailable` source honesty can never diverge
  * between the CLI and this tool. Non-ok results pass through untouched:
- * `invalid` and `unavailable` keep their own status and `asOf`, never an
+ * `invalid` and `unavailable` keep their own status, `asOf` and `feed`
+ * state, never an
  * invented empty claim list, and `ok` keeps `claims`, the resolved `owner`
- * match and the `feed` read state exactly as the projection reports them.
+ * match, the `feed` read state and the `job` resolution exactly as the
+ * projection reports them.
  */
 export async function readFleetBusClaims(
   args: FleetBusClaimsArgs,
@@ -164,6 +177,7 @@ export async function readFleetBusClaims(
     ...(args.origin === undefined ? {} : { origin: args.origin }),
     ...(args.since === undefined ? {} : { since: args.since }),
     ...(args.before === undefined ? {} : { before: args.before }),
+    ...(args.job === undefined ? {} : { job: args.job }),
     ...(args.jobs === undefined ? {} : { jobs: args.jobs }),
   });
   return {

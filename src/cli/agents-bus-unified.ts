@@ -60,7 +60,7 @@ ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
 ashlr agents bus claim release --key <claimKey> --token <64hex> --outcome released|completed
-ashlr agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--jobs]
+ashlr agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--jobs]
 ashlr agents bus claim message acquire --id <envelope-id> --lease-ms <1..3600000> [--owner <label>]
 ashlr agents bus claim message renew|release|complete --id <envelope-id> --token <64hex>
 ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--claim <key>]... [--to <label>]
@@ -354,7 +354,11 @@ takes one of
 a shown job's declared claim keys — queue:<jobId> preferred, --key picks
 another declared key — into the shared coordination table, reporting live
 holds on the job's other declared keys; claims coordinate,
-never authenticate. work mine is a read-only per-agent digest — the live
+never authenticate. claim list reads that table back, and --job keeps only
+the live claims blocking one announced feed job's declared claim keys —
+the claims-side answer to work feed --job --claims, with the feed read
+state and the job's announced/key-count resolution reported honestly.
+work mine is a read-only per-agent digest — the live
 claims it holds under any of its labels, where a message-id claim also
 names the retained envelope it leases (id, cursor, kind, sender,
 recipient, scrubbed summary and any live job citation; the claims
@@ -1618,15 +1622,17 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       noExtra(2);
       if (sub === 'list') {
+        const wantsJobs = p.bools.has('--jobs');
         const result = listBusClaims({ root: options.root, key: one('--key'), owner: one('--owner'),
           excludeOwner: one('--exclude-owner'), contains: one('--contains'), origin: originArg(),
-          since: sinceArg(), before: beforeArg(), jobs: p.bools.has('--jobs') });
+          since: sinceArg(), before: beforeArg(), jobs: wantsJobs, job: one('--job') });
         if (result.status === 'invalid') {
-          out(json ? JSON.stringify(result) : 'invalid: --key must be a v2 claim key (repo:, path:, queue: or pr:); --owner and --exclude-owner must be printable labels; --origin must be resource, message, team or board; --contains must be non-empty text of at most 512 characters; --since and --before must resolve to non-negative epoch-ms cutoffs');
+          out(json ? JSON.stringify(result) : 'invalid: --key must be a v2 claim key (repo:, path:, queue: or pr:); --owner and --exclude-owner must be printable labels; --origin must be resource, message, team or board; --contains must be non-empty text of at most 512 characters; --job must be a printable routing label of 1-128 characters; --since and --before must resolve to non-negative epoch-ms cutoffs');
           return 2;
         }
         if (result.status !== 'ok') {
-          out(json ? JSON.stringify(result) : `${result.status} claims=unknown as-of=${result.asOf}`);
+          const feedNote = result.feed === undefined ? '' : ` feed=${result.feed}`;
+          out(json ? JSON.stringify(result) : `${result.status} claims=unknown${feedNote} as-of=${result.asOf}`);
           return 1;
         }
         const ownerNote = result.owner === undefined ? '' :
@@ -1634,15 +1640,17 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         const excludeNote = result.excludeOwner === undefined ? '' :
           ` excludeOwner=${result.excludeOwner.ref} identity=${result.excludeOwner.identity ?? 'label'} registry=${result.excludeOwner.registry}`;
         const feedNote = result.feed === undefined ? '' : ` feed=${result.feed}`;
+        const jobNote = result.job === undefined ? '' :
+          ` job=${result.job.id} announced=${result.job.announced} keys=${result.job.claimKeys}`;
         out(json ? JSON.stringify(result) : [
           ...result.claims.map(row => {
             const base = `${row.key} owner=${row.owner} origin=${row.origin} until=${new Date(row.leaseUntil).toISOString()} source=${row.sourceId}`;
-            if (result.feed === undefined) return base;
+            if (!wantsJobs) return base;
             if (result.feed !== 'ok') return `${base} jobs=unknown`;
             const blocked = row.jobs ?? [];
             return `${base} jobs=${blocked.length === 0 ? 'none' : blocked.map(claimJobLabel).join(',')}`;
           }),
-          `claims=${result.claims.length} source=${result.source}${ownerNote}${excludeNote}${feedNote} as-of=${result.asOf}`,
+          `claims=${result.claims.length} source=${result.source}${ownerNote}${excludeNote}${feedNote}${jobNote} as-of=${result.asOf}`,
         ].join('\n'));
         return 0;
       }
