@@ -125,6 +125,26 @@ describe('multi-Mac durable fencing witness', () => {
     expect(() => initializePool(f.store, 'main-mac', 'backup-mac', 1000)).toThrow(/fresh/);
     expect(() => parseState({ ...f.store.state, pool: { ...f.store.state.pool, epoch: 0 } })).toThrow();
   });
+  it('keeps a newer capacity hold when a delayed heartbeat arrives', () => {
+    const f = fixture();
+    const { session } = f.run('primary', 'join', ['--node', 'worker', '--caps', 'codex']).result;
+    const worker = ['--node', 'worker', '--session', String(session)];
+    const sample = { hostId: 'mac', sampledAtMs: 1000, ramBytes: 8 * 1024 ** 3, slots: 1, held: null };
+    f.run('primary', 'enqueue', ['--job', 'waiting', '--requires', 'codex']);
+    f.advance(1000);
+    f.run('primary', 'beat', [...worker, '--capacity', JSON.stringify({ ...sample,
+      sampledAtMs: 2000, slots: 0, held: 'memory-pressure' })]);
+    f.advance(1000);
+    f.run('primary', 'beat', [...worker, '--capacity', JSON.stringify(sample)]);
+
+    expect(f.run('primary', 'status').result['nodes']).toEqual([expect.objectContaining({ heartbeatAt: 3000 })]);
+    expect(f.run('primary', 'pull', worker).result).toMatchObject({ pulled: false, slots: 0, held: 'memory-pressure' });
+
+    f.run('primary', 'beat', [...worker, '--capacity', JSON.stringify({ ...sample, sampledAtMs: 4000 })]);
+    expect(f.run('primary', 'pull', worker).result).toMatchObject({ pulled: false });
+    f.run('primary', 'beat', [...worker, '--capacity', JSON.stringify({ ...sample, sampledAtMs: 3000 })]);
+    expect(f.run('primary', 'pull', worker).result).toMatchObject({ pulled: true });
+  });
   it('keeps jobs in the configured owner scope and exposes lanes, load and heartbeat', () => {
     const f = fixture();
     const joined = f.run('primary', 'join', ['--node', 'worker', '--caps', 'codex']).result;
