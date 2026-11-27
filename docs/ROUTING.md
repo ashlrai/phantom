@@ -389,6 +389,8 @@ reports one
 `router.outcome.v1` record per job in that window, newest
 first. Jobs receipts with a recognized ledger timestamp after report start
 are excluded before outcome folding, PR attribution and handoff comparison.
+An explicit merge, close or revert timestamp after report start also
+withholds that verdict when the row's general timestamp is in range.
 Receipts at the boundary and legacy receipts without a parseable timestamp
 remain eligible. A lane on a receipt marked `launched: false` serves as a
 fallback for queue diagnostics when no other receipt for the job records a lane.
