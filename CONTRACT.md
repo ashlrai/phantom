@@ -3838,8 +3838,9 @@ shown with `matched` the true total and `truncated` definitive. The store's
 `pendingFor` does — applied to the pending set before `limit` and `hasMore`
 count it — and `phm bus inbox` composes the shared bus read filters
 (`--from`/`--exclude-from` sender matching, `--priority`, `--job`,
-`--channel`, the `[since, before)` acceptance-time window, `--contains`,
-`--in-reply-to`, `--thread`, `--id` and `--body-kind`) into that one
+`--channel`, `--topic`, the `[since, before)` acceptance-time window,
+`--contains`, `--in-reply-to`, `--thread`, `--id`, `--body-kind` and
+`--result`) into that one
 predicate, so the legacy mailbox read answers the same filter grammar every
 other bus read shares. Labels are the
 resolved identity's `agentLabels` set, or the literal ref alone when no

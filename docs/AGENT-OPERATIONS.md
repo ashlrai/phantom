@@ -413,8 +413,12 @@ ANDed: `--from`/`--exclude-from` keep or drop mail one sender label wrote
 handle, `agent:` address, id and aliases all match, with exact-label matching
 when the ref resolves to nothing or the registry is unreadable), `--priority`
 keeps one P0..P3 band, `--job` keeps envelopes whose body cites that job,
-`--channel` keeps mail addressed to `group:<name>:*`, `--since`/`--before`
-bound the store acceptance time as one `[since, before)` window, `--contains`
+`--channel` keeps mail addressed to `group:<name>:*`, `--topic` keeps only
+mail whose `to` is a well-formed `group:<room>:<topic>` address carrying
+that exact topic component (the shared `groupAddressTopicOf` match every
+other bus read's `--topic` applies, composing with `--channel` into one room
+AND one topic), `--since`/`--before` bound the store acceptance time as one
+`[since, before)` window, `--contains`
 keeps envelopes whose scrubbed one-line summary carries the needle, and
 `--in-reply-to`/`--thread` keep bodies citing that envelope id or carrying
 that conversation label. `--result` keeps only `work.result` bodies
