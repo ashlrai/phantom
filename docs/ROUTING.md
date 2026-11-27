@@ -794,6 +794,8 @@ dated after it, including future calls with missing prices. Legacy calls
 with no timestamp fields remain eligible. When a call names a job and
 carries `ts`, `at`, or `timestamp` but none can be parsed, the spend join
 and reward sync leave that job's spend-derived total unknown.
+Both consumers also withhold the job's spend total when one call has a
+parseable timestamp at or before the cutoff and another after it.
 Both the router outcomes and the daemon's reward feed withhold a job's
 spend-derived total if any call attributed to that job lacks a usable USD
 price or the sum is non-finite. Spend totals for other jobs can still be

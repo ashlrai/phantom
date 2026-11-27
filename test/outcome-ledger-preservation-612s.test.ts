@@ -1624,6 +1624,21 @@ describe('router outcome spend join', () => {
     expect(costs.size).toBe(4);
   });
 
+  it('withholds only the spend totals whose call timestamps straddle the cutoff', () => {
+    const cutoff = '2026-11-02T09:00:00Z';
+    const before = '2026-11-02T08:00:00Z';
+    const after = '2026-11-02T10:00:00Z';
+    const spend = [
+      { job: 'J1', ts: cutoff, cost_usd: 1 },
+      { job: 'J1', ts: cutoff, timestamp: after, cost_usd: 2 },
+      { job: 'J2', ts: after, at: before, cost_usd: 4 },
+      { job: 'J2', at: before, cost_usd: 8 },
+      { job: 'J3', ts: cutoff, at: before, cost_usd: 16 },
+      { job: 'J3', ts: after, at: after },
+    ].map((row) => JSON.stringify(row)).join('\n');
+    expect(foldSpendCosts(spend, Date.parse(cutoff))).toEqual(new Map([['J3', 16]]));
+  });
+
   it.each(['{"job":"J1"', '[1,2]'])('withholds spend totals when a receipt is not an object: %s', async (receipt) => {
     const root = runsDir('{"job":"J1","phase":"MERGED"}\n{"job":"J2","phase":"CLOSED","cost_usd":2}\n');
     const spend = ['{"job":"J1","cost_usd":1}', receipt, '{"job":"J2","cost_usd":9}'].join('\n');

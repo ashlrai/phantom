@@ -2471,7 +2471,8 @@ function foldRouterOutcomesWithCiCoverage(
  * parseable timestamp also leaves that job's total unknown. Legacy calls
  * without any timestamp field remain eligible.
  * Estimated costs (cost_estimated) report a USD figure and count toward the sum.
- * Dated receipts after asOfMs are excluded before checking price coverage.
+ * Receipts dated only after asOfMs are excluded before checking price
+ * coverage. Conflicting dates across the cutoff leave the total unknown.
  */
 export function foldSpendCosts(text: string, asOfMs = Infinity): Map<string, number> {
   const costs = new Map<string, number>();
@@ -2480,11 +2481,13 @@ export function foldSpendCosts(text: string, asOfMs = Infinity): Map<string, num
     if (!line.trim()) continue;
     const r = parseJsonObjectLine(line);
     if (r === null) return new Map();
-    const at = parseLedgerTs(r['ts']) ?? parseLedgerTs(r['at']) ?? parseLedgerTs(r['timestamp']);
-    if (at !== null && at > asOfMs) continue;
+    const timestampKeys = ['ts', 'at', 'timestamp'] as const;
+    const dates = timestampKeys.map((key) => parseLedgerTs(r[key])).filter((at) => at !== null);
+    const hasFutureDate = dates.some((at) => at > asOfMs);
+    if (hasFutureDate && dates.every((at) => at > asOfMs)) continue;
     const j = str(r, 'job', 'job_id', 'id');
     if (!j || incomplete.has(j)) continue;
-    const invalidTimestamp = at === null && ('ts' in r || 'at' in r || 'timestamp' in r);
+    const invalidTimestamp = hasFutureDate || (dates.length === 0 && timestampKeys.some((key) => key in r));
     const cost = num(r['cost_usd']) ?? num(r['usd']) ?? num(r['cost']);
     const total = cost === null || invalidTimestamp ? null : (costs.get(j) ?? 0) + cost;
     if (total === null || !Number.isFinite(total)) {
