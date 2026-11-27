@@ -334,6 +334,9 @@ claim-to-completion duration over 24 hours; a producer withdrawal is a fence,
 not an execution, and adds no sample. Missing latency uses the mean of
 measured host medians (equal weights when none exist). Unknown duration is never
 reported as zero. Owner, capability, local-auth and fencing checks still apply.
+When eligible workers have equal host scores, the router prefers the worker
+with fewer active claims and planned assignments, then breaks ties by node ID.
+This spreads work across eligible siblings while enforcing their shared slot budget.
 
 `phm node status --json` exposes scoped capacity samples. `phm fleet status-api
 --json` and the existing Fleet compute API add lane occupancy, targets, floors
