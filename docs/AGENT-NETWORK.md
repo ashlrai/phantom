@@ -413,7 +413,10 @@ are refused. Spending stays with each member; nothing here changes billing.
   add `agents` entries to org.toml), or no contributed budget left. Text output also lists each held lane
   (`held <member>/<lane>: <reason>`) with the `phm org join` command that opts it
   in on that member's machine, so a member can see why a contribution is unused.
-  Because a re-join replaces the machine's whole record, the printed command
+  When the queue holds no jobs — no `--queue` file given, or one that parses to
+  an empty list — the text output says so and names the `--queue <jobs.json>`
+  snapshot shape, so `0 assigned` reads as "nothing to plan" rather than a
+  broken org. Because a re-join replaces the machine's whole record, the printed command
   keeps the opt-ins that machine's record already carries at their recorded
   shares and adds the held lane — running it never drops a sibling opt-in.
 
