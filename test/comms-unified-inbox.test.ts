@@ -16,7 +16,8 @@ import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/co
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type JobsStuckSourceRead, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import type { ParkedMetDep, ParkedUnmetDep } from '../src/core/fleet/runs-parked-queue.js';
 import type { StuckJob as RunningStuckJob } from '../src/core/fleet/running-stuck.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
@@ -5154,6 +5155,141 @@ describe('readUnifiedInbox jobs stuck', () => {
     // The marker's job id is the item's own citation — --job names it directly.
     const byJob = await readStuck(pending, { filter: { job: 'J-STUCK' } });
     expect(byJob.items.filter(i => i.source === 'jobs-stuck').map(i => i.id)).toEqual(['jobs-stuck:J-STUCK']);
+  });
+});
+
+describe('readUnifiedInbox queue parked', () => {
+  const parkedRead = (over: Partial<QueueParkedRead> = {}): QueueParkedRead => ({
+    state: 'healthy', waiting: [], stale: [], ...over,
+  });
+  const readParked = (q: QueueParkedRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readQueueParked: async () => q, ...extra });
+  const waiting = (over: Partial<ParkedUnmetDep> = {}): ParkedUnmetDep => ({
+    job: 'RQ-WAIT', lane: 'devin', unmet: ['RQ-GATE-1'], ...over,
+  });
+  const stale = (over: Partial<ParkedMetDep> = {}): ParkedMetDep => ({
+    job: 'RQ-STALE', lane: 'codex-local', gates: ['RQ-DONE'], ...over,
+  });
+
+  it('lists each parked row once under its own state — waiting info, stale warn', async () => {
+    const inbox = await readParked(parkedRead({
+      waiting: [waiting({ unmet: ['RQ-GATE-1', 'RQ-GATE-2'] }), waiting({ job: 'RQ-WAIT-2', lane: null, unmet: ['RQ-GATE-3'] })],
+      stale: [stale()],
+    }));
+    expect(inbox.sources['queue-parked']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'queue-parked');
+    expect(items).toHaveLength(3);
+
+    const wait = items.find(i => i.id === 'queue-parked:RQ-WAIT')!;
+    expect(wait).toMatchObject({
+      kind: 'parked-dep-waiting', severity: 'info', blocking: false,
+      title: 'Job RQ-WAIT parked on unmet dependency gates',
+      since: null, expiresAt: null,
+      jobIds: ['RQ-GATE-1', 'RQ-GATE-2', 'RQ-WAIT'],
+      act: ['phm fleet queue-parked', 'phm fleet autopilot --once'],
+    });
+    expect(wait.detail).toContain('lane devin');
+    expect(wait.detail).toContain('waiting on gates RQ-GATE-1, RQ-GATE-2');
+    expect(wait.detail).toContain('no MERGED outcome recorded');
+
+    const noLane = items.find(i => i.id === 'queue-parked:RQ-WAIT-2')!;
+    expect(noLane.detail).toContain('lane unknown');
+
+    const staleItem = items.find(i => i.id === 'queue-parked:RQ-STALE')!;
+    expect(staleItem).toMatchObject({
+      kind: 'parked-dep-stale', severity: 'warn', blocking: false,
+      title: 'Job RQ-STALE parked past merged dependency gates',
+      since: null, expiresAt: null,
+      jobIds: ['RQ-DONE', 'RQ-STALE'],
+    });
+    expect(staleItem.detail).toContain('all gates MERGED (RQ-DONE)');
+    expect(staleItem.detail).toContain('never unparked');
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readParked(parkedRead({ state: 'missing', waiting: [waiting()], stale: [stale()] }));
+    expect(missing.sources['queue-parked']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+
+    const unavailable = await readParked(parkedRead({ state: 'unavailable', waiting: [waiting()], stale: [stale()] }));
+    expect(unavailable.sources['queue-parked']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+
+    const throwing = await read({ readQueueParked: async () => { throw new Error('queue boom'); } });
+    expect(throwing.sources['queue-parked']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+  });
+
+  it('lists every parked row degraded when the ready read is partial, saying so in the detail', async () => {
+    const inbox = await readParked(parkedRead({ state: 'degraded', waiting: [waiting()], stale: [stale()] }));
+    expect(inbox.sources['queue-parked']).toEqual({ state: 'degraded', pending: 2 });
+    for (const item of inbox.items.filter(i => i.source === 'queue-parked')) {
+      expect(item.detail).toContain('ready.tsv read degraded');
+    }
+  });
+
+  it('reads the real ready.tsv, prompts and jobs.jsonl under runsDir', async () => {
+    mkdirSync(join(runsDir, 'queue', 'prompts'), { recursive: true });
+    mkdirSync(join(runsDir, 'metrics'), { recursive: true });
+    const waitPrompt = join(runsDir, 'queue', 'prompts', 'wait.md');
+    const stalePrompt = join(runsDir, 'queue', 'prompts', 'stale.md');
+    writeFileSync(waitPrompt, 'DEPENDENCY GATE: RQ-OPEN, RQ-DONE\n', { mode: 0o600 });
+    writeFileSync(stalePrompt, 'DEPENDENCY GATE: RQ-DONE\n', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'queue', 'ready.tsv'), [
+      `PARKED-DEP.devin\tRQ-WAIT\tdevin\twork\tphantom\t${waitPrompt}`,
+      `PARKED-DEP.codex-local\tRQ-STALE\tcodex-local\twork\tphantom\t${stalePrompt}`,
+      'READY\tRQ-FREE\tdevin\twork\tphantom\tprompts/free.md',
+    ].join('\n'), { mode: 0o600 });
+    writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'),
+      `${JSON.stringify({ event: 'outcome', state: 'MERGED', job: 'RQ-DONE' })}\n`, { mode: 0o600 });
+
+    const inbox = await read();
+    expect(inbox.sources['queue-parked']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'queue-parked');
+    expect(items.map(i => i.id).sort()).toEqual(['queue-parked:RQ-STALE', 'queue-parked:RQ-WAIT']);
+    const waitItem = items.find(i => i.id === 'queue-parked:RQ-WAIT')!;
+    expect(waitItem).toMatchObject({ kind: 'parked-dep-waiting', severity: 'info' });
+    // Only the unmet gate is named — RQ-DONE merged, so this item never cites it.
+    expect(waitItem.jobIds).toEqual(['RQ-OPEN', 'RQ-WAIT']);
+    const staleItem = items.find(i => i.id === 'queue-parked:RQ-STALE')!;
+    expect(staleItem).toMatchObject({ kind: 'parked-dep-stale', severity: 'warn' });
+    expect(staleItem.jobIds).toEqual(['RQ-DONE', 'RQ-STALE']);
+    // READY rows are the router-queue/market's concern, never this source's.
+    expect(items.some(i => i.id === 'queue-parked:RQ-FREE')).toBe(false);
+  });
+
+  it('reports a missing ready.tsv as missing and an unreadable one degraded', async () => {
+    const missing = await read();
+    expect(missing.sources['queue-parked']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+
+    mkdirSync(join(runsDir, 'queue'));
+    // A directory where the file belongs is a read failure, not verified-empty.
+    mkdirSync(join(runsDir, 'queue', 'ready.tsv'));
+    const degraded = await read();
+    expect(degraded.sources['queue-parked']).toEqual({ state: 'degraded', pending: 0 });
+    expect(degraded.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = parkedRead({
+      waiting: [waiting({ unmet: ['RQ-GATE-1', 'RQ-DONE'] })],
+      stale: [stale()],
+    });
+    const bySource = await readParked(pending, { filter: { source: 'queue-parked' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'queue-parked')).toBe(true);
+    const byKind = await readParked(pending, { filter: { kind: 'parked-dep-stale' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['queue-parked:RQ-STALE']);
+    expect(byKind.sources['queue-parked']).toEqual({ state: 'healthy', pending: 2 });
+    // The parked job's own id and each gate id it names are both citations.
+    const byJob = await readParked(pending, { filter: { job: 'RQ-WAIT' } });
+    expect(byJob.items.filter(i => i.source === 'queue-parked').map(i => i.id)).toEqual(['queue-parked:RQ-WAIT']);
+    const byGate = await readParked(pending, { filter: { job: 'RQ-GATE-1' } });
+    expect(byGate.items.filter(i => i.source === 'queue-parked').map(i => i.id)).toEqual(['queue-parked:RQ-WAIT']);
+    const byGateStale = await readParked(pending, { filter: { job: 'RQ-DONE' } });
+    expect(byGateStale.items.filter(i => i.source === 'queue-parked').map(i => i.id).sort())
+      .toEqual(['queue-parked:RQ-STALE', 'queue-parked:RQ-WAIT']);
   });
 });
 

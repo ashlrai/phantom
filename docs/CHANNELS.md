@@ -713,7 +713,29 @@ the source, since a throwing read is itself the degraded/unknown evidence
 and `unavailable`/`missing` never apply to a live probe that always
 resolves; deep links `phm fleet channel-health`, `phm channels slack
 status`, `phm imessage doctor`, `phm comms health --json`, `phm comms
-cycle`, `phm channels`) — and each item carries `act` deep-link commands (`phm fleet
+cycle`, `phm channels`) — and PARKED-DEP rows in the dispatch ready queue
+(the same `readFleetQueue` `depDetail` projection `phm fleet
+queue-parked`, `phm fleet parked` and the autopilot's `stale-parked-deps`
+gap serve, over `<runsDir>/queue/ready.tsv` plus `metrics/jobs.jsonl`, so
+the surfaces can never disagree: until now the parked dependency backlog
+had no inbox surface — the router-queue source lists only READY rows in
+`queue/router-queue.md`, so a job parked on `DEPENDENCY GATE` ids was
+invisible to the one view an agent checks for work; each parked row lists
+once under its own state — gates still lacking a MERGED outcome list as
+info `parked-dep-waiting` naming the unmet gate ids, queued work correctly
+waiting on named jobs, while a row whose gate ids ALL show MERGED yet was
+never unparked lists as warn `parked-dep-stale`, since the auto-unpark pass
+should have freed it already so it is stuck work, not a wait — `jobIds`
+carries the parked job's own id plus the gate ids its detail names, so
+`--job` finds the row under the parked job and under every job it waits
+on; `since`/`expiresAt` stay null throughout — ready.tsv rows keep no park
+timestamp and a parked job waits for its gates or an unpark pass, never a
+guessed deadline — and no item is Mason-blocking; a missing `ready.tsv`
+is `missing` (verified-empty: no parked rows can exist), an unreadable or
+malformed one `degraded` — the listed rows are a floor, never a complete
+set — and a throwing read `unavailable`, never an empty queue passed off
+as fact; deep links `phm fleet queue-parked`, `phm fleet parked`, `phm
+fleet autopilot --once`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -735,7 +757,8 @@ claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`,
 queue stuck`, `phm fleet unfed --json`, `phm queue`, `phm jobs stuck`,
 `phm fleet stray-stop --stuck --apply`, `phm fleet
 channel-health`, `phm channels slack status`, `phm imessage doctor`, `phm
-comms health --json`, `phm comms cycle`). It never claims, replies, or mutates; a source
+comms health --json`, `phm comms cycle`, `phm fleet queue-parked`, `phm
+fleet parked`, `phm fleet autopilot --once`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
@@ -751,7 +774,8 @@ delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job, a
 seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
 peer-dispatch receipt's job, a session-handoff journal's job id, a
-router-queue row's own READY id or a jobs-stuck marker's own job id —
+router-queue row's own READY id, a jobs-stuck marker's own job id, or a
+queue-parked row's own job id or one of the gate ids its detail names —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound
