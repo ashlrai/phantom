@@ -195,9 +195,14 @@ export async function startOwnerPair(deps: PairDeps, input: { handle?: string; a
   if (input.auto && (state.autoOff || (state.lastStartAt !== null && now - state.lastStartAt < PAIR_TTL_MS))) return { status: 'too-soon' };
 
   // --handle narrows to one; otherwise every own handle found is Mason's.
-  const targets = explicit !== undefined ? [explicit] : [...new Map((await deps.bridge.ownHandles()).map(h => [h.toLowerCase(), h])).values()].slice(0, PAIR_MAX_HANDLES);
+  let discovered: string[] = [];
+  if (explicit === undefined) {
+    try { discovered = await deps.bridge.ownHandles(); } catch { return { status: 'messages-unreadable' }; }
+  }
+  const targets = explicit !== undefined ? [explicit] : [...new Map(discovered.map(h => [h.toLowerCase(), h])).values()].slice(0, PAIR_MAX_HANDLES);
   if (targets.length === 0) return { status: 'none-found' };
-  const afterRowId = await deps.bridge.baseline();
+  let afterRowId: number | null;
+  try { afterRowId = await deps.bridge.baseline(); } catch { return { status: 'messages-unreadable' }; }
   if (afterRowId === null) return { status: 'messages-unreadable' };
   const sent: string[] = [];
   for (const handle of targets) if (await deps.bridge.send(handle, PAIR_TEXT)) sent.push(handle);
@@ -277,6 +282,7 @@ export async function pairTick(deps: PairDeps): Promise<PairTickReport> {
   }
   const started = await startOwnerPair(deps, { auto: true });
   if (started.status === 'pending') return { action: 'started', detail: sentLine(started.handles.length) };
+  if (started.status === 'messages-unreadable') return { action: expired ? 'expired' : 'none', detail: 'Messages discovery or baseline is unreadable; invitation not sent' };
   return { action: expired ? 'expired' : 'none', detail: started.status };
 }
 
