@@ -191,14 +191,10 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
         !Number.isFinite(at) || (at <= to && (at > from || (at === from && start !== 'launch'))))) continue;
       // A member claim may start another attempt, but does not prove execution.
       if ([...(events.get('batch_claim')?.times ?? [])].some(at => !Number.isFinite(at) || (from <= at && at <= to))) continue;
-      // A solo re-claim marks another attempt the same way: this attempt's own
-      // claim precedes its launch, so a claim strictly inside a post-queue span
-      // is foreign evidence the boundaries cannot be ordered against. Queue
-      // wait keeps its claims — failed attempts are part of the admission
-      // delay being measured. A claim stamped exactly at the start can be this
-      // attempt's own claim/launch pair (the dispatcher writes them back to
-      // back), so the lower bound stays strict.
-      if (start !== 'queued' && [...(events.get('claim')?.times ?? [])].some(at => !Number.isFinite(at) || (at > from && at <= to))) continue;
+      // Queue wait includes admission retries. For other phases a tied claim
+      // is ambiguous unless the phase starts at its own recorded launch.
+      if (start !== 'queued' && [...(events.get('claim')?.times ?? [])].some(at =>
+        !Number.isFinite(at) || (at <= to && (at > from || (at === from && start !== 'launch'))))) continue;
       samples.push((to - from) / 1000);
       if (phases === jobPhases && phase === 'checkout') {
         checkout.push(to - from);
