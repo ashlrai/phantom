@@ -1924,6 +1924,25 @@ function evidencePackObserved(evidence: OutcomeRecordEvidence, asOfMs: number): 
   return Date.parse(evidence.generatedAt) <= asOfMs;
 }
 
+function outcomeActiveInWindow(outcome: OutcomeRecord, sinceMs: number, asOfMs: number): boolean {
+  const createdMs = Date.parse(outcome.proposal.createdAt);
+  if (!(createdMs <= asOfMs)) return false;
+  const latestMs = eventMs(outcome.lastActivityAt);
+  if (latestMs <= asOfMs) return latestMs >= sinceMs;
+
+  // A future maximum can hide earlier, in-window activity in the same record.
+  const inWindow = (ts: string | undefined) => {
+    const ms = ts === undefined ? NaN : Date.parse(ts);
+    return ms >= sinceMs && ms <= asOfMs;
+  };
+  return createdMs >= sinceMs || inWindow(outcome.proposal.decidedAt)
+    || outcome.decisions.some((row) => inWindow(row.ts))
+    || outcome.judgeTraces.some((row) => inWindow(row.ts) || inWindow(row.outcomeAt))
+    || outcome.evidencePacks.some((row) => inWindow(row.generatedAt))
+    || outcome.workedEvents.some((row) => inWindow(row.ts))
+    || (outcome.postMergeObservations ?? []).some((row) => inWindow(row.observedAt));
+}
+
 function verificationStates(outcome: OutcomeRecord, asOfMs: number): Set<boolean> {
   const states = new Set<boolean>();
   if (outcome.proposal.verifyResult) states.add(outcome.proposal.verifyResult.passed);
@@ -1991,7 +2010,7 @@ export function listTrajectoryJoinQuality(
   const dispatchQuality = (({ events: _events, ...quality }) => quality)(dispatchRead);
   const actionQuality = (({ events: _events, ...quality }) => quality)(actionRead);
   const outcomesInWindow = outcomeRead.records.filter(
-    (outcome) => Date.parse(outcome.proposal.createdAt) <= asOfMs && eventMs(outcome.lastActivityAt) >= sinceMs,
+    (outcome) => outcomeActiveInWindow(outcome, sinceMs, asOfMs),
   );
   const dispatches = attachReadQuality(
     dispatchRead.events.filter((event) => Date.parse(event.ts) <= asOfMs),

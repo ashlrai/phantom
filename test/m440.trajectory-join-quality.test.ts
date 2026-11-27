@@ -362,6 +362,34 @@ describe('trajectory join quality', () => {
     expect(result.edges.proposalToVerification.denominator).toBe(0);
   });
 
+  it.each([
+    ['historical', '2026-06-01T00:00:00.000Z', 0],
+    ['at cutoff', NOW, 1],
+  ] as const)('uses %s decision activity when a future receipt is latest', (_label, decisionAt, expected) => {
+    const historicalAt = '2026-06-01T00:00:00.000Z';
+    const futureAt = new Date(Date.parse(NOW) + 1).toISOString();
+    const deps = outcomeDeps();
+    const outcomes = listOutcomeRecordsDetailed({ deps: {
+      ...deps,
+      listProposals: () => [{ ...proposal(), createdAt: historicalAt, decidedAt: historicalAt }],
+      readDecisions: () => [{ ts: decisionAt, proposalId: PROPOSAL_ID, action: 'merged' }],
+      listAutonomyEvidencePacks: () => [],
+      readPostMergeObservations: () => postMergeRead({
+        observations: postMergeRead().observations.map((row) => ({ ...row, observedAt: futureAt })),
+      }),
+    } });
+    expect(outcomes.records[0]?.lastActivityAt).toBe(futureAt);
+
+    const result = listTrajectoryJoinQuality({ deps: {
+      readDispatchProductionEventsDetailed: () => dispatchRead(),
+      listOutcomeRecordsDetailed: () => outcomes,
+      readAgentActionsDetailed: () => actionRead(),
+    } });
+
+    expect(result.edges.dispatchToProposal).toMatchObject({ denominator: 1, joined: expected });
+    expect(result.edges.proposalToVerification.denominator).toBe(expected);
+  });
+
   it('reconstructs a protected GitHub trajectory and publishes exact healthy edge rates', () => {
     const outcomes = listOutcomeRecordsDetailed({ deps: outcomeDeps() });
     const result = listTrajectoryJoinQuality({
