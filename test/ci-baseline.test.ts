@@ -238,6 +238,31 @@ describe('CI baseline evidence', () => {
       expect(report.freshness.every(p => p.state === 'fresh')).toBe(true);
     }
   });
+  it.each([null, undefined, 'unrecognized'])(
+    'withholds PR freshness and master pass evidence for job conclusion %s',
+    async conclusion => {
+      const { gh } = github({
+        count: 1, pass: true, masterRunConclusion: 'success', runConclusion: 'failure',
+        extraMasterJob: 'neutral', extraPrJob: 'neutral',
+      });
+      for (const runId of [1, 2]) {
+        const report = await analyzeCiBaseline('owner/repo', async args => {
+          const result = await gh(args);
+          if (!args[1]?.includes(`/runs/${runId}/jobs?`)) return result;
+          const page = JSON.parse(result.stdout);
+          page.jobs[1].conclusion = conclusion;
+          return { ...result, stdout: JSON.stringify(page) };
+        });
+        if (runId === 1) {
+          expect(report.master.known).toBe(false);
+          expect(report.groups[0]).toMatchObject({ classification: 'unknown', master: 'unknown' });
+        } else {
+          expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'incomplete-check' }]);
+          expect(report.groups).toEqual([]);
+        }
+      }
+    },
+  );
   it('drops master known state on incomplete checks but keeps failure evidence', async () => {
     const report = await analyzeCiBaseline('owner/repo', github({ masterJobConclusion: 'timed_out' }).gh);
     expect(report.master.known).toBe(false);
