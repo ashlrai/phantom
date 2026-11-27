@@ -102,8 +102,8 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 // its latest terminal outcome (or its last row while unresolved).
 //
 // Field provenance, all real ledger evidence:
-//   - id/lane: job plus the last execution-side lane (enqueue/enqueued/queued rows are
-//     queue hints and never set the lane).
+//   - id/lane: job plus the last execution-side lane (queue hints and receipts
+//     explicitly marked launched: false never set the lane).
 //   - outcome: the latest terminal lifecycle phase on any row — the phase
 //     fields (phase|state|outcome|status|result|conclusion via the shared
 //     ledgerPhase accessor) are the producer convention (dispatchd
@@ -338,7 +338,7 @@ export function skillNudgeJobsFromLedger(
     }
     acc.lastLine = lineNo;
     const evidence = acc.evidence;
-    if (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event)) {
+    if (row['launched'] !== false && (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event))) {
       for (const key of LEDGER_LANE_KEYS) {
         const value = row[key];
         if (typeof value !== 'string' || !hasKnownLane(value.trim())) continue;

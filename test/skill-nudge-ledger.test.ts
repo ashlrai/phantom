@@ -71,6 +71,27 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(job).not.toHaveProperty('retries');
   });
 
+  it('keeps recovery lane and failure class across a no-launch outcome', async () => {
+    const job = 'RQ-SKIPPED-RETRY';
+    const noLaunch = outcome(job, 'DONE-NOOP', { lane: 'claude', launched: false });
+    const rows = [
+      launch(job),
+      finish(job, { failure_class: 'quota' }),
+      launch(job, 'codex', '2026-10-28T12:30:00-0400'),
+      noLaunch,
+    ];
+    expect(skillNudgeJobsFromLedger(rows.join('\n'))).toEqual([
+      { id: job, lane: 'codex', outcome: 'empty', retries: 1, failureClass: 'quota' },
+    ]);
+
+    const merge = line({ event: 'merged', job, ts: '2026-10-28T18:00:00Z' });
+    const result = await syncSkillNudgesFromJobsLedger({
+      jobsText: [...rows, merge].join('\n'), now: () => new Date('2026-10-28T20:00:00Z'),
+    });
+    expect(result.candidates).toBe(1);
+    expect(cards.map(card => card.trigger)).toEqual(['codex: recover from quota']);
+  });
+
   it('counts launch_failed retry receipts as retries and keeps their reason as the class', () => {
     const text = [
       launch('RQ-C'),
