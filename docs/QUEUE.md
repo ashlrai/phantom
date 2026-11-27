@@ -514,7 +514,13 @@ combined session makes after each member's own decision appear here and
 nowhere in `overrides`, and a decision overridden on paper but deferred
 before launch never counts. Batch members count through their own
 `batch_claim` events, and the synthetic `RQ-BATCH-*` session claim is excluded
-from the total. A claim whose hint and launch lane match counts
+from the total. A `claim` marked `launch_dedupe: true` is a reservation.
+It supplies the override only when a subsequent `launch` receipt for the
+same job and lane confirms the attempt, with no intervening terminal
+launch receipt or replacement claim. The launch timestamp determines the
+report window, so a reservation just before the window can still qualify.
+Legacy claims without the marker count as before. Receipts explicitly marked
+`launched: false` are excluded. A claim whose hint and launch lane match counts
 as a launch only, even if it carries an override code.
 A missing or unreadable jobs ledger leaves `claims.claimed` and
 `claims.overridden` unknown (null in JSON). A readable ledger with no
