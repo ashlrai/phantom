@@ -77,7 +77,7 @@ import {
   type FleetEngine,
   type FleetFunnelStage,
   type FleetGateFunnel,
-  type FleetLaneState,
+  type FleetLiveLaneState,
   type FleetLiveRun,
   type FleetLiveSnapshotV1,
   type FleetLiveState,
@@ -1337,6 +1337,10 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
   for (const run of runList) {
     if (run.phase === 'producing' && run.endedAt === null && run.lane) busy[run.lane] = (busy[run.lane] ?? 0) + 1;
   }
+  // `busy` counts observed producing dispatches, which only the in-flight
+  // tail reports: when that read failed (inFlightRaw === null) the count is
+  // unknown, never 0 — the same rule `summary.building` already applies.
+  const laneBusy = (lane: FleetEngine): number | null => inFlightRaw === null ? null : busy[lane] ?? 0;
 
   // ── State ───────────────────────────────────────────────────────────────
   const lastActivityCandidates = [
@@ -1378,12 +1382,14 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
   if (problems.length > 0) stateReason = `${stateReason ? `${stateReason} ` : ''}Unknown: ${problems.join('; ')}.`;
 
   const standingTickFresh = tick !== null && tick.standing !== null && nowMs >= msOf(tick.at) && nowMs - msOf(tick.at) <= 10 * 60_000;
-  const lanes: FleetLaneState[] = standingTickFresh
-    ? tick.lanes.map((lane) => ({ ...lane, busy: busy[lane.lane] ?? 0 }))
+  const lanes: FleetLiveLaneState[] = standingTickFresh
+    ? tick.lanes.map((lane) => ({ ...lane, busy: laneBusy(lane.lane) }))
     : FLEET_ENGINES.map((lane) => ({
         lane,
-        slots: 0,
-        busy: busy[lane] ?? 0,
+        // No fresh standing tick means slot capacity was never observed:
+        // null is "unknown", not an observed off lane (0 = off).
+        slots: null,
+        busy: laneBusy(lane),
         capReason: state === 'dark' || state === 'stopped' || state === 'paused'
           ? stateReason ?? 'The fleet is not running.'
           : 'No standing tick has reported lanes in the last 10 minutes.',

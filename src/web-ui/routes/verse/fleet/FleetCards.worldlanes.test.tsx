@@ -9,7 +9,7 @@ import { LanesStrip } from './FleetCards.js';
 
 function staleLive(now: number) {
   const live = fleetLive('live', now);
-  live.lanes = [{ lane: 'local', slots: 0, busy: 0, capReason: STALE_STANDING_LANES }];
+  live.lanes = [{ lane: 'local', slots: null, busy: 0, capReason: STALE_STANDING_LANES }];
   return live;
 }
 

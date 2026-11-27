@@ -727,7 +727,7 @@ describe('lane observations', () => {
     const now = Date.now();
     const staleReason = 'No standing tick has reported lanes in the last 10 minutes.';
     const live = fleetLive('live', now);
-    live.lanes = live.lanes.map((lane) => ({ ...lane, slots: 0,
+    live.lanes = live.lanes.map((lane) => ({ ...lane, slots: null,
       busy: lane.lane === 'grok-cli' ? 1 : 0, capReason: staleReason }));
     stubSurfaceFetch({ kind: 'live', now, routes: { '/api/verse/fleet/live': live } });
     render(<FleetSection />);
