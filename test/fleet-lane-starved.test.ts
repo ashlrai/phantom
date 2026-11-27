@@ -403,7 +403,7 @@ describe('phm fleet starved', () => {
     expect(await cmdFleetStarved([], async () => status, async () => read)).toBe(1);
     expect(String(log.mock.calls[1]![0]).split('\n').slice(0, 2)).toEqual([
       'claude: 8 free slots, 0 ready rows for 42 min; next step: add work for claude',
-      '3 READY rows are waiting on a held or drained pool and could run on a starved lane instead.',
+      '3 READY rows are waiting on a held or drained pool.',
     ]);
   });
 
@@ -423,12 +423,30 @@ describe('phm fleet starved', () => {
     expect(JSON.parse(String(log.mock.calls[0]![0])).starved_lanes).toEqual([]);
     expect(await cmdFleetStarved(['--json'], async () => status, async () => { throw new Error('nope'); })).toBe(0);
     expect(JSON.parse(String(log.mock.calls[1]![0])).starved_lanes).toBeNull();
-    expect(explainFleetStarved(JSON.parse(status)).waiting_elsewhere).toBe(0);
+    expect(explainFleetStarved(JSON.parse(status)).waiting_elsewhere).toBeNull();
+    expect(JSON.parse(String(log.mock.calls[1]![0])).waiting_elsewhere).toBeNull();
   });
 });
 
 describe('starved notice', () => {
   const read = readStarved([input()], {}, NOW);
+
+  it.each([
+    { ready: 1, total: 3, suffix: ' 3 READY rows are waiting on a held or drained pool.' },
+    { ready: null, total: null, suffix: '' },
+  ])('reports held and drained supply only when its total is known (%j)', ({ ready, total, suffix }) => {
+    const since = { claude: minutesAgo(42) };
+    const snapshot = readStarved([
+      input(),
+      input({ lane: 'devin', ready, held: true }),
+      input({ lane: 'codex', ready: 2, drained: true }),
+    ], since, NOW, 0);
+    expect(snapshot.waiting_elsewhere).toBe(total);
+    expect(planStarvedNotices(snapshot, { since, noticed: {} }, NOW).posts).toEqual([{
+      lane: 'claude',
+      text: `claude: 8 free slots, 0 ready rows for 42 min; next step: add work for claude.${suffix}`,
+    }]);
+  });
 
   it('waits 30 minutes, posts once, then holds off for 6 hours', () => {
     let plan = planStarvedNotices(read, { since: {}, noticed: {} }, NOW);

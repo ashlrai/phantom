@@ -41,8 +41,8 @@ export interface FleetStarvedView {
   lanes: FleetStarvedLane[];
   /** Lanes with free slots and no ready rows, most free slots first; null when the lanes read failed. */
   starved_lanes: FleetStarvedIdleLane[] | null;
-  /** READY rows waiting on a held or drained pool that a starved lane could run instead. */
-  waiting_elsewhere: number;
+  /** READY rows hinted to held or drained lanes, or null if their total is unknown. */
+  waiting_elsewhere: number | null;
   /** Lane-open READY rows — open supply any lane may claim; null when the lanes read failed. */
   open_rows: number | null;
 }
@@ -89,7 +89,7 @@ function admitReason(value: unknown): string | null {
 
 /** Starved lanes (free slots, no ready rows) from the lanes read, biggest gap first. */
 export function idleStarved(read: StarvedRead | null): Pick<FleetStarvedView, 'starved_lanes' | 'waiting_elsewhere' | 'open_rows'> {
-  if (read === null) return { starved_lanes: null, waiting_elsewhere: 0, open_rows: null };
+  if (read === null) return { starved_lanes: null, waiting_elsewhere: null, open_rows: null };
   const starved_lanes = Object.entries(read.lanes)
     .flatMap(([lane, row]) => row.starved && row.line !== null ? [{ ...row, lane: plain(lane), line: plain(row.line) }] : [])
     .sort((a, b) => (b.free_slots ?? 0) - (a.free_slots ?? 0) || a.lane.localeCompare(b.lane));
@@ -133,8 +133,8 @@ export function explainFleetStarved(value: unknown, idle: StarvedRead | null = n
 function formatFleetStarved(view: FleetStarvedView): string {
   const idle = view.starved_lanes ?? [];
   const lines = idle.map(row => row.line);
-  if (idle.length > 0 && view.waiting_elsewhere > 0) {
-    lines.push(`${view.waiting_elsewhere} READY ${view.waiting_elsewhere === 1 ? 'row is' : 'rows are'} waiting on a held or drained pool and could run on a starved lane instead.`);
+  if (idle.length > 0 && view.waiting_elsewhere !== null && view.waiting_elsewhere > 0) {
+    lines.push(`${view.waiting_elsewhere} READY ${view.waiting_elsewhere === 1 ? 'row is' : 'rows are'} waiting on a held or drained pool.`);
   }
   lines.push(...view.lanes.map(lane =>
     `${lane.lane}: ${lane.running} of ${lane.target} running, ${lane.queued} queued${lane.starved ? ' starved' : ''}`));

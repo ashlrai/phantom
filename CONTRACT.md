@@ -32,6 +32,13 @@ malformed. With no cutoff, all observation times are eligible.
 Zero suppresses idle alarms and null preserves unknown headroom. When the
 argument is omitted, the lane's target and running count supply headroom.
 
+`readStarved(...)` returns `StarvedRead.waiting_elsewhere` as a count of READY
+rows hinted to held or drained lanes when any lane is starved. An unknown READY
+count on a held or drained lane makes the total null. A snapshot with no starved
+lanes returns zero. `noticeText(line, waitingElsewhere)` accepts a nullable total
+and mentions waiting work only for a positive count. The CLI returns null for
+`waiting_elsewhere` when the starvation snapshot is unavailable.
+
 `unfedTickLanes(row)` (`src/core/fleet/unfed-market.ts`) reads a decoded
 `unfed_capacity` snapshot and returns its usable lane observations as
 `{ lane, slots, blocked }`. Each observation requires positive headroom
