@@ -2149,6 +2149,7 @@ describe('router outcome market handoff advisory join', () => {
       // the market row's epoch ts (1000s ≈ 1970).
       JSON.stringify({ schema: 'session-failover.v1', event: 'session_handoff_advisory', job: 'J5', lane: 'jobs-lane', trigger: 'rate-limit', target: 'jobs-target', ts: '2026-11-03T00:00:00Z' }),
       '{"job":"J5","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      JSON.stringify({ schema: 'session-failover.v1', event: 'session_handoff_advisory', job: 'J6', lane: 'jobs-lane', trigger: 'rate-limit', ts: 'invalid', timestamp: '2026-11-02 00:00:00+0000' }),
     ].join('\n'));
     writeMarket(root, [
       // J1 recorded no jobs advisory: the market verdict fills the triple.
@@ -2162,6 +2163,7 @@ describe('router outcome market handoff advisory join', () => {
       marketAdvisory('J4', 'quota-exhausted', Date.parse('2026-11-04T00:00:00Z') / 1000, { lane: 'market-lane', target: 'market-target' }),
       // J5's market advisory (epoch ~1970) predates the jobs advisory.
       marketAdvisory('J5', 'quota-exhausted', 1000, { lane: 'market-lane', target: 'market-target' }),
+      marketAdvisory('J6', 'quota-exhausted', Date.parse('2026-11-04T00:00:00Z') / 1000, { lane: 'market-lane', target: 'market-target' }),
       // A market advisory naming a job with no jobs outcome joins nothing.
       marketAdvisory('J-UNADVISED', 'quota-exhausted', Date.parse('2026-11-04T00:00:00Z') / 1000, { lane: 'alpha', target: 'devin' }),
     ]);
@@ -2173,6 +2175,7 @@ describe('router outcome market handoff advisory join', () => {
     expect(byId.get('J3')).toMatchObject({ handoff_trigger: 'quota-exhausted', handoff_lane: 'market-lane', handoff_target: 'market-target' });
     expect(byId.get('J4')).toMatchObject({ handoff_trigger: 'rate-limit', handoff_lane: 'jobs-lane', handoff_target: null });
     expect(byId.get('J5')).toMatchObject({ handoff_trigger: 'rate-limit', handoff_lane: 'jobs-lane', handoff_target: 'jobs-target' });
+    expect(byId.get('J6')).toMatchObject({ handoff_trigger: 'quota-exhausted', handoff_lane: 'market-lane', handoff_target: 'market-target' });
     expect(byId.has('J-UNADVISED')).toBe(false);
   });
 
