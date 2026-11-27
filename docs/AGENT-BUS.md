@@ -2285,6 +2285,10 @@ One row represents each claim owner (aggregating concurrent claims) or desktop
 session (keyed by the hook's app/window-title pair). Desktop collection has a five-second deadline; a stalled
 desktop source does not prevent CLI or teammate observations.
 
+`fleet_agent_mesh` (the isolated fleet MCP tool) serves the same
+`agent-mesh.v1` read to MCP-connected agents — the identical `readAgentMesh`
+projection with every store root server-owned and no arguments accepted.
+
 `phm agentnet peers mesh --json` and `phm agentnet peers work-feed --json` expose
 these shared projections to every enrolled, authenticated peer, independent of
 lane or role. `peers work-feed` accepts the same filter set every other
