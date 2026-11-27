@@ -298,6 +298,10 @@ function fleetStopVerdict(data: Record<string, unknown>): FleetStopCode | null {
   if (data.paused) return 'admission_stopped';
   const admission = isRecord(data.admission) ? data.admission : null;
   if (admission === null || (admission.ts !== undefined && admission.ts !== data.last_tick)) return null;
+  const { admit, decision } = admission;
+  if ((admit !== undefined && typeof admit !== 'boolean')
+      || (decision !== undefined && decision !== 'admit' && decision !== 'stop')
+      || (typeof admit === 'boolean' && decision !== undefined && decision !== (admit ? 'admit' : 'stop'))) return null;
   const gateReason = admission.gate_reason;
   if (typeof gateReason === 'string' && gateReason.trim().length > 0) return 'admission_stopped';
   const cap = count(admission.cap) ? admission.cap : null;
