@@ -2,6 +2,7 @@
 import { DupcheckInputError, dupcheckJob, dupcheckLines } from '../core/queue/dupcheck.js';
 import { dupcheckGate, dupcheckStatsLines, readDupcheckStats, recordDupcheckGate } from '../core/queue/dupcheck-gate.js';
 import { defaultRunsDir } from '../core/fleet/landed-closes-read.js';
+import { hasQueueHelpFlag, reportQueueCliError } from './queue.js';
 
 const help = `Usage: phm queue dupcheck <job-id|prompt-file> [--gate] [--json]
        phm queue dupcheck --stats [--json]
@@ -18,15 +19,14 @@ already_done (recorded by phm jobs empty --record) and skips that were relaunche
 Plain check and --stats are read-only; exit 0 for any verdict, 1 when the job, prompt or record cannot be read, 2 for bad usage.`;
 
 export async function cmdQueueDupcheck(args: string[]): Promise<number> {
-  if (args.includes('--help') || args.includes('-h')) { console.log(help); return 0; }
+  if (hasQueueHelpFlag(args)) { console.log(help); return 0; }
   const json = args.includes('--json'), gate = args.includes('--gate'), stats = args.includes('--stats');
   const rest = args.filter(a => a !== '--json' && a !== '--gate' && a !== '--stats');
   const flags = args.length - rest.length;
-  const fail = (message: string): number => { if (json) console.log(JSON.stringify({ error: message })); else console.error(message); return 1; };
   if (stats) {
     if (rest.length || gate || flags !== 1 + (json ? 1 : 0)) { console.error(help); return 2; }
     const s = await readDupcheckStats(defaultRunsDir());
-    if (!s) return fail('The dupcheck record (metrics/dupcheck.jsonl) could not be read, so the counts are unknown.');
+    if (!s) return reportQueueCliError('The dupcheck record (metrics/dupcheck.jsonl) could not be read, so the counts are unknown.', json);
     console.log(json ? JSON.stringify(s) : dupcheckStatsLines(s).join('\n'));
     return 0;
   }
@@ -40,6 +40,6 @@ export async function cmdQueueDupcheck(args: string[]): Promise<number> {
     } else console.log(json ? JSON.stringify(report) : dupcheckLines(report).join('\n'));
     return 0;
   } catch (error) {
-    return fail(error instanceof DupcheckInputError ? error.message : 'Duplicate check failed.');
+    return reportQueueCliError(error instanceof DupcheckInputError ? error.message : 'Duplicate check failed.', json);
   }
 }

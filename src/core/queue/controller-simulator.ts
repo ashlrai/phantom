@@ -5,6 +5,8 @@
  * silently dropping censored jobs would bias W. Recorded service durations are
  * fixed workload demands, not predictions of how real workers will perform.
  */
+import { isNonNegativeFinite, isNonNegativeSafeInt, nonEmptyQueueString } from './schema.js';
+
 export interface ControllerQueueEvent {
   jobId: string;
   station: string;
@@ -34,15 +36,13 @@ export interface CapacityDecision {
 }
 
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
-const count = (n: number) => Number.isSafeInteger(n) && n >= 0;
-const finite = (n: number) => Number.isFinite(n) && n >= 0;
 
 function validateStations(stations: readonly QueueStation[]): void {
   const names = new Set<string>();
   if (!stations.length) throw new Error('At least one queue station is required');
   for (const s of stations) {
-    if (typeof s.station !== 'string' || !s.station.trim() || names.has(s.station) ||
-      !count(s.slots) || s.slots < 1 || !count(s.minSlots ?? 1) ||
+    if (nonEmptyQueueString(s.station) === null || names.has(s.station) ||
+      !isNonNegativeSafeInt(s.slots) || s.slots < 1 || !isNonNegativeSafeInt(s.minSlots ?? 1) ||
       (s.minSlots ?? 1) < 1 || (s.minSlots ?? 1) > s.slots) {
       throw new Error('Invalid queue station capacity');
     }
@@ -67,7 +67,7 @@ export function decideQueueCapacity(
   validateStations(stations);
   if (!stations.some(s => s.station === readyStation)) throw new Error('Unknown READY station');
   for (const s of stations) {
-    if (!count(s.running) || s.running > s.slots || !count(s.waiting) || !finite(s.lambda) ||
+    if (!isNonNegativeSafeInt(s.running) || s.running > s.slots || !isNonNegativeSafeInt(s.waiting) || !isNonNegativeFinite(s.lambda) ||
       (s.mu !== null && (!Number.isFinite(s.mu) || s.mu <= 0))) {
       throw new Error('Invalid queue station pressure');
     }
@@ -116,8 +116,8 @@ function visitsFromEvents(events: readonly ControllerQueueEvent[], stations: rea
   const active = new Map<string, { station: string; arrivedAt: number; startedAt?: number }>();
   let previous = -Infinity;
   for (const event of events) {
-    if (!event || !finite(event.atMs) || event.atMs < previous ||
-      typeof event.jobId !== 'string' || !event.jobId.trim() || !known.has(event.station)) {
+    if (!event || !isNonNegativeFinite(event.atMs) || event.atMs < previous ||
+      nonEmptyQueueString(event.jobId) === null || !known.has(event.station)) {
       throw new Error('Invalid or nonchronological queue event');
     }
     previous = event.atMs;
