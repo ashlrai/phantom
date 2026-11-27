@@ -1159,6 +1159,25 @@ describe('derived market reasons', () => {
     }
   });
 
+  it('derives eligibility reasons only for lanes with a slots entry', () => {
+    const slots = JSON.stringify({ 'codex-personal': {}, cursor: null });
+    const report = currentUnfed(JSON.stringify({ lanes: MLANES }), READY2, { slots, hold: 'codex-local' });
+    const byLane = Object.fromEntries(report.resources.map(r => [r.lane, r]));
+
+    expect(report.derivedReasons).toBe(true);
+    expect(byLane['codex-personal']?.blocked).toMatchObject({ missing_capability: 1 });
+    expect(byLane.cursor).toMatchObject({ unfed: true, waitingElsewhere: 4 });
+    expect(byLane.cursor?.blocked).toEqual({});
+    expect(byLane['codex-local']).toMatchObject({ held: true, unfed: false, blocked: {} });
+  });
+
+  it('retains a fleet stop reason when no lane has a slots entry', () => {
+    const report = currentUnfed(JSON.stringify({ lanes: MLANES, paused: true }), READY2, { slots: '{}' });
+
+    expect(report).toMatchObject({ derivedReasons: false, fleetStop: 'admission_stopped' });
+    expect(report.resources.find(r => r.lane === 'cursor')?.blocked).toEqual({ admission_stopped: 4 });
+  });
+
   it('uses the first valid row per job for derived waiting and blocker counts', () => {
     const ready = [
       mrow('RQ-DUP', 'codex-personal', 'work', '{broken'),

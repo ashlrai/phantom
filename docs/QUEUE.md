@@ -441,6 +441,10 @@ When the dispatcher omits its unfed summary, the derived report also honors
 holds in `queue/slots.json` and the operator's `HOLD` file. Held lanes can
 show physical headroom but contribute zero unfed slots. Published unfed
 summaries use the lane holds from the same dispatcher tick.
+Derived eligibility reasons require an object for that lane in
+`queue/slots.json`. A missing or malformed lane entry leaves eligibility
+reasons unknown while dispatcher counts, operator holds and a recorded
+fleet-wide admission stop still apply.
 An embedded admission record with a `ts` must match the status `last_tick`
 to supply the fleet stop verdict. The status pause marker and published
 blocked reasons can still supply evidence when the timestamps differ.
