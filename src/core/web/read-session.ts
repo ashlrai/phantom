@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { timingSafeTextEqual } from './api-http-helpers.js';
 import { ReadSessionRevocations } from './read-session-revocations.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -99,10 +100,7 @@ export function headerValue(req: IncomingMessage, name: string): string {
 }
 
 export function safeEqual(left: string, right: string): boolean {
-  const a = Buffer.from(left, 'utf8');
-  const b = Buffer.from(right, 'utf8');
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+  return timingSafeTextEqual(left, right);
 }
 
 export function requestUrl(req: IncomingMessage): URL | null {

@@ -2,7 +2,7 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { dirname } from 'node:path';
-import { parseRemoteAccessConfig } from './remote-access.js';
+import { assertPrivatePath, parseRemoteGatewayConfigRecord } from './remote-access.js';
 import { remoteAdminSocketPath } from './remote-admin.js';
 
 type AdminAction = 'pending' | 'devices';
@@ -18,7 +18,7 @@ function readConfig(path: string): { publicOrigin: string; port: number } {
   const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   try {
     const stat = fstatSync(fd);
-    if (!before.isFile() || before.isSymbolicLink() || !stat.isFile() || stat.ino !== before.ino || stat.dev !== before.dev
+    if (!stat.isFile() || stat.ino !== before.ino || stat.dev !== before.dev
       || (stat.mode & 0o077) !== 0 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())
       || stat.size > 8192) throw new Error('insecure');
     const buffer = Buffer.alloc(8193);
@@ -29,14 +29,9 @@ function readConfig(path: string): { publicOrigin: string; port: number } {
       size += count;
     }
     if (size > 8192) throw new Error('oversized');
-    const value: unknown = JSON.parse(buffer.subarray(0, size).toString('utf8'));
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid');
-    const record = value as Record<string, unknown>;
-    const access = parseRemoteAccessConfig(record.access);
-    const port = record.gatewayPort;
-    if (Object.keys(record).some((key) => key !== 'access' && key !== 'gatewayPort') || !access
-      || !Number.isInteger(port) || (port as number) < 1 || (port as number) > 65535) throw new Error('invalid');
-    return { publicOrigin: access.publicOrigin, port: port as number };
+    const parsed = parseRemoteGatewayConfigRecord(JSON.parse(buffer.subarray(0, size).toString('utf8')) as unknown);
+    if (!parsed) throw new Error('invalid');
+    return { publicOrigin: parsed.access.publicOrigin, port: parsed.gatewayPort };
   } finally { closeSync(fd); }
 }
 
@@ -52,11 +47,8 @@ function probeListener(port: number): Promise<boolean> {
 
 /** Speak the existing read-only admin protocol without its directory-creating client. */
 function readAdmin(action: AdminAction, path = remoteAdminSocketPath()): Promise<unknown> {
-  for (const [name, directory] of [[dirname(path), true], [path, false]] as const) {
-    const stat = lstatSync(name);
-    if ((directory ? !stat.isDirectory() : !stat.isSocket()) || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
-      || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw new Error('unavailable');
-  }
+  assertPrivatePath(dirname(path), 'directory', 'unavailable');
+  assertPrivatePath(path, 'socket', 'unavailable');
   return new Promise((resolve, reject) => {
     const socket = createConnection(path);
     let text = '';

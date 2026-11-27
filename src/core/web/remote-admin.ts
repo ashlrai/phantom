@@ -4,6 +4,8 @@ import { createConnection, createServer, type Server } from 'node:net';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { defaultVerseRoot } from '../verse/preferences.js';
+import { isWebRecord } from './api-http-helpers.js';
+import { assertPrivatePath, lstatOrNull } from './remote-access.js';
 import type { createRemotePairing } from './remote-pairing.js';
 import type { RemoteDeviceStore } from './remote-device-store.js';
 
@@ -17,31 +19,15 @@ export function remoteAdminSocketPath(root = defaultVerseRoot()): string { retur
 
 function privateDirectory(root: string): void {
   mkdirSync(root, { recursive: true, mode: 0o700 });
-  const stat = lstatSync(root);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
-    || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
-    throw new Error('Remote operator directory is not private');
-  }
-}
-
-function existingSocket(path: string) {
-  try { return lstatSync(path); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
-  }
+  assertPrivatePath(root, 'directory', 'Remote operator directory is not private');
 }
 
 /** A killed sidecar leaves its Unix socket pathname behind. Reclaim only a
  * private socket owned by this user after a connection proves no listener is
  * alive; never remove a regular file, symlink, or another process's socket. */
 async function clearStaleSocket(root: string, path: string): Promise<void> {
-  const before = existingSocket(path);
-  if (!before) return;
-  if (!before.isSocket() || (before.mode & 0o077) !== 0
-    || (typeof process.getuid === 'function' && before.uid !== process.getuid())) {
-    throw new Error('Remote admin socket path is not a private owned socket');
-  }
+  if (!lstatOrNull(path)) return;
+  const before = assertPrivatePath(path, 'socket', 'Remote admin socket path is not a private owned socket');
   const stale = await new Promise<boolean>((resolve, reject) => {
     const probe = createConnection(path);
     probe.setTimeout(1_000, () => probe.destroy(new Error('Remote admin socket probe timed out')));
@@ -55,11 +41,9 @@ async function clearStaleSocket(root: string, path: string): Promise<void> {
   });
   if (!stale) throw new Error('Remote admin socket already has a live listener');
   privateDirectory(root);
-  const after = existingSocket(path);
-  if (!after) return;
-  if (!after.isSocket() || (after.mode & 0o077) !== 0
-    || (typeof process.getuid === 'function' && after.uid !== process.getuid())
-    || after.ino !== before.ino || after.dev !== before.dev) {
+  if (!lstatOrNull(path)) return;
+  const after = assertPrivatePath(path, 'socket', 'Remote admin socket changed during stale recovery');
+  if (after.ino !== before.ino || after.dev !== before.dev) {
     throw new Error('Remote admin socket changed during stale recovery');
   }
   unlinkSync(path);
@@ -76,8 +60,8 @@ async function confirmMacOperator(action: OperatorAction, id: string): Promise<b
 }
 
 async function command(pairing: Pairing, devices: RemoteDeviceStore, input: unknown, confirm: ConfirmMacOperator, info?: { publicOrigin: string }): Promise<unknown> {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: 'Invalid operator command' };
-  const value = input as Record<string, unknown>;
+  if (!isWebRecord(input)) return { error: 'Invalid operator command' };
+  const value = input;
   switch (value.action) {
     case 'invite': {
       if (typeof value.subject !== 'string' || (value.scope !== 'read' && value.scope !== 'act')) return { error: 'Invalid invitation' };

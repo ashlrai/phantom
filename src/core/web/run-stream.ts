@@ -99,6 +99,7 @@ import { loadRun } from '../run/orchestrator.js';
 import { gcRunStreams, MAX_STREAM_FILE_BYTES, readRunStreamChunkResult, type RunStreamReadIdentity } from '../run/streaming.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 import { registerSse, deregisterSse, sseConnectionCapReached, sendJson } from './api.js';
+import { headerValue } from './read-session.js';
 
 // ---------------------------------------------------------------------------
 // Route matching / run-id grammar
@@ -318,14 +319,8 @@ function progressEqual(a: ProgressSnapshot, b: ProgressSnapshot): boolean {
 // Header helpers
 // ---------------------------------------------------------------------------
 
-function singleHeader(req: IncomingMessage, name: string): string {
-  const raw = req.headers[name];
-  if (Array.isArray(raw)) return raw.length === 1 ? (raw[0] ?? '') : '';
-  return raw ?? '';
-}
-
 function parseLastEventId(req: IncomingMessage): ResumeCursor {
-  const raw = singleHeader(req, 'last-event-id');
+  const raw = headerValue(req, 'last-event-id');
   const empty = { task: -1, step: -1, output: -1 };
   const fields = /^v1:(-?\d+):(-?\d+):(-?\d+)$/.exec(raw);
   if (fields) {

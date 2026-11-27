@@ -7,7 +7,7 @@ import { buildResourcePerformance, resourceUsageScopeForProvider, validateResour
 import { validResourceNativeProcessForReceipt } from '../resources/native-diagnostics.js';
 
 export const MAX_RESOURCE_CONSOLE_RESPONSE_BYTES = 4 * 1024 * 1024;
-export const MAX_RESOURCE_CONSOLE_RECENT_ATTEMPTS = 100;
+const MAX_RESOURCE_CONSOLE_RECENT_ATTEMPTS = 100;
 const MAX_ATTEMPTS = 4_096;
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const HASH = /^[a-f0-9]{64}$/;

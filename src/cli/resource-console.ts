@@ -1,4 +1,5 @@
 import { isAbsolute, parse as parsePath, resolve } from 'node:path';
+import { containsControlChars } from '../core/universe/input-guards.js';
 
 const USAGE = `usage: ashlr resources pool console --root ABS --pool ABS --bindings ABS --observations ABS [--port N] [--json]
        add --execute --workspace ABS [--max-parallel N] to enable foreground queued tasks
@@ -94,8 +95,7 @@ function path(value: string): string {
   return resolve(value);
 }
 function parse(args: string[]): Options {
-  if (args.length > 32 || args.some((arg) => typeof arg !== 'string' || arg.length > 4_096 ||
-      [...arg].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) >= 127 && char.charCodeAt(0) <= 159)) ||
+  if (args.length > 32 || args.some((arg) => typeof arg !== 'string' || arg.length > 4_096 || containsControlChars(arg)) ||
     Buffer.byteLength(args.join('\0')) > 32 * 1024) throw new UsageError('Arguments exceed the bounded text contract');
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) return { help: true };
   const values = new Map<string, string>(); let execute = false; let json = false; let allocationControls = false;

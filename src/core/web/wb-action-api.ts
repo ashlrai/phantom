@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { passesMutationGate, readBody } from './api.js';
+import { isWebRecord } from './api-http-helpers.js';
 import { sendJson } from './read-session.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { readLaneTargets, setLaneTarget } from '../fleet/runs-lane-targets.js';
@@ -22,8 +23,8 @@ const actions = ['lane.pause', 'lane.resume', 'lane.target', 'queue.hold', 'queu
 type Action = typeof actions[number];
 interface Request { action: Action; nonce: string; dryRun: boolean; lane?: string; job?: string; target?: number; text?: string; priority?: string }
 function parse(value: unknown): Request | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const b = value as Record<string, unknown>;
+  if (!isWebRecord(value)) return null;
+  const b = value;
   if (!actions.includes(b.action as Action) || typeof b.nonce !== 'string' || !/^[a-f0-9]{32,64}$/.test(b.nonce) ||
       (b.dryRun !== undefined && typeof b.dryRun !== 'boolean')) return null;
   const action = b.action as Action;

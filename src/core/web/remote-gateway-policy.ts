@@ -20,10 +20,10 @@
  * fleet/cos/status with a single cos- job id; approval stays desktop-only.
  * Every path and body shape is exact — no wildcards.
  */
-import { timingSafeEqual } from 'node:crypto';
 import { validateBusEnvelope } from '../fleet/bus-envelope.js';
 import { validateDropJob } from '../fleet/drop-job-writer.js';
 import { parseLeaderQuestionSubmission } from '../vision/leader-thread-types.js';
+import { isWebRecord, timingSafeTextEqual } from './api-http-helpers.js';
 
 export interface RemoteRequest {
   method?: string;
@@ -253,10 +253,6 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
   return { kind: 'deny' };
 }
 
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
 function keys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
   return Object.keys(value).every((key) => allowed.includes(key));
 }
@@ -269,8 +265,8 @@ function boundedText(value: unknown, max: number): boolean {
 export function validateRemoteMutation(decision: RemoteRouteDecision, body: unknown): boolean {
   if (decision.kind !== 'write') return false;
   const { path } = decision;
-  if (/^\/api\/verse\/leader\/directives\/[^/]+$/.test(path)) return body === undefined || (record(body) && Object.keys(body).length === 0);
-  if (!record(body)) return false;
+  if (/^\/api\/verse\/leader\/directives\/[^/]+$/.test(path)) return body === undefined || (isWebRecord(body) && Object.keys(body).length === 0);
+  if (!isWebRecord(body)) return false;
   if (path === '/api/verse/activity/seen') return keys(body, ['sessionId', 'turnCount'])
     && typeof body.sessionId === 'string' && SESSION_ID.test(body.sessionId)
     && Number.isSafeInteger(body.turnCount) && (body.turnCount as number) >= 0;
@@ -349,12 +345,6 @@ function oneHeader(value: string | string[] | undefined): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function equalSecret(a: string, b: string): boolean {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  return left.length === right.length && timingSafeEqual(left, right);
-}
-
 export type RemoteEnvelopeDecision = { ok: true } | { ok: false; reason: 'host' | 'origin' | 'csrf' | 'hub-token' };
 
 /**
@@ -381,6 +371,6 @@ export function checkRemoteEnvelope(
   const site = request.headers['sec-fetch-site'];
   if (site !== undefined && oneHeader(site) !== 'same-origin') return { ok: false, reason: 'origin' };
   const proof = oneHeader(request.headers['x-ashlr-remote-csrf']);
-  if (!csrfSecret || !proof || !equalSecret(proof, csrfSecret)) return { ok: false, reason: 'csrf' };
+  if (!csrfSecret || !proof || !timingSafeTextEqual(proof, csrfSecret)) return { ok: false, reason: 'csrf' };
   return { ok: true };
 }
