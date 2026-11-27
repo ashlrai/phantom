@@ -93,7 +93,6 @@ export function summarize(rows: EvalRow[]): EvalSummary {
  */
 export function formatEvalTable(rows: EvalRow[]): string {
   const idW = Math.max(8, ...rows.map((r) => r.id.length));
-  const cell = (s: string, w: number) => s + ' '.repeat(Math.max(0, w - s.length));
   const num = (n: number) => String(n);
   const doneMark = (b: boolean) => (b ? 'done' : 'fail');
 
@@ -101,19 +100,19 @@ export function formatEvalTable(rows: EvalRow[]): string {
   lines.push('Adaptive prompts: OFF vs ON');
   lines.push('');
   lines.push(
-    `${cell('id', idW)}  ${cell('off:done', 10)} ${cell('off:steps', 10)} ${cell('off:tok', 10)}  ` +
-      `${cell('on:done', 10)} ${cell('on:steps', 10)} ${cell('on:tok', 10)}`,
+    `${pad('id', idW)}  ${pad('off:done', 10)} ${pad('off:steps', 10)} ${pad('off:tok', 10)}  ` +
+      `${pad('on:done', 10)} ${pad('on:steps', 10)} ${pad('on:tok', 10)}`,
   );
   lines.push('-'.repeat(idW + 2 + 33 + 2 + 33));
   for (const r of rows) {
     if (r.error) {
-      lines.push(`${cell(r.id, idW)}  ERROR: ${r.error}`);
+      lines.push(`${pad(r.id, idW)}  ERROR: ${r.error}`);
       continue;
     }
     lines.push(
-      `${cell(r.id, idW)}  ` +
-        `${cell(doneMark(r.doneOff), 10)} ${cell(num(r.stepsOff), 10)} ${cell(num(r.tokensOff), 10)}  ` +
-        `${cell(doneMark(r.doneOn), 10)} ${cell(num(r.stepsOn), 10)} ${cell(num(r.tokensOn), 10)}`,
+      `${pad(r.id, idW)}  ` +
+        `${pad(doneMark(r.doneOff), 10)} ${pad(num(r.stepsOff), 10)} ${pad(num(r.tokensOff), 10)}  ` +
+        `${pad(doneMark(r.doneOn), 10)} ${pad(num(r.stepsOn), 10)} ${pad(num(r.tokensOn), 10)}`,
     );
   }
 
@@ -244,46 +243,20 @@ async function evalFixture(
 // `ashlr eval` — main
 // ---------------------------------------------------------------------------
 
+const EVAL_SUBCOMMANDS: Record<string, (args: string[]) => Promise<number> | number> = {
+  checkpoints: async (rest) => (await import('./eval-checkpoints.js')).cmdEvalCheckpoints(rest),
+  attention: async (rest) => (await import('./eval-attention.js')).cmdEvalAttention(rest),
+  'swe-bench': async (rest) => (await import('./eval-swe-bench.js')).cmdSweBench(rest),
+  router: async (rest) => (await import('./eval-router.js')).cmdEvalRouter(rest),
+  dataset: async (rest) => (await import('./eval-dataset.js')).cmdEvalDataset(rest),
+  prompts: async (rest) => (await import('./eval-prompts.js')).cmdEvalPrompts(rest),
+  passk: async (rest) => (await import('./eval-passk.js')).cmdEvalPassK(rest),
+};
+
 export async function cmdEval(args: string[]): Promise<number> {
-  if (args[0] === 'checkpoints') {
-    const { cmdEvalCheckpoints } = await import('./eval-checkpoints.js');
-    return cmdEvalCheckpoints(args.slice(1));
-  }
-
-  // M346: metadata-only fleet attention evaluation.
-  if (args[0] === 'attention') {
-    const { cmdEvalAttention } = await import('./eval-attention.js');
-    return cmdEvalAttention(args.slice(1));
-  }
-
-  // M143: dispatch swe-bench subcommand to its own handler.
-  if (args[0] === 'swe-bench') {
-    const { cmdSweBench } = await import('./eval-swe-bench.js');
-    return cmdSweBench(args.slice(1));
-  }
-
-  // RQ-SELFOPT-EVAL-HARNESS: offline router/prompt-policy replay benchmark.
-  if (args[0] === 'router') {
-    const { cmdEvalRouter } = await import('./eval-router.js');
-    return cmdEvalRouter(args.slice(1));
-  }
-
-  // Fold the live fleet ledgers into a router-eval.v1 dataset for replay.
-  if (args[0] === 'dataset') {
-    const { cmdEvalDataset } = await import('./eval-dataset.js');
-    return cmdEvalDataset(args.slice(1));
-  }
-
-  // RQ-SELFOPT-PROMPT-OPT: prompt-variant A/B eval + promotion dashboard.
-  if (args[0] === 'prompts') {
-    const { cmdEvalPrompts } = await import('./eval-prompts.js');
-    return cmdEvalPrompts(args.slice(1));
-  }
-
-  // RQ-SWE5-PASSK-EVAL: pass^k golden-task eval suite + nightly scheduler.
-  if (args[0] === 'passk') {
-    const { cmdEvalPassK } = await import('./eval-passk.js');
-    return cmdEvalPassK(args.slice(1));
+  const sub = args[0];
+  if (sub !== undefined && Object.hasOwn(EVAL_SUBCOMMANDS, sub)) {
+    return EVAL_SUBCOMMANDS[sub]!(args.slice(1));
   }
 
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
