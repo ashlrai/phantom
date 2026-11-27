@@ -16,7 +16,8 @@ import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/co
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type RouterQueueStuckRead, type StrandedRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import type { StrandedBranch } from '../src/core/fleet/stranded-branches.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
@@ -157,6 +158,7 @@ describe('readUnifiedInbox sources', () => {
         'email-outbox': { state: 'missing', pending: 0 },
         'team-approvals': { state: 'healthy', pending: 0 },
         proposals: { state: 'healthy', pending: 0 },
+        stranded: { state: 'healthy', pending: 0 },
       },
     });
   });
@@ -5284,5 +5286,128 @@ describe('readUnifiedInbox owner pair', () => {
     // A pair wait names no job — --job never matches it.
     const byJob = await readPair(pending, { filter: { job: 'job-1' } });
     expect(byJob.items.filter(i => i.source === 'owner-pair')).toHaveLength(0);
+  });
+});
+
+describe('readUnifiedInbox stranded', () => {
+  const strandedRead = (over: Partial<StrandedRead> = {}): StrandedRead => ({ state: 'healthy', branches: [], ...over });
+  const branch = (job: string, over: Partial<StrandedBranch> = {}): StrandedBranch => ({
+    job, branch: `codex-bridge/${job}`, shape: 'result-abort', reason: 'default-fetch',
+    repo: 'example/phantom', ageHours: 2, filesChanged: 3,
+    next: `Re-queue as a recovery job: fetch codex-bridge/${job} from the fork and re-publish.`,
+    recover: `gh pr view 'codex-bridge/${job}' >/dev/null 2>&1 || gh pr create --head 'codex-bridge/${job}' --fill`,
+    ...over,
+  });
+  const readStranded = (s: StrandedRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readStranded: async () => s, ...extra });
+  /** A publish log in the shape `readStrandedBranches` proves stranded: push confirmation, then an abort. */
+  const PUSH_ABORT = (job: string): string[] => [
+    `remote: Create a pull request for 'codex-bridge/${job}' on GitHub by visiting:`,
+    `remote:      https://github.com/example/phantom/pull/new/codex-bridge/${job}`,
+    'fatal: shallow file has changed since we read it',
+    ' 3 files changed, 9 insertions(+)',
+    'RESULT ABORT default-fetch',
+  ];
+  const writePublish = (job: string, lines: string[], ageHours: number | null): void => {
+    const path = join(runsDir, `${job}.publish`);
+    writeFileSync(path, `${lines.join('\n')}\n`, { mode: 0o600 });
+    if (ageHours !== null) {
+      const t = new Date(now - ageHours * 3_600_000);
+      utimesSync(path, t, t);
+    }
+  };
+
+  it('lists each stranded branch as a warn naming its job, age, repo and acts', async () => {
+    const inbox = await readStranded(strandedRead({ branches: [
+      branch('RQ-ALPHA'),
+      branch('RQ-BETA', { reason: 'network', repo: null, ageHours: null, filesChanged: null }),
+    ] }));
+    expect(inbox.sources.stranded).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'stranded');
+    expect(items).toHaveLength(2);
+
+    const alpha = items.find(i => i.id === 'stranded:RQ-ALPHA')!;
+    expect(alpha).toMatchObject({
+      kind: 'stranded-branch', severity: 'warn', blocking: false,
+      title: 'Job RQ-ALPHA pushed a branch but opened no PR',
+      since: new Date(now - 2 * 3_600_000).toISOString(), expiresAt: null,
+      jobIds: ['RQ-ALPHA'],
+    });
+    expect(alpha.detail).toContain('publish aborted (default-fetch)');
+    expect(alpha.detail).toContain('repo example/phantom');
+    expect(alpha.detail).toContain('3 files changed');
+    expect(alpha.act).toEqual(['phm jobs stranded', 'phm jobs stranded --requeue --apply']);
+
+    // No provable repo, age or file count — each stays unknown, never a guess.
+    const beta = items.find(i => i.id === 'stranded:RQ-BETA')!;
+    expect(beta.since).toBeNull();
+    expect(beta.detail).toContain('publish aborted (network)');
+    expect(beta.detail).toContain('age unknown');
+    expect(beta.detail).not.toContain('files changed');
+    expect(beta.jobIds).toEqual(['RQ-BETA']);
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readStranded(strandedRead({ state: 'missing', branches: [branch('RQ-X')] }));
+    expect(missing.sources.stranded).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stranded')).toHaveLength(0);
+
+    const unavailable = await readStranded(strandedRead({ state: 'unavailable', branches: [branch('RQ-X')] }));
+    expect(unavailable.sources.stranded).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'stranded')).toHaveLength(0);
+
+    const throwing = await read({ readStranded: async () => { throw new Error('stranded boom'); } });
+    expect(throwing.sources.stranded).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'stranded')).toHaveLength(0);
+  });
+
+  it('lists proved branches degraded when some publish logs are unreadable, saying the set may be incomplete', async () => {
+    const inbox = await readStranded(strandedRead({ state: 'degraded', branches: [branch('RQ-ALPHA')] }));
+    expect(inbox.sources.stranded).toEqual({ state: 'degraded', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'stranded:RQ-ALPHA')!;
+    expect(item.detail).toContain('stranded set may be incomplete');
+  });
+
+  it('reads the real publish logs under runsDir — stranded lists, recovered and published never do', async () => {
+    writePublish('RQ-STRANDED', PUSH_ABORT('RQ-STRANDED'), 2);
+    writePublish('RQ-RECOVERED', [
+      ...PUSH_ABORT('RQ-RECOVERED'),
+      'RESULT PR https://github.com/example/phantom/pull/9',
+    ], 5);
+    writePublish('RQ-CLEAN', [
+      `remote: Create a pull request for 'codex-bridge/RQ-CLEAN' on GitHub by visiting:`,
+      'RESULT PR https://github.com/example/phantom/pull/10',
+    ], 1);
+    const inbox = await read();
+    expect(inbox.sources.stranded).toEqual({ state: 'healthy', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'stranded');
+    expect(items.map(i => i.id)).toEqual(['stranded:RQ-STRANDED']);
+    expect(items[0]!.since).toBe(new Date(now - 2 * 3_600_000).toISOString());
+    expect(items[0]!.jobIds).toEqual(['RQ-STRANDED']);
+  });
+
+  it('reports an absent runs dir missing and an unreadable publish log degraded', async () => {
+    const missing = await read({ runsDir: join(root, 'no-such-runs') });
+    expect(missing.sources.stranded).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stranded')).toHaveLength(0);
+
+    writePublish('RQ-STRANDED', PUSH_ABORT('RQ-STRANDED'), 2);
+    mkdirSync(join(runsDir, 'RQ-DIR.publish'));
+    const degraded = await read();
+    expect(degraded.sources.stranded).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.find(i => i.id === 'stranded:RQ-STRANDED')!.detail).toContain('may be incomplete');
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = strandedRead({ branches: [branch('RQ-ALPHA'), branch('RQ-BETA')] });
+    const bySource = await readStranded(pending, { filter: { source: 'stranded' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'stranded')).toBe(true);
+    const byKind = await readStranded(pending, { filter: { kind: 'stranded-branch' } });
+    expect(byKind.items.map(i => i.id).sort()).toEqual(['stranded:RQ-ALPHA', 'stranded:RQ-BETA']);
+    expect(byKind.sources.stranded).toEqual({ state: 'healthy', pending: 2 });
+    // The job id is the item's own citation — --job names it directly.
+    const byJob = await readStranded(pending, { filter: { job: 'RQ-ALPHA' } });
+    expect(byJob.items.filter(i => i.source === 'stranded').map(i => i.id)).toEqual(['stranded:RQ-ALPHA']);
   });
 });

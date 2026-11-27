@@ -691,7 +691,24 @@ the source, since a throwing read is itself the degraded/unknown evidence
 and `unavailable`/`missing` never apply to a live probe that always
 resolves; deep links `phm fleet channel-health`, `phm channels slack
 status`, `phm imessage doctor`, `phm comms health --json`, `phm comms
-cycle`, `phm channels`) — and each item carries `act` deep-link commands (`phm fleet
+cycle`, `phm channels`) — and finished jobs that pushed their branch but
+whose publish then aborted — usually the default-branch fetch — so no
+pull request exists for the pushed work (the same `readStrandedBranches`
+scan `phm jobs stranded`, `phm jobs stranded --requeue` and the
+stranded-requeue self-tick hook serve, so the surfaces can never
+disagree: until now the stranded backlog had no unified-inbox surface —
+every other pending-work read looks forward at work not yet claimed,
+while a job that finished and lost its PR sat invisible; each stranded
+branch lists as warn `stranded-branch` citing the job id — the same id
+`phm jobs stranded --requeue` recovers as `<job>R2` — `since` the publish
+log's last-write time the reported age is measured from and `expiresAt`
+null, since stranded work waits for a recovery decision, never a guessed
+deadline; `recovered` branches — a later `RESULT PR` line proves the PR
+exists after all — never list, an absent runs dir is `missing`
+(verified-empty: no publish log can exist), an unreadable one
+`unavailable`, and a report with unreadable logs `degraded` — the listed
+branches are a floor, never a complete set; deep links `phm jobs
+stranded`, `phm jobs stranded --requeue --apply`) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -712,7 +729,8 @@ claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`,
 `phm agents bus status`, `phm fleet status`, `phm fleet resume`, `phm
 queue stuck`, `phm fleet unfed --json`, `phm queue`, `phm fleet
 channel-health`, `phm channels slack status`, `phm imessage doctor`, `phm
-comms health --json`, `phm comms cycle`). It never claims, replies, or mutates; a source
+comms health --json`, `phm comms cycle`, `phm jobs stranded`, `phm jobs
+stranded --requeue --apply`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
@@ -727,8 +745,8 @@ that provably name that job — a bus, mailbox or peer-mail body's
 delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job, a
 seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
-peer-dispatch receipt's job, a session-handoff journal's job id or a
-router-queue row's own READY id —
+peer-dispatch receipt's job, a session-handoff journal's job id, a
+router-queue row's own READY id or a stranded publish's own job id —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound
