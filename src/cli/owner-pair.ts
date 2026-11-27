@@ -74,7 +74,7 @@ export async function cmdOwnerPair(args: string[], deps: OwnerPairCliDeps = {}):
       if (checked.status === 'bound') {
         emit({ status: 'paired', confirmed: checked.confirmed, ...(checked.reason ? { reason: checked.reason } : {}) },
           `Paired. ${checked.confirmed ? 'Fleet updates will come here.' : `Not confirmed yet: ${checked.reason ?? 'see comms.toml'}`}`);
-        return 0;
+        return checked.confirmed ? 0 : 1;
       }
     }
     const started = await startOwnerPair(live, handle === undefined ? {} : { handle });
