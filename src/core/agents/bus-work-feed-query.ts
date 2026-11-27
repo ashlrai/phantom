@@ -4,7 +4,7 @@
  * feed`) apply to argv, shared so the HTTP read and the CLI reads can never
  * disagree on what a value means. Read-only: builds the `projectBusWorkFeedView`
  * filter set plus the claims-join flag; it reads no store itself beyond the
- * identity registry the `to`/`owner` matchers resolve through, and an
+ * identity registry the `to`/`owner`/`excludeOwner` matchers resolve through, and an
  * unresolvable ref or unreadable registry keeps exact-label matching exactly
  * like the CLI flags. Every malformed value is a usage error, never a silent
  * empty view.
@@ -30,6 +30,8 @@ export interface BusWorkFeedQueryInput {
   tier?: string;
   to?: string;
   owner?: string;
+  /** Announcer ref to drop — the `owner` match inverted under the same identity-label rule. */
+  excludeOwner?: string;
   since?: string;
   before?: string;
   contains?: string;
@@ -97,14 +99,15 @@ export function parseBusWorkFeedQuery(
     }
     filters.status = input.status as WorkJob['status'];
   }
-  for (const key of ['job', 'to', 'owner', 'id'] as const) {
+  for (const key of ['job', 'to', 'owner', 'excludeOwner', 'id'] as const) {
     const value = input[key];
     if (value === undefined) continue;
     if (!LABEL.test(value)) return invalid(`${key} takes a printable routing label of 1-128 characters.`);
     if (key === 'job') filters.jobId = value;
     else if (key === 'id') filters.id = value;
     else if (key === 'to') filters.toMatch = busWorkFeedPendingToMatcher(value, { root: options.root });
-    else filters.ownerMatch = busWorkFeedOwnerMatcher(value, { root: options.root });
+    else if (key === 'owner') filters.ownerMatch = busWorkFeedOwnerMatcher(value, { root: options.root });
+    else filters.excludeOwnerMatch = busWorkFeedOwnerMatcher(value, { root: options.root });
   }
   if (input.repo !== undefined) {
     const repo = busWorkFeedRepoKey(input.repo);

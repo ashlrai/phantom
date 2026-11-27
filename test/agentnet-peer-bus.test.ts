@@ -10,7 +10,7 @@ import { cmdAgentnet } from '../src/cli/agentnet.js';
 import { localWriteGate } from '../src/core/agents/send-gate.js';
 import type { SlackCall, SlackDeliveryPolicy } from '../src/core/agents/slack-transport.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
-import { busWorkFeedPendingToMatcher } from '../src/core/agents/bus-work-feed-read.js';
+import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher } from '../src/core/agents/bus-work-feed-read.js';
 import { readPeerFleet, type PeerWorkFeedQuery } from '../src/core/agentnet/mesh-read.js';
 vi.mock('../src/core/agents/send-gate.js', () => ({ localWriteGate: vi.fn(() => null) }));
 let root: string, bindings: string, peers: PeerBinding[], now: number, shared: boolean, approved: boolean;
@@ -95,6 +95,9 @@ describe('team peer mesh', () => {
       [{ topic: 'deploy' }, ['RQ-FEED-C']],
       [{ topic: 'general' }, []],
       [{ channel: 'release', topic: 'deploy' }, ['RQ-FEED-C']],
+      // excludeOwnerMatch is the owner predicate inverted — every announced
+      // job here carries owner 'agent0', so excluding it empties the view.
+      [{ excludeOwnerMatch: busWorkFeedOwnerMatcher('agent0', { root }) }, []],
     ] as const) {
       expect(ids(feed({ claims: false, filters }))).toEqual(expected);
     }
@@ -113,6 +116,10 @@ describe('team peer mesh', () => {
     expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ matched: 1, omitted: 0, jobs: [{ id: 'RQ-FEED-B' }] });
     expect(await cmdAgentnet(['peers', 'work-feed', '--claims', '--open', '--json'], options(), session())).toBe(0);
     expect(JSON.parse(log.mock.calls.at(-1)![0] as string).claims.source).toBe('missing');
+    // --exclude-owner maps to the same excludeOwner query key the other feed surfaces take.
+    expect(await cmdAgentnet(['peers', 'work-feed', '--exclude-owner', 'agent0', '--json'], options(), session())).toBe(0);
+    expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ status: 'ok', jobs: [] });
+    expect(await cmdAgentnet(['peers', 'work-feed', '--exclude-owner', 'bad owner', '--json'], options(), session())).toBe(2);
     expect(await cmdAgentnet(['peers', 'work-feed', '--status', 'bogus', '--json'], options(), session())).toBe(2);
     expect(await cmdAgentnet(['peers', 'work-feed', '--from', 'agent0', '--json'], options(), session())).toBe(2);
     expect(await cmdAgentnet(['peers', 'work-feed', '--peer-kind', 'task', '--json'], options(), session())).toBe(2);
