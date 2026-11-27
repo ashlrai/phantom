@@ -122,7 +122,8 @@ type FootprintCost = Pick<HarnessFootprint, 'mem_bytes_max' | 'cpu_cores_per_ses
 function footprintExpired(fp: HarnessFootprint | undefined, measuredAt: number, nowMs: number): boolean {
   if (fp?.source !== 'learned') return false;
   const learnedAt = typeof fp.learned_at === 'string' ? Date.parse(fp.learned_at) : NaN;
-  return !finite(learnedAt) || learnedAt > measuredAt || nowMs - learnedAt > CAPACITY_POLICY.learnedFootprintTtlMs;
+  return !finite(learnedAt) || learnedAt > Math.min(measuredAt, nowMs) ||
+    nowMs - learnedAt > CAPACITY_POLICY.learnedFootprintTtlMs;
 }
 
 /** Per-resource maxima for each harness, used on nodes that have not run it yet. */
@@ -280,7 +281,8 @@ export function fleetRunnable(docs: NodeCapacityDoc[], nowMs: number, maxAgeMs =
   for (const adapter of HARNESS_ADAPTERS) {
     let sum: number | null = null;
     for (const { doc, at, stopped } of current) {
-      if (!stopped && (!hasMeasuredMemory(doc) || footprintExpired(doc.per_harness_footprint[adapter.id], at, nowMs))) continue;
+      const footprint = doc.per_harness_footprint[adapter.id];
+      if (!stopped && (!hasMeasuredMemory(doc) || !footprint || footprintExpired(footprint, at, nowMs))) continue;
       const n = doc.agents_runnable_now[adapter.id];
       if (Number.isSafeInteger(n)) sum = (sum ?? 0) + (stopped ? 0 : (n as number));
     }

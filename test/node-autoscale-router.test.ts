@@ -103,6 +103,21 @@ describe('autoscale router scoring', () => {
     expect(fleetRunnable([doc, peer.doc], nowMs).codex).toBeNull();
   });
 
+  it('waits for a learned footprint observation even when its snapshot is within clock skew', () => {
+    const observedAt = T0 + 1_000;
+    const prior = computeNodeCapacity(mbp({ measuredAtMs: observedAt }));
+    const doc = computeNodeCapacity(mbp({ measuredAtMs: observedAt + 1, sessions: [] }), prior);
+    const peer = node(mbp8());
+    const input = { nodes: [{ doc }, peer], costs: [COSTS[0]!], outcomes: {}, jobs: [{ id: 'j' }] };
+
+    expect(planAutoscaleRoutes({ ...input, nowMs: T0 })[0]).toMatchObject({
+      nodeId: null, rejected: { 'footprint-unmeasured': 2 },
+    });
+    expect(fleetRunnable([doc, peer.doc], T0).codex).toBeNull();
+    expect(planAutoscaleRoutes({ ...input, nowMs: observedAt })[0]?.nodeId).not.toBeNull();
+    expect(fleetRunnable([doc, peer.doc], observedAt).codex).toBe(doc.agents_runnable_now.codex);
+  });
+
   it.each([
     [84.95, 0.3, 1],
     [84.92, 0.8, 0],
@@ -420,6 +435,17 @@ describe('autoscale router scoring', () => {
     expect(fleet.devin).toBeNull();
     expect(fleetRunnable(docs, T0 + 10 * 60_000).codex).toBeNull();
     expect(fleetFootprints(docs).claude!.mem_bytes_max).toBe(900 * MIB);
+  });
+
+  it('ignores runnable counts without a footprint on the reporting node', () => {
+    const { doc } = node(mbp());
+    expect(doc.agents_runnable_now.codex).toBeGreaterThan(0);
+    delete doc.per_harness_footprint.codex;
+    const peer = node(mbp({ node: 'peer' })).doc;
+
+    expect(fleetRunnable([doc], T0).codex).toBeNull();
+    expect(fleetRunnable([doc, peer], T0).codex).toBe(peer.agents_runnable_now.codex);
+    expect(fleetRunnable([{ ...doc, swap: { ...doc.swap, growing: true } }], T0).codex).toBe(0);
   });
 
   it('budgets duplicate snapshots once and honors a newer pressure hold in either input order', () => {
