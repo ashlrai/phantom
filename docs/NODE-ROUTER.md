@@ -335,6 +335,11 @@ not an execution, and adds no sample. Missing latency uses the mean of
 measured host medians (equal weights when none exist). Unknown duration is never
 reported as zero. Owner, capability, local-auth and fencing checks still apply.
 
+Completions use the host recorded at claim time. A legacy completion without
+a recorded host contributes latency only while the registry still has the
+claiming node's original session. A rejoin under the same node ID with a new
+session cannot attach that duration to the replacement host.
+
 `phm node status --json` exposes scoped capacity samples. `phm fleet status-api
 --json` and the existing Fleet compute API add lane occupancy, targets, floors
 and queued counts from dispatcher status. Lane `available` counts slots against
