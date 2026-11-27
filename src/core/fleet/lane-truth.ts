@@ -95,8 +95,9 @@ function analyzeLaneTruth(lanes: readonly LaneState[], meters: readonly MeterSam
     if (known && typeof lane.held === 'boolean') {
       const reset = windows.some(samples => {
         const current = samples[0]!;
-        const previous = samples.find(s => Date.parse(s.sampledAt) < Date.parse(current.sampledAt));
-        return previous && valid(previous) && fresh(previous.sampledAt, now) &&
+        const previous = samples.find(s => Date.parse(s.sampledAt) < Date.parse(current.sampledAt) &&
+          valid(s) && fresh(s.sampledAt, now));
+        return previous &&
           (previous.usedPercent! - current.usedPercent! >= 20 || Date.parse(current.resetAt!) > Date.parse(previous.resetAt!));
       });
       // A contradictory hold is the actionable verdict even when a reset also occurred.
