@@ -75,6 +75,7 @@ export const defaultLaneRewardDeps: LaneRewardDeps = {
 export interface LaneRewardAttempt {
   lane: string | null; tokens: number | null;
   published: boolean; outcome: 'merged' | 'closed' | null; outcomeTsMs: number;
+  outcomeDisputed?: true;
 }
 
 type Row = Record<string, unknown>;
@@ -116,7 +117,8 @@ const tokensOf = (row: Row): number | null => {
 
 /** Fold a jobs ledger into attempts; malformed lines are counted, never thrown. */
 export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attempts: Map<string, LaneRewardAttempt>; dropped: number } {
-  const rows: { row: Row; job: string | null; event: string; phase: string; receiptAt: number | null; prKey: string | null }[] = [];
+  const rows: { row: Row; job: string | null; event: string; phase: string; receiptAt: number | null;
+    outcomeAt: number | null; prKey: string | null }[] = [];
   let dropped = 0;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -132,7 +134,7 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
     const outcomeAt = TERMINAL_PHASES.has(phase) ? ledgerEventTs(row, phase) : null;
     if ((receiptAt !== null && receiptAt > asOfMs) || (outcomeAt !== null && outcomeAt > asOfMs)) continue;
     const url = urlOf(row);
-    rows.push({ row, job, event, phase, receiptAt, prKey: prKeyOf(url)?.key ?? url });
+    rows.push({ row, job, event, phase, receiptAt, outcomeAt, prKey: prKeyOf(url)?.key ?? url });
   }
   // URL-only rows can resolve only against a unique recorded job.
   const jobByPr = new Map<string, string | null>();
@@ -145,7 +147,8 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
   const attempts = new Map<string, LaneRewardAttempt>();
   const batchClaimLanes = new Map<string, string>();
   const usageTimes = new Map<string, number>();
-  for (const { row, job: explicitJob, event, phase, receiptAt, prKey } of rows) {
+  const datedOutcomes = new Set<string>();
+  for (const { row, job: explicitJob, event, phase, receiptAt, outcomeAt, prKey } of rows) {
     const launch = LAUNCH_EVENTS.has(event), finish = FINISH_EVENTS.has(event);
     const batchClaim = event === 'batch_claim';
     if (!batchClaim && !launch && !finish && !PUBLISH_EVENTS.has(event) && phase !== 'PUBLISHED' &&
@@ -176,10 +179,15 @@ export function foldLaneRewardAttempts(text: string, asOfMs = Infinity): { attem
     }
     attempt.published ||= PUBLISH_EVENTS.has(event) || phase === 'PUBLISHED' || prKey !== null;
     if (TERMINAL_PHASES.has(phase)) {
-      const tsMs = ledgerEventTs(row, phase) ?? 0;
-      if (tsMs >= attempt.outcomeTsMs) {
-        attempt.outcome = phase === 'MERGED' ? 'merged' : 'closed';
-        attempt.outcomeTsMs = tsMs;
+      const outcome = phase === 'MERGED' ? 'merged' : 'closed';
+      if (!datedOutcomes.has(job) || (outcomeAt !== null && outcomeAt > attempt.outcomeTsMs)) {
+        attempt.outcome = outcome;
+        attempt.outcomeTsMs = outcomeAt ?? 0;
+        delete attempt.outcomeDisputed;
+        if (outcomeAt !== null) datedOutcomes.add(job);
+      } else if (outcomeAt === attempt.outcomeTsMs && outcome !== attempt.outcome) {
+        attempt.outcome = null;
+        attempt.outcomeDisputed = true;
       }
     }
     attempts.set(job, attempt);
@@ -197,6 +205,7 @@ type ScoredAttempt =
 
 /** Score one folded attempt through the one-ask reward inspector. */
 function scoreAttempt(job: string, attempt: LaneRewardAttempt, deps: LaneRewardDeps): ScoredAttempt {
+  if (attempt.outcomeDisputed) return { scored: false, reason: 'disputed-outcome' };
   const merged = attempt.outcome === 'merged';
   if (!merged && !attempt.published && attempt.outcome !== 'closed') return { scored: false, reason: 'unresolved' };
   const tokens = attempt.tokens;

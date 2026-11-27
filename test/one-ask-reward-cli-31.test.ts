@@ -214,6 +214,28 @@ describe('fleet lane-reward', () => {
     expect(fold.attempts.get('RQ-FAKE-T1')?.outcome).toBe('closed');
   });
 
+  it('withholds disputed terminal outcomes until a newer dated verdict arrives', async () => {
+    const job = 'RQ-FAKE-TIE';
+    const finish = { event: 'finish', job, lane: 'lane-a', tokens_total: 100, url: URL(8) };
+    const merge = { event: 'merged', url: URL(8), mergedAt: '2026-10-31T08:00:00Z' };
+    const close = { event: 'closed', job, closedAt: '2026-10-31T04:00:00-04:00' };
+    const undated = { event: 'closed', job };
+    const newer = { ...close, closedAt: '2026-10-31T09:00:00Z' };
+    for (const [first, second] of [[merge, close], [close, merge]]) {
+      const text = rows(finish, first!, second!, first!, undated);
+      expect(foldLaneRewardAttempts(text).attempts.get(job)).toMatchObject({
+        outcome: null, outcomeDisputed: true, outcomeTsMs: Date.parse(merge.mergedAt),
+      });
+      const report = await readLaneReward({ deps: deps({ jobsText: read(text) }) });
+      expect(report).toMatchObject({ scored: 0, unscored: 1, meanReward: null, tokensMeasured: 100 });
+      expect(report.lanes[0]?.reasons).toEqual({ 'disputed-outcome': 1 });
+    }
+    const resolved = foldLaneRewardAttempts(rows(finish, merge, close, newer, merge, undated)).attempts.get(job);
+    expect(resolved?.outcome).toBe('closed');
+    expect(resolved?.outcomeDisputed).toBeUndefined();
+    expect(foldLaneRewardAttempts(rows(finish, merge, merge)).attempts.get(job)?.outcome).toBe('merged');
+  });
+
   it('withholds URL-only outcomes for contested PRs and honors explicit job IDs', () => {
     const fold = foldLaneRewardAttempts(rows(
       { event: 'publish', job: 'RQ-FAKE-A1', lane: 'lane-a', url: URL(5) },

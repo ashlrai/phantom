@@ -33,7 +33,9 @@ journal envelope and use the last usable snapshot for each tick timestamp.
 accepts an inclusive millisecond cutoff for receipts and terminal timestamps.
 The cutoff also applies to PR URL claims before ownership is resolved. Omitting
 it folds the entire supplied text. Receipts without a parseable timestamp
-remain eligible.
+remain eligible. A folded attempt has `outcomeDisputed: true` and a null
+`outcome` when terminal receipts disagree at its latest recorded outcome
+timestamp. The optional flag is absent once a newer dated verdict resolves it.
 
 `parseJobsJsonl` (`src/core/fleet/lane-console.ts`) adds an optional
 `LaneLedgerEvent.mergedAt` when a merge row carries a readable timestamp

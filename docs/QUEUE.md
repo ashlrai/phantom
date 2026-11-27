@@ -1444,6 +1444,10 @@ measurements, the last valid finish in ledger order supplies usage.
 The report uses the first merge or close verdict in `state`, `outcome`,
 `status`, `phase`, `result` or `conclusion`. If none of those fields
 records a terminal verdict, a `merged` or `closed` event name can supply it.
+When merge and close receipts share the latest terminal timestamp for a job,
+the attempt is unscored (`disputed-outcome`) and its measured tokens still
+count. Only a newer dated terminal receipt resolves the dispute. If all
+terminal receipts for a job are undated, the last one in ledger order applies.
 The report uses receipts through its generation time, inclusive. Future-dated
 receipts and terminal merge or close timestamps are excluded before PR URL
 ownership is resolved. Receipts without a parseable timestamp remain eligible.
