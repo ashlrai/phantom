@@ -232,7 +232,17 @@ export function selectChangedFiles(changedPaths, existingPaths) {
  * real command. Only interpreters with a matching grammar step classify —
  * python, node, perl, and the POSIX shells `bash -n` parses (sh/bash/dash).
  * zsh, ksh and friends return null and stay unchecked, exactly as before.
+ *
+ * env options that take a separate argument (`-u NAME`, `-C DIR`,
+ * `--unset NAME`, `--chdir DIR`, `--argv0 ARG`) consume the following token,
+ * so without the skip the argument itself would be mistaken for the command
+ * and a `#!/usr/bin/env -u FOO node` script would classify to nothing and
+ * escape its syntax check. Attached forms (`-uFOO`, `--unset=FOO`) already
+ * arrive as one `-` token; `-S`'s payload is the command line itself, so it
+ * stays a plain option skip.
  */
+const ENV_ARG_OPTIONS = new Set(['-u', '-C', '--unset', '--chdir', '--argv0']);
+
 export function shebangInterpreter(firstLine) {
   if (typeof firstLine !== 'string' || !firstLine.startsWith('#!')) return null;
   const tokens = firstLine.slice(2).trim().split(/\s+/).filter(Boolean);
@@ -240,7 +250,15 @@ export function shebangInterpreter(firstLine) {
   let command = tokens[index] ?? '';
   if (/(^|\/)env$/.test(command)) {
     index += 1;
-    while (index < tokens.length && (tokens[index].startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]))) index += 1;
+    while (index < tokens.length) {
+      const token = tokens[index];
+      if (token.startsWith('-')) {
+        index += ENV_ARG_OPTIONS.has(token) ? 2 : 1;
+        continue;
+      }
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) { index += 1; continue; }
+      break;
+    }
     command = tokens[index] ?? '';
   }
   const base = command.split('/').pop() ?? '';
