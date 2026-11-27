@@ -1907,7 +1907,13 @@ function foldRouterOutcomesWithCiCoverage(
     const name = event.toLowerCase();
     if (name !== 'ci_start' && name !== 'ci_complete') continue;
     const at = ledgerEventTs(r, null);
-    if (at === null) {
+    // Receipt and update stamps can date legacy rows, but the event-time
+    // aliases must agree when more than one records the boundary.
+    const conflicts = ['ts', 'timestamp', 'at', 'time'].some((key) => {
+      const stamp = parseLedgerTs(r[key]);
+      return stamp !== null && stamp !== at;
+    });
+    if (at === null || conflicts) {
       ambiguousCiJobs.add(j);
       continue;
     }
