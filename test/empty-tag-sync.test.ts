@@ -195,6 +195,24 @@ describe('syncEmptyTagsFromJobsLedger', () => {
     expect(readTags(runsDir)).toEqual([expect.objectContaining({ job, tag: 'already_done' })]);
   });
 
+  it('uses member finishes without treating wrapper and node telemetry as local jobs', async () => {
+    const job = 'RQ-MEMBER';
+    const later = '2026-10-28T19:30:00.000Z';
+    writeJobs([
+      line({ event: 'batch_claim', job, ts: TS }),
+      finish(job, true),
+      finish('RQ-BATCH-SESSION', true),
+      line({ schema: 'fleet.session-pool.v1', event: 'launch', job, ts: later }),
+      line({ schema: 'phm-node-runner.v1', event: 'finish', job: 'RQ-NODE', ts: later, empty: true }),
+    ].join('\n') + '\n');
+    writeLog(job, 'This is a duplicate of an earlier job.');
+
+    const result = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW });
+
+    expect(result).toMatchObject({ state: 'read', candidates: 1, recorded: 1 });
+    expect(readTags(runsDir)).toEqual([expect.objectContaining({ job, tag: 'already_done' })]);
+  });
+
   it('defers fresh classifications past the per-pass cap to a later sync', async () => {
     writeJobs(['RQ-A', 'RQ-B', 'RQ-C'].map(id => finish(id, true)).join('\n') + '\n');
     const first = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW, maxClassify: 1 });

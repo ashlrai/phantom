@@ -1476,6 +1476,9 @@ counts. Receipts marked `launched: false` supply neither dispatch nor
 finish evidence. Explicit precheck skips still count toward the separate
 gate-skip tally. Receipt timestamps determine the order, with ledger
 order breaking ties.
+Batch session wrappers and node-pool telemetry supply neither dispatch nor
+finish evidence for empty-tag discovery or recording. Batch members still
+contribute their individual job receipts.
 Receipts with the same JSON fields and values keep their first position,
 even when a replay changes key order or whitespace. A replay at the same
 timestamp cannot move a finish across a dispatch boundary.
