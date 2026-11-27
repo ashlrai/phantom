@@ -79,8 +79,19 @@ const writeJournal = (rows: Row[] | string): string => {
 };
 
 describe('ciRerunBacklogItems', () => {
+  it.each([
+    ['malformed heads', [sha(1), 'abc123', 'z'.repeat(40)]],
+    ['too few valid verdicts', [sha(1), sha(2), 'unknown']],
+    ['case variants of one head', ['a'.repeat(40), 'A'.repeat(40), 'aA'.repeat(20)]],
+  ])('withholds recurring-failure briefs for %s', async (_label, heads) => {
+    const rows = heads.flatMap((head, index) => rerun(REPO, TEST_A, head, index + 1, 'fail', 1));
+    const items = await ciRerunBacklogItems({ repo: REPO, journalPath: writeJournal(rows), now: NOW });
+    expect(items).toEqual([]);
+  });
+
   it('turns recurring fail verdicts into a valid priority-3 backlog item', async () => {
-    const items = await ciRerunBacklogItems({ repo: REPO, journalPath: writeJournal(failingVerdicts()), now: NOW });
+    const rows = [...failingVerdicts(), ...rerun(REPO, TEST_A, 'unknown', 99, 'fail', 1)];
+    const items = await ciRerunBacklogItems({ repo: REPO, journalPath: writeJournal(rows), now: NOW });
     expect(items).toHaveLength(1);
     const item = items[0]!;
     expect(item.id).toMatch(/^ci-rerun-verdict-[0-9a-f]{16}$/);
