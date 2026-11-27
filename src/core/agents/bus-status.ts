@@ -33,7 +33,7 @@
  * nothing. */
 import { createHash } from 'node:crypto';
 import { lstatSync } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { inspectBusInbox, busPathMissing, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxInspection, type BusInboxReceipt } from '../fleet/bus-inbox.js';
@@ -64,6 +64,8 @@ import { handoffPressure } from './session-handoff-schema.js';
 import { probePauseState } from '../comms/pause.js';
 import { readKillSwitch } from '../sandbox/policy.js';
 import { realHome } from '../real-home.js';
+import { orgRunsRoot } from '../org/agent-plane-reader.js';
+import { previewOrgOutbox } from '../org/agent-plane-outbox.js';
 import type { BusWorkMineBoardOptions } from './bus-work-mine.js';
 
 export interface UnifiedBusStatusOptions {
@@ -438,6 +440,33 @@ export interface UnifiedBusStatus {
      * the `released-unposted` class only this projection names; same
      * null rule. */
     returns: number | null;
+  };
+  /** Org-plane membership outbox (`<runsRoot>/org/agents.json`, the
+   * `org.agents.v1` store `phm fleet org-sync`/`org-board` read) behind the
+   * `org.membership` bus events the org chart recorded but
+   * `phm fleet org-sync --apply` has not yet confirmed posted — the same
+   * `busDelivered:false` set `previewOrgOutbox` replays, the unified
+   * inbox org-outbox source itemizes and `orgBoardView.pendingBusEvents`
+   * counts. Until the apply pass runs, staffing changes the chart already
+   * recorded are invisible to the bus — the same "owed but undelivered"
+   * class `peerDispatch.unpublished` reports for peer work results — so
+   * an agent checking bus health can see the backlog without a second
+   * read. The probe runs `previewOrgOutbox` itself, so `readAgentPlane`'s
+   * whole acceptance applies: a verified-absent store is 'missing', any
+   * refusal 'unavailable'. The root resolves the same way the org-sync
+   * and org-board verbs do — `options.runsRoot`, then `ASHLR_RUNS_DIR`,
+   * then `~/.ashlr-runs` (`orgRunsRoot`'s own fallback) — never the bus
+   * `root` override, which those verbs do not honor either. `pending`
+   * counts the distinct events the apply pass would post — 0 on a
+   * verified-missing store or a fully delivered ledger, null when the
+   * store cannot be read or validated; never role ids, actors, revisions,
+   * proposals or bodies. */
+  orgOutbox: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Distinct `org.membership` events `previewOrgOutbox` would replay —
+     * the same count the unified inbox org-outbox source reports pending;
+     * same null rule as the other pending counts. */
+    pending: number | null;
   };
   /** Channel adapter registry (`listChannelRegistry`, the same read
    * `agents bus channels list`, `agents bus channels test` and the
@@ -974,6 +1003,41 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     fleetCoordination = { source: 'unavailable', messages: null, proposals: null, returns: null };
   }
 
+  // The org plane's membership outbox is bus input the probe used to leave
+  // unreported: `org.membership` envelopes are how chart staffing changes
+  // reach the bus, and until `phm fleet org-sync --apply` replays them the
+  // bus cannot see them — the same "owed but undelivered" class
+  // `peerDispatch.unpublished` counts for peer work results. The read is
+  // `previewOrgOutbox`, the same replay `org-sync` previews and the unified
+  // inbox org-outbox source itemizes, under the same runs root
+  // `options.runsRoot` selects — `ASHLR_RUNS_DIR` or `~/.ashlr-runs` by
+  // default through `orgRunsRoot`, the resolution the org-sync/org-board
+  // verbs share and a bus `root` override never relocates. Existence is
+  // probed first, the same convention `peerLedger`/`ownerChat` apply, so a
+  // never-written store reports missing rather than unavailable; any
+  // refusal `readAgentPlane`/`envelopes` raises — unsafe, oversized,
+  // malformed, chart-invalid or an undeliverable edit — reports
+  // unavailable with a null count, never a guessed backlog. Counts only —
+  // the distinct event ids the apply pass would post, never role ids,
+  // actors, revisions or proposals.
+  let orgOutbox: UnifiedBusStatus['orgOutbox'];
+  try {
+    const orgRoot = options.runsRoot ?? orgRunsRoot();
+    const orgFile = join(resolve(orgRoot), 'org', 'agents.json');
+    let present = true;
+    try { lstatSync(orgFile); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') present = false;
+      else throw error;
+    }
+    orgOutbox = present
+      ? { source: 'available',
+          pending: new Set(previewOrgOutbox(orgRoot).map(event => event.id)).size }
+      : { source: 'missing', pending: 0 };
+  } catch {
+    orgOutbox = { source: 'unavailable', pending: null };
+  }
+
   // The channel adapter registry behind every channel-addressed send's
   // delivery decision — `agents bus channels list`/`test` answer it on a
   // separate dispatch path, so the health probe names it here too: which
@@ -1024,5 +1088,5 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     kill, pause,
   };
 
-  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, peerInbox, deadLetters, sessionHandoffs, fleetCoordination, channels, sendGate };
+  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, peerInbox, deadLetters, sessionHandoffs, fleetCoordination, orgOutbox, channels, sendGate };
 }

@@ -5074,7 +5074,7 @@ turn as untrusted data. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the twenty dependencies the unified verbs touch — the
+read-only probe over the twenty-one dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
@@ -5182,7 +5182,18 @@ path; `source` plus `messages`/`proposals`/`returns` counts of the live
 pending surface — posted coordination mail, advisory assignment proposals
 and unpublished RESULT intents still inside their TTLs; 0 on a
 verified-missing ledger, null when unreadable, never agent labels, repos,
-task text, bodies or record ids), the channel adapter registry
+task text, bodies or record ids), the org plane's membership outbox
+(`previewOrgOutbox` over `<runsRoot>/org/agents.json` — the `org.agents.v1`
+store `phm fleet org-sync`/`org-board` read under the same runs root
+`options.runsRoot` selects, else `ASHLR_RUNS_DIR` or `~/.ashlr-runs`, never
+the bus `root` override — the same read-only replay `org-sync` previews and
+the unified inbox org-outbox source itemizes; `source` plus a `pending`
+count of distinct `org.membership` events the apply pass would post — the
+same count the unified inbox reports, deduplicated on the stable event id
+repeated edits of one revision share; 0 on a verified-missing store or a
+fully delivered ledger, null when the store cannot be read or validated,
+never role ids, actors, revisions, proposals or bodies), the channel adapter
+registry
 (`listChannelRegistry` over the process-local adapter table — the same
 read `agents bus channels list`, `agents bus channels test` and the
 comms-agent adapter probe serve — under the probe's `root` and clock;

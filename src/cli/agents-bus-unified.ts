@@ -1071,6 +1071,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           `truncated=${result.sessionHandoffs.truncated ?? unknown}`,
         `fleetCoordination ${result.fleetCoordination.source} messages=${result.fleetCoordination.messages ?? unknown} ` +
           `proposals=${result.fleetCoordination.proposals ?? unknown} returns=${result.fleetCoordination.returns ?? unknown}`,
+        `orgOutbox ${result.orgOutbox.source} pending=${result.orgOutbox.pending ?? unknown}`,
         `channels ${result.channels.adapters === null ? 'unavailable' : result.channels.adapters.map(a =>
           `${a.id}=${a.adapterRegistered ? (a.healthy === 'unknown' ? 'unknown' : a.healthy ? 'ok' : 'down') : 'no-adapter'}`).join(' ')}`,
         `sendGate ${result.sendGate.state} kill=${result.sendGate.kill.state}:${result.sendGate.kill.reason} ` +
