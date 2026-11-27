@@ -2092,6 +2092,21 @@ describe('CI baseline evidence', () => {
     const caused = await analyzeCiBaseline('owner/repo', github({ flaky: true, touched: 'test/example.test.ts' }).gh);
     expect(caused.groups[0]?.action).toBe('pr-caused');
   });
+  it('uses a verified master retry-flake verdict to corroborate one unaffected PR', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ flaky: true, count: 1 }).gh);
+    expect(report.groups[0]).toMatchObject({
+      classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', unaffectedPrs: [1],
+    });
+    expect(report.updates[0]).toMatchObject({ pr: 1, ready: false });
+
+    const touched = await analyzeCiBaseline('owner/repo', github({ flaky: true, count: 1, touched: 'test/example.test.ts' }).gh);
+    expect(touched.groups[0]).toMatchObject({ classification: 'pr-caused', unaffectedPrs: [] });
+    expect(touched.updates).toEqual([]);
+
+    const neutral = await analyzeCiBaseline('owner/repo', github({ flaky: true, count: 1, masterJobConclusion: 'neutral' }).gh);
+    expect(neutral.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
+    expect(neutral.updates).toEqual([]);
+  });
   it('parses first-paint budget verdicts as per-arm gate failures', () => {
     // check:first-paint:built prints one verdict per arm; each over-budget
     // line groups under the checker script with the arm as the target.
