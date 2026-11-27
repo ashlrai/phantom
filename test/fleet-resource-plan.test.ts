@@ -6,6 +6,7 @@ import * as nodesView from '../src/core/fleet/nodes-view.js';
 import { buildFleetResourcePlan, readFleetResourcePlan, writeFleetResourceAdvice } from '../src/core/usage/resource-live/fleet-plan.js';
 import { resourceLivePath } from '../src/core/usage/resource-live/store.js';
 import { routeExpiringCapacity } from '../src/core/fleet/resource-queue-route.js';
+import { readResourceQueue } from '../src/core/fleet/resource-queue.js';
 import { readUnfedReport } from '../src/core/fleet/unfed-read.js';
 import { recordLeaderBoard } from '../src/core/fleet/leader-board.js';
 import { readFleetBoard } from '../src/core/fleet/leader-journal.js';
@@ -192,5 +193,30 @@ describe('fleet resource plan', () => {
       expect(updated).toContain(`first\tphantom\tagy\twork\tfixture.md\t${JSON.stringify({ ...spec, preferred_lane: 'agy', max_cost_class: 'included' })}`);
       expect(await routeExpiringCapacity(dir, plan, () => now, quiet)).toEqual([]);
     } finally { nodes.mockRestore(); await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('counts each ready job once by its first valid row for reroute and demand', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'phantom-resource-queue-'));
+    try {
+      await mkdir(join(dir, 'queue'));
+      const snapshot = { schema: 'dispatchd.status.v1', last_tick: iso(now), paused: null,
+        admission: { admit: true, decision: 'admit' },
+        lanes: { agy: { running: 1, target: 2, held: false } } };
+      await writeFile(join(dir, 'queue/slots.json'), JSON.stringify({
+        agy: { cost_class: 'included', capabilities: ['git'], tiers: ['work'], data_class: 'internal' },
+      }));
+      const spec = JSON.stringify({ needs: ['git'], data_class: 'internal', min_tier: 'work' });
+      const row = (id: string) => `${id}\tphantom\tagy\twork\tfixture.md\t${spec}\n`;
+      // 'dup' repeats its READY row, 'shadow' sits beside a status-first parked
+      // row and 'lanepark' beside a lane-column parked row; each job still
+      // contributes its first valid READY row, like readyHints.
+      const ready = row('dup') + row('dup') + row('shadow') + 'PARKED-dep\tshadow\tagy\twork\tphantom\tfixture.md\n' +
+        row('lanepark') + `lanepark\tphantom\tPARKED-dep\twork\tfixture.md\t${spec}\n` + row('solo');
+      await writeFile(join(dir, 'queue/ready.tsv'), ready);
+      const queue = await readResourceQueue(dir, now, snapshot);
+      expect(queue?.rows.map(entry => [entry.row.id, entry.index, entry.spec !== null])).toEqual([
+        ['dup', 0, true], ['shadow', 2, true], ['lanepark', 4, true], ['solo', 6, true],
+      ]);
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
