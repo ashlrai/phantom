@@ -56,6 +56,11 @@ finish timestamps. Reward timestamps describe dispatch and PR resolution,
 and `ciWallMs` measures CI, so a reward row alone leaves execution wall time
 unknown.
 
+All supplied timestamp aliases (`timestamp`, `at`, `time`, and `ts`) on a
+launch or finish must parse to the same instant. Invalid or conflicting
+aliases cause an error. A batch claim with invalid or conflicting aliases
+has unknown timing and withholds the elapsed-time fallback.
+
 The reward feed attributes a resolved job to the latest dispatch timestamp
 at or before its outcome bound. Conflicting pool receipts at that timestamp
 leave the reward's pool null. A single observed pool is retained when other

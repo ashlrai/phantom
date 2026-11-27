@@ -66,15 +66,19 @@ function numberField(row: Row, names: string[], max = Infinity): number | undefi
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > max) throw new Error(`Invalid ${names[0]}`);
   return value;
 }
-function timestampField(row: Row): unknown {
-  return field(row, 'timestamp', 'at', 'time', 'ts');
-}
-function timestamp(row: Row): number | undefined {
-  const value = timestampField(row);
-  if (value === undefined) return undefined;
-  const parsed = parseLedgerTs(value);
-  if (parsed === null) throw new Error('Invalid event timestamp');
-  return parsed;
+function timestamp(row: Row, ambiguousAsUnknown = false): number | undefined {
+  let observed: number | undefined;
+  for (const key of ['timestamp', 'at', 'time', 'ts']) {
+    const value = row[key];
+    if (value === undefined || value === null) continue;
+    const parsed = parseLedgerTs(value);
+    if (parsed === null || (observed !== undefined && observed !== parsed)) {
+      if (ambiguousAsUnknown) return undefined;
+      throw new Error(parsed === null ? 'Invalid event timestamp' : 'Conflicting event timestamps');
+    }
+    observed = parsed;
+  }
+  return observed;
 }
 function assign<K extends keyof Job>(job: Job, key: K, value: Job[K] | undefined): void {
   if (value === undefined) return;
@@ -166,7 +170,7 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
       job.batchLanes ??= new Set();
       if (lane) job.batchLanes.add(lane);
       job.batchClaimTimes ??= new Set();
-      job.batchClaimTimes.add(parseLedgerTs(timestampField(row)));
+      job.batchClaimTimes.add(timestamp(row, true) ?? null);
     }
     if (event === 'launch') {
       if (job.launched) {
