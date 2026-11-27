@@ -1453,6 +1453,8 @@ within the evidence window. At least four must have not-held outcomes,
 those outcomes must form a strict majority, and they must have been
 recorded on at least two distinct UTC dates. The brief lists dates with
 not-held outcomes. Held merges count toward the denominator.
+The window ends at the evaluation time, inclusive. Future-dated reward
+receipts contribute once the evaluation time reaches their `recordedAt`.
 
 ## Fleet resource capacity advice
 
