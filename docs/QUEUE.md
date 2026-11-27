@@ -376,6 +376,13 @@ the tier tally falls back to the row's own fields.
 The planner uses those counts for its supply floor, so repeated READY rows
 cannot inflate the backlog. Parked rows are counted separately.
 
+The Leader board orders conflict history by observation time and excludes
+future samples. It keeps the last valid stored count at each instant, with a
+fresh queue read replacing any count recorded at the same instant. The delta
+compares the latest two distinct observations, and the trend compares the
+oldest and newest retained observations. Both stay unknown until the current
+count and an earlier observation are available.
+
 An executor is unfed when it has free slots while runnable rows wait under
 another lane's hint. Each tick the dispatcher computes this after its launches
 and publishes it as `unfed_capacity` in `queue/status.json`: per lane `running`,
