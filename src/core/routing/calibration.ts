@@ -6,6 +6,7 @@ import { parseLedgerTs } from '../metrics/loop.js';
 import { isRewardSignalV1 } from '../metrics/reward-signal.js';
 
 type Row = Record<string, unknown>;
+const OUTCOME_EVENTS = new Set(['outcome', 'result', 'resolved', 'resolution']);
 type Metric = { predicted: number | null; actual: number | null; paired: number };
 export interface CalibrationArm {
   arm: string;
@@ -84,8 +85,9 @@ function outcome(row: Row): boolean | undefined {
   const value = field(row, 'merged', 'outcome', 'result', 'status');
   if (typeof value === 'boolean') return value;
   if (typeof value !== 'string') return undefined;
-  if (value === 'merged') return true;
-  if (['not_merged', 'not-merged', 'closed', 'rejected', 'failed'].includes(value)) return false;
+  const verdict = value.trim().toLowerCase();
+  if (verdict === 'merged') return true;
+  if (['not_merged', 'not-merged', 'closed', 'rejected', 'failed'].includes(verdict)) return false;
   return undefined;
 }
 function metrics(job: Job, row: Row): void {
@@ -151,7 +153,8 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
     const phase = terminalPhases.values().next().value ?? ledgerPhase(row);
     const event = ledgerLifecycleEvent(row, phase);
     const state = ledgerOutcomeState(row, event, phase);
-    if (state === null && !['launch', 'batch_claim', 'finish', 'publish', 'outcome'].includes(event ?? '')) continue;
+    const isOutcomeEvent = OUTCOME_EVENTS.has(event ?? '');
+    if (state === null && !isOutcomeEvent && !['launch', 'batch_claim', 'finish', 'publish'].includes(event ?? '')) continue;
     recognized++;
     if (row['launched'] === false) continue;
     if (state !== null && terminalPhases.size > 1) throw new Error('Conflicting merged verdicts on a job receipt');
@@ -182,7 +185,7 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
         assign(job, 'wallTimeMs', seconds * 1000);
       }
     }
-    const verdict = event === 'outcome' ? outcome(row) : undefined;
+    const verdict = isOutcomeEvent ? outcome(row) : undefined;
     const terminalVerdict = state === 'MERGED' ? true : state === 'CLOSED' ? false : undefined;
     const explicitVerdict = typeof row['merged'] === 'boolean' ? row['merged'] : verdict;
     if ((terminalVerdict !== undefined && explicitVerdict !== undefined && terminalVerdict !== explicitVerdict)

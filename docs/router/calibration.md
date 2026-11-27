@@ -6,6 +6,11 @@ Use numeric `predicted_merge_rate` (probability from 0 to 1), `predicted_tokens`
 
 The optional PostHog export is a JSON array or an object with a `results` array; each row is a run or has a `properties` object. Join by `job_id` or `jobId`, using the same numeric fields. Unmatched rows are counted. PostHog export input must represent one run per job or contain consistent duplicate observations.
 
+The fleet's `result`, `resolved`, and `resolution` events use the same
+verdict rules as `outcome`. Verdict strings are case-insensitive. An
+explicit verdict that disagrees with a terminal merge or close phase
+causes an error.
+
 Calibration counts identical launch receipts with a valid timestamp once, even
 when replayed after a finish or verdict. It rejects conflicting values and
 other duplicate launches, including identical launches without timestamps.
