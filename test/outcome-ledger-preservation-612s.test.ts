@@ -3393,20 +3393,25 @@ describe('router outcome launch-cost join', () => {
     });
   });
 
-  it('excludes future probe starts before choosing the last appended receipt for each job', async () => {
+  it('excludes probes that start or extend past the report cutoff before selecting receipts', async () => {
     const reportTime = '2026-11-02T00:00:00.000Z';
     const future = '2026-11-02T00:00:00.001Z';
     const root = runsDir([
       '{"job":"J1","phase":"MERGED"}',
       '{"job":"J2","phase":"VERIFIED"}',
       '{"job":"J3","phase":"CLOSED"}',
+      '{"job":"J4","phase":"VERIFIED"}',
+      '{"job":"J5","phase":"VERIFIED"}',
     ].join('\n'));
     writeLaunchCosts(root, [
-      launchCostRow('J1-aaaabbbbcccc', 'measured', { startedAt: reportTime }),
+      launchCostRow('J1-aaaabbbbcccc', 'measured', { startedAt: '2026-11-01T23:59:00Z', sampledSeconds: 59 }),
+      launchCostRow('J1-ddddeeeeffff', 'partial', { startedAt: '2026-11-01T23:59:30.001Z' }),
       launchCostRow('J1-aaaabbbbcccc', 'partial', { startedAt: future }),
       launchCostRow('J2-ddddeeeeffff', 'measured', { startedAt: future }),
       launchCostRow('J3', 'unknown'),
       launchCostRow('J3-aaaabbbbcccc', 'unknown', { startedAt: future }),
+      launchCostRow('J4-aaaabbbbcccc', 'measured', { startedAt: '2026-11-01T23:59:00.001Z', sampledSeconds: 59 }),
+      launchCostRow('J5-aaaabbbbcccc', 'partial', { startedAt: '2026-11-01T23:59:30Z' }),
     ]);
 
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(reportTime));
@@ -3416,6 +3421,8 @@ describe('router outcome launch-cost join', () => {
         { job_id: 'J1', launch_cost_status: 'measured', launch_peak_processes: 4, launch_mean_cpu_pct: 12.5, launch_peak_cpu_pct: 40 },
         { job_id: 'J2', launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null },
         { job_id: 'J3', launch_cost_status: 'unknown', launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null },
+        { job_id: 'J4', launch_cost_status: null, launch_peak_processes: null },
+        { job_id: 'J5', launch_cost_status: 'partial', launch_peak_processes: 4 },
       ]);
     } finally {
       clock.mockRestore();

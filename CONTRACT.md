@@ -1003,7 +1003,11 @@ The join fills `launch_cost_status`,
 `launch_peak_processes`, `launch_mean_cpu_pct` and
 `launch_peak_cpu_pct` — fields no jobs-ledger row supplies, the only
 per-attempt resource-cost evidence subscription lanes record — with
-the last appended row for a resolved job standing; rows resolving
+the newest eligible recorded start standing, with distinct receipts at the
+same start and undated receipts retaining append order. Dated receipts must
+start by report time. Measured probes require the full 60-second window to
+elapse, and partial probes require at least their recorded sampling duration
+to elapse. Rows resolving
 outside the jobs window join nothing and never create outcomes.
 `RouterOutcomeRead.launch_cost_state` reports the ledger's health and
 `launch_cost_truncated` marks a cut tail; anything but `read` leaves
