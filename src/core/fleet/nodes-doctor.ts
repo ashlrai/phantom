@@ -161,13 +161,19 @@ export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Pro
 }
 
 export function doctorText(report: NodesDoctor): string {
-  if (!report.nodes.length) return 'No computers known. Run `phm node join` on each computer.';
   const words: Record<LaneStatus, string> = { ready: 'ok', 'not-installed': 'not installed', 'signed-out': 'signed out', unknown: 'unknown' };
-  return report.nodes.flatMap(n => [
-    `${n.name}${n.isSelf ? ' (this computer)' : ''}: ${n.reachable === true ? 'reachable' : n.reachable === false ? 'not reachable' : 'reachability unknown'} | disk ${n.diskFreeGb === UNKNOWN ? 'unknown' : `${n.diskFreeGb} GB free`}`,
-    `  ${n.lanes.map(l => `${l.lane} ${words[l.status]}`).join(' | ')}`,
-    `  repos: ${n.repos === UNKNOWN ? 'unknown' : n.repos.join(', ') || 'none'}`,
-    ...n.gaps.map(g => `  fix: ${g}`), ...n.unknowns.map(u => `  unknown: ${u}`),
-    ...(n.ready ? ['  ready for jobs'] : []),
-  ]).join('\n');
+  // The view-level reasons explain the gaps the per-node lines cannot — for
+  // example why a reachable remote computer gets no join command (this
+  // computer has no node pool). `phm nodes` and `phm nodes offload` already
+  // print them as `note:` lines; the doctor report carries the same list, so
+  // its text output shows it too instead of leaving the JSON as the only read.
+  const body = report.nodes.length === 0 ? ['No computers known. Run `phm node join` on each computer.']
+    : report.nodes.flatMap(n => [
+      `${n.name}${n.isSelf ? ' (this computer)' : ''}: ${n.reachable === true ? 'reachable' : n.reachable === false ? 'not reachable' : 'reachability unknown'} | disk ${n.diskFreeGb === UNKNOWN ? 'unknown' : `${n.diskFreeGb} GB free`}`,
+      `  ${n.lanes.map(l => `${l.lane} ${words[l.status]}`).join(' | ')}`,
+      `  repos: ${n.repos === UNKNOWN ? 'unknown' : n.repos.join(', ') || 'none'}`,
+      ...n.gaps.map(g => `  fix: ${g}`), ...n.unknowns.map(u => `  unknown: ${u}`),
+      ...(n.ready ? ['  ready for jobs'] : []),
+    ]);
+  return [...body, ...report.reasons.map(r => `note: ${r}`)].join('\n');
 }

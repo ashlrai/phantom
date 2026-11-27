@@ -280,6 +280,23 @@ it('withholds latency across a solo re-claim inside a measured span', () => {
     .toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 0 });
 });
 
+it('withholds timings when a solo re-claim ties a non-launch start boundary', () => {
+  const text = [
+    event('launch', start),
+    event('checkout_complete', end),
+    event('claim', end),
+    event('finish', '2026-01-01T00:01:30Z'),
+    event('publish', '2026-01-01T00:02:00Z'),
+    event('claim', '2026-01-01T00:02:00Z'),
+    event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  expect(jobLatency(text).phases.find(phase => phase.phase === 'model'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+  expect(mergeQueueLatency(text).phases.find(phase => phase.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+});
+
 it('keeps a claim stamped with its own launch inside post-queue spans', () => {
   const text = [
     event('claim', start),

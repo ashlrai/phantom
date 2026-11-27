@@ -193,6 +193,36 @@ describe('listWorkBoard on real durable stores', { timeout: 60_000 }, () => {
     // A channelRef-only read keeps the unfiltered shape: no matched token.
     expect(listWorkBoard({ root, now, channelRef: REF_A }).matched).toBeUndefined();
   });
+
+  it('filters by the shared channel, topic and id address rules', () => {
+    const groupReq = (id: string, to: string): BusEnvelope => ({ ...busRequest(id), to });
+    post(groupReq('grp-ops-deploy', 'group:ops:deploy'));
+    now += 1_000;
+    post(groupReq('grp-ops-review', 'group:ops:review'));
+    now += 1_000;
+    post(groupReq('grp-eng-deploy', 'group:eng:deploy'));
+    now += 1_000;
+    post(busRequest('plain-lane'));
+
+    // --channel keeps the room's whole traffic under every topic, newest first.
+    expect(listWorkBoard({ root, now, channel: 'ops' }).items.map(i => i.id))
+      .toEqual(['grp-ops-review', 'grp-ops-deploy']);
+    // --topic keeps the exact topic component across every room.
+    const deploy = listWorkBoard({ root, now, topic: 'deploy' });
+    expect(deploy.items.map(i => i.id)).toEqual(['grp-eng-deploy', 'grp-ops-deploy']);
+    expect(deploy.matched).toBe(2);
+    // channel AND topic compose into one room and one topic.
+    expect(listWorkBoard({ root, now, channel: 'ops', topic: 'deploy' }).items.map(i => i.id))
+      .toEqual(['grp-ops-deploy']);
+    // --id keeps only the request whose own wire id is strictly equal.
+    expect(listWorkBoard({ root, now, id: 'grp-ops-review' }).items.map(i => i.id))
+      .toEqual(['grp-ops-review']);
+    // An agent address, a bare room and an absent room never match — unknown
+    // stays out, and matched reports the honest filtered total.
+    expect(listWorkBoard({ root, now, channel: 'nope' })).toMatchObject({ items: [], matched: 0 });
+    expect(listWorkBoard({ root, now, topic: 'deploy', id: 'plain-lane' }))
+      .toMatchObject({ items: [], matched: 0 });
+  });
 });
 
 describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
@@ -278,6 +308,32 @@ describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
     const parsed = JSON.parse(String(log.mock.calls.at(-1)![0]));
     expect(parsed).toMatchObject({ state: 'RUNNING', matched: 1, inbox: 'ok' });
     expect(parsed.items.map((i: { id: string }) => i.id)).toEqual(['slack-request-a']);
+  });
+
+  it('--channel/--topic/--id filter requests and the footer reports matched', async () => {
+    const groupReq = (id: string, to: string): BusEnvelope => ({ ...busRequest(id), to });
+    post(groupReq('grp-ops-deploy', 'group:ops:deploy'));
+    now += 1_000;
+    post(groupReq('grp-ops-review', 'group:ops:review'));
+    now += 1_000;
+    post(groupReq('grp-eng-deploy', 'group:eng:deploy'));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await cmdFleetWorkBoard(['--root', root, '--channel', 'ops', '--topic', 'deploy'])).toBe(0);
+    let lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('grp-ops-deploy RECEIVED');
+    expect(lines[1]).toContain('items=1 matched=1 truncated=no inbox=ok');
+    expect(await cmdFleetWorkBoard(['--root', root, '--topic', 'deploy', '--json'])).toBe(0);
+    const parsed = JSON.parse(String(log.mock.calls.at(-1)![0]));
+    expect(parsed).toMatchObject({ matched: 2, inbox: 'ok' });
+    expect(parsed.items.map((i: { id: string }) => i.id)).toEqual(['grp-eng-deploy', 'grp-ops-deploy']);
+    expect(await cmdFleetWorkBoard(['--root', root, '--id', 'grp-ops-review'])).toBe(0);
+    lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines.at(-2)).toContain('grp-ops-review');
+    expect(await cmdFleetWorkBoard(['--root', root, '--channel', 'BAD ROOM'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--root', root, '--topic', 'Upper'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--root', root, '--id', 'has space'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--root', root, '--channel', 'ops', '--channel', 'eng'])).toBe(2);
   });
 
   it('exits 2 on bad or duplicate flags and prints nothing on stdout', async () => {
