@@ -572,6 +572,14 @@ the dispatcher would record (`derivedReasons: true` in `--json`), otherwise
 reasons stay unknown. For API lanes whose derived cost class is metered, rows
 without `max_cost_class=metered` receive `metered_api_opt_in_required`. The
 dispatcher verdict includes any changes in cost class from promotional windows.
+The derived view reads the same status.json lane records the report already
+trusts, so a published `healthy: false` on omlx — the dispatcher's per-tick
+loopback verdict — records `local_unhealthy` on that lane exactly as the
+dispatcher's per-destination gate does, replacing `invalid_capability_advertisement`
+(the lane keeps one `unavailable` code, last writer wins); a missing or
+non-boolean reading stays unknown and blocks nothing. Per-destination gates
+with no published reading — codex-local health and scope, Devin scope and
+recovery-lane exclusion — stay unmodelled.
 Ready rows are validated exactly like the dispatcher's
 `work_market.requirements`: a malformed job id, tier or requirements spec —
 including a spec-less row whose `queue/router-queue.md` `(attrs)` envelope
