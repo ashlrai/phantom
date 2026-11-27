@@ -1,7 +1,7 @@
 /** Read-only ambiguous-create reconciliation. Never treats provider absence as zero spend. */
 import type { DevinClient, DevinSession } from './client.js';
 import { devinSessionTaskTag } from './service.js';
-import { DEVIN_ORG_ID_PATTERN, type DevinTaskV1 } from './types.js';
+import { DEVIN_ORG_ID_PATTERN, roundDevinAcu, type DevinTaskV1 } from './types.js';
 
 export function hasAmbiguousDevinCreate(task: DevinTaskV1): boolean {
   return task.sessionId === null && task.session === null && (task.state === 'failed' || task.state === 'closed')
@@ -17,7 +17,7 @@ export function devinTaskDiagnostics(inventory: import('./store.js').DevinTaskIn
   if (inventory.sourceState !== 'ready') return { sourceState: inventory.sourceState, legacyUnboundCount: null, legacyUnboundAcu: null };
   const legacy = inventory.tasks.filter(task => hasAmbiguousDevinCreate(task) && task.launchOrgId === undefined);
   return { sourceState: 'ready', legacyUnboundCount: legacy.length,
-    legacyUnboundAcu: Math.round(legacy.reduce((sum, task) => sum + task.maxAcu, 0) * 100) / 100 };
+    legacyUnboundAcu: roundDevinAcu(legacy.reduce((sum, task) => sum + task.maxAcu, 0)) };
 }
 
 /**

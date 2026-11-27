@@ -306,6 +306,27 @@ export interface DevinSelfIdentitySummary {
   hasDevinSessionsOrgId: boolean;
 }
 
+/** Plain JSON-object guard shared across the Devin lane. */
+export function isDevinRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Round an ACU quantity to two decimal places. */
+export function roundDevinAcu(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** Format an ACU quantity with singular/plural unit label. */
+export function formatDevinAcu(value: number): string {
+  const rounded = roundDevinAcu(value);
+  return `${rounded} ACU${rounded === 1 ? '' : 's'}`;
+}
+
+/** Redact `cog_…` Devin API credentials from free text. */
+export function redactDevinKeys(text: string): string {
+  return text.replace(/\bcog_[A-Za-z0-9_-]+/g, '[REDACTED]');
+}
+
 /** Defensive private storage bound; the provider documents string, not an ID prefix. */
 export function isDevinOpaqueSelfId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 256 &&
@@ -313,13 +334,12 @@ export function isDevinOpaqueSelfId(value: unknown): value is string {
     !/%(?:2f|5c)/i.test(value) && !/^(?:cog_|apk_|sk[-_]|gh[pousr]_|github_pat_|Bearer|eyJ)/i.test(value);
 }
 export function isDevinSelfIdentity(value: unknown): value is DevinSelfIdentity {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const row = value as Record<string, unknown>;
+  if (!isDevinRecord(value)) return false;
   const org = (id: unknown) => id === null || typeof id === 'string' && DEVIN_ORG_ID_PATTERN.test(id);
-  if (!org(row['orgId']) || !org(row['devinSessionsOrgId'])) return false;
-  return row['principal'] === 'service_user'
-    ? isDevinOpaqueSelfId(row['serviceUserId']) && row['userId'] === null && row['apiKeyId'] === null && row['devinSessionsOrgId'] === null
-    : row['principal'] === 'pat_user' && row['serviceUserId'] === null && isDevinOpaqueSelfId(row['userId']) && isDevinOpaqueSelfId(row['apiKeyId']);
+  if (!org(value['orgId']) || !org(value['devinSessionsOrgId'])) return false;
+  return value['principal'] === 'service_user'
+    ? isDevinOpaqueSelfId(value['serviceUserId']) && value['userId'] === null && value['apiKeyId'] === null && value['devinSessionsOrgId'] === null
+    : value['principal'] === 'pat_user' && value['serviceUserId'] === null && isDevinOpaqueSelfId(value['userId']) && isDevinOpaqueSelfId(value['apiKeyId']);
 }
 
 /** Non-secret connection facts (`<ashlr home>/devin/connection.json`). The key never lives here. */

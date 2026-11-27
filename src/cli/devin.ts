@@ -23,15 +23,17 @@
  * var — and goes straight to the Keychain. Output is for people; `--json`
  * prints the service's shapes. Exit codes: 0 ok, 1 error / refused, 2 usage.
  */
-import type {
-  DevinBudgetUpdate,
-  DevinBudgetV1,
-  DevinBudgetView,
-  DevinLaunchRequest,
-  DevinLaunchResponse,
-  DevinStatus,
-  DevinTaskState,
-  DevinTaskV1,
+import {
+  formatDevinAcu as acu,
+  redactDevinKeys,
+  type DevinBudgetUpdate,
+  type DevinBudgetV1,
+  type DevinBudgetView,
+  type DevinLaunchRequest,
+  type DevinLaunchResponse,
+  type DevinStatus,
+  type DevinTaskState,
+  type DevinTaskV1,
 } from '../core/devin/types.js';
 import type { DevinConnectResult, DevinMessageResult } from '../core/devin/service.js';
 import { localWhen, readOriginRepo } from './cloud.js';
@@ -233,8 +235,6 @@ function json(deps: DevinCliDeps, value: unknown): void {
   deps.out(JSON.stringify(value, null, 2));
 }
 
-const acu = (n: number): string => `${Math.round(n * 100) / 100} ACU${Math.round(n * 100) / 100 === 1 ? '' : 's'}`;
-
 const STATE_WORDS: Readonly<Record<DevinTaskState, string>> = {
   queued: 'queued',
   launching: 'starting',
@@ -248,7 +248,7 @@ const STATE_WORDS: Readonly<Record<DevinTaskState, string>> = {
 };
 
 /** Recent or unfinished tasks unless `all`. */
-export function devinTasksToList(tasks: readonly DevinTaskV1[], now: Date, all: boolean): DevinTaskV1[] {
+function devinTasksToList(tasks: readonly DevinTaskV1[], now: Date, all: boolean): DevinTaskV1[] {
   if (all) return [...tasks];
   const cutoff = now.getTime() - 3 * 24 * 60 * 60 * 1000;
   return tasks.filter((task) => !['merged', 'closed', 'failed', 'expired'].includes(task.state) || Date.parse(task.updatedAt) >= cutoff);
@@ -433,6 +433,25 @@ async function cmdLand(deps: DevinCliDeps, args: string[]): Promise<number> {
   return 0;
 }
 
+async function cmdAutoland(deps: DevinCliDeps, args: string[]): Promise<number> {
+  const asJson = takeFlag(args, '--json');
+  if (args[0] === 'pause' || args[0] === 'resume') {
+    const paused = args.shift() === 'pause';
+    rejectLeftovers(args);
+    (await import('../core/devin/autoland.js')).setDevinAutolandPaused(paused);
+    if (asJson) json(deps, { ok: true, paused }); else deps.out(paused ? 'Autoland paused.' : 'Autoland resumed.');
+    return 0;
+  }
+  const apply = takeFlag(args, '--apply');
+  const cap = takeOption(args, '--cap');
+  rejectLeftovers(args);
+  if (!deps.autoland) throw new Error('Autoland is unavailable in this build.');
+  const result = await deps.autoland({ apply, ...(cap !== null ? { cap: Number(cap) } : {}) });
+  if (asJson) json(deps, result);
+  else for (const row of result.decisions) deps.out(clean(`${row.sessionId ?? 'Pass'}: ${row.decision} — ${row.reason}${row.commitCount !== undefined ? ` (${row.commitCount} commits)` : ''}${row.pr ? ` ${row.pr}` : ''}`));
+  return result.ok ? 0 : 1;
+}
+
 async function cmdReview(deps: DevinCliDeps, args: string[]): Promise<number> {
   const asJson = takeFlag(args, '--json');
   const apply = takeFlag(args, '--apply');
@@ -444,8 +463,7 @@ async function cmdReview(deps: DevinCliDeps, args: string[]): Promise<number> {
   const ref = review.parseDevinPrRef(args[0]!, repo);
   if (!ref) { deps.err('invalid-pr'); return 1; }
   if (!apply) {
-    const plan = review.planDevinPrReview(ref, null);
-    if (asJson) json(deps, plan); else deps.out(JSON.stringify(plan, null, 2));
+    json(deps, review.planDevinPrReview(ref, null));
     return 0;
   }
   if (!head) {
@@ -618,7 +636,7 @@ function isComplete(deps: Partial<DevinCliDeps>): deps is DevinCliDeps {
 function clean(text: string): string {
   const home = process.env['HOME'];
   const noHome = home && home.length > 1 ? text.split(home).join('~') : text;
-  return noHome.replace(/\bcog_[A-Za-z0-9_-]+/g, '[REDACTED]');
+  return redactDevinKeys(noHome);
 }
 
 const HELP_VALUE_OPTIONS = new Set([
@@ -680,24 +698,7 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
       case 'status': return await cmdStatus(deps, args);
       case 'launch': return await cmdLaunch(deps, args);
       case 'land': return await cmdLand(deps, args);
-      case 'autoland': {
-        const asJson = takeFlag(args, '--json');
-        if (args[0] === 'pause' || args[0] === 'resume') {
-          const paused = args.shift() === 'pause';
-          rejectLeftovers(args);
-          (await import('../core/devin/autoland.js')).setDevinAutolandPaused(paused);
-          if (asJson) json(deps, { ok: true, paused }); else deps.out(paused ? 'Autoland paused.' : 'Autoland resumed.');
-          return 0;
-        }
-        const apply = takeFlag(args, '--apply');
-        const cap = takeOption(args, '--cap');
-        rejectLeftovers(args);
-        if (!deps.autoland) throw new Error('Autoland is unavailable in this build.');
-        const result = await deps.autoland({ apply, ...(cap !== null ? { cap: Number(cap) } : {}) });
-        if (asJson) json(deps, result);
-        else for (const row of result.decisions) deps.out(clean(`${row.sessionId ?? 'Pass'}: ${row.decision} — ${row.reason}${row.commitCount !== undefined ? ` (${row.commitCount} commits)` : ''}${row.pr ? ` ${row.pr}` : ''}`));
-        return result.ok ? 0 : 1;
-      }
+      case 'autoland': return await cmdAutoland(deps, args);
       case 'list':
       case 'ls': return cmdList(deps, args);
       case 'refresh': return await cmdRefresh(deps, args);

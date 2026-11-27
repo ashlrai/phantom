@@ -49,9 +49,9 @@ export interface DevinTrackerDeps extends DevinServiceDeps {
 
 const HOUR = 60 * 60 * 1000;
 /** Expired tasks stay watched this long after creation so a late PR is not lost. */
-export const DEVIN_EXPIRED_WATCH_MS = 48 * HOUR;
+const DEVIN_EXPIRED_WATCH_MS = 48 * HOUR;
 /** queued / launching this long means the launch was interrupted by a restart. */
-export const DEVIN_STALE_LAUNCH_MS = 10 * 60 * 1000;
+const DEVIN_STALE_LAUNCH_MS = 10 * 60 * 1000;
 const MAX_CHECKS_PER_REFRESH = 30;
 
 const watched = (task: DevinTaskV1, nowMs: number): boolean =>
