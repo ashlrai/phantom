@@ -273,7 +273,9 @@ export function fleetRunnable(docs: NodeCapacityDoc[], nowMs: number, maxAgeMs =
   const current = latestByNode(docs, doc => doc, nowMs).filter(({ at, conflict }) => {
     const age = nowMs - at;
     return !conflict && finite(age) && age <= maxAgeMs;
-  }).map(({ item: doc, at }) => ({ doc, at, stopped: capacityHold(doc) !== null || doc.cpu.headroom_cores === 0 }));
+  }).map(({ item: doc, at }) => ({
+    doc, at, stopped: capacityHold(doc) !== null || doc.cpu.headroom_cores === 0 || doc.mem_free.headroom_bytes === 0,
+  }));
   const out: Record<string, number | null> = {};
   for (const adapter of HARNESS_ADAPTERS) {
     let sum: number | null = null;
