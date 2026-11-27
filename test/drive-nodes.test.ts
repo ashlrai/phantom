@@ -672,6 +672,28 @@ describe('standalone join sign-in lanes', () => {
       expect(lines.join('\n')).toContain('Caps auto-detected from this machine\'s sign-ins: codex. Pass --caps to advertise a different set.');
     } finally { vi.restoreAllMocks(); }
   });
+  it('a bare join that detects no sign-ins reports the empty probe instead of staying silent', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      // autoCaps: [] is the "probed, found nothing" signal — distinct from an
+      // explicit --caps, which carries no autoCaps key at all. The node still
+      // joins and advertises the version cap; it just has no sign-in lanes.
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--json'],
+        { store, phmVersion: () => '9.9.9', providerLanes: () => [] })).toBe(0);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out).toMatchObject({ command: 'join', caps: ['phm-9.9.9'], autoCaps: [] });
+      expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.caps).toEqual(['phm-9.9.9']);
+      // Text mode names the empty detection and the two ways to give the node lanes.
+      expect(await cmdNodeFleet('join', ['--node', 'desktop', '--owner', 'acme'],
+        { store, phmVersion: () => null, providerLanes: () => [] })).toBe(0);
+      const text = lines.at(-1)!;
+      expect(text).toContain('caps: none');
+      expect(text).toContain('No codex, claude or gh sign-ins detected on this machine');
+      expect(text).toContain('pass --caps');
+    } finally { vi.restoreAllMocks(); }
+  });
 });
 
 describe('standalone join node id default', () => {

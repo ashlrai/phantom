@@ -80,8 +80,10 @@ computer's sanitized hostname — the same default a pool join applies — so
 support, probed exactly the way a pool worker probes them — `codex` and
 `claude` only when their CLI login checks exit 0 on this computer, `gh` only
 when `gh auth status` passes — reported as `autoCaps` in `--json` and named in
-text mode. An explicit `--caps` list is the complete manual advertisement and
-skips that probe (the local-model and `phm-<version>` caps still merge in).
+text mode; an empty probe reports `autoCaps: []` and says so, since the node
+then advertises no sign-in lanes. An explicit `--caps` list is the complete
+manual advertisement and skips that probe (the local-model and `phm-<version>`
+caps still merge in).
 A job with no live node prints a `phm node join --owner` fix that names the
 caps it needs.
 

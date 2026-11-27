@@ -147,10 +147,15 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
     }
     // A bare join advertises whatever this machine's sign-ins support; name
     // the detected set so the caps line never reads as a choice the operator
-    // made, and point at --caps for a different advertisement.
+    // made, and point at --caps for a different advertisement. An empty probe
+    // is the first-run case that matters most: the node advertises no sign-in
+    // lanes, so say that and name the way to give it some instead of letting
+    // `caps: phm-<version>` read as a working advertisement.
     const auto = out['autoCaps'] as string[] | undefined;
-    if (auto !== undefined && auto.length) {
-      lines.push(`Caps auto-detected from this machine's sign-ins: ${auto.join(', ')}. Pass --caps to advertise a different set.`);
+    if (auto !== undefined) {
+      lines.push(auto.length
+        ? `Caps auto-detected from this machine's sign-ins: ${auto.join(', ')}. Pass --caps to advertise a different set.`
+        : 'No codex, claude or gh sign-ins detected on this machine — the join advertises no sign-in lanes. Sign in to one and join again, or pass --caps to advertise lanes yourself.');
     }
     return lines.join('\n');
   }
@@ -378,7 +383,12 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // --caps stays the complete manual advertisement and skips the probe.
       if (!flags.has('--caps')) {
         const lanes = [...new Set(deps.providerLanes?.() ?? await joinSignInLanes(deps.probeAuth ?? probeLocalAuth))].sort();
-        if (lanes.length > 0) { flags.set('--caps', lanes.join(',')); autoCaps = lanes; }
+        // The probe outcome rides the reply even when empty: autoCaps: [] says
+        // "probed, found no sign-ins" where an absent key means the operator
+        // passed --caps and no probe ran — the same distinction the pool
+        // worker's 'no-local-provider-login' hold makes for a lane-less join.
+        autoCaps = lanes;
+        if (lanes.length > 0) flags.set('--caps', lanes.join(','));
       }
       // A standalone join advertises this build as a `phm-<version>` cap, the same
       // report a pool worker sends, so `phm node self-update` reads a real version

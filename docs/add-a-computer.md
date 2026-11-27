@@ -40,9 +40,12 @@ probes the `codex` and `claude` CLIs' login status and the `gh` login exactly
 the way a pool worker does (exit codes only; no credential is read or sent),
 then advertises those lanes plus any local-model caps. The join reply names
 the detected set under `autoCaps` in `--json` and in a plain-words line in
-text mode. Pass `--caps` to choose the advertisement yourself instead — an
-explicit list replaces the sign-in detection entirely (local-model and
-version caps still merge in). Either way, advertise only what this computer
+text mode; a probe that finds no sign-ins reports `autoCaps: []` and says so,
+since the node then advertises no sign-in lanes. Sign in to a provider CLI
+or `gh` and join again, or pass `--caps` to choose the advertisement
+yourself — an explicit list replaces the sign-in detection entirely
+(local-model and version caps still merge in). Either way, advertise only
+what this computer
 can actually do: jobs select nodes that advertise all their required
 capabilities and share their owner scope. For `gh` jobs, sign in locally
 with `gh auth login`; the keep-alive beat's `--probe-auth` reports that login
