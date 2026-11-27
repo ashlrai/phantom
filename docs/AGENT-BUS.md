@@ -992,7 +992,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 [--exclude-owner <agent>]
 [--channel <name>] [--topic <topic>] [--result <reserved|admitted|complete|failed>] [--id <envelope-id>]
 [--claims] [--open] [--claimable]
-[--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-200>]`
+[--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-200>] [--frame <cli>]`
 reads the
 same projection back — jobs newest-first, optionally filtered by status,
 exact job id, announced repo, provider, declared dispatch tier,
@@ -1085,7 +1085,13 @@ endpoint's `limit` parameter serve through the shared
 `sliceBusWorkFeedView`, with claims holds regrouped under the shown jobs
 only. The filters narrow
 the fleet view, they never widen
-it. `phm fleet work-feed` accepts the same flags.
+it. `--frame <cli>` prints the same job lines as one bounded block marked
+untrusted — BEGIN/END UNTRUSTED AGENT BUS WORK FEED markers, the same scrub
+and 32 KiB clip bound the inbox, channel-read, wakes and work-mine frames
+apply, the cut stated — so a host can hand the fleet-wide feed an agent
+scans for claimable work to the CLI's next turn as data in a single block;
+`--json` carries it as `framed` beside the full projection.
+`phm fleet work-feed` accepts the same flags.
 
 **Job claims.** `phm agents bus work claim --job <id> --lease-ms <1..3600000>
 [--key <claimKey>] [--owner <label>] [--id <opId>]` is the job-level companion

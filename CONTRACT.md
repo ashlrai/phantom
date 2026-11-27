@@ -3391,12 +3391,17 @@ newest `work.status` receipt or newest `work.result` receipt, the same
 overlong values as usage errors.
 `phm fleet work-feed [--claims]
 [--to <label>] [--owner <agent>] [--job <id>] [--repo <owner/name>]
-[--provider <p>] [--channel <name>] [--topic <topic>] [--claimable] [--since <15m|2h|1d|ISO>] [--limit <1-200>]` and
+[--provider <p>] [--channel <name>] [--topic <topic>] [--claimable] [--since <15m|2h|1d|ISO>] [--limit <1-200>] [--frame <cli>]` and
 `phm agents bus work feed [--status] [--claims] [--claimable] [--to <label>]
 [--owner <agent>] [--job <id>] [--repo <owner/name>] [--provider <p>]
-[--channel <name>] [--topic <topic>] [--since <15m|2h|1d|ISO>] [--limit <1-200>]` print the same
+[--channel <name>] [--topic <topic>] [--since <15m|2h|1d|ISO>] [--limit <1-200>] [--frame <cli>]` print the same
 projection — hold lines plus a `claims=` footer — and non-ok reads print
-`jobs=unknown` rather than a fabricated count.
+`jobs=unknown` rather than a fabricated count. `--frame <cli>` (a
+`BUS_CLIS` value, anything else a usage error) prints the same job lines
+inside one bounded block under the BEGIN/END UNTRUSTED AGENT BUS WORK FEED
+markers `frameBusWorkFeed` produces — the feed's sender-controlled titles,
+details and dispatch specs stay marked data for the CLI's next turn — and
+`--json` carries it as `framed` beside the full projection.
 
 `src/core/agents/bus-claims.ts` executes the v2 claim protocol bodies. Exports:
 `BusClaimOptions` (`root?`, `now?`), `BusClaimResult` (the `{v:2, ...}` result
@@ -5076,7 +5081,13 @@ already-formatted `formatBusWorkMine` lines — through the same markers'
 discipline, scrub and 32 KiB bound under BEGIN/END UNTRUSTED AGENT BUS WORK
 DIGEST markers, newline and tab flattened so one digest line never opens a
 second framed row and the cut stated; `--json` carries it as `framed`
-beside the full projection. Identities
+beside the full projection. `frameBusWorkFeed(cli, lines)` renders the
+fleet-wide work feed (`agents bus work feed --frame <cli>`,
+`phm fleet work-feed --frame <cli>`) — the already-formatted
+`formatBusWorkFeed` lines — through the same shared line-framing helper
+under its own BEGIN/END UNTRUSTED AGENT BUS WORK FEED markers, the same
+scrub, flattening, 32 KiB bound and stated cut, identical for every CLI;
+`--json` carries it as `framed` beside the full projection. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one

@@ -399,6 +399,31 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['work', 'mine', '--frame', 'gemini'], env)).toMatchObject({ code: 2 });
   });
 
+  it('frames the work feed as untrusted data', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-FRAME-FEED', '--title', 'Ship the frame',
+      '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom',
+      '--tier', 'work', '--scope', 'bus lane', '--acceptance', 'feed frames titles', '--id', 'frame-feed'])).json)
+      .toMatchObject({ status: 'posted' });
+    // --frame prints the whole feed page as one bounded block under its own
+    // markers; --json carries it on `framed` beside the full projection.
+    const framed = await run(['work', 'feed', '--frame', 'claude']);
+    expect(framed.code).toBe(0);
+    expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS WORK FEED');
+    expect(framed.json.framed).toContain('RQ-FRAME-FEED');
+    expect(framed.json.framed).toContain('Ship the frame');
+    expect(framed.json.framed).toContain('feed frames titles');
+    expect(framed.json.framed).toContain('END UNTRUSTED AGENT BUS WORK FEED');
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const framedText: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'feed', '--frame', 'grok', '--root', root],
+      t => framedText.push(t), () => {}, {})).toBe(0);
+    expect(framedText.join('\n')).toContain('BEGIN UNTRUSTED AGENT BUS WORK FEED');
+    expect(framedText.join('\n')).toContain('RQ-FRAME-FEED');
+    expect(framedText.join('\n')).not.toContain('"status"');
+    expect(await run(['work', 'feed', '--frame', 'gemini'])).toMatchObject({ code: 2 });
+  });
+
   it('resolves one retained envelope by id without needing an identity', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
