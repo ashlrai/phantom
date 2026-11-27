@@ -26,6 +26,9 @@ import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import {
   PLAYBOOK_ID_PATTERN,
   VERSE_PLAYBOOKS_PATH,
+  isPlainRecord,
+  isPositivePlaybookVersion,
+  parsePositivePlaybookVersion,
   type PlaybookDetailResponse,
   type PlaybookSaveResponse,
   type PlaybooksListResponse,
@@ -78,7 +81,7 @@ async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res:
     sendInvalid(res, 'invalid JSON body');
     return null;
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+  if (!isPlainRecord(parsed)) {
     sendInvalid(res, 'body must be a JSON object');
     return null;
   }
@@ -88,7 +91,7 @@ async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res:
       return null;
     }
   }
-  return parsed as Record<string, unknown>;
+  return parsed;
 }
 
 async function detail(id: string, version: number | null): Promise<PlaybookDetailResponse | null> {
@@ -137,11 +140,11 @@ export const handlePlaybooksApi: ApiModule = async (ctx, req, res, path, method)
       const rawVersion = params.get('version');
       let version: number | null = null;
       if (rawVersion !== null) {
-        if (!/^[1-9]\d{0,5}$/.test(rawVersion)) {
+        version = parsePositivePlaybookVersion(rawVersion);
+        if (version === null) {
           sendInvalid(res, 'version must be a positive integer');
           return true;
         }
-        version = Number(rawVersion);
       }
       const found = await detail(id, version);
       if (!found) {
@@ -162,7 +165,7 @@ export const handlePlaybooksApi: ApiModule = async (ctx, req, res, path, method)
       return true;
     }
     const baseVersion = body['baseVersion'];
-    if (baseVersion !== undefined && !(Number.isInteger(baseVersion) && (baseVersion as number) >= 1)) {
+    if (baseVersion !== undefined && !isPositivePlaybookVersion(baseVersion)) {
       sendInvalid(res, 'baseVersion must be a positive integer');
       return true;
     }
