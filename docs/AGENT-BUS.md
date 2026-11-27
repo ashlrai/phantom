@@ -2018,7 +2018,8 @@ delivery-failure reports — the `status` envelopes the router files under
 the reserved `bus.dead-letter` address when delivery provably never
 landed ("Dead letters" above), kept in the same bus store under their own
 TTL and surfaced one item at a time by `phm comms bus read --to
-bus.dead-letter` and the unified inbox's `bus-dead-letter` kind. The
+bus.dead-letter`, listed with parsed reports by `ashlr agents bus
+dead-letters`, and itemized by the unified inbox's `bus-dead-letter` kind. The
 probe pages the same bounded live-receipt scan `peerInbox` runs —
 `listBusInboxAfter` already skips expired receipts — and counts envelopes
 addressed to the sink (`source` plus a `pending` count of live letters
@@ -2188,7 +2189,11 @@ no transport serves the role. `createFileDeadLetterSink()` records a `status`
 envelope addressed to `bus.dead-letter` in the same store, holding the
 original envelope (or only its routing metadata when it would not fit) and the
 attempt log; read it with a file transport whose addresses include
-`bus.dead-letter`, or with `phm comms bus read --to bus.dead-letter`. The
+`bus.dead-letter`, with `phm comms bus read --to bus.dead-letter`, or with
+`ashlr agents bus dead-letters` — the unified bus's fleet-level list of the
+same live letters, each with its parsed delivery-failure report and the
+`exhausted`/`expired`/`no-route`/`other` classification `agents bus status`
+tallies. The
 unified comms inbox (`phm comms inbox`, kind `bus-dead-letter`) lists each
 live letter as pending attention — the mail provably never arrived — naming
 the reason, attempt count and original routing metadata the letter kept. The

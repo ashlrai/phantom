@@ -20,6 +20,8 @@ import { COORDINATION_ORIGINS, type CoordinationOrigin } from '../core/agents/cl
 import { formatBusWorkMine } from '../core/agents/bus-work-mine.js';
 import { readBusWorkMineWithSeats } from '../core/agents/bus-work-mine-seats.js';
 import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
+import { BUS_DEAD_LETTER_REASONS, type BusDeadLetterReason } from '../core/agents/bus-dead-letter.js';
+import { readBusDeadLetters } from '../core/agents/bus-dead-letters.js';
 import { readAgentBusThread } from '../core/agents/bus-thread.js';
 import { followAgentBus, type AgentBusFollowRecord, type AgentBusFollowRequest } from '../core/agents/bus-follow.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
@@ -34,7 +36,7 @@ import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js'
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
-export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'follow', 'wakes', 'show', 'thread', 'adapters', 'claim', 'work', 'status']);
+export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'follow', 'wakes', 'show', 'thread', 'adapters', 'claim', 'work', 'status', 'dead-letters']);
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
@@ -51,6 +53,7 @@ ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
 ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> [--interval-ms <100..60000>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] --json
 ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
+ashlr agents bus dead-letters [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--priority P0..P3] [--id <id>] [--reason <${BUS_DEAD_LETTER_REASONS.join('|')}>] [--from <agent>] [--exclude-from <agent>] [--to <agent>] [--channel <name>] [--body-kind <kind>] [--limit <1-100>]
 ashlr agents bus show <id>
 ashlr agents bus thread <id>
 ashlr agents bus adapters
@@ -684,6 +687,29 @@ address, aliases, runtimes and member channels, plus the detected session
 CLI on the self view; an unresolvable ref reports unknown, a malformed one
 invalid, an unreadable registry unavailable and a missing PHM_AGENT_ID
 unset — never a guessed identity.
+dead-letters lists the transport dead-letter sink's retained
+delivery-failure reports — every live envelope the router filed under the
+reserved bus.dead-letter address when delivery provably never landed — in
+the same claim order work mine's deadLetters section uses (priority band,
+then cursor). It is the fleet-level counterpart of that per-agent section:
+work mine keeps only letters whose ORIGINAL recipient is the agent, while
+this read lists them all, the surface agents bus status's deadLetters probe
+and the unified inbox's bus-dead-letter items point at. --since and
+--before bound the letter's receipt time; --contains matches the report's
+descriptive facts (reason, attempts, original kind, dropped payload) the
+same way work mine does; --priority keeps one P0..P3 band of the letter
+itself; --id keeps the letter whose own wire id or whose original envelope
+id equals it; --reason keeps one classified failure — exhausted, expired,
+no-route or other for a body the defensive read cannot classify; --from,
+--exclude-from and --to resolve the ORIGINAL sender and recipient through
+the registry exactly like every bus sender filter, an unresolvable ref or
+unreadable registry keeping literal-label matching and a letter whose
+report proves no such label never matching; --channel keeps reports whose
+original recipient carries group:<name>:; --body-kind keeps the original
+envelope kind; --limit caps the page while matched reports the filtered
+total and truncated marks the cut. A verified-missing store reports real
+zeros, an unreadable one unavailable and a scan that cannot finish
+retryable — never a partial matched.
 No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
@@ -921,6 +947,16 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         throw new UsageError('--origin must be resource, message, team or board.');
       }
       return value as CoordinationOrigin | undefined;
+    };
+    // Read-side --reason on dead-letters is the classified failure enum the
+    // status probe tallies: a bad value is a usage error here and an
+    // 'invalid' result inside the core read.
+    const reasonArg = (): BusDeadLetterReason | undefined => {
+      const value = one('--reason');
+      if (value !== undefined && !(BUS_DEAD_LETTER_REASONS as readonly string[]).includes(value)) {
+        throw new UsageError(`--reason must be one of ${BUS_DEAD_LETTER_REASONS.join(', ')}.`);
+      }
+      return value as BusDeadLetterReason | undefined;
     };
     // Read-side --since takes the phm messages grammar — 15m, 2h, 1d, epoch
     // ms or an ISO time — resolved to epoch ms; anything else is a usage
@@ -1260,6 +1296,33 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),
         ...page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}` + agentWakeClaimHolderSuffix(w) + agentWakeMessageSuffix(w)),
       ].join('\n') || 'No wakes.');
+      return 0;
+    }
+    if (verb === 'dead-letters') {
+      noExtra(1);
+      const result = readBusDeadLetters({ root: options.root,
+        since: sinceArg(), before: beforeArg(), contains: one('--contains'),
+        priority: priorityArg(), id: one('--id'), reason: reasonArg(),
+        from: one('--from'), excludeFrom: one('--exclude-from'), to: one('--to'),
+        channel: one('--channel'), bodyKind: one('--body-kind'),
+        limit: integer(one('--limit'), '--limit') });
+      if (result.status !== 'ok') {
+        if (result.status === 'invalid') {
+          out(json ? JSON.stringify(result) : `invalid: ${result.reason}`);
+          return 2;
+        }
+        out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
+        return 1;
+      }
+      if (json) { out(JSON.stringify(result)); return 0; }
+      out([
+        ...(result.source === 'missing' ? ['dead-letter store missing'] : []),
+        ...result.letters.map(item =>
+          `${item.ts} ${item.priority} ${item.id} ${item.summary}` +
+          ` original=${item.originalId ?? 'unknown'} reason=${item.reasonKind}`),
+        `matched=${result.matched} shown=${result.letters.length}` +
+          `${result.truncated ? ' truncated' : ''} source=${result.source} as-of=${result.asOf}`,
+      ].join('\n'));
       return 0;
     }
     if (verb === 'work' && sub === 'feed') {

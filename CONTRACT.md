@@ -5072,6 +5072,47 @@ the whole chain and a root whose every member a filter excludes reports
 `phm agents bus thread <id>`; a `wh-…` claim-holder hint id is not an envelope
 id and reports `rootFound: false`, never `show`'s wake-hint resolution.
 
+`src/core/agents/bus-dead-letter.ts` is the shared defensive parse of the
+transport dead-letter report every bus dead-letter surface reads — the
+`body.payload.deadLetter` summary the router's `createFileDeadLetterSink`
+files under the reserved `bus.dead-letter` address (docs/AGENT-BUS.md "Dead
+letters"). `busDeadLetterReport(body)` answers the report or null, every
+field optional and absent rather than guessed; `busDeadLetterReason(report)`
+classifies it into the closed `exhausted`/`expired`/`no-route`/`other` set
+`agents bus status` tallies; `busDeadLetterSummary`/`busDeadLetterContainsText`
+compose the scrubbed one-line display text and the `--contains` haystack —
+descriptive facts only, never routing labels or wire ids. `work mine`'s
+deadLetters section and `agents bus dead-letters` both read through it.
+
+`src/core/agents/bus-dead-letters.ts`: `readBusDeadLetters(options?)` is the
+fleet-level dead-letter list behind `phm agents bus dead-letters` — every
+LIVE envelope addressed to `bus.dead-letter` in the same bus store
+`agents bus status`'s deadLetters probe counts, walked by the same bounded
+`listBusInboxAfter` live-receipt paging `work mine`'s pending-work sections
+run (expired letters never list). Each item carries the letter's wire `id`,
+`cursor`, `priority`, ISO `ts`/`expiresAt`, the parsed report's original
+`originalId`/`to`/`from`/`kind`/`reason`/`attempts`/`payloadDropped` (null
+when the body never parsed — a letter still lists, classified `other`),
+the resolved `fromAgent` handle, the classified `reasonKind`, and the
+scrubbed `summary`. Filters mirror the bus reads they complement: `since`/
+`before` bound `receivedAt` (inclusive/exclusive), `contains` matches the
+report-facts haystack through `busReadContains`, `priority` the letter's own
+band, `id` the letter's wire id OR the original envelope id, `reason` the
+classified kind, `from`/`excludeFrom`/`to` resolve the ORIGINAL sender and
+recipient through `agentRefAddressMatcher` (unreadable registry keeps
+literal-label matching; a report proving no such label never matches, and
+`excludeFrom` drops unprovable senders the same way `work mine` does),
+`channel` keeps reports whose original recipient carries `group:<name>:`,
+`bodyKind` the original envelope kind, `limit` (1..100, default the max)
+caps `letters` while `matched` reports the filtered total and `truncated`
+marks the cut. Items sort in the same claim order `work mine`'s deadLetters
+section uses — priority band, then cursor. `source` is `missing` with real
+zeros on a verified-absent store, `available` otherwise; an unreadable store
+or failed page reports `unavailable`/`invalid`/`retryable` and a scan that
+cannot reach the store's end reports `retryable`, so `matched` is always
+the true filtered total, never a partial count. Read-only: no claims, no
+mutations, no locks beyond the store's own.
+
 `fleet.specialist-identity.v1` adds a read-only identity/outcome projection over
 specialist roster metadata, orchestration assignments and real jobs.jsonl rows.
 Optional role, capabilities, machine/lane affinity and peer mappings persist in

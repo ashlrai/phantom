@@ -82,8 +82,8 @@
  *               `bus-dead-letter`: the mail provably never arrived, so it is
  *               pending attention even though the conversations, messages
  *               and edges projections deliberately exclude it as "not agent
- *               mail" — act: `phm agents bus show`, `phm comms bus read
- *               --to bus.dead-letter`.
+ *               mail" — act: `phm agents bus show`, `phm agents bus
+ *               dead-letters`, `phm comms bus read --to bus.dead-letter`.
  *               When the claims table itself
  *               cannot be read the section reports 'degraded' and still lists
  *               candidates rather than hiding possibly unclaimed work; a
