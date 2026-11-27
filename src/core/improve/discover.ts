@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. One hundred thirty-one sources, all of which Phantom
+ * evidence instead of a hand-kept list. One hundred thirty-two sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -1741,6 +1741,26 @@
  *     lower bounds, and items emit only for the fleet's own
  *     repository since the journal describes this install's host
  *     and fleet;
+ *   - the ops-side cruise watchdog's runaway-daemon alerts: the same
+ *     cruise package's other journal, metrics/cruise-alerts.jsonl —
+ *     one record per process outside the fleet's live job groups that
+ *     sustains a reading past its learned RSS/CPU baseline (kind
+ *     'runaway_daemon', name, pid, rss_share, cpu_pct, z, system uid
+ *     flag, action 'alert_only', epoch-seconds ts), plus a
+ *     bus/core/CRUISE-ALERT-<name>.md notice per firing — until now
+ *     read by nothing at all, so a host whose node, git or helper
+ *     processes kept tripping the runaway bar never became work even
+ *     though every row is measured evidence about this install's
+ *     process hygiene (cruiseAlertsBacklogItems below). Records count
+ *     only under the producer's contract — the runaway kind, a
+ *     bounded control-free name, an in-window epoch-seconds
+ *     timestamp — a (name, system, action) cell emits only at the
+ *     recurring bars of three alerts across two UTC days inside the
+ *     7-day window, measured peaks are quoted rounded while pids are
+ *     counted never listed, truncated tails are stated as lower
+ *     bounds, and items emit only for the fleet's own repository
+ *     since the journal describes this install's host and carries no
+ *     repo column;
  *   - the Engineering Ops growth export series' recurring adverse
  *     cells: the growth-pulls-hourly.jsonl, growth-cost-hourly.jsonl
  *     and growth-releases.jsonl files plus the
@@ -1980,6 +2000,7 @@ import { resetReleaseBacklogItems } from './reset-release-backlog.js';
 import { nodesOffloadBacklogItems } from './nodes-offload-backlog.js';
 import { commsRunBacklogItems } from './comms-run-backlog.js';
 import { cruiseShadowBacklogItems } from './cruise-shadow-backlog.js';
+import { cruiseAlertsBacklogItems } from './cruise-alerts-backlog.js';
 import { growthBacklogItems } from './growth-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 import { reviewBlocksBacklogItems } from './review-blocks-backlog.js';
@@ -4136,6 +4157,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the journal describes this
   // install's host and carries no repo column.
   items.push(...await cruiseShadowBacklogItems({ repo }));
+
+  // Cruise watchdog runaway-daemon journal (metrics/cruise-alerts.jsonl
+  // under the runs root): the same ops-side cruise package's other
+  // output — one record per process outside the fleet's live job
+  // groups that sustains a reading past its learned RSS/CPU baseline,
+  // with the watchdog's uid flag, measured peaks and a bus notice per
+  // firing (cruiseAlertsBacklogItems below). Until now the journal
+  // had no reader at all: the bus notices are ops-side surfaces, so
+  // a host whose node, git or helper processes kept tripping the
+  // runaway bar never became work. Same bounded tail read; a
+  // (name, system, action) cell emits only at the recurring bars of
+  // three alerts across two UTC days inside the 7-day window, rows
+  // count only under the producer's contract, peaks are quoted
+  // rounded and pids counted never listed, truncated tails are stated
+  // as lower bounds, and only the fleet's own repository inherits
+  // the items since the journal describes this install's host and
+  // carries no repo column.
+  items.push(...await cruiseAlertsBacklogItems({ repo }));
 
   // Engineering Ops growth export series: the growth-pulls-hourly,
   // growth-cost-hourly and growth-releases files plus the
