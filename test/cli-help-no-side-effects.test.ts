@@ -95,7 +95,6 @@ const STRICT_VERB_PARSER = 'its option parser turns every unrecognized flag, --h
 
 /** Intentionally strict: exit 2 with usage, no side effects (still asserted). */
 const HELP_STRICT_REFUSALS: Record<string, string> = {
-  team: 'the team dispatcher prints its Usage for anything that is not one of its verbs (src/cli/team.ts) and exits 2',
   improve: '`improve` only has the `propose` verb; anything else prints its Usage line and exits 2 (src/cli/improve.ts)',
   'desktop install': 'release installer with an exact grammar; an unrecognized token is a usage error before any download or stage',
   'desktop-update inspect': 'release updater with an exact grammar; an unrecognized token is a usage error before any stage is read',
@@ -135,6 +134,13 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'radar diff': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before snapshots are read',
   'agents bus': 'runAgentsCli accepts only `bus contract [--json]` (src/cli/agents-bus-contract.ts); anything else prints the contract help and exits 2',
   'capacity publish': '`publish` accepts only --json (src/cli/capacity.ts); anything else prints the usage line and exits 2 before the publisher is built',
+  'library show': '`show` takes exactly one library id; a help flag lands in the id slot and is refused with usage on stderr, exit 2, before any store read (src/cli/library.ts)',
+  'library list': '`list` accepts only --json; any other token is refused with usage on stderr, exit 2, before files are read (src/cli/library.ts)',
+  'publish resume': 'parseArgs strict grammar; a help flag after the verb is an unknown option, so usage prints on stderr and exits 2 before any gh call (src/cli/publish.ts)',
+  'publish orphans': 'same strict parseArgs grammar as `publish resume` (src/cli/publish.ts); usage on stderr, exit 2, before any gh call',
+  'publish sweep': 'same strict parseArgs grammar as `publish resume` (src/cli/publish.ts); usage on stderr, exit 2, before any run is read',
+  'owner-live': 'the dispatcher requires a status|enable|disable verb; `phm owner-live --help` matches none and prints usage on stderr, exit 2, before any channel work (src/cli/index.ts)',
+  'resources autopilot': 'exact flag grammar (--json/--input/--root/--overrides); a help flag is refused with usage on stderr, exit 2, before any file read (src/cli/resource-autopilot.ts)',
 };
 
 /**

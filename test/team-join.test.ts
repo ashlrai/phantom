@@ -105,6 +105,23 @@ describe('team invite / join / remove', () => {
     expect(String(err.mock.calls.at(-1)?.[0])).toMatch(/Unknown human member human:octocat.*phm team view/);
   });
 
+  it('CLI: --help and -h print usage and never act on any verb', async () => {
+    // Regression: the dispatcher used to pass the flag through as an operand —
+    // `join --help` joined the team and `say --help` posted "--help".
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+    for (const verb of ['list', 'add', 'show', 'view', 'join', 'invite', 'remove', 'role', 'link', 'approve', 'deny', 'claim', 'release', 'say']) {
+      for (const flag of ['--help', '-h']) {
+        const before = log();
+        expect(await cmdTeam([verb, flag, '--team', T]), `${verb} ${flag}`).toBe(0);
+        expect(String(out.mock.calls.at(-1)?.[0]), `${verb} ${flag}`).toContain('Usage: phm team');
+        expect(log(), `${verb} ${flag} wrote team state`).toBe(before);
+      }
+    }
+    expect(await cmdTeam(['--help'])).toBe(0);
+    expect(String(out.mock.calls.at(-1)?.[0])).toContain('Usage: phm team');
+    expect(await cmdTeam(['-h'])).toBe(0);
+  });
+
   it('view labels approval responsibility per role and explains presence and shared context', async () => {
     const out = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdTeam(['view', '--team', T])).toBe(0);
