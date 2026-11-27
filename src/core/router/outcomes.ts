@@ -1161,6 +1161,18 @@ const repoLabel = (r: Row): string | null => {
   return v !== null && REPO_LABEL.test(v) ? v : null;
 };
 
+function rewardForOutcome(
+  outcome: RouterOutcome,
+  rewards: ReadonlyMap<string, RewardOutcomeEvidence> | undefined,
+): RewardOutcomeEvidence | undefined {
+  const reward = rewards?.get(outcome.job_id);
+  const jobsRepo = outcome.repo;
+  const rewardRepo = reward?.repo;
+  if (jobsRepo?.includes('/') && rewardRepo?.includes('/') &&
+      jobsRepo.toLowerCase() !== rewardRepo.toLowerCase()) return undefined;
+  return reward;
+}
+
 /**
  * The finish row's recorded empty-diff classification. dispatchd writes
  * `empty_class` from launch_precheck.classify_empty — a closed three-value
@@ -2257,7 +2269,7 @@ function foldRouterOutcomesWithCiCoverage(
       const solePrClaim = soleClaimByJob.get(o.job_id) === `pr:${prKey}`;
       if (verdictClaim === undefined && o.merged !== null && !solePrClaim) continue;
       // Reward rows resolve the job but carry no PR identity of their own.
-      const rewardMerge = o.merged === null && solePrClaim && rewards?.get(o.job_id)?.merged === true;
+      const rewardMerge = o.merged === null && solePrClaim && rewardForOutcome(o, rewards)?.merged === true;
       if ((o.merged === true || rewardMerge) && opts.revertedPrKeys?.has(prKey)) o.reverted = true;
       if (opts.mergeEvents !== undefined) {
         const evidence = opts.mergeEvents.get(prKey);
@@ -3597,7 +3609,7 @@ export async function readRouterOutcomes(opts: {
   }
   if (rewards !== undefined) {
     for (const o of folded.outcomes) {
-      const reward = rewards.get(o.job_id);
+      const reward = rewardForOutcome(o, rewards);
       if (reward === undefined) continue;
       // Fill-only join: a recorded jobs-ledger verdict or measurement
       // always wins; the reward row's resolved evidence fills what the
