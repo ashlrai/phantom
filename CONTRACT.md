@@ -5099,7 +5099,25 @@ under BEGIN/END UNTRUSTED AGENT BUS THREAD markers, so the whole
 exchange reaches a CLI's next turn as marked-untrusted data in a single
 block and a thread block can never pass for an inbox page, a digest or
 a feed; `--json` carries it as `framed` beside the full projection the
-same way, and a proven miss frames its own not-found verdict. Identities
+same way, and a proven miss frames its own not-found verdict.
+`frameBusClaims(cli, lines)` renders the live-claims list
+(`agents bus claim list --frame <cli>`) — the already-formatted claim
+rows with their `--jobs` blocked-job labels and the honest
+`claims=… source=… as-of=…` summary — through the same shared line
+renderer under BEGIN/END UNTRUSTED AGENT BUS CLAIMS markers, so the
+whole held-scope table reaches a CLI's next turn as marked-untrusted
+data in a single block; `--json` carries it as `framed` beside the full
+projection the same way, and a read that cannot complete still answers
+its own status line rather than an invented claim list.
+`frameBusDeadLetters(cli, lines)` renders the transport dead-letter
+list (`agents bus dead-letters --frame <cli>`) — the already-formatted
+letter lines and the `matched=… shown=… source=… as-of=…` summary —
+through the same shared line renderer under BEGIN/END UNTRUSTED AGENT
+BUS DEAD LETTERS markers, so the whole delivery-failure backlog reaches
+a CLI's next turn as marked-untrusted data in a single block; `--json`
+carries it as `framed` beside the full projection the same way, and a
+verified-missing store frames its own missing line rather than an
+invented letter. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one

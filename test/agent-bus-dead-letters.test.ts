@@ -208,7 +208,7 @@ describe('agents bus dead-letters (cli)', () => {
     const out: string[] = [], err: string[] = [];
     const code = await runAgentsBusUnified([...args, '--root', root, '--json'], t => out.push(t), t => err.push(t), env);
     return { code, out: out.join('\n'), err: err.join('\n'),
-      json: out.length ? JSON.parse(out) : err.length ? JSON.parse(err) : null };
+      json: out.length ? JSON.parse(out.join('\n')) : err.length ? JSON.parse(err.join('\n')) : null };
   }
 
   it('lists dead letters as JSON and as human lines', async () => {
@@ -265,5 +265,37 @@ describe('agents bus dead-letters (cli)', () => {
 
     const extra = await run(['dead-letters', 'surplus'], options.root);
     expect(extra.code).toBe(2);
+  });
+
+  it('frames the dead-letter list as bounded untrusted data', async () => {
+    const options = setup(Date.now());
+    register(options.root, 'atlas', 'nova');
+    postLetter(options, 'dl-1', deadLetterBody({ to: 'agent:atlas', reason: 'no-route' }));
+
+    // --json carries the frame as `framed` beside the full projection.
+    const framed = await run(['dead-letters', '--frame', 'claude'], options.root);
+    expect(framed.code).toBe(0);
+    expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS DEAD LETTERS');
+    expect(framed.json.framed).toContain('dl-1');
+    expect(framed.json.framed).toContain('matched=1 shown=1');
+    expect(framed.json.framed).toContain('END UNTRUSTED AGENT BUS DEAD LETTERS');
+
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['dead-letters', '--frame', 'grok', '--root', options.root],
+      t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('BEGIN UNTRUSTED AGENT BUS DEAD LETTERS');
+    expect(text.join('\n')).not.toContain('"status"');
+
+    // A verified-missing store frames its own missing line, never an
+    // invented letter.
+    const missing = setup();
+    const missingJson = await run(['dead-letters', '--frame', 'claude'], missing.root);
+    expect(missingJson.code).toBe(0);
+    expect(missingJson.json.framed).toContain('dead-letter store missing');
+    expect(missingJson.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS DEAD LETTERS');
+
+    const bad = await run(['dead-letters', '--frame', 'gemini'], options.root);
+    expect(bad.code).toBe(2);
   });
 });

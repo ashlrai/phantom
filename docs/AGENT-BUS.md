@@ -2331,7 +2331,15 @@ evidence — `--since`/`--before`, `--contains`, `--priority`, `--id`,
 `--reason`, the `--from`/`--exclude-from`/`--to` sender and recipient
 matchers, `--channel`/`--topic` on the original recipient's room address
 and `--body-kind` on the original kind — never on fields the letter
-dropped. The
+dropped. `--frame <cli>` prints the same list — every letter line and
+the `matched=… shown=… source=… as-of=…` summary — as one bounded block
+marked untrusted under BEGIN/END UNTRUSTED AGENT BUS DEAD LETTERS
+markers, the same scrub, flattening and 32 KiB clip bound every other
+bus `--frame` read applies with the cut stated, so a host can hand the
+whole delivery-failure backlog to a CLI's next turn as data in a single
+block; `--json` carries it as `framed` beside the full projection, and a
+verified-missing store frames its own missing line rather than an
+invented letter. The
 unified comms inbox (`phm comms inbox`, kind `bus-dead-letter`) lists each
 live letter as pending attention — the mail provably never arrived — naming
 the reason, attempt count and original routing metadata the letter kept. The
@@ -2508,7 +2516,7 @@ from now and may not exceed the acquired length. `phm agents bus claim
 acquire|renew|release` runs the same core path locally with `--key`,
 `--lease-ms`, `--owner` (defaults to `PHM_AGENT_ID`), `--token`, `--outcome`
 and optional `--id`; exit 0 on success, 2 on invalid arguments, 1 otherwise.
-`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--jobs]` is
+`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--jobs] [--frame <cli>]` is
 the read
 side: it prints the live coordination claims (owner, origin, lease end, source
 id — never tokens) across every origin, narrowed by `--key` to those that
@@ -2557,6 +2565,15 @@ reverse of `work feed --claims`, with the same retained receipt citations
 so a blocked job names its `agents bus show` handles),
 and the JSON `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
+`--frame <cli>` prints the same list — every claim row, its `--jobs`
+blocked-job labels when asked and the `claims=… source=… as-of=…`
+summary — as one bounded block marked untrusted under BEGIN/END
+UNTRUSTED AGENT BUS CLAIMS markers, the same scrub, flattening and 32 KiB
+clip bound every other bus `--frame` read applies with the cut stated,
+so a host can hand the whole held-scope table to a CLI's next turn as
+data in a single block; `--json` carries it as `framed` beside the full
+projection, and a read that cannot complete still answers its own status
+line rather than an invented claim list.
 `fleet_bus_claims` (the isolated fleet MCP tool) serves the same
 `listBusClaims` read with `key`, `owner`, `excludeOwner`, `contains`,
 `origin`, `since`, `before`, `job` and `jobs` as its only
