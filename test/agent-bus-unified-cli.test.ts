@@ -374,6 +374,31 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['channel', 'read', 'release', '--frame', 'gemini'])).toMatchObject({ code: 2 });
   });
 
+  it('frames the work-mine digest as untrusted data', async () => {
+    const env = { PHM_AGENT_ID: 'atlas' };
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'], env)).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'], env)).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'nova', '--to', 'atlas', '--text', 'status ping', '--id', 'wm-dm'], env)).json)
+      .toMatchObject({ status: 'posted' });
+    // --frame prints the whole pending-work digest as one bounded block
+    // under its own markers; --json carries it on `framed` beside the
+    // full projection.
+    const framed = await run(['work', 'mine', '--frame', 'claude'], env);
+    expect(framed.code).toBe(0);
+    expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS WORK DIGEST');
+    expect(framed.json.framed).toContain('agent=atlas');
+    expect(framed.json.framed).toContain('ping');
+    expect(framed.json.framed).toContain('END UNTRUSTED AGENT BUS WORK DIGEST');
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const framedText: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'mine', '--frame', 'grok', '--root', root],
+      t => framedText.push(t), () => {}, env)).toBe(0);
+    expect(framedText.join('\n')).toContain('BEGIN UNTRUSTED AGENT BUS WORK DIGEST');
+    expect(framedText.join('\n')).toContain('END UNTRUSTED AGENT BUS WORK DIGEST');
+    expect(framedText.join('\n')).not.toContain('"status"');
+    expect(await run(['work', 'mine', '--frame', 'gemini'], env)).toMatchObject({ code: 2 });
+  });
+
   it('resolves one retained envelope by id without needing an identity', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

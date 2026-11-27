@@ -1178,7 +1178,7 @@ guessed claim no matter how long the wait runs. Exit 0 on
 otherwise. Claims still coordinate scope only — holding one never permits
 a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>] [--frame <cli>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -1940,7 +1940,13 @@ required, `job`/`since`/`before`/`contains`/`priority`/`channel`/`from`/`exclude
 filters — under the same
 validation, so an MCP-connected agent reads its whole pending digest
 without shelling out to `phm`; it accepts no caller root or path and
-passes a refused or degraded section through untouched.
+passes a refused or degraded section through untouched. `--frame <cli>`
+prints the same digest as one bounded block marked untrusted — BEGIN/END
+UNTRUSTED AGENT BUS WORK DIGEST markers, the same scrub and 32 KiB clip
+bound the inbox, channel-read and wakes frames apply, the cut stated —
+so a host can hand the agent's whole pending-work picture to the CLI's
+next turn as data in a single block; `--json` carries it as `framed`
+beside the full projection.
 
 **Pending-work claim.** `phm agents bus work next [<agent>] --lease-ms
 <1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since

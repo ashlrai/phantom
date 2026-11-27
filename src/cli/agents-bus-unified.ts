@@ -11,7 +11,7 @@ import {
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, busWorkJobDispatch, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
-import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusInbox, frameBusWakes, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
+import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusInbox, frameBusWakes, frameBusWorkMine, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, claimNextBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   waitClaimNextBusWorkJob,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope,
@@ -71,7 +71,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--exclude-owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work claim-next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>] [--exclude-announcer <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--wait-ms <1..300000>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>] [--frame <cli>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>] [--wait-ms <1..300000>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -664,7 +664,13 @@ while jobs, announced, board, channels, work-board items — the board
 projection exposes no thread label — sessions, coordination and
 seats carry no per-item thread label the digest can prove and stay
 unfiltered; a label nothing on the bus carries is an honest empty match
-and every count stays the filtered total. work next claims the next claimable
+and every count stays the filtered total. --frame on work mine prints the
+digest as the same bounded block the inbox, channel-read and wakes
+--frame reads produce — BEGIN/END UNTRUSTED AGENT BUS WORK DIGEST
+markers, the same scrub and 32 KiB clip bound with the cut stated — so a
+host can hand the agent's whole pending-work picture to the CLI's next
+turn as marked-untrusted data in one block; --json carries it as the
+framed field beside the full projection. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
 receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
@@ -1540,6 +1546,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const bodyKind = one('--body-kind');
       const resultOutcome = resultArg();
       const thread = one('--thread');
+      const frame = one('--frame');
+      if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
       const result = await readBusWorkMineWithSeats(agent,
         { ...options, ...(job === undefined ? {} : { job }),
           ...(contains === undefined ? {} : { contains }),
@@ -1559,7 +1567,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;
       }
-      out(json ? JSON.stringify(result) : formatBusWorkMine(result).join('\n'));
+      const lines = formatBusWorkMine(result);
+      const framed = frame === undefined ? undefined : frameBusWorkMine(frame as BusCli, lines);
+      out(json ? JSON.stringify(framed === undefined ? result : { ...result, framed }) : framed ?? lines.join('\n'));
       return 0;
     }
     if (verb === 'work' && sub === 'next') {
