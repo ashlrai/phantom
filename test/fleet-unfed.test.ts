@@ -841,7 +841,11 @@ describe('foldRouteRejections', () => {
           { lane: 'bad lane!', reason_codes: ['quota_exhausted'] },
           { lane: 'omlx' },                                  // no reason_codes array
           { lane: 'omlx', reason_codes: 'quota_exhausted' }, // reason_codes not an array
-          { lane: 'claude', reason_codes: ['NOT_A_CODE', 'also bad', 'quota_exhausted'] },
+          { lane: 'claude', reason_codes: ['saturated'] }, // contradicts chosen_lane
+          { lane: 'omlx', reason_codes: [] },
+          { lane: 'codex-cmp', reason_codes: ['NOT_A_CODE'] },
+          { lane: 'codex-cmp', reason_codes: ['also bad', 'quota_exhausted'] },
+          { lane: 'codex-local', reason_codes: ['NOT_A_CODE'] },
           { lane: 'devin', reason_codes: ['quota_exhausted', 'quota_exhausted'] }, // dup code deduped
           { lane: 'devin', reason_codes: ['saturated'] },    // duplicate lane: first entry wins
         ],
@@ -854,7 +858,7 @@ describe('foldRouteRejections', () => {
       decided: 2,
       unrouted: 0,
       lanes: [
-        { lane: 'claude', jobs: 1, reasons: { quota_exhausted: 1 } },
+        { lane: 'codex-cmp', jobs: 1, reasons: { quota_exhausted: 1 } },
         { lane: 'devin', jobs: 1, reasons: { quota_exhausted: 1 } },
       ],
       // RQ-A hit quota_exhausted on two lanes but counts once; RQ-B recorded none.

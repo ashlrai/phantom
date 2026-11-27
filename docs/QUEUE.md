@@ -504,7 +504,8 @@ with the reason codes that say why (`missing_capability`, `quota_exhausted`,
 `saturated`, `lower_rank`, ...). `lanes` tallies each rejected lane per job
 with its reason counts and `byReason` counts each job once per reason
 across all its rejected lanes; `unrouted` counts decisions that chose no
-lane at all. Malformed entries or codes are skipped, never guessed.
+lane at all. A lane contributes only if it differs from the chosen lane and
+has at least one valid reason code. The first usable entry for each lane wins.
 When the final decision has no chosen lane and records `global_admission`,
 the fleet cap or per-tick launch limit blocked the job. The report counts it
 once under `byReason.global_admission` and omits its provisional lane rejections
