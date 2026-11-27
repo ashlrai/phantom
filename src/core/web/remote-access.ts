@@ -22,6 +22,15 @@ export interface RemoteAccessIdentity {
 const TEAM_DOMAIN = /^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com$/;
 const AUDIENCE = /^[a-f0-9]{64}$/i;
 
+/** True for a canonical public HTTPS origin (never localhost or an IP literal). */
+export function isPublicHttpsOrigin(value: string): boolean {
+  try {
+    const origin = new URL(value);
+    return origin.protocol === 'https:' && origin.origin === value && origin.hostname.includes('.')
+      && isIP(origin.hostname) === 0 && origin.hostname !== 'localhost' && !origin.hostname.endsWith('.localhost');
+  } catch { return false; }
+}
+
 /** No defaults: incomplete provisioned config cannot make a gateway usable. */
 export function parseRemoteAccessConfig(value: unknown): RemoteAccessConfig | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -31,12 +40,7 @@ export function parseRemoteAccessConfig(value: unknown): RemoteAccessConfig | nu
   if (!TEAM_DOMAIN.test(teamDomain) || !AUDIENCE.test(audience)) return null;
   if (!Array.isArray(allowedSubjects) || allowedSubjects.length === 0
     || allowedSubjects.some((subject: unknown) => typeof subject !== 'string' || !/^[A-Za-z0-9_-]{8,256}$/.test(subject))) return null;
-  try {
-    const origin = new URL(publicOrigin);
-    if (origin.protocol !== 'https:' || origin.origin !== publicOrigin || !origin.hostname.includes('.')
-      || isIP(origin.hostname) !== 0
-      || origin.hostname === 'localhost' || origin.hostname.endsWith('.localhost')) return null;
-  } catch { return null; }
+  if (!isPublicHttpsOrigin(publicOrigin)) return null;
   return { publicOrigin, teamDomain, audience, allowedSubjects: [...new Set(allowedSubjects as string[])] };
 }
 

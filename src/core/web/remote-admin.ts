@@ -4,6 +4,7 @@ import { createConnection, createServer, type Server } from 'node:net';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { defaultVerseRoot } from '../verse/preferences.js';
+import { assertPrivatePath, isPrivateStat, lstatOrNull } from './remote-fs.js';
 import type { createRemotePairing } from './remote-pairing.js';
 import type { RemoteDeviceStore } from './remote-device-store.js';
 
@@ -17,29 +18,16 @@ export function remoteAdminSocketPath(root = defaultVerseRoot()): string { retur
 
 function privateDirectory(root: string): void {
   mkdirSync(root, { recursive: true, mode: 0o700 });
-  const stat = lstatSync(root);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
-    || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
-    throw new Error('Remote operator directory is not private');
-  }
-}
-
-function existingSocket(path: string) {
-  try { return lstatSync(path); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
-  }
+  assertPrivatePath(root, 'directory', 'Remote operator directory is not private');
 }
 
 /** A killed sidecar leaves its Unix socket pathname behind. Reclaim only a
  * private socket owned by this user after a connection proves no listener is
  * alive; never remove a regular file, symlink, or another process's socket. */
 async function clearStaleSocket(root: string, path: string): Promise<void> {
-  const before = existingSocket(path);
+  const before = lstatOrNull(path);
   if (!before) return;
-  if (!before.isSocket() || (before.mode & 0o077) !== 0
-    || (typeof process.getuid === 'function' && before.uid !== process.getuid())) {
+  if (!isPrivateStat(before, 'socket')) {
     throw new Error('Remote admin socket path is not a private owned socket');
   }
   const stale = await new Promise<boolean>((resolve, reject) => {
@@ -55,11 +43,9 @@ async function clearStaleSocket(root: string, path: string): Promise<void> {
   });
   if (!stale) throw new Error('Remote admin socket already has a live listener');
   privateDirectory(root);
-  const after = existingSocket(path);
+  const after = lstatOrNull(path);
   if (!after) return;
-  if (!after.isSocket() || (after.mode & 0o077) !== 0
-    || (typeof process.getuid === 'function' && after.uid !== process.getuid())
-    || after.ino !== before.ino || after.dev !== before.dev) {
+  if (!isPrivateStat(after, 'socket') || after.ino !== before.ino || after.dev !== before.dev) {
     throw new Error('Remote admin socket changed during stale recovery');
   }
   unlinkSync(path);
@@ -153,7 +139,7 @@ export async function startRemoteAdminSocket(pairing: Pairing, devices: RemoteDe
   try {
     chmodSync(path, 0o600);
     const secured = lstatSync(path);
-    if (!secured.isSocket() || (secured.mode & 0o077) !== 0
+    if (!isPrivateStat(secured, 'socket')
       || secured.ino !== identity.ino || secured.dev !== identity.dev) throw new Error('Remote admin socket is not private');
   } catch (error) {
     await new Promise<void>((resolve) => server.close(() => resolve()));

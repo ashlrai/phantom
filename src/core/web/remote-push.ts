@@ -1,11 +1,12 @@
 /**
  * Per-credential Web Push sender with bounded, scrubbed fleet summaries.
  */
-import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import webpush, { type PushSubscription } from 'web-push';
 import { defaultVerseRoot } from '../verse/preferences.js';
 import { writePrivateFileAtomically } from '../verse/session-store.js';
+import { isPublicHttpsOrigin } from './remote-access.js';
+import { assertPrivatePath, lstatOrNull, readPrivateJsonFile, withPrivateFileLock } from './remote-fs.js';
 import { sanitizePushDetail } from './remote-push-fleet.js';
 import type { RemoteDeviceStore } from './remote-device-store.js';
 
@@ -27,14 +28,6 @@ export interface RemotePushConfig {
   privateKey: string;
   /** A stable HTTPS or mailto contact for VAPID, never localhost. */
   subject: string;
-}
-
-function privatePath(path: string, directory: boolean): void {
-  const stat = lstatSync(path);
-  if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile())
-    || (stat.mode & 0o077) !== 0 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
-    throw new Error('Remote push store is not private');
-  }
 }
 
 function validEndpoint(value: unknown): value is string {
@@ -67,11 +60,7 @@ function validConfig(value: RemotePushConfig): boolean {
     || Buffer.from(value.publicKey, 'base64url').length !== 65
     || Buffer.from(value.privateKey, 'base64url').length !== 32) return false;
   if (value.subject.startsWith('mailto:')) return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value.subject.slice(7));
-  try {
-    const url = new URL(value.subject);
-    return url.protocol === 'https:' && url.origin === value.subject && url.hostname.includes('.')
-      && url.hostname !== 'localhost' && !url.hostname.endsWith('.localhost');
-  } catch { return false; }
+  return isPublicHttpsOrigin(value.subject);
 }
 
 function validEntry(value: unknown): value is Entry {
@@ -95,19 +84,11 @@ export function createRemotePush(config: RemotePushConfig, devices: RemoteDevice
   const lastSent = new Map<string, number>();
   const offRevoke = devices.onRevoked((id) => { try { removeDevice(id); } catch { /* fail closed at send-time */ } });
 
-  function exists(target: string): boolean {
-    try { lstatSync(target); return true; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
-  }
   function read(): Registry {
-    if (!exists(root)) return { v: 1, entries: [] };
-    privatePath(root, true);
-    if (!exists(path)) return { v: 1, entries: [] };
-    privatePath(path, false);
-    if (lstatSync(path).size > MAX_FILE_BYTES) throw new Error('Remote push store is too large');
-    let data: unknown;
-    try { data = JSON.parse(readFileSync(path, 'utf8')) as unknown; }
-    catch { throw new Error('Remote push store is unreadable'); }
+    if (!lstatOrNull(root)) return { v: 1, entries: [] };
+    assertPrivatePath(root, 'directory', 'Remote push store is not private');
+    if (!lstatOrNull(path)) return { v: 1, entries: [] };
+    const data = readPrivateJsonFile(path, MAX_FILE_BYTES, 'Remote push store');
     if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Remote push store is invalid');
     const registry = data as Record<string, unknown>;
     if (registry.v !== 1 || !Array.isArray(registry.entries) || registry.entries.length > MAX_SUBSCRIPTIONS
@@ -117,21 +98,14 @@ export function createRemotePush(config: RemotePushConfig, devices: RemoteDevice
     return { v: 1, entries };
   }
   function mutate<T>(update: (registry: Registry) => T): T {
-    mkdirSync(root, { recursive: true, mode: 0o700 });
-    privatePath(root, true);
-    const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
-    const fd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow, 0o600);
-    try {
-      writeSync(fd, `${process.pid}\n`);
-      fsyncSync(fd);
-      if ((fstatSync(fd).mode & 0o077) !== 0) throw new Error('Remote push lock is not private');
+    return withPrivateFileLock(root, lockPath, 'Remote push store is not private', 'Remote push lock is not private', () => {
       const registry = read();
       const result = update(registry);
       const bytes = `${JSON.stringify(registry)}\n`;
       if (Buffer.byteLength(bytes) > MAX_FILE_BYTES) throw new Error('Remote push store is too large');
       writePrivateFileAtomically(root, path, bytes);
       return result;
-    } finally { closeSync(fd); rmSync(lockPath, { force: true }); }
+    });
   }
   function removeDevice(deviceId: string): void {
     mutate((registry) => { registry.entries = registry.entries.filter((entry) => entry.deviceId !== deviceId); });
