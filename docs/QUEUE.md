@@ -1163,8 +1163,10 @@ The starvation view bounds each lane's free slots by the remaining shared
 fleet slots. A dispatcher pause, closed admission gate or full fleet cap
 suppresses starvation and its notice when the tick is at most 60 seconds old
 and no later than report time. Admission timestamps, when present, must match
-the enclosing tick. Without usable fleet admission evidence, the starvation
-view uses lane-local headroom.
+the enclosing tick. A confirmed fleet stop, lane hold or zero launch target
+reports zero free slots even when lane occupancy or the configured target is
+unknown. The missing lane measurements stay null. Without usable fleet admission
+evidence, the starvation view uses lane-local headroom.
 The desktop lane
 card (Ops, Lanes on this Mac) shows the same line. The Leader posts one chat notice
 when a lane has been starved for 30 minutes, at most once per lane every 6 hours,
