@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetLaneSnapshot, FleetLaneView } from '../src/core/fleet/lane-console.js';
+import { readStarved } from '../src/core/fleet/lane-starved.js';
 import { asLaneSupplyReport, buildLaneSupply, formatLaneSupply, readPlannerFacts } from '../src/core/fleet/lane-supply.js';
 
 const NOW = Date.parse('2026-11-20T12:00:00Z');
@@ -17,6 +18,19 @@ const snapshot = (lanes: FleetLaneView[], openRows: number | null = null): Fleet
 } as FleetLaneSnapshot);
 
 describe('lane supply verdicts', () => {
+  it.each([0, 1, null])('uses projected launch headroom (%s) for idle alarms', freeSlots => {
+    const snap = snapshot([lane('claude', { liveJobs: 1, slotTarget: 8 })], 0);
+    snap.starved = readStarved([{
+      lane: 'claude', target: freeSlots === null ? null : 1 + freeSlots,
+      running: 1, ready: 0, held: false, drained: false,
+    }], {}, NOW, 0);
+    const report = buildLaneSupply(snap, null, NOW);
+    expect(report.lanes[0]).toMatchObject({ freeSlots, target: 8, running: 1 });
+    expect(report.idle).toEqual(freeSlots === 1 ? ['claude'] : []);
+    expect(report.alarm).toBe(freeSlots === 1 ? 'claude idle: 1 free slot, 50% left' : null);
+    if (freeSlots === 0) expect(report.lanes[0]?.text).toBe('claude: no launch slots available');
+  });
+
   it('raises the alarm for a lane with free slots, nothing queued and usage left', () => {
     const report = buildLaneSupply(snapshot([lane('claude', { liveJobs: 2, slotTarget: 8, credit: credit(68) })]), null, NOW);
     expect(report.lanes[0]).toMatchObject({ verdict: 'idle-with-usage-left', freeSlots: 6, usedPct: 32, leftPct: 68, hoursToReset: 48 });

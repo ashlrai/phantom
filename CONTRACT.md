@@ -22,6 +22,11 @@ and the dates quoted in discovery briefs.
 
 ## Fleet lane ledger
 
+`laneSupplyLane(view, nowMs, openRows?, launchHeadroom?)`
+(`src/core/fleet/lane-supply.ts`) accepts an optional projected launch headroom.
+Zero suppresses idle alarms and null preserves unknown headroom. When the
+argument is omitted, the lane's target and running count supply headroom.
+
 `unfedTickLanes(row)` (`src/core/fleet/unfed-market.ts`) reads a decoded
 `unfed_capacity` snapshot and returns its usable lane observations as
 `{ lane, slots, blocked }`. Each observation requires positive headroom
