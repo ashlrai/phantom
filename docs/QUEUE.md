@@ -576,6 +576,8 @@ including rows with an empty lane column or an explicit
 `"preferred_lane": null` in the requirements. The first valid READY row in
 file order supplies each job's tier, whether it has a lane hint or is open.
 Open jobs have no per-lane attribution.
+Recognized READY rows with missing or unsupported tiers count in `unknown`.
+The named depth buckets are `frontier`, `work`, `mid`, and `fast`.
 
 The Leader board estimates the number of conflicting PRs from rebase job IDs
 in `ready.tsv`. It includes parked rebase jobs, expands batches into their
