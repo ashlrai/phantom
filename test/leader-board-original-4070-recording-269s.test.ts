@@ -92,6 +92,31 @@ it('counts lane-open work by tier without attributing it to a lane', async () =>
   expect(board?.lanes.find((lane) => lane.lane === 'codex')?.ready).toBe(1);
 });
 
+it('uses distinct, chronological conflict samples earlier than the current tick', async () => {
+  await seed();
+  const path = join(root, 'coordination');
+  await mkdir(path);
+  await writeFile(join(path, 'leader-board.json'), JSON.stringify({
+    schema: 'fleet.leader-board.v1',
+    generatedAt: minutesAgo(-1),
+    conflictingPrs: { history: [
+      { at: minutesAgo(5), count: 1 },
+      { at: minutesAgo(-1), count: 10 },
+      { at: minutesAgo(0), count: 9 },
+      { at: minutesAgo(10), count: 3 },
+      { at: minutesAgo(5), count: 4 },
+    ] },
+  }));
+  const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  expect(result.wrote && result.board.conflictingPrs).toEqual({
+    count: 2, delta: -2, trend: 'falling', history: [
+      { at: minutesAgo(10), count: 3 },
+      { at: minutesAgo(5), count: 4 },
+      { at: minutesAgo(0), count: 2 },
+    ],
+  });
+});
+
 it('reports honest failures for hostile paths and the reader stays truthful', async () => {
   expect(await recordLeaderBoard({ runsDir: 'relative/path', nowMs: NOW_MS })).toMatchObject({ wrote: false });
   expect(await recordLeaderBoard({ runsDir: '/dev/null/impossible', nowMs: NOW_MS })).toMatchObject({ wrote: false });
