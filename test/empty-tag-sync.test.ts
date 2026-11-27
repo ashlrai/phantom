@@ -178,6 +178,23 @@ describe('syncEmptyTagsFromJobsLedger', () => {
     expect(existsSync(join(runsDir, TAGS_FILE))).toBe(false);
   });
 
+  it('uses worker evidence through declined dispatch and outcome receipts', async () => {
+    const job = 'RQ-WORKER';
+    const declinedAt = '2026-10-28T19:30:00.000Z';
+    writeJobs([
+      finish(job, true),
+      line({ event: 'batch_claim', job, ts: declinedAt, launched: false }),
+      line({ event: 'outcome', job, ts: declinedAt, empty: false, launched: false }),
+      line({ event: 'outcome', job: 'RQ-DECLINED', ts: declinedAt, empty: true, launched: false }),
+    ].join('\n') + '\n');
+    writeLog(job, 'This is a duplicate of an earlier job.');
+
+    const result = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW });
+
+    expect(result).toMatchObject({ state: 'read', candidates: 1, recorded: 1 });
+    expect(readTags(runsDir)).toEqual([expect.objectContaining({ job, tag: 'already_done' })]);
+  });
+
   it('defers fresh classifications past the per-pass cap to a later sync', async () => {
     writeJobs(['RQ-A', 'RQ-B', 'RQ-C'].map(id => finish(id, true)).join('\n') + '\n');
     const first = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW, maxClassify: 1 });

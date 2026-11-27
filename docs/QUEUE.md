@@ -1466,7 +1466,10 @@ windows. Discovery generates empty-tag briefs only for `ashlrai/phantom`
 or its bare `phantom` shorthand, matching case-insensitively.
 A launch or batch claim supersedes earlier finishes, so a retry
 awaiting its own finish is excluded from the backlog's empty and untagged
-counts. Receipt timestamps determine the order, with ledger order breaking ties.
+counts. Receipts marked `launched: false` supply neither dispatch nor
+finish evidence. Explicit precheck skips still count toward the separate
+gate-skip tally. Receipt timestamps determine the order, with ledger
+order breaking ties.
 Receipts with the same JSON fields and values keep their first position,
 even when a replay changes key order or whitespace. A replay at the same
 timestamp cannot move a finish across a dispatch boundary.

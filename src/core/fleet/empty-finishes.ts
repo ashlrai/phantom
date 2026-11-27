@@ -64,6 +64,8 @@ export function currentAttemptFinishes(text: string, nowMs: number, hours: numbe
   const seen = new Set<string>();
   let timestamp: number | undefined;
   const rows = receipts.filter(({ row, at }) => {
+    // Keep explicit gate skips for the separate skip tally.
+    if (row.launched === false && !SKIP_EVENTS.has(ledgerEventName(row) ?? '')) return false;
     if (at !== timestamp) {
       seen.clear();
       timestamp = at;
