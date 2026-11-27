@@ -49,8 +49,9 @@ Each successful call returns an MCP content array containing a text item whose
 text is a JSON object. Parse that text; check `isError` first. `fleet_status`
 takes no arguments. `fleet_loop` accepts only an integer `limit` from 1 through
 50, default 20. `fleet_bus_hops` accepts the same `limit` plus optional
-`from`/`to`/`excludeFrom` sender and recipient routing labels and an exact `id`
-message filter. They return the newest selected records in oldest-first order.
+`from`/`to`/`excludeFrom` sender and recipient routing labels, an exact `id`
+message filter, and the `channel`/`topic` room filters every other bus read
+shares. They return the newest selected records in oldest-first order.
 Invalid arguments are MCP invalid-params errors.
 
 - `fleet_status` summarizes daemon, pause and kill controls, budget, backend
@@ -64,7 +65,11 @@ Invalid arguments are MCP invalid-params errors.
   identity registry `fleet_bus_inbox` uses — a ref naming one registered
   identity matches every label it answers to, an unresolvable ref keeps
   exact-label matching — and the hop log carries no timestamps, so there is
-  no time filter. `matched` counts the filter hits inside the bounded tail
+  no time filter. `channel` keeps only hops addressed to `group:<channel>:*`
+  and `topic` only hops addressed to a well-formed `group:<room>:<topic>`
+  label carrying that topic component — the same raw `to`-label matches
+  every bus read's channel/topic filters apply, composing into one room AND
+  one topic. `matched` counts the filter hits inside the bounded tail
   observation and `truncated` stays honest about rows beyond it.
 
 The standalone server exposes read-only observation tools only — `tools/list`
