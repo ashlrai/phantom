@@ -57,6 +57,18 @@ export function summarizeMessage(message: InboxMessage, mailClass: MailClass): s
   return scrubSecrets(text) === text ? text : `${mailClass}: [redacted]`;
 }
 
+/**
+ * The deliverable reply stub names the subject being answered — scrubbed
+ * like every summary — and never the internal mail class. That label is
+ * triage metadata for the owner-facing `summaries` record; it must not
+ * reach a recipient through `draft.body`, which becomes the sent text.
+ */
+function replyStub(message: InboxMessage): string {
+  const subject = message.subject.replace(/\s+/g, ' ').trim().slice(0, 160);
+  if (subject === '') return 'Draft reply.';
+  return `Draft reply.\n\n${scrubSecrets(subject) === subject ? subject : '[redacted]'}`;
+}
+
 export function triageInbox(messages: readonly InboxMessage[], ownerIds: readonly string[]): TriageResult {
   const kept: InboxMessage[] = [];
   const archived: InboxMessage[] = [];
@@ -79,7 +91,7 @@ export function triageInbox(messages: readonly InboxMessage[], ownerIds: readonl
           transport: message.transport,
           recipient: message.from.trim(),
           subject: `Re: ${message.subject}`.replace(/\s+/g, ' ').trim().slice(0, 300),
-          body: `Draft reply.\n\n${summary}`,
+          body: replyStub(message),
         });
         break;
       case 'unknown':
