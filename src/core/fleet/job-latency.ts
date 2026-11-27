@@ -121,7 +121,8 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
       row = value as Record<string, unknown>;
     } catch { ignored++; continue; }
-    if (isNodePoolLedgerRow(row)) continue;
+    // Admission retirements record a verdict without an execution attempt.
+    if (isNodePoolLedgerRow(row) || row.launched === false) continue;
     const id = ledgerJobId(row);
     const event = boundaryEvent(row);
     if (event === 'git_operation') {
