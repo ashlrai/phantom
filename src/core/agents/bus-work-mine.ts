@@ -56,7 +56,8 @@ import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobCitesEnvelo
   type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodyInReplyToMatch, busBodyJobIds, busBodyJobId, busBodyJobMatch,
   busBodySummary, busInboxJobMarker, busReadContains, busReadContainsMatch, jobAnnotationFromFeed, readAgentInbox, readAgentWakes,
-  type AgentWakeRow, type BusEnvelopeLookupJob, type InboxKind } from './bus-unified.js';
+  type AgentWakeRow, type BusEnvelopeLookupJob, type InboxKind, type InboxMessage } from './bus-unified.js';
+import { groupAddressTopicOf } from '../fleet/bus-group.js';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { BUS_DEAD_LETTER_ADDRESS, busDeadLetterContainsText, busDeadLetterReport, busDeadLetterSummary,
   type BusDeadLetterReport } from './bus-dead-letter.js';
@@ -253,6 +254,41 @@ export interface BusWorkMineOptions {
    * Every section's count stays the filtered total, never the unfiltered
    * one. */
   channel?: string;
+  /** Keep only pending items provably addressed under one
+   * `group:<room>:<topic>` topic of a bus channel — the same
+   * `groupAddressTopicOf` verdict every bus read's shared group-topic
+   * filter applies, narrower than `channel`'s room prefix: `jobs`/
+   * `announced` keep feed jobs whose `to` parses to that exact topic,
+   * `next`/`handoffs`/`mailbox` keep envelopes whose `to` parses to it,
+   * `deadLetters` keeps reports whose ORIGINAL `to` parses to it (the
+   * letter itself is addressed to the sink, never a room), `claims` keep
+   * only message claims whose resolved leased envelope's `to` parses to
+   * it (a claim naming no resolved message names no provable topic and
+   * never lists, the same "unknown stays out" rule `channel` applies),
+   * the three thread sections keep threads whose latest message — the
+   * wait's own evidence for waiting threads, the block report for
+   * blocked ones — is addressed to the topic, and `workBoard` keeps
+   * requests whose `to` parses to it — a board item naming no provable
+   * `to` never lists, the same "unknown stays out" rule `channel`
+   * applies. `board`, `channels`, `sessions`, `seats` and
+   * `coordination` carry no per-item topic in their projections and stay
+   * unfiltered, like they do under `channel`. `wakes` and `inbox`
+   * delegate to reads that carry no topic filter of their own, so the
+   * digest applies the same `groupAddressTopicOf` verdict to the rows
+   * those reads return: `wakes` filters the resolved page's hints on
+   * their own `to` labels — `matched` is exact when the bounded queue
+   * tail read is complete and a proven lower bound when `truncated`,
+   * the same convention the section's own `truncated` flag already
+   * documents — while `inbox` pages the delegated read to the store's
+   * end and applies the verdict itself, so its `matched` stays the true
+   * topic-filtered total across the retained store. The value takes the
+   * strict channel-name grammar `agentChannelNameSchema` validates —
+   * the same grammar a `group:<room>:<topic>` label's topic segment
+   * must satisfy — composing with `channel` into one room AND topic;
+   * matching parses the routing label, needs no registry and never
+   * widens on unknown state. Every section's count stays the filtered
+   * total, never the unfiltered one. */
+  topic?: string;
   /** Keep only pending items provably sent by the agent `from` names — the
    * same sender rule every bus read's `--from` applies, decided on each
    * section's own sender evidence: feed jobs and announced jobs keep
@@ -1258,6 +1294,8 @@ export type BusWorkMineResult =
       priority?: BusPriority;
       /** The room filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
       channel?: string;
+      /** The group-address topic filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
+      topic?: string;
       /** The sender filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
       from?: string;
       /** The sender-exclusion filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
@@ -1313,6 +1351,11 @@ const WORK_MINE_THREADS_MAX = 20;
 const WORK_MINE_BLOCKED_MAX = 20;
 /** Bounded scan over the retained store, same page bound the inbox reader uses. */
 const WORK_MINE_NEXT_MAX_PAGES = Math.ceil(BUS_INBOX_MAX_MESSAGES / BUS_INBOX_MAX_READ) + 1;
+/** Delegated-inbox pages a topic-filtered digest collects: the shared read has
+ * no topic filter of its own, so `inbox` under `topic` pages it to the store's
+ * end and applies `groupAddressTopicOf` itself — the same page bound the
+ * pending-work walk uses keeps the collect bounded by the retained store. */
+const WORK_MINE_INBOX_TOPIC_MAX_PAGES = WORK_MINE_NEXT_MAX_PAGES;
 /** Display clip for one mail summary; the digest carries no raw body, so JSON and human output share it. */
 const WORK_MINE_SUMMARY_MAX = 200;
 
@@ -1413,7 +1456,7 @@ function busWorkFeedJobCitesResultOutcome(job: BusWorkFeedJob, outcome: WorkResu
 function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined,
   jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number, channelPrefix?: string,
   from?: string, excludeFrom?: string, envelopeId?: string, bodyKind?: string,
-  resultOutcome?: WorkResultOutcome): BusWorkMineJobs {
+  resultOutcome?: WorkResultOutcome, topic?: string): BusWorkMineJobs {
   if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
     ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
@@ -1432,6 +1475,7 @@ function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | 
       (sinceMs === undefined || job.updatedAt >= sinceMs) &&
       (beforeMs === undefined || job.updatedAt < beforeMs) &&
       (channelPrefix === undefined || job.to.startsWith(channelPrefix)) &&
+      (topic === undefined || groupAddressTopicOf(job.to) === topic) &&
       (fromOwner === undefined || fromOwner(job.owner)) &&
       (excludeOwner === undefined || !excludeOwner(job.owner)) &&
       (envelopeId === undefined || busWorkFeedJobCitesEnvelope(job, envelopeId)) &&
@@ -1478,7 +1522,7 @@ const ANNOUNCED_DONE: ReadonlySet<BusWorkFeedJob['status']> = new Set(['done', '
 function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined,
   jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number, channelPrefix?: string,
   from?: string, excludeFrom?: string, envelopeId?: string, bodyKind?: string,
-  resultOutcome?: WorkResultOutcome): BusWorkMineAnnounced {
+  resultOutcome?: WorkResultOutcome, topic?: string): BusWorkMineAnnounced {
   if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
     ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
@@ -1497,6 +1541,7 @@ function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: stri
       (sinceMs === undefined || job.updatedAt >= sinceMs) &&
       (beforeMs === undefined || job.updatedAt < beforeMs) &&
       (channelPrefix === undefined || job.to.startsWith(channelPrefix)) &&
+      (topic === undefined || groupAddressTopicOf(job.to) === topic) &&
       (fromOwner === undefined || fromOwner(job.owner)) &&
       (excludeOwner === undefined || !excludeOwner(job.owner)) &&
       (envelopeId === undefined || busWorkFeedJobCitesEnvelope(job, envelopeId)) &&
@@ -1522,9 +1567,12 @@ function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: stri
  * resumes strictly before it and `agents bus inbox --after` redelivers nothing
  * shown and skips nothing pending.
  */
-function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number,
-  contains?: string): BusWorkMineInbox {
-  const page = readAgentInbox(agent, { limit: WORK_MINE_INBOX_MAX + 1, matched: true,
+/** The shared-read filters `work mine`'s inbox section forwards verbatim —
+ * `topic` is deliberately absent: the delegated read carries no group-topic
+ * filter of its own, so a topic-filtered digest applies `groupAddressTopicOf`
+ * to the rows the read returns instead of asking it to. */
+function workMineInboxFilters(options: BusWorkMineOptions, contains?: string) {
+  return {
     ...(options.job === undefined ? {} : { job: options.job }),
     ...(options.since === undefined ? {} : { since: options.since }),
     ...(options.before === undefined ? {} : { before: options.before }),
@@ -1537,7 +1585,33 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number,
     ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
     ...(options.result === undefined ? {} : { result: options.result }),
     ...(options.thread === undefined ? {} : { thread: options.thread }),
-    ...(contains === undefined ? {} : { contains }) },
+    ...(contains === undefined ? {} : { contains }),
+  };
+}
+
+/** One inbox row's digest item — the same projection the unfiltered and
+ * topic-filtered paths share, so a row reads identically either way. */
+function workMineInboxItem(message: InboxMessage): BusWorkMineInboxMessage {
+  return {
+    cursor: message.cursor, id: message.envelope.id, ts: new Date(message.receivedAt).toISOString(),
+    priority: message.priority, kind: message.kind, channel: message.channel,
+    from: message.envelope.from, fromAgent: message.fromAgent,
+    summary: mineField(busBodySummary(message.envelope.body) ?? busBodyFallbackSummary(message.envelope.body),
+      WORK_MINE_SUMMARY_MAX),
+    // Claimable work and worker-handoff mail keep the hold evidence the
+    // inbox read already computed; other kinds carry no held field at all.
+    ...(message.held === undefined ? {} : { held: message.held, holder: message.holder ?? null }),
+    // Work-feed citations keep the same live job state the inbox read
+    // resolved; other bodies carry no job field at all.
+    ...(message.job === undefined ? {} : { job: message.job }),
+  };
+}
+
+function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number,
+  contains?: string): BusWorkMineInbox {
+  const filters = workMineInboxFilters(options, contains);
+  if (options.topic !== undefined) return inboxTopicSection(agent, options, nowMs, filters);
+  const page = readAgentInbox(agent, { ...filters, limit: WORK_MINE_INBOX_MAX + 1, matched: true },
     { root: options.root, now: () => nowMs });
   if (page.status !== 'ok') return { status: page.status, reason: page.reason };
   let shown = page.messages, nextCursor = page.nextCursor, truncated = false;
@@ -1553,19 +1627,57 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number,
   return {
     status: 'ok', agent: page.agent, nextCursor, truncated,
     matched: page.matched ?? shown.length,
-    messages: shown.map(message => ({
-      cursor: message.cursor, id: message.envelope.id, ts: new Date(message.receivedAt).toISOString(),
-      priority: message.priority, kind: message.kind, channel: message.channel,
-      from: message.envelope.from, fromAgent: message.fromAgent,
-      summary: mineField(busBodySummary(message.envelope.body) ?? busBodyFallbackSummary(message.envelope.body),
-        WORK_MINE_SUMMARY_MAX),
-      // Claimable work and worker-handoff mail keep the hold evidence the
-      // inbox read already computed; other kinds carry no held field at all.
-      ...(message.held === undefined ? {} : { held: message.held, holder: message.holder ?? null }),
-      // Work-feed citations keep the same live job state the inbox read
-      // resolved; other bodies carry no job field at all.
-      ...(message.job === undefined ? {} : { job: message.job }),
-    })),
+    messages: shown.map(workMineInboxItem),
+  };
+}
+
+/**
+ * The `topic`-filtered twin of the inbox section: the delegated read carries
+ * no group-topic filter, so the digest pages it to the store's end — the same
+ * bounded collect `pendingWorkSections` runs — gathers every row the shared
+ * filters accept, and applies the `groupAddressTopicOf` verdict itself.
+ * `matched` is then the true topic-filtered total across the retained store,
+ * the same honesty the unfiltered section's `matched:true` read reports; the
+ * shown window keeps the oldest WORK_MINE_INBOX_MAX topic matches in cursor
+ * order and `nextCursor` resumes strictly before the first undelivered one —
+ * or at the store's end when the topic set fits — so `agents bus inbox
+ * --after` redelivers nothing shown and skips nothing pending.
+ */
+function inboxTopicSection(agent: string, options: BusWorkMineOptions, nowMs: number,
+  filters: ReturnType<typeof workMineInboxFilters>): BusWorkMineInbox {
+  const topic = options.topic!;
+  const collected: InboxMessage[] = [];
+  let agentName = agent, after = 0, nextCursor = 0, finished = false;
+  for (let index = 0; index < WORK_MINE_INBOX_TOPIC_MAX_PAGES && !finished; index += 1) {
+    const page = readAgentInbox(agent, { ...filters, after, limit: BUS_INBOX_MAX_READ },
+      { root: options.root, now: () => nowMs });
+    if (page.status !== 'ok') return { status: page.status, reason: page.reason };
+    agentName = page.agent;
+    collected.push(...page.messages);
+    nextCursor = page.nextCursor;
+    if (page.messages.length < BUS_INBOX_MAX_READ) { finished = true; break; }
+    if (page.nextCursor <= after) {
+      return { status: 'retryable', reason: 'Bus store cursor did not advance.' };
+    }
+    after = page.nextCursor;
+  }
+  if (!finished) {
+    return { status: 'retryable', reason: 'Bus store scan exceeded the bounded read.' };
+  }
+  // Cursor order is the store's own receipt order, so the oldest window is
+  // the smallest cursors — the same cap the unfiltered section keeps.
+  const matched = collected
+    .filter(message => groupAddressTopicOf(message.envelope.to) === topic)
+    .sort((a, b) => a.cursor - b.cursor);
+  const truncated = matched.length > WORK_MINE_INBOX_MAX;
+  const shown = matched.slice(0, WORK_MINE_INBOX_MAX);
+  const resumeCursor = truncated ? shown[shown.length - 1]!.cursor : nextCursor;
+  return {
+    status: 'ok', agent: agentName, nextCursor: resumeCursor, truncated,
+    matched: matched.length,
+    messages: shown
+      .sort((a, b) => a.priority.localeCompare(b.priority) || a.cursor - b.cursor)
+      .map(workMineInboxItem),
   };
 }
 
@@ -1594,7 +1706,8 @@ function mailboxSection(agent: string, identity: AgentIdentity | undefined,
   const fromMatch = options.from === undefined ? undefined : agentRefAddressMatcher(options.from, registry);
   const excludeFromMatch = options.excludeFrom === undefined ? undefined : agentRefAddressMatcher(options.excludeFrom, registry);
   const match = job === undefined && contains === undefined && since === undefined && before === undefined &&
-      priority === undefined && channelPrefix === undefined && fromMatch === undefined && excludeFromMatch === undefined &&
+      priority === undefined && channelPrefix === undefined && options.topic === undefined &&
+      fromMatch === undefined && excludeFromMatch === undefined &&
       options.id === undefined && options.inReplyTo === undefined && options.bodyKind === undefined &&
       options.result === undefined && options.thread === undefined ? undefined
     : (message: BusMailboxPendingMessage) =>
@@ -1603,6 +1716,7 @@ function mailboxSection(agent: string, identity: AgentIdentity | undefined,
       (before === undefined || message.acceptedAt < before) &&
       (priority === undefined || message.envelope.priority === priority) &&
       (channelPrefix === undefined || message.envelope.to.startsWith(channelPrefix)) &&
+      (options.topic === undefined || groupAddressTopicOf(message.envelope.to) === options.topic) &&
       (fromMatch === undefined || fromMatch(message.envelope.from)) &&
       (excludeFromMatch === undefined || !excludeFromMatch(message.envelope.from)) &&
       (options.id === undefined || message.envelope.id === options.id) &&
@@ -1808,8 +1922,12 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
   // A room filter keeps only envelopes whose `to` carries `group:<name>:` —
   // the same raw prefix the feed `--channel` rule and every other bus read's
   // channel filter match, registry-free so unknown channel state never
-  // widens it.
+  // widens it. A topic filter keeps only envelopes whose `to` parses to
+  // `group:<room>:<topic>` — the same `groupAddressTopicOf` verdict every
+  // bus read's shared group-topic filter applies, composing with the room
+  // prefix into one room AND topic.
   const channelPrefix = options.channel === undefined ? undefined : `group:${options.channel}:`;
+  const topic = options.topic;
   // The same `agentRefAddressMatcher` sender rule every bus `--from`/
   // `--exclude-from` read applies: identity labels of the resolved ref,
   // exact-label fallback on an unresolvable ref or unreadable registry —
@@ -1883,6 +2001,7 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
       if (options.before !== undefined && row.receivedAt >= options.before) continue;
       if (options.priority !== undefined && envelope.priority !== options.priority) continue;
       if (channelPrefix !== undefined && !envelope.to.startsWith(channelPrefix)) continue;
+      if (topic !== undefined && groupAddressTopicOf(envelope.to) !== topic) continue;
       if (fromMatch !== undefined && !fromMatch(envelope.from)) continue;
       if (excludeFromMatch !== undefined && excludeFromMatch(envelope.from)) continue;
       // An id filter keeps only the envelope whose own wire id equals the
@@ -2027,6 +2146,7 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
     if (options.before !== undefined && candidate.receivedAt >= options.before) return false;
     if (options.priority !== undefined && candidate.priority !== options.priority) return false;
     if (channelPrefix !== undefined && !candidate.to.startsWith(channelPrefix)) return false;
+    if (topic !== undefined && groupAddressTopicOf(candidate.to) !== topic) return false;
     if (fromMatch !== undefined && (report.from === null || !fromMatch(report.from))) return false;
     if (excludeFromMatch !== undefined && (report.from === null || excludeFromMatch(report.from))) return false;
     if (options.id !== undefined && candidate.id !== options.id && report.id !== options.id) return false;
@@ -2210,6 +2330,17 @@ function threadInChannel(thread: Conversation, channelPrefix: string | undefined
 }
 
 /**
+ * The `topic` twin of `threadInChannel`: the thread's latest message's `to`
+ * must parse to `group:<room>:<topic>` under the same `groupAddressTopicOf`
+ * verdict every bus read's shared group-topic filter applies — a label or
+ * bare-room latest word names no provable topic and never matches.
+ */
+function threadInTopic(thread: Conversation, topic: string | undefined): boolean {
+  return topic === undefined ||
+    groupAddressTopicOf(thread.messages[thread.messages.length - 1]!.to) === topic;
+}
+
+/**
  * The conversation threads whose latest message still wants this agent's
  * answer — the same thread state `agents conversations --waiting`
  * computes, narrowed to waits the agent (or a channel it belongs to) owes.
@@ -2224,14 +2355,14 @@ function threadInChannel(thread: Conversation, channelPrefix: string | undefined
  * keeps the damaged-row count honest.
  */
 function threadsSection(conversations: AgentConversations, scope: ConversationScope,
-  channelPrefix?: string): BusWorkMineThreads {
+  channelPrefix?: string, topic?: string): BusWorkMineThreads {
   const source = conversations.source;
   if (source === 'unavailable' || conversations.conversations === null) {
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
   }
   const matched = conversations.conversations.filter(thread => thread.waiting !== null &&
     scope.denotes(thread.waiting.on) && !scope.isSelf(thread.messages[thread.messages.length - 1]!.from) &&
-    threadInChannel(thread, channelPrefix));
+    threadInChannel(thread, channelPrefix) && threadInTopic(thread, topic));
   return { status: 'ok', source, matched: matched.length,
     items: matched.slice(0, WORK_MINE_THREADS_MAX).map(thread => {
       const last = thread.messages[thread.messages.length - 1]!;
@@ -2262,14 +2393,14 @@ function threadsSection(conversations: AgentConversations, scope: ConversationSc
  * label off the waiting message, the other on it).
  */
 function awaitingSection(conversations: AgentConversations, scope: ConversationScope,
-  channelPrefix?: string): BusWorkMineAwaiting {
+  channelPrefix?: string, topic?: string): BusWorkMineAwaiting {
   const source = conversations.source;
   if (source === 'unavailable' || conversations.conversations === null) {
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
   }
   const matched = conversations.conversations.filter(thread => thread.waiting !== null &&
     scope.isSelf(thread.messages[thread.messages.length - 1]!.from) && !scope.isSelf(thread.waiting.on) &&
-    threadInChannel(thread, channelPrefix));
+    threadInChannel(thread, channelPrefix) && threadInTopic(thread, topic));
   return { status: 'ok', source, matched: matched.length,
     items: matched.slice(0, WORK_MINE_THREADS_MAX).map(thread => {
       const last = thread.messages[thread.messages.length - 1]!;
@@ -2299,7 +2430,7 @@ function awaitingSection(conversations: AgentConversations, scope: ConversationS
  * unreadable-store rule as the other thread sections.
  */
 function blockedSection(conversations: AgentConversations, scope: ConversationScope, nowMs: number,
-  channelPrefix?: string): BusWorkMineBlocked {
+  channelPrefix?: string, topic?: string): BusWorkMineBlocked {
   const source = conversations.source;
   if (source === 'unavailable' || conversations.conversations === null) {
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
@@ -2307,7 +2438,7 @@ function blockedSection(conversations: AgentConversations, scope: ConversationSc
   const matched = conversations.conversations
     .filter(thread => thread.state === 'blocked' &&
       thread.participants.some(participant => scope.denotes(participant.name)) &&
-      threadInChannel(thread, channelPrefix))
+      threadInChannel(thread, channelPrefix) && threadInTopic(thread, topic))
     .map(thread => ({ thread, blockedMs: Math.max(0, nowMs - Date.parse(thread.lastAt)) }))
     .sort((a, b) => b.blockedMs - a.blockedMs ||
       (a.thread.id < b.thread.id ? -1 : a.thread.id > b.thread.id ? 1 : 0));
@@ -2446,7 +2577,26 @@ function claimContainsMatch(claim: BusWorkMineClaim, needle: string): boolean {
  * lists. `board`, `channels`, `sessions` and `seats`
  * carry no
  * per-item room and stay unfiltered. `channels` is registry context, not
- * pending work, and stays unfiltered under any filter. `options.thread`
+ * pending work, and stays unfiltered under any filter. `options.topic`
+ * applies the shared group-topic rule every bus read's `--topic` shares —
+ * the `groupAddressTopicOf` verdict on `group:<room>:<topic>` labels —
+ * across the same address-carrying sections `channel` reaches, narrowed
+ * from the room prefix to the exact topic: feed jobs and announced jobs
+ * keep announcements whose `to` parses to it, next/handoffs/mailbox keep
+ * envelopes whose `to` parses to it, dead letters keep reports whose
+ * ORIGINAL `to` parses to it, claims keep only message claims whose
+ * resolved leased envelope's `to` parses to it — a claim naming no
+ * resolved message never lists — the three thread sections keep threads
+ * whose latest message is addressed to the topic, and work-board requests
+ * keep those whose `to` parses to it — a board item naming no provable
+ * `to` never lists. `wakes` and `inbox` delegate to reads carrying no
+ * topic filter of their own, so the digest applies the verdict to the
+ * rows they return: `wakes` filters the resolved page's own `to` labels
+ * (`matched` exact on a complete tail read, a proven lower bound under
+ * `truncated`) while `inbox` pages the delegated read to the store's end
+ * and reports the true topic-filtered total. `board`, `channels`,
+ * `sessions`, `seats` and `coordination` carry no per-item topic and
+ * stay unfiltered. `options.thread`
  * applies the thread-label rule every bus read's `--thread` shares across
  * the sections whose items provably carry a declared conversation bucket:
  * next/handoffs/mailbox keep envelopes whose body the `busBodyThread`
@@ -2499,6 +2649,13 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   // error and never a widened one.
   if (options.channel !== undefined && !agentChannelNameSchema.safeParse(options.channel).success) {
     return { status: 'invalid', reason: 'invalid-channel' };
+  }
+  // The same strict channel-name grammar a `group:<room>:<topic>` label's
+  // topic segment must satisfy — the shared group-topic filter's own
+  // validation, so an unparseable topic is a usage error, never a widened
+  // or silently-empty read.
+  if (options.topic !== undefined && !agentChannelNameSchema.safeParse(options.topic).success) {
+    return { status: 'invalid', reason: 'invalid-topic' };
   }
   // The same printable-label bound every bus `--from`/`--exclude-from`
   // read validates: a routing label is 1-128 visible ASCII characters.
@@ -2553,9 +2710,9 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
 
   const feed = readBusWorkFeed({ root: options.root, now: () => nowMs, claims: true });
   const jobs = jobsSection(feed, agent, options.root, options.job, contains, sinceMs, beforeMs, channelPrefix,
-    options.from, options.excludeFrom, options.id, options.bodyKind, options.result);
+    options.from, options.excludeFrom, options.id, options.bodyKind, options.result, options.topic);
   const announced = announcedSection(feed, agent, options.root, options.job, contains, sinceMs, beforeMs, channelPrefix,
-    options.from, options.excludeFrom, options.id, options.bodyKind, options.result);
+    options.from, options.excludeFrom, options.id, options.bodyKind, options.result, options.topic);
   const { next, handoffs, deadLetters } = pendingWorkSections(agent, options, nowMs, registry, contains);
   // One conversations read backs all three thread views: waits the agent
   // owes, its own unanswered asks and blocked threads it is a party to.
@@ -2581,9 +2738,9 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       ...(options.thread === undefined ? {} : { thread: options.thread }) },
     { root: options.root, now: () => nowMs });
   const scope = conversationScope(agent, registry, identity);
-  const threads = threadsSection(conversations, scope, channelPrefix);
-  const awaiting = awaitingSection(conversations, scope, channelPrefix);
-  const blocked = blockedSection(conversations, scope, nowMs, channelPrefix);
+  const threads = threadsSection(conversations, scope, channelPrefix, options.topic);
+  const awaiting = awaitingSection(conversations, scope, channelPrefix, options.topic);
+  const blocked = blockedSection(conversations, scope, nowMs, channelPrefix, options.topic);
 
   if (claims.status === 'ok') {
     if (feed.status === 'ok') {
@@ -2656,6 +2813,15 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       // applies.
       claims.claims = claims.claims.filter(claim =>
         claim.message?.status === 'resolved' && claim.message.to.startsWith(channelPrefix));
+    }
+    if (options.topic !== undefined) {
+      // A claim lists under a topic filter only when its leased envelope's
+      // `to` parses to `group:<room>:<topic>` — the same `groupAddressTopicOf`
+      // verdict every other section's topic match applies. A claim with no
+      // resolved message names no provable topic and never lists, the same
+      // "unknown stays out" rule the room filter applies.
+      claims.claims = claims.claims.filter(claim =>
+        claim.message?.status === 'resolved' && groupAddressTopicOf(claim.message.to) === options.topic);
     }
     if (options.from !== undefined || options.excludeFrom !== undefined) {
       // A claim lists under a sender filter only when its leased envelope
@@ -2747,10 +2913,26 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       ...(options.result === undefined ? {} : { result: options.result }),
       ...(options.thread === undefined ? {} : { thread: options.thread }),
       ...(beforeMs === undefined ? {} : { before: beforeMs }) });
+  // The wakes read carries no group-topic filter of its own, so under
+  // `topic` the digest applies the same `groupAddressTopicOf` verdict to the
+  // resolved page's own `to` labels. `matched` is exact when the bounded
+  // queue tail read is complete (`page.truncated === false` proves every
+  // hint the other filters accept is on the page) and a proven lower bound
+  // when it is not — the same convention the section's `truncated` flag
+  // already documents — and `truncated` stays honest either way: the page's
+  // own truncation or a filtered set larger than the shown cap.
   const wakes: BusWorkMineWakes = page.status === 'ok'
-    ? { status: 'ok', agent: page.agent, scope: page.scope, matched: page.matched,
-        truncated: page.truncated || page.matched > WORK_MINE_WAKES_MAX,
-        wakes: page.wakes.slice(-WORK_MINE_WAKES_MAX) }
+    ? (() => {
+        const rows = options.topic === undefined ? page.wakes
+          : page.wakes.filter(row => groupAddressTopicOf(row.to) === options.topic);
+        const complete = page.truncated === false;
+        return { status: 'ok' as const, agent: page.agent, scope: page.scope,
+          matched: options.topic === undefined ? page.matched : rows.length,
+          truncated: options.topic === undefined
+            ? (page.truncated || page.matched > WORK_MINE_WAKES_MAX)
+            : (!complete || rows.length > WORK_MINE_WAKES_MAX),
+          wakes: rows.slice(-WORK_MINE_WAKES_MAX) };
+      })()
     : { status: page.status, reason: page.reason };
 
   const inbox = inboxSection(agent, options, nowMs, contains);
@@ -2788,6 +2970,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
     ...(beforeMs === undefined ? {} : { before: new Date(beforeMs).toISOString() }),
     ...(options.priority === undefined ? {} : { priority: options.priority }),
     ...(options.channel === undefined ? {} : { channel: options.channel }),
+    ...(options.topic === undefined ? {} : { topic: options.topic }),
     ...(options.from === undefined ? {} : { from: options.from }),
     ...(options.excludeFrom === undefined ? {} : { excludeFrom: options.excludeFrom }),
     ...(options.id === undefined ? {} : { id: options.id }),
@@ -3018,7 +3201,10 @@ function workBoardContainsText(item: WorkBoardItem): string {
  * request rule, no in-reply-to citation); `contains` matches the
  * scrubbed state/channel/missing-evidence/dependency text; `since`/
  * `before` bound `receivedAt` on `[since, before)`; `channel` keeps
- * requests whose `to` carries `group:<name>:`; `from`/`excludeFrom` match
+ * requests whose `to` carries `group:<name>:`; `topic` keeps requests
+ * whose `to` parses to `group:<room>:<topic>` under the same
+ * `groupAddressTopicOf` verdict every other section applies — a board
+ * item naming no provable `to` never lists; `from`/`excludeFrom` match
  * the request's `from` label with an unprovable `from` never listing;
  * `id` keeps the request whose envelope id equals the value;
  * `priority`/`bodyKind`/`result`/`thread` leave the section whole. An
@@ -3065,6 +3251,7 @@ function workBoardSection(agent: string, identity: AgentIdentity | undefined,
       if (beforeMs !== undefined && at >= beforeMs) return [];
     }
     if (channelPrefix !== undefined && (to === null || !to.startsWith(channelPrefix))) return [];
+    if (options.topic !== undefined && (to === null || groupAddressTopicOf(to) !== options.topic)) return [];
     if (fromMatch !== undefined || excludeFromMatch !== undefined) {
       if (from === null) return [];
       if (fromMatch !== undefined && !fromMatch(from)) return [];
@@ -3126,6 +3313,7 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
     (result.before === undefined ? '' : ` before=${result.before}`) +
     (result.priority === undefined ? '' : ` priority=${result.priority}`) +
     (result.channel === undefined ? '' : ` channel=${result.channel}`) +
+    (result.topic === undefined ? '' : ` topic=${result.topic}`) +
     (result.from === undefined ? '' : ` from=${result.from}`) +
     (result.excludeFrom === undefined ? '' : ` exclude-from=${result.excludeFrom}`) +
     (result.id === undefined ? '' : ` id=${result.id}`) +

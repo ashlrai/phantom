@@ -3545,10 +3545,10 @@ while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
-`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `coordination?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `from?`, `excludeFrom?`, `id?`, `inReplyTo?`, `bodyKind?`, `result?: WorkResultOutcome`, `thread?: string`, `now?: () => number` frozen once
+`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `coordination?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `topic?`, `from?`, `excludeFrom?`, `id?`, `inReplyTo?`, `bodyKind?`, `result?: WorkResultOutcome`, `thread?: string`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, contains?, since?, before?, priority?, channel?, from?, excludeFrom?, id?, inReplyTo?, bodyKind?, result?, thread?, claims, jobs, announced, next, handoffs, deadLetters, threads, awaiting, blocked, wakes, inbox, mailbox, board, workBoard, sessions, coordination, channels, seats?}` or `{status:'invalid',
+asOf, job?, contains?, since?, before?, priority?, channel?, topic?, from?, excludeFrom?, id?, inReplyTo?, bodyKind?, result?, thread?, claims, jobs, announced, next, handoffs, deadLetters, threads, awaiting, blocked, wakes, inbox, mailbox, board, workBoard, sessions, coordination, channels, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, a `job` outside the same rule
 (`invalid-job`), a `contains` outside the shared bounded free-text
@@ -3557,13 +3557,15 @@ rule every bus `--contains` read applies (`invalid-contains`), a
 (`invalid-since`/`invalid-before`), a `priority` outside the P0..P3 band
 (`invalid-priority`), a `channel` outside the strict channel-name
 grammar every bus `--channel` read validates (`invalid-channel`), a
+`topic` outside the same grammar a `group:<room>:<topic>` label's
+topic segment must satisfy (`invalid-topic`), a
 `from`/`excludeFrom` outside the same printable-label bound every bus
 sender filter shares (`invalid-from`/`invalid-exclude-from`), an
 `id`/`inReplyTo`/`bodyKind`/`thread` outside the same printable-label bound every bus
 `--id`/`--in-reply-to`/`--body-kind`/`--thread` read validates (`invalid-id`/`invalid-in-reply-to`/`invalid-body-kind`/`invalid-thread`),
 or a `result` outside the `WORK_RESULT_OUTCOMES` vocabulary every bus
 `--result` read validates (`invalid-result`).
-`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `from`, `excludeFrom`, `id`, `inReplyTo`, `bodyKind`, `result` and `thread` echo the applied
+`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `topic`, `from`, `excludeFrom`, `id`, `inReplyTo`, `bodyKind`, `result` and `thread` echo the applied
 filters and are absent on an
 unfiltered read. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -3791,7 +3793,12 @@ a lower bound, never a proven total, when `truncated` marks queue-tail or
 cap cuts beyond the shown slice — carrying the same `scope`
 (`'identity'`/`'label'`) the page reports — claim-holder `wh-…` rows carrying the
 same `claimHolder` citation `readAgentWakes` resolves — and
-`unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
+`unknown-agent`/`unavailable` with `reason`. The delegated read carries
+no topic filter of its own, so under `topic` the section applies the
+shared `groupAddressTopicOf` verdict to the resolved page's own `to`
+labels: `matched` stays exact when the bounded queue-tail read is
+complete and a proven lower bound under `truncated`, the same
+convention the section's `truncated` flag documents. `inbox` reuses `readAgentInbox`
 for the next page of mail addressed to the agent — same matching, order and
 owner-share receipt checks as `agents bus inbox` — as `{status:'ok', agent,
 messages, nextCursor, matched, truncated}`: `matched` is the true pending
@@ -3813,7 +3820,13 @@ the digest's mail rows answer where each announced job stands without a
 for one row past the 20-message cap so `truncated` is definitive — a full
 window proves mail remains beyond `nextCursor`, a short one proves the scan
 reached the store's end — and on overflow the newest scanned row is the one
-dropped, so `nextCursor` resumes strictly before it. A non-ok inbox read
+dropped, so `nextCursor` resumes strictly before it. The delegated read
+carries no topic filter of its own, so under `topic` the section instead
+pages `readAgentInbox` to the store's end under a bounded page budget,
+applies the shared `groupAddressTopicOf` verdict itself and reports the
+true topic-filtered total across the retained store — `messages` keeps the
+oldest topic matches in cursor order and `nextCursor` resumes strictly
+before the first undelivered row or at the store's end. A non-ok inbox read
 reports `unknown-agent`/`unavailable`/`retryable`/`invalid` with `reason`.
 `mailbox` is the digest's window into the legacy `phm bus` mailbox store
 (`$ASHLR_HOME/bus-mailbox`, the records `phm bus inbox --to <label>` reads and
@@ -3940,12 +3953,15 @@ state/channel/missing-evidence/dependency text (ids, routing labels,
 owner and receipt stay out — they have their own fields and filters),
 `since`/`before` bound `receivedAt` on the shared `[since, before)`
 window, `channel` keeps requests whose `to` carries `group:<name>:` (no
-provable `to` never lists), `from`/`excludeFrom` match the request's
-`from` label under `agentRefAddressMatcher` (an item naming no provable
-`from` never lists under either), `id` keeps the request whose envelope
-id equals the value, and `priority`/`bodyKind`/`result`/`thread` leave
-the section whole — the board projection carries no per-item band, body
-kind, wire result outcome or thread label. An item may also appear under
+provable `to` never lists), `topic` keeps requests whose `to` parses to
+`group:<room>:<topic>` under the same `groupAddressTopicOf` verdict every
+other section applies — room-agnostic, composing with `channel` into one
+room AND topic, no provable `to` never listing — `from`/`excludeFrom`
+match the request's `from` label under `agentRefAddressMatcher` (an item
+naming no provable `from` never lists under either), `id` keeps the
+request whose envelope id equals the value, and `priority`/`bodyKind`/
+`result`/`thread` leave the section whole — the board projection carries
+no per-item band, body kind, wire result outcome or thread label. An item may also appear under
 `next`, `handoffs`, `inbox` or the thread sections with its raw envelope
 view — this section adds the ownership/verification classification those
 projections do not compute, the same split the unified inbox keeps

@@ -71,7 +71,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--exclude-owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work claim-next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>] [--exclude-announcer <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--wait-ms <1..300000>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>] [--wait-ms <1..300000>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -514,7 +514,26 @@ lists; board, channels, sessions,
 coordination and seats
 carry no
 per-item room and stay unfiltered, and every count stays the filtered
-total. --from on work mine keeps only pending items provably sent by the
+total. --topic on work mine keeps only pending items provably addressed
+under one group:<room>:<topic> topic of a bus channel — the same
+groupAddressTopicOf verdict every bus read's shared group-topic filter
+applies, narrower than --channel's room prefix, so "what is pending for
+me on this topic" is one filtered digest: feed jobs and announced jobs
+keep announcements whose to parses to that exact topic, next, handoffs
+and mailbox keep envelopes whose to parses to it, claims keep only
+message claims whose resolved leased envelope sits on the topic (a claim
+naming no resolved message never lists), deadLetters keep reports whose
+ORIGINAL recipient parses to it, the thread sections keep threads whose
+latest message is addressed to the topic, and work-board requests keep
+those whose to parses to it — a board item naming no provable to never
+lists; wakes and inbox delegate to reads carrying no topic filter of
+their own, so the digest applies the same verdict to the rows they
+return — wakes filtering the resolved page's own to labels (matched
+exact on a complete queue-tail read, a proven lower bound under
+truncated) while inbox pages the delegated read to the store's end and
+reports the true topic-filtered total; board, channels, sessions,
+coordination and seats carry no per-item topic and stay unfiltered, and
+every count stays the filtered total. --from on work mine keeps only pending items provably sent by the
 named agent — the same sender rule every bus read's --from applies, so
 "what is pending for me from X" is one filtered digest: feed jobs and
 announced jobs keep announcements whose owner resolves to the ref, next,
@@ -1491,6 +1510,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (channel !== undefined && !agentChannelNameSchema.safeParse(channel).success) {
         throw new UsageError('--channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).');
       }
+      const topic = one('--topic');
+      if (topic !== undefined && !agentChannelNameSchema.safeParse(topic).success) {
+        throw new UsageError('--topic takes a bus channel-name topic (a-z, 0-9, _ -; 1-32 chars).');
+      }
       const senderArg = (flag: '--from' | '--exclude-from'): string | undefined => {
         const value = one(flag);
         if (value !== undefined && !/^[\x21-\x7e]{1,128}(?![\s\S])/.test(value)) {
@@ -1512,6 +1535,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           ...(before === undefined ? {} : { before }),
           ...(priority === undefined ? {} : { priority }),
           ...(channel === undefined ? {} : { channel }),
+          ...(topic === undefined ? {} : { topic }),
           ...(from === undefined ? {} : { from }),
           ...(excludeFrom === undefined ? {} : { excludeFrom }),
           ...(id === undefined ? {} : { id }),
