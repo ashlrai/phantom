@@ -1593,6 +1593,28 @@
  *     counted and never guessed, and items emit only for the
  *     fleet's own repository since the machinery axes carry no
  *     target-repo dimension;
+ *   - the lane-capacity audit journal's recurring hold and churn
+ *     cells: the `<iso>\t<lane>\t<old>-><target>\t<by>` retarget,
+ *     `<iso>\t<lane>\thold <minutes>m\t<by>: <reason>` hold and
+ *     `<iso>\t<lane>\theld->released\t<by>` release lines the
+ *     guarded slots.json writers (setLaneTarget,
+ *     placeLaneHold, releaseLaneHold in src/core/fleet/) append to
+ *     <runs>/queue/lane-target-changes.log — until now read only by
+ *     tests asserting individual writes, so a lane that kept earning
+ *     holds (the autohold empty-streak brake, the incident gate,
+ *     operator brakes) or whose target kept oscillating never became
+ *     work (laneTargetChangesBacklogItems below). Rows count only
+ *     under the writers' four-field contract; a hold cell emits per
+ *     lane at three audit lines across two distinct UTC days inside
+ *     the 7-day window, a churn cell additionally requires the
+ *     in-window retarget transitions to have run in both directions —
+ *     monotone scaling is deliberate tuning — releases count as
+ *     context, each hold line is one placement-or-refresh audit event
+ *     (self-expiring holds close silently, so rows are a recorded
+ *     floor of brake events), dispatchd's autobackoff holds write no
+ *     audit line, truncated tails are stated as lower bounds and
+ *     items emit only for the fleet's own repository since the
+ *     journal describes this install's lane configuration;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1739,6 +1761,7 @@ import { nodesOffloadBacklogItems } from './nodes-offload-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 import { reviewBlocksBacklogItems } from './review-blocks-backlog.js';
 import { capacityHistoryBacklogItems } from './capacity-history-backlog.js';
+import { laneTargetChangesBacklogItems } from './lane-target-changes-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -3704,6 +3727,31 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the fleet's own repository since the machinery axes carry no
   // target-repo dimension.
   items.push(...await outcomeLedgerBacklogItems({ repo }));
+
+  // Lane-capacity audit journal (<runs>/queue/lane-target-changes.log):
+  // the guarded slots.json writers' append-only audit trail —
+  // setLaneTarget's `<iso>\t<lane>\t<old>-><target>\t<by>` retarget
+  // lines, placeLaneHold's `<iso>\t<lane>\thold <minutes>m\t<by>:
+  // <reason>` placements and releaseLaneHold's `<iso>\t<lane>\t
+  // held->released\t<by>` releases. Until now the log's only readers
+  // were tests asserting individual writes — the lane state lives in
+  // slots.json and every surface renders current state, so a lane
+  // that kept earning holds (the autohold empty-streak brake, the
+  // incident gate, operator brakes) or whose target kept oscillating
+  // between raises and cuts never became work. A hold cell emits per
+  // lane at three audit lines across two distinct UTC days inside the
+  // 7-day window; a churn cell emits per lane when the in-window
+  // retarget transitions hit the same bars AND ran in both directions
+  // — monotone scaling is deliberate tuning, context only — releases
+  // count as context, each hold line is one placement-or-refresh
+  // audit event (self-expiring holds close silently, so rows are a
+  // recorded floor of brake events), dispatchd's autobackoff holds
+  // write no audit line at all, malformed lines are counted never
+  // guessed, truncated tails are stated as lower bounds, and only the
+  // fleet's own repository inherits the items since the journal
+  // describes this install's lane configuration and carries no repo
+  // column.
+  items.push(...await laneTargetChangesBacklogItems({ repo }));
   return { items, errors };
 }
 
