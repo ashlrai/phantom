@@ -1214,6 +1214,9 @@ the enclosing tick. A confirmed fleet stop, lane hold or zero launch target
 reports zero free slots even when lane occupancy or the configured target is
 unknown. The missing lane measurements stay null. Without usable fleet admission
 evidence, the starvation view uses lane-local headroom.
+The Fleet lane view expires usage-journal credit, burn rate and projected
+exhaustion at the recorded quota reset, even if the sample is still fresh.
+The previous window's exhausted reading stops suppressing starvation at reset.
 `phm fleet lane-supply` and the Fleet lane-supply API use the same free-slot
 measurement for their idle alarms. A confirmed fleet stop clears the alarm,
 and limited shared capacity bounds the reported free slots. The lane's target
