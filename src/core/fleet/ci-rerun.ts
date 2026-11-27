@@ -56,9 +56,13 @@ export function observedVerdicts(entries: readonly Entry[], nowMs: number): Entr
 }
 
 function triggeringTests(entry: Entry): string[] {
-  const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
-  return [...new Set(tests.filter((test): test is string =>
-    typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX))].sort();
+  const validTest = (test: unknown): test is string =>
+    typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX;
+  if (entry.tests === undefined) return validTest(entry.test) ? [entry.test] : [];
+  if (!Array.isArray(entry.tests) || !entry.tests.every(validTest)) return [];
+  const tests = [...new Set(entry.tests)].sort();
+  if (entry.test !== undefined && (tests.length !== 1 || tests[0] !== entry.test)) return [];
+  return tests;
 }
 
 /** Keep the earliest attempt time and only attribute consistent test evidence. */

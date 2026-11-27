@@ -739,6 +739,9 @@ Discovery counts one attempt per repository and workflow run ID,
 and at most one verdict per repository and workflow run ID. The earliest
 observed receipt sets each attempt or verdict's time in the recurrence
 window, so a replay cannot bring expired evidence back into the window.
+If an attempt carries both `test` and `tests`, both must identify the same
+single test. A malformed test array or disagreement between fields withholds
+per-test evidence while the receipt still counts as a workflow attempt.
 If observed verdict receipts for a run disagree on its head, test
 attribution, or verdict, that run provides no per-test verdict evidence.
 For recurring call failures, discovery counts one call result per
