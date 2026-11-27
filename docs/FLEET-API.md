@@ -126,6 +126,12 @@ The Leader board and Fleet lane console share merge attribution. When a merge
 receipt lacks a lane and attribution falls back to the job's ledger history,
 events with an observation or merge timestamp after report time are excluded.
 
+The Leader board orders conflict observations by timestamp and excludes
+future observations. A new count replaces any count at the same timestamp.
+Delta compares the current count with the immediately preceding observation.
+Trend compares it with the oldest retained observation. Both require a count
+from a strictly earlier timestamp.
+
 | Method | Path | Query | Response type / source | Handler | Curl example |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/verse/leader` | none | [LeaderStateV1](../src/core/vision/leader-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader'` |
