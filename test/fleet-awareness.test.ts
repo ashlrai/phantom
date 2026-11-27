@@ -91,6 +91,23 @@ test('a fresh lane hold establishes zero availability with missing counts', () =
   expect(projectFleetAwareness(null, now - 1, status).lanes[0]?.available).toBeNull();
 });
 
+test.each([
+  { admit: true, decision: 'stop' },
+  { admit: false, decision: 'admit' },
+  { admit: 'false', decision: 'stop' },
+  { admit: false, decision: null },
+])('fleet availability ignores a malformed embedded admission record (%j)', verdict => {
+  const now = 100_000;
+  const lastTick = new Date(now).toISOString();
+  const status = {
+    schema: 'dispatchd.status.v1', last_tick: lastTick, paused: null,
+    lanes: { codex: { running: 1, target: 4, held: false } },
+    admission: { ts: lastTick, cap: 2, running: 2, ...verdict },
+  };
+  expect(projectFleetAwareness(null, now, status).lanes[0]?.available).toBe(3);
+  expect(projectFleetAwareness(null, now, { ...status, paused: true }).lanes[0]?.available).toBe(0);
+});
+
 test('a claim fenced by a rejoined session frees its host slots at once', () => {
   const f = fixture();
   const n = f.add('worker', { hostId: 'mac', slots: 2 });

@@ -6,7 +6,7 @@
  */
 import { parseLedgerTs } from '../metrics/loop.js';
 import { foldRouterOutcomes } from '../router/outcomes.js';
-import { laneLaunchTarget } from './lane-launch-target.js';
+import { laneLaunchTarget, validDispatcherAdmissionDecision } from './lane-launch-target.js';
 import { derivedRowCodes, marketContext, marketLaneView, marketBlockedCodes as codes, MARKET_REASON_CODE as CODE, MARKET_RECORDED_LANE as LANE, MAX_MARKET_CODES as MAX_CODES, unfedTickLanes, parseReadyMarketRows, stoppedReadyHints, type ReadyMarketRow, type UnfedMarketInputs } from './unfed-market.js';
 
 export const FLEET_UNFED_SCHEMA = 'fleet.unfed.v1';
@@ -299,9 +299,7 @@ function fleetStopVerdict(data: Record<string, unknown>): FleetStopCode | null {
   const admission = isRecord(data.admission) ? data.admission : null;
   if (admission === null || (admission.ts !== undefined && admission.ts !== data.last_tick)) return null;
   const { admit, decision } = admission;
-  if ((admit !== undefined && typeof admit !== 'boolean')
-      || (decision !== undefined && decision !== 'admit' && decision !== 'stop')
-      || (typeof admit === 'boolean' && decision !== undefined && decision !== (admit ? 'admit' : 'stop'))) return null;
+  if (!validDispatcherAdmissionDecision(admit, decision)) return null;
   const gateReason = admission.gate_reason;
   if (typeof gateReason === 'string' && gateReason.trim().length > 0) return 'admission_stopped';
   const cap = count(admission.cap) ? admission.cap : null;
