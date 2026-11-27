@@ -136,10 +136,17 @@ describe('ashlr fleet trim', () => {
   });
 
   it('exits 2 without echoing contents when status is unreadable', async () => {
-    for (const bad of [`not json ${SECRET}`, '[]', { admission: { cap: 1, running: 1 }, lanes: [] }]) {
+    const statusPath = join(homedir(), '.ashlr-runs', 'queue', 'status.json');
+    const shapeError = `Cannot read queue status: ${statusPath} is not a valid dispatchd status document.`;
+    const jsonError = `Cannot read queue status: ${statusPath} is not valid JSON.`;
+    for (const [bad, error] of [
+      [`not json ${SECRET}`, jsonError],
+      ['[]', shapeError],
+      [{ admission: { cap: 1, running: 1 }, lanes: [] }, shapeError],
+    ] as [unknown, string][]) {
       const { code, printed } = await run(bad, ['--json']);
       expect(code).toBe(2);
-      expect(JSON.parse(printed)).toEqual({ schema: FLEET_TRIM_SCHEMA, readOnly: true, error: 'Queue status is unreadable or invalid.' });
+      expect(JSON.parse(printed)).toEqual({ schema: FLEET_TRIM_SCHEMA, readOnly: true, error });
     }
   });
 

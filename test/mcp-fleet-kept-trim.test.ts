@@ -1,3 +1,5 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -84,10 +86,13 @@ describe('fleet_trim', () => {
   });
 
   it('returns the error body on invalid or unreadable status', async () => {
-    const body = { schema: 'fleet.trim.v1', readOnly: true, error: 'Queue status is unreadable or invalid.' };
-    expect(await readFleetTrimTool({ readStatus: async () => '{"lanes":{}}' })).toEqual(body);
-    expect(await readFleetTrimTool({ readStatus: async () => 'nope' })).toEqual(body);
-    expect(await readFleetTrimTool({ readStatus: async () => { throw new Error('ENOENT'); } })).toEqual(body);
+    const statusPath = join(homedir(), '.ashlr-runs', 'queue', 'status.json');
+    const shape = { schema: 'fleet.trim.v1', readOnly: true, error: `Cannot read queue status: ${statusPath} is not a valid dispatchd status document.` };
+    const json = { schema: 'fleet.trim.v1', readOnly: true, error: `Cannot read queue status: ${statusPath} is not valid JSON.` };
+    const unreadable = { schema: 'fleet.trim.v1', readOnly: true, error: `Cannot read queue status: ${statusPath} exists but cannot be read.` };
+    expect(await readFleetTrimTool({ readStatus: async () => '{"lanes":{}}' })).toEqual(shape);
+    expect(await readFleetTrimTool({ readStatus: async () => 'nope' })).toEqual(json);
+    expect(await readFleetTrimTool({ readStatus: async () => { throw new Error('EACCES'); } })).toEqual(unreadable);
   });
 
   it('takes no arguments', () => {

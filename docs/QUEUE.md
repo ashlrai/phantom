@@ -1185,6 +1185,15 @@ and the bottleneck ideas
 all measure "under target", "full" and "starved" against it. `fleet trim`'s
 `SLOTS` suggestion still retunes the configured target it would change.
 
+`fleet lane-share`, `fleet starved`, `fleet trim`, `fleet shed-plan` and the
+`fleet_trim` MCP read share one `queue/status.json` reader. The runs root is
+`ASHLR_RUNS_DIR` when it names an absolute directory, else `~/.ashlr-runs`. A
+failed read names which failure it hit — no dispatcher status at the
+looked-at path (this machine runs no fleet), the file exists but cannot be
+read, the file is not valid JSON, or it is not a valid dispatchd status
+document — instead of one flat unreadable error; each still exits 2, and the
+MCP read returns the same message in its `fleet.trim.v1` error body.
+
 `ashlr fleet idle-lanes` takes the newest event for each lane at or before
 report time from the bounded tails of `metrics/jobs.jsonl` and the legacy
 `queue/jobs.jsonl` under the runs directory. Events need a lane or pool and a

@@ -208,28 +208,31 @@ describe('ashlr fleet lane-share', () => {
 
   it('rejects invalid fixture files without echoing them', async () => {
     const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const samples = [
-      'not json ' + SECRET,
-      {},
-      { lanes: {} },
-      { admission: { cap: 4 } },
-      { admission: { cap: 4, reason: null }, lanes: [] },
-      status({ lanes: { bad: { running: -1, target: 1, queued: 1 } } }),
-      status({ lanes: { bad: { running: 0.5, target: 1, queued: 1 } } }),
-      status({ lanes: { bad: { running: 0, target: 1 } } }),
-      status({ lanes: { ' ': lane(0, 1, 1) } }),
-      status({ reason: 4 as unknown as string }),
+    const statusPath = join(homedir(), '.ashlr-runs', 'queue', 'status.json');
+    const shapeError = `Cannot read queue status: ${statusPath} is not a valid dispatchd status document.`;
+    const jsonError = `Cannot read queue status: ${statusPath} is not valid JSON.`;
+    const samples: [unknown, string][] = [
+      ['not json ' + SECRET, jsonError],
+      [{}, shapeError],
+      [{ lanes: {} }, shapeError],
+      [{ admission: { cap: 4 } }, shapeError],
+      [{ admission: { cap: 4, reason: null }, lanes: [] }, shapeError],
+      [status({ lanes: { bad: { running: -1, target: 1, queued: 1 } } }), shapeError],
+      [status({ lanes: { bad: { running: 0.5, target: 1, queued: 1 } } }), shapeError],
+      [status({ lanes: { bad: { running: 0, target: 1 } } }), shapeError],
+      [status({ lanes: { ' ': lane(0, 1, 1) } }), shapeError],
+      [status({ reason: 4 as unknown as string }), shapeError],
     ];
-    for (const contents of samples) {
+    for (const [contents, error] of samples) {
       const file = await fixture(contents);
       expect(await cmdFleetLaneShare(['--json'], file.reader)).toBe(2);
       const body = JSON.parse(String(output.mock.calls.at(-1)![0]));
-      expect(body).toEqual({ schema: FLEET_LANE_SHARE_SCHEMA, readOnly: true, error: 'Queue status is unreadable or invalid.' });
+      expect(body).toEqual({ schema: FLEET_LANE_SHARE_SCHEMA, readOnly: true, error });
       expect(JSON.stringify(body)).not.toContain(SECRET);
       expect(await readFile(file.path, 'utf8')).toBe(file.text);
     }
     expect(await cmdFleetLaneShare([], async () => { throw new Error(SECRET); })).toBe(2);
-    expect(output.mock.calls.at(-1)![0]).toBe('Queue status is unreadable or invalid.');
+    expect(output.mock.calls.at(-1)![0]).toBe(`Cannot read queue status: ${statusPath} exists but cannot be read.`);
   });
 
   it('prints help and rejects unknown flags before reading', async () => {

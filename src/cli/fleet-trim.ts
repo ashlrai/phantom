@@ -1,7 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { laneLaunchTarget } from '../core/fleet/lane-launch-target.js';
+import { readQueueStatusView } from '../core/fleet/queue-status-read.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 export const FLEET_TRIM_SCHEMA = 'fleet.trim.v1';
@@ -40,8 +39,6 @@ STARVED: queued work, nothing running, launch target above 0 (the configured tar
 WASTES: ${FLEET_TRIM_MIN_JOBS} or more jobs in 24 hours with a merge rate under ${FLEET_TRIM_MERGE_RATE_MIN} or an empty rate over ${FLEET_TRIM_EMPTY_RATE_MAX}.
 Each suggestion is a line "SLOTS <lane> <from> -> <to>" that takes one slot from a wasting lane. Nothing is applied.
 Related: ashlr fleet admission, ashlr fleet lane-idle.`;
-
-const UNREADABLE = 'Queue status is unreadable or invalid.';
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid status');
@@ -133,15 +130,16 @@ export async function cmdFleetTrim(
     console.error(USAGE);
     return 2;
   }
-  try {
-    const report = sanitizePublicJson(trimFleet(JSON.parse(
-      await reader(join(homedir(), '.ashlr-runs', 'queue', 'status.json')),
-    ))) as FleetTrimReport;
-    console.log(args.includes('--json') ? JSON.stringify(report) : formatFleetTrim(report));
-    return 0;
-  } catch {
-    const body = { schema: FLEET_TRIM_SCHEMA, readOnly: true, error: UNREADABLE };
-    console.log(args.includes('--json') ? JSON.stringify(body) : UNREADABLE);
+  const result = await readQueueStatusView(
+    value => sanitizePublicJson(trimFleet(value)) as FleetTrimReport,
+    { read: reader, subject: 'phm fleet trim' },
+  );
+  if (!result.ok) {
+    const body = { schema: FLEET_TRIM_SCHEMA, readOnly: true, error: result.message };
+    console.log(args.includes('--json') ? JSON.stringify(body) : result.message);
     return 2;
   }
+  const report = result.view;
+  console.log(args.includes('--json') ? JSON.stringify(report) : formatFleetTrim(report));
+  return 0;
 }
