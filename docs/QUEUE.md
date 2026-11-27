@@ -1558,6 +1558,11 @@ empty ready queue still has zero hours of work.
 
 ## Which producer earns its slots?
 
+The fleet brief's Git merge-latency fallback uses job publication receipts
+from the jobs ledger. It ignores receipts marked `launched: false`, batch
+session wrappers and node-pool attempt telemetry when pairing publications
+with merges or estimating how long unpaired publications have been open.
+
 The launch-based `phm fleet yield` and `phm jobs yield` reports credit a
 merge to the launch that published the PR URL named by the outcome receipt.
 A reconciler receipt that repeats the publish event preserves an existing
