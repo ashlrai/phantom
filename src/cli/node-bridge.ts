@@ -3,6 +3,17 @@ import type { NodeBridgeReport } from '../core/drive/nodes/ready-bridge.js';
 
 const USAGE = 'Usage: phm node bridge [--owner <scope>] [--apply] [--json]';
 
+/** `$ASHLR_HOME/node-bridge.json` spelled for operators — the real path under
+ * a relocated home, contracted to `~` on a default install. The store module
+ * loads lazily so --help stays off its graph; the documented spelling is the
+ * fallback when resolution itself fails. */
+async function bridgeConfigLabel(): Promise<string> {
+  try {
+    const { ashlrHomePath } = await import('../core/cloud/store.js');
+    return ashlrHomePath('node-bridge.json');
+  } catch { return '~/.ashlr/node-bridge.json'; }
+}
+
 function text(r: NodeBridgeReport): string {
   const head = `node bridge ${r.mode} owner=${r.owner ?? 'unset'} ${r.inert ? `inert: ${r.inert}` : 'active'}${r.held ? ` held: ${r.held}` : ''}`;
   return [head,
@@ -12,7 +23,7 @@ function text(r: NodeBridgeReport): string {
 }
 
 export async function cmdNodeBridge(args: string[]): Promise<number> {
-  if (args.includes('--help') || args.includes('-h')) { console.log(`${USAGE}\nDry run by default: lists ready.tsv rows that would offload to a node and why each stays local. --apply runs one claim/reconcile pass (needs ~/.ashlr/node-bridge.json enabled).\nAll node commands: phm node --help`); return 0; }
+  if (args.includes('--help') || args.includes('-h')) { console.log(`${USAGE}\nDry run by default: lists ready.tsv rows that would offload to a node and why each stays local. --apply runs one claim/reconcile pass (needs ${await bridgeConfigLabel()} enabled).\nAll node commands: phm node --help`); return 0; }
   const json = args.includes('--json');
   const ownerAt = args.indexOf('--owner');
   const owner = ownerAt >= 0 ? args[ownerAt + 1] : undefined;
@@ -33,7 +44,7 @@ export async function cmdNodeBridge(args: string[]): Promise<number> {
     const message = error instanceof Error && operatorMessage.test(error.message)
       ? error.message : 'Node bridge unavailable or misconfigured.';
     if (json) console.log(JSON.stringify({ schemaVersion: 1, command: 'bridge',
-      error: { code: 'error', message, fix: 'Check ~/.ashlr/node-bridge.json and the node pool config.' } }));
+      error: { code: 'error', message, fix: `Check ${await bridgeConfigLabel()} and the node pool config.` } }));
     else console.error(message);
     return 1;
   }

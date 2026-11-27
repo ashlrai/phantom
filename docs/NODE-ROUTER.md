@@ -364,7 +364,7 @@ projection does not enqueue production jobs twice or install any fleet scripts.
 `phm node bridge --json` is a dry run. It lists every `ready.tsv` row, says if
 the row would go to a node, and gives a reason code for each row that stays
 local. `phm node bridge --apply --json` runs one claim and reconcile pass. When
-`~/.ashlr/node-bridge.json` holds `{"enabled": true, "owner": "<scope>"}`, the
+`~/.ashlr/node-bridge.json` (or `$ASHLR_HOME/node-bridge.json`) holds `{"enabled": true, "owner": "<scope>"}`, the
 resident daemon runs the same pass as a single-flight `node-bridge`
 background job. The tick records the handoff and continues without waiting.
 The job spawns
