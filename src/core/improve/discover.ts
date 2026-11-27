@@ -186,11 +186,16 @@
  *     to fabric/gateway-shadow-<UTC-day>.jsonl when
  *     foundry.fabric.gatewayShadow is on — recurring safety-relevant
  *     divergences where the gateway would dispatch what the legacy path
- *     blocked, and a measured divergence rate at or above the
- *     CONTRACT-M334 stage-2 bar (gatewayShadowBacklogItems below). Until
- *     now the journal was write-only evidence — divergenceStats(), the
- *     exit-criteria evaluator, has no caller — so a shadow that kept
- *     failing the flip criteria never became work;
+ *     blocked, a measured divergence rate at or above the
+ *     CONTRACT-M334 stage-2 bar, and the stage-2 exit-criteria verdict
+ *     itself evaluated over the full journal — a soak that clears the
+ *     bar queues the stage-3 gateway flip, one whose cumulative record
+ *     fails it surfaces the blocker the 7-day window cannot see
+ *     (gatewayShadowBacklogItems below). Until now the journal was
+ *     write-only evidence — divergenceStats(), the exit-criteria
+ *     evaluator, has no caller — so a shadow that kept failing the flip
+ *     criteria never became work, and a passing soak never queued its
+ *     flip;
  *   - the fleet recheck verdict history's recurring non-clean cells: the
  *     per-pass fleet.recheck-record.v1 rows the self-tick recheck-record
  *     step and `phm fleet recheck-record` append to
@@ -2064,15 +2069,20 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // InferenceGateway shadow journal: the observe-only gateway-vs-legacy
   // comparison rows the daemon appends to fabric/gateway-shadow-<day>.jsonl
   // — recurring safety-relevant divergences (the gateway would dispatch
-  // what the legacy path blocked) and a measured divergence rate at or
-  // above the CONTRACT-M334 stage-2 bar — become backlog items too. Until
-  // now the journal was write-only evidence: divergenceStats(), the exit
-  // criteria evaluator, has no caller and no report reads the files, so a
-  // shadow that kept failing the flip criteria never became work. Same
-  // bounded per-day tail reads; the safety item emits at the recurring
-  // bar and the divergence item only once the window holds enough
-  // decisions for the rate to mean something, and only for the fleet's
-  // own repository.
+  // what the legacy path blocked), a measured divergence rate at or
+  // above the CONTRACT-M334 stage-2 bar, and the stage-2 exit-criteria
+  // verdict over the full journal (a passing soak queues the stage-3
+  // gateway flip; a cumulative failure surfaces the blocker the window
+  // cannot see) — become backlog items too. Until now the journal was
+  // write-only evidence: divergenceStats(), the exit criteria evaluator,
+  // has no caller and no report reads the files, so a shadow that kept
+  // failing the flip criteria never became work and a passing soak never
+  // queued its flip. Same bounded per-day tail reads for the windowed
+  // kinds; the safety item emits at the recurring bar, the divergence
+  // item only once the window holds enough decisions for the rate to
+  // mean something, the verdict items only once the whole journal holds
+  // the contract's own 200-decision bar, and only for the fleet's own
+  // repository.
   items.push(...await gatewayShadowBacklogItems({ repo }));
 
   // Shadow seat-decision journal: the seat router's own comparison log —
