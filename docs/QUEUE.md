@@ -263,6 +263,9 @@ The weight reported by `phm lanes yield` counts a timestamped launch receipt
 once at its first occurrence. JSON key order and whitespace do not change
 receipt identity. Distinct launches remain separate observations, and receipts
 without a usable timestamp retain their ledger order.
+Launch receipts marked `launched: false` are excluded from the window and
+cannot receive outcome credit. Node-pool attempt telemetry is excluded from
+both the launch sample and outcome attribution.
 
 ### Repository shares
 
