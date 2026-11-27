@@ -72,6 +72,23 @@ export function subscribeGroup(room: string, topic: string, after: number, limit
   return { ...page, messages: page.messages.filter(row => row.envelope.to === address) };
 }
 
+/**
+ * One live presence observation or null: the member/state/ttl rule
+ * `groupPresence` folds on — a `group.presence` body reporting `online` or
+ * `offline`, a remaining ttl inside the presence bound and a member-shaped
+ * sender. Shared with the unified channel presence read so both apply the
+ * identical observation check; `envelope.ttl` is the remaining ttl the bus
+ * read reports, the same value `groupPresence` already compares.
+ */
+export function groupPresenceObservationOf(body: unknown, envelope: { ttl: number; from: string }): 'online' | 'offline' | null {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+  const observation = body as Record<string, unknown>;
+  if (observation.kind !== 'group.presence') return null;
+  if (observation.state !== 'online' && observation.state !== 'offline') return null;
+  if (envelope.ttl > GROUP_PRESENCE_TTL_MS || !MEMBER.test(envelope.from)) return null;
+  return observation.state;
+}
+
 /** Fold all live presence observations in cursor order; callers must handle failures. */
 export function groupPresence(room: string, topic: string, options: BusInboxOptions = {}) {
   const members = new Map<string, { member: string; state: 'online' | 'offline'; receivedAt: number }>();
@@ -80,10 +97,9 @@ export function groupPresence(room: string, topic: string, options: BusInboxOpti
     const page = subscribeGroup(room, topic, cursor, 100, options);
     if (page.status !== 'ok') return { status: page.status };
     for (const row of page.messages) {
-      const body = row.envelope.body;
-      if (body && typeof body === 'object' && !Array.isArray(body) && body.kind === 'group.presence' &&
-          (body.state === 'online' || body.state === 'offline') && row.envelope.ttl <= GROUP_PRESENCE_TTL_MS && MEMBER.test(row.envelope.from)) {
-        members.set(row.envelope.from, { member: row.envelope.from, state: body.state, receivedAt: row.receivedAt });
+      const state = groupPresenceObservationOf(row.envelope.body, row.envelope);
+      if (state !== null) {
+        members.set(row.envelope.from, { member: row.envelope.from, state, receivedAt: row.receivedAt });
       }
     }
     if (page.nextCursor === cursor) break;

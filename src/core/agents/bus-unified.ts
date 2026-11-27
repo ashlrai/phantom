@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { appendBusInbox, listBusInboxAfter, scanBusInbox, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxOptions, type BusInboxPost, type BusInboxReceipt, type BusInboxScan } from '../fleet/bus-inbox.js';
 import { BUS_PRIORITIES, isClaimableWork, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
-import { groupAddress, isGroupPresenceBody } from '../fleet/bus-group.js';
+import { groupAddress, groupPresenceObservationOf, isGroupPresenceBody } from '../fleet/bus-group.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { createBusWakeHook, type BusWakeResult } from '../fleet/bus-wake.js';
@@ -2383,6 +2383,101 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   annotateLiveEvidence(messages, options);
   return { status: 'ok', channel: name, messages, nextCursor: cursor,
     ...(countMatched ? { matched } : {}) };
+}
+
+/** One member's latest live presence observation on one channel topic. */
+export interface AgentChannelPresenceMember {
+  /** The presence sender label — a routing name, never authenticated identity. */
+  member: string;
+  /** The member's newest observed state; `offline` is an explicit leave, not absence of data. */
+  state: 'online' | 'offline';
+  /** Epoch ms the winning observation was received — inside the five-minute presence ttl. */
+  receivedAt: number;
+}
+
+/** Every member observed on one `group:<channel>:<topic>` address, latest state each. */
+export interface AgentChannelPresenceTopic {
+  topic: string;
+  members: AgentChannelPresenceMember[];
+}
+
+export type AgentChannelPresenceResult =
+  | { status: 'ok'; channel: string; topics: AgentChannelPresenceTopic[] }
+  | { status: 'invalid' | 'unknown-channel' | 'unavailable' | 'retryable'; reason?: string };
+
+/**
+ * `agents bus channel presence`: the unified-surface read of the
+ * `group.presence` observations `channel read` deliberately excludes —
+ * heartbeats are expiring observations with their own read, and until now
+ * that read lived only on the legacy `phm comms bus group presence
+ * <room> <topic>` surface. This folds the same observations across every
+ * topic of one registry channel (or one `--topic`), so an agent on the
+ * unified bus answers "who is in this room right now" without dropping to
+ * the comms CLI. The observation rule is the shared
+ * `groupPresenceObservationOf` check `groupPresence` applies — a
+ * `group.presence` body reporting `online` or `offline`, remaining ttl
+ * inside the five-minute bound and a member-shaped sender — and the fold
+ * keeps each member's newest observation in cursor order, so a later
+ * `offline` heartbeat correctly replaces an earlier `online` one. Members
+ * report their latest observed state, online first then by name: an
+ * explicit `offline` stays visible as data rather than collapsing into
+ * "never seen", while a member whose heartbeats all expired is simply
+ * absent — unknown presence is never reported as offline. With `topic`
+ * the read narrows to that one `group:<channel>:<topic>` address and
+ * still answers an empty member list; without it only topics carrying at
+ * least one live observation appear. Reading needs no identity and no
+ * membership, the same rule `channel read` keeps; an unknown channel is
+ * `unknown-channel`, an unreadable registry or store is reported — never
+ * an empty topic list passed off as "nobody is here".
+ */
+export function readAgentChannelPresence(name: string, page: { topic?: string } = {},
+  options: UnifiedBusOptions = {}): AgentChannelPresenceResult {
+  if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
+    return { status: 'invalid', reason: 'Invalid channel name.' };
+  }
+  let exact: string | undefined;
+  if (page.topic !== undefined) {
+    if (typeof page.topic !== 'string') return { status: 'invalid', reason: 'Invalid channel topic.' };
+    try { exact = groupAddress(name, page.topic); }
+    catch { return { status: 'invalid', reason: 'Invalid channel topic.' }; }
+  }
+  const read = readAgentRegistry(options);
+  if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
+  if (!findAgentChannel(read.registry, name)) return { status: 'unknown-channel', reason: 'Channel does not exist.' };
+  const prefix = `group:${name}:`;
+  const topics = new Map<string, Map<string, AgentChannelPresenceMember>>();
+  let cursor = 0;
+  for (let index = 0; index < MAX_PAGES; index += 1) {
+    const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, { root: options.root, now: options.now });
+    if (result.status !== 'ok') {
+      return { status: result.status === 'retryable' ? 'retryable' : result.status === 'invalid' ? 'invalid' : 'unavailable',
+        reason: 'Bus store is not readable.' };
+    }
+    for (const row of result.messages) {
+      const envelope = row.envelope;
+      if (!envelope.to.startsWith(prefix) || (exact !== undefined && envelope.to !== exact)) continue;
+      const state = groupPresenceObservationOf(envelope.body, envelope);
+      if (state === null) continue;
+      const topic = envelope.to.slice(prefix.length);
+      let members = topics.get(topic);
+      if (members === undefined) { members = new Map(); topics.set(topic, members); }
+      members.set(envelope.from, { member: envelope.from, state, receivedAt: row.receivedAt });
+    }
+    if (result.nextCursor <= cursor) break;
+    cursor = result.nextCursor;
+  }
+  const report: AgentChannelPresenceTopic[] = [...topics.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([topic, members]) => ({
+      topic,
+      members: [...members.values()].sort((a, b) =>
+        (a.state === b.state ? a.member.localeCompare(b.member) : a.state === 'online' ? -1 : 1)),
+    }));
+  if (exact !== undefined && !report.some(topic => topic.topic === page.topic)) {
+    report.push({ topic: page.topic as string, members: [] });
+    report.sort((a, b) => a.topic.localeCompare(b.topic));
+  }
+  return { status: 'ok', channel: name, topics: report };
 }
 
 export interface BusEnvelopeLookupMessage {

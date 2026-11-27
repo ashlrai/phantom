@@ -8,7 +8,7 @@ import {
 } from '../src/core/agents/bus-identity.js';
 import {
   agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodySummary, busPageResumeCursor, listBusChannels, postChannelMessage, postLabelMessage,
-  readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff,
+  readAgentChannel, readAgentChannelPresence, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff,
   sendWakeRequest, shouldWake, updateWorkStatus, type AgentWakeRow, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
@@ -297,6 +297,92 @@ describe('channel reads', () => {
     if (resumed.status !== 'ok') throw new Error(`unexpected ${resumed.status}`);
     expect(resumed.matched).toBe(0);
     expect(resumed.messages).toEqual([]);
+  });
+});
+
+describe('channel presence', () => {
+  it('folds live presence observations across every topic of one channel', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova', 'orion'] }, options);
+    createAgentChannel({ name: 'other', createdBy: 'atlas' }, options);
+    // Heartbeats on the channel's topics plus noise that must never count.
+    expect(publishGroupPresence({ room: 'release', topic: 'general', id: 'p-1', member: 'nova', state: 'online' }, options).status).toBe('posted');
+    expect(publishGroupPresence({ room: 'release', topic: 'deploy', id: 'p-2', member: 'orion', state: 'online' }, options).status).toBe('posted');
+    expect(publishGroupPresence({ room: 'release', topic: 'general', id: 'p-3', member: 'atlas', state: 'online' }, options).status).toBe('posted');
+    // A later offline heartbeat on the same topic replaces the member's online state.
+    options.clock.now += 1_000;
+    expect(publishGroupPresence({ room: 'release', topic: 'general', id: 'p-4', member: 'nova', state: 'offline' }, options).status).toBe('posted');
+    // Presence on another channel's room and plain channel posts never leak in.
+    expect(publishGroupPresence({ room: 'other', topic: 'general', id: 'p-5', member: 'atlas', state: 'online' }, options).status).toBe('posted');
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'not presence', id: 'ch-1' }, options);
+
+    const result = readAgentChannelPresence('release', {}, options);
+    if (result.status !== 'ok') throw new Error(`unexpected ${result.status}`);
+    expect(result.channel).toBe('release');
+    expect(result.topics.map(t => t.topic)).toEqual(['deploy', 'general']);
+    const general = result.topics[1]!;
+    // atlas stays online; nova's newest observation is the offline heartbeat.
+    expect(general.members.map(m => `${m.member}:${m.state}`)).toEqual(['atlas:online', 'nova:offline']);
+    expect(general.members.every(m => m.receivedAt > 0)).toBe(true);
+    expect(result.topics[0]!.members.map(m => `${m.member}:${m.state}`)).toEqual(['orion:online']);
+
+    // --topic narrows to one address and still answers an empty member list.
+    const deploy = readAgentChannelPresence('release', { topic: 'deploy' }, options);
+    if (deploy.status !== 'ok') throw new Error(`unexpected ${deploy.status}`);
+    expect(deploy.topics).toHaveLength(1);
+    expect(deploy.topics[0]!.topic).toBe('deploy');
+    expect(deploy.topics[0]!.members.map(m => `${m.member}:${m.state}`)).toEqual(['orion:online']);
+    const quiet = readAgentChannelPresence('release', { topic: 'review' }, options);
+    if (quiet.status !== 'ok') throw new Error(`unexpected ${quiet.status}`);
+    expect(quiet.topics).toEqual([{ topic: 'review', members: [] }]);
+  });
+
+  it('drops expired observations and never counts forged presence shapes', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    expect(publishGroupPresence({ room: 'release', topic: 'general', id: 'p-1', member: 'nova', state: 'online' }, options).status).toBe('posted');
+    // A presence-shaped body with an unrecognized state, an oversized ttl or a
+    // non-member sender is not an observation — the same rule groupPresence applies.
+    // The oversized ttl stays one millisecond over the bound and expires inside
+    // the test window, so it can never decay into a valid remaining ttl.
+    const address = 'group:release:general';
+    for (const [id, from, ttl, body] of [
+      ['bad-state', 'atlas', 300_000, { kind: 'group.presence', state: 'away' }],
+      ['big-ttl', 'atlas', 300_001, { kind: 'group.presence', state: 'online' }],
+      ['bad-member', '-lead', 300_000, { kind: 'group.presence', state: 'online' }],
+      ['not-presence', 'atlas', 300_000, { kind: 'group.message', value: 'hi' }],
+    ] as const) {
+      expect(appendBusInbox({ id, from, to: address, priority: 'P3', ttl, body }, options).status).toBe('posted');
+    }
+
+    const live = readAgentChannelPresence('release', {}, options);
+    if (live.status !== 'ok') throw new Error(`unexpected ${live.status}`);
+    expect(live.topics).toHaveLength(1);
+    expect(live.topics[0]!.members.map(m => `${m.member}:${m.state}`)).toEqual(['nova:online']);
+
+    // Once every heartbeat expires the topic is simply absent — never reported offline.
+    options.clock.now += 5 * 60_000 + 1;
+    const expired = readAgentChannelPresence('release', {}, options);
+    if (expired.status !== 'ok') throw new Error(`unexpected ${expired.status}`);
+    expect(expired.topics).toEqual([]);
+    const expiredTopic = readAgentChannelPresence('release', { topic: 'general' }, options);
+    if (expiredTopic.status !== 'ok') throw new Error(`unexpected ${expiredTopic.status}`);
+    expect(expiredTopic.topics).toEqual([{ topic: 'general', members: [] }]);
+  });
+
+  it('reports unknown channels and unreadable state instead of an empty report', () => {
+    const options = setup();
+    expect(readAgentChannelPresence('release', {}, options)).toMatchObject({ status: 'unknown-channel' });
+    register(options, 'atlas');
+    createAgentChannel({ name: 'release', createdBy: 'atlas' }, options);
+    expect(readAgentChannelPresence('release', {}, options)).toMatchObject({ status: 'ok', topics: [] });
+    expect(readAgentChannelPresence('missing', {}, options)).toMatchObject({ status: 'unknown-channel' });
+    expect(readAgentChannelPresence('Bad Name', {}, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannelPresence('release', { topic: 'Bad Topic' }, options)).toMatchObject({ status: 'invalid' });
+    writeFileSync(join(options.root!, 'agent-identities', 'registry.json'), '{broken');
+    expect(readAgentChannelPresence('release', {}, options)).toMatchObject({ status: 'unavailable' });
   });
 });
 
