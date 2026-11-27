@@ -52,7 +52,7 @@ ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <a
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
 ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> [--interval-ms <100..60000>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] --json
-ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
+ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
 ashlr agents bus dead-letters [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--priority P0..P3] [--id <id>] [--reason <${BUS_DEAD_LETTER_REASONS.join('|')}>] [--from <agent>] [--exclude-from <agent>] [--to <agent>] [--channel <name>] [--topic <topic>] [--body-kind <kind>] [--limit <1-100>]
 ashlr agents bus show <id>
 ashlr agents bus thread <id>
@@ -147,7 +147,15 @@ the same room prefix inbox --channel and phm messages --channel match —
 decided on the hint's own to label, so it composes with the addressee
 scope and every other filter and matched counts it with the rest of the
 queue-tail match; on --all it answers "which hints concern room X" in one
-fleet read.
+fleet read. --topic on wakes keeps only hints whose own to label is a
+well-formed group:<room>:<topic> address carrying that exact topic
+component — the same groupAddressTopicOf match every bus read's --topic
+applies (inbox, channel read, phm messages, work feed, work next,
+dead-letters) — decided on the hint's address alone like --channel, so
+it composes with --channel into one room AND one topic and with every
+other filter, an agent label, a bare group:<room> or a malformed address
+never matching, and a topic no hint addresses is an honest empty match,
+never an error.
 --since on inbox, channel read and wakes keeps only rows at or after the
 cutoff — the phm messages grammar (15m, 2h, 1d, epoch ms or an ISO
 time), resolved to epoch ms — so fresh mail, a room's recent posts and
@@ -1285,7 +1293,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'wakes') {
       noExtra(2);
       const filter = { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'),
-        channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id'),
+        channel: one('--channel'), topic: one('--topic'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id'),
         thread: one('--thread'), inReplyTo: one('--in-reply-to'), bodyKind: one('--body-kind'), result: resultArg() };
       const since = sinceArg();
       let page: WakePage | AllWakesPage;

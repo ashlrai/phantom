@@ -690,7 +690,7 @@ reports — so an agent on the unified surface can wait for mail without
 polling `inbox` in a loop or dropping to the raw-envelope stream.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
-[--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
+[--channel <name>] [--topic <topic>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]` lists wake
 hints for the agent — addressed under any spelling that resolves to its
 identity, exact first then lowercase, the same fold the inbox read
@@ -729,7 +729,19 @@ and every other filter: on a per-agent read it narrows to one room's
 hints for that agent (a channel the agent does not belong to simply has
 no hints to show), and on `--all` it answers "which hints concern room
 X" in one fleet read, with `matched` counting it inside the queue-tail
-match like `from`/`excludeFrom`. A ref that resolves to no registered identity keeps exact-label
+match like `from`/`excludeFrom`. `--topic` keeps only hints whose own
+`to` label is a well-formed `group:<room>:<topic>` address carrying that
+exact topic component — the same `groupAddressTopicOf` parse every bus
+read's `--topic` applies (`inbox --topic`, `channel read --topic`, `phm
+messages --topic`, `work feed --topic`, `work next --topic`,
+`dead-letters --topic`), grammar-validated by the same channel-name
+rule — decided on the hint's address alone like `--channel`, so it
+needs no referent resolution and composes with the addressee scope and
+every other filter, `--channel` into one room AND one topic at once: a
+hint addressed to an agent label, a bare `group:<room>` or a malformed
+address never matching, and a topic no hint addresses is an honest empty
+match, never an error, with `matched` counting it inside the queue-tail
+match. A ref that resolves to no registered identity keeps exact-label
 matching instead — the page reports `scope: 'label'` (vs `'identity'`),
 `agent` the queried label verbatim, and only hints whose `to` is that label
 match — so hints queued under a bare coordination or routing label, like the
@@ -833,7 +845,7 @@ cannot be read. Triage no longer costs one `agents bus show` per hint.
 `fleet_agent_wakes` (the isolated fleet MCP tool) serves the same read with
 the same dimensions as arguments — `agent` optional (omitted, the
 fleet-wide `--all` read under `scope: 'fleet'`), `since`/`job`/`from`/
-`excludeFrom`/`channel`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` the same filters — under the identical
+`excludeFrom`/`channel`/`topic`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` the same filters — under the identical
 `readAgentWakes`/`readAllWakes` validation, so an MCP-connected agent reads its wake
 hints, claim-holder citations and resolved referents — or the whole
 fleet's pending hints in one call — without shelling out
