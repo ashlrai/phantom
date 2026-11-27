@@ -701,8 +701,11 @@ it is the fleet's post-hoc triage of the job's final output, distinct
 from the finish row's own `empty`/`empty_class` measures — and rows
 naming jobs outside the jobs window never create outcomes. Only rows
 with the exact schema, a bounded job id and an in-vocabulary tag join;
-malformed rows, other schemas and unrecognized tags are skipped, never
-recorded raw. The tags read degrades independently like the market and
+malformed rows, other schemas and unrecognized tags are skipped. The recorder
+also ignores these rows and invalid timestamps when deciding whether a job
+already has a tag. A later sync can append a valid receipt while preserving
+the original ledger bytes, including an unterminated final line. The tags read
+degrades independently like the market and
 spend joins: the report's `empty_tag_state` mirrors the jobs `state`
 vocabulary and `empty_tag_truncated` marks a cut tags tail, in which case
 joined tags cover only the newest bytes; anything but `read` leaves

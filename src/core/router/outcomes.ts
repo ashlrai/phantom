@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { canonicalJson } from '../authority/canonical-json.js';
 import { ashlrHome } from '../cloud/store.js';
 import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
+import { parseEmptyTagReceipt } from '../fleet/empty-tag-receipt.js';
 import { ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 
@@ -2759,19 +2760,6 @@ function latestJobsHandoffAdvisoryMs(text: string, throughMs: number): Map<strin
 }
 
 /**
- * The empty-tags ledger's row schema and closed tag vocabulary, mirrored
- * from the producer (src/core/fleet/empty-tags.ts): `phm jobs empty
- * --record` appends `job.empty-tag.v1` rows — { schema, job, lane, tag, ts? } —
- * where tag is one of EMPTY_TAGS. The router keeps its own copy of the
- * vocabulary so a fleet-side rename can never leak an unbounded label
- * into router.outcome.v1.
- */
-const EMPTY_TAG_SCHEMA = 'job.empty-tag.v1';
-const EMPTY_TAGS: ReadonlySet<string> = new Set([
-  'already_done', 'pool_cap', 'blocked', 'no_change_needed', 'unknown',
-]);
-
-/**
  * Folds empty-tags.jsonl text into each job's recorded empty tag. The
  * first eligible append in the supplied ledger bytes wins for each job.
  * Legacy rows lack timestamps.
@@ -2785,21 +2773,8 @@ const EMPTY_TAGS: ReadonlySet<string> = new Set([
 export function foldEmptyTags(text: string, throughMs = Infinity): Map<string, string> {
   const tags = new Map<string, string>();
   for (const line of text.split('\n')) {
-    // Cheap prefilter: the schema marker is on every real row.
-    if (!line.includes(EMPTY_TAG_SCHEMA)) continue;
-    const row = parseJsonObjectLine(line);
-    if (row === null) continue;
-    if (row['schema'] !== EMPTY_TAG_SCHEMA) continue;
-    const ts = row['ts'];
-    if (ts !== undefined) {
-      const at = typeof ts === 'string' ? Date.parse(ts) : NaN;
-      if (!Number.isFinite(at) || at > throughMs) continue;
-    }
-    const job = row['job'];
-    if (typeof job !== 'string' || job.length === 0 || job.length > 200 || tags.has(job)) continue;
-    const tag = row['tag'];
-    if (typeof tag !== 'string' || !EMPTY_TAGS.has(tag)) continue;
-    tags.set(job, tag);
+    const receipt = parseEmptyTagReceipt(line, throughMs);
+    if (receipt && !tags.has(receipt.job)) tags.set(receipt.job, receipt.tag);
   }
   return tags;
 }

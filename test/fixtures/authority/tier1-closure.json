@@ -770,6 +770,7 @@
     "src/core/fleet/empty-cause.ts",
     "src/core/fleet/empty-final-reason.ts",
     "src/core/fleet/empty-finishes.ts",
+    "src/core/fleet/empty-tag-receipt.ts",
     "src/core/fleet/empty-tag-sync.ts",
     "src/core/fleet/empty-tags.ts",
     "src/core/fleet/empty-why-classify.ts",
