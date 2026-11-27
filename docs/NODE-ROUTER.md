@@ -374,8 +374,13 @@ ticks wait at most for the deadline, with no abort grace. Optional settings are 
 
 The bridge counts fresh measured slots once per physical host and enforces
 each worker's advertised limit on its own assignments. A worker capped at
-zero can share a host with siblings that still have room for work. Legacy
-nodes without a capacity sample use their advertised slots as the host bound.
+zero can share a host with siblings that still have room for work. Measured
+workers contribute capacity and receive assignments only while their heartbeat
+is within two heartbeat intervals. A stale worker's active claims still
+consume host slots until the claims lapse. A fresh heartbeat with a stale
+capacity sample still leaves the host's capacity unknown. Legacy nodes without
+a capacity sample use their advertised slots as the host bound and follow the
+standalone router's heartbeat limit.
 
 The bridge uses the claim that dispatchd already honors, so the pinned
 dispatcher needs no change:
