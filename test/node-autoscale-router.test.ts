@@ -44,6 +44,24 @@ const COSTS: HarnessModelCost[] = [
 ];
 
 describe('autoscale router scoring', () => {
+  it('withholds both swap rates across a counter rollback and resumes on the next sample', () => {
+    const before = computeNodeCapacity(mbp());
+    const after = computeNodeCapacity(mbp({
+      measuredAtMs: T0 + 60_000,
+      swap: { usedBytes: 0, totalBytes: 8 * GIB, swapoutsTotal: 0 },
+    }), before);
+    expect(after.swap).toMatchObject({
+      used_bytes: 0, swapouts_total: 0,
+      swapouts_per_min: null, growth_bytes_per_min: null, growing: null,
+    });
+
+    const next = computeNodeCapacity(mbp({
+      measuredAtMs: T0 + 120_000,
+      swap: { usedBytes: MIB, totalBytes: 8 * GIB, swapoutsTotal: 1 },
+    }), after);
+    expect(next.swap).toMatchObject({ swapouts_per_min: 1, growth_bytes_per_min: MIB, growing: false });
+  });
+
   it('expires learned costs for local placements, peer borrowing and runnable totals while the snapshot is fresh', () => {
     const learnedAt = T0 - CAPACITY_POLICY.learnedFootprintTtlMs;
     const prior = computeNodeCapacity(mbp({ measuredAtMs: learnedAt }));
