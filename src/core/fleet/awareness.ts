@@ -23,7 +23,8 @@ export function projectFleetAwareness(state: NodesState | null, now: number, dis
     let available: number | null = null;
     if (dispatcherFresh && (stopped || row.held === true)) available = 0;
     else if (unpaused && row.held === false && running !== null && target !== null) {
-      available = Math.min(headroom ?? Infinity, Math.max(0, laneLaunchTarget(target, effectiveTarget) - running));
+      const laneRoom = Math.max(0, laneLaunchTarget(target, effectiveTarget) - running);
+      available = laneRoom === 0 ? 0 : headroom === null ? null : Math.min(headroom, laneRoom);
     }
     return { lane, running, target, effectiveTarget, floor: count(row.floor), queued: dispatcherFresh ? count(row.queued) : null,
       available };

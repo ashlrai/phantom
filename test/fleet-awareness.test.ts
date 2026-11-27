@@ -37,6 +37,7 @@ test('pool dispatch prefers measured free slots and shares one host budget acros
   const node = f.state.nodes[0]!;
   expect(f.run('pull', ['--node', node.nodeId, '--session', String(node.session)]).pulled).toBe(true);
   const report = projectFleetAwareness(f.state, f.now(), { schema: 'dispatchd.status.v1', last_tick: new Date(f.now()).toISOString(), paused: null,
+    admission: { cap: 6, running: 2 },
     lanes: { codex: { running: 2, target: 5, effective_target: 4, floor: 1, queued: 6, held: false } } });
   expect(report.hosts.find(h => h.hostId === 'mbp')).toMatchObject({ slots: 3, running: 1, freeSlots: 2 });
   expect(report.lanes[0]).toMatchObject({ running: 2, target: 5, effectiveTarget: 4, floor: 1, queued: 6, available: 2 });

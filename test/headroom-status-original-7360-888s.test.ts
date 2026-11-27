@@ -37,7 +37,7 @@ async function fixture(lastTick = now, paused = false, admission?: Record<string
 }
 
 test('preserves headroom alongside sibling capacity and current API evidence', async () => {
-  const report = await fixture();
+  const report = await fixture(now, false, { cap: 20, running: 10 });
   expect(report).toMatchObject({
     schema: 'fleet.status-api.v1', fresh: true, paused: false,
     generatedAt: '2026-01-01T12:00:00.000Z', observedAt: '2026-01-01T12:00:00.000Z',
@@ -75,13 +75,22 @@ test.each([
   ['over fleet cap', { cap: 10, running: 11 }, 0],
   ['admission stopped below cap', { cap: 10, running: 9, admit: false }, 0],
   ['load gate', { gate_reason: 'load gate active' }, 0],
-  ['malformed count', { cap: 10, running: '9' }, 3],
-  ['admission from another tick', { ts: new Date(now - 30_000).toISOString(), decision: 'stop' }, 3],
+  ['missing fleet counts', {}, null],
+  ['malformed count', { cap: 10, running: '9' }, null],
+  ['admission from another tick', { ts: new Date(now - 30_000).toISOString(), cap: 10, running: 9 }, null],
 ] as const)('%s bounds lane availability consistently in both views', async (_label, admission, expected) => {
   const report = await fixture(now, false, { ts: new Date(now).toISOString(), ...admission });
   for (const lanes of [report.lanes, report.awareness.lanes]) {
     expect(lanes.find(lane => lane.lane === 'absent')?.available).toBe(expected);
-    expect(lanes.find(lane => lane.lane === 'shed')?.available).toBe(Math.min(2, expected));
+    expect(lanes.find(lane => lane.lane === 'shed')?.available).toBe(expected === null ? null : Math.min(2, expected));
     expect(lanes.find(lane => lane.lane === 'held')?.available).toBe(0);
+    expect(lanes.find(lane => lane.lane === 'over')?.available).toBe(0);
+  }
+});
+
+test('keeps occupancy visible without an admission record', async () => {
+  const report = await fixture();
+  for (const lanes of [report.lanes, report.awareness.lanes]) {
+    expect(lanes.find(lane => lane.lane === 'shed')).toMatchObject({ running: 1, target: 5, available: null });
   }
 });

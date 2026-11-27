@@ -342,8 +342,9 @@ the launch target — the configured target tightened by the controller's
 `effective_target` load-shed ceiling (`effectiveTarget`, null when unpublished)
 — and is bounded by the shared remaining fleet slots when the same tick
 reports valid admission `cap` and `running` counts. Each lane shares this
-ceiling, so adding lane availability can overstate fleet capacity. Without
-usable fleet counts, availability describes lane-local headroom. A fresh dispatcher pause or
+ceiling, so adding lane availability can overstate fleet capacity. When a lane
+has room but the shared headroom is unknown, `available` is null. A lane at
+its launch target can still report zero. A fresh dispatcher pause or
 explicit fleet admission stop sets every lane's `available` to zero, including
 when the fleet-wide cap is reached. Four local reads run concurrently,
 each capped at 2 MiB and 250 ms, with phase status; no SSH probes or writes.
