@@ -14,27 +14,36 @@ export interface WasteRiskFacts {
 }
 const sane = (n: number | null | undefined): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 
+function observedWindowStart(resetAt: string | null, minutes: number, observedAt: number, now: number): string | null {
+  const reset = Date.parse(resetAt ?? '');
+  const start = new Date(reset - minutes * 60_000);
+  return Number.isSafeInteger(minutes) && minutes > 0 &&
+    start.getTime() <= observedAt && observedAt <= now && now < reset &&
+    now - observedAt <= LANE_TRUTH_MAX_AGE_MS ? start.toISOString() : null;
+}
+
 export function buildWasteRiskInputs(facts: WasteRiskFacts, nowIso: string): WasteRiskInput[] {
   const now = Date.parse(nowIso);
   return [...new Set([...facts.lanes.map(l => l.lane), ...facts.ledger.lanes.map(l => l.lane), ...facts.meters.map(m => m.provider)])].sort().map(lane => {
     const state = facts.lanes.find(l => l.lane === lane);
     const row = facts.ledger.lanes.find(l => l.lane === lane);
     const at = Date.parse(row?.observation?.asOf ?? facts.ledger.asOf ?? '');
-    const fresh = at <= now && now - at <= LANE_TRUTH_MAX_AGE_MS;
     // The ledger labels these as weekly windows; percent units have limit 100.
-    let used = fresh && row?.window === 'weekly' && sane(row.usedPct) && row.usedPct <= 100 ? row.usedPct : null;
-    let reset = used !== null ? row?.resetAt ?? null : null;
-    let start = reset && Number.isFinite(Date.parse(reset)) ? new Date(Date.parse(reset) - 7 * 86400_000).toISOString() : null;
+    let start = row?.window === 'weekly' && sane(row.usedPct) && row.usedPct <= 100
+      ? observedWindowStart(row.resetAt, 7 * 24 * 60, at, now) : null;
+    let used = start !== null ? row?.usedPct ?? null : null;
+    let reset = start !== null ? row?.resetAt ?? null : null;
     let burn: number | null = null;
     const samples = facts.meters.filter(m => m.provider === lane && sane(m.usedPercent) && m.usedPercent <= 100 && Date.parse(m.sampledAt) <= now)
       .sort((a, b) => Date.parse(b.sampledAt) - Date.parse(a.sampledAt));
     const latest = samples[0];
-    const minutes = Number(latest?.window.split(':')[1]);
-    if (latest && now - Date.parse(latest.sampledAt) <= LANE_TRUTH_MAX_AGE_MS && minutes > 0 && latest.resetAt && Number.isFinite(Date.parse(latest.resetAt))) {
+    const meterStart = latest
+      ? observedWindowStart(latest.resetAt, Number(latest.window.split(':')[1]), Date.parse(latest.sampledAt), now) : null;
+    if (latest && meterStart !== null) {
       used = latest.usedPercent;
       reset = latest.resetAt;
-      start = new Date(Date.parse(reset) - minutes * 60_000).toISOString();
-      const previous = samples.find(m => m.window === latest.window && m.resetAt === reset && Date.parse(m.sampledAt) < Date.parse(latest.sampledAt) && Date.parse(m.sampledAt) >= Date.parse(start!));
+      start = meterStart;
+      const previous = samples.find(m => m.window === latest.window && m.resetAt === reset && Date.parse(m.sampledAt) < Date.parse(latest.sampledAt) && Date.parse(m.sampledAt) >= Date.parse(meterStart));
       if (previous && latest.usedPercent! >= previous.usedPercent!) burn = (latest.usedPercent! - previous.usedPercent!) / ((Date.parse(latest.sampledAt) - Date.parse(previous.sampledAt)) / 3600_000);
     }
     const paid = lane === 'claude-api' || row?.window === 'credits' || facts.overageLanes?.includes(lane) === true;

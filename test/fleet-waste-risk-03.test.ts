@@ -36,6 +36,33 @@ it('keeps stale samples and reset crossings unknown', () => {
   const changed = { ...facts, meters: facts.meters.map((m, i) => ({ ...m, resetAt: i ? reset : '2026-10-30T20:00:00Z' })) };
   expect(buildWasteRiskInputs(changed, now)[0]?.burn_per_hour).toBeNull();
 });
+it.each(['2026-10-30T18:59:00Z', '2026-10-30T19:00:00Z'])(
+  'checks provider quota against its window start when observed at %s', (sampledAt) => {
+    const meter = { ...facts.meters[1]!, sampledAt, window: 'primary:300', usedPercent: 100 };
+    const input = buildWasteRiskInputs({ ...facts, meters: [meter] }, now)[0]!;
+    if (sampledAt === now) {
+      expect(input).toMatchObject({ used: 100, window_start: '2026-10-30T19:00:00.000Z' });
+      expect(projectWasteRisk(input).recommended_target).toBe(0);
+    } else {
+      expect(input).toMatchObject({ used: null, limit: null, window_start: null, reset_at: null, burn_per_hour: null });
+      expect(projectWasteRisk(input).recommended_target).toBeNull();
+    }
+  },
+);
+it.each(['2026-10-30T19:00:00Z', '2026-11-06T19:01:00Z'])(
+  'withholds weekly ledger quota outside the active window ending at %s', (resetAt) => {
+    const ledger: WasteRiskFacts['ledger'] = { ...facts.ledger, asOf: now, lanes: [{
+      lane: 'fake-lane', running: 2, target: 8, held: false, window: 'weekly',
+      usedPct: 100, creditsRemaining: null, resetAt, burnPctPerHour: null,
+      tokensPerHour6h: null, projectedExhaustion: null, source: null, deadSignal: null,
+    }] };
+    expect(buildWasteRiskInputs({ ...facts, meters: [], ledger }, now)[0])
+      .toMatchObject({ used: null, limit: null, window_start: null, reset_at: null });
+    ledger.lanes[0]!.resetAt = '2026-11-06T19:00:00Z';
+    expect(buildWasteRiskInputs({ ...facts, meters: [], ledger }, now)[0])
+      .toMatchObject({ used: 100, window_start: '2026-10-30T19:00:00.000Z' });
+  },
+);
 it('prints schema without writing; notify persists and suppresses repeated high', async () => {
   const runsDir = await mkdtemp(join(tmpdir(), 'fake-waste-'));
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
