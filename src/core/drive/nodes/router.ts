@@ -145,7 +145,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
     const fix = !nodes.some(n => n.owners?.includes(job.owner!))
       ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
       : reasons.has('capacity')
-        ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
+        ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or capacity to recover.`
       : reasons.has('declined') && !reasons.has('caps')
         ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
       : reasons.has('caps')
