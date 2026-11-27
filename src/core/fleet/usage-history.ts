@@ -279,7 +279,9 @@ export function poolUsageSeries(pool: string, rows: readonly UsageReading[], now
     }
     previous = reading;
   }
-  const resetAt = mine.at(-1)?.reset_at ?? null;
+  // Use the last eligible reading for window selection too. With no eligible
+  // points, retain the reported reset for the empty-window explanation.
+  const resetAt = (previous ?? mine.at(-1))?.reset_at ?? null;
   const resetMs = ms(resetAt);
   const startMs = resetMs - windowMs;
   const known = Number.isFinite(resetMs);

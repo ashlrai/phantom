@@ -154,6 +154,19 @@ describe('pool series', () => {
     });
   });
 
+  it.each([
+    ['after reset', iso(NOW - H)],
+    ['before opening', iso(NOW + 8 * D)],
+  ])('keeps current quota pace when a later reading falls %s in its own window', (_label, reset) => {
+    const current = [read(3, 20), read(1, 24)];
+    const expected = poolUsageSeries('claude', current, NOW);
+    expect(expected).toMatchObject({
+      reset_at: RESET, used_pct: 24, pace: 'behind', runway: { pace_per_hour: 2 },
+    });
+    const [series] = projectUsageHistory(current, NOW, [read(0, 99, reset)]);
+    expect(series).toEqual(expected);
+  });
+
   it('compares a rollover to the last in-window reading when an expired sample intervenes', () => {
     const oldReset = iso(NOW - 96 * H);
     const old = read(97, 90, oldReset);
