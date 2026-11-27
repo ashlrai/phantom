@@ -561,8 +561,10 @@ walking up from the test file, and the dependency manifests (which also cover
 suites running without bare imports). An unreadable governing config, an
 unresolvable or globbed setup entry, or a failed harness probe yields
 `unknown`, never independence. A candidate that 404s tries the next
-resolution; any other fetch failure, unresolvable spec, alias, or computed
-import prevents independence claims. Pass evidence comes in two shapes: a
+resolution. Missing candidates ahead of the resolved target also count as
+inputs, since a PR can add one and change which module loads. Any other
+fetch failure, unresolvable spec, alias, or computed import prevents
+independence claims. Pass evidence comes in two shapes: a
 verbose per-test line (`✓ file > suite > test`) resolves only the named
 test, while the default reporter's green-module line (`✓ file (N tests)`)
 resolves any failure identity in that file because every test the module
