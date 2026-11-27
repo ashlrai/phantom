@@ -80,6 +80,21 @@ it('applies the inbox filters to the stream', async () => {
   expect(messages(records).map(row => row.envelope.id)).toEqual(['dm-p0']);
 });
 
+it('applies the shared group-topic filter to the stream', async () => {
+  const options = setup();
+  register(options, 'atlas', 'nova');
+  createAgentChannel({ name: 'eng', createdBy: 'atlas', members: ['nova'] }, options);
+  await postChannelMessage({ from: 'atlas', channel: 'eng', topic: 'deploy', text: 'deploy', id: 'ch-dep' }, options);
+  await postChannelMessage({ from: 'atlas', channel: 'eng', topic: 'general', text: 'chat', id: 'ch-gen' }, options);
+  await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'direct', id: 'dm-1' }, options);
+  // topic keeps only the deploy-addressed room post; the dm names no topic.
+  const { records, pending, expire } = follow({ agent: 'nova', topic: 'deploy' }, {}, options);
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['ch-dep']);
+});
+
 it('resumes after a persisted cursor without replaying shown rows', async () => {
   const options = setup();
   register(options, 'atlas', 'nova');

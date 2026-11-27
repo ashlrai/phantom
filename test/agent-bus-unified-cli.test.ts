@@ -273,6 +273,47 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['wakes', '--all', '--channel='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
+  it('filters inbox and wakes by the group topic their to label addresses', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    // P0 posts wake the room's group:<name>:<topic> address; a dm names no topic.
+    for (const [room, topic, id] of [['release', 'deploy', 'wtp-rel-dep'], ['release', 'general', 'wtp-rel-gen'],
+      ['ops', 'deploy', 'wtp-ops-dep']] as const) {
+      expect((await run(['channel', 'post', room, '--from', 'atlas', '--topic', topic, '--text', 'x',
+        '--priority', 'P0', '--id', id])).json).toMatchObject({ status: 'posted', wake: 'queued' });
+    }
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'hi', '--priority', 'P0', '--id', 'wtp-dm'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+
+    // Inbox: the verdict is room-agnostic and composes with --channel into one
+    // room AND one topic; the dm never matches a topic.
+    const deployInbox = await run(['inbox', 'nova', '--topic', 'deploy']);
+    expect(deployInbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id).sort())
+      .toEqual(['wtp-ops-dep', 'wtp-rel-dep']);
+    expect((await run(['inbox', 'nova', '--channel', 'release', '--topic', 'deploy'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['wtp-rel-dep']);
+    expect((await run(['inbox', 'nova', '--channel', 'ops', '--topic', 'deploy'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['wtp-ops-dep']);
+    expect((await run(['inbox', 'nova', '--topic', 'absent'])).json).toMatchObject({ messages: [] });
+    expect(await run(['inbox', 'nova', '--topic', 'Bad Topic'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+
+    // Wakes: the same verdict on the hint's own to label, per-agent and fleet-wide.
+    const deployWakes = await run(['wakes', 'nova', '--topic', 'deploy']);
+    expect(deployWakes.json).toMatchObject({ matched: 2, truncated: false });
+    expect(deployWakes.json.wakes.map((w: { id: string }) => w.id).sort()).toEqual(['wtp-ops-dep', 'wtp-rel-dep']);
+    expect((await run(['wakes', 'nova', '--channel', 'release', '--topic', 'deploy'])).json.wakes
+      .map((w: { id: string }) => w.id)).toEqual(['wtp-rel-dep']);
+    expect((await run(['wakes', 'nova', '--topic', 'general'])).json.wakes
+      .map((w: { id: string }) => w.id)).toEqual(['wtp-rel-gen']);
+    expect((await run(['wakes', '--all', '--topic', 'deploy'])).json.wakes
+      .map((w: { id: string }) => w.id).sort()).toEqual(['wtp-ops-dep', 'wtp-rel-dep']);
+    expect(await run(['wakes', 'nova', '--topic='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('filters wakes by the resolved referent thread label and reply citation', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
