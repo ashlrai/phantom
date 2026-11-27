@@ -3645,18 +3645,20 @@ export async function readRouterOutcomes(opts: {
   }
   if (launchCostRead.state === 'read') {
     const byJob = new Map<string, LaunchCostEvidence>();
+    const latestStartByJob = new Map<string, number>();
     const seen = new Set<string>();
     for (const receipt of launchCostReceipts(launchCostRead.text)) {
       const { launchId, startedAtMs, evidence } = receipt;
+      // Resolve before folding so a bare job ID and a claim ID can coexist.
+      const job = startedAtMs !== null ? launchId.replace(LAUNCH_ATTEMPT_SUFFIX, '') : launchId;
       if (startedAtMs !== null) {
-        if (startedAtMs > reportStartedAt) continue;
+        const latestStart = latestStartByJob.get(job);
+        if (startedAtMs > reportStartedAt || (latestStart !== undefined && startedAtMs < latestStart)) continue;
         const key = JSON.stringify(receipt);
         if (seen.has(key)) continue;
         seen.add(key);
+        latestStartByJob.set(job, startedAtMs);
       }
-      // The producer sets startedAt and appends the claim hash together.
-      // Resolve before folding so a bare job ID and a claim ID can coexist.
-      const job = startedAtMs !== null ? launchId.replace(LAUNCH_ATTEMPT_SUFFIX, '') : launchId;
       byJob.set(job, evidence);
     }
     for (const o of folded.outcomes) {

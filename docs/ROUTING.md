@@ -911,7 +911,7 @@ exceeds peak). The producer sets `startedAt` and appends a 12-character
 lowercase hex claim hash to the job ID together. The join strips that suffix
 when a start is recorded, even if the probe verdict is `unknown`. A receipt
 with null `startedAt` keeps its whole ID. The join resolves the job before
-folding receipts in append order, so a bare job ID can coexist with
+folding receipts, so a bare job ID can coexist with
 another job's claim ID of the same spelling. The join fills
 `launch_cost_status` (`measured`/`partial`/`unknown` — the probe ran
 but recorded nothing on `unknown`), `launch_peak_processes`,
@@ -920,8 +920,9 @@ resource-cost evidence subscription lanes record since their finish
 rows carry no `cost_usd`. A replay of a dated receipt keeps its original
 position in the retained journal, so it cannot overwrite a later probe
 for the same job. Timestamp spellings for the same instant are equivalent.
-Distinct valid receipts and receipts without a recorded start retain their
-append order. The join skips
+An older recorded start cannot supersede a newer start for the same job
+when its probe arrives late. Distinct receipts with the same start time and
+receipts without a recorded start retain their append order. The join skips
 receipts whose recorded start is after the report began. Starts exactly at
 report time and receipts with no recorded start remain eligible. Rows resolving
 outside the jobs window join nothing and
