@@ -1472,6 +1472,25 @@
  *     a report someone had to run — so a mitigation step that kept
  *     failing or sweeps that kept reclaiming nothing under pressure
  *     never became work;
+ *   - the usage-reset release audit journal's recurring
+ *     expiry-justified and provider-clock-justified releases: the
+ *     {v, at, by, reason, lane, state, usedPct, readingAsOf,
+ *     heldUntil} rows runResetReleaseOnce appends to
+ *     <runs>/queue/reset-releases.jsonl — fed by every applied
+ *     self-tick's reset-release step and the ops self-update GET's
+ *     armed loop — until now read only by point-in-time surfaces
+ *     (the ops reset-releases API, the per-lane release await and
+ *     the reset-history follower), so a lane whose holds kept
+ *     releasing on heldUntil expiry or provider resetAt instead of
+ *     measured reset evidence never became work
+ *     (resetReleaseBacklogItems below). A cell emits only at the
+ *     recurring bars of three adverse rows across two distinct UTC
+ *     days inside the 7-day window — 'hold-expired' and
+ *     'reset-time-passed' per lane, with 'reset-detected' rows as
+ *     healthy-path context and fresh-reading buckets stated as
+ *     recorded — truncated tails are stated as lower bounds, and
+ *     items emit only for the fleet's own repository since the
+ *     journal carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1610,6 +1629,7 @@ import { teammateInboxBacklogItems } from './teammate-inbox-backlog.js';
 import { telemetrySpanBacklogItems } from './telemetry-span-backlog.js';
 import { coordinationBacklogItems } from './coordination-backlog.js';
 import { diskSweepBacklogItems } from './disk-sweep-backlog.js';
+import { resetReleaseBacklogItems } from './reset-release-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -3459,6 +3479,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // items since the journal describes this install's machinery and
   // carries no repository column.
   items.push(...await diskSweepBacklogItems({ repo }));
+
+  // Usage-reset release audit journal (queue/reset-releases.jsonl under
+  // the runs dir): the {v, at, by, reason, lane, state, usedPct,
+  // readingAsOf, heldUntil} rows runResetReleaseOnce appends per lane
+  // hold it releases — fed by every applied self-tick's reset-release
+  // step and the ops self-update GET's armed 60-second loop. Until now
+  // the ledger's only readers were point-in-time — the ops
+  // reset-releases API, the per-lane release await and the
+  // reset-history follower — so a lane whose releases kept landing on
+  // heldUntil expiry or provider resetAt instead of measured reset
+  // evidence never became work. A cell emits only at the recurring
+  // bars of three adverse rows across two distinct UTC days inside
+  // the 7-day window — 'hold-expired' and 'reset-time-passed' per
+  // lane, 'reset-detected' rows as healthy-path context, expiry rows
+  // bucketed by their recorded reading's freshness against the
+  // fleet's own 3 h usage-runway stale bound — truncated tails are
+  // stated as lower bounds, and only the fleet's own repository
+  // inherits the items since the journal carries no repo column.
+  items.push(...await resetReleaseBacklogItems({ repo }));
   return { items, errors };
 }
 
