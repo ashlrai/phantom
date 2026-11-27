@@ -138,6 +138,20 @@ describe('foldJobsLedgerRewards', () => {
     expect(foldJobsLedgerRewards([matching, other, verdict].join('\n'), NOW_MS)).toEqual([]);
   });
 
+  it.each(['MERGED', 'CLOSED', 'REVERTED'])('binds a repository-only %s verdict to the dispatch PR repository', (state) => {
+    const job = 'RQ-DISPATCH-PR-REPO';
+    const dispatch = line({
+      event: 'launch', job, ts: DISPATCH_ISO, lane: 'devin',
+      pr_url: 'https://github.com/ashlrai/lexicon/pull/101',
+    });
+    const verdict = { job, state, ts: MERGED_ISO };
+
+    expect(foldJobsLedgerRewards([dispatch, line({ ...verdict, repo: 'ashlrai/phantom' })].join('\n'), NOW_MS))
+      .toEqual([]);
+    expect(foldJobsLedgerRewards([dispatch, line({ ...verdict, repo: 'AshlrAI/Lexicon' })].join('\n'), NOW_MS))
+      .toMatchObject([{ jobId: job, pool: 'devin', repo: 'ashlrai/lexicon', merged: state === 'MERGED' }]);
+  });
+
   it('withholds rewards when latest dispatch receipts disagree on the PR in either order', () => {
     const job = 'RQ-DISPATCH-PR-TIE';
     const dispatch = { event: 'launch', job, ts: DISPATCH_ISO, lane: 'codex-cmp' };

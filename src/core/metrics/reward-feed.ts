@@ -423,6 +423,12 @@ function dispatchBefore(acc: RewardJobAccum, resolution: ResolutionMark) {
   }
   const executionPrKeys = [...new Set([...prKeys, ...resolution.prKeys])];
   if (prKeys.size > 0 && resolution.prKeys.length > 0 && executionPrKeys.length > 1) return null;
+  // A repository-only verdict still cannot resolve a dispatch tied to a PR
+  // in another repository.
+  if (resolution.prKeys.length === 0 && typeof resolution.repo === 'string') {
+    const repoPrefix = `${resolution.repo}#`;
+    if ([...prKeys].some((key) => !key.startsWith(repoPrefix))) return null;
+  }
   // The dispatcher stamps receipts to the second. Conflicting lanes at the
   // same timestamp cannot prove which pool earned the reward.
   return latestMs === null ? null : {

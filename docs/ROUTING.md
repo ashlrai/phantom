@@ -838,6 +838,9 @@ CI receipts outside that window are ignored when
 checking for ambiguity, so earlier attempts can coexist with a measured
 retry. A merge uses its recorded merge time even if its ledger receipt
 arrived later. The latest effective merge time selects the rewarded attempt.
+A merge, close, or standalone revert that identifies only a repository
+can resolve a dispatch with PR links only when each link belongs to that
+repository. Conflicts leave the reward unwritten.
 When the verdict has no repository evidence, the reward uses the repository
 from the latest dispatch timestamp. Conflicting repository claims at that
 timestamp, including different repository URLs on a single receipt, leave
