@@ -140,8 +140,13 @@ export function parseUsageHistory(raw: unknown, nowMs: number): UsageReading[] {
   return prune(((raw as { rows: unknown[] }).rows).filter(validRow).map(row), nowMs);
 }
 
+function inHistoryWindow(reading: UsageReading, nowMs: number): boolean {
+  const observedMs = ms(reading.observed_at);
+  return observedMs <= nowMs && observedMs > nowMs - USAGE_HISTORY_MAX_AGE_MS;
+}
+
 function prune(rows: UsageReading[], nowMs: number): UsageReading[] {
-  return rows.filter(r => ms(r.observed_at) <= nowMs && ms(r.observed_at) > nowMs - USAGE_HISTORY_MAX_AGE_MS)
+  return rows.filter(r => inHistoryWindow(r, nowMs))
     .sort((a, b) => ms(a.observed_at) - ms(b.observed_at)).slice(-USAGE_HISTORY_MAX_ROWS);
 }
 
@@ -153,7 +158,7 @@ export function appendUsageReadings(rows: readonly UsageReading[], readings: rea
   const next = prune([...rows], nowMs);
   let changed = next.length !== rows.length;
   for (const reading of readings) {
-    if (!validRow(reading) || ms(reading.observed_at) > nowMs || ms(reading.observed_at) <= nowMs - USAGE_HISTORY_MAX_AGE_MS) continue;
+    if (!validRow(reading) || !inHistoryWindow(reading, nowMs)) continue;
     const last = lastFor(next, reading.pool);
     if (last && (ms(reading.observed_at) <= ms(last.observed_at)
       || (last.used_pct === reading.used_pct && last.reset_at === reading.reset_at))) continue;
@@ -166,7 +171,7 @@ export function appendUsageReadings(rows: readonly UsageReading[], readings: rea
 /** The ledger's current per-pool readings. A pool without a measured share or a reading time is skipped. */
 export function ledgerUsageReadings(ledger: ResourceLedgerV1): UsageReading[] {
   return ledger.lanes.flatMap(lane => {
-    const at = lane.observation?.asOf ?? lane.quotaEvidence?.statusQuota?.observedAt ?? ledger.asOf;
+    const at = lane.observation?.asOf ?? lane.quotaEvidence?.statusQuota?.observedAt;
     if (lane.usedPct === null || !isoTime(at)) return [];
     const reading = { pool: lane.lane, used_pct: lane.usedPct, observed_at: new Date(ms(at)).toISOString(),
       reset_at: lane.resetAt === null ? null : new Date(ms(lane.resetAt)).toISOString(), source: lane.source };
@@ -174,29 +179,46 @@ export function ledgerUsageReadings(ledger: ResourceLedgerV1): UsageReading[] {
   });
 }
 
-/** True when `cur` begins a new window after `prev`. */
+/** Compare readings that have already been checked against their own windows. */
 function startsWindow(prev: UsageReading, cur: UsageReading): boolean {
   const prevReset = ms(prev.reset_at), curReset = ms(cur.reset_at);
   if (!Number.isFinite(prevReset) || !Number.isFinite(curReset)) return false;
+  const observedAt = ms(cur.observed_at);
   // A drop with the same or a later reset time, or the old reset passed and a later one is reported.
   return (cur.used_pct < prev.used_pct && curReset >= prevReset)
-    || (prevReset <= ms(cur.observed_at) && curReset > prevReset);
+    || (prevReset <= observedAt && curReset > prevReset);
+}
+
+function withinQuotaWindow(reading: UsageReading, windowMs: number): boolean {
+  const reset = ms(reading.reset_at);
+  const observed = ms(reading.observed_at);
+  return !Number.isFinite(reset) || (observed >= reset - windowMs && observed < reset);
 }
 
 const pts = (n: number): string => `${Math.round(n * 100) / 100}`;
+
+/** Match the history writer: keep the first reading at each observation time. */
+function distinctObservations<T>(readings: readonly T[], observedAt: (reading: T) => string, nowMs: number): T[] {
+  const byTime = new Map<number, T>();
+  for (const reading of readings) {
+    const at = ms(observedAt(reading));
+    if (Number.isFinite(at) && at <= nowMs && !byTime.has(at)) byTime.set(at, reading);
+  }
+  return [...byTime.entries()].sort(([a], [b]) => a - b).map(([, reading]) => reading);
+}
 
 /**
  * Pure. Pace from consecutive readings of one pool, then whether it runs dry
  * before `resetAt` or leaves usage unspent. Readings before the window start
  * (`resetAt` minus `windowMs`) are ignored; a used share that goes down means
- * the pool was reset, so the series restarts there. A single reading, a stale
- * newest reading, identical values or no reset time is "unknown", never a guess.
+ * the pool was reset, so the series restarts there. A single reading, stale
+ * evidence of a reading or change, identical values or no reset time yields "unknown".
  */
 export function usageRunway(pool: string, readings: readonly UsagePoint[], resetAt: string | null, nowMs: number, windowMs = USAGE_WINDOW_MS): PoolRunwayRead {
   const name = poolLabel(pool);
   const resetMs = ms(resetAt);
-  let series = readings.filter(r => Number.isFinite(ms(r.at)) && ms(r.at) <= nowMs && (!Number.isFinite(resetMs) || ms(r.at) >= resetMs - windowMs))
-    .sort((a, b) => ms(a.at) - ms(b.at));
+  let series = distinctObservations(readings, r => r.at, nowMs)
+    .filter(r => !Number.isFinite(resetMs) || ms(r.at) >= resetMs - windowMs);
   for (let i = series.length - 1; i > 0; i--) if (series[i]!.used_pct < series[i - 1]!.used_pct) { series = series.slice(i); break; }
   const latest = series.at(-1);
   const hoursToReset = Number.isFinite(resetMs) ? (resetMs - nowMs) / 3_600_000 : null;
@@ -209,10 +231,11 @@ export function usageRunway(pool: string, readings: readonly UsagePoint[], reset
   if (hoursToReset <= 0) return unknown('reset passed; waiting for a new reading');
   if (series.length < 2) return unknown('only one reading');
   if (nowMs - ms(latest.at) > USAGE_RUNWAY_STALE_MS) return unknown('latest reading is stale');
-  // Newest reading of a flat run is not the change; the first reading at the newest value is.
+  // The first reading at the newest value timestamps the measured change.
   let first = series.length - 1;
   while (first > 0 && series[first - 1]!.used_pct === latest.used_pct) first--;
   if (first === 0) return unknown('readings are identical; no pace yet');
+  if (nowMs - ms(series[first]!.at) > USAGE_RUNWAY_STALE_MS) return unknown('latest usage change is stale');
   const hours = (a: UsagePoint, b: UsagePoint): number => (ms(b.at) - ms(a.at)) / 3_600_000;
   const pace = (series[first]!.used_pct - series[first - 1]!.used_pct) / hours(series[first - 1]!, series[first]!);
   const recent = series.filter(r => ms(r.at) >= ms(latest.at) - USAGE_RUNWAY_LONG_MS);
@@ -242,35 +265,43 @@ export function usageRunway(pool: string, readings: readonly UsagePoint[], reset
  * `rows` may hold any pools and any order; only `pool` is read.
  */
 export function poolUsageSeries(pool: string, rows: readonly UsageReading[], nowMs: number, windowMs = USAGE_WINDOW_MS): PoolUsageSeries {
-  const mine = rows.filter(r => r.pool === pool).sort((a, b) => ms(a.observed_at) - ms(b.observed_at));
+  const mine = distinctObservations(rows.filter(r => r.pool === pool), r => r.observed_at, nowMs);
   const resets: UsageResetEvent[] = [];
   let start = 0;
-  for (let i = 1; i < mine.length; i++) {
-    if (!startsWindow(mine[i - 1]!, mine[i]!)) continue;
-    start = i;
-    if (mine[i]!.used_pct < mine[i - 1]!.used_pct) {
-      resets.push({ at: mine[i]!.observed_at, from_pct: mine[i - 1]!.used_pct, to_pct: mine[i]!.used_pct });
+  let previous: UsageReading | undefined;
+  for (const [i, reading] of mine.entries()) {
+    if (!withinQuotaWindow(reading, windowMs)) continue;
+    if (previous && startsWindow(previous, reading)) {
+      start = i;
+      if (reading.used_pct < previous.used_pct) {
+        resets.push({ at: reading.observed_at, from_pct: previous.used_pct, to_pct: reading.used_pct });
+      }
     }
+    previous = reading;
   }
-  const window = mine.slice(start);
-  const latest = window.at(-1) ?? null;
-  const resetMs = ms(latest?.reset_at ?? null);
+  const resetAt = mine.at(-1)?.reset_at ?? null;
+  const resetMs = ms(resetAt);
   const startMs = resetMs - windowMs;
   const known = Number.isFinite(resetMs);
+  const window = mine.slice(start).filter(r => !known || (ms(r.reset_at) === resetMs && withinQuotaWindow(r, windowMs)));
+  const latest = window.at(-1) ?? null;
+  const points = window.map(r => ({ at: r.observed_at, used_pct: r.used_pct }));
   const idealAt = (t: number): number => round1(Math.min(100, Math.max(0, (t - startMs) / windowMs * 100)));
   const series: PoolUsageSeries = {
     pool, pace: 'unknown', reason: null, used_pct: latest?.used_pct ?? null, observed_at: latest?.observed_at ?? null,
-    reset_at: known ? latest!.reset_at : null, window_start: known ? new Date(startMs).toISOString() : null,
-    points: window.map(r => ({ at: r.observed_at, used_pct: r.used_pct })),
-    ideal: known ? { from: { at: new Date(startMs).toISOString(), used_pct: 0 }, to: { at: latest!.reset_at!, used_pct: 100 } } : null,
+    reset_at: known ? resetAt : null, window_start: known ? new Date(startMs).toISOString() : null,
+    points,
+    ideal: known ? { from: { at: new Date(startMs).toISOString(), used_pct: 0 }, to: { at: resetAt!, used_pct: 100 } } : null,
     ideal_pct: known && latest ? idealAt(ms(latest.observed_at)) : null,
     resets,
-    runway: usageRunway(pool, window.map(r => ({ at: r.observed_at, used_pct: r.used_pct })), known ? latest!.reset_at : null, nowMs, windowMs),
+    runway: usageRunway(pool, points, known ? resetAt : null, nowMs, windowMs),
   };
-  if (!latest) return { ...series, reason: 'No readings yet.' };
+  if (mine.length === 0) return { ...series, reason: 'No readings yet.' };
   if (!known) return { ...series, reason: 'Reset time unknown.' };
   if (resetMs <= nowMs) return { ...series, reason: 'The window reset. Waiting for a new reading.' };
+  if (!latest) return { ...series, reason: 'No readings in this window.' };
   if (window.length < 2) return { ...series, reason: 'Only one reading in this window.' };
+  if (nowMs - ms(latest.observed_at) > USAGE_RUNWAY_STALE_MS) return { ...series, reason: 'Latest reading is stale.' };
   const gap = latest.used_pct - series.ideal_pct!;
   return { ...series, pace: gap > PACE_BAND_PCT ? 'ahead' : gap < -PACE_BAND_PCT ? 'behind' : 'on pace' };
 }
@@ -280,8 +311,9 @@ export function projectUsageHistory(rows: readonly UsageReading[], nowMs: number
   const all = appendUsageReadings(rows, current, nowMs).rows;
   // Storage dedupes an unchanged reading; show it as the tail point so a flat run reaches its real reading time.
   for (const reading of current) {
+    if (!validRow(reading) || !inHistoryWindow(reading, nowMs)) continue;
     const last = lastFor(all, reading.pool);
-    if (last && ms(reading.observed_at) > ms(last.observed_at) && validRow(reading)) all.push(row(reading));
+    if (last && ms(reading.observed_at) > ms(last.observed_at)) all.push(row(reading));
   }
   const pools = [...new Set(all.map(r => r.pool))].sort();
   return pools.map(pool => poolUsageSeries(pool, all, nowMs));

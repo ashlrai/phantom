@@ -7,6 +7,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { fleetNotRunning, type LaunchRecord, type NotRunningRow } from './fleet-held.js';
 import { GLOBAL_SLOT_KEYS, LANE_ID_RE } from './runs-lane-targets.js';
 import { ledgerEventName, ledgerJobId, ledgerLane, ledgerPrUrl, ledgerStamp } from './empty-cause.js';
+import { dispatcherAdmissionHeadroom } from './lane-launch-target.js';
 
 export interface FleetRunsLane {
   seat?: { health: 'ok'|'degraded'|'down'|'unknown'; usedPct: number|null; resetAt: string|null; observedAt: string|null; passAt: string|null; passMs: number|null;
@@ -27,6 +28,8 @@ export interface FleetRunsDirState {
   v: 1; generatedAt: string; runsDirPresent: boolean; sourceState: Health;
   sources: Record<'status'|'claimed'|'events'|'metrics'|'claudeLane'|'switches'|'drop', Health>;
   lastTick: string|null; paused: boolean|null; memFreePct: number|null; diskFreeGb: number|null;
+  /** Shared admission headroom at lastTick, null when unpublished or unusable. */
+  admissionHeadroom?: number|null;
   lanes: FleetRunsLane[]; switches: string[]; claudeLane: string|null;
   publishesLastHour: FleetRunsPublish[]; events: FleetRunsEvent[]; claimed: FleetRunsClaim[];
   drop: { pending: Array<{ lane: string; file: string }>; done: number };
@@ -184,6 +187,7 @@ export async function readFleetRunsDirState(opts: ReadFleetRunsDirOptions = {}):
       const paused = pauseState(s);
       if (!timestamp(s.last_tick) || paused === null || number(s.mem_free_pct) === null || Number(s.mem_free_pct) > 100 || !s.lanes || Array.isArray(s.lanes) || typeof s.lanes !== 'object') throw new Error('invalid status');
       state.lastTick = s.last_tick; state.paused = paused; state.memFreePct = number(s.mem_free_pct);
+      state.admissionHeadroom = dispatcherAdmissionHeadroom(s.admission, s.last_tick);
       const leader = object(s.leader);
       state.leader = { lane: typeof leader.lane === 'string' && validLane(leader.lane) ? leader.lane : null,
         model: typeof leader.model === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(leader.model) && scrubSecrets(leader.model) === leader.model ? leader.model : null,

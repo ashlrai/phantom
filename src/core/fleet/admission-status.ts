@@ -21,6 +21,13 @@ export interface FleetStartStatus {
 
 const number = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 const count = (v: unknown): number | null => Number.isSafeInteger(v) ? number(v) : null;
+const zonedTimestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:?\d{2})$/;
+
+function timestamp(v: unknown): number | null {
+  if (typeof v !== 'string') return number(v);
+  if (!zonedTimestamp.test(v)) return null;
+  return number(Date.parse(v.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')) / 1000);
+}
 
 /** Only the guard's public measurements are projected; malformed or old observations cannot say open. */
 export function admissionStatus(text: string | null, now = Date.now()): FleetStartStatus {
@@ -35,7 +42,7 @@ export function admissionStatus(text: string | null, now = Date.now()): FleetSta
     if (!value || typeof value !== 'object' || Array.isArray(value)) return unknown('invalid admission file');
     raw = value as Record<string, unknown>;
   } catch { return unknown('invalid admission file'); }
-  const ts = number(raw.ts);
+  const ts = timestamp(raw.ts);
   if (ts === null || ts * 1000 > now) return unknown('invalid admission timestamp');
   if (now - ts * 1000 > 300_000) return unknown('admission file older than 5 min');
   const settle_s = number(raw.settle_s), last_admit = number(raw.last_admit);

@@ -1,4 +1,3 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
@@ -11,13 +10,12 @@ import {
   openSync,
   opendirSync,
   readSync,
-  realpathSync,
   renameSync,
   unlinkSync,
   type Stats,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import {
   loadExistingProvenanceKey,
@@ -29,10 +27,21 @@ import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { isOuterAttemptIdentity } from '../fleet/attempt-identity.js';
-import { policyAssignmentUnitId } from './policy-assignment-identity.js';
+import {
+  LEARNING_WORK_SOURCES as WORK_SOURCES,
+  POLICY_IDENTIFIER_RE as POLICY_RE,
+  SHA256_HEX_RE as SHA256_RE,
+  canonicalRealPath,
+  equalSha256Hex as safeDigestEqual,
+  exactKeys,
+  hmacSha256Tuple as hmacTuple,
+  isCanonicalIsoTimestamp as canonicalTimestamp,
+  isSha256JsonFileName,
+  policyAssignmentUnitId,
+  sha256Tuple as shaTuple,
+} from './policy-assignment-identity.js';
 
 const PROTOCOL = 'policy-assignment-receipt-v1' as const;
-const SHA256_RE = /^[a-f0-9]{64}$/;
 const TOKEN_RE = /^[a-z0-9][a-z0-9._:-]{0,79}$/;
 // Proof-of-pre-registration: a dispatchTrajectoryId in this exact shape can
 // only have been minted by createOuterAttemptIdentity() (fleet/attempt-identity.ts)
@@ -41,7 +50,6 @@ const TOKEN_RE = /^[a-z0-9][a-z0-9._:-]{0,79}$/;
 // `run:${runId}`). Any other shape is still recorded (diagnostically visible)
 // but never counts as preExposureVerified.
 const PRE_REGISTERED_TRAJECTORY_PREFIX = 'run:';
-const POLICY_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const MAX_ACTIONS = 32;
 const MAX_PROBABILITY_DENOMINATOR = 1_000_000_000;
 const MAX_RECEIPT_BYTES = 16 * 1024;
@@ -80,10 +88,6 @@ const RECEIPT_KEYS = [
   'workSource',
 ] as const;
 const ACTION_KEYS = ['actionDefinitionDigest', 'actionId', 'probabilityNumerator'] as const;
-const WORK_SOURCES = new Set<WorkItem['source']>([
-  'issue', 'todo', 'test', 'dep', 'doc', 'security', 'plugin', 'self', 'lint',
-  'goal', 'hygiene', 'invent',
-]);
 
 export interface PolicyAssignmentActionProbability {
   actionId: string;
@@ -195,32 +199,8 @@ interface DirectoryIdentity {
   ino: number;
 }
 
-function canonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
 function safeToken(value: unknown): value is string {
   return typeof value === 'string' && TOKEN_RE.test(value);
-}
-
-function exactKeys(value: object, keys: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  return actual.length === expected.length &&
-    actual.every((key, index) => key === expected[index]);
-}
-
-function safeDigestEqual(left: string, right: string): boolean {
-  if (!SHA256_RE.test(left) || !SHA256_RE.test(right)) return false;
-  const leftBytes = Buffer.from(left, 'hex');
-  const rightBytes = Buffer.from(right, 'hex');
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
-}
-
-function shaTuple(domain: string, values: readonly unknown[]): string {
-  return createHash('sha256').update(JSON.stringify([domain, ...values]), 'utf8').digest('hex');
 }
 
 function isPreRegisteredTrajectory(value: string): boolean {
@@ -228,18 +208,16 @@ function isPreRegisteredTrajectory(value: string): boolean {
     isOuterAttemptIdentity(value.slice(PRE_REGISTERED_TRAJECTORY_PREFIX.length));
 }
 
-function hmacTuple(key: Buffer, domain: string, values: readonly unknown[]): string {
-  return createHmac('sha256', key).update(JSON.stringify([domain, ...values]), 'utf8').digest('hex');
+function canonicalRepo(value: unknown): string | null {
+  return canonicalRealPath(value, 1_024);
 }
 
-function canonicalRepo(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length === 0 || value.length > 1_024 || !isAbsolute(value)) return null;
-  try {
-    const canonical = realpathSync(value);
-    return isAbsolute(canonical) && canonical.length <= 1_024 ? canonical : null;
-  } catch {
-    return null;
-  }
+function receiptsMatch(
+  left: Pick<PolicyAssignmentReceiptV1, 'assignmentDigest' | 'attestation'>,
+  right: Pick<PolicyAssignmentReceiptV1, 'assignmentDigest' | 'attestation'>,
+): boolean {
+  return safeDigestEqual(left.assignmentDigest, right.assignmentDigest) &&
+    safeDigestEqual(left.attestation, right.attestation);
 }
 
 function canonicalActions(
@@ -562,12 +540,8 @@ export function verifyPolicyAssignmentReceipt(value: unknown): PolicyAssignmentR
   }
 }
 
-function receiptRoot(): string {
-  return resolve(join(homedir(), '.ashlr', 'fleet', 'policy-assignment-receipts'));
-}
-
 export function policyAssignmentReceiptRootPath(): string {
-  return receiptRoot();
+  return resolve(join(homedir(), '.ashlr', 'fleet', 'policy-assignment-receipts'));
 }
 
 function privateDirectory(stat: Stats): boolean {
@@ -645,7 +619,7 @@ function verifyDirectories(directories: ReceiptDirectories): void {
 }
 
 function receiptPath(unitId: string): string {
-  return join(receiptRoot(), `${unitId}.json`);
+  return join(policyAssignmentReceiptRootPath(), `${unitId}.json`);
 }
 
 function readReceiptFile(
@@ -742,8 +716,7 @@ function recoverInterruptedPublication(
       const temporaryReceipt = readReceiptFile(temporary, key, directories.home);
       if (temporaryReceipt) {
         if (temporaryReceipt.assignmentUnitId !== expected.assignmentUnitId ||
-          !safeDigestEqual(temporaryReceipt.assignmentDigest, expected.assignmentDigest) ||
-          !safeDigestEqual(temporaryReceipt.attestation, expected.attestation)) return 'conflicted';
+          !receiptsMatch(temporaryReceipt, expected)) return 'conflicted';
         renameSync(temporary, stage);
         const installedStage = lstatSync(stage);
         if (!privateFile(installedStage) ||
@@ -769,8 +742,7 @@ function recoverInterruptedPublication(
     }
     const staged = readReceiptFile(stage, key, directories.home, expectedLinks);
     if (!staged || staged.assignmentUnitId !== expected.assignmentUnitId) return 'failed';
-    if (!safeDigestEqual(staged.assignmentDigest, expected.assignmentDigest) ||
-      !safeDigestEqual(staged.attestation, expected.attestation)) return 'conflicted';
+    if (!receiptsMatch(staged, expected)) return 'conflicted';
 
     if (!targetPresent) {
       linkSync(stage, target);
@@ -792,9 +764,7 @@ function recoverInterruptedPublication(
     fsyncDirectory(directories.receipts);
     verifyDirectories(directories);
     const recovered = readReceiptFile(target, key, directories.home);
-    return recovered &&
-      safeDigestEqual(recovered.assignmentDigest, expected.assignmentDigest) &&
-      safeDigestEqual(recovered.attestation, expected.attestation)
+    return recovered && receiptsMatch(recovered, expected)
       ? 'recovered'
       : 'failed';
   } catch {
@@ -854,6 +824,17 @@ function publishReceiptWithoutClobber(
   }
 }
 
+function classifyExistingReceipt(
+  target: string,
+  receipt: PolicyAssignmentReceiptV1,
+  key: Buffer,
+  anchorPath: string,
+): 'replayed' | 'conflicted' | 'failed' {
+  const existing = readReceiptFile(target, key, anchorPath);
+  if (!existing) return 'failed';
+  return receiptsMatch(existing, receipt) ? 'replayed' : 'conflicted';
+}
+
 export function recordPolicyAssignmentReceipt(
   input: PolicyAssignmentReceiptInput,
   options: { lockWaitMs?: number } = {},
@@ -885,12 +866,7 @@ export function recordPolicyAssignmentReceipt(
     if (recovery === 'conflicted') return 'conflicted';
     if (recovery === 'failed') return 'failed';
     if (existsSync(target)) {
-      const existing = readReceiptFile(target, key, directories.home);
-      if (!existing) return 'failed';
-      return safeDigestEqual(existing.assignmentDigest, receipt.assignmentDigest) &&
-        safeDigestEqual(existing.attestation, receipt.attestation)
-        ? 'replayed'
-        : 'conflicted';
+      return classifyExistingReceipt(target, receipt, key, directories.home);
     }
     const serialized = `${JSON.stringify(receipt)}\n`;
     if (Buffer.byteLength(serialized, 'utf8') > MAX_RECEIPT_BYTES) return 'invalid';
@@ -902,18 +878,11 @@ export function recordPolicyAssignmentReceipt(
       key,
     );
     if (publication === 'exists') {
-      const existing = readReceiptFile(target, key, directories.home);
-      if (!existing) return 'failed';
-      return safeDigestEqual(existing.assignmentDigest, receipt.assignmentDigest) &&
-        safeDigestEqual(existing.attestation, receipt.attestation)
-        ? 'replayed'
-        : 'conflicted';
+      return classifyExistingReceipt(target, receipt, key, directories.home);
     }
     verifyDirectories(directories);
     const persisted = readReceiptFile(target, key, directories.home);
-    return persisted &&
-      safeDigestEqual(persisted.assignmentDigest, receipt.assignmentDigest) &&
-      safeDigestEqual(persisted.attestation, receipt.attestation)
+    return persisted && receiptsMatch(persisted, receipt)
       ? 'recorded'
       : 'failed';
   } catch {
@@ -977,7 +946,7 @@ export function readPolicyAssignmentReceipts(
     requireComplete?: boolean;
   } = {},
 ): PolicyAssignmentReceiptReadResult {
-  const root = receiptRoot();
+  const root = policyAssignmentReceiptRootPath();
   if (!existsSync(root)) return emptyRead('missing', { sourcePresent: false });
   let key: Buffer | null;
   try { key = loadExistingProvenanceKeyReadOnly(); } catch { key = null; }
@@ -1010,13 +979,13 @@ export function readPolicyAssignmentReceipts(
     verifyDirectories(directories);
     const snapshotBefore = boundedDirectoryEntries(root);
     const entriesBefore = snapshotBefore.entries;
-    const files = entriesBefore.filter((file) => /^[a-f0-9]{64}\.json$/.test(file));
+    const files = entriesBefore.filter(isSha256JsonFileName);
     const stopReasons = new Set<PolicyAssignmentReceiptReadStopReason>();
     if (snapshotBefore.overflow) stopReasons.add('file-limit');
     const writerActive = entriesBefore.includes('.policy-assignment-receipts.lock');
     if (writerActive) stopReasons.add('source-mutated');
     const unexpectedEntries = entriesBefore.filter((entry) =>
-      entry !== '.policy-assignment-receipts.lock' && !/^[a-f0-9]{64}\.json$/.test(entry));
+      entry !== '.policy-assignment-receipts.lock' && !isSha256JsonFileName(entry));
     if (unexpectedEntries.length > 0) stopReasons.add('invalid-file');
     if (files.length > maxFiles || files.length > HARD_MAX_FILES) stopReasons.add('file-limit');
     const selected = files.slice(0, maxFiles);

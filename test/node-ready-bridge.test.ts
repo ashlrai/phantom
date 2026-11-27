@@ -128,6 +128,34 @@ describe('ready.tsv -> node router bridge', () => {
     expect(report.claimed).toEqual([]);
   });
 
+  it('claims and restores a valid row after a malformed copy of the same job', async () => {
+    const job = 'RQ-REVIEW-DUP';
+    const malformed = `${job}\tphantom`;
+    const f = fixture([malformed, row(job)]);
+    const dry = await f.pass(false);
+    expect(dry.rows.map(r => r.reasons)).toEqual([['invalid_row'], []]);
+    expect(dry.rows[1]?.offload).toBe(true);
+
+    expect((await f.pass()).claimed).toEqual([job]);
+    expect(f.ready()).toBe(malformed + '\n');
+    expect(f.nodes.view(['ashlr']).jobs.map(j => j.id)).toEqual([`ready:${job}:1`]);
+
+    f.advance(61_000);
+    expect((await f.pass()).requeued).toEqual([job]);
+    expect(f.ready()).toBe(`${malformed}\n${f.line(job)}\n`);
+  });
+
+  it('keeps an earlier parked or valid row authoritative for its job id', async () => {
+    const parked = 'RQ-REVIEW-PARKED-DUP';
+    const local = 'RQ-REVIEW-LOCAL-DUP';
+    const f = fixture([row(parked, 'PARKED-DEP.codex'), row(parked), row(local, 'codex-local'), row(local)]);
+    const report = await f.pass();
+    expect(report.rows.map(r => r.reasons)).toEqual([
+      ['parked_row'], ['duplicate_row'], ['local_execution_required'], ['duplicate_row'],
+    ]);
+    expect(report.claimed).toEqual([]);
+  });
+
   it('never offloads a parked row, even when its spec still names a remote lane', async () => {
     const spec = JSON.stringify({ preferred_lane: 'codex' });
     const f = fixture([
@@ -183,6 +211,61 @@ describe('ready.tsv -> node router bridge', () => {
     expect(report.rows.find(r => r.job === 'RQ-REVIEW-GOOD')!.offload).toBe(true);
   });
 
+  it('resolves spec-less rows through router-queue envelopes like the work market', async () => {
+    const f = fixture([
+      // Lane cell says codex but the envelope prefers claude: the market routes
+      // by the envelope, so the bridge must too — no codex cap is required.
+      row('RQ-REVIEW-ENV-LANE', 'codex-cmp'),
+      // Envelope-declared constraints a spec-less row used to bypass entirely.
+      row('RQ-REVIEW-ENV-DC', 'codex-cmp'),
+      row('RQ-REVIEW-ENV-EX', 'codex-cmp'),
+      row('RQ-REVIEW-ENV-GH', 'codex-cmp'),
+      // No matching envelope: the lane cell still stands.
+      row('RQ-REVIEW-ENV-NONE', 'codex-cmp'),
+      // Envelope naming no lane leaves the row open; the lane cell is the fallback.
+      row('RQ-REVIEW-ENV-OPEN', 'codex-cmp'),
+    ]);
+    writeFileSync(join(f.host.runsRoot, 'queue', 'router-queue.md'), [
+      '- READY RQ-REVIEW-ENV-LANE (priority=P2, pool=claude, tier=work, repo=phantom): env lane',
+      '- READY RQ-REVIEW-ENV-DC (priority=P2, pool=codex-cmp, tier=work, repo=phantom, data_class=confidential): env dc',
+      '- READY RQ-REVIEW-ENV-EX (priority=P2, pool=codex-cmp, tier=work, repo=phantom, exclusive=true): env ex',
+      '- READY RQ-REVIEW-ENV-GH (priority=P2, pool=codex-cmp, tier=work, repo=phantom, needs=gh): env gh',
+      '- READY RQ-REVIEW-ENV-OPEN (priority=P2, tier=work, repo=phantom): env open',
+    ].join('\n') + '\n');
+    const report = await f.pass(false);
+    const byJob = Object.fromEntries(report.rows.map(r => [r.job, r]));
+    // preferred_lane=claude maps to the claude cap no node advertises.
+    expect(byJob['RQ-REVIEW-ENV-LANE']).toMatchObject({ lane: 'claude', offload: false, reasons: ['lane_mismatch'] });
+    expect(byJob['RQ-REVIEW-ENV-DC']).toMatchObject({ offload: false, reasons: ['data_class_exceeded'] });
+    expect(byJob['RQ-REVIEW-ENV-EX']).toMatchObject({ offload: false, reasons: ['exclusive'] });
+    // needs=gh joins the requires, so a node must advertise gh and report auth.
+    expect(byJob['RQ-REVIEW-ENV-GH']).toMatchObject({ offload: false, reasons: ['caps_missing'] });
+    expect(byJob['RQ-REVIEW-ENV-NONE']).toMatchObject({ offload: true, lane: 'codex-cmp' });
+    expect(byJob['RQ-REVIEW-ENV-OPEN']).toMatchObject({ offload: true, lane: 'codex-cmp' });
+  });
+
+  it('rejects spec-less rows the market would call invalid_requirements', async () => {
+    const f = fixture([
+      // No envelope: a lane cell that is not a lane id fails requirements().
+      ['RQ-REVIEW-ENV-BADLANE', 'phantom', 'Not A Lane', 'work', '/prompts/RQ-REVIEW-ENV-BADLANE.md'].join('\t'),
+      // A matching envelope replaces requirements wholesale, so the lane cell
+      // is never consulted — the row offloads on the envelope's lane.
+      ['RQ-REVIEW-ENV-RESCUED', 'phantom', 'Not A Lane', 'work', '/prompts/RQ-REVIEW-ENV-RESCUED.md'].join('\t'),
+      // Malformed envelope exclusive: from_envelope raises before the market sees the row.
+      row('RQ-REVIEW-ENV-BADENV', 'codex-cmp'),
+      row('RQ-REVIEW-ENV-FINE', 'codex-cmp'),
+    ]);
+    writeFileSync(join(f.host.runsRoot, 'queue', 'router-queue.md'),
+      '- READY RQ-REVIEW-ENV-RESCUED (priority=P2, pool=codex-cmp, tier=work, repo=phantom): rescued\n' +
+      '- READY RQ-REVIEW-ENV-BADENV (priority=P2, pool=codex-cmp, tier=work, repo=phantom, exclusive=maybe): bad env\n');
+    const report = await f.pass(false);
+    const reasons = Object.fromEntries(report.rows.map(r => [r.job, r.reasons]));
+    expect(reasons['RQ-REVIEW-ENV-BADLANE']).toEqual(['invalid_requirements']);
+    expect(reasons['RQ-REVIEW-ENV-BADENV']).toEqual(['invalid_requirements']);
+    expect(report.rows.find(r => r.job === 'RQ-REVIEW-ENV-RESCUED')!.offload).toBe(true);
+    expect(report.rows.find(r => r.job === 'RQ-REVIEW-ENV-FINE')!.offload).toBe(true);
+  });
+
   it('refuses rows past free slots and treats unknown slots as unknown, not zero', async () => {
     const f = fixture(['A', 'B', 'C', 'D'].map(j => row(`RQ-REVIEW-${j}`)));
     const report = await f.pass(false);
@@ -212,6 +295,99 @@ describe('ready.tsv -> node router bridge', () => {
     const second = await g.pass(false);
     expect(second.rows.map(r => r.offload)).toEqual([true, true, true, true]);
     expect(new Set(second.rows.map(r => r.nodeId))).toEqual(new Set(['node-a', 'node-c']));
+  });
+
+  it('reserves slots for router assignments only when the router provides a plan', async () => {
+    const f = fixture([row('RQ-REVIEW-A')], [{ id: 'worker', caps: [...READ, 'gh'], slots: 1 }]);
+    f.nodes.enqueue('needs-auth', { owner: 'ashlr', requires: ['gh'] });
+
+    const blocked = await f.pass(false);
+    expect(blocked.nodes[0]).toMatchObject({ freeSlots: 1 });
+    expect(blocked.rows[0]).toMatchObject({ offload: true, nodeId: 'worker' });
+
+    f.nodes.heartbeat(f.sessions.get('worker')!, { auth: 'ok' });
+    const assigned = await f.pass(false);
+    expect(assigned.nodes[0]).toMatchObject({ freeSlots: 0 });
+    expect(assigned.rows[0]).toMatchObject({ offload: false, reasons: ['no_free_slot'] });
+  });
+
+  it('reports each live node\'s full advertised caps beside the model-lane subset', async () => {
+    const f = fixture([row('RQ-REVIEW-A')], [{ id: 'worker', caps: [...READ, 'gh', 'build'], slots: 1 }]);
+    const report = await f.pass(false);
+    expect(report.nodes).toEqual([expect.objectContaining({
+      nodeId: 'worker', lanes: ['codex'], caps: ['build', 'codex', 'gh', 'pack:codex-file'] })]);
+  });
+
+  it('keeps work ready during a shared host hold and resumes within measured headroom', async () => {
+    const jobs = ['RQ-REVIEW-A', 'RQ-REVIEW-B'];
+    const f = fixture(jobs.map(job => row(job)), [
+      { id: 'worker', caps: READ, slots: 4 },
+      { id: 'sibling', caps: [], slots: 4 },
+    ]);
+    const sample = { hostId: 'mac', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000_000 };
+    f.nodes.heartbeat(f.sessions.get('worker')!, { capacity: sample });
+    f.nodes.heartbeat(f.sessions.get('sibling')!, { capacity: { ...sample, slots: 0, held: 'memory-pressure' } });
+    const held = await f.pass();
+    expect(held.claimed).toEqual([]);
+    expect(held.rows.map(r => r.reasons)).toEqual([['no_free_slot'], ['no_free_slot']]);
+    expect(f.ready()).toBe(jobs.map(job => f.line(job) + '\n').join(''));
+
+    f.advance(6001);
+    for (const session of f.sessions.values()) f.nodes.heartbeat(session);
+    const stale = await f.pass(false);
+    expect(stale.rows.map(r => r.reasons)).toEqual([['slots_unknown'], ['slots_unknown']]);
+
+    for (const session of f.sessions.values()) {
+      f.nodes.heartbeat(session, { capacity: { ...sample, sampledAtMs: 1_006_001 } });
+    }
+    expect((await f.pass()).claimed).toEqual([jobs[0]]);
+    expect(f.ready()).toBe(f.line(jobs[1]!) + '\n');
+  });
+
+  it('reports shared headroom after sibling reservations', async () => {
+    const f = fixture([row('RQ-REVIEW-A')], [
+      { id: 'node-a', caps: [...READ, 'build'], slots: 1 },
+      { id: 'node-b', caps: READ, slots: 1 },
+    ]);
+    const capacity = { hostId: 'shared-host', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000_000 };
+    for (const id of ['node-a', 'node-b']) f.nodes.heartbeat(f.sessions.get(id)!, { capacity });
+    f.nodes.enqueue('needs-build', { owner: 'ashlr', requires: ['build'] });
+
+    const report = await f.pass(false);
+    expect(report.nodes.map(n => [n.nodeId, n.freeSlots])).toEqual([['node-a', 0], ['node-b', 0]]);
+    expect(report.rows[0]).toMatchObject({ offload: false, reasons: ['no_free_slot'] });
+  });
+
+  it('reports unknown headroom when a shared host has incomplete slot telemetry', async () => {
+    const f = fixture([row('RQ-REVIEW-A')], [
+      { id: 'worker', caps: READ, slots: 1 },
+      { id: 'shared-host', caps: [] },
+    ]);
+    f.nodes.heartbeat(f.sessions.get('worker')!, {
+      capacity: { hostId: 'shared-host', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000_000 },
+    });
+
+    const report = await f.pass(false);
+    expect(report.nodes.find(n => n.nodeId === 'worker')).toMatchObject({ slots: 1, freeSlots: null });
+    expect(report.rows[0]).toMatchObject({ offload: false, reasons: ['slots_unknown'] });
+  });
+
+  it('keeps gh work local until a capable node reports working auth', async () => {
+    const f = fixture([row('RQ-REVIEW-GH', 'codex-cmp', { needs: ['gh'] })], [
+      { id: 'unknown-auth', caps: [...READ, 'gh'], slots: 2 },
+      { id: 'worker', caps: [...READ, 'gh'], slots: 1 },
+    ]);
+    f.nodes.heartbeat(f.sessions.get('worker')!, { auth: 'missing' });
+    const blocked = await f.pass();
+    expect(blocked.rows[0]).toMatchObject({ offload: false, reasons: ['auth_missing'] });
+    expect(blocked.claimed).toEqual([]);
+    expect(f.ready()).toContain('RQ-REVIEW-GH');
+    expect(existsSync(f.lease('RQ-REVIEW-GH'))).toBe(false);
+
+    f.nodes.heartbeat(f.sessions.get('worker')!, { auth: 'ok' });
+    const assigned = await f.pass();
+    expect(assigned.rows[0]).toMatchObject({ offload: true, nodeId: 'worker' });
+    expect(assigned.claimed).toHaveLength(1);
   });
 
   it('never offers a job to a node whose local capability probe failed', async () => {

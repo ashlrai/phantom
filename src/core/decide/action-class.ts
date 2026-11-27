@@ -17,7 +17,7 @@
 import type { TypeSafeChoiceQuestion } from '../classify/typesafe-client.js';
 import { decide } from './decide.js';
 import { ACTION_CLASSES } from './registry.js';
-import type { DecideOptions, Decision } from './types.js';
+import type { Decision, DecisionCallOptions } from './types.js';
 
 export type ActionClass = (typeof ACTION_CLASSES)[number];
 
@@ -37,7 +37,7 @@ export interface ActionClassAdvice {
   readonly decision: Decision<ActionClass>;
 }
 
-export type SuggestActionClassOptions = Omit<DecideOptions<ActionClass>, 'fallback' | 'interpret' | 'escalateOnly'>;
+export type SuggestActionClassOptions = DecisionCallOptions;
 
 const RANK: Readonly<Record<ActionClass, number>> = { A: 0, B: 1, C: 2 };
 

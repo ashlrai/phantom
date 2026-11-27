@@ -90,6 +90,21 @@ it('applies the topic filter to each poll of the wait', async () => {
   expect(await waitClaimBusWork({ ...request(), topic: 'Bad Name' })).toEqual({ status: 'invalid' });
 });
 
+it('claims only the named envelope under id and refuses malformed ids', async () => {
+  post('id-decoy');
+  post('id-target');
+  // --id waits for and claims the named receipt only: the earlier decoy —
+  // which unfiltered claim order would take first — never enters the scan.
+  const acquired = await waitClaimBusWork({ ...request(), id: 'id-target', waitMs: 5000 });
+  expect(acquired.status).toBe('acquired');
+  if (!('token' in acquired)) throw new Error('missing claim');
+  expect(acquired.receipt.envelope.id).toBe('id-target');
+  // An absent id waits honestly to timeout rather than widening to held work.
+  expect(await waitClaimBusWork({ ...request(), id: 'id-absent', waitMs: 30 })).toEqual({ status: 'timeout' });
+  // A malformed id refuses before any poll, never a widened claim.
+  expect(await waitClaimBusWork({ ...request(), id: 'has space' })).toEqual({ status: 'invalid' });
+});
+
 it('rejects malformed arguments before creating storage', async () => {
   const output = vi.spyOn(console, 'log').mockImplementation(() => {});
   for (const bad of [[], [...args(), '--json'], [...args(), '--to', 'duplicate'], [...args(), '--bad'],
@@ -97,7 +112,8 @@ it('rejects malformed arguments before creating storage', async () => {
     args().map(x => x === '12000' ? '1e2' : x), args().map(x => x === '60000' ? '3600001' : x),
     args().map(x => x === root ? 'relative' : x), args().slice(0, -2),
     [...args(), '--priority', 'P9'], [...args(), '--since', 'bogus'], [...args(), '--before', 'bogus'], [...args(), '--contains', '   '],
-    [...args(), '--topic', 'Bad Name'], [...args(), '--topic', 'deploy:extra']]) {
+    [...args(), '--topic', 'Bad Name'], [...args(), '--topic', 'deploy:extra'],
+    [...args(), '--id', 'has space'], [...args(), '--id', '']]) {
     expect(await cmdFleetBusWaitClaim(bad)).toBe(2);
     expect(JSON.parse(String(output.mock.calls.at(-1)![0]))).toEqual({ status: 'invalid' });
   }

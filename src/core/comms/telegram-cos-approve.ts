@@ -22,9 +22,8 @@
  */
 
 import { lstat, readdir } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { cosStatus, type CosDraft } from '../cos/intake.js';
+import { cosDir, cosStatus, isCosJobId, type CosDraft } from '../cos/intake.js';
 import type { AshlrConfig } from '../types.js';
 import type { deliverTelegramCosResult, TelegramInboxDeps } from './telegram-inbox-bridge.js';
 
@@ -33,13 +32,8 @@ export const TELEGRAM_COS_LIST_RE = /^\/cos(?:@\w+)?$/;
 /** `/approve <cos-id> <first 12 hex of the draft digest>` (optionally @bot). */
 export const TELEGRAM_COS_APPROVE_RE = /^\/approve(?:@\w+)?\s+(cos-[a-f0-9]{32})\s+([a-f0-9]{12})$/;
 
-const DRAFT_FILE = /^cos-[a-f0-9]{32}\.json$/;
 const LIST_MAX = 3;
 const TEXT_CLIP = 3_000;
-
-/** Same root cos/intake.ts resolves: explicit runsDir, ASHLR_RUNS_DIR, ~/.ashlr-runs. */
-const root = (runsDir?: string): string =>
-  runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
 
 /**
  * Waiting Telegram-origin drafts, newest first by file mtime, at most 3.
@@ -49,14 +43,16 @@ const root = (runsDir?: string): string =>
  */
 export async function listTelegramCosDrafts(runsDir?: string): Promise<CosDraft[]> {
   try {
-    const dir = join(root(runsDir), 'cos');
+    const dir = cosDir(runsDir);
     const found: { draft: CosDraft; mtimeMs: number }[] = [];
     for (const name of await readdir(dir)) {
-      if (!DRAFT_FILE.test(name)) continue;
+      if (!name.endsWith('.json')) continue;
+      const id = name.slice(0, -'.json'.length);
+      if (!isCosJobId(id)) continue;
       try {
         const stat = await lstat(join(dir, name));
         if (!stat.isFile() || stat.isSymbolicLink()) continue;
-        const state = await cosStatus(name.slice(0, -'.json'.length), runsDir);
+        const state = await cosStatus(id, runsDir);
         if (state.needsYou && state.delivery === undefined && state.draft?.origin.channel === 'telegram') {
           found.push({ draft: state.draft, mtimeMs: stat.mtimeMs });
         }

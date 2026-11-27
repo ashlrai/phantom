@@ -7,6 +7,7 @@ import { probeLocalAuth } from '../src/core/drive/nodes/auth-probe.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 import { localPhmVersion, versionCap } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNode } from '../src/cli/node.js';
+import { cmdNodeFleet } from '../src/cli/node-fleet.js';
 
 class MemoryStore implements NodesStore {
   state = emptyState();
@@ -223,6 +224,45 @@ describe('phm node CLI', () => {
     expect(status.out).not.toContain('j1');
   });
 
+  it('rejoin hints drop the join-managed phm-<version> cap', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    const marker = versionCap(localPhmVersion())!;
+    const store = new MemoryStore();
+    let now = 1_000_000;
+    const fleet = async (verb: string, args: string[]) => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const code = await cmdNodeFleet(verb, args, { store, now: () => now });
+      const out = log.mock.calls.map(c => String(c[0])).join('\n');
+      log.mockRestore();
+      return { code, out };
+    };
+    // Every standalone join stores the build marker beside the operator's caps:
+    // --caps build advertises [build, phm-<this build>], a bare join advertises
+    // only the marker. The marker is join-managed — join re-derives it from the
+    // running build and discards any version cap passed in --caps — so the
+    // paste-ready rejoin must not carry it back as a cap the operator chose.
+    const boxed = JSON.parse((await fleet('join', ['--node', 'boxed', '--owner', 'acme', '--caps', 'build', '--json'])).out);
+    expect(boxed.caps).toEqual(['build', marker]);
+    const bare = JSON.parse((await fleet('join', ['--node', 'bare', '--owner', 'acme', '--json'])).out);
+    expect(bare.caps).toEqual([marker]);
+    now += 31_000; // both 30-second sessions lapse; the records keep their profiles
+    const boxedBeat = JSON.parse((await fleet('beat', ['--node', 'boxed', '--session', String(boxed.session), '--json'])).out);
+    expect(boxedBeat.error).toMatchObject({ code: 'session-expired' });
+    expect(boxedBeat.error.fix).toContain('phm node join --node boxed --owner acme --caps build --watch');
+    expect(boxedBeat.error.fix).not.toContain(marker);
+    const bareBeat = JSON.parse((await fleet('beat', ['--node', 'bare', '--session', String(bare.session), '--json'])).out);
+    expect(bareBeat.error.fix).toContain('phm node join --node bare --owner acme --watch');
+    expect(bareBeat.error.fix).not.toContain('--caps');
+    expect(bareBeat.error.fix).not.toContain(marker);
+    // status/list print the same hint per expired node; it drops the marker too
+    // (the node line still reports the advertised caps, marker included — the
+    // exact rejoin strings above cannot match if the marker leaked back in).
+    const status = await fleet('status', ['--owner', 'acme']);
+    expect(status.out).toContain('rejoin: phm node join --node boxed --owner acme --caps build --watch');
+    expect(status.out).toContain('rejoin: phm node join --node bare --owner acme --watch');
+  });
+
   it('join prints its keep-alive beat and session refusals name the live session', async () => {
     dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
     vi.stubEnv('ASHLR_HOME', dir);
@@ -274,6 +314,9 @@ describe('phm node CLI', () => {
     const text = await cli('join', '--node', 'desktop', '--owner', 'acme');
     expect(text.out).toContain('local to this machine');
     expect(text.out).toContain('docs/NODES.md');
+    // The shared-queue pointer names the doc that carries the join commands,
+    // not only the design doc — a first-run node must see how to enroll.
+    expect(text.out).toContain('docs/AGENT-NETWORK.md');
     // The beat keep-alive hint is unchanged; the boundary line follows it.
     expect(text.out.indexOf('phm node beat --node desktop')).toBeLessThan(text.out.indexOf('local to this machine'));
   });
@@ -288,13 +331,43 @@ describe('phm node CLI', () => {
     // Text mode renders the node view, not the plan's routes array.
     expect((await cli('status', '--owner', 'acme')).out).toContain('node laptop live usage=unknown');
     expect((await cli('list', '--owner', 'acme')).out).toContain('node laptop live usage=unknown');
-    expect((await cli('plan', '--owner', 'acme')).out).toBe('No routable jobs.');
+    expect((await cli('plan', '--owner', 'acme')).out).toBe("No jobs queued in owner 'acme'. Enqueue one: phm node enqueue --job <id> --owner acme");
     expect((await cli('beat', '--node', 'laptop', '--session', s, '--usage', '250', '--json')).code).toBe(0);
     const after = JSON.parse((await cli('status', '--owner', 'acme', '--json')).out);
     expect(after.nodes[0].usage).toBe(250);
     // A beat without --usage keeps the last reported value rather than resetting it.
     expect((await cli('beat', '--node', 'laptop', '--session', s, '--json')).code).toBe(0);
     expect(JSON.parse((await cli('status', '--owner', 'acme', '--json')).out).nodes[0].usage).toBe(250);
+  });
+
+  it('plan names the next step on an empty queue and counts jobs that cannot route', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    // First run: nothing queued — plan names the enqueue step, the same
+    // next-step naming status and the session-expired fix already give.
+    expect((await cli('plan', '--owner', 'acme')).out)
+      .toBe("No jobs queued in owner 'acme'. Enqueue one: phm node enqueue --job <id> --owner acme");
+    // A job in another scope stays out of the count: the note is scope-exact.
+    expect((await cli('enqueue', '--job', 'j-b', '--owner', 'beta', '--json')).code).toBe(0);
+    expect((await cli('plan', '--owner', 'acme')).out).toContain("No jobs queued in owner 'acme'");
+    // The whole-store plan still routes beta's pending job, so no empty note.
+    expect((await cli('plan')).out).toContain('j-b ->');
+    // Claimed or completed work is not routable; the note says what the
+    // scope holds instead of implying an empty queue.
+    const joined = JSON.parse((await cli('join', '--node', 'n1', '--owner', 'acme', '--json')).out);
+    const s = String(joined.session);
+    expect((await cli('enqueue', '--job', 'j1', '--owner', 'acme', '--json')).code).toBe(0);
+    const pulled = JSON.parse((await cli('pull', '--node', 'n1', '--session', s, '--json')).out);
+    const lease = ['--job', 'j1', '--node', 'n1', '--session', s, '--token', String(pulled.claim.token), '--leader-token', String(pulled.claim.leaderToken)];
+    const running = await cli('plan', '--owner', 'acme');
+    expect(running.out).toContain('No routable jobs');
+    expect(running.out).toContain('1 running');
+    expect((await cli('complete', ...lease, '--result', 'done', '--json')).code).toBe(0);
+    const done = await cli('plan', '--owner', 'acme');
+    expect(done.out).toContain('No routable jobs');
+    expect(done.out).toContain('1 completed');
+    // --json keeps the routes array alone; the note is text-only.
+    expect(JSON.parse((await cli('plan', '--owner', 'acme', '--json')).out).routes).toEqual([]);
   });
 
   it('runs the documented flow through a symlinked ASHLR_HOME (scratch homes under macOS $TMPDIR)', async () => {
@@ -408,6 +481,29 @@ describe('phm node CLI', () => {
     expect(text.err).toContain('--usage must be an integer from 0 to 1000.');
   });
 
+  it('names each self-reported flag\'s own fix on a non-numeric value', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    const joined = JSON.parse((await cli('join', '--node', 'laptop', '--owner', 'acme', '--json')).out);
+    const s = String(joined.session);
+    // --slots and --usage are bounds the operator chooses; join and pull never
+    // print them, so their fix must describe the flag itself. Lease numbers
+    // (--session, --token) do come from join/pull and keep that pointer.
+    const cases: [string[], string][] = [
+      [['join', '--node', 'other', '--owner', 'acme', '--slots', 'lots', '--json'], 'concurrent job slots'],
+      [['beat', '--node', 'laptop', '--session', s, '--slots', 'lots', '--json'], 'concurrent job slots'],
+      [['beat', '--node', 'laptop', '--session', s, '--usage', 'busy', '--json'], 'self-reported load in permille'],
+      [['beat', '--node', 'laptop', '--session', 'many', '--json'], 'printed by phm node join or pull'],
+    ];
+    for (const [args, fixPart] of cases) {
+      const res = await cli(...args);
+      expect(res.code).toBe(2);
+      expect(res.err).toBe('');
+      expect(JSON.parse(res.out)).toMatchObject({ schemaVersion: 1, command: args[0],
+        error: { code: 'bad-number', fix: expect.stringContaining(fixPart) } });
+    }
+  });
+
   it('sends bare and --json-only join to the standalone registry error, not the pool', async () => {
     dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
     vi.stubEnv('ASHLR_HOME', dir);
@@ -435,6 +531,77 @@ describe('phm node CLI', () => {
   it('keeps bootstrap and help working', async () => {
     expect((await cli('--help')).out).toContain('Usage: phm node bootstrap --dry-run');
     expect((await cli('--help')).out).toContain('phm node pull');
+  });
+
+  it('scopes --help to the verb asked instead of leading with bootstrap', async () => {
+    // A first-run user typing `phm node join --help` (or any verb's --help)
+    // must land on that verb's usage, not the whole command list led by the
+    // bootstrap stub. Unknown and bare verbs keep the full list.
+    const join = await cli('join', '--help');
+    expect(join.code).toBe(0);
+    expect(join.out).toContain('Usage: phm node join [--node <id>] --owner <scope[,scope]>');
+    expect(join.out).toContain('All node commands: phm node --help');
+    expect(join.out).not.toContain('Usage: phm node bootstrap');
+
+    const beat = await cli('beat', '--help');
+    expect(beat.out).toContain('Usage: phm node beat --node <id> --session <n>');
+    expect(beat.out).toContain('--watch');
+
+    const status = await cli('status', '--help');
+    expect(status.out).toContain('Usage: phm node list|status --owner');
+
+    const capacity = await cli('capacity', '--help');
+    expect(capacity.out).toContain('Usage: phm node capacity');
+    expect(capacity.out).toContain('--outcomes-ledger');
+
+    const route = await cli('route', '--help');
+    expect(route.out).toContain('phm node route --capacity');
+
+    const measure = await cli('measure', '--help');
+    expect(measure.out).toContain('Usage: phm node measure');
+
+    const pool = await cli('pool', '--help');
+    expect(pool.out).toContain('phm node pool --role primary|backup');
+    expect(pool.out).toContain('phm node worker');
+    expect(pool.out).not.toContain('phm node capacity');
+
+    const light = await cli('light', '--help');
+    expect(light.out).toContain('phm node light restock');
+    expect(light.out).toContain('phm node light run');
+    expect(light.out).not.toContain('phm node pool --role');
+
+    const lanes = await cli('lanes', '--help');
+    expect(lanes.out).toContain('phm node lanes [--json]');
+
+    // Pool enrollment is `join --primary`, not the standalone fleet join.
+    const joinPrimary = await cli('join', '--primary', 'mbp', '--help');
+    expect(joinPrimary.out).toContain('phm node pool --role primary|backup');
+
+    const bridge = await cli('bridge', '--help');
+    expect(bridge.out).toContain('Usage: phm node bridge');
+    expect(bridge.out).toContain('Dry run by default');
+
+    // Bare and unknown verbs still print the full command list; bootstrap's
+    // own scoped help keeps its usage line without the rest of the list.
+    for (const args of [['--help'], ['-h'], ['frobnicate', '--help']]) {
+      const res = await cli(...args);
+      expect(res.code).toBe(0);
+      expect(res.out).toContain('Usage: phm node bootstrap --dry-run');
+      expect(res.out).toContain('phm node bridge [--owner');
+    }
+    const bootstrapHelp = await cli('bootstrap', '--execute', '--help');
+    expect(bootstrapHelp.code).toBe(0);
+    expect(bootstrapHelp.out).toContain('Usage: phm node bootstrap --dry-run');
+    expect(bootstrapHelp.out).not.toContain('phm node bridge [--owner');
+  });
+
+  it('help advertises the embedded-task enqueue flags a producer needs', async () => {
+    // The codex-file task path is how a job carries real work to a node; it
+    // must be discoverable from `phm node --help`, not only from source.
+    const help = (await cli('--help')).out;
+    expect(help).toContain('--task-part');
+    expect(help).toContain('--task-sha256');
+    expect(help).toContain('codex-file');
   });
 });
 

@@ -52,13 +52,19 @@ import '../src/core/verse/seats.js';
 import { keyIdForPublicKeyPem } from '../src/core/authority/custody-client.js';
 import { killSwitchOn } from '../src/core/sandbox/policy.js';
 import { writeCapacitySnapshot } from '../src/core/routing/budget-store.js';
+import { PRIVATE_STORAGE_TEST_CONTROL, _setPrivateStorageTestControlForTest } from '../src/core/util/private-storage.js';
 import { ed25519RootPem, editGrant, makeGrant, TEST_ROOT, TEST_SURFACE, withTempHome } from './helpers/authority-310b.js';
+import { createSemanticPrivateStorageHarness, trustedWindowsSystemRootForTest } from './helpers/semantic-private-storage.js';
 
 let home: string;
 let restore: () => void;
 
 beforeEach(() => {
   ({ home, restore } = withTempHome('bu1-cli-'));
+  if (process.platform === 'win32') {
+    const { runner } = createSemanticPrivateStorageHarness({ systemRoot: trustedWindowsSystemRootForTest() });
+    _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, { runner });
+  }
   merges.revoked = 0;
   merges.calls.length = 0;
   resetLedgerCachesForTest();
@@ -67,6 +73,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, undefined);
   resetLedgerCachesForTest();
   invalidateStandingPolicyCache();
   resetAuthorityApiCachesForTest();

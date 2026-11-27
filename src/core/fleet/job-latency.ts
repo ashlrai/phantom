@@ -1,3 +1,7 @@
+import { ledgerEventName } from './empty-cause.js';
+import { prKeyOf } from './eval-report.js';
+import { isNodePoolLedgerRow, ledgerEventTs, ledgerJobId } from './jobs-ledger-dialect.js';
+
 const jobPhases = [
   ['queue_wait', 'queued', 'launch', 'Measure admission delays and remove the largest queue bottleneck.'],
   ['checkout', 'launch', 'checkout_complete', 'Profile checkout and reuse safe local worktree preparation.'],
@@ -8,28 +12,9 @@ const jobPhases = [
   ['merge', 'ci_complete', 'merged', 'Profile post-CI merge delays and unblock the merge queue.'],
 ] as const;
 
-type Events = Map<string, number[]>;
-
-/**
- * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
- * recordedAt|updatedAt, with mergedAt/closedAt preferred on terminal rows —
- * the same field set dispatchd `_vc_pick` and metrics/loop accept.
- */
-const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
-
-/** First parseable stamp among the ledger's timestamp fields for one boundary; merged prefers mergedAt, closed closedAt. */
-function boundaryTs(row: Record<string, unknown>, event: string): number {
-  const preferred = event === 'merged' ? 'mergedAt' : event === 'closed' ? 'closedAt' : null;
-  const fields = preferred === null ? TS_KEYS : [preferred, ...TS_KEYS.filter(f => f !== preferred)];
-  for (const field of fields) {
-    const value = row[field];
-    if (typeof value === 'string') {
-      const at = Date.parse(value);
-      if (Number.isFinite(at)) return at;
-    }
-  }
-  return NaN;
-}
+type Events = Map<string, { times: Set<number>; prsByTime: Map<number, Set<string>> }>;
+const prBoundaries = new Set(['publish', 'ci_start', 'ci_complete', 'merged']);
+const prEvidenceEvents = [...prBoundaries, 'closed'];
 
 /**
  * Canonical boundary name for one ledger row, or undefined when the row is
@@ -45,14 +30,14 @@ function boundaryTs(row: Record<string, unknown>, event: string): number {
  * publish claim the reconciler consumes.
  */
 function boundaryEvent(row: Record<string, unknown>): string | undefined {
-  const state = String([row.outcome, row.state, row.status, row.phase, row.result, row.conclusion].find(v => typeof v === 'string') ?? '').toUpperCase();
-  if (state === 'MERGED') return 'merged';
-  if (state === 'CLOSED') return 'closed';
-  if (state === 'PUBLISHED') return 'publish';
-  const raw = row.event ?? row.type ?? row.kind;
+  const states = [row.outcome, row.state, row.status, row.phase, row.result, row.conclusion]
+    .map(value => typeof value === 'string' ? value.trim().toUpperCase() : '');
+  const terminal = states.find(state => state === 'MERGED' || state === 'CLOSED');
+  if (terminal !== undefined) return terminal.toLowerCase();
+  if (states.includes('PUBLISHED')) return 'publish';
+  const raw = ledgerEventName(row);
   if (raw === 'enqueue' || raw === 'enqueued') return 'queued';
-  if (raw === 'published') return 'publish';
-  return typeof raw === 'string' ? raw : undefined;
+  return raw ?? undefined;
 }
 
 const gitOperations = ['index.lock', 'worktree_add', 'worktree_remove', 'fetch', 'push'] as const;
@@ -65,7 +50,7 @@ function gitObservation(row: Record<string, unknown>): Observation | null {
   const { machine, lane, elapsed_ms, failed, retries } = row;
   if (!operation || typeof machine !== 'string' || !machine || typeof lane !== 'string' || !lane) return null;
   const elapsed = typeof elapsed_ms === 'number' && Number.isSafeInteger(elapsed_ms) && elapsed_ms >= 0 ? elapsed_ms : null;
-  const end = boundaryTs(row, 'git_operation');
+  const end = ledgerEventTs(row, null) ?? NaN;
   return { machine, lane, operation, start: elapsed === null ? NaN : end - elapsed, end, elapsed,
     failed: typeof failed === 'boolean' ? Number(failed) : null,
     retries: typeof retries === 'number' && Number.isSafeInteger(retries) && retries >= 0 ? retries : null };
@@ -121,10 +106,11 @@ function summarizeGit(rows: Observation[]) {
   });
 }
 
-/** A job ID must identify one attempt; ambiguous repeated boundaries are never paired. */
+/** Pair unique, ordered boundaries within a recorded dispatch attempt when launch evidence exists. */
 export function jobLatency(text: string | null, phases: readonly (readonly [string, string, string, string])[] = jobPhases) {
   const jobs = new Map<string, Events>();
   const git: Observation[] = [], recovery = new Map<string, Set<number>>();
+  const seenGitReceipts = new Set<string>();
   const checkout: number[] = [], recoverySamples: number[] = [];
   let ignored = 0;
   for (const line of (text ?? '').split(/\r?\n/)) {
@@ -135,23 +121,45 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
       row = value as Record<string, unknown>;
     } catch { ignored++; continue; }
-    const id = row.job ?? row.job_id ?? row.jobId ?? row.id;
+    if (isNodePoolLedgerRow(row)) continue;
+    const id = ledgerJobId(row);
     const event = boundaryEvent(row);
     if (event === 'git_operation') {
       if (phases === jobPhases) {
         const observation = gitObservation(row);
-        if (observation) git.push(observation);
-        else ignored++;
+        if (!observation) {
+          ignored++;
+          continue;
+        }
+        // A dated receipt can be replayed verbatim. Preserve distinct lines
+        // even when the writer records multiple operations at the same time.
+        if (Number.isFinite(observation.end)) {
+          const receipt = line.trim();
+          if (seenGitReceipts.has(receipt)) continue;
+          seenGitReceipts.add(receipt);
+        }
+        git.push(observation);
       }
       continue;
     }
-    const at = event === undefined ? NaN : boundaryTs(row, event);
-    if (typeof id !== 'string' || !id || event === undefined) { ignored++; continue; }
-    const events = jobs.get(id) ?? new Map<string, number[]>();
-    const times = events.get(event) ?? [];
+    // Batch members carry their own evidence. The session is a shared worker.
+    if (id?.startsWith('RQ-BATCH-')) continue;
+    if (id === null || event === undefined) { ignored++; continue; }
+    const at = ledgerEventTs(row, event.toUpperCase()) ?? NaN;
+    const events: Events = jobs.get(id) ?? new Map();
+    const boundary = events.get(event) ?? { times: new Set<number>(), prsByTime: new Map<number, Set<string>>() };
     if (!Number.isFinite(at)) ignored++;
-    if (!times.includes(at)) times.push(at);
-    events.set(event, times); jobs.set(id, events);
+    boundary.times.add(at);
+    if (prEvidenceEvents.includes(event)) {
+      for (const url of [row.url, row.prUrl, row.pr_url, row.pr, row.html_url]) {
+        const pr = prKeyOf(url);
+        if (!pr) continue;
+        const prs = boundary.prsByTime.get(at) ?? new Set<string>();
+        prs.add(pr.key);
+        boundary.prsByTime.set(at, prs);
+      }
+    }
+    events.set(event, boundary); jobs.set(id, events);
     if (phases === jobPhases && event === 'checkout_complete' && typeof row.manual_checkout_recovery === 'boolean') {
       const values = recovery.get(id) ?? new Set<number>();
       values.add(Number(row.manual_checkout_recovery));
@@ -162,10 +170,30 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
     const samples: number[] = [];
     for (const [id, events] of jobs) {
       const a = events.get(start), b = events.get(end);
-      if (a?.length !== 1 || b?.length !== 1 || !Number.isFinite(a[0]) || !Number.isFinite(b[0]) || b[0]! < a[0]!) continue;
-      samples.push((b[0]! - a[0]!) / 1000);
+      if (a?.times.size !== 1 || b?.times.size !== 1) continue;
+      const [from] = a.times, [to] = b.times;
+      if (from === undefined || to === undefined || !Number.isFinite(from) || !Number.isFinite(to) || to < from) continue;
+      const prs = new Set([...(a.prsByTime.get(from) ?? []), ...(b.prsByTime.get(to) ?? [])]);
+      if (prBoundaries.has(start) && prBoundaries.has(end)) {
+        for (const event of prEvidenceEvents) {
+          if (event === start || event === end) continue;
+          for (const [at, claims] of events.get(event)?.prsByTime ?? []) {
+            // An undated PR receipt could belong to this span.
+            if (Number.isFinite(at) && (at < from || at > to)) continue;
+            for (const claim of claims) prs.add(claim);
+          }
+        }
+      }
+      if (prs.size > 1) continue;
+      // With tied timestamps, only a launch boundary itself proves which
+      // attempt started the phase. An undated launch could fall anywhere.
+      if (end !== 'launch' && [...(events.get('launch')?.times ?? [])].some(at =>
+        !Number.isFinite(at) || (at <= to && (at > from || (at === from && start !== 'launch'))))) continue;
+      // A member claim may start another attempt, but does not prove execution.
+      if ([...(events.get('batch_claim')?.times ?? [])].some(at => !Number.isFinite(at) || (from <= at && at <= to))) continue;
+      samples.push((to - from) / 1000);
       if (phases === jobPhases && phase === 'checkout') {
-        checkout.push(b[0]! - a[0]!);
+        checkout.push(to - from);
         const values = recovery.get(id);
         if (values?.size === 1) recoverySamples.push(...values);
       }

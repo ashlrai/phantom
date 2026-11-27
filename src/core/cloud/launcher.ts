@@ -18,9 +18,8 @@ import { chmodSync, readFileSync, renameSync, statSync, writeFileSync } from 'no
 import { join, resolve, sep } from 'node:path';
 
 import { isRateLimitText, isUsageLimitText } from '../classify/engine-errors.js';
-import { readPrivateFileCapped } from '../verse/preferences.js';
-import { ashlrHome, cloudHome } from './store.js';
-import { CLOUD_LAUNCH_TIMEOUT_MS, CLOUD_SEAT_ID, type CloudLaunchFailureCode } from './types.js';
+import { ashlrHome, cloudHome, readCloudJsonFile } from './store.js';
+import { CLOUD_LAUNCH_TIMEOUT_MS, CLOUD_SEAT_ID, clipCloudText, isCloudRecord, type CloudLaunchFailureCode } from './types.js';
 
 export type CloudLaunchResult =
   | { ok: true; sessionId: string; url: string; title: string }
@@ -62,14 +61,7 @@ export function cloudSeatCommandPath(seat: string = CLOUD_SEAT_ID): string {
  * strings. Reads a file only — never runs anything.
  */
 export function readCloudSeatArgv(seat: string = CLOUD_SEAT_ID): string[] | null {
-  const file = readPrivateFileCapped(cloudSeatCommandPath(seat), MAX_COMMAND_BYTES);
-  if (!file || file.truncated) return null;
-  let value: unknown;
-  try {
-    value = JSON.parse(file.text);
-  } catch {
-    return null;
-  }
+  const value = readCloudJsonFile(cloudSeatCommandPath(seat), MAX_COMMAND_BYTES);
   if (!Array.isArray(value) || value.length === 0 || value.length > MAX_ARGV) return null;
   if (!value.every((arg) => typeof arg === 'string' && arg !== '' && !arg.includes('\0'))) return null;
   return value as string[];
@@ -223,7 +215,7 @@ function detailLine(text: string): string {
   const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
   const line = lines.find((l) => /error|failed|fatal|cannot|can't|unable/i.test(l)) ?? lines[lines.length - 1] ?? '';
   const scrubbed = line.replace(/(?:~|\/)[^\s'"`]*\/[^\s'"`]*/g, '…');
-  return scrubbed.length > MAX_DETAIL_CHARS ? `${scrubbed.slice(0, MAX_DETAIL_CHARS - 1).trimEnd()}…` : scrubbed;
+  return clipCloudText(scrubbed, MAX_DETAIL_CHARS);
 }
 
 /** Pure: ANSI-strip + find "Created cloud session: <title>" / "View: <url>" / session id, or classify the error text. */
@@ -274,10 +266,9 @@ export function trustCloudCheckoutFolder(cwd: string, seat: string = CLOUD_SEAT_
     const profile = JSON.parse(readFileSync(join(ashlrHome(), 'native-profiles', seat, 'profile.json'), 'utf8')) as { nativeStatePath?: unknown };
     if (typeof profile.nativeStatePath !== 'string' || profile.nativeStatePath === '') return;
     const configPath = join(profile.nativeStatePath, '.claude.json');
-    const config = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
-    if (config === null || typeof config !== 'object' || Array.isArray(config)) return;
-    const projects = (config.projects && typeof config.projects === 'object' && !Array.isArray(config.projects)
-      ? config.projects : {}) as Record<string, Record<string, unknown>>;
+    const config = JSON.parse(readFileSync(configPath, 'utf8')) as unknown;
+    if (!isCloudRecord(config)) return;
+    const projects = (isCloudRecord(config.projects) ? config.projects : {}) as Record<string, Record<string, unknown>>;
     if (projects[folder]?.hasTrustDialogAccepted === true) return;
     projects[folder] = { ...(projects[folder] ?? {}), hasTrustDialogAccepted: true };
     config.projects = projects;

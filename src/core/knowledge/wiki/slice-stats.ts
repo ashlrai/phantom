@@ -4,12 +4,12 @@ import { wikiCloudSliceStats } from '../../cloud/store.js';
 import { resolveDropJobRoot } from '../../fleet/drop-job-writer.js';
 import { foldLaneRewardAttempts } from '../../fleet/lane-reward.js';
 import { parseLedgerTs } from '../../metrics/loop.js';
-import { readLedgerTail } from '../../router/outcomes.js';
+import { readLedgerTail, ROUTER_OUTCOME_LEDGER_LIMIT, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../../router/outcomes.js';
 import { WIKI_JOB_BYTES } from './brain-cloud.js';
 
 export async function wikiSliceStats(root = resolveDropJobRoot()) {
   const cloud = wikiCloudSliceStats();
-  const tail = await readLedgerTail(join(root, 'metrics', 'jobs.jsonl'));
+  const tail = await readLedgerTail(join(root, ROUTER_OUTCOME_LEDGER_RELATIVE));
   const measurements = new Map<string, { at: number; withSlice: boolean }>();
   const delivery = tail.state === 'read' ? foldLaneRewardAttempts(tail.text).attempts : null;
   if (tail.state === 'read') for (const line of tail.text.split('\n')) {
@@ -25,9 +25,14 @@ export async function wikiSliceStats(root = resolveDropJobRoot()) {
   }
   const withSlice = { resolved: 0, merged: 0 };
   const withoutSlice = { resolved: 0, merged: 0 };
-  for (const [job, receipt] of measurements) {
-    const attempt = delivery?.get(job);
-    if (!attempt?.outcome || attempt.outcomeTsMs < receipt.at) continue;
+  let unmeasuredResolved = 0;
+  for (const [job, attempt] of delivery ?? []) {
+    if (!attempt.outcome) continue;
+    const receipt = measurements.get(job);
+    if (!receipt || attempt.outcomeTsMs < receipt.at) {
+      unmeasuredResolved++;
+      continue;
+    }
     const cohort = receipt.withSlice ? withSlice : withoutSlice;
     cohort.resolved++;
     if (attempt.outcome === 'merged') cohort.merged++;
@@ -36,8 +41,10 @@ export async function wikiSliceStats(root = resolveDropJobRoot()) {
     ...cohort, mergeRate: cohort.resolved ? cohort.merged / cohort.resolved : null,
   });
   return {
-    schema: cloud.schema, cloud: { withSlice: cloud.withSlice, withoutSlice: cloud.withoutSlice },
+    schema: cloud.schema, cloud: { withSlice: cloud.withSlice, withoutSlice: cloud.withoutSlice, unmeasuredResolved: cloud.unmeasuredResolved },
     fleet: { coverage: tail.state, truncated: tail.state === 'read' && tail.truncated,
+      window: { source: ROUTER_OUTCOME_LEDGER_RELATIVE, maxBytes: ROUTER_OUTCOME_LEDGER_LIMIT },
+      measuredJobs: measurements.size, unmeasuredResolved,
       withSlice: summarize(withSlice), withoutSlice: summarize(withoutSlice) },
   };
 }

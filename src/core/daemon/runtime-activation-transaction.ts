@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { userInfo } from 'node:os';
@@ -8,9 +7,14 @@ import {
   observeRuntimeActivationExecutionPlan,
   type RuntimeActivationPreflightRequestV1,
 } from './runtime-activation-authority.js';
+import {
+  equalSha256Digest as sameDigest,
+  hasExactKeys as exactKeys,
+  isPlainRecord as record,
+  sha256Hex as sha256,
+} from './runtime-protocol-shared.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 
-const SHA256_RE = /^[a-f0-9]{64}$/;
 const MAX_DESCRIPTOR_BYTES = 256 * 1_024;
 const SAFE_LAUNCHD_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 
@@ -105,22 +109,6 @@ function resultFromStopped(
     recoveryJournalRetained: stopped.recoveryJournalRetained,
     durableOutcome: stopped.durableOutcome,
   };
-}
-
-function sameDigest(left: string, right: string): boolean {
-  return SHA256_RE.test(left) && SHA256_RE.test(right)
-    && timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
-}
-
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
 }
 
 function accountBoundHome(): { ok: true; homePath: string } | { ok: false; reason: string } {
@@ -292,11 +280,6 @@ function validateMutationDisabledPlan(
   }
   validateClosedDescriptor(request, request.candidate, payload.candidate, descriptors.candidate);
   validateClosedDescriptor(request, request.rollback, payload.rollback, descriptors.rollback);
-}
-
-function sha256(value: string | Buffer): string {
-  // Kept local so the mutation-disabled consumer has no release-writer imports.
-  return createHash('sha256').update(value).digest('hex');
 }
 
 function sameStoppedAdmission(

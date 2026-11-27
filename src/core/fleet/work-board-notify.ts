@@ -19,9 +19,10 @@
  * state key stays exposed for Set-based callers. Labels and claim
  * owners are untrusted data and grant no authority. */
 import { createHash } from 'node:crypto';
-import { appendFileSync, chmodSync } from 'node:fs';
+import { appendFileSync, chmodSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
+import { isSlackChannelId, isSlackTeamId, isSlackTs, parseSlackThreadRef } from '../agents/slack-network.js';
 import type { WorkBoardResult } from '../comms/work-board.js';
 import type { WorkItemEvidence, WorkItemState } from '../comms/work-item-state.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -46,6 +47,8 @@ export interface BoardSnapshotItem {
   verified: WorkItemEvidence['verified'] | null;
 }
 
+const usablePr = (pr: unknown): pr is number => typeof pr === 'number' && Number.isSafeInteger(pr) && pr > 0;
+
 /** Enrich a work-board listing with the blocker/verified evidence each
  * item's own classification already used. `readEvidence` is the only I/O
  * seam; items in other states need none and stay unenriched. */
@@ -60,7 +63,8 @@ export function snapshotBoard(
       try {
         const evidence = readEvidence(item.id);
         blocker = evidence?.blocker ?? null;
-        verified = evidence?.verified ?? null;
+        verified = evidence?.verified ? { ...evidence.verified } : null;
+        if (verified && !usablePr(verified.pr)) delete verified.pr;
       } catch { /* A failed evidence read leaves nulls: the planner drops it loud. */ }
     }
     return { ...item, blocker, verified };
@@ -166,7 +170,9 @@ export interface BoardNotifyPlan {
 
 /** One printable line; ids, owners and dependency text are untrusted. */
 const field = (value: string, max: number): string =>
-  value.replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, '?').slice(0, max).trim();
+  value.replace(/[\r\n\u0085\u2028\u2029]+/g, ' ')
+    .replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu, char => char === '\u200c' || char === '\u200d' ? char : '?')
+    .slice(0, max).replace(/[\uD800-\uDBFF]$/, '').trim();
 
 export function boardNotifyLedgerKey(itemId: string, state: string, delta?: string): string {
   return delta === undefined ? `${itemId} ${state}` : `${itemId} ${state} ${delta}`;
@@ -178,6 +184,17 @@ const provenanceKey = (itemId: string, state: string, kind: 'legacy' | 'modern')
   JSON.stringify(['board-notify-provenance', itemId, state, kind]);
 
 const normDeltaField = (v: string | null | undefined): string => (v ?? '').replace(/\s+/g, ' ').trim();
+
+function slackIdentity(ref: string | null): string | null {
+  if (ref === null) return null;
+  const parsed = parseSlackThreadRef(ref);
+  const parts = parsed ? [parsed.teamId, parsed.channelId, parsed.rootTs] : ref.split('/');
+  if (parts.length !== 3 || !isSlackTeamId(parts[0]) || !isSlackChannelId(parts[1]) || !isSlackTs(parts[2])) return null;
+  const [seconds, fraction] = parts[2]!.split('.') as [string, string];
+  return JSON.stringify([parts[0], parts[1], seconds.replace(/^0+/, '') || '0', fraction.replace(/0+$/, '')]);
+}
+
+const slackReceipts = new WeakMap<ReadonlySet<string>, Array<{ item: string; state: string; thread: string; delta: string }>>();
 
 /** The evidence fields a meaningful delta is computed from. */
 export interface BoardNotifyDeltaFields {
@@ -195,7 +212,8 @@ export interface BoardNotifyDeltaFields {
 
 /** Canonical meaningful-delta material for a postable state: the
  * normalized evidence the thread needs (ASSIGNED owner+claim, BLOCKED
- * dependency, VERIFIED pr/head/tests/artifact) bound to the channel and
+ * dependency, VERIFIED pr/head/tests/artifact, plus complete receipt-backed
+ * ownership for either outcome) bound to the channel and
  * thread it routes to, so a reroute is a new identity. `asOf` and the
  * source label are excluded — they move every pass and would defeat
  * dedupe. Returns null for silent states or missing evidence; the
@@ -212,10 +230,17 @@ export function boardNotifyDeltaMaterial(f: BoardNotifyDeltaFields): string | nu
     core = { dependency };
   } else if (f.state === 'VERIFIED') {
     const head = normDeltaField(f.head), tests = normDeltaField(f.tests), artifact = normDeltaField(f.artifact);
-    if (f.pr === undefined && head === '' && tests === '' && artifact === '') return null;
-    core = { pr: f.pr ?? null, head: head === '' ? null : head, tests: tests === '' ? null : tests, artifact: artifact === '' ? null : artifact };
+    if (!usablePr(f.pr) && head === '' && tests === '' && artifact === '') return null;
+    core = { pr: usablePr(f.pr) ? f.pr : null, head: head === '' ? null : head, tests: tests === '' ? null : tests, artifact: artifact === '' ? null : artifact };
   } else return null;
-  return JSON.stringify({ channel: f.channel, thread: f.thread, ...core });
+  if (f.state === 'BLOCKED' || f.state === 'VERIFIED') {
+    const owner = normDeltaField(f.owner), claim = normDeltaField(f.claimReceipt);
+    // Partial attribution stays byte-for-byte compatible with prior receipts.
+    // Claims identify coordination changes; they grant no execution authority.
+    if (owner !== '' && claim !== '') core = { ...core, owner, claim };
+  }
+  const identity = f.channel === 'slack' ? slackIdentity(f.thread) : null;
+  return JSON.stringify({ channel: f.channel, thread: identity === null ? f.thread : { slackIdentity: identity }, ...core });
 }
 
 /** Fixed-width digest of the delta material; carried on notices, ledger
@@ -249,24 +274,34 @@ export function boardNoticeText(state: BoardNotifyState, itemId: string, asOf: s
   return scrubSecrets(`${state} ${field(itemId, 80)} as of ${field(asOf, 40)} — ${detail} (source: ${field(source, 120)})`);
 }
 
+/** VERIFIED detail budget: at most 1600 printable characters (three
+ * 512-character fields, labels, separators and PR number). Snapshot-reader
+ * evidence fits in full. Oversized direct inputs reserve space for an
+ * explicit omission marker; scrub BEFORE bounding to avoid partial secrets. */
+function proofField(value: string): string {
+  const clean = field(scrubSecrets(value), Infinity);
+  const omitted = ' [... omitted]';
+  return clean.length <= 512 ? clean : `${clean.slice(0, 512 - omitted.length).replace(/[\uD800-\uDBFF]$/, '')}${omitted}`;
+}
+
 /** The bounded evidence a postable state cites: ASSIGNED names the owner
  * with its durable claim receipt labeled alongside, BLOCKED names the
  * dependency, and VERIFIED joins every supplied field with its label so
  * combined evidence stays parseable. A lone artifact already cites
  * itself, so it keeps the unlabeled single-field form. Every untrusted
- * value goes through `field`, keeping the line single and bounded. */
+ * value goes through `field` or `proofField`, keeping the line single and bounded. */
 function detail(t: BoardTransition, state: BoardNotifyState): string | null {
   const e = t.evidence;
   if (state === 'ASSIGNED') {
     if (!e.owner || !e.claimReceipt) return null;
     return `${field(e.owner, 120)} (claim ${field(e.claimReceipt, 160)})`;
   }
-  if (state === 'BLOCKED') return e.dependency ? field(e.dependency, 160) : null;
+  if (state === 'BLOCKED') return e.dependency ? proofField(e.dependency) : null;
   const parts: string[] = [];
-  if (e.pr !== undefined) parts.push(`PR #${e.pr}`);
-  if (e.head) parts.push(`head ${field(e.head, 40)}`);
-  if (e.tests) parts.push(`tests ${field(e.tests, 120)}`);
-  if (e.artifact) parts.push(parts.length === 0 ? field(e.artifact, 160) : `artifact ${field(e.artifact, 160)}`);
+  if (usablePr(e.pr)) parts.push(`PR #${e.pr}`);
+  if (normDeltaField(e.head)) parts.push(`head ${proofField(e.head!)}`);
+  if (normDeltaField(e.tests)) parts.push(`tests ${proofField(e.tests!)}`);
+  if (normDeltaField(e.artifact)) parts.push(parts.length === 0 ? proofField(e.artifact!) : `artifact ${proofField(e.artifact!)}`);
   return parts.length === 0 ? null : parts.join(' ');
 }
 
@@ -274,14 +309,14 @@ function detail(t: BoardTransition, state: BoardNotifyState): string | null {
 export function missingNoticeEvidence(t: BoardTransition, state: BoardNotifyState): string | null {
   const e = t.evidence;
   if (state === 'ASSIGNED') {
-    if (!e.owner) return 'ASSIGNED dropped: no named owner';
-    if (!e.claimReceipt) return 'ASSIGNED dropped: no durable claim receipt';
+    if (!normDeltaField(e.owner)) return 'ASSIGNED dropped: no named owner';
+    if (!normDeltaField(e.claimReceipt)) return 'ASSIGNED dropped: no durable claim receipt';
     return null;
   }
   if (state === 'BLOCKED') {
-    return e.dependency ? null : 'BLOCKED dropped: no dependency named';
+    return normDeltaField(e.dependency) ? null : 'BLOCKED dropped: no dependency named';
   }
-  if (e.pr !== undefined || e.head || e.tests || e.artifact) return null;
+  if (usablePr(e.pr) || normDeltaField(e.head) || normDeltaField(e.tests) || normDeltaField(e.artifact)) return null;
   return 'VERIFIED dropped: no PR, head or test artifact';
 }
 
@@ -309,13 +344,22 @@ export function planNotifications(
     if (material === null) continue; // unreachable: missingNoticeEvidence already proved the fields
     const delta = boardNotifyDeltaDigest(material);
     const deltaKey = boardNotifyLedgerKey(t.itemId, state, delta);
+    // Old rows retain the raw thread and digest. Rebuild only that exact
+    // material, after verifying its physical identity, to preserve receipts.
+    const identity = t.sourceChannel === 'slack' ? slackIdentity(t.sourceThread) : null;
+    const oldReceipt = identity !== null && (slackReceipts.get(sentLedger) ?? []).some(row => {
+        if (row.item !== t.itemId || row.state !== state || slackIdentity(row.thread) !== identity) return false;
+        const raw = JSON.parse(material) as Record<string, unknown>;
+        raw.thread = row.thread;
+        return boardNotifyDeltaDigest(JSON.stringify(raw)) === row.delta;
+    });
     const entryKey = boardNotifyLedgerKey(t.itemId, state);
     // A bare state key supplied by an older Set caller is legacy proof.
     // Mixed ledgers retain the legacy fence even after modern deliveries.
     const legacy = sentLedger.has(provenanceKey(t.itemId, state, 'legacy'))
       || (sentLedger.has(entryKey) && !sentLedger.has(provenanceKey(t.itemId, state, 'modern')));
     const entered = t.from !== t.to;
-    if (sentLedger.has(deltaKey) || planned.has(deltaKey) || (entered && legacy)) {
+    if (sentLedger.has(deltaKey) || oldReceipt || planned.has(deltaKey) || (entered && legacy)) {
       dropped.push({ itemId: t.itemId, state, reason: `${state} dropped: already notified` });
       continue;
     }
@@ -391,26 +435,42 @@ export function boardNotifySnapshotPath(stateDir: string): string {
  * Unreadable or truncated ledgers fail closed; a missing ledger is empty. */
 export function readBoardNotifySent(ledgerPath: string): Set<string> | null {
   const read = readPrivateFileCapped(ledgerPath, LEDGER_MAX_BYTES);
-  if (read === null) return new Set();
+  if (read === null) {
+    try { lstatSync(ledgerPath); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Set();
+    }
+    return null;
+  }
   if (read.truncated) return null;
   const sent = new Set<string>();
+  const receipts: Array<{ item: string; state: string; thread: string; delta: string }> = [];
   for (const line of read.text.split('\n')) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line) as { v?: unknown; itemId?: unknown; state?: unknown; delta?: unknown };
-      if (row.v === 1 && boundedString(row.itemId, 128)
-        && (BOARD_NOTIFY_STATES as readonly string[]).includes(String(row.state))) {
+      const row = JSON.parse(line) as Record<string, unknown> | null;
+      const nonblank = (value: unknown, max: number): value is string =>
+        boundedString(value, max) && value.trim().length > 0;
+      if (row && !Array.isArray(row) && row.v === 1 && nonblank(row.itemId, 128)
+        && typeof row.state === 'string' && (BOARD_NOTIFY_STATES as readonly string[]).includes(row.state)
+        && nonblank(row.at, 64) && nonblank(row.channel, 64)
+        && (row.thread === null || nonblank(row.thread, 1024))
+        && (nonblank(row.receipt, 512) || (row.delta === undefined && row.receipt === null))
+        && (row.delta === undefined || nonblank(row.delta, 64))) {
         const itemId = row.itemId, state = String(row.state);
         sent.add(boardNotifyLedgerKey(itemId, state));
-        if (boundedString(row.delta, 64) && row.delta.length > 0) {
+        if (typeof row.delta === 'string') {
           sent.add(boardNotifyLedgerKey(itemId, state, row.delta));
+          if (row.channel === 'slack' && typeof row.thread === 'string' && slackIdentity(row.thread) !== null) {
+            receipts.push({ item: itemId, state, thread: row.thread, delta: row.delta });
+          }
           sent.add(provenanceKey(itemId, state, 'modern'));
         } else {
           sent.add(provenanceKey(itemId, state, 'legacy'));
         }
-      }
-    } catch { /* skip a torn line */ }
+      } else return null;
+    } catch { return null; }
   }
+  slackReceipts.set(sent, receipts);
   return sent;
 }
 
@@ -433,7 +493,7 @@ function validSnapshotItem(v: unknown): v is BoardSnapshotItem {
   const blocker = blockerField === null || (record(blockerField)
     && optString(blockerField.dependency, 256) && optString(blockerField.source, 512) && optString(blockerField.at, 64));
   const verified = verifiedField === null || (record(verifiedField)
-    && (verifiedField.pr === undefined || (typeof verifiedField.pr === 'number' && Number.isSafeInteger(verifiedField.pr)))
+    && (verifiedField.pr === undefined || usablePr(verifiedField.pr))
     && ['head', 'tests', 'artifact', 'source', 'at'].every(key => optString(verifiedField[key], 512)));
   return boundedString(item.id, 128) && states.includes(String(item.state))
     && boundedString(item.asOf, 64) && boundedString(item.source, 512)
@@ -457,12 +517,14 @@ export function readBoardNotifySnapshot(stateDir: string): BoardSnapshotItem[] |
 }
 
 /** Persist this pass's board for the next diff; never throws. */
-export function writeBoardNotifySnapshot(stateDir: string, items: readonly BoardSnapshotItem[]): void {
+export function writeBoardNotifySnapshot(stateDir: string, items: readonly BoardSnapshotItem[]): { ok: true } | { ok: false } {
   try {
+    if (!items.every(validSnapshotItem)) return { ok: false };
     ensurePrivateDirectory(stateDir);
     writePrivateFileAtomic(boardNotifySnapshotPath(stateDir),
       JSON.stringify({ v: 1, at: new Date().toISOString(), items }));
-  } catch { /* a lost snapshot only replays; the ledger still fences sends */ }
+    return { ok: true };
+  } catch { return { ok: false }; }
 }
 
 /** What the next pass diffs against: delivered items advance; items whose
@@ -515,9 +577,13 @@ export async function sendNotifications(
     appendLedger?: (row: BoardNotifyLedgerRow) => void;
     now?: () => number;
     log?: (line: string) => void;
+    /** Per-sender deadline; timeout leaves delivery uncertain and pending. */
+    senderTimeoutMs?: number;
   },
 ): Promise<BoardSendResult[]> {
   const results: BoardSendResult[] = [];
+  const timeoutMs = Number.isFinite(opts.senderTimeoutMs) && opts.senderTimeoutMs! > 0
+    ? Math.min(opts.senderTimeoutMs!, 2_147_483_647) : 30_000;
   const append = opts.appendLedger
     ?? (opts.ledgerPath ? (row: BoardNotifyLedgerRow) => appendBoardNotifyLedger(opts.ledgerPath!, row) : undefined);
   for (const notice of notices) {
@@ -531,10 +597,26 @@ export async function sendNotifications(
       continue;
     }
     let receipt: BoardSendReceipt;
-    try { receipt = await sender(notice); }
-    catch { receipt = { status: 'unavailable', reason: 'sender threw' }; }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      receipt = await Promise.race([
+        Promise.resolve().then(() => sender(notice)),
+        new Promise<BoardSendReceipt>(resolve => {
+          timer = setTimeout(() => resolve({ status: 'unavailable', reason: 'sender-timeout' }), timeoutMs);
+        }),
+      ]);
+    } catch { receipt = { status: 'unavailable', reason: 'sender threw' }; }
+    finally { if (timer !== undefined) clearTimeout(timer); }
+    if (receipt === null || typeof receipt !== 'object' || Array.isArray(receipt)
+      || !['sent', 'duplicate', 'refused', 'unavailable'].includes(receipt.status)) {
+      results.push({ notice, status: 'unavailable', reason: 'invalid-sender-receipt' });
+      continue;
+    }
     if (receipt.status !== 'sent' && receipt.status !== 'duplicate') {
-      results.push({ notice, status: receipt.status, ...(receipt.reason ? { reason: receipt.reason } : {}) });
+      // Scrub before the 256-code-unit, single-line cap so truncation cannot expose a partial secret.
+      const reason = typeof receipt.reason === 'string' && receipt.reason.trim()
+        ? field(scrubSecrets(receipt.reason), 256) : '';
+      results.push({ notice, status: receipt.status, reason: reason || 'sender-reason-unavailable' });
       continue;
     }
     const senderReceipt = typeof receipt.receipt === 'string' ? receipt.receipt.trim().slice(0, 512) : '';

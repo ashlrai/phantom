@@ -12,7 +12,8 @@
  * as an attempt only when its merge verdict is known (`merged` is true or
  * false — MERGED, or CLOSED/merged:false). `merged: null` means the job's
  * result is unknown (still running, aborted, or no outcome row), so it is
- * excluded from both sides rather than counted as a failed attempt. A merge
+ * excluded from both sides rather than counted as a failed attempt. Standing
+ * terminal no-ops are also excluded because the fleet retired them unrun. A merge
  * recorded as reverted (`reverted: true`) still counts as an attempt but not
  * as a held merge — the same rule `proposeRouterWeights` applies — so a lane
  * whose merges get reverted does not keep an inflated learned rate. A lane
@@ -42,7 +43,7 @@ export interface RouteLaneOutcomes {
 export function foldRouteLaneOutcomes(outcomes: readonly RouterOutcome[]): Record<string, LaneOutcomes> {
   const tally = new Map<string, { attempts: number; merged: number }>();
   for (const outcome of outcomes) {
-    if (outcome.lane === null || outcome.merged === null) continue;
+    if (outcome.lane === null || outcome.merged === null || outcome.noop === true) continue;
     const row = tally.get(outcome.lane) ?? { attempts: 0, merged: 0 };
     row.attempts++;
     if (outcome.merged && outcome.reverted !== true) row.merged++;

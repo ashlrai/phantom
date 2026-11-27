@@ -39,6 +39,9 @@ export const handoffSchema = handoffDraftSchema.extend({
 export type HandoffDraft = z.infer<typeof handoffDraftSchema>;
 export type HandoffSignal = z.infer<typeof handoffSignalSchema>;
 export type SessionHandoff = z.infer<typeof handoffSchema>;
+/** Every signal kind the wire union accepts, derived once so list filters and tool schemas share the vocabulary. */
+export const HANDOFF_SIGNAL_KINDS: readonly HandoffSignal['kind'][] =
+  handoffSignalSchema.options.map(option => option.shape.kind.value);
 export class SessionHandoffError extends Error {}
 export const refuseHandoff = (reason: string): never => { throw new SessionHandoffError(reason); };
 

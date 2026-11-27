@@ -202,6 +202,19 @@ describe('insufficient evidence', () => {
 });
 
 describe('isolation between work classes and lanes', () => {
+  it('excludes unknown lane and class placeholders even at the proposal threshold', async () => {
+    writeLedger([
+      ...merged(20, 'unknown', 'code'),
+      ...merged(20, 'alpha', 'UNKNOWN'),
+      ...merged(20, 'alpha', 'code'),
+    ]);
+
+    const { report } = await runJson();
+    expect(report).toMatchObject({ known_outcomes: 20, unclassified_outcomes: 40 });
+    expect(report.proposals).toHaveLength(1);
+    expect(report.proposals[0]).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 20, status: 'proposed' });
+  });
+
   it('keeps each (work_class, lane) group separate and counts unclassified rows', async () => {
     writeLedger([
       ...merged(20, 'alpha', 'code'), ...merged(19, 'alpha', 'docs'), ...closed(20, 'beta', 'code'),
@@ -574,16 +587,52 @@ describe('outcome-quality evidence', () => {
       // A job that never published likewise never fabricates a duration.
       { job: 'synthetic-pw-open', event: 'finish', ts: new Date(t0).toISOString() },
       event('synthetic-pw-open', 'alpha', 'code', 'MERGED'),
+      { job: 'synthetic-pw-undated', event: 'finish', ts: new Date(t0).toISOString() },
+      { job: 'synthetic-pw-undated', event: 'publish', ts: new Date(t0 + 900_000).toISOString() },
+      { job: 'synthetic-pw-undated', event: 'publish' },
+      event('synthetic-pw-undated', 'alpha', 'code', 'MERGED'),
     ]);
     const { code, report } = await runJson();
     expect(code).toBe(0);
     const p = report.proposals[0];
-    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 22 });
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 23 });
     // waits are 30s..600s over the 20 paired jobs -> mean 315s.
     expect(p.evidence.publish_wait_known).toBe(20);
     expect(p.evidence.publish_wait_s_mean).toBe(315);
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('publish_wait_s=315(20)');
+  });
+
+  it('withholds CI and publish timings across batch claims, including reward fallback', async () => {
+    const cases = [
+      { job: 'claim-before', ts: '2026-11-19T23:59:00Z' },
+      { job: 'claim-at-start', ts: '2026-11-20T00:00:00Z' },
+      { job: 'claim-inside', ts: '2026-11-20T00:01:00Z' },
+      { job: 'claim-at-end', ts: '2026-11-20T00:02:00Z' },
+      { job: 'claim-undated' },
+      { job: 'claim-after', ts: '2026-11-20T00:03:00Z' },
+    ];
+    writeLedger(cases.flatMap(({ job, ts }) => [
+      { job, event: 'ci_start', ts: '2026-11-20T00:00:00Z' },
+      { job, event: 'finish', ts: '2026-11-20T00:00:00Z' },
+      { job, event: 'batch_claim', ts },
+      { job, event: 'ci_complete', ts: '2026-11-20T00:02:00Z' },
+      { job, event: 'publish', ts: '2026-11-20T00:02:00Z' },
+      event(job, 'alpha', 'code', 'MERGED'),
+    ]));
+    writeRewardSignals(cases.map(({ job }) => rewardRow(job, true, null)));
+
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report.proposals[0]).toMatchObject({
+      known_n: cases.length,
+      evidence: {
+        ci_wall_known: 2,
+        ci_wall_s_mean: 120,
+        publish_wait_known: 2,
+        publish_wait_s_mean: 120,
+      },
+    });
   });
 
   it('folds dispatch lane overrides into group evidence with reason tallies', async () => {

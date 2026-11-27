@@ -33,7 +33,7 @@ export interface ImpactOverride {
   trivial?: boolean;
 }
 
-export const IMPACT_WEIGHTS = Object.freeze({
+const IMPACT_WEIGHTS = Object.freeze({
   capability: 30,
   autonomy: 25,
   unblocking: 20,
@@ -41,7 +41,7 @@ export const IMPACT_WEIGHTS = Object.freeze({
   productionReach: 15,
   repoBreadth: 10,
 });
-type Dimension = keyof typeof IMPACT_WEIGHTS;
+type Dimension = 'capability' | 'autonomy' | 'unblocking' | 'fleetLoop' | 'productionReach' | 'repoBreadth';
 
 export interface ImpactScore {
   version: typeof IMPACT_VERSION;

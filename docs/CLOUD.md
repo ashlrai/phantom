@@ -266,14 +266,27 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   item while `state-persistence-failed` or `activation-refused` recurs;
   policy reasons like `budget-exhausted` never do. A missing or unreadable
   state file emits nothing —
+  and the post-merge credit release funnel's recurring machinery
+  failures, the per-reason skip tallies and source-completeness verdicts
+  `sweepPostMergeCreditReleases` records on each producer-maintenance
+  pass's `producerMaintenance.postMergeCredit*` fields in `daemon.json`
+  (otherwise only visible through `phm daemon status`'s last-tick
+  summary — and released credit is what learned-skill card attestation
+  requires, so a stuck funnel starves the skills lane). A skip reason, an
+  incomplete-source streak or an unattributed-skip streak becomes an item
+  while it recurs across in-window sweep passes; the funnel's designed
+  holds — the observation window, missing merge or stability witnesses,
+  recorded adverse outcomes and the operational-release ops gate — never
+  do. A missing or unreadable state file emits nothing —
   and the cross-model review journal's recurring findings, the reject
   reason codes and review failures `fleet/cross-review.jsonl` records for
   each repository's pull requests (otherwise only visible through
   `phm router outcomes`/`phm fleet router-weights` tallies and the audit
-  log). A finding becomes an item while its recorded rows span enough
-  distinct pull requests inside the recency window — a producer whose
-  diffs keep failing independent review for the same reason, or a
-  reviewer pipeline that keeps failing before a verdict — and the
+  log). A finding becomes an item when at least three receipts span at
+  least two pull requests within the 30-day window ending at evaluation
+  time, inclusive, with exact journal replays counted once. These findings
+  cover recurring rejection reasons and repeated reviewer failures
+  before a verdict. Discovery also reads the
   empty-job tag ledger's recurring
   actionable tags, the `job.empty-tag.v1` rows the daemon's empty-tag-sync
   and `phm jobs empty --record` write to `metrics/empty-tags.jsonl`
@@ -503,11 +516,13 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   (otherwise only visible through `phm fleet unfed`, `phm route
   explain` and the router outcome/weight folds — reports someone had
   to run and read). A lane becomes an item while its recorded unfed
-  ticks span enough distinct UTC days inside the 7-day window — free
-  target slots while runnable rows waited under other lanes' hints —
+  ticks span enough distinct UTC days inside the 7-day window. It counts the
+  last usable snapshot per timestamp at or before report time. It shares the
+  unfed report's cross-checks for holds, headroom and waiting counts.
   a (lane, reason-code) cell becomes an item while distinct jobs keep
   recording that lane's rejection for the same non-mechanical code
-  across days (lower_rank, saturated, held and hysteresis_* never
+  across days. Each exact lane and code pair must meet the recurrence
+  threshold independently (lower_rank, saturated, held and hysteresis_* never
   emit — the market working as designed), and unrouted decisions and
   unknown_preference overrides become umbrella items at the same
   recurring bar; route decisions collapse to each job's latest
@@ -615,10 +630,10 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   strict majority not held and evidence spanning distinct UTC days
   inside the 7-day window — with rows whose pool field went unrecorded
   grouping as the calibration arm's own 'unknown' cell, in-flight jobs
-  absent by design and never counted; a missing or unreadable ledger
-  emits nothing, rows failing the writer's closed contract drop like
-  the substrate readers' own parse, truncated tails are stated as lower
-  bounds, and another repository emits nothing since the ledger is
+  absent by design and never counted. A missing, unreadable or truncated
+  ledger emits nothing. A clipped prefix can change the majority and
+  first-row attribution. Rows failing the writer's closed contract are
+  skipped, and another repository emits nothing since the ledger is
   this install's dispatch record —
   and the job-control steering ledger's recurring unacknowledged
   requests, the fleet.job.control.v1 rows `phm job <action>`, POST
@@ -1288,6 +1303,50 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   or truncated runs log, degraded trajectory sources) or a failed
   knowledge read emits nothing, and another repository emits nothing
   since the ledger describes this install's injection machinery —
+  and the approved-knowledge consumption gap, the learn store's
+  approved-note corpus (readKnowledge over knowledge.json) joined to
+  the injection hits log (readKnowledgeHits over
+  knowledge-hits.jsonl) — the counters every rendered
+  knowledgeBlockFor/withApprovedKnowledge injection records, reaching
+  until now only the Verse Lessons panel's per-note numbers, so
+  approved notes that never reached a task prompt or whose recorded
+  injections went quiet never became work (knowledgeServeBacklogItems).
+  A never-served cell becomes an item at the population bar of
+  qualifying notes — approved at least seven days with zero recorded
+  hits — or for a single note approved past the thirty-day long bar,
+  and a stale-served cell at its own higher bar of notes whose newest
+  recorded hit is thirty-plus days old; only 'approved' notes count
+  since pending was never injected by design and rejected was already
+  handled, the approval clock is decidedAt falling back to createdAt
+  with unparseable dates skipped and disclosed, stored and logged hits
+  sum exactly as the Lessons view publishes them, a failed notes or
+  hits read withholds rather than guesses, and another repository
+  emits nothing since the store describes this install's lesson
+  machinery —
+  and the playbook-version trajectory outcome tallies' recurring
+  adverse evidence, the per-version {merged, refused, reverted,
+  failed, total} buckets countPlaybookOutcomes
+  (src/core/playbooks/stats.ts) folds from the learn/retro
+  ended-run store's playbookRef field — attached by the retro
+  sweep's uses.jsonl lane:key join for fleet dispatches and by
+  playbookForLaunch for cloud/Devin tasks — the same tallies `phm
+  playbook show` prints per version and the playbooks API serves
+  (otherwise only visible through those two surfaces — reports
+  someone had to run and read — so a playbook version whose runs
+  kept being reverted or failing never became work even though
+  every matching launch pays the injected prompt bytes). A version
+  becomes an item only at the recurring bars of three adverse runs
+  (reverted + failed — the refused bucket stays reported but never
+  counts, since gate-refused, owner-laned, closed and vetoed are
+  gate and owner decisions, not evidence about the version)
+  across two distinct UTC days inside the 7-day window AND only
+  while its playbook id still resolves — built-ins are always
+  live, disk playbooks only while the id remains in the store; a
+  deleted playbook's history is moot, rows with malformed refs or
+  unparseable endedAt never reach a cell, a retro store whose
+  newest-500 bound lands wholly inside the window states its
+  tallies as lower bounds, and another repository emits nothing
+  since the store describes this install's procedure memory —
   and the landed-close attempt journal's recurring adverse cells, the
   {at, pr, head, outcome, reason?} rows `ashlr fleet landed-close
   --apply` appends to <runs>/queue/landed-closes.jsonl for each
@@ -1387,6 +1446,12 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   report someone had to run and read, so recurring Git contention
   never became work). A cell emits only at the recurring bars of three
   adverse rows across two distinct UTC days inside the 7-day window —
+  identical receipt lines (ignoring surrounding whitespace) count once
+  toward both recurrence and recorded retry totals. Distinct lines can
+  contribute even when they share a timestamp. The job latency report also
+  counts identical timestamped Git-operation receipts once in its timing,
+  failure, retry, and cross-lane overlap tallies. Undated observations
+  retain their per-row counts and supply no overlap evidence. For recurrence,
   index.lock cells count rows recorded `failed`, fetch/push cells
   count rows whose `retries` is a recorded positive integer, timed
   rows and clean retries are context never counted as adverse — a
@@ -1395,6 +1460,27 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   parse, truncated tails are stated as lower bounds, and items emit
   only for the fleet's own repository since the rows describe this
   install's hosts and lanes and carry no repository column —
+  and the jobs ledger's per-phase latency totals, the phases and
+  top_wastes sections of `phm fleet job-latency`
+  (src/core/fleet/job-latency.ts) folded from the same lifecycle
+  boundary rows in `metrics/jobs.jsonl` — queue_wait, checkout,
+  model, worker, publish_wait, ci and merge, each carrying
+  measured_jobs, missing_jobs, total_seconds and the report's own
+  fix_line (otherwise only visible through that report — a report
+  someone had to run and read, so a fleet whose jobs kept piling
+  wall time into one stage never became work). For phases bounded by PR
+  events, fleet job latency and pulse merge latency withhold a sample when
+  publish, CI, merge or close receipts identify conflicting PRs within the
+  span. Undated PR receipts can also make the span ambiguous. A phase emits only
+  when measured on at least ten job attempts and carrying at least
+  six hours of recorded wait across the bounded tail — enough
+  samples that the total is not one fluke and enough accumulated
+  wait that the phase is a fleet-level bottleneck — with totals and
+  counts quoted only as recorded, missing boundary coverage quoted
+  as the report counts it, truncated tails stated as lower bounds,
+  and items emitting only for the fleet's own repository since the
+  phases describe this install's dispatch, checkout, model, publish,
+  CI and merge path and carry no repository column —
   and the job-reissue audit ledger's recurring rescue cells, the
   {at, from, to, lane, tier, file} rows reissueJob (src/core/fleet/
   job-reissue.ts) appends to queue/job-reissues.jsonl under the fleet
@@ -1415,9 +1501,34 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   rows rather than claimed, truncated tails are stated as lower
   bounds, and items emit only for the fleet's own repository since
   the ledger is this install's rescue record and carries no
-  repository column.
+  repository column —
+  and the route shadow journal's recurring adverse divergence
+  cells, the advisory route.shadow.v1 records `phm route shadow
+  eval --record` appends to metrics/route.shadow.jsonl under the
+  fleet runs directory through recordShadowPolicyDecision
+  (src/core/router/shadow-policy.ts) — the live router's pick next
+  to the class-failure-avoidance policy's pick per evaluation,
+  always dispatched:false. Until now the journal's only readers
+  were `phm route shadow report` and the shadow_comparison inside
+  `phm route explain` — reports someone had to run — so a
+  (repo, task_class) cell where the two routers kept disagreeing
+  and the live lane's resolved picks kept failing never became
+  work. A cell emits only at the recurring bars of supported
+  disagreements across distinct UTC days inside the 7-day window
+  with resolved live failures at the adverse bar — at least two
+  failures and at least half of the cell's resolved disagreed
+  outcomes — where disagreement is recomputed
+  live_lane !== shadow_lane like the report (the stored flag is
+  never trusted), insufficient_support and no_candidates rows
+  never count, the outcome join reads the canonical
+  readRouterOutcomes projection only once a cell is already
+  recurring on disagreements and days, the shadow pick's own
+  outcome stays counterfactual and unobserved, truncated tails
+  are stated as lower bounds, and items emit only for the fleet's
+  own repository since the journal describes this install's
+  routing.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
-  cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
+  credit-release, cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   claude-recovery, memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, stray-stop, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
@@ -1426,7 +1537,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts, postrun, git-contention and job-reissue items carry priority 3;
+  devin-review, custody, launch-cost, knowledge-outcome, knowledge-serve, playbook-outcome, landed-close, live-config, delivery-receipts, postrun, git-contention, job-latency, job-reissue and route-shadow items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1443,7 +1554,12 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   dispatch, queue and lane machinery. Tick-health items name the state
   ledger and keep the inspect-the-phase-deadlines framing, emitting only
   for the fleet's own repository since the daemon is this install's
-  machinery. Cross-review items name the review
+  machinery. Credit-release items name the daemon state ledger and the
+  post-merge-credit sweep, keep the find-why-the-release-funnel-keeps-
+  failing-closed framing — a degraded ledger, witness producer or
+  eligibility path this repository owns versus a designed hold or the
+  ops gate — and emit only for the fleet's own repository since the
+  sweep is this install's machinery. Cross-review items name the review
   journal and keep the find-why-review-keeps-failing framing, emitting
   only when a review row's recorded repository matches the discovery
   target — findings on another repository's pull requests never land on
@@ -1767,12 +1883,31 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   quoting recorded lanes, host and day counts without hostnames, with
   the same owner-side no-change escape, and emit only for the fleet's
   own repository since the rows describe this install's hosts and
-  lanes. They
+  lanes. Job-latency items name the jobs-ledger lifecycle boundary
+  rows, `phm fleet job-latency`'s phases/top_wastes fold and the
+  per-phase ownership map in src/core/improve/job-latency-backlog.ts,
+  keep the find-where-this-stage's-wall-time-concentrates framing per
+  phase — dispatch admission, worktree checkout, model execution,
+  publish, the CI critical path or merge-queue dwell this repository
+  owns versus pinned contrib/mac machinery, the .github/workflows
+  files, host capacity or owner-side state only the owner can fix —
+  quoting the report's own fix_line and the recorded totals, counts
+  and mean wait, with the same owner-side no-change escape, and emit
+  only for the fleet's own repository since the phases describe this
+  install's job lifecycle and carry no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
   after it ends `merged` or its session reported `no-change` (the work was
-  already done).
+  already done) — with one exception: every append stamps the item
+  `assertedAt`, and re-emitting an id already in the file refreshes its
+  prompt and stamp in place instead of duplicating. When the newest task
+  ended `merged` but the item's `assertedAt` is later than that task's
+  creation, evidence arrived after the prompt was minted — evidence the
+  merge cannot have covered — so the claim releases and the item is
+  claimable again. Items never re-asserted (built-in, hand-written, or a
+  producer whose condition cleared) carry no later stamp and stay done for
+  good.
 - **Order.** The next item is the highest priority (1 first). Within a
   priority, areas whose measured outcomes improved their metric go first
   (higher measured leverage first), unmeasured areas next, and areas with a
@@ -1788,14 +1923,17 @@ There are two ways to launch backlog items:
   module first loads, never under a test runner. Every 10 minutes it refreshes
   task states from GitHub. Two minutes after start, and then every 60 minutes,
   it launches the next backlog item. Before each launch pick it also registers
-  every backlog task whose item declares a metric and whose carrier PR is
+  every backlog task — cloud or Devin lane, which claims items from the same
+  backlog — whose item declares a metric and whose carrier PR is
   still live into the outcome ledger — the same records `phm improve
   sync-backlog` writes by hand — so measured outcomes keep feeding the order
   above. When the standing-pass intake has superseded a task's cloud PR, the
   carrier is the fleet App PR (`supersededBy`): that is the PR number the
   ledger records, measures and watches. The same pass records
-  checkout-free post-merge observations (`syncCloudOutcomeObservations`):
-  merged task outcomes, the fleet merge-state landing record for a
+  checkout-free post-merge observations (`syncCloudOutcomeObservations`)
+  for both lanes: merged task outcomes (cloud tasks only — a Devin task
+  carries no outcome block, so its merge evidence is the fleet merge-state
+  record and the revert journal), the fleet merge-state landing record for a
   superseded task's intake proposal, and the revert-outcomes journal become
   `observed` events — a proposal still naming the closed cloud PR is
   re-pointed at the fleet PR — so standing reverts discount the proposals
@@ -1944,7 +2082,8 @@ App PR is never touched.
 the diff that was filed, the intake comments "Superseded by #N" on the cloud
 PR, closes it, and records `supersededBy` on the task. From then on the
 tracker follows the App PR: open stays `pr-open`, merged makes the task
-`merged` (so its backlog item is done for good), and closed makes it
+`merged` (so its backlog item is done for good unless the item is asserted
+again — see Claims), and closed makes it
 `closed`. The App PR's own merge/CI/review verdict is kept on the task's
 `outcome` at that terminal transition, exactly as the cloud PR's was — it is
 the evidence the outcome ledger, retros and lesson trial read for the PR

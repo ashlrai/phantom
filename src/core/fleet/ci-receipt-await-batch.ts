@@ -22,12 +22,9 @@
  * dispatch, no check mutation.
  */
 import { performance } from 'node:perf_hooks';
-import { stripVTControlCharacters } from 'node:util';
 import type { GitRunner } from '../verse/git-ops.js';
-import { scrubSecrets } from '../util/scrub.js';
 import type { CiResumePrior } from './ci-resume-inputs.js';
 import { abortableSleep, isAwaitMs } from './needs-mason-answer-await.js';
-import { artifactNameField } from './ci-receipt-discovery.js';
 import {
   awaitCiReceipt,
   CI_RECEIPT_AWAIT_DEFAULT_POLL_MS,
@@ -35,16 +32,19 @@ import {
   CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS,
   CI_RECEIPT_AWAIT_MIN_POLL_MS,
 } from './ci-receipt-await.js';
+import {
+  ciReceiptTargetKey,
+  cleanCiReceiptReason,
+  hasExactKeys,
+  isPlainRecord,
+  isValidCiReceiptTarget,
+} from './ci-receipt-shared.js';
 
 /** One bounded stdin document names the whole batch: 64 KiB, at most 16 targets. */
 export const CI_RECEIPT_AWAIT_BATCH_MAX_INPUT_BYTES = 64 * 1024;
 export const CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS = 16;
 /** Batch stderr evidence is capped; the newest binding lines always survive. */
 export const CI_RECEIPT_AWAIT_BATCH_MAX_DIAGNOSTICS = 200;
-const MAX_REASON = 200;
-
-/** Same owner/name shape the ci-receipt CLIs accept — never a path or URL. */
-const REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 
 export interface CiReceiptAwaitBatchTarget {
   repo: string; run: number; attempt: number; artifactName: string;
@@ -76,34 +76,6 @@ export interface CiReceiptAwaitBatchResult {
   diagnostics: string[];
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
-const idNum = (value: unknown): value is number =>
-  Number.isSafeInteger(value) && (value as number) >= 1;
-
-const validRepo = (repo: unknown): repo is string =>
-  typeof repo === 'string' && REPO.test(repo)
-  && !repo.split('/')[0]!.endsWith('-') && !repo.split('/')[0]!.includes('--')
-  && !repo.endsWith('/.') && !repo.endsWith('/..');
-
-const validTarget = (value: unknown): value is CiReceiptAwaitBatchTarget =>
-  isRecord(value) && Object.keys(value).length === 4
-  && validRepo(value.repo)
-  && idNum(value.run) && idNum(value.attempt)
-  && typeof value.artifactName === 'string'
-  && artifactNameField(value.artifactName) === value.artifactName
-  && !value.artifactName.startsWith('-');
-
-/** Exact identity, case-insensitive on the repo like the evidence binder is. */
-const identity = (t: CiReceiptAwaitBatchTarget): string =>
-  `${t.repo.toLowerCase()}\0${t.run}\0${t.attempt}\0${t.artifactName}`;
-
-const clean = (value: string): string =>
-  // eslint-disable-next-line no-control-regex
-  scrubSecrets(stripVTControlCharacters(value).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, ''))
-    .replace(/[\r\n]+/g, ' ').slice(0, MAX_REASON);
-
 export type CiReceiptAwaitBatchParse =
   | { ok: true; targets: CiReceiptAwaitBatchTarget[] }
   | { ok: false; reason: string };
@@ -117,9 +89,8 @@ export type CiReceiptAwaitBatchParse =
 export function parseCiReceiptAwaitBatchInput(text: string): CiReceiptAwaitBatchParse {
   let doc: unknown;
   try { doc = JSON.parse(text); } catch { return { ok: false, reason: 'not_json' }; }
-  if (!isRecord(doc)) return { ok: false, reason: 'not_object' };
-  const keys = Object.keys(doc);
-  if (keys.length !== 2 || !keys.includes('version') || !keys.includes('targets')) {
+  if (!isPlainRecord(doc)) return { ok: false, reason: 'not_object' };
+  if (!hasExactKeys(doc, ['version', 'targets'])) {
     return { ok: false, reason: 'unknown_or_missing_fields' };
   }
   if (doc.version !== 1) return { ok: false, reason: 'unsupported_version' };
@@ -130,8 +101,8 @@ export function parseCiReceiptAwaitBatchInput(text: string): CiReceiptAwaitBatch
   const seen = new Set<string>();
   const targets: CiReceiptAwaitBatchTarget[] = [];
   for (const entry of doc.targets) {
-    if (!validTarget(entry)) return { ok: false, reason: 'target_invalid' };
-    const key = identity(entry);
+    if (!isValidCiReceiptTarget(entry)) return { ok: false, reason: 'target_invalid' };
+    const key = ciReceiptTargetKey(entry);
     if (seen.has(key)) return { ok: false, reason: 'duplicate_target' };
     seen.add(key);
     targets.push(entry);
@@ -172,8 +143,8 @@ export async function awaitCiReceiptBatch(
   deps: CiReceiptAwaitBatchDeps = {},
 ): Promise<CiReceiptAwaitBatchResult> {
   if (!Array.isArray(targets) || targets.length < 1 || targets.length > CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS
-    || !targets.every(validTarget)
-    || new Set(targets.map(identity)).size !== targets.length) {
+    || !targets.every(isValidCiReceiptTarget)
+    || new Set(targets.map(ciReceiptTargetKey)).size !== targets.length) {
     throw new RangeError('invalid target list');
   }
   const pollMs = opts.pollMs ?? CI_RECEIPT_AWAIT_DEFAULT_POLL_MS;
@@ -203,7 +174,7 @@ export async function awaitCiReceiptBatch(
       for (const line of found.diagnostics) diagnostics.push(`${tag}: ${line}`);
     } catch (error) {
       entries.push({ ...target, outcome: 'failed', prior: null,
-        reason: clean(error instanceof Error ? error.message : String(error)) });
+        reason: cleanCiReceiptReason(error instanceof Error ? error.message : String(error)) });
     }
     await opts.onEntry?.(entries[entries.length - 1]!);
   }

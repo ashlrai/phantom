@@ -13,7 +13,8 @@
  * On top of that the launch-specific fences apply: jobs marked `drop` or
  * `defer` in queue/skipped-empty.tsv never launch, filler rows wait while
  * queue/FILLER_HOLD exists, and a row whose prompt file is absent cannot
- * start. `free` counts against the launch target — the configured target
+ * start. Each job contributes supply once, using its first surviving row.
+ * `free` counts against the launch target — the configured target
  * tightened by the controller's effective_target shed — so a shed lane has
  * no phantom room.
  */
@@ -97,10 +98,12 @@ export async function planLaunchable(
   }
   const excluded = dropDeferIds(inputs.skippedEmpty);
   const fillerHold = options.fillerHold === true;
+  const countedJobs = new Set<string>();
   let openRows = 0;
   for (const row of parseReadyMarketRows(inputs.readyTsv, inputs.routerQueue).rows) {
-    if (excluded.has(row.id) || (fillerHold && FILLER_ID.test(row.id))) continue;
+    if (countedJobs.has(row.id) || excluded.has(row.id) || (fillerHold && FILLER_ID.test(row.id))) continue;
     if (!(await options.promptExists(row.prompt))) continue;
+    countedJobs.add(row.id);
     if (row.hint === null) { openRows++; continue; }
     const entry = lanes.get(row.hint);
     if (entry !== undefined) entry.launchable++;

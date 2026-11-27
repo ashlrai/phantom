@@ -16,9 +16,15 @@ import { closeSync, constants, existsSync, readFileSync, readdirSync, renameSync
 import { join, sep } from 'node:path';
 import { NODE_TASK_LIMIT, validNodeTask, nodeTaskArgs, type EmbeddedNodeTask } from './task.js';
 import { type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
-import { validCap } from './state.js';
+import { NODE_HEARTBEAT_MS, validCap } from './state.js';
+import type { RouteAssignment } from './router.js';
+import { LOCAL_LANES, MARKET_LANE_ID, readyEnvelopeSpec, remoteLaneCap } from '../../fleet/unfed-market.js';
 import { scrubSecrets } from '../../util/scrub.js';
 import { traceBridgeSync, traceBridgeWait, type BridgeTrace } from './ready-bridge-receipts.js';
+
+// The lane-to-cap map lives with the market semantics in unfed-market; the
+// contract surface keeps it exported here for existing readers.
+export { remoteLaneCap };
 
 export const NODE_BRIDGE_SCHEMA = 'phantom.node-bridge.v1';
 /** dispatchd keeps a lease only when its owner starts with RQ-BATCH- and has a manifest. */
@@ -41,7 +47,6 @@ export const NODE_BRIDGE_CALL_MS = 12_000;
 export const NODE_BRIDGE_PASS_BUDGET_MS = 25_000;
 
 const JID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const LOCAL_LANES = new Set(['codex-local', 'omlx']);
 const HOST_BOUND = ['RQ-FIX-MAIN-', 'RQ-REL-', 'RQ-DESK-', 'RQ-BATCH-'];
 const DATA_CLASSES: Record<string, number> = { public: 0, internal: 1, confidential: 2, restricted: 3 };
 /** work_market.py's clearance for a remote built-in executor. */
@@ -58,7 +63,14 @@ export interface BridgeRowDecision {
   job: string; lane: string; cap: string | null; pack: string | null; offload: boolean; reasons: string[];
   nodeId: string | null; routerJobId: string | null; requires: string[];
 }
-export interface BridgeNodeView { nodeId: string; lanes: string[]; slots: number | null; running: number; freeSlots: number | null }
+export interface BridgeNodeView {
+  nodeId: string;
+  /** Model lanes the node serves (the codex/claude/omlx subset of its advertisement). */
+  lanes: string[];
+  /** Every advertised cap — the set offload `requires` (lane cap, pack:*, needs) actually tests. */
+  caps: string[];
+  slots: number | null; running: number; freeSlots: number | null;
+}
 export interface BridgeLeaseView { job: string; leaseOwner: string; routerJobId: string; state: string; routerState: string | null; action: string }
 export interface NodeBridgeReport {
   schema: typeof NODE_BRIDGE_SCHEMA; mode: 'dry-run' | 'apply'; owner: string | null;
@@ -69,9 +81,14 @@ export interface NodeBridgeReport {
   nodes: BridgeNodeView[]; rows: BridgeRowDecision[]; leases: BridgeLeaseView[];
   claimed: string[]; requeued: string[]; completed: string[]; lostRace: string[];
 }
+interface BridgeRouterView {
+  nodes: NodeView[];
+  jobs: JobView[];
+  routes?: RouteAssignment[];
+}
 export interface BridgeRouter {
   scope: string;
-  view(owner: string): { nodes: NodeView[]; jobs: JobView[] };
+  view(owner: string): BridgeRouterView;
   enqueue(jobId: string, spec: { owner: string; requires: string[]; pack: string; task?: EmbeddedNodeTask }): boolean;
   withdraw(jobId: string, owner: string): WithdrawOutcome;
 }
@@ -92,15 +109,7 @@ export function bridgeLeaseOwner(job: string): string {
   return NODE_BRIDGE_LEASE_PREFIX + createHash('sha256').update(job).digest('hex').slice(0, 20);
 }
 
-/** The node cap a ready lane needs, or null when the lane only runs on this host or on an API key. */
-export function remoteLaneCap(lane: string): string | null {
-  if (LOCAL_LANES.has(lane)) return null;
-  if (lane === 'codex' || lane.startsWith('codex-')) return 'codex';
-  if (lane === 'claude' || (lane.startsWith('claude-') && lane !== 'claude-api')) return 'claude';
-  return null;
-}
-
-export function parseReadyRow(text: string): ReadyRow | null {
+export function parseReadyRow(text: string, routerQueue?: string | null): ReadyRow | null {
   const line = text.replace(/\r$/, '');
   if (!line.trim() || line.startsWith('#')) return null;
   const f = line.split('\t');
@@ -120,6 +129,20 @@ export function parseReadyRow(text: string): ReadyRow | null {
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed).some(k => !SPEC_KEYS.has(k))) throw new Error('spec');
       spec = parsed as Record<string, unknown>;
     } catch { return { job, lane: f[2]!, line, spec: null, invalid: 'invalid_requirements' }; }
+  } else {
+    // A matching `- STATUS ... (attrs):` envelope replaces the requirements
+    // wholesale — exactly like dispatchd's from_envelope — so the envelope's
+    // preferred_lane (or explicit open) and declared needs/data_class reach the
+    // offload decision and the lane cell is never consulted: the dispatcher's
+    // routed pass writes the envelope spec into the requirements cell before
+    // launch. With no envelope the requirements fallback applies: a non-empty
+    // lane cell that is not a lane id is invalid_requirements.
+    const env = readyEnvelopeSpec(routerQueue, job);
+    if (env === 'invalid') return { job, lane: f[2]!, line, spec: null, invalid: 'invalid_requirements' };
+    if (env !== null) spec = env;
+    else if (laneCell !== '' && !MARKET_LANE_ID.test(laneCell)) {
+      return { job, lane: f[2]!, line, spec: null, invalid: 'invalid_requirements' };
+    }
   }
   return { job, lane: f[2]!, line, spec, invalid: null };
 }
@@ -130,39 +153,75 @@ function routerJobId(job: string, jobs: JobView[]): string {
   return `${prefix}${attempts.length ? Math.max(...attempts) + 1 : 1}`;
 }
 
+function reservesReadyId(row: ReadyRow): boolean {
+  return row.invalid === null || row.invalid === 'parked_row';
+}
+
 /** Pure eligibility plan. Unknown slot telemetry is `null` and never admits a row. */
-export function planNodeBridge(input: {
-  rows: ReadyRow[]; claimed: (job: string) => boolean; nodes: NodeView[]; jobs: JobView[]; maxPerPass?: number;
+export function planNodeBridge(input: BridgeRouterView & {
+  rows: ReadyRow[]; claimed: (job: string) => boolean; now: number; maxPerPass?: number;
 }): { nodes: BridgeNodeView[]; rows: BridgeRowDecision[] } {
   const live = input.nodes.filter(n => n.live).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const running = (id: string) => input.jobs.filter(j => j.state === 'running' && j.claimedBy === id).length;
   const free = new Map<string, number | null>(live.map(n => [n.nodeId, n.slots === undefined ? null : Math.max(0, n.slots - running(n.nodeId))]));
-  // Capacity-reporting nodes on one physical host share its measured slots —
-  // the router's nodeCapacityView groups by capacity.hostId the same way. Each
-  // node's advertised `slots` already includes host headroom, so free capacity
-  // is accounted once per host (the smallest advertisement minus every claim
-  // on it), never summed per node; a node without a capacity sample is its own
-  // host, which leaves standalone accounting exactly as before.
+  // Count the physical host's budget once, including claims held by siblings.
+  // Legacy nodes without samples still use their advertised slot bounds.
   const hostOf = (n: NodeView): string => n.capacity?.hostId ?? n.nodeId;
   const hostGroups = new Map<string, NodeView[]>();
   for (const n of live) { const host = hostOf(n); const members = hostGroups.get(host) ?? []; members.push(n); hostGroups.set(host, members); }
   const hostFree = new Map<string, number | null>();
+  const freshCapacity = (node: NodeView) => {
+    const sample = node.capacity;
+    return sample && sample.sampledAtMs <= input.now &&
+      input.now - sample.sampledAtMs <= 2 * NODE_HEARTBEAT_MS ? sample : undefined;
+  };
   for (const [host, members] of hostGroups) {
-    hostFree.set(host, members.every(m => m.slots !== undefined)
-      ? Math.max(0, Math.min(...members.map(m => m.slots!)) - members.reduce((sum, m) => sum + running(m.nodeId), 0))
+    const samples = members.map(freshCapacity);
+    if (samples.some(sample => sample?.held)) {
+      hostFree.set(host, 0);
+      continue;
+    }
+    const budgets = members.map((member, index) => {
+      const sample = samples[index];
+      if (member.slots === undefined || (member.capacity && !sample)) return null;
+      return Math.min(member.slots, sample?.slots ?? member.slots);
+    });
+    hostFree.set(host, budgets.every((budget): budget is number => budget !== null)
+      ? Math.max(0, Math.min(...budgets) - members.reduce((sum, m) => sum + running(m.nodeId), 0))
       : null);
   }
+  const reserve = (node: NodeView) => {
+    const host = hostOf(node);
+    const nodeSlots = free.get(node.nodeId);
+    const hostSlots = hostFree.get(host);
+    if (nodeSlots != null) free.set(node.nodeId, Math.max(0, nodeSlots - 1));
+    if (hostSlots != null) hostFree.set(host, Math.max(0, hostSlots - 1));
+  };
+  const hasAuth = (node: NodeView, requires: string[]) => !requires.includes('gh') || node.auth === 'ok';
+  const available = (node: NodeView): number | null => {
+    const nodeSlots = free.get(node.nodeId) ?? null;
+    const hostSlots = hostFree.get(hostOf(node)) ?? null;
+    return nodeSlots === null || hostSlots === null ? null : Math.min(nodeSlots, hostSlots);
+  };
   const take = (requires: string[]): NodeView | null => {
-    const fits = live.filter(n => requires.every(c => n.caps.includes(c)) && (free.get(n.nodeId) ?? 0) > 0 && (hostFree.get(hostOf(n)) ?? 0) > 0)
+    const fits = live.filter(n => requires.every(c => n.caps.includes(c)) && hasAuth(n, requires) &&
+      (available(n) ?? 0) > 0)
       .sort((a, b) => ((hostFree.get(hostOf(b)) ?? 0) - (hostFree.get(hostOf(a)) ?? 0)) || (a.nodeId < b.nodeId ? -1 : 1));
     if (!fits[0]) return null;
-    free.set(fits[0].nodeId, free.get(fits[0].nodeId)! - 1);
-    hostFree.set(hostOf(fits[0]), hostFree.get(hostOf(fits[0]))! - 1);
+    reserve(fits[0]);
     return fits[0];
   };
-  // Router jobs still waiting (or held by an unreported node) reserve a slot before any new row.
-  for (const job of input.jobs) if (job.state === 'pending' || (job.state === 'running' && !job.claimedBy)) take(job.requires);
-  const nodes = live.map(n => ({ nodeId: n.nodeId, lanes: n.lanes, slots: n.slots ?? null, running: running(n.nodeId), freeSlots: free.get(n.nodeId) ?? null }));
+  if (input.routes) {
+    const byId = new Map(live.map(node => [node.nodeId, node]));
+    for (const route of input.routes) {
+      const node = route.nodeId === null ? undefined : byId.get(route.nodeId);
+      if (node) reserve(node);
+    }
+  } else {
+    // Older router views lack assignments. Keep their capability-based estimate.
+    for (const job of input.jobs) if (job.state === 'pending' || (job.state === 'running' && !job.claimedBy)) take(job.requires);
+  }
+  const nodes = live.map(n => ({ nodeId: n.nodeId, lanes: n.lanes, caps: n.caps, slots: n.slots ?? null, running: running(n.nodeId), freeSlots: available(n) }));
   const limit = input.maxPerPass ?? NODE_BRIDGE_MAX_PER_PASS;
   const seen = new Set<string>();
   let planned = 0;
@@ -191,16 +250,18 @@ export function planNodeBridge(input: {
       if (!needsValid) reasons.push('needs_invalid');
       if (needs.some(n => !validCap(n))) reasons.push('need_not_routable');
     }
-    seen.add(row.job);
+    if (reservesReadyId(row)) seen.add(row.job);
     let nodeId: string | null = null;
     if (!reasons.length) {
       const capable = live.filter(n => requires.every(c => n.caps.includes(c)));
+      const eligible = capable.filter(n => hasAuth(n, requires));
       if (!live.length) reasons.push('no_live_node');
       else if (!live.some(n => cap && n.caps.includes(cap))) reasons.push('lane_mismatch');
       else if (target!.writes && !NODE_BRIDGE_WORKTREE_PACK_ENABLED) reasons.push('pack_inert');
       else if (!live.some(n => n.caps.includes(`pack:${target!.pack}`))) reasons.push('node_pack_unsupported');
       else if (!capable.length) reasons.push('caps_missing');
-      else if (capable.every(n => free.get(n.nodeId) === null)) reasons.push('slots_unknown');
+      else if (!eligible.length) reasons.push('auth_missing');
+      else if (eligible.every(n => available(n) === null)) reasons.push('slots_unknown');
       else if (planned >= limit) reasons.push('pass_limit');
       else nodeId = take(requires)?.nodeId ?? null;
       if (!reasons.length && !nodeId) reasons.push('no_free_slot');
@@ -249,7 +310,11 @@ function readBridgeTask(host: NodeBridgeHost, row: ReadyRow): EmbeddedNodeTask {
 
 function readRows(host: NodeBridgeHost): { text: string; rows: ReadyRow[] } {
   const text = readText(join(queueDir(host), 'ready.tsv')) ?? '';
-  return { text, rows: text.split('\n').map(parseReadyRow).filter((r): r is ReadyRow => r !== null) };
+  // Spec-less rows inherit their requirements from the matching
+  // router-queue.md `(attrs)` envelope, exactly like dispatchd's from_envelope.
+  // A missing or unreadable queue leaves every spec-less row on its lane cell.
+  const routerQueue = readText(join(queueDir(host), 'router-queue.md'));
+  return { text, rows: text.split('\n').map(line => parseReadyRow(line, routerQueue)).filter((r): r is ReadyRow => r !== null) };
 }
 
 function claimedLocally(host: NodeBridgeHost, job: string): boolean {
@@ -349,7 +414,7 @@ export function poolBridgeRouter(call: (verb: string, args: string[]) => { demot
   };
   return {
     scope: realpathSync(storeDirectory),
-    view: owner => ok('status', ['--owner', owner]) as unknown as { nodes: NodeView[]; jobs: JobView[] },
+    view: owner => ok('status', ['--owner', owner]) as unknown as BridgeRouterView,
     enqueue: (jobId, spec) => ok('enqueue', ['--job', jobId, '--owner', spec.owner, '--requires', spec.requires.join(','), '--pack', spec.pack, ...nodeTaskArgs(spec.task)])['enqueued'] === true,
     withdraw: (jobId, owner) => {
       const r = ok('withdraw', ['--job', jobId, '--owner', owner]);
@@ -400,13 +465,13 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
   const callsLeft = (): number => opts.signal?.aborted ? 0 : opts.deadlineAt === undefined ? Infinity
     : Math.max(0, Math.floor((opts.deadlineAt - clock()) / NODE_BRIDGE_CALL_MS));
   const emptyView = { nodes: [], jobs: [] };
-  const readView = (): { nodes: NodeView[]; jobs: JobView[] } => {
+  const readView = (): BridgeRouterView => {
     if (!owner || !opts.router) return emptyView;
     const router = opts.router;
     try { return traceBridgeSync(trace, 'router-view', () => router.view(owner)); }
     catch { report.inert ??= 'router-unavailable'; return emptyView; }
   };
-  const recordSnapshot = (view: { nodes: NodeView[]; jobs: JobView[] }, manifests: Manifest[], fresh: { text: string; rows: ReadyRow[] }) => {
+  const recordSnapshot = (view: BridgeRouterView, manifests: Manifest[], fresh: { text: string; rows: ReadyRow[] }) => {
     report.leases = manifests.map(m => {
       const job = view.jobs.find(j => j.id === m.routerJobId);
       return { job: m.job, leaseOwner: m.id, routerJobId: m.routerJobId, state: m.state, routerState: job?.state ?? null,
@@ -415,7 +480,7 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
     const bridged = new Set(manifests.map(m => m.job));
     const plan = traceBridgeSync(trace, 'build-plan', () => planNodeBridge({
       rows: fresh.rows, claimed: j => bridged.has(j) || claimedLocally(host, j),
-      nodes: view.nodes, jobs: view.jobs, ...(opts.maxPerPass !== undefined ? { maxPerPass: opts.maxPerPass } : {}),
+      ...view, now, ...(opts.maxPerPass !== undefined ? { maxPerPass: opts.maxPerPass } : {}),
     }));
     report.nodes = plan.nodes;
     report.rows = plan.rows;
@@ -483,13 +548,17 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
 
     const lines = fresh.text.split('\n');
     if (lines.at(-1) === '') lines.pop();
+    const queuedIds = new Set(fresh.rows.filter(reservesReadyId).map(r => r.job));
     const toRequeue: Manifest[] = [];
     for (const m of safeRequeue) {
       if (!leaseHeldBy(host, m.job, m.id)) {
         try { unlinkSync(join(batchesDir(host), `${m.id}.json`)); } catch { /* gone */ }
         continue;
       }
-      if (!lines.some(l => l.split('\t')[0] === m.job)) lines.push(m.line);
+      if (!queuedIds.has(m.job)) {
+        lines.push(m.line);
+        queuedIds.add(m.job);
+      }
       toRequeue.push(m);
     }
     if (toRequeue.length) writeAtomic(join(queueDir(host), 'ready.tsv'), lines.map(l => l + '\n').join(''));
@@ -514,7 +583,7 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
     }
     const staged: { decision: BridgeRowDecision; manifest: Manifest; task?: EmbeddedNodeTask }[] = [];
     for (const decision of claims) {
-      const row = fresh.rows.find(r => r.job === decision.job);
+      const row = fresh.rows.find(r => r.job === decision.job && r.invalid === null);
       const id = bridgeLeaseOwner(decision.job);
       if (!row || claimedLocally(host, decision.job) || existsSync(join(batchesDir(host), `${id}.json`))) { report.lostRace.push(decision.job); continue; }
       let task: EmbeddedNodeTask | undefined;

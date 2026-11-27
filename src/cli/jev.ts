@@ -17,8 +17,8 @@
 import type { AshlrConfig } from '../core/types.js';
 import type { Decision, JevStatus } from '../core/decide/types.js';
 
-export const JEV_TEST_KINDS = ['intent', 'task-class', 'engine-error', 'lane', 'claim', 'triage'] as const;
-export type JevTestKind = (typeof JEV_TEST_KINDS)[number];
+export type JevTestKind = 'intent' | 'task-class' | 'engine-error' | 'lane' | 'claim' | 'triage';
+const JEV_TEST_KINDS: readonly JevTestKind[] = ['intent', 'task-class', 'engine-error', 'lane', 'claim', 'triage'];
 
 export interface JevCliDeps {
   loadConfig(): AshlrConfig;
@@ -97,7 +97,7 @@ export function renderJevStatus(s: JevStatus): string[] {
   return lines;
 }
 
-export function renderDecision(d: Decision<unknown>): string[] {
+function renderDecision(d: Decision<unknown>): string[] {
   const value = typeof d.value === 'string' ? d.value : JSON.stringify(d.value);
   const lines = [
     `decision: ${d.kind} → ${value}`,

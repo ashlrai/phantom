@@ -10,9 +10,9 @@
  * entirely — so none answers "what is pending on the shared board,
  * fleet-wide, for this job" in one call. This tool is the board digest's
  * own read: every unacknowledged delivery across every thread and every
- * task whose observed hold is not `held`, under the same `job`,
- * `contains` and `since`/`before` filters the `work mine` board section and
- * the board digest share.
+ * task whose observed hold is not `held`, under the same `job`, `id`,
+ * `contains`, `since`/`before` and `from`/`excludeFrom` filters the
+ * board digest shares.
  *
  * `job` keeps only threads carrying a task whose fleet `itemId` cites it
  * — the same citation rule `work mine --job` applies, with `peers` then
@@ -25,12 +25,18 @@
  * `[since, before)` window — board tasks carry no timestamp, so under a
  * time bound the task list is provably empty rather than padded with
  * undated rows, and thread rollups list only while a surviving delivery
- * remains. `from` and `excludeFrom` are the sender filters every bus read
- * shares, resolved through the server-side identity registry under the
- * same fleet root the board derives from: a handle, `agent:` address,
- * stable id or alias of one registered identity keeps or drops every
- * delivery whose `sender` label belongs to that identity, an
- * unresolvable ref or unreadable registry keeps exact-label matching —
+ * remains. `id` keeps only the unacknowledged delivery whose stored
+ * envelope id — the id `thread ack` and `hops` report — strictly equals
+ * it, the same exact retained-envelope match `phm bus board pending --id`
+ * and every other bus read's `id` applies; board tasks record no envelope
+ * id and never match under it, so the task list is provably empty rather
+ * than padded, and a thread rollup lists only while that surviving
+ * delivery remains. `from` and `excludeFrom` are the sender filters
+ * every bus read shares, resolved through the server-side identity
+ * registry under the same fleet root the board derives from: a handle,
+ * `agent:` address, stable id or alias of one registered identity keeps
+ * or drops every delivery whose `sender` label belongs to that identity,
+ * an unresolvable ref or unreadable registry keeps exact-label matching —
  * unknown identity state never widens the read — and the two compose
  * include-then-exclude so a sender both included and excluded matches
  * nothing. Board tasks record no author, so under `from` they never
@@ -65,11 +71,13 @@ import {
 /** The printable-label rule `job` shares — the same bound every bus read applies. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const BOARD_KEYS = new Set(['job', 'contains', 'since', 'before', 'from', 'excludeFrom']);
+const BOARD_KEYS = new Set(['job', 'id', 'contains', 'since', 'before', 'from', 'excludeFrom']);
 
 export interface FleetBusBoardArgs {
   /** Keep only threads carrying a task whose fleet itemId cites this job id — the same citation rule the work-mine board section applies. */
   job?: string;
+  /** Keep only the unacknowledged delivery whose stored envelope id strictly equals this value — the same exact retained-envelope match `phm bus board pending --id` applies; board tasks record no envelope id and never match under it. */
+  id?: string;
   /** Keep only rows whose scrubbed display text carries this needle — the same `--contains` rule every bus read shares. */
   contains?: string;
   /** Keep only deliveries whose createdAt reaches this epoch-ms cutoff — the shared `since` grammar resolved once; tasks never match under it. */
@@ -85,13 +93,14 @@ export interface FleetBusBoardArgs {
 /**
  * Runtime argument validation: low-level SDK servers never check the
  * tools/list schema, so the server re-validates on every call. `job`
- * takes the printable routing-label bound every bus read applies,
- * `contains` the bounded free-text needle `busReadContains` normalizes,
- * `since`/`before` the shared `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved
- * to a safe non-negative epoch-ms integer, and `from`/`excludeFrom` the
- * same printable-label bound every bus sender filter shares. Unknown keys,
- * wrong types, caller roots and malformed values are all refused before
- * the store is touched.
+ * and `id` take the printable routing-label bound every bus read applies
+ * — `id` the same envelope-id grammar `phm bus board pending --id`
+ * shares — `contains` the bounded free-text needle `busReadContains`
+ * normalizes, `since`/`before` the shared `15m`/`2h`/`1d`/epoch-ms/ISO
+ * grammar resolved to a safe non-negative epoch-ms integer, and
+ * `from`/`excludeFrom` the same printable-label bound every bus sender
+ * filter shares. Unknown keys, wrong types, caller roots and malformed
+ * values are all refused before the store is touched.
  */
 export function parseFleetBusBoardArgs(args: Record<string, unknown>): FleetBusBoardArgs | null {
   if (Object.keys(args).some(key => !BOARD_KEYS.has(key))) return null;
@@ -100,6 +109,11 @@ export function parseFleetBusBoardArgs(args: Record<string, unknown>): FleetBusB
   if (job !== undefined) {
     if (typeof job !== 'string' || !BUS_LABEL.test(job)) return null;
     parsed.job = job;
+  }
+  const id = args.id;
+  if (id !== undefined) {
+    if (typeof id !== 'string' || !BUS_LABEL.test(id)) return null;
+    parsed.id = id;
   }
   const contains = busReadContains(args.contains);
   if (contains === null) return null;
@@ -151,6 +165,7 @@ export async function readFleetBusBoard(
   const read = deps.read ?? readBusBoardPending;
   const result = read({
     ...(args.job === undefined ? {} : { jobId: args.job }),
+    ...(args.id === undefined ? {} : { id: args.id }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
     ...(args.since === undefined ? {} : { sinceMs: args.since }),
     ...(args.before === undefined ? {} : { beforeMs: args.before }),

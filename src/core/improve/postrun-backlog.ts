@@ -123,6 +123,14 @@ export const POSTRUN_MAX_ITEMS = 8;
 const POSTRUN_ITEM_HARD_MAX = 25;
 /** The window every fold anchors on: the fleet's recurring-evidence week. */
 export const POSTRUN_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Future-skew ceiling on log timestamps, the sibling feeds' one-minute
+ * tolerance for same-host clock drift: a row stamped further ahead
+ * than the evaluation time is corrupt or replayed evidence and never
+ * reaches a cell — including the per-job 'exhausted' verdict, which a
+ * few future-dated spawn-consuming rows could otherwise mint.
+ */
+export const POSTRUN_FUTURE_SKEW_MS = 60_000;
 /** Adverse rows one recurring global cell needs inside the window… */
 export const POSTRUN_MIN_ROWS = 3;
 /** …spread across at least this many distinct UTC days. */
@@ -386,9 +394,11 @@ export function noPrClass(detail: string | null): string {
 
 /**
  * Pure: fold validated rows into the adverse cells. Rows outside the
- * window contribute nothing. Designed outcomes — 'skip-off',
- * 'skip-repo', 'exists', 'published' — never fold into a cell; 'publish'
- * markers and terminal rows feed only the per-job exhaustion tally.
+ * window — before its start or past the evaluation time plus the
+ * sibling feeds' future skew — contribute nothing. Designed outcomes —
+ * 'skip-off', 'skip-repo', 'exists', 'published' — never fold into a
+ * cell; 'publish' markers and terminal rows feed only the per-job
+ * exhaustion tally.
  */
 export function foldPostrunRows(
   rows: readonly PostrunRow[],
@@ -397,8 +407,9 @@ export function foldPostrunRows(
 ): PostrunFold {
   const fold = newFold();
   const windowStart = nowMs - windowMs;
+  const until = nowMs + POSTRUN_FUTURE_SKEW_MS;
   for (const row of rows) {
-    if (row.atMs < windowStart) continue;
+    if (row.atMs < windowStart || row.atMs > until) continue;
     const t = tally(fold, row.job);
     switch (row.kind) {
       case 'publish': t.publish += 1; break;

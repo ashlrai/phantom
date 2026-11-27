@@ -7,7 +7,6 @@
 
 import { existsSync } from 'node:fs';
 import { credentialExecFileSync as execFileSync } from '../integrations/secrets.js';
-import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import {
   listProposalsDetailed,
@@ -32,7 +31,17 @@ import {
   verifyAutonomyEvidencePackV3,
 } from '../autonomy/evidence-pack.js';
 import { protectedPrOperationShape } from '../autonomy/protected-pr-handoff.js';
-import { sanitizeGithubMergedAt } from './remote-handoff-time.js';
+import {
+  REMOTE_HANDOFF_RECOVERY_MARKER,
+  hasStrongRemoteHandoffIdentity,
+  hasValidRemoteHandoffRecovery,
+  prUrlMatchesRepository,
+  remoteAuthorityBinding,
+  remoteIntentAuthorizationId,
+  sameRemoteAuthorityBinding,
+  sanitizeGithubMergedAt,
+  type RemoteIntentPhase,
+} from './remote-handoff-time.js';
 import {
   acquireProposalMutationLock,
   releaseProposalMutationLock,
@@ -62,12 +71,14 @@ export interface RemoteHandoffReconcileResult {
   sourceQuality?: ProposalSourceQuality;
 }
 
-export const REMOTE_HANDOFF_RECOVERY_MARKER = '[ashlr-remote-handoff-retry:1]' as const;
+export {
+  REMOTE_HANDOFF_RECOVERY_MARKER,
+  remoteAuthorityBinding,
+  remoteIntentAuthorizationId,
+};
+
 const HOST_READ_TIMEOUT_MS = 30_000;
 const HEX32_RE = /^[0-9a-f]{32}$/;
-const HEX64_RE = /^[0-9a-f]{64}$/;
-
-type RemoteIntentPhase = 'pre-effect' | 'recovery';
 
 type RemoteBranchEvidence =
   | { kind: 'absent' }
@@ -75,58 +86,11 @@ type RemoteBranchEvidence =
   | { kind: 'mismatch'; head: string }
   | { kind: 'unknown' };
 
-function stablePushUrlIdentity(raw: string): string {
-  const value = raw.trim();
-  try {
-    const parsed = new URL(value);
-    parsed.username = '';
-    parsed.password = '';
-    parsed.hash = '';
-    parsed.search = '';
-    parsed.hostname = parsed.hostname.toLowerCase();
-    parsed.pathname = parsed.pathname.replace(/\/+$/, '');
-    return parsed.toString().replace(/\/$/, '');
-  } catch {
-    return value;
-  }
-}
-
-/** Hash effective push destinations without retaining credentials in proposal state. */
-export function remotePushAuthorityDigest(authority: GitHubOriginAuthority): string {
-  const pushUrls = [...new Set(authority.pushUrls.map(stablePushUrlIdentity))].sort();
-  if (!authority.nameWithOwner || pushUrls.length === 0) return '';
-  return createHash('sha256').update(JSON.stringify([
-    'ashlr.github-push-authority.v1',
-    authority.nameWithOwner,
-    pushUrls,
-  ]), 'utf8').digest('hex');
-}
-
-export function remoteAuthorityBinding(
-  authority: GitHubOriginAuthority,
-): ProposalRemoteAuthorityBinding | null {
-  const pushAuthorityDigest = remotePushAuthorityDigest(authority);
-  return authority.nameWithOwner && HEX64_RE.test(pushAuthorityDigest)
-    ? { provider: 'github', nameWithOwner: authority.nameWithOwner, pushAuthorityDigest }
-    : null;
-}
-
-function sameAuthority(
-  left: ProposalRemoteAuthorityBinding | undefined,
-  right: ProposalRemoteAuthorityBinding | undefined,
-): boolean {
-  return Boolean(left && right && left.provider === 'github' && right.provider === 'github' &&
-    left.nameWithOwner.length > 0 &&
-    left.nameWithOwner === right.nameWithOwner &&
-    left.pushAuthorityDigest === right.pushAuthorityDigest &&
-    HEX64_RE.test(left.pushAuthorityDigest));
-}
-
 function sameOptionalAuthority(
   left: ProposalRemoteAuthorityBinding | undefined,
   right: ProposalRemoteAuthorityBinding | undefined,
 ): boolean {
-  return left === undefined && right === undefined ? true : sameAuthority(left, right);
+  return left === undefined && right === undefined ? true : sameRemoteAuthorityBinding(left, right);
 }
 
 export function remoteAuthorityMatchesRepo(
@@ -135,46 +99,7 @@ export function remoteAuthorityMatchesRepo(
 ): boolean {
   const current = resolveGitHubOriginAuthorityDetails(repo);
   const binding = current ? remoteAuthorityBinding(current) : null;
-  return sameAuthority(binding ?? undefined, expected);
-}
-
-/**
- * The HMAC signer authenticates authorizationId. Deriving that id from the
- * remote fields makes the otherwise-local intent signature bind exact host and
- * push authority without changing the provenance signing format.
- */
-export function remoteIntentAuthorizationId(
-  phase: RemoteIntentPhase,
-  intent: Omit<ProposalLocalMergeIntent, 'attestation' | 'authorizationId'>,
-): string {
-  const authority = intent.remoteAuthority;
-  if (!authority || !sameAuthority(authority, authority)) return '';
-  const recoveryMarker = phase === 'recovery' ? REMOTE_HANDOFF_RECOVERY_MARKER : '';
-  return createHash('sha256').update(JSON.stringify([
-    intent.evidenceProtocol === 'sealed-v3'
-      ? 'ashlr.remote-handoff-authorization.sealed-v3.v1'
-      : 'ashlr.remote-handoff-authorization.v1',
-    phase,
-    authority.provider,
-    authority.nameWithOwner,
-    authority.pushAuthorityDigest,
-    intent.schemaVersion,
-    intent.branch,
-    intent.base,
-    intent.baseBeforeOid,
-    intent.proposalHeadOid,
-    intent.diffHash,
-    intent.evidencePackDigest,
-    intent.authorizedAt,
-    recoveryMarker,
-    ...(intent.evidenceProtocol === 'sealed-v3' ? [intent.evidenceProtocol] : []),
-  ]), 'utf8').digest('hex').slice(0, 32);
-}
-
-function validRecoveryMarker(handoff: ProposalRemoteHandoff): boolean {
-  return handoff.recovery?.schemaVersion === 1 && handoff.recovery.attempt === 1 &&
-    handoff.recovery.marker === REMOTE_HANDOFF_RECOVERY_MARKER &&
-    Number.isFinite(Date.parse(handoff.recovery.authorizedAt));
+  return sameRemoteAuthorityBinding(binding ?? undefined, expected);
 }
 
 function intentPhase(handoff: ProposalRemoteHandoff): RemoteIntentPhase {
@@ -252,7 +177,7 @@ function verifyBoundRemoteIntent(
   try {
     const intent = proposal.localMergeIntent;
     if (!proposal.repo || !intent || !handoff.authority ||
-      !sameAuthority(intent.remoteAuthority, handoff.authority) ||
+      !sameRemoteAuthorityBinding(intent.remoteAuthority, handoff.authority) ||
       handoff.intentAttestation !== intent.attestation ||
       intent.branch !== handoff.branch || intent.base !== handoff.base ||
       intent.proposalHeadOid.toLowerCase() !== handoff.expectedHeadOid?.toLowerCase() ||
@@ -277,8 +202,8 @@ export function isApprovedRemoteHandoffRetryCandidate(proposal: Proposal): boole
         remoteAuthorityMatchesRepo(proposal.repo, authority));
     }
     return Boolean(handoff.provider === 'github' && handoff.state === 'unknown' &&
-      !handoff.prUrl && validRecoveryMarker(handoff) && handoff.authority &&
-      sameAuthority(proposal.localMergeIntent?.remoteAuthority, handoff.authority) &&
+      !handoff.prUrl && hasValidRemoteHandoffRecovery(handoff) && handoff.authority &&
+      sameRemoteAuthorityBinding(proposal.localMergeIntent?.remoteAuthority, handoff.authority) &&
       verifyStandaloneRemoteIntent(proposal, 'recovery', true) &&
       remoteAuthorityMatchesRepo(proposal.repo, handoff.authority));
   } catch {
@@ -302,20 +227,13 @@ export function isAuthenticatedAwaitingRemoteHandoff(proposal: Proposal): boolea
       handoff.state === 'awaiting-host-merge' &&
       handoff.prUrl &&
       handoff.authority &&
-      prUrlMatchesAuthority(handoff.prUrl, handoff.authority.nameWithOwner) &&
+      prUrlMatchesRepository(handoff.prUrl, handoff.authority.nameWithOwner) &&
       remoteAuthorityMatchesRepo(proposal.repo, handoff.authority) &&
       verifyBoundRemoteIntent(proposal, handoff, intentPhase(handoff), true)
     );
   } catch {
     return false;
   }
-}
-
-function prUrlMatchesAuthority(url: string | undefined, nameWithOwner: string): boolean {
-  if (!url) return false;
-  const match = url.match(/^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\/([1-9]\d*)$/i);
-  return Boolean(match?.[1] && match[2] &&
-    `${match[1]}/${match[2]}`.toLowerCase() === nameWithOwner.toLowerCase());
 }
 
 function outwardAuthorityStillValid(
@@ -330,7 +248,7 @@ function outwardAuthorityStillValid(
     return false;
   }
   return handoff.prUrl === undefined ||
-    prUrlMatchesAuthority(handoff.prUrl, handoff.authority.nameWithOwner);
+    prUrlMatchesRepository(handoff.prUrl, handoff.authority.nameWithOwner);
 }
 
 function initialResult(): RemoteHandoffReconcileResult {
@@ -371,16 +289,6 @@ function hasConflictingIdentity(handoff: ProposalRemoteHandoff, pr: PrView): boo
     handoff.expectedHeadOid.toLowerCase() !== pr.headRefOid.toLowerCase()
   ) return true;
   return false;
-}
-
-function hasStrongIdentity(handoff: ProposalRemoteHandoff, pr: PrView): boolean {
-  return Boolean(
-    handoff.prUrl && pr.url && handoff.prUrl === pr.url &&
-    handoff.branch && pr.headRefName && handoff.branch === pr.headRefName &&
-    handoff.base && pr.baseRefName && handoff.base === pr.baseRefName &&
-    handoff.expectedHeadOid && pr.headRefOid &&
-    handoff.expectedHeadOid.toLowerCase() === pr.headRefOid.toLowerCase()
-  );
 }
 
 /** Exact PR coordinates whose host head no longer matches the verified proposal. */
@@ -505,7 +413,8 @@ function recoverProvenUrlLessIntent(
     const currentBinding = current.remoteHandoff.authority;
     const capturedBinding = remoteAuthorityBinding(authority);
     if (!current.repo || !currentBinding || !capturedBinding ||
-      !sameAuthority(currentBinding, capturedBinding) || !remoteAuthorityMatchesRepo(current.repo, currentBinding) ||
+      !sameRemoteAuthorityBinding(currentBinding, capturedBinding) ||
+      !remoteAuthorityMatchesRepo(current.repo, currentBinding) ||
       !verifyBoundRemoteIntent(current, current.remoteHandoff, intentPhase(current.remoteHandoff), true)) {
       return 'unknown';
     }
@@ -519,7 +428,7 @@ function recoverProvenUrlLessIntent(
     if (branchEvidence.kind !== 'absent' && branchEvidence.kind !== 'exact') return 'unknown';
 
     if (current.remoteHandoff.recovery !== undefined) {
-      if (!validRecoveryMarker(current.remoteHandoff)) return 'unknown';
+      if (!hasValidRemoteHandoffRecovery(current.remoteHandoff)) return 'unknown';
       const detail = `remote handoff recovery exhausted: host again confirmed no PR and ` +
         `staging branch is ${branchEvidence.kind === 'exact' ? 'still exact' : 'absent'}; no merge credited`;
       return setStatus(proposal.id, 'rejected', detail, undefined, mutationLock, {
@@ -581,7 +490,7 @@ function completeInterruptedRecoveryTransition(
 ): boolean {
   const intent = proposal.localMergeIntent;
   if (!proposal.repo || !intent || handoff.prUrl || handoff.recovery !== undefined ||
-    !handoff.authority || !sameAuthority(intent.remoteAuthority, handoff.authority) ||
+    !handoff.authority || !sameRemoteAuthorityBinding(intent.remoteAuthority, handoff.authority) ||
     intent.branch !== handoff.branch || intent.base !== handoff.base ||
     intent.proposalHeadOid.toLowerCase() !== handoff.expectedHeadOid?.toLowerCase() ||
     !verifyStandaloneRemoteIntent(proposal, 'recovery', true) || !ownsOutwardMutationFence(fence) ||
@@ -649,7 +558,7 @@ function reconcileOne(proposal: Proposal): RemoteHandoffReconcileResult {
     const authority = resolveGitHubOriginAuthorityDetails(repo);
     const binding = authority ? remoteAuthorityBinding(authority) : null;
     if (!authority || !binding || !authoritativeHandoff.authority ||
-      !sameAuthority(binding, authoritativeHandoff.authority)) {
+      !sameRemoteAuthorityBinding(binding, authoritativeHandoff.authority)) {
       result.unknown++;
       return result;
     }
@@ -704,7 +613,7 @@ function reconcileOne(proposal: Proposal): RemoteHandoffReconcileResult {
 
     if (!authoritativeHandoff.prUrl) {
       if (!canBindPrUrl(current.remoteHandoff, pr) ||
-        !prUrlMatchesAuthority(pr.url, current.remoteHandoff.authority!.nameWithOwner)) {
+        !prUrlMatchesRepository(pr.url, current.remoteHandoff.authority!.nameWithOwner)) {
         result.unknown++;
         return result;
       }
@@ -746,7 +655,7 @@ function reconcileOne(proposal: Proposal): RemoteHandoffReconcileResult {
     }
 
     if (hasConflictingIdentity(authoritativeHandoff, pr) ||
-      (terminal && !hasStrongIdentity(authoritativeHandoff, pr))) {
+      (terminal && !hasStrongRemoteHandoffIdentity(authoritativeHandoff, pr))) {
       result.unknown++;
       return result;
     }
@@ -758,7 +667,8 @@ function reconcileOne(proposal: Proposal): RemoteHandoffReconcileResult {
       }
       if ((current.remoteHandoff.mergedAt !== undefined && current.remoteHandoff.mergedAt !== mergedAt) ||
         (current.remoteHandoff.mergeCommitOid !== undefined && current.remoteHandoff.mergeCommitOid !== mergeCommitOid) ||
-        hasConflictingIdentity(current.remoteHandoff, pr) || !hasStrongIdentity(current.remoteHandoff, pr)) {
+        hasConflictingIdentity(current.remoteHandoff, pr) ||
+        !hasStrongRemoteHandoffIdentity(current.remoteHandoff, pr)) {
         result.unknown++;
         return result;
       }
@@ -795,7 +705,8 @@ function reconcileOne(proposal: Proposal): RemoteHandoffReconcileResult {
 
     if (pr.closed === true || isClosedState(pr.state)) {
       if (current.remoteHandoff.mergedAt !== undefined || current.remoteHandoff.mergeCommitOid !== undefined ||
-        hasConflictingIdentity(current.remoteHandoff, pr) || !hasStrongIdentity(current.remoteHandoff, pr)) {
+        hasConflictingIdentity(current.remoteHandoff, pr) ||
+        !hasStrongRemoteHandoffIdentity(current.remoteHandoff, pr)) {
         result.unknown++;
         return result;
       }

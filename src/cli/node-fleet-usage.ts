@@ -1,9 +1,9 @@
 /** Kept import-free so `phm node --help` and `bootstrap` never load the node store. */
 export const NODE_FLEET_VERBS = ['join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'release', 'withdraw', 'result', 'status', 'list', 'leave'] as const;
 
-export const NODE_FLEET_USAGE = `Usage: phm node join [--node <id>] --owner <scope[,scope]> [--caps <cap[,cap]>] [--slots 0-64] [--json]
+export const NODE_FLEET_USAGE = `Usage: phm node join [--node <id>] --owner <scope[,scope]> [--caps <cap[,cap]>] [--slots 0-64] [--watch [--every <seconds>]] [--json]
        phm node beat --node <id> --session <n> [--usage 0-1000] [--slots 0-64] [--capacity <sample-json>] [--auth ok|missing|unknown | --probe-auth] [--watch [--every <seconds>]] [--json]
-       phm node enqueue --job <id> --owner <scope> [--requires <cap[,cap]>] [--pack <id>] [--secrets <NAME[,NAME]>] [--json]
+       phm node enqueue --job <id> --owner <scope> [--requires <cap[,cap]>] [--pack <id>] [--secrets <NAME[,NAME]>] [--task-part <text>] [--task-sha256 sha256:<hex>] [--json]
        phm node plan [--owner <scope>] [--json]
        phm node pull --node <id> --session <n> [--json]
        phm node renew --job <id> --node <id> --session <n> --token <n> --leader-token <n> [--watch [--every <seconds>]] [--json]
@@ -18,7 +18,10 @@ export const NODE_FLEET_USAGE = `Usage: phm node join [--node <id>] --owner <sco
 
 Computers join Phantom as nodes; \`join\` defaults \`--node\` to this computer's
 sanitized hostname (the pool join's default), so \`phm node join --owner <scope>\`
-is the shortest first join — pass \`--node\` to choose another id. A job carries an owner scope and only nodes in that scope
+is the shortest first join — pass \`--node\` to choose another id. A re-join
+replaces the whole advertised profile; the reply names any owner scopes, caps
+or \`--slots\` bound it drops and prints the re-join that keeps them. A job
+carries an owner scope and only nodes in that scope
 see or pull it. The router picks the least-loaded live node that advertises the job's caps
 (\`gh\` also needs a local gh-auth heartbeat). A per-job lease with a fencing token means no
 job runs twice: renew before it expires and pass the token to every effect. A pulled job the
@@ -32,8 +35,35 @@ anything. State lives in
 ~/.ashlr/nodes (or $ASHLR_HOME/nodes). Each node uses only its own local login; tokens are
 never copied or sent, and jobs carry secret NAMES, never values.
 
+\`--task-part\` and \`--task-sha256\` embed the job's task text — the prompt a
+runner executes, which the claiming node's \`pull\` prints. Repeat \`--task-part\`
+for long text (the parts join in order; each at most 4000 characters, 16 KiB
+joined). \`--task-sha256\` is \`sha256:\` plus the lowercase hex sha256 of the
+exact joined text (\`sha256sum\` on Linux, \`shasum -a 256\` on macOS). An embedded
+task requires \`--pack codex-file\`, and the two flags together or neither.
+
 \`beat --watch\` repeats the beat every --every seconds (default 10, at most 25 — sessions
 expire 30 s after the last beat) until Ctrl-C, re-measuring capacity and host stats on this
 machine each pass unless those flags were given explicitly. \`renew --watch\` repeats the
 renew on the same interval so a pulled job's 30-second claim lease survives real work;
-the watch flags never reach either verb's parser.`;
+the watch flags never reach either verb's parser. \`join --watch\` is the one-command
+first run on the standalone registry: it joins, prints the session, then holds it live
+with the same beat watch — refused on a pool-configured Mac, where join releases its
+probe session and \`phm node worker\` holds the live sessions instead.`;
+
+/**
+ * Help scoped to one fleet verb: its own usage line plus the shared prose every
+ * verb relies on (owner scopes, lease/fencing model, --task-part, --watch).
+ * Returns null for a verb with no usage line so the caller can fall back to the
+ * full command list. `list` and `status` share one usage line.
+ */
+export function nodeFleetVerbUsage(verb: string): string | null {
+  const [usageBlock, ...prose] = NODE_FLEET_USAGE.split('\n\n');
+  const needle = verb === 'list' || verb === 'status' ? 'phm node list|status' : `phm node ${verb} `;
+  const line = usageBlock!.split('\n').find(candidate => candidate.includes(needle));
+  if (!line) return null;
+  // Only the first command carries the `Usage:` label in the full list; a
+  // scoped help for any other verb needs it added back.
+  const text = line.trimStart();
+  return `${text.startsWith('Usage:') ? text : `Usage: ${text}`}\n\n${prose.join('\n\n')}`;
+}

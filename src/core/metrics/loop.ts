@@ -10,7 +10,7 @@
 import type { Bet, BetObservation } from './bets.js';
 
 export const LOOP_SCHEMA = 'metrics.loop.v1';
-export const HINTS_SCHEMA = 'metrics.selection-hints.v1';
+const HINTS_SCHEMA = 'metrics.selection-hints.v1' as const;
 
 export interface Missing { missing: string }
 export type Measured<T> = T | Missing;
@@ -55,23 +55,27 @@ const PR_URL = /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)$/;
  * recordedAt|updatedAt (mergedAt/closedAt preferred on terminal rows), PR
  * links url|pr_url|prUrl|pr|html_url and the lane aliases pool|arm.
  */
-const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
-const EVENT_KEYS = ['event', 'type', 'kind'] as const;
+export const LEDGER_JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+export const LEDGER_EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
 const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
-const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
-const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
+export const LEDGER_URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
+export const LEDGER_LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 
-const firstString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function firstLedgerString(row: Record<string, unknown>, keys: readonly string[]): string | null {
   for (const key of keys) {
     const value = row[key];
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
   return null;
-};
+}
 
 function stateOf(row: Record<string, unknown>): string {
-  return (firstString(row, PHASE_KEYS) ?? '').toUpperCase();
+  return (firstLedgerString(row, PHASE_KEYS) ?? '').toUpperCase();
 }
 
 /** First parseable stamp among the ledger's timestamp fields; MERGED prefers mergedAt, CLOSED closedAt. */
@@ -87,7 +91,7 @@ function eventTs(row: Record<string, unknown>, state: string): number | null {
 
 /** Canonical github.com pull URL from the row's link fields, or null. */
 function prUrlOf(row: Record<string, unknown>): string | null {
-  const value = firstString(row, URL_KEYS)?.replace(/\/+$/, '');
+  const value = firstLedgerString(row, LEDGER_URL_KEYS)?.replace(/\/+$/, '');
   return value !== undefined && PR_URL.test(value) ? value : null;
 }
 
@@ -99,7 +103,7 @@ function prUrlOf(row: Record<string, unknown>): string | null {
  * a publish claim, MERGED/CLOSED/OPEN a reconciled outcome.
  */
 function ledgerEvent(row: Record<string, unknown>, state: string): string | null {
-  const named = firstString(row, EVENT_KEYS);
+  const named = firstLedgerString(row, LEDGER_EVENT_KEYS);
   if (named !== null) return named === 'published' ? 'publish' : named;
   if (state === 'PUBLISHED') return 'publish';
   if (state === 'MERGED' || state === 'CLOSED' || state === 'OPEN') return 'outcome';
@@ -120,9 +124,9 @@ export function jobTimelines(text: string | null, now: number): Map<string, JobT
     if (!line.trim()) continue;
     let raw: unknown;
     try { raw = JSON.parse(line); } catch { continue; }
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
-    const row = raw as Record<string, unknown>;
-    const id = firstString(row, JOB_KEYS);
+    if (!isPlainRecord(raw)) continue;
+    const row = raw;
+    const id = firstLedgerString(row, LEDGER_JOB_KEYS);
     const state = stateOf(row);
     const event = ledgerEvent(row, state);
     if (id === null || event === null) continue;
@@ -131,9 +135,9 @@ export function jobTimelines(text: string | null, now: number): Map<string, JobT
     const job = jobs.get(id) ?? { id, lane: null, repo: null, enqueuedAt: null, launchedAt: null, finishedAt: null, wallSeconds: null, openedAt: null, mergedAt: null, prUrl: null };
     jobs.set(id, job);
     const earliest = (prev: number | null) => prev === null ? at : Math.min(prev, at);
-    const lane = firstString(row, LANE_KEYS);
+    const lane = firstLedgerString(row, LEDGER_LANE_KEYS);
     if (lane !== null && (event === 'launch' || job.lane === null)) job.lane = lane;
-    const repo = firstString(row, ['repo']);
+    const repo = firstLedgerString(row, ['repo']);
     if (repo !== null && job.repo === null) job.repo = repo;
     const url = prUrlOf(row);
     if (url !== null && job.prUrl === null) job.prUrl = url;
@@ -253,11 +257,10 @@ export function feedbackLoop(jobs: Map<string, JobTimeline>, installed: Measured
 export interface SlotLane { lane: string; target: number | null; held: boolean; hardCap: number | null }
 /** slots.json lane rows; accepts the direct map and the `lanes`-wrapped form. Global keys are skipped. */
 export function slotLanes(raw: unknown): SlotLane[] {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
-  const obj = raw as Record<string, unknown>;
-  const map = obj.lanes && typeof obj.lanes === 'object' && !Array.isArray(obj.lanes) ? obj.lanes as Record<string, unknown> : obj;
+  if (!isPlainRecord(raw)) return [];
+  const map = isPlainRecord(raw.lanes) ? raw.lanes : raw;
   const count = (v: unknown) => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null;
-  return Object.entries(map).filter(([lane, v]) => !['hard_cap', 'last_change_by', 'lanes'].includes(lane) && v && typeof v === 'object' && !Array.isArray(v))
+  return Object.entries(map).filter(([lane, v]) => !['hard_cap', 'last_change_by', 'lanes'].includes(lane) && isPlainRecord(v))
     .map(([lane, v]) => { const r = v as Record<string, unknown>; return { lane, target: count(r.target), held: r.held === true, hardCap: count(r.hard_cap) }; })
     .sort((a, b) => a.lane.localeCompare(b.lane));
 }
@@ -382,15 +385,7 @@ export function betObservation(bet: Pick<Bet, 'id' | 'metric'>, jobs: Map<string
   };
 }
 
-/** The parts of the loop-stages report the hints carry; structural so loop.ts stays import-free of loop-stages.ts. */
-export interface LoopWaitSource {
-  headline: string;
-  slowest: { stage: string; p50_minutes: number } | null;
-  since: string;
-  jobs_truncated: boolean | null;
-}
-
-/** Where the loop waits, compacted for the hints file: the bottleneck line, the slowest stage and the window it covers. */
+/** Where the loop waits, compacted for the hints file (structural so loop.ts stays import-free of loop-stages.ts). */
 export interface LoopWaitHint {
   headline: string;
   slowest: { stage: string; p50_minutes: number } | null;
@@ -399,7 +394,7 @@ export interface LoopWaitHint {
 }
 
 export interface SelectionHints {
-  schema: typeof HINTS_SCHEMA;
+  schema: 'metrics.selection-hints.v1';
   at: string;
   advisory: true;
   /** Lanes ranked by merged per lane-hour (6h); unmeasured lanes follow, flagged. */
@@ -431,7 +426,7 @@ export function topConstraint(report: LoopReport): { name: string; evidence: str
   return { name: 'unknown', evidence: 'loop times missing; see loop report reasons' };
 }
 
-export function selectionHints(report: LoopReport, share: { reserved: number; usable: number } | null, stages?: LoopWaitSource | null): SelectionHints {
+export function selectionHints(report: LoopReport, share: { reserved: number; usable: number } | null, stages?: LoopWaitHint | null): SelectionHints {
   const lanes = report.lanes.map(l => ({
     lane: l.lane, merged_6h: l.merged_6h, held: l.held,
     merged_per_lane_hour: isMissing(l.merged_per_lane_hour) ? null : l.merged_per_lane_hour,
@@ -471,8 +466,8 @@ export function morningFields(report: LoopReport): MorningFields {
  */
 export function mergeMorning(existing: unknown, fields: MorningFields): Record<string, unknown> | null {
   if (existing === undefined || existing === null) return { ...fields };
-  if (typeof existing !== 'object' || Array.isArray(existing)) return null;
-  return { ...(existing as Record<string, unknown>), ...fields };
+  if (!isPlainRecord(existing)) return null;
+  return { ...existing, ...fields };
 }
 
 /** Local calendar day stamp (YYYYMMDD) for the loop and morning file names. */

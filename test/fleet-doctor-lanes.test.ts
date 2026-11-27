@@ -21,7 +21,7 @@ afterEach(() => vi.restoreAllMocks());
 describe('fleet doctor lanes', () => {
   it('reports ok with no queued work', async () => {
     const report = await runFleetDoctor(fixtures(status(false, 0)));
-    expect(report.checks.at(-1)).toEqual({ name: 'lanes', level: 'ok', reason: 'no queued work waiting' });
+    expect(report.checks.at(-1)).toEqual({ name: 'lanes', level: 'ok', reason: 'no lanes with queued work and room to launch' });
   });
 
   it('goes red and exits 1 when queued work has room to run', async () => {
@@ -38,6 +38,13 @@ describe('fleet doctor lanes', () => {
     const report = await runFleetDoctor(fixtures(status(true, 3)));
     expect(report.checks.at(-1)).toEqual({ name: 'lanes', level: 'warn', reason: 'held with queued work: devin (3)' });
     expect(report.level).toBe('warn');
+  });
+
+  it('does not flag queued work as idle during a dispatcher pause', async () => {
+    const report = await runFleetDoctor(fixtures(async () => JSON.stringify({
+      paused: 'disk guard', lanes: { devin: { held: false, running: 5, target: 8, queued: 11 } },
+    })));
+    expect(report.checks.at(-1)).toMatchObject({ name: 'lanes', level: 'ok' });
   });
 
   it.each([

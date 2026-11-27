@@ -71,6 +71,16 @@ describe('usageRunway', () => {
   it('uses the first reading at a flat run\'s value, not the tail', () => {
     expect(usageRunway('claude', [at(3, 15), at(2, 23), at(0.5, 23)], RESET, NOW).pace_per_hour).toBe(8);
   });
+
+  it('withholds runway advice when fresh flat readings follow a stale change', () => {
+    const result = usageRunway('claude', [at(5, 15), at(4, 23), at(2, 23), at(0.5, 23)], RESET, NOW);
+    expect(result).toMatchObject({
+      verdict: 'unknown', pace_per_hour: null, pace_6h_per_hour: null, runway_hours: null,
+      hours_to_reset: 45, advice: null, reason: 'latest usage change is stale',
+    });
+    expect(result.sentence).toContain('23% used');
+    expect(usageRunway('claude', [at(4, 15), at(3, 23), at(0.5, 23)], RESET, NOW).pace_per_hour).toBe(8);
+  });
 });
 
 describe('fleet usage-history output', () => {

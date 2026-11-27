@@ -89,6 +89,9 @@ function fixFor(row: PoolRow, label: string, input: PoolsWasteInput): { kind: Wa
   if (signIn !== null) return { kind: 'sign-in', fix: signIn };
   if (row.held === true) return { kind: 'lane-held', fix: `lane held: ${reason || 'no reason recorded'}` };
   const queued = input.supply?.pools.find(p => p.id === row.id);
+  if (queued?.state === 'unknown' && queued.ready !== null && queued.ready > 0) {
+    return { kind: 'check-lane', fix: `${label} has ${queued.ready} ${queued.ready === 1 ? 'job' : 'jobs'} queued with unknown coverage: check the lane` };
+  }
   if (queued && queued.ready !== null && queued.ready > 0 && queued.state === 'healthy') {
     return { kind: 'check-lane', fix: `${label} has ${queued.ready} ${queued.ready === 1 ? 'job' : 'jobs'} queued but is not spending it: check the lane` };
   }

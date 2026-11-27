@@ -3,7 +3,8 @@
  * This module performs no capture operations or filesystem reads. */
 import { posix } from 'node:path';
 import { types } from 'node:util';
-import { canonical, digest, MAX_ARTIFACT_BYTES, MAX_ARTIFACT_ENTRIES } from './artifacts.js';
+import { canonical, digest, isSha256Hex, MAX_ARTIFACT_BYTES, MAX_ARTIFACT_ENTRIES } from './artifacts.js';
+import { containsControlChars } from './input-guards.js';
 import { ownCaptureData } from './preparation-measurement-capture-store.js';
 import { parsePreparationMeasurementCalibration, type PreparationMeasurementCalibration } from './preparation-measurement-calibration.js';
 import { comparePreparationScenarioVectors, extractPreparationScenarioVector } from './preparation-measurement-comparison.js';
@@ -15,7 +16,7 @@ export interface PreparationProcessInventoryFile { path: string; executable: boo
 export interface PreparationProcessInventory { digest: string; files: PreparationProcessInventoryFile[] }
 export interface PreparationProcessEvaluation { passed: boolean; score: number; metrics: Record<string, number>; diagnostics?: UniverseDiagnostic[] }
 const invalid = (): never => { throw new Error('Invalid preparation process scoring input'); };
-function hash(value: unknown): string { if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) return invalid(); return value; }
+function hash(value: unknown): string { if (!isSha256Hex(value)) return invalid(); return value; }
 function count(value: unknown): number { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return invalid(); return value; }
 function array(value: unknown, maximum: number): unknown[] {
   if (types.isProxy(value) || !Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype ||
@@ -28,9 +29,7 @@ function array(value: unknown, maximum: number): unknown[] {
 }
 function filePath(value: unknown): string {
   if (typeof value !== 'string' || !value.length || Buffer.byteLength(value) > 4096 ||
-      value.includes('\\') || [...value].some(character => {
-        const code = character.charCodeAt(0); return code < 32 || code >= 127 && code <= 159;
-      }) || posix.isAbsolute(value) || posix.normalize(value) !== value ||
+      value.includes('\\') || containsControlChars(value) || posix.isAbsolute(value) || posix.normalize(value) !== value ||
       value.split('/').some(part => !part || ['.', '..', '.git', '.ashlr'].includes(part))) return invalid();
   return value;
 }

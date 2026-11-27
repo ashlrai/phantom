@@ -73,6 +73,38 @@ describe('currentUnfed', () => {
     expect(byLane.claude).toMatchObject({ utilization: null, unfed: false });
   });
 
+  it.each(['derived', 'dispatcher'] as const)('caps %s headroom at the configured target', (source) => {
+    const lanes = { a: { running: 2, target: 2, effective_target: 4 } };
+    const unfed_capacity = source === 'dispatcher'
+      ? { waiting: 1, lanes: { a: { waiting_elsewhere: 1 } } }
+      : undefined;
+    const report = currentUnfed(JSON.stringify({ lanes, unfed_capacity }), row('RQ-A', 'elsewhere'));
+
+    expect(report).toMatchObject({ source, unfedLanes: [], unfedSlots: 0 });
+    expect(report.resources[0]).toMatchObject({ target: 2, headroom: 0, utilization: 1, unfed: false });
+  });
+
+  it('rejects a lane whose configured target is missing even when an effective target is present', () => {
+    const status = JSON.stringify({ lanes: { a: { running: 0, effective_target: 2 } } });
+    expect(() => currentUnfed(status, '')).toThrow('invalid lane');
+  });
+
+  it.each([
+    { configured: 1, target: 1, headroom: 0 },
+    { configured: 3, target: 3, headroom: 2 },
+    { configured: 6, target: 4, headroom: 3 },
+    { configured: -1, target: 4, headroom: 3 },
+    { configured: undefined, target: 4, headroom: 3 },
+  ])('bounds derived unfed capacity with slots.json target $configured', ({ configured, target, headroom }) => {
+    const slots = JSON.stringify({ 'codex-cmp': { target: configured } });
+    const report = currentUnfed(JSON.stringify({ lanes: LANES }), READY, { slots });
+
+    expect(report.unfedSlots).toBe(headroom);
+    expect(report.resources.find(r => r.lane === 'codex-cmp')).toMatchObject({
+      target, headroom, unfed: headroom > 0,
+    });
+  });
+
   it('prefers the dispatcher verdict and keeps only well-formed reason codes', () => {
     const status = JSON.stringify({
       lanes: LANES,
@@ -84,7 +116,7 @@ describe('currentUnfed', () => {
         },
       },
     });
-    const report = currentUnfed(status, READY);
+    const report = currentUnfed(status, READY, { slots: JSON.stringify({ 'codex-cmp': { target: 0 } }) });
     expect(report.source).toBe('dispatcher');
     expect(report.waiting).toBe(2);
     expect(report.unfedSlots).toBe(2);
@@ -97,6 +129,85 @@ describe('currentUnfed', () => {
     const report = currentUnfed(JSON.stringify({ lanes: { a: { running: 0, target: 2 } } }), row('RQ-A', 'a'));
     expect(report.unfedLanes).toEqual([]);
     expect(report.resources[0]).toMatchObject({ readyHinted: 1, waitingElsewhere: 0 });
+  });
+
+  it.each([
+    { slots: JSON.stringify({ 'codex-cmp': { held: true } }) },
+    { hold: 'codex-cmp', slots: '{}' },
+    { hold: 'codex-cmp', slots: 'unreadable' },
+  ])('excludes configured holds from derived unfed capacity (%j)', market => {
+    const status = JSON.stringify({ lanes: LANES });
+    for (const ready of [READY, null]) {
+      const report = currentUnfed(status, ready, market);
+      expect(report).toMatchObject({ unfedLanes: [], unfedSlots: 0 });
+      expect(report.resources.find(r => r.lane === 'codex-cmp')).toMatchObject({
+        held: true, headroom: 3, unfed: false, waitingElsewhere: 0, blocked: {},
+      });
+    }
+  });
+
+  it.each([undefined, { waiting_elsewhere: -1 }])(
+    'keeps an idle lane unknown when its published count is unavailable (%j)',
+    (entry) => {
+      const lanes = { a: { running: 0, target: 2 }, b: { running: 0, target: 2 } };
+      const unfed_capacity = { waiting: 2, lanes: { a: { waiting_elsewhere: 1 }, b: entry } };
+      const report = currentUnfed(JSON.stringify({ lanes, unfed_capacity }), '');
+      expect(report).toMatchObject({ waiting: 2, unfedLanes: ['a'], unfedSlots: null });
+      expect(report.resources[1]).toMatchObject({ lane: 'b', readyHinted: 0, waitingElsewhere: null, unfed: null });
+    },
+  );
+
+  it('distinguishes a missing dispatcher total from a measured empty tick', () => {
+    const lanes = { a: { running: 0, target: 2 } };
+    const ready = row('RQ-A', 'elsewhere');
+    const partial = currentUnfed(JSON.stringify({ lanes, unfed_capacity: { lanes: {} } }), ready);
+    expect(partial).toMatchObject({ waiting: null, unfedSlots: null });
+    expect(partial.resources[0]).toMatchObject({ waitingElsewhere: null, unfed: null });
+
+    const empty = currentUnfed(JSON.stringify({ lanes, unfed_capacity: { waiting: 0, lanes: {} } }), ready);
+    expect(empty).toMatchObject({ waiting: 0, unfedSlots: 0 });
+    expect(empty.resources[0]).toMatchObject({ waitingElsewhere: 0, unfed: false });
+  });
+
+  it('omits impossible blocker counts without losing valid overlapping reasons or unfed capacity', () => {
+    const status = JSON.stringify({
+      lanes: { a: { running: 0, target: 2 }, b: { running: 0, target: 2 } },
+      unfed_capacity: {
+        waiting: 3,
+        lanes: {
+          a: { waiting_elsewhere: 1, blocked: { admission_stopped: 2, missing_capability: 1, tier_unavailable: 1 } },
+          b: { waiting_elsewhere: 0, blocked: { global_admission: 1 } },
+        },
+      },
+    });
+
+    const report = currentUnfed(status, null);
+    expect(report).toMatchObject({ fleetStop: null, unfedLanes: ['a'], unfedSlots: 1 });
+    expect(report.resources.map(lane => lane.blocked)).toEqual([{ missing_capability: 1, tier_unavailable: 1 }, {}]);
+  });
+
+  it.each([0, 1])('rejects a published lane count above the tick total of %i', waiting => {
+    const lanes = { a: { running: 0, target: 2 } };
+    const unfed_capacity = {
+      waiting,
+      lanes: { a: { waiting_elsewhere: 2, blocked: { missing_capability: 2 } } },
+    };
+    const report = currentUnfed(JSON.stringify({ lanes, unfed_capacity }), row('RQ-A', 'elsewhere'));
+    const expected = waiting === 0 ? 0 : null;
+
+    expect(report).toMatchObject({ waiting, unfedLanes: [], unfedSlots: expected });
+    expect(report.resources[0]).toMatchObject({
+      readyHinted: 0, waitingElsewhere: expected, unfed: waiting === 0 ? false : null, blocked: {},
+    });
+  });
+
+  it.each(['derived', 'dispatcher'] as const)('bounds %s unfed slots by the shared waiting count', (source) => {
+    const lanes = { a: { running: 0, target: 2 }, b: { running: 0, target: 2 } };
+    const entry = { waiting_elsewhere: 1, blocked: { missing_capability: 1 } };
+    const unfed_capacity = source === 'dispatcher' ? { waiting: 1, lanes: { a: entry, b: entry } } : undefined;
+    const report = currentUnfed(JSON.stringify({ lanes, unfed_capacity }), row('RQ-A', 'elsewhere'));
+    expect(report).toMatchObject({ source, waiting: 1, unfedLanes: ['a', 'b'], unfedSlots: 1 });
+    expect(report.resources.map(r => r.waitingElsewhere)).toEqual([1, 1]);
   });
 
   it('rejects malformed status', () => {
@@ -126,15 +237,102 @@ describe('foldUnfedHistory', () => {
       { lane: 'devin', unfedTicks: 1, slotTicks: 2, lastUnfedAt: new Date((t - 120) * 1000).toISOString(), blocked: {} },
     ]);
   });
+  it('uses an inclusive trailing window and excludes even slightly future ticks', () => {
+    const lanes = { claude: { unfed: true, headroom: 2, waiting_elsewhere: 1 } };
+    const start = t - 3600;
+    const text = [start - 1, start, t, t + 1].map(ts => unfedRow(ts, lanes)).join('\n');
+
+    expect(foldUnfedHistory(text, now, 1)).toMatchObject({
+      ticks: 2,
+      lanes: [{ lane: 'claude', unfedTicks: 2, slotTicks: 2, lastUnfedAt: new Date(now).toISOString() }],
+    });
+  });
+
   it('says when there is no history file', () => {
     expect(foldUnfedHistory(null, now, 24)).toEqual({ windowHours: 24, available: false, ticks: 0, lanes: [] });
     expect(foldUnfedHistory('', now, 24)).toEqual({ windowHours: 24, available: true, ticks: 0, lanes: [] });
+  });
+
+  it('counts a replayed tick once and uses the last usable snapshot as a whole', () => {
+    const codex = { unfed: true, headroom: 3, waiting_elsewhere: 3 };
+    const claude = { unfed: true, headroom: 2, waiting_elsewhere: 1, blocked: { missing_capability: 1 } };
+    const replay = unfedRow(t, { claude });
+    const text = [
+      unfedRow(t, { codex }),
+      replay,
+      unfedRow(t - 60, { codex }),
+      replay,
+      unfedRow(t, { codex: { ...codex, headroom: 0 } }),
+    ].join('\n');
+
+    expect(foldUnfedHistory(text, now, 1)).toMatchObject({
+      ticks: 2,
+      lanes: [
+        { lane: 'codex', unfedTicks: 1, slotTicks: 3, lastUnfedAt: new Date(now - 60_000).toISOString(), blocked: {} },
+        { lane: 'claude', unfedTicks: 1, slotTicks: 1, lastUnfedAt: new Date(now).toISOString(), blocked: { missing_capability: 1 } },
+      ],
+    });
+  });
+
+  it('counts only lanes with both spare slots and waiting work', () => {
+    const full = { unfed: true, headroom: 0, waiting_elsewhere: 2, blocked: { saturated: 2 } };
+    const idle = { unfed: true, headroom: 2, waiting_elsewhere: 0 };
+    const starved = { unfed: true, headroom: 2, waiting_elsewhere: 1 };
+    const text = [
+      unfedRow(t - 60, { codex: starved }),
+      unfedRow(t - 30, { codex: full, claude: idle }),
+      unfedRow(t, { codex: full, claude: starved }),
+    ].join('\n');
+
+    expect(foldUnfedHistory(text, now, 24)).toMatchObject({
+      ticks: 2,
+      lanes: [
+        { lane: 'claude', unfedTicks: 1, slotTicks: 1, lastUnfedAt: new Date(now).toISOString(), blocked: {} },
+        { lane: 'codex', unfedTicks: 1, slotTicks: 1, lastUnfedAt: new Date(now - 60_000).toISOString(), blocked: {} },
+      ],
+    });
+  });
+
+  it('excludes contradictory lane evidence without losing valid siblings or earlier replays', () => {
+    const lane = { unfed: true, held: false, headroom: 2, running: 1, target: 3, waiting_elsewhere: 2 };
+    const tick = (ts: number, waiting: number, lanes: Record<string, unknown>) =>
+      JSON.stringify({ schema: 'work-market.v1', event: 'unfed_capacity', ts, waiting, lanes });
+    const text = [
+      tick(t, 2, {
+        codex: { ...lane, held: true },
+        devin: { ...lane, waiting_elsewhere: 3 },
+        omlx: { ...lane, running: 3 },
+        claude: lane,
+      }),
+      tick(t, 0, { codex: lane }),
+      tick(t - 60, 1, { codex: lane }),
+    ].join('\n');
+
+    expect(foldUnfedHistory(text, now, 24)).toMatchObject({
+      ticks: 1,
+      lanes: [{ lane: 'claude', unfedTicks: 1, slotTicks: 2, lastUnfedAt: new Date(now).toISOString() }],
+    });
   });
 });
 
 describe('foldMarketOverrides', () => {
   const now = 1_800_000_000_000;
   const t = now / 1000;
+  it('keeps the latest decision as of the report time across all decision folds', () => {
+    const text = [
+      decision('RQ-A', t - 24 * 3600),
+      decision('RQ-B', t),
+      decision('RQ-B', t + 1, { chosen_lane: null, override: null }),
+      decision('RQ-C', t + 1),
+    ].join('\n');
+
+    expect(foldMarketOverrides(text, now, 24)).toMatchObject({ decided: 2, overridden: 2 });
+    expect(foldRouteRejections(text, now, 24)).toMatchObject({ decided: 2, unrouted: 0 });
+    expect(foldDecisionOutcomes(text, null, now, 24)).toMatchObject({
+      decided: 2, overridden: { decided: 2 }, unrouted: { decided: 0 },
+    });
+  });
+
   it('requires recorded lane fields across all decision folds', () => {
     const text = [
       decision('RQ-A', t - 90),
@@ -152,6 +350,28 @@ describe('foldMarketOverrides', () => {
       decided: 3, overridden: { decided: 1 }, open: { decided: 1 }, unrouted: { decided: 1 },
     });
   });
+
+  it('uses the last valid journal entry for decisions from the same tick', () => {
+    const text = [
+      decision('RQ-A', t, {
+        chosen_lane: null, preferred_lane: undefined, override: null,
+        reason_codes: ['invalid_requirements'],
+      }),
+      decision('RQ-A', t, {
+        rejected_lanes: [{ lane: 'codex-personal', reason_codes: ['saturated'] }],
+      }),
+      decision('RQ-A', t, { chosen_lane: undefined }),
+      decision('RQ-A', t - 1, { chosen_lane: null, override: null }),
+    ].join('\n');
+
+    expect(foldMarketOverrides(text, now, 24)).toMatchObject({ decided: 1, overridden: 1 });
+    expect(foldRouteRejections(text, now, 24)).toMatchObject({
+      decided: 1, unrouted: 0, byReason: { saturated: 1 },
+    });
+    expect(foldDecisionOutcomes(text, null, now, 24)).toMatchObject({
+      decided: 1, overridden: { decided: 1 }, unrouted: { decided: 0 },
+    });
+  });
   const decision = (job: string, ts: number, extra: Record<string, unknown> = {}) =>
     JSON.stringify({
       schema: 'work-market.v1', event: 'route_decision', job, ts,
@@ -159,6 +379,24 @@ describe('foldMarketOverrides', () => {
       override: { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback', preferred_lane_blocked_by: ['saturated'] },
       ...extra,
     });
+
+  it('lets a dispatcher requirements failure supersede an earlier route without guessing a preference', () => {
+    const invalid = (job: string) => JSON.stringify({
+      schema: 'work-market.v1', event: 'route_decision', job, ts: t - 30,
+      chosen_lane: null, rejected_lanes: [], reason_codes: ['invalid_requirements'],
+    });
+    const text = [
+      invalid('RQ-A'),
+      decision('RQ-A', t - 90, { rejected_lanes: [{ lane: 'devin', reason_codes: ['saturated'] }] }),
+      invalid('RQ-B'),
+    ].join('\n');
+
+    expect(foldMarketOverrides(text, now, 24)).toMatchObject({ decided: 2, overridden: 0 });
+    expect(foldRouteRejections(text, now, 24)).toMatchObject({ decided: 2, unrouted: 2, lanes: [], byReason: {} });
+    expect(foldDecisionOutcomes(text, null, now, 24)).toMatchObject({
+      decided: 2, overridden: { decided: 0 }, open: { decided: 0 }, unrouted: { decided: 2 },
+    });
+  });
 
   it("collapses route decisions to each job's latest in-window decision", () => {
     const journal = [
@@ -240,6 +478,17 @@ describe('foldClaimOverrides', () => {
   const batchClaim = (job: string, ts: string, extra: Record<string, unknown> = {}) =>
     JSON.stringify({ event: 'batch_claim', job, batch: 'B-1', repo: 'phantom', lane: 'claude', tier: 'work', ts, ...extra });
 
+  it('includes both report window endpoints and excludes slightly future launches', () => {
+    const override = { lane_hint: 'devin', lane_override: 'batch_session' };
+    const journal = [
+      claim('RQ-A', iso(now - 24 * 3_600_000)),
+      batchClaim('RQ-B', iso(now), override),
+      batchClaim('RQ-C', iso(now + 1), override),
+    ].join('\n');
+
+    expect(foldClaimOverrides(journal, now, 24)).toMatchObject({ claimed: 2, overridden: 1 });
+  });
+
   it('tallies claim launches that left their hinted lane, batch_session included', () => {
     const journal = [
       claim('RQ-A', iso(now - 100_000)),
@@ -247,6 +496,7 @@ describe('foldClaimOverrides', () => {
       claim('RQ-B', iso(now - 80_000), { lane_hint: 'codex-personal', lane_override: 'preferred_lane_fallback' }),
       batchClaim('RQ-C', iso(now - 70_000), { lane_hint: 'devin', lane_override: 'batch_session' }),
       batchClaim('RQ-D', iso(now - 60_000), { lane_hint: null, lane_override: 'resource_fit' }),
+      claim('RQ-BATCH-1', iso(now - 60_000)),
       // Out-of-window, future, missing-ts, malformed and non-claim rows never count.
       claim('RQ-E', iso(now - 25 * 3_600_000)),
       claim('RQ-F', iso(now + 3_600_000)),
@@ -364,6 +614,57 @@ describe('foldDecisionOutcomes', () => {
     const truncated = foldDecisionOutcomes(market, outcome('RQ-A'), now, 24, true);
     expect(truncated.jobsTruncated).toBe(true);
     expect(truncated.overridden).toMatchObject({ decided: 1, merged: 1 });
+  });
+
+  it('uses only merge and revert evidence dated at or before the report time', () => {
+    const market = [
+      decision('RQ-MERGED', t - 100),
+      decision('RQ-FUTURE', t - 100),
+      decision('RQ-UNDATED', t - 100),
+    ].join('\n');
+    const jobs = [
+      outcome('RQ-MERGED', { mergedAt: iso(now), reverted: true, revertedAt: iso(now + 1) }),
+      outcome('RQ-MERGED', { phase: 'CLOSED', ts: iso(now + 1) }),
+      outcome('RQ-FUTURE', { mergedAt: iso(now + 1) }),
+      outcome('RQ-UNDATED', { ts: undefined }),
+    ].join('\n');
+
+    expect(foldDecisionOutcomes(market, jobs, now, 24).overridden).toEqual({
+      decided: 3, known: 1, merged: 1, unmerged: 0, reverted: 0, unresolved: 2,
+    });
+  });
+
+  it('uses the first parseable verdict stamp while preserving terminal timestamp precedence', () => {
+    const market = ['RQ-MERGED', 'RQ-CLOSED', 'RQ-REVERTED', 'RQ-FUTURE']
+      .map(job => decision(job, t - 100)).join('\n');
+    const jobs = [
+      outcome('RQ-MERGED', { mergedAt: 'invalid', ts: iso(now) }),
+      outcome('RQ-CLOSED', { phase: 'CLOSED', closedAt: 'invalid', ts: 'invalid', at: iso(now) }),
+      outcome('RQ-REVERTED', { reverted: true, reverted_at: 'invalid', revertedAt: iso(now) }),
+      outcome('RQ-FUTURE', { mergedAt: iso(now + 1), ts: iso(now) }),
+    ].join('\n');
+
+    expect(foldDecisionOutcomes(market, jobs, now, 24).overridden).toEqual({
+      decided: 4, known: 3, merged: 2, unmerged: 1, reverted: 1, unresolved: 1,
+    });
+  });
+
+  it('joins only verdicts dated at or after each job’s latest decision', () => {
+    const market = [
+      decision('RQ-REQUEUED', t - 200),
+      decision('RQ-REQUEUED', t - 100),
+      decision('RQ-BOUNDARY', t - 50),
+      decision('RQ-LATER', t - 40),
+    ].join('\n');
+    const jobs = [
+      outcome('RQ-REQUEUED', { phase: 'CLOSED', closedAt: iso(now - 100_001) }),
+      outcome('RQ-BOUNDARY', { mergedAt: iso(now - 50_000), revertedAt: iso(now - 50_001) }),
+      outcome('RQ-LATER', { mergedAt: iso(now - 39_999), revertedAt: iso(now - 39_998) }),
+    ].join('\n');
+
+    expect(foldDecisionOutcomes(market, jobs, now, 24).overridden).toEqual({
+      decided: 3, known: 2, merged: 2, unmerged: 0, reverted: 1, unresolved: 1,
+    });
   });
 
   it('says when there is no market journal', () => {
@@ -495,6 +796,71 @@ describe('phm fleet unfed', () => {
     expect((await run([])).code).toBe(2);
   });
 
+  it('names the status path and the no-dispatcher case when status.json is absent', async () => {
+    const statusPath = join(dir, 'queue', 'status.json');
+    const missing = await run();
+    expect(missing.code).toBe(2);
+    const payload = JSON.parse(missing.lines[0]!);
+    expect(payload).toMatchObject({ schema: 'fleet.unfed.v1', readOnly: true });
+    expect(payload.error).toContain(statusPath);
+    expect(payload.error).toMatch(/no fleet publishing|no dispatcher/i);
+    vi.restoreAllMocks();
+    const text = await run([]);
+    expect(text.code).toBe(2);
+    expect(text.lines.join('\n')).toContain(statusPath);
+  });
+
+  it('distinguishes a malformed status.json from an absent one', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), 'not json{');
+    const bad = await run();
+    expect(bad.code).toBe(2);
+    expect(JSON.parse(bad.lines[0]!).error).toContain('not a valid dispatchd status document');
+    vi.restoreAllMocks();
+    writeFileSync(join(dir, 'queue', 'status.json'), '{"lanes":[]}');
+    const wrongShape = await run();
+    expect(wrongShape.code).toBe(2);
+    expect(JSON.parse(wrongShape.lines[0]!).error).toContain('not a valid dispatchd status document');
+  });
+
+  it.each(['missing', 'unreadable'])('preserves unknown queue counts when ready.tsv is %s', async unavailable => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(), lanes: LANES,
+    }));
+    const ready = join(dir, 'queue', 'ready.tsv');
+    if (unavailable === 'unreadable') mkdirSync(ready);
+
+    const result = await run();
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.lines[0]!)).toMatchObject({
+      statusFresh: true, waiting: null, invalidRows: null, unfedSlots: null, unfedLanes: [],
+      resources: expect.arrayContaining([
+        expect.objectContaining({ lane: 'codex-cmp', headroom: 3, readyHinted: null, waitingElsewhere: null, unfed: null }),
+        expect.objectContaining({ lane: 'devin', unfed: false }),
+      ]),
+    });
+    vi.restoreAllMocks();
+    expect((await run([])).lines.join('\n')).toContain('Unfed capacity unknown: unknown rows waiting.');
+
+    vi.restoreAllMocks();
+    rmSync(ready, { recursive: true, force: true });
+    writeFileSync(ready, '');
+    const empty = await run();
+    expect(JSON.parse(empty.lines[0]!)).toMatchObject({ waiting: 0, invalidRows: 0, unfedSlots: 0 });
+  });
+
+  it('preserves published unfed counts when ready.tsv is unavailable', () => {
+    const report = currentUnfed(JSON.stringify({
+      lanes: LANES,
+      unfed_capacity: { waiting: 2, lanes: { 'codex-cmp': { waiting_elsewhere: 2 } } },
+    }), null);
+    expect(report).toMatchObject({
+      source: 'dispatcher', waiting: 2, invalidRows: null, unfedSlots: 2, unfedLanes: ['codex-cmp'],
+      resources: expect.arrayContaining([
+        expect.objectContaining({ lane: 'codex-cmp', readyHinted: null, waitingElsewhere: 2, unfed: true }),
+      ]),
+    });
+  });
+
   it('reports utilization, unfed lanes and windowed history from the runs directory', async () => {
     writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
       schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(), lanes: LANES,
@@ -574,7 +940,7 @@ describe('phm fleet unfed', () => {
     const body = text.lines.join('\n');
     expect(body).toContain('codex-cmp  1/4 running (25%), 1 hinted here  UNFED: 3 free, 3 rows waiting elsewhere');
     expect(body).toContain('devin  0/3 running (0%), 0 hinted here  HELD');
-    expect(body).toContain('3 slot(s) could be filled now across codex-cmp; 4 rows waiting.');
+    expect(body).toContain('Up to 3 unfed slot(s) across codex-cmp; 4 rows waiting.');
     expect(body).toContain('Last 24h: 2 tick(s) left capacity unfed.');
     expect(body).toContain('codex-cmp: 2 tick(s), 3 slot-tick(s) lost (missing_capability 4)');
     expect(body).toContain('Last 24h: 2 job(s) decided, 1 left their hinted lane.');
@@ -616,6 +982,7 @@ describe('phm fleet unfed', () => {
       schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(),
       lanes: { a: { running: 2, target: 2 } },
     }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), '');
     const result = await run([]);
     expect(result.code).toBe(0);
     expect(result.lines).toEqual([
@@ -626,21 +993,67 @@ describe('phm fleet unfed', () => {
     ]);
   });
 
-  it('flags a stale status snapshot in json and text without hiding the counts', async () => {
+  it('returns an unknown live verdict for stale status and preserves counts in both formats', async () => {
     const staleTick = new Date(Date.now() - 10 * 60_000).toISOString();
     writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
       schema: 'dispatchd.status.v1', last_tick: staleTick, lanes: LANES,
     }));
     writeFileSync(join(dir, 'queue', 'ready.tsv'), READY);
     const json = await run(['--json']);
-    expect(json.code).toBe(1);
+    expect(json.code).toBe(2);
     const report = JSON.parse(json.lines[0]!);
     expect(report).toMatchObject({ statusAsOf: staleTick, statusFresh: false, unfedLanes: ['codex-cmp'] });
     vi.restoreAllMocks();
     const text = await run([]);
-    expect(text.code).toBe(1);
+    expect(text.code).toBe(2);
     expect(text.lines.join('\n')).toContain(`Status snapshot is stale: last dispatcher tick ${staleTick}`);
-    expect(text.lines.join('\n')).toContain('3 slot(s) could be filled now across codex-cmp');
+    expect(text.lines.join('\n')).toContain('Up to 3 unfed slot(s) across codex-cmp');
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['future', new Date(Date.now() + 60_000).toISOString()],
+  ])('returns an unknown live verdict for a %s tick even with no waiting work', async (_kind, lastTick) => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: lastTick, lanes: LANES,
+    }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), '');
+    const result = await run();
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.lines[0]!)).toMatchObject({ statusFresh: false, unfedSlots: 0 });
+  });
+
+  it.each([
+    { waiting: 2, lanes: undefined, ready: '', hinted: 0, unfed: null, code: 2 },
+    { waiting: 0, lanes: [], ready: row('RQ-A', 'b'), hinted: 1, unfed: false, code: 0 },
+  ])('preserves a fresh dispatcher total of $waiting without a usable lane map', async ({
+    waiting, lanes, ready, hinted, unfed, code,
+  }) => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(),
+      lanes: { b: { running: 0, target: 2 } },
+      unfed_capacity: { waiting, lanes },
+    }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), ready);
+
+    const result = await run();
+    expect(result.code).toBe(code);
+    expect(JSON.parse(result.lines[0]!)).toMatchObject({
+      source: 'dispatcher', statusFresh: true, waiting, unfedLanes: [], invalidRows: 0,
+      unfedSlots: waiting === 0 ? 0 : null,
+      resources: [{ lane: 'b', readyHinted: hinted, waitingElsewhere: waiting === 0 ? 0 : null, unfed }],
+    });
+  });
+
+  it('signals a confirmed unfed lane even when the fleet-wide bound is unknown', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(),
+      lanes: { a: { running: 0, target: 2 }, b: { running: 0, target: 2 } },
+      unfed_capacity: { waiting: 2, lanes: { a: { waiting_elsewhere: 1 } } },
+    }));
+    const result = await run();
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.lines[0]!)).toMatchObject({ statusFresh: true, unfedSlots: null, unfedLanes: ['a'] });
   });
 });
 
@@ -746,15 +1159,70 @@ describe('derived market reasons', () => {
     }
   });
 
+  it('uses the first valid row per job for derived waiting and blocker counts', () => {
+    const ready = [
+      mrow('RQ-DUP', 'codex-personal', 'work', '{broken'),
+      mrow('RQ-DUP', 'claude', 'work', '{"needs":["browser"]}'),
+      mrow('RQ-DUP', 'claude', 'work'),
+      mrow('RQ-DUP', 'codex-personal', 'work'),
+    ].join('\n');
+    const report = currentUnfed(JSON.stringify({ lanes: MLANES }), ready, { slots: SLOTS });
+    expect(report).toMatchObject({ waiting: 1, invalidRows: 1, unfedSlots: 1 });
+    const lane = report.resources.find(r => r.lane === 'codex-personal');
+    expect(lane).toMatchObject({ readyHinted: 0, waitingElsewhere: 1 });
+    expect(lane?.blocked).toEqual({ missing_capability: 1 });
+  });
+
+  it('requires explicit metered opt-in for API lanes with a known metered cost class', () => {
+    const ready = [
+      mrow('RQ-DEFAULT', 'claude', 'work'),
+      mrow('RQ-INCLUDED', 'claude', 'work', '{"max_cost_class":"included"}'),
+      mrow('RQ-METERED', 'claude', 'work', '{"max_cost_class":"metered"}'),
+    ].join('\n');
+    const lanes = {
+      'claude-api': { running: 0, target: 2, held: false },
+      'openai-api': { running: 0, target: 2, held: false },
+    };
+    const report = currentUnfed(JSON.stringify({ lanes }), ready, {
+      slots: JSON.stringify({
+        'claude-api': {},
+        'openai-api': { cost_class: 'metered', tiers: ['work'] },
+      }),
+    });
+    expect(report.resources.map(({ lane, blocked }) => [lane, blocked])).toEqual([
+      ['claude-api', { metered_api_opt_in_required: 2, cost_class_exceeded: 1, deferred_after_selection: 1 }],
+      ['openai-api', { metered_api_opt_in_required: 2, cost_class_exceeded: 1, deferred_after_selection: 1 }],
+    ]);
+  });
+
+  it('keeps one unavailable verdict when a metered API lane also advertises bad capabilities', () => {
+    const ready = [mrow('RQ-OPEN', 'claude', 'work')].join('\n');
+    const report = currentUnfed(JSON.stringify({
+      lanes: { 'openai-api': { running: 0, target: 2, held: false } },
+    }), ready, {
+      slots: JSON.stringify({
+        'openai-api': { cost_class: 'metered', tiers: ['work'], capabilities: ['Bad_Cap'] },
+      }),
+    });
+    // lane_view's invalid_capability_advertisement is overwritten by the
+    // dispatcher's metered-API gate, so choose records one unavailable code.
+    expect(report.resources.map(({ lane, blocked }) => [lane, blocked])).toEqual([
+      ['openai-api', { metered_api_opt_in_required: 1 }],
+    ]);
+  });
+
   it('does not recompute reasons when the dispatcher published its verdict', () => {
     const status = JSON.stringify({
       lanes: MLANES,
       unfed_capacity: { waiting: 1, lanes: { 'codex-personal': { waiting_elsewhere: 1, blocked: { saturated: 1 } } } },
     });
-    const report = currentUnfed(status, READY2, { slots: SLOTS });
+    const hinted = mrow('RQ-HINTED', 'codex-personal', 'work');
+    const report = currentUnfed(status, [READY2, hinted, hinted].join('\n'), { slots: SLOTS, hold: 'codex-personal' });
     expect(report.source).toBe('dispatcher');
     expect(report.derivedReasons).toBe(false);
-    expect(report.resources.find(r => r.lane === 'codex-personal')!.blocked).toEqual({ saturated: 1 });
+    expect(report.resources.find(r => r.lane === 'codex-personal')).toMatchObject({
+      held: false, unfed: true, readyHinted: 1, waitingElsewhere: 1, blocked: { saturated: 1 },
+    });
   });
 });
 
@@ -836,10 +1304,12 @@ describe('ready row validation', () => {
     expect(hints.invalid).toBe(1);
   });
 
-  it('rejects an envelope row whose lane column is not a lane id', () => {
-    // dispatchd runs work_market.requirements on the raw row before the
-    // envelope replaces the spec: the lane column defaults to preferred_lane
-    // and must be a lane id or empty, or the row is invalid — never open supply.
+  it('lets the envelope replace a bad lane cell, while a bare bad lane cell still rejects', () => {
+    // dispatchd's routed pass resolves the `(attrs)` envelope before launch
+    // and writes the spec into the requirements cell, so the lane column is
+    // never consulted for an enveloped row — a bad lane cell cannot reject
+    // it. With no envelope the requirements fallback still applies: the lane
+    // column defaults to preferred_lane and must be a lane id or empty.
     const routerQueue = [
       '- READY RQ-BADLANE (P1, pool=codex-cmp): valid envelope',
       '- READY RQ-OPENLANE (P1, pool=claude): envelope supplies the hint',
@@ -847,15 +1317,17 @@ describe('ready row validation', () => {
     const ready = [
       vrow('RQ-BADLANE', 'NOT_A_LANE'),
       vrow('RQ-OPENLANE', ''),
+      vrow('RQ-NOENV', 'NOT_A_LANE'),
       'RQ-RAWOPEN\tphantom\t\twork\t/q/prompts/RQ-RAWOPEN.md',
     ].join('\n');
     const hints = readyHints(ready, routerQueue);
-    expect(hints.waiting).toBe(2);
+    expect(hints.waiting).toBe(3);
     expect(hints.invalid).toBe(1);
-    // An empty lane cell stays open: the envelope's pool= hint applies, and a
-    // spec-less row with no envelope line stays unhinted.
-    expect(hints.rows[0]).toMatchObject({ hint: 'claude' });
-    expect(hints.rows[1]).toMatchObject({ hint: null });
+    // The envelope's pool= hint applies past the bad lane cell; an empty lane
+    // cell with no envelope stays open.
+    expect(hints.rows[0]).toMatchObject({ hint: 'codex-cmp' });
+    expect(hints.rows[1]).toMatchObject({ hint: 'claude' });
+    expect(hints.rows[2]).toMatchObject({ hint: null });
   });
 
   it('keeps the row repo through the envelope like the dispatcher re-parse', () => {
@@ -876,11 +1348,12 @@ describe('ready row validation', () => {
     expect(byLane.claude!.blocked).toEqual({ repo_unserved: 1 });
   });
 
-  it('counts every JID+tier-valid row by raw lane column when admission stopped', () => {
+  it('counts the first JID+tier-valid row per job by raw lane when admission stopped', () => {
     const status = JSON.stringify({ lanes: VLANES, paused: 'hold' });
     const ready = [
       vrow('RQ-OK', 'a'),
       vrow('RQ-BADSPEC', 'a', 'work', '{"bogus":1}'),
+      vrow('RQ-BADSPEC', 'b'),
       vrow('RQ-BADTIER', 'a', 'bogus-tier'),
     ].join('\n');
     const report = currentUnfed(status, ready);
@@ -934,9 +1407,28 @@ describe('fleet stop verdicts', () => {
     expect(report.resources.find(r => r.lane === 'a')!.blocked).toEqual({});
   });
 
+  it('uses timestamped admission evidence only from the status tick', () => {
+    const tick = '2026-11-26T10:00:00-0500';
+    const ready = [TWO_WAITING, `${row('RQ-INVALID', 'b')}\t{broken`].join('\n');
+    const reportAt = (ts: string) => currentUnfed(JSON.stringify({
+      last_tick: tick,
+      lanes: STOP_LANES,
+      admission: { ts, gate_reason: 'load guard', admit: false },
+    }), ready);
+
+    expect(reportAt(tick)).toMatchObject({ fleetStop: 'admission_stopped', waiting: 3 });
+    for (const ts of ['2026-11-26T09:59:59-0500', '2026-11-26T10:00:01-0500']) {
+      const report = reportAt(ts);
+      expect(report).toMatchObject({ fleetStop: null, waiting: 2, invalidRows: 1 });
+      expect(report.resources.find(r => r.lane === 'a')?.blocked).toEqual({});
+    }
+  });
+
   it('reads the stop code back from dispatcher-published blocked reasons', () => {
     const status = JSON.stringify({
       lanes: STOP_LANES,
+      last_tick: '2026-11-26T10:00:00-0500',
+      admission: { ts: '2026-11-26T09:59:59-0500', running: 4, cap: 4 },
       unfed_capacity: {
         waiting: 2,
         lanes: {
@@ -948,6 +1440,23 @@ describe('fleet stop verdicts', () => {
     const report = currentUnfed(status, TWO_WAITING);
     expect(report.source).toBe('dispatcher');
     expect(report.fleetStop).toBe('admission_stopped');
+  });
+
+  it.each([
+    [{ paused: 'maintenance' }, 'admission_stopped'],
+    [{ admission: { gate_reason: 'load guard' } }, 'admission_stopped'],
+    [{ admission: { running: 1, cap: 1 } }, 'global_admission'],
+    [{ admission: { claim_limit: 1 }, launched_this_tick: ['RQ-1'] }, 'global_admission'],
+  ])('honors the fleet stop with published lane data and no blocked rows (%j)', (extra, stop) => {
+    const report = currentUnfed(JSON.stringify({
+      lanes: STOP_LANES,
+      ...extra,
+      unfed_capacity: {
+        waiting: 0,
+        lanes: { a: { waiting_elsewhere: 0, blocked: {} } },
+      },
+    }), '');
+    expect(report).toMatchObject({ source: 'dispatcher', fleetStop: stop, unfedLanes: [] });
   });
 
   it('prints the fleet stop line in text output', async () => {

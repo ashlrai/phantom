@@ -16,7 +16,8 @@ import { existsSync, lstatSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { defaultGitRunner } from '../verse/git-ops.js';
-import { CLOUD_REPO_PATTERN, cloudHome, ensureCloudDirectory } from './store.js';
+import { cloudHome, ensureCloudDirectory } from './store.js';
+import { CLOUD_REPO_PATTERN, isCloudRecord } from './types.js';
 
 export type CloudCheckoutResult =
   | { ok: true; path: string }
@@ -27,7 +28,7 @@ export interface CloudCheckoutDeps {
   originUrlFor?: (repo: string) => string;
 }
 
-export const CLOUD_CHECKOUTS_DIR = 'checkouts';
+const CLOUD_CHECKOUTS_DIR = 'checkouts';
 const CLONE_TIMEOUT_MS = 180_000;
 const GIT_TIMEOUT_MS = 60_000;
 
@@ -192,8 +193,8 @@ export function declaredMcpServers(checkoutPath: string): string[] {
   try {
     if (!existsSync(path) || statSync(path).size > MAX_MCP_JSON_BYTES) return [];
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
-    const servers = (parsed as { mcpServers?: unknown } | null)?.mcpServers;
-    if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return [];
+    const servers = isCloudRecord(parsed) ? parsed['mcpServers'] : undefined;
+    if (!isCloudRecord(servers)) return [];
     return Object.keys(servers);
   } catch {
     return [];

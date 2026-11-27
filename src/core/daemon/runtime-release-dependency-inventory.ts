@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   closeSync,
   constants as fsConstants,
@@ -14,6 +13,18 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
+import {
+  RUNTIME_SHA256_RE as SHA256_RE,
+  domainCanonicalSha256,
+  hasExactKeys,
+  isBoundedSingleLineText as isBoundedText,
+  isPathContained as isContained,
+  isPlainRecord,
+  sameStatSnapshot as sameSnapshot,
+  sha256Hex,
+  strictCanonicalJson,
+} from './runtime-protocol-shared.js';
+
 /**
  * The source lockfile selects the build-time runtime closure only. Published
  * releases carry bundled dependency bytes plus this inventory; admission never
@@ -22,7 +33,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export const RUNTIME_RELEASE_DEPENDENCY_INVENTORY_PATH =
   'dist/release-dependency-inventory.json' as const;
-export const RUNTIME_RELEASE_DEPENDENCY_INVENTORY_SCHEMA_VERSION = 2 as const;
+const RUNTIME_RELEASE_DEPENDENCY_INVENTORY_SCHEMA_VERSION = 2 as const;
 
 const INVENTORY_DIGEST_DOMAIN = 'ashlr:runtime-release-dependency-inventory:v2';
 const PACKAGE_CONTENT_DIGEST_DOMAIN = 'ashlr:runtime-release-dependency-package-content:v1';
@@ -41,10 +52,7 @@ const MAX_FILE_BYTES = 128 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 512 * 1024 * 1024;
 const MAX_DEPTH = 48;
 const MAX_BUILD_OBSERVATION_MS = 120_000;
-const SHA256_RE = /^[a-f0-9]{64}$/;
 const PACKAGE_NAME_RE = /^(?:@[a-z0-9._~-]+\/[a-z0-9._~-]+|[a-z0-9._~-]+)$/i;
-
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export interface RuntimeReleaseDependencyInventoryPackageV1 {
   archiveModeSha256: string;
@@ -138,68 +146,12 @@ export type RuntimeDependencyBinLinkOwnership =
 
 type DependencyObservationCheckpoint = (phase?: string) => void;
 
-function canonicalize(value: unknown, ancestors: Set<object>): JsonValue | undefined {
-  if (value === undefined) return undefined;
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new TypeError('non-finite JSON number');
-    return Object.is(value, -0) ? 0 : value;
-  }
-  if (typeof value !== 'object' || ancestors.has(value)) throw new TypeError('invalid JSON value');
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      return value.map((entry, index) => {
-        if (!Object.hasOwn(value, index)) throw new TypeError('sparse JSON array');
-        const canonical = canonicalize(entry, ancestors);
-        if (canonical === undefined) throw new TypeError('undefined JSON array entry');
-        return canonical;
-      });
-    }
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new TypeError('non-plain JSON object');
-    }
-    const output: Record<string, JsonValue> = Object.create(null) as Record<string, JsonValue>;
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) {
-      const canonical = canonicalize(entry, ancestors);
-      if (canonical !== undefined) output[key] = canonical;
-    }
-    return output;
-  } finally {
-    ancestors.delete(value);
-  }
-}
-
 function canonicalJson(value: unknown): string {
-  const canonical = canonicalize(value, new Set<object>());
-  if (canonical === undefined) throw new TypeError('undefined root JSON value');
-  return JSON.stringify(canonical);
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-
-function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
-}
-
-function isBoundedText(value: unknown, max = 4_096): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= max &&
-    !/[\0\r\n]/u.test(value);
+  return strictCanonicalJson(value, { omitUndefinedProperties: true });
 }
 
 function digest(domain: string, value: unknown): string {
-  return createHash('sha256')
-    .update(domain, 'utf8')
-    .update('\n', 'utf8')
-    .update(canonicalJson(value), 'utf8')
-    .digest('hex');
+  return domainCanonicalSha256(domain, value, { omitUndefinedProperties: true });
 }
 
 function inventoryPayload(
@@ -207,12 +159,6 @@ function inventoryPayload(
 ): Omit<RuntimeReleaseDependencyInventoryV2, 'inventoryDigest'> {
   const { inventoryDigest: _inventoryDigest, ...payload } = inventory;
   return payload;
-}
-
-function sameSnapshot(left: BigIntStats, right: BigIntStats): boolean {
-  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
-    left.uid === right.uid && left.gid === right.gid && left.nlink === right.nlink &&
-    left.size === right.size && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
 }
 
 function requireSafePortableMode(stat: BigIntStats, label: string, directory = false): void {
@@ -295,11 +241,6 @@ function canonicalRoot(path: string, label: string): string {
     throw new Error(`${label} is not a canonical directory`);
   }
   return real;
-}
-
-function isContained(root: string, candidate: string): boolean {
-  const nested = relative(root, candidate);
-  return nested !== '' && nested !== '..' && !nested.startsWith(`..${sep}`) && !isAbsolute(nested);
 }
 
 export function runtimeDependencyBinLinkOwnership(
@@ -682,7 +623,7 @@ function scanPackageDirectory(
       if (totalBytes > MAX_TOTAL_BYTES) throw new Error('runtime dependency package bytes exceed limit');
       files.push({
         path: relativePath,
-        sha256: createHash('sha256').update(bytes).digest('hex'),
+        sha256: sha256Hex(bytes),
         size: bytes.length,
       });
       if ((stat.mode & 0o111n) !== 0n) hostExecutablePaths.add(relativePath);
@@ -909,7 +850,7 @@ function buildInventory(
     algorithm: 'sha256',
     assurance: 'packaged-build-byte-observation',
     package: {
-      manifestSha256: createHash('sha256').update(packageJsonBytes).digest('hex'),
+      manifestSha256: sha256Hex(packageJsonBytes),
       name,
       version,
     },
@@ -1178,7 +1119,7 @@ function observeCompleteDependencyTree(
       content.push({
         executable: (stat.mode & 0o111n) !== 0n,
         path: relativePath,
-        sha256: createHash('sha256').update(bytes).digest('hex'),
+        sha256: sha256Hex(bytes),
         size: bytes.length,
       });
     }

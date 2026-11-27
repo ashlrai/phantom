@@ -19,6 +19,17 @@ coverage/
 # Editor / backup files
 *.bak
 *.bak.*
+*.orig
+*.rej
+*.backup
+*.save
+*.swp
+*.swo
+*.swn
+*.tmp
+*.temp
+*.old
+*~
 
 # Stray scaffold output from `ashlr new` (must never land at the repo root)
 /myapp/

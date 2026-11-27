@@ -28,11 +28,11 @@ import type {
 import { resolveEngineSpec } from '../run/engine-registry.js';
 
 export const EXECUTION_IDENTITY_V1_SCHEMA_VERSION = 1 as const;
-export const EXECUTION_IDENTITY_V1_MAX_IDENTITIES = 32;
-export const EXECUTION_IDENTITY_V1_MAX_CONCURRENT = 32;
+const EXECUTION_IDENTITY_V1_MAX_IDENTITIES = 32;
+const EXECUTION_IDENTITY_V1_MAX_CONCURRENT = 32;
 export const EXECUTION_IDENTITY_V1_OBSERVATION_MAX_AGE_MS = 5 * 60_000;
 export const EXECUTION_IDENTITY_V1_MAX_FUTURE_SKEW_MS = 60_000;
-export const EXECUTION_IDENTITY_V1_MAX_BACKOFF_MS = 24 * 60 * 60_000;
+const EXECUTION_IDENTITY_V1_MAX_BACKOFF_MS = 24 * 60 * 60_000;
 const PRIVATE_STORE_MAX_BYTES = 64 * 1024;
 
 const IDENTITY_REF_RE = /^eid_[0-9a-f]{32}$/;
@@ -97,12 +97,12 @@ export type ExecutionIdentityResourceReasonV1 =
   | 'backoff-provider-refused'
   | 'backoff-transport-error';
 
-export type ExecutionIdentityBackoffReasonV1 =
+type ExecutionIdentityBackoffReasonV1 =
   | 'rate-limited'
   | 'provider-refused'
   | 'transport-error';
 
-export interface ExecutionIdentityResourceObservationV1 {
+interface ExecutionIdentityResourceObservationV1 {
   identityRef: ExecutionIdentityRefV1;
   state: 'open' | 'near' | 'exhausted' | 'unreachable';
   availableSlots: number;
@@ -224,7 +224,7 @@ export function digestExecutionIdentityModelResourcesV1(
   return sha256(MODEL_RESOURCE_DIGEST_DOMAIN, canonicalJson({ sourceState, resources: sorted }));
 }
 
-export function isExecutionIdentityRefV1(value: unknown): value is ExecutionIdentityRefV1 {
+function isExecutionIdentityRefV1(value: unknown): value is ExecutionIdentityRefV1 {
   return typeof value === 'string' && IDENTITY_REF_RE.test(value);
 }
 
@@ -236,7 +236,7 @@ export function digestExecutionIdentityRefV1(value: unknown): ExecutionIdentityD
   return isExecutionIdentityRefV1(value) ? sha256(IDENTITY_DIGEST_DOMAIN, value) : null;
 }
 
-export function executionIdentityPrivateStorePathV1(): string {
+function executionIdentityPrivateStorePathV1(): string {
   return join(homedir(), '.ashlr', 'private', 'execution-identities-v1.json');
 }
 

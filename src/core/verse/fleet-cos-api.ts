@@ -1,6 +1,5 @@
 /** Desktop surface for chief-of-staff intake: ask, read status, approve the drafted reply.
  * Wire reference: docs/COS-DESKTOP-API.md. */
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ApiModule } from './api-modules.js';
 import type { AshlrConfig } from '../types.js';
@@ -10,15 +9,23 @@ import { createChannelReceiver } from '../fleet/channel-envelope.js';
 import { createLocalChannelDedupeStore } from '../fleet/channel-dedupe-store.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
 import { appendInboxEntry } from '../fleet/mason-inbox.js';
-import { cosJobId, cosStatus, deliverCosResult, type CosRoute } from '../cos/intake.js';
+import {
+  cosJobId,
+  cosStatus,
+  deliverCosResult,
+  isCosJobId,
+  isPlainRecord,
+  parseCosIntakeRoute,
+  resolveCosRunsDir,
+} from '../cos/intake.js';
 import { listCosTasks } from '../cos/list.js';
 import { reconcileCosDelivery } from '../cos/reconcile.js';
 import type { deliverTelegramCosResult } from '../comms/telegram-inbox-bridge.js';
 import type { deliverEmailCosResult } from '../comms/email-drop-bridge.js';
 
-export const VERSE_FLEET_COS_ASK_PATH = '/api/verse/fleet/cos/ask';
-export const VERSE_FLEET_COS_STATUS_PATH = '/api/verse/fleet/cos/status';
-export const VERSE_FLEET_COS_APPROVE_PATH = '/api/verse/fleet/cos/approve';
+const VERSE_FLEET_COS_ASK_PATH = '/api/verse/fleet/cos/ask';
+const VERSE_FLEET_COS_STATUS_PATH = '/api/verse/fleet/cos/status';
+const VERSE_FLEET_COS_APPROVE_PATH = '/api/verse/fleet/cos/approve';
 export const VERSE_FLEET_COS_LIST_PATH = '/api/verse/fleet/cos/list';
 export const VERSE_FLEET_COS_RECONCILE_PATH = '/api/verse/fleet/cos/reconcile';
 
@@ -30,7 +37,6 @@ const VERSE_COS_OPERATOR_ID = 'verse-cos-operator';
 const COS_INBOX_SOURCE = 'Phantom desktop task';
 const COS_INBOX_MOBILE_SOURCE = 'Phantom mobile task';
 const COS_TEXT_MAX = 16_000;
-const JOB_ID = /^cos-[a-f0-9]{32}$/;
 const WIRE_DIGEST = /^sha256:[a-f0-9]{24}$/;
 
 export interface FleetCosApiDeps {
@@ -45,8 +51,10 @@ export interface FleetCosApiDeps {
   outboxDir?: string;
 }
 
-const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-const defaultRunsDir = (): string => process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+async function readJsonBody(req: Parameters<ApiModule>[1]): Promise<unknown> {
+  try { return JSON.parse(await readBody(req)); } catch { return null; }
+}
+
 // A bare 64-hex value is redacted by the response sanitizer, so the wire carries
 // a labeled 96-bit prefix of the draft digest.
 const wireDigest = (digest: string): string => `sha256:${digest.slice(0, 24)}`;
@@ -57,13 +65,13 @@ function safeText(value: unknown): string {
   }
   return scrubSecrets(value);
 }
-const code = (e: unknown): unknown => record(e) ? e.code : undefined;
+const code = (e: unknown): unknown => isPlainRecord(e) ? e.code : undefined;
 // A request line that cannot pass safeText (a private path shape) lists as empty.
 const listedText = (value: string): string => { try { return safeText(value); } catch { return ''; } };
 
 export function createFleetCosApi(deps: FleetCosApiDeps = {}): ApiModule {
   const now = deps.now ?? Date.now;
-  const runsDir = deps.runsDir ?? defaultRunsDir();
+  const runsDir = resolveCosRunsDir(deps.runsDir);
   const receive = createChannelReceiver({
     allowedSenderIds: new Set([VERSE_COS_OPERATOR_ID]),
     now: () => new Date(now()),
@@ -77,10 +85,9 @@ export function createFleetCosApi(deps: FleetCosApiDeps = {}): ApiModule {
   });
 
   async function ask(req: Parameters<ApiModule>[1], res: Parameters<ApiModule>[2]): Promise<void> {
-    let body: unknown;
-    try { body = JSON.parse(await readBody(req)); } catch { body = null; }
-    const text = record(body) && typeof body.text === 'string' ? body.text.trim() : '';
-    if (!record(body) || Object.keys(body).some(k => k !== 'text') || !text || text.length > COS_TEXT_MAX) {
+    const body = await readJsonBody(req);
+    const text = isPlainRecord(body) && typeof body.text === 'string' ? body.text.trim() : '';
+    if (!isPlainRecord(body) || Object.keys(body).some(k => k !== 'text') || !text || text.length > COS_TEXT_MAX) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid task body' }); return;
     }
     try {
@@ -118,11 +125,12 @@ export function createFleetCosApi(deps: FleetCosApiDeps = {}): ApiModule {
   async function status(req: Parameters<ApiModule>[1], res: Parameters<ApiModule>[2]): Promise<void> {
     let id: string | null;
     try { id = new URL(req.url ?? '/', 'http://localhost').searchParams.get('id'); } catch { id = null; }
-    if (id === null || !JOB_ID.test(id)) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid id' }); return; }
+    if (!isCosJobId(id)) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid id' }); return; }
     try {
       const state = await read(id);
       if (state === 'unknown') { sendJson(res, 404, { code: 'COS_UNKNOWN' }); return; }
-      const route = JSON.parse(state.job.acceptance) as CosRoute;
+      const route = parseCosIntakeRoute(state.job.acceptance);
+      if (!route) throw new Error('Job has no intake origin');
       // senderId and threadId stay server-side.
       sendJson(res, 200, { v: 1, id, jobStatus: safeText(state.job.status), channel: safeText(state.draft?.origin.channel ?? route.origin.channel),
         draft: state.draft ? { text: safeText(state.draft.text), digest: wireDigest(state.draft.digest) } : null,
@@ -146,10 +154,9 @@ export function createFleetCosApi(deps: FleetCosApiDeps = {}): ApiModule {
   }
 
   async function approve(req: Parameters<ApiModule>[1], res: Parameters<ApiModule>[2]): Promise<void> {
-    let body: unknown;
-    try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+    const body = await readJsonBody(req);
     // Approval binds to the stored draft only; no text is ever read from the request.
-    if (!record(body) || Object.keys(body).length !== 2 || typeof body.id !== 'string' || !JOB_ID.test(body.id) ||
+    if (!isPlainRecord(body) || Object.keys(body).length !== 2 || !isCosJobId(body.id) ||
       typeof body.digest !== 'string' || !WIRE_DIGEST.test(body.digest)) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid approval body' }); return;
     }
@@ -198,9 +205,8 @@ export function createFleetCosApi(deps: FleetCosApiDeps = {}): ApiModule {
 
   /** Mason's record of what he found after an uncertain send. Never sends; never echoes error text. */
   async function reconcile(req: Parameters<ApiModule>[1], res: Parameters<ApiModule>[2]): Promise<void> {
-    let body: unknown;
-    try { body = JSON.parse(await readBody(req)); } catch { body = null; }
-    if (!record(body) || Object.keys(body).length !== 2 || typeof body.id !== 'string' || !JOB_ID.test(body.id) ||
+    const body = await readJsonBody(req);
+    if (!isPlainRecord(body) || Object.keys(body).length !== 2 || !isCosJobId(body.id) ||
       (body.verdict !== 'delivered' && body.verdict !== 'retry')) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid reconcile body' }); return;
     }

@@ -224,6 +224,42 @@ describe('landedCloseBacklogItems', () => {
     expect(closedOnly).toEqual([]);
   });
 
+  it('drops rows stamped past the evaluation-time future skew', async () => {
+    // Three 'failed' rows on distinct future UTC days: corrupt or replayed
+    // evidence, no close-failure cell.
+    const future = await landedCloseBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        row(4321, 'failed', -1, 'boom'),
+        row(4321, 'failed', -2, 'boom'),
+        row(4321, 'failed', -4, 'boom'),
+      ]),
+    });
+    expect(future).toEqual([]);
+    // A future stamp cannot stretch a below-bar cell over the bar either:
+    // two in-window rows plus one beyond the skew stays two rows.
+    const stretched = await landedCloseBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        row(4321, 'failed', 1, 'boom'),
+        row(4321, 'failed', 2, 'boom'),
+        row(4321, 'failed', -1, 'boom'),
+      ]),
+    });
+    expect(stretched).toEqual([]);
+    // A stamp inside the skew still counts as same-host clock drift:
+    // 1/120 h = 30 s ahead of NOW.
+    const drift = await landedCloseBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        row(4321, 'failed', 1, 'boom'),
+        row(4321, 'failed', 2, 'boom'),
+        { ...row(4321, 'failed', 0, 'boom'), at: at(0, 1 / 120) },
+      ]),
+    });
+    expect(drift).toHaveLength(1);
+  });
+
   it('emits only for the fleet repository', async () => {
     const file = writeJournal(failedRows());
     expect(await landedCloseBacklogItems({ repo: 'ashlrai/lexicon', journalPath: file, now: NOW })).toEqual([]);

@@ -9,8 +9,9 @@
  */
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { inspectPrivateDirectory } from '../universe/artifacts.js';
-import { readImmutablePrivateRecords, writeImmutablePrivateRecord,
+import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
+import { inspectPrivateDirectory, privateDirectory } from '../universe/artifacts.js';
+import { readImmutablePrivateRecords, recoverImmutablePrivateRecordStore, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
 import { canonicalJson, hasPlainDataKeys, isSha256Hex } from './validation.js';
 
@@ -19,6 +20,22 @@ export interface ReplayWatermarkReservation { revision: number; ledgerDigest: st
 export interface ReplayWatermarkRead { sourceState: 'healthy' | 'missing' | 'degraded'; revision: number; ledgerDigest: string | null }
 export type ReplayWatermarkDisposition = 'recorded' | 'replayed' | 'conflict' | 'unavailable';
 export interface RevisionRecord { revision: number; digest: string }
+export interface ChainedRevisionRecord extends RevisionRecord { previousDigest: string | null }
+export interface WatermarkedLedgerConfigOptions<T extends ChainedRevisionRecord> {
+  label: string; directory: string; maxRecordBytes: number; maxRecords: number;
+  maxAggregateBytes: number; codec: ImmutablePrivateRecordCodec<T>;
+}
+export interface WatermarkedLedgerRead<T extends ChainedRevisionRecord> { sourceState: 'healthy' | 'missing' | 'degraded'; records: T[] }
+export type WatermarkedLedgerCommitOutcome<T extends ChainedRevisionRecord, TResult> =
+  | { kind: 'short-circuit'; value: TResult }
+  | { kind: 'commit'; record: T };
+export interface WatermarkedLedgerCommitOptions<T extends ChainedRevisionRecord, TResult> {
+  directory: string; lockFileName: string; config: ImmutablePrivateRecordStoreConfig<T>; maxRecords: number;
+  read: () => WatermarkedLedgerRead<T>; allowReplayedWatermark?: boolean; mapConflictDisposition?: boolean;
+  fail: (reason: 'conflict' | 'unavailable') => TResult;
+  prepare: (records: T[]) => WatermarkedLedgerCommitOutcome<T, TResult>;
+  onCommitted: (record: T, disposition: 'recorded' | 'replayed') => TResult;
+}
 interface WatermarkRecord extends ReplayWatermarkReservation {
   schemaVersion: 1; previousWatermarkDigest: string | null; digest: string;
 }
@@ -34,6 +51,66 @@ export function createRevisionRecordCodec<T extends RevisionRecord>(
     isRecordFileName: name => /^\d{16}\.json$/.test(name), stageToken: value => value.digest,
     equivalent: (left, right) => left.digest === right.digest, compare: (left, right) => left.revision - right.revision,
   };
+}
+/** Shared config for a watermarked immutable private ledger stored under `<directory>/ledger`. */
+export function createWatermarkedLedgerConfig<T extends ChainedRevisionRecord>(
+  options: WatermarkedLedgerConfigOptions<T>,
+): ImmutablePrivateRecordStoreConfig<T> {
+  return {
+    label: options.label, anchorPath: options.directory, rootPath: join(options.directory, 'ledger'), lockFileName: '.records.lock',
+    maxRecordBytes: options.maxRecordBytes, defaultMaxFiles: options.maxRecords, hardMaxFiles: options.maxRecords,
+    defaultMaxBytes: options.maxAggregateBytes, hardMaxBytes: options.maxAggregateBytes,
+    codecForRead: () => options.codec, codecForWrite: () => options.codec,
+  };
+}
+/** Read a complete watermarked revision chain and verify privacy, head alignment, links, and domain invariants. */
+export function readWatermarkedLedger<T extends ChainedRevisionRecord>(
+  directory: string, storeConfig: ImmutablePrivateRecordStoreConfig<T>, maxRecords: number,
+  verifyTransition: (record: T, previous: T | undefined, index: number, records: readonly T[]) => boolean,
+): WatermarkedLedgerRead<T> {
+  try {
+    inspectPrivateDirectory(directory);
+    const watermark = readReplayWatermark(directory, { maxRecords });
+    if (watermark.sourceState === 'degraded') return { sourceState: 'degraded', records: [] };
+    const snapshot = readImmutablePrivateRecords(storeConfig, { requireComplete: true });
+    if (snapshot.sourceState === 'missing') return { sourceState: watermark.sourceState === 'missing' ? 'missing' : 'degraded', records: [] };
+    if (!snapshot.complete || snapshot.sourceState !== 'healthy') return { sourceState: 'degraded', records: [] };
+    const head = snapshot.records.at(-1);
+    if (head ? watermark.sourceState !== 'healthy' || watermark.revision !== head.revision || watermark.ledgerDigest !== head.digest : watermark.sourceState !== 'missing') {
+      return { sourceState: 'degraded', records: [] };
+    }
+    for (const [index, record] of snapshot.records.entries()) {
+      const previous = snapshot.records[index - 1];
+      if (record.revision !== index + 1 || record.previousDigest !== (previous?.digest ?? null) || !verifyTransition(record, previous, index, snapshot.records)) {
+        return { sourceState: 'degraded', records: [] };
+      }
+    }
+    return { sourceState: snapshot.records.length ? 'healthy' : 'missing', records: snapshot.records };
+  } catch (error) { return { sourceState: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded', records: [] }; }
+}
+/** Lock, check degradation, recover staging, reserve watermark, and publish one immutable revision record. */
+export function commitWatermarkedLedgerRecord<T extends ChainedRevisionRecord, TResult>(
+  options: WatermarkedLedgerCommitOptions<T, TResult>,
+): TResult {
+  try { privateDirectory(options.directory); } catch { return options.fail('unavailable'); }
+  const acquired = acquireLocalStoreLockWithOutcome(join(options.directory, options.lockFileName), 0, { anchorPath: options.directory, exactPrivateStorage: true });
+  if (acquired.state !== 'acquired') return options.fail(acquired.state === 'contended' ? 'conflict' : 'unavailable');
+  try {
+    // Reservation gaps and truncated prefixes are never repaired into fresh permission.
+    if (options.read().sourceState === 'degraded') return options.fail('unavailable');
+    if (!['clean', 'recovered', 'missing'].includes(recoverImmutablePrivateRecordStore(options.config))) return options.fail('unavailable');
+    const current = options.read();
+    if (current.sourceState === 'degraded') return options.fail('unavailable');
+    const outcome = options.prepare(current.records);
+    if (outcome.kind === 'short-circuit') return outcome.value;
+    const { record } = outcome;
+    if (!ownsLocalStoreLock(acquired.lock)) return options.fail('unavailable');
+    const reserved = reserveReplayWatermark(options.directory, { revision: record.revision, ledgerDigest: record.digest, previousLedgerDigest: record.previousDigest }, { maxRecords: options.maxRecords });
+    if (!(options.allowReplayedWatermark ? reserved === 'recorded' || reserved === 'replayed' : reserved === 'recorded')) return options.fail('unavailable');
+    const disposition = writeImmutablePrivateRecord(options.config, record, { prepublish: () => ownsLocalStoreLock(acquired.lock) });
+    if (disposition !== 'recorded' && disposition !== 'replayed') return options.fail(options.mapConflictDisposition && disposition === 'conflicted' ? 'conflict' : 'unavailable');
+    return options.onCommitted(record, disposition);
+  } catch { return options.fail('unavailable'); } finally { releaseLocalStoreLock(acquired.lock); }
 }
 function validReservation(value: unknown): value is ReplayWatermarkReservation {
   if (!hasPlainDataKeys(value, ['revision', 'ledgerDigest', 'previousLedgerDigest'])) return false;

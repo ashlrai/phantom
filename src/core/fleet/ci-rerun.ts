@@ -20,52 +20,111 @@ const VERDICT_MIN_AGE_MS = 5 * 60_000;
 const VERDICT_MAX_AGE_MS = 24 * 60 * 60_000;
 /** Verdict API reads per repository per maintenance pass, bounding calls inside the deadline. */
 const MAX_VERDICT_CHECKS = 8;
-/** Slack allowed between the local fire timestamp and the run's GitHub updated_at guard. */
+/** Slack allowed between the local fire timestamp and the GitHub attempt start. */
 const VERDICT_SKEW_MS = 60_000;
 const VERDICTS = ['pass', 'fail', 'inconclusive'] as const;
 
 function rerunKey(e: Pick<Entry, 'repo' | 'head' | 'runId'>): string {
-  return JSON.stringify([e.repo, e.head, e.runId]);
+  return JSON.stringify([e.repo.toLowerCase(), e.head, e.runId]);
 }
 
 function compareVerdictPosition(a: VerdictCursor, b: VerdictCursor): number {
   return Date.parse(a.at) - Date.parse(b.at) || rerunKey(a).localeCompare(rerunKey(b));
 }
 
-/** Expand attempt evidence for recurrence while keeping workflow counters per run. */
-function summarizeFlakes(entries: readonly Entry[], nowMs: number) {
-  return recurringFlakes(entries.flatMap(entry => {
-    if (entry.outcome !== 'attempt' || !Array.isArray(entry.tests)) return [entry];
-    const tests = new Set(entry.tests.filter(test => typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX));
-    return [...tests].map(test => ({ ...entry, test }));
-  }), { nowMs });
+/** Keep one verdict per workflow run as of the observation time. */
+function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
+  const runs = new Map<string, { first: Entry; verdictConflict: boolean; testConflict: boolean }>();
+  for (const entry of entries) {
+    if (entry.outcome !== 'verdict' || Date.parse(entry.at) > nowMs) continue;
+    const key = JSON.stringify([entry.repo.toLowerCase(), entry.runId]);
+    const run = runs.get(key);
+    if (!run) {
+      runs.set(key, { first: entry, verdictConflict: false, testConflict: false });
+      continue;
+    }
+    run.verdictConflict ||= run.first.head !== entry.head || run.first.verdict !== entry.verdict;
+    run.testConflict ||= run.first.test !== entry.test;
+    if (Date.parse(entry.at) < Date.parse(run.first.at)) run.first = entry;
+  }
+  return [...runs.values()].filter(run => !run.verdictConflict)
+    .map(({ first, testConflict }) => testConflict ? { ...first, test: undefined } : first);
 }
 
-/** Fired reruns (ok call rows) still awaiting a run verdict, oldest first. */
-function pendingVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
-  const verdicted = new Set<string>();
-  const fired = new Map<string, Entry>();
-  for (const e of entries) {
-    const key = rerunKey(e);
-    if (e.outcome === 'verdict') verdicted.add(key);
-    else if (e.outcome === 'ok') {
-      const prev = fired.get(key);
-      if (!prev || Date.parse(e.at) >= Date.parse(prev.at)) fired.set(key, e);
+function triggeringTests(entry: Entry): string[] {
+  const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
+  return [...new Set(tests.filter((test): test is string =>
+    typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX))].sort();
+}
+
+/** Keep the earliest attempt time and only attribute consistent test evidence. */
+export function observedAttempts(entries: readonly Entry[], nowMs: number): Entry[] {
+  const attempts = new Map<string, { first: Entry; testsKey: string; testConflict: boolean }>();
+  for (const entry of entries) {
+    if (entry.outcome !== 'attempt' || Date.parse(entry.at) > nowMs) continue;
+    const key = rerunKey(entry);
+    const testsKey = JSON.stringify(triggeringTests(entry));
+    const attempt = attempts.get(key);
+    if (!attempt) {
+      attempts.set(key, { first: entry, testsKey, testConflict: false });
+      continue;
     }
+    attempt.testConflict ||= attempt.testsKey !== testsKey;
+    if (Date.parse(entry.at) < Date.parse(attempt.first.at)) attempt.first = entry;
   }
-  return [...fired.values()]
-    .filter(e => !verdicted.has(rerunKey(e)) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
+  return [...attempts.values()].map(({ first, testConflict }) =>
+    testConflict ? { ...first, test: undefined, tests: undefined } : first);
+}
+
+/** Expand each observed attempt once for each triggering test. */
+function summarizeFlakes(attempts: readonly Entry[], nowMs: number, verdicts: readonly Entry[]) {
+  const testsByAttempt = attempts.flatMap(entry => triggeringTests(entry).map(test => ({ ...entry, test })));
+  return recurringFlakes([...testsByAttempt, ...verdicts], { nowMs });
+}
+
+/** Reconcile call receipts without treating replays as new calls. */
+function observedCallResults(entries: readonly Entry[], nowMs: number): Entry[] {
+  const calls = new Map<string, { first: Entry; outcomeConflict: boolean; testConflict: boolean }>();
+  for (const e of entries) {
+    if ((e.outcome !== 'ok' && e.outcome !== 'failed') || Date.parse(e.at) > nowMs) continue;
+    const key = rerunKey(e);
+    const call = calls.get(key);
+    if (!call) {
+      calls.set(key, { first: e, outcomeConflict: false, testConflict: false });
+      continue;
+    }
+    call.outcomeConflict ||= call.first.outcome !== e.outcome;
+    call.testConflict ||= call.first.test !== e.test;
+    if (Date.parse(e.at) < Date.parse(call.first.at)) call.first = e;
+  }
+  return [...calls.values()].filter(call => !call.outcomeConflict)
+    .map(({ first, testConflict }) => testConflict ? { ...first, test: undefined } : first);
+}
+
+/** Fired reruns still awaiting a run verdict, oldest first. */
+function pendingVerdicts(entries: readonly Entry[], calls: readonly Entry[], nowMs: number): Entry[] {
+  const verdicted = new Set(entries.filter(e => e.outcome === 'verdict' && Date.parse(e.at) <= nowMs).map(rerunKey));
+  return calls
+    .filter(e => e.outcome === 'ok' && !verdicted.has(rerunKey(e)) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
     .sort(compareVerdictPosition);
 }
 
+function hourlyAttempts(entries: readonly Entry[], nowMs: number): number {
+  return entries.filter(e => Date.parse(e.at) > nowMs - 3_600_000).length;
+}
+
 /** Map a workflow-run API payload to a verdict; null means not yet resolvable. */
-function verdictFromRun(data: unknown, entry: Entry): Entry['verdict'] | null {
+function verdictFromRun(data: unknown, entry: Entry, observedAt: number): Entry['verdict'] | null {
   if (typeof data !== 'object' || data === null) return null;
-  const run = data as { id?: unknown; status?: unknown; conclusion?: unknown; head_sha?: unknown; updated_at?: unknown };
+  const run = data as { id?: unknown; status?: unknown; conclusion?: unknown; head_sha?: unknown; updated_at?: unknown; run_attempt?: unknown; run_started_at?: unknown };
   if (run.id !== entry.runId || run.head_sha !== entry.head || run.status !== 'completed') return null;
   if (typeof run.conclusion !== 'string' || !run.conclusion.trim() || typeof run.updated_at !== 'string') return null;
+  if (typeof run.run_attempt !== 'number' || !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 2
+      || typeof run.run_started_at !== 'string') return null;
+  const started = Date.parse(run.run_started_at);
   const updated = Date.parse(run.updated_at);
-  if (!Number.isFinite(updated) || updated < Date.parse(entry.at) - VERDICT_SKEW_MS) return null;
+  if (!Number.isFinite(started) || !Number.isFinite(updated)
+      || started < Date.parse(entry.at) - VERDICT_SKEW_MS || updated < started || updated > observedAt) return null;
   if (run.conclusion === 'success') return 'pass';
   if (run.conclusion === 'failure' || run.conclusion === 'timed_out') return 'fail';
   return 'inconclusive';
@@ -109,11 +168,29 @@ export function readCiReruns(path = ciRerunPaths().journalPath, now = Date.now()
       }
     } finally { closeSync(fd); }
   } catch { /* absent journal */ }
-  const attempts = entries.filter(e => e.outcome === 'attempt');
+  const observed = entries.filter(e => Date.parse(e.at) <= now);
+  const attempts = observedAttempts(observed, now);
+  const calls = observedCallResults(observed, now);
+  const verdicts = observedVerdicts(observed, now);
   const verdictTally = { pass: 0, fail: 0, inconclusive: 0 };
-  for (const e of entries) if (e.outcome === 'verdict' && e.verdict) verdictTally[e.verdict]++;
+  for (const e of verdicts) if (e.verdict) verdictTally[e.verdict]++;
   const resolved = verdictTally.pass + verdictTally.fail;
-  return { entries, recent: entries.slice(-100), counts: { attempted: attempts.length, ok: entries.filter(e => e.outcome === 'ok').length, failed: entries.filter(e => e.outcome === 'failed').length }, lastHour: attempts.filter(e => Date.parse(e.at) > now - 3_600_000).length, recurringFlakes: summarizeFlakes(entries, now), verdicts: { ...verdictTally, pending: pendingVerdicts(entries, now).length, resolutionRate: resolved > 0 ? verdictTally.pass / resolved : null } };
+  return {
+    entries,
+    recent: observed.slice(-100),
+    counts: {
+      attempted: attempts.length,
+      ok: calls.filter(e => e.outcome === 'ok').length,
+      failed: calls.filter(e => e.outcome === 'failed').length,
+    },
+    lastHour: hourlyAttempts(attempts, now),
+    recurringFlakes: summarizeFlakes(attempts, now, verdicts),
+    verdicts: {
+      ...verdictTally,
+      pending: pendingVerdicts(observed, calls, now).length,
+      resolutionRate: resolved > 0 ? verdictTally.pass / resolved : null,
+    },
+  };
 }
 
 export function readCiRerunStatus(path = ciRerunPaths().statusPath): { lastRunAt: string; status: string; repos: Record<string, RepoStatus> } | null {
@@ -149,8 +226,10 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
   try {
     for (const repo of opts.repos) {
       opts.signal.throwIfAborted();
+      const repoKey = repo.toLowerCase();
       const s: RepoStatus = { groups: 0, attempted: 0, ok: 0, failed: 0, skippedDuplicate: 0, skippedCap: 0, queued: 0, flakeFixesQueued: 0, recurringFlakes: 0, verdictsPending: 0, verdictsResolved: 0, queueBlocked: null, errors: [] };
-      s.verdictCursor = previous?.repos?.[repo]?.verdictCursor;
+      const previousRepo = Object.keys(previous?.repos ?? {}).find(name => name.toLowerCase() === repoKey);
+      s.verdictCursor = previousRepo === undefined ? undefined : previous?.repos[previousRepo]?.verdictCursor;
       status.repos[repo] = s;
       try {
         const report = await (opts.analyzer ?? analyzeCiBaseline)(repo, gh);
@@ -159,14 +238,23 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
         s.errors.push(...report.errors);
         const eligibleGroups = report.groups.filter(group =>
           group.classification === 'probable-flake' && group.action === 'rerun-failed');
+        const rerunGroups = new Set(eligibleGroups);
+        const runsWithOtherFailures = new Set<string>();
         const testsByRun = new Map<string, Set<string>>();
-        for (const group of eligibleGroups) {
-          if (typeof group.testId !== 'string' || !group.testId) continue;
-          const test = scrubSecrets(group.testId).slice(0, JOURNAL_TEST_MAX);
+        for (const group of report.groups) {
+          // A shortened or redacted ID can collide with a different test.
+          const test = rerunGroups.has(group) && typeof group.testId === 'string'
+            && group.testId.length <= JOURNAL_TEST_MAX && scrubSecrets(group.testId) === group.testId
+            ? group.testId
+            : '';
           for (const run of group.runs) {
             const key = rerunKey({ repo, ...run });
+            if (!test) {
+              runsWithOtherFailures.add(key);
+              continue;
+            }
             const tests = testsByRun.get(key) ?? new Set<string>();
-            if (test) tests.add(test);
+            tests.add(test);
             testsByRun.set(key, tests);
           }
         }
@@ -174,11 +262,13 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
           opts.signal.throwIfAborted();
           for (const run of group.runs) {
             opts.signal.throwIfAborted();
-            if (journal.some(e => e.repo === repo && e.head === run.head && e.runId === run.runId)) { s.skippedDuplicate++; continue; }
+            const key = rerunKey({ repo, ...run });
+            if (journal.some(e => rerunKey(e) === key)) { s.skippedDuplicate++; continue; }
             const cap = opts.maxPerHour ?? 10;
-            if (!Number.isFinite(cap) || journal.filter(e => e.outcome === 'attempt' && Date.parse(e.at) > now() - 3_600_000).length >= Math.max(0, cap)) { s.skippedCap++; continue; }
+            const evaluatedAt = now();
+            if (!Number.isFinite(cap) || hourlyAttempts(observedAttempts(journal, evaluatedAt), evaluatedAt) >= Math.max(0, cap)) { s.skippedCap++; continue; }
             const entry: Entry = { at: new Date(now()).toISOString(), repo, ...run, outcome: 'attempt' };
-            const tests = [...(testsByRun.get(rerunKey(entry)) ?? [])];
+            const tests = [...(testsByRun.get(key) ?? [])];
             if (tests.length === 1) entry.test = tests[0];
             else if (tests.length > 1) entry.tests = tests;
             append(entry);
@@ -186,12 +276,16 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
             let ok = false;
             try { ok = (await gh(['run', 'rerun', String(run.runId), '--failed', '--repo', repo])).ok; }
             catch (error) { if (opts.signal.aborted) throw error; }
-            append({ ...entry, tests: undefined, at: new Date(now()).toISOString(), outcome: ok ? 'ok' : 'failed' });
+            // A failed-job rerun can include failures outside the triggering flakes.
+            const test = runsWithOtherFailures.has(key) ? undefined : entry.test;
+            append({ ...entry, test, tests: undefined, at: new Date(now()).toISOString(), outcome: ok ? 'ok' : 'failed' });
             if (ok) s.ok++; else s.failed++;
           }
         }
         opts.signal.throwIfAborted();
-        const flakes = summarizeFlakes(journal.filter(e => e.repo === repo), now());
+        const repoEntries = journal.filter(e => e.repo.toLowerCase() === repoKey);
+        const evaluatedAt = now();
+        const flakes = summarizeFlakes(observedAttempts(repoEntries, evaluatedAt), evaluatedAt, observedVerdicts(repoEntries, evaluatedAt));
         s.recurringFlakes = flakes.length;
         const sharedBaseline = report.groups.some(g => g.classification === 'shared-baseline');
         if (sharedBaseline || flakes.length > 0) {
@@ -204,9 +298,14 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
             s.flakeFixesQueued = enqueueFlakeFixes(flakes, queuePath).length;
           }
         }
-        const pending = pendingVerdicts(journal.filter(e => e.repo === repo), now());
+        const pendingAt = now();
+        const pending = pendingVerdicts(repoEntries, observedCallResults(repoEntries, pendingAt), pendingAt);
+        const attemptsByRun = new Map(observedAttempts(repoEntries, pendingAt).map(entry => [rerunKey(entry), entry]));
         s.verdictsPending = pending.length;
-        const eligible = pending.filter(e => Date.parse(e.at) <= now() - VERDICT_MIN_AGE_MS);
+        // A future-dated verdict is invisible to the tally but still deduplicates writes.
+        const recordedVerdicts = new Set(journal.filter(e => e.outcome === 'verdict').map(rerunKey));
+        const eligible = pending.filter(e =>
+          !recordedVerdicts.has(rerunKey(e)) && Date.parse(e.at) <= now() - VERDICT_MIN_AGE_MS);
         const cursor = s.verdictCursor;
         const next = cursor ? eligible.findIndex(e => compareVerdictPosition(e, cursor) > 0) : 0;
         const start = Math.max(0, next);
@@ -214,16 +313,22 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
           const p = eligible[(start + offset) % eligible.length]!;
           opts.signal.throwIfAborted();
           let verdict: Entry['verdict'] | null = null;
+          let observedAt = 0;
           try {
             const r = await gh(['api', `repos/${repo}/actions/runs/${p.runId}`]);
             if (r.ok) {
-              try { verdict = verdictFromRun(JSON.parse(r.stdout), p); }
+              observedAt = now();
+              try { verdict = verdictFromRun(JSON.parse(r.stdout), p, observedAt); }
               catch { /* malformed run payload: stays pending for a later pass */ }
             }
           } catch (error) { if (opts.signal.aborted) throw error; }
           s.verdictCursor = { at: p.at, repo: p.repo, head: p.head, runId: p.runId };
           if (verdict === null) continue;
-          append({ at: new Date(now()).toISOString(), repo: p.repo, head: p.head, runId: p.runId, pr: p.pr, outcome: 'verdict', verdict, ...(p.test ? { test: p.test } : {}) });
+          const attempt = attemptsByRun.get(rerunKey(p));
+          const tests = attempt ? triggeringTests(attempt) : [];
+          // Older or truncated journals can have a call receipt without its attempt.
+          const test = p.test && (!attempt || (tests.length === 1 && tests[0] === p.test)) ? p.test : undefined;
+          append({ at: new Date(observedAt).toISOString(), repo: p.repo, head: p.head, runId: p.runId, pr: p.pr, outcome: 'verdict', verdict, ...(test ? { test } : {}) });
           s.verdictsResolved++;
         }
       } catch (error) {

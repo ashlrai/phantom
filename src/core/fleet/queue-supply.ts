@@ -4,8 +4,11 @@
  *
  * Joins three reads that already exist and measures nothing new:
  *   usage and reset  pools.v1 (`buildPoolsView`), the same numbers `phm pools` shows;
- *   ready jobs       queue/ready.tsv, one row per queued job, counted by the lane it will launch on
- *                    (parked rows are held out of launch and not counted);
+ *   ready jobs       queue/ready.tsv, one row per queued job, counted by the lane the work
+ *                    market resolves for it — requirements preferred_lane, or the row's
+ *                    router-queue.md envelope when the spec names none, else the lane
+ *                    column (parked and market-rejected rows are held out of launch and
+ *                    not counted);
  *   starts per hour  LAUNCH lines of dispatch-events.log over the last 6 hours.
  * "Hours of work queued" = ready jobs / starts per hour. A source that cannot be read is null and shown as unknown,
  * never as zero. Pure `buildQueueSupply`; `readQueueSupply` does the reads.
@@ -14,9 +17,12 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { poolLabel } from '../usage/runway.js';
+import { KNOWN_STATUSES } from './lane-console.js';
 import { defaultRunsDir } from './landed-closes-read.js';
 import type { PoolRow, PoolsViewV1 } from './pools-view.js';
-import { parseReadyRows, readReadyText } from './ready-row-edit.js';
+import { readReadyText } from './ready-row-edit.js';
+import { readSource } from './runs-parked-queue.js';
+import { parseReadyMarketRows } from './unfed-market.js';
 
 export const QUEUE_SUPPLY_SCHEMA = 'queue.supply.v1';
 /** How far back launches are counted to get a pool's starts per hour. */
@@ -24,7 +30,7 @@ export const SUPPLY_STARTS_WINDOW_H = 6;
 /** The digest speaks when a pool at risk of waste has less work than this queued. */
 export const SUPPLY_LOW_HOURS = 1;
 
-/** empty: usage left, nothing queued. low: under an hour queued. healthy: enough queued. used-up and held: work waits on the pool. unknown: usage or queue could not be read. */
+/** empty: usage left, nothing queued. low: under an hour queued. healthy: at least an hour queued. used-up and held: work waits on the pool. unknown: usage, queue depth, or queue duration is unavailable. */
 export type SupplyState = 'empty' | 'low' | 'healthy' | 'used-up' | 'held' | 'unknown';
 
 export interface SupplyRow {
@@ -37,7 +43,7 @@ export interface SupplyRow {
   left_pct: number | null;
   resets_in_h: number | null;
   reset_at: string | null;
-  /** Jobs in the ready queue routed to this pool; null when the queue could not be read. */
+  /** Jobs in the ready queue the market resolves to this pool; null when the queue could not be read. */
   ready: number | null;
   /** Launches per hour over the last 6 hours; null when the launch log could not be read. */
   starts_per_hour: number | null;
@@ -66,9 +72,9 @@ export interface QueueSupplyV1 {
 
 export interface QueueSupplyInput {
   view: Pick<PoolsViewV1, 'pools' | 'generatedAt'>;
-  /** Ready jobs per lane; null when ready.tsv could not be read. */
+  /** Ready jobs per lane the market resolves; null when ready.tsv could not be read. */
   readyByLane: Readonly<Record<string, number>> | null;
-  /** Launches per lane inside the window; null when the launch log could not be read. */
+  /** Launches per lane inside the window; null when log coverage is unavailable. */
   startsByLane: Readonly<Record<string, number>> | null;
   /** Window the launches were counted over, in hours. */
   windowH?: number;
@@ -87,7 +93,7 @@ function dayAndTime(iso: string): string {
 
 /** "20 min", "1 hour", "3 hours". */
 function span(hours: number): string {
-  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} min`;
+  if (hours < 1) return `${Math.min(59, Math.max(1, Math.round(hours * 60)))} min`;
   const h = Math.round(hours);
   return plural(h, 'hour', 'hours');
 }
@@ -97,8 +103,9 @@ const atRisk = (row: PoolRow): boolean => row.wasteRisk === 'high' || row.wasteR
 function rowFor(pool: PoolRow, input: QueueSupplyInput, nowMs: number, windowH: number): SupplyRow {
   const label = poolLabel(pool.id);
   const ready = input.readyByLane === null ? null : input.readyByLane[pool.id] ?? 0;
-  const starts = input.startsByLane === null ? null : round1((input.startsByLane[pool.id] ?? 0) / windowH);
-  const hoursQueued = ready === null ? null : ready === 0 ? 0 : starts !== null && starts > 0 ? round1(ready / starts) : null;
+  const launchCount = input.startsByLane === null ? null : input.startsByLane[pool.id] ?? 0;
+  const starts = launchCount === null ? null : launchCount / windowH;
+  const hoursQueued = ready === null ? null : ready === 0 ? 0 : launchCount !== null && launchCount > 0 ? ready * windowH / launchCount : null;
   const resetMs = pool.resetAt === null ? NaN : Date.parse(pool.resetAt);
   const resetsIn = Number.isFinite(resetMs) && resetMs > nowMs ? round1((resetMs - nowMs) / 3_600_000) : null;
   const used = pool.usedPct;
@@ -111,7 +118,7 @@ function rowFor(pool: PoolRow, input: QueueSupplyInput, nowMs: number, windowH: 
 
   const reasons: string[] = [];
   if (ready === null) reasons.push('ready queue not readable');
-  if (starts === null) reasons.push('launch log not readable');
+  if (starts === null) reasons.push('launch window unavailable');
   else if (ready !== null && ready > 0 && starts === 0) reasons.push(`no launches in the last ${windowH} h to size the queue`);
   if (!known) reasons.push(pool.reason ?? 'no usage reading');
 
@@ -129,7 +136,10 @@ function rowFor(pool: PoolRow, input: QueueSupplyInput, nowMs: number, windowH: 
   if (ready === null) return out('unknown', `${label}: queue unknown, ${leftText}`);
   const idleText = idle === null ? '' : `, about ${span(idle)} of usage idle`;
   if (ready === 0) return out('empty', `${label}: 0 jobs queued, ${leftText}${idleText}`, risk);
-  if (hoursQueued === null) return out('healthy', `${label}: ${queued}, ${leftText}, no recent starts to size the queue`);
+  if (hoursQueued === null) {
+    const explanation = starts === null ? 'launch window unavailable' : 'no recent starts to size the queue';
+    return out('unknown', `${label}: ${queued}, ${leftText}, ${explanation}`);
+  }
   if (hoursQueued < SUPPLY_LOW_HOURS) return out('low', `${label}: ${queued}, about ${span(hoursQueued)} of work, ${leftText}${idleText}`, risk);
   return out('healthy', `${label}: ${queued}, about ${span(hoursQueued)} of work, ${leftText}`);
 }
@@ -143,11 +153,11 @@ export function buildQueueSupply(input: QueueSupplyInput): QueueSupplyV1 {
   // Stable: pools of one state keep the order `phm pools` gave them.
   const pools = rows.map((row, index) => ({ row, index })).sort((a, b) => ORDER[a.row.state] - ORDER[b.row.state] || a.index - b.index).map(x => x.row);
   const gaps = [
-    'Ready jobs are counted by the lane written on their queue row; a job the router has not placed on a lane yet is not counted.',
+    'Each job ID is counted at most once, using the first valid dispatcher row. Its lane comes from preferred_lane in the row\'s spec or router-queue.md envelope, or from the lane column when neither applies. Lane-open jobs contribute to no pool.',
     `Starts per hour is the last ${windowH} hours of launches, so a pool that has not launched lately shows its hours of work as unknown.`,
   ];
   if (input.readyByLane === null) gaps.unshift('The ready queue could not be read.');
-  if (input.startsByLane === null) gaps.unshift('The dispatch event log could not be read.');
+  if (input.startsByLane === null) gaps.unshift('The dispatch event log did not establish coverage of the launch window.');
   return { schema: QUEUE_SUPPLY_SCHEMA, generated_at: input.view.generatedAt, pools, gaps };
 }
 
@@ -167,6 +177,8 @@ export function supplyLowLine(data: QueueSupplyV1): string | null {
 
 const EVENT_LINE = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\s+LAUNCH\s+\S+\s+\S+\s+(\S+)/;
 const TAIL_BYTES = 2 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; same bound the unfed read uses. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 /** Launches per lane in the window. Event times are local wall time, as dispatchd writes them. */
 export function countStarts(eventsText: string, nowMs: number, windowH = SUPPLY_STARTS_WINDOW_H): Record<string, number> {
@@ -181,23 +193,53 @@ export function countStarts(eventsText: string, nowMs: number, windowH = SUPPLY_
   return out;
 }
 
-async function readTail(path: string): Promise<string> {
+async function readStarts(path: string, nowMs: number): Promise<Record<string, number> | null> {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const { size } = await handle.stat();
+    const stat = await handle.stat();
+    if (!stat.isFile()) return null;
+    const { size } = stat;
     const length = Math.min(size, TAIL_BYTES);
     const buffer = Buffer.alloc(length);
-    await handle.read(buffer, 0, length, size - length);
-    return buffer.toString('utf8');
+    const { bytesRead } = await handle.read(buffer, 0, length, size - length);
+    if (bytesRead !== length) return null;
+    let text = buffer.toString('utf8');
+    if (size > length) {
+      // The byte offset may land inside a line. Require a complete event
+      // strictly before the inclusive window to establish tail coverage.
+      const boundary = text.indexOf('\n');
+      if (boundary < 0) return null;
+      text = text.slice(boundary + 1);
+      const first = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) [^\n]+\n/.exec(text);
+      const at = first ? Date.parse(first[1]!.replace(' ', 'T')) : NaN;
+      if (!Number.isFinite(at) || at >= nowMs - SUPPLY_STARTS_WINDOW_H * 3_600_000) return null;
+    }
+    return countStarts(text, nowMs);
   } finally { await handle.close(); }
 }
 
-/** Ready jobs per lane from queue/ready.tsv; parked rows (lane PARKED-*) are held out of launch. */
-export function countReady(readyText: string): Record<string, number> {
+/**
+ * Ready jobs per lane the way the work market resolves them: a row's
+ * requirements preferred_lane — or its router-queue.md envelope for a
+ * spec-less row — wins over the lane column, an open (null) hint counts
+ * nowhere, and a row the market would reject is dead work, never supply.
+ * Status-first ready.tsv rows (`READY job lane tier repo prompt`) are not
+ * dispatcher jobs — dispatchd's ok-check needs the repo in cell 2 — so they
+ * are dropped before the market-row parse, which would otherwise misread
+ * their cells as the dispatcher dialect.
+ */
+export function countReady(readyText: string, routerQueue?: string | null): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const row of parseReadyRows(readyText)) {
-    if (row.lane === '' || row.lane.startsWith('PARKED')) continue;
-    out[row.lane] = (out[row.lane] ?? 0) + 1;
+  const seen = new Set<string>();
+  const dispatcher = readyText.split('\n').filter(line => {
+    const first = line.split('\t', 1)[0] ?? '';
+    return !KNOWN_STATUSES.has(first.trim().toUpperCase());
+  }).join('\n');
+  for (const row of parseReadyMarketRows(dispatcher, routerQueue).rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    if (row.hint === null) continue;
+    out[row.hint] = (out[row.hint] ?? 0) + 1;
   }
   return out;
 }
@@ -208,10 +250,21 @@ export async function readQueueSupply(opts: { runsDir?: string; now?: () => numb
   const [{ readResourceLedger }, { buildPoolsView }, { readUsageSamples }] = await Promise.all([
     import('./runs-resource-ledger.js'), import('./pools-view.js'), import('./usage-history.js'),
   ]);
-  const [view, readyByLane, startsByLane] = await Promise.all([
+  // Spec-less ready rows resolve their requirements from router-queue.md
+  // envelopes; an absent or over-bound queue leaves the lane column standing,
+  // exactly like the market's own fallback. Any ready.tsv read failure leaves
+  // supply unknown while the rest of the report still stands.
+  const readyByLane = Promise.all([
+    readReadyText(join(runsDir, 'queue', 'ready.tsv')),
+    readSource(join(runsDir, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES, false),
+  ]).then(
+    ([text, routerQueue]) => countReady(text, routerQueue.state === 'healthy' ? routerQueue.text : null),
+    () => null,
+  );
+  const [view, ready, startsByLane] = await Promise.all([
     readResourceLedger({ runsDir, now: () => nowMs }).then(async ledger => buildPoolsView(ledger, nowMs, await readUsageSamples({ nowMs }))),
-    readReadyText(join(runsDir, 'queue', 'ready.tsv')).then(countReady, (error: NodeJS.ErrnoException) => error.code === 'ENOENT' ? {} : null),
-    readTail(join(runsDir, 'dispatch-events.log')).then(text => countStarts(text, nowMs), () => null),
+    readyByLane,
+    readStarts(join(runsDir, 'dispatch-events.log'), nowMs).catch(() => null),
   ]);
-  return buildQueueSupply({ view, readyByLane, startsByLane });
+  return buildQueueSupply({ view, readyByLane: ready, startsByLane });
 }

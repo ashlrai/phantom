@@ -22,7 +22,7 @@ function assertOwner(directory: TeamDirectory, actor: TeamActor): void {
   if (actor.kind !== 'human' || !owners.some(p => p.id === actor.id)) throw new DirectoryRefusedError(OWNER_ONLY);
 }
 /** Pools a teammate can bring: the dispatch lanes plus any lane already on this team's record. */
-export const knownPools = (directory?: TeamDirectory): string[] =>
+const knownPools = (directory?: TeamDirectory): string[] =>
   [...new Set([...DROP_JOB_LANES, ...BUS_MIRROR_KNOWN_LANES, ...(directory?.people.flatMap(p => p.lanes) ?? [])])].sort();
 const invalid = (): never => { throw new DirectoryInputError('Invalid teammate. Use a display name, role, contact identities, lane names and seat names only.'); };
 
@@ -78,8 +78,9 @@ export function addTeamPerson(team: string, actor: TeamActor, input: unknown, op
       m.identities.some(i => identities.some(j => i.kind === j.kind && i.value.toLowerCase() === j.value.toLowerCase())))) {
       throw new DirectoryInputError('Teammate already exists. Use phm team list to review.');
     }
-    const unknown = p.lanes.filter(lane => !knownPools(directory).includes(lane));
-    if (unknown.length) throw new DirectoryInputError(`Unknown pool ${unknown.join(', ')}. Known pools: ${knownPools(directory).join(', ')}.`);
+    const pools = knownPools(directory);
+    const unknown = p.lanes.filter(lane => !pools.includes(lane));
+    if (unknown.length) throw new DirectoryInputError(`Unknown pool ${unknown.join(', ')}. Known pools: ${pools.join(', ')}.`);
     const total = shareTotal(directory.people) + (p.poolSharePct ?? 0);
     if (total > 100) throw new DirectoryInputError(`Pool shares would add up to ${total}%. Keep the total at 100 or less.`);
     const person: TeamPerson = { id: `person:${randomUUID()}`, displayName: p.displayName, role: p.role, identities,

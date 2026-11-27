@@ -252,10 +252,9 @@ async function bindOwnerHandle(configDir: string, handle: string, state: PairSta
 export function unpairOwner(configDir: string): { status: 'unpaired' | 'not-paired' | 'failed' } {
   const state = readPairState(configDir);
   const wasBound = boundHandle(configDir) !== undefined;
-  if (!wasBound && !state.pending) return { status: 'not-paired' };
   if (wasBound && !writeNetwork(configDir, (text, section) => withoutIdentity(text, section), ['mason', 'team'])) return { status: 'failed' };
   writePairState(configDir, { pending: null, lastStartAt: state.lastStartAt, autoOff: true });
-  return { status: 'unpaired' };
+  return { status: wasBound || state.pending ? 'unpaired' : 'not-paired' };
 }
 
 const sentLine = (n: number): string => `sent to ${n} handle${n === 1 ? '' : 's'}, waiting for YES`;
@@ -272,6 +271,7 @@ export async function pairTick(deps: PairDeps): Promise<PairTickReport> {
   if (readPairState(deps.configDir).pending) {
     const checked = await checkOwnerPair(deps);
     if (checked.status === 'bound') return { action: 'bound', detail: checked.confirmed ? 'paired and confirmed' : `paired; ${checked.reason ?? 'not confirmed'}` };
+    if (checked.status === 'unreadable') return { action: 'waiting', detail: 'Messages replies are unreadable; YES cannot currently be checked' };
     if (checked.status !== 'expired') return { action: 'waiting', detail: sentLine(readPairState(deps.configDir).pending?.handles.length ?? 0) };
     expired = true;
   }

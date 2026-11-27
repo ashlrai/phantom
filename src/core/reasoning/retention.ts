@@ -154,10 +154,9 @@ export async function applyReasoningRetention(options: RetentionOptions = {}): P
     }
 
     // 3. Enforce the whole-store ceiling, oldest first, steps before features.
-    const steps = await listDayFiles('steps', root);
-    const features = await listDayFiles('features', root);
-    let total = [...steps, ...features].reduce((sum, file) => sum + file.size, 0);
-    for (const file of [...steps, ...features]) {
+    const remaining = [...await listDayFiles('steps', root), ...await listDayFiles('features', root)];
+    let total = remaining.reduce((sum, file) => sum + file.size, 0);
+    for (const file of remaining) {
       if (total <= maxBytes) break;
       if (removeDayFile(file.path)) {
         total -= file.size;

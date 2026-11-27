@@ -93,6 +93,28 @@ export function validHumanMemberId(value: unknown): value is string {
 
 export const REPO_NAME_RE = /^[\w.-]+\/[\w.-]+$/;
 
+export function isAdminRole(role: unknown): role is 'owner' | 'admin' {
+  return role === 'owner' || role === 'admin';
+}
+
+export function isHumanRole(role: unknown): role is 'owner' | 'admin' | 'member' {
+  return role === 'owner' || role === 'admin' || role === 'member';
+}
+
+export function isAssignableMemberRole(role: unknown): role is 'admin' | 'member' {
+  return role === 'admin' || role === 'member';
+}
+
+export function normalizeHandle(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+}
+
+export function stringList(value: unknown, max?: number): string[] {
+  if (!Array.isArray(value)) return [];
+  const items = value.filter((entry): entry is string => typeof entry === 'string');
+  return max === undefined ? items : items.slice(0, max);
+}
+
 /** Structural parse of an `access.requested` payload's `request` field (state-independent). */
 export function parseAccessRequestAction(value: unknown): AccessRequestAction | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -101,7 +123,7 @@ export function parseAccessRequestAction(value: unknown): AccessRequestAction | 
     case 'member.invited':
       return validHumanMemberId(v['memberId']) ? { type: 'member.invited', memberId: v['memberId'] } : null;
     case 'member.role-changed':
-      return validHumanMemberId(v['memberId']) && (v['role'] === 'admin' || v['role'] === 'member')
+      return validHumanMemberId(v['memberId']) && isAssignableMemberRole(v['role'])
         ? { type: 'member.role-changed', memberId: v['memberId'], role: v['role'] } : null;
     case 'repo.linked':
       return typeof v['repo'] === 'string' && REPO_NAME_RE.test(v['repo']) ? { type: 'repo.linked', repo: v['repo'].toLowerCase() } : null;
@@ -125,6 +147,10 @@ export function claimsOverlap(a: ClaimTarget, b: ClaimTarget): boolean {
 const ID_RE = /^[a-z0-9][a-z0-9._:/@-]{0,127}$/i;
 export function validId(value: unknown): value is string {
   return typeof value === 'string' && ID_RE.test(value);
+}
+
+export function validTeamId(value: unknown): value is string {
+  return validId(value) && !value.includes('/') && !value.includes('..');
 }
 
 export function validOwnerScope(value: unknown): value is OwnerScope {

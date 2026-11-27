@@ -18,7 +18,7 @@
 import type { TypeSafeChoiceQuestion } from '../classify/typesafe-client.js';
 import { decide } from './decide.js';
 import { OPERATOR_INTENTS } from './registry.js';
-import type { DecideOptions, Decision } from './types.js';
+import type { Decision, DecisionCallOptions } from './types.js';
 
 export type OperatorIntent = (typeof OPERATOR_INTENTS)[number];
 
@@ -34,7 +34,7 @@ export interface OperatorIntentContext {
   readonly channel?: 'telegram' | 'verse' | 'cli';
 }
 
-export type ClassifyOperatorIntentOptions = Omit<DecideOptions<OperatorIntent>, 'fallback' | 'interpret' | 'escalateOnly'>;
+export type ClassifyOperatorIntentOptions = DecisionCallOptions;
 
 // ---------------------------------------------------------------------------
 // Deterministic reading

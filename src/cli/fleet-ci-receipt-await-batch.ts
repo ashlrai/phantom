@@ -11,7 +11,7 @@ import {
   CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS,
   CI_RECEIPT_AWAIT_MIN_POLL_MS,
 } from '../core/fleet/ci-receipt-await.js';
-import { isAwaitMs } from '../core/fleet/needs-mason-answer-await.js';
+import { parseBoundedMsFlag, readBoundedUtf8Input } from '../core/fleet/ci-receipt-shared.js';
 import type { GitRunner } from '../core/verse/git-ops.js';
 
 const USAGE = 'usage: ashlr fleet ci-receipt-await-batch --stdin --timeout-ms N [--poll-ms N] [--target-timeout-ms N] [--json | --ndjson]';
@@ -49,9 +49,6 @@ started, 2 invalid arguments or input. Output failures propagate as errors.
 Read-only: every call is a GET metadata/listing read plus a bounded archive
 download; there are no POSTs, no workflow dispatch and no check mutation.`;
 
-const boundedMs = (v: string | undefined, max: number): number | null =>
-  v !== undefined && /^\d+$/.test(v) && isAwaitMs(Number(v), max) ? Number(v) : null;
-
 export interface FleetCiReceiptAwaitBatchDeps {
   input?: AsyncIterable<string | Uint8Array>;
   gh?: GitRunner;
@@ -60,18 +57,6 @@ export interface FleetCiReceiptAwaitBatchDeps {
   signal?: AbortSignal;
   /** Internal output seam for streaming consumers. */
   output?: Writable;
-}
-
-async function readStdin(input: AsyncIterable<string | Uint8Array>): Promise<string> {
-  const chunks: Buffer[] = [];
-  let bytes = 0;
-  for await (const chunk of input) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    bytes += buffer.length;
-    if (bytes > CI_RECEIPT_AWAIT_BATCH_MAX_INPUT_BYTES) throw new Error('input too large');
-    chunks.push(buffer);
-  }
-  return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
 }
 
 /** Bounded batch artifact wait; stdout is the single JSON report, diagnostics stderr. */
@@ -95,28 +80,21 @@ export async function cmdFleetCiReceiptAwaitBatch(
     }
     values.set(arg, args[++i]!);
   }
-  const timeoutMs = boundedMs(values.get('--timeout-ms'), CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS);
+  const timeoutMs = parseBoundedMsFlag(values.get('--timeout-ms'), CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS);
   const pollMs = values.has('--poll-ms')
-    ? boundedMs(values.get('--poll-ms'), CI_RECEIPT_AWAIT_MAX_POLL_MS)
+    ? parseBoundedMsFlag(values.get('--poll-ms'), CI_RECEIPT_AWAIT_MAX_POLL_MS)
     : CI_RECEIPT_AWAIT_DEFAULT_POLL_MS;
   const targetTimeoutMs = values.has('--target-timeout-ms')
-    ? boundedMs(values.get('--target-timeout-ms'), CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS) : undefined;
+    ? parseBoundedMsFlag(values.get('--target-timeout-ms'), CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS) : undefined;
   if (json && ndjson) return invalid('conflicting_output_flags');
   if (!stdin) return invalid('missing_stdin_flag');
   if (timeoutMs === null || pollMs === null || pollMs < CI_RECEIPT_AWAIT_MIN_POLL_MS || targetTimeoutMs === null) {
     return invalid('invalid_flags');
   }
-  const input = deps.input ?? process.stdin;
-  if (deps.input === undefined && (input as { isTTY?: boolean }).isTTY === true) {
-    return invalid('stdin_must_be_a_pipe');
-  }
-  let text: string;
-  try { text = await readStdin(input); }
-  catch (error) {
-    return invalid(error instanceof Error && error.message === 'input too large'
-      ? 'input_too_large' : 'input_unreadable');
-  }
-  const parsed = parseCiReceiptAwaitBatchInput(text);
+  const read = await readBoundedUtf8Input(
+    deps.input ?? process.stdin, CI_RECEIPT_AWAIT_BATCH_MAX_INPUT_BYTES, deps.input === undefined);
+  if (!read.ok) return invalid(read.reason);
+  const parsed = parseCiReceiptAwaitBatchInput(read.text);
   if (!parsed.ok) return invalid(parsed.reason);
   const output = deps.output ?? process.stdout;
   let outputError: Error | undefined;

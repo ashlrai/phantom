@@ -90,7 +90,7 @@ describe('foldRewardJournal', () => {
       rewardRow({ jobId: 'job-10', repo: 'not a repo', recordedAtMs: NOW_MS }),
       // Cost shape drift.
       J({ ...JSON.parse(held('job-11', NOW_MS)), cost: { pool: null } }),
-      // Outside the window and beyond the skew allowance.
+      // Outside the window.
       held('job-12', NOW_MS - REWARD_BACKLOG_WINDOW_MS - 10),
       held('job-13', NOW_MS + 120_000),
       'not json',
@@ -171,6 +171,15 @@ describe('rewardCells', () => {
     expect(oneDay.pools.get('claude')!.days.size).toBe(1);
     expect(rewardCells(oneDay)).toEqual([]);
 
+    const burstWithHeldMerges = [
+      ...poolSeries('claude', 1, 4, (_d, i) => notHeld(`burst-${i}`, NOW_MS - i * HOUR)),
+      held('held-1', NOW_MS - DAY),
+      held('held-2', NOW_MS - 2 * DAY),
+    ];
+    const burst = foldRewardJournal(burstWithHeldMerges.join('\n'), NOW_MS, REWARD_BACKLOG_WINDOW_MS);
+    expect(burst.pools.get('claude')).toMatchObject({ rows: 6, notHeld: 4 });
+    expect(rewardCells(burst)).toEqual([]);
+
     // Enough rows and days but not-held below the floor: 3 not-held of 6.
     const thin = foldRewardJournal(
       [
@@ -207,8 +216,6 @@ describe('rewardCells', () => {
     expect(cells[0]).toMatchObject({ pool: 'claude', rows: 7, held: 2, notHeld: 5 });
     expect(cells[0]!.share).toBeCloseTo(5 / 7, 5);
     expect(cells[0]!.days).toHaveLength(3);
-    expect(cells[0]!.lowerBound).toBe(false);
-    expect(rewardCells(recurring, true)[0]!.lowerBound).toBe(true);
     expect(cells[0]!.repos[0]).toEqual(['ashlrai/phantom', 7]);
   });
 
@@ -272,8 +279,14 @@ describe('rewardBacklogItems', () => {
     expect(item.prompt).toContain('router-calibration');
     expect(item.prompt).toContain('merged:false');
     expect(item.prompt).toContain('9 of 11');
+    expect(item.prompt).toContain('not held across 3 UTC day(s)');
     expect(item.prompt).toContain('no-change');
-    expect(item.prompt).not.toContain('lower bound');
+
+    for (const repo of ['ASHLRAI/Phantom', 'phantom']) {
+      const allowed = await rewardBacklogItems({ repo, ledgerPath: path, now: NOW_MS });
+      expect(allowed.map(({ id }) => id)).toEqual([item.id]);
+    }
+    expect(await rewardBacklogItems({ repo: 'another-owner/phantom', ledgerPath: path, now: NOW_MS })).toEqual([]);
   });
 
   it('emits nothing for missing evidence, another repository, or below-bar cells', async () => {
@@ -301,14 +314,27 @@ describe('rewardBacklogItems', () => {
     expect(await rewardBacklogItems({ repo: 'ashlrai/phantom', ledgerPath: healthy, now: NOW_MS })).toEqual([]);
   });
 
-  it('states truncation as a lower bound in every prompt', async () => {
-    const rows = poolSeries('claude', 3, 2, (d, i) => notHeld(`n${d}-${i}`, NOW_MS - d * DAY));
-    // Pad the ledger past the 16 MiB tail bound so the read reports truncated.
-    const pad = 'x'.repeat(17 * 1024 * 1024);
-    const path = await ledger('led-trunc', [pad, ...rows]);
-    const items = await rewardBacklogItems({ repo: 'ashlrai/phantom', ledgerPath: path, now: NOW_MS });
-    expect(items.length).toBeGreaterThan(0);
-    expect(items.every((i) => i.prompt.includes('lower bound'))).toBe(true);
+  it('withholds collapse items when the clipped prefix can overturn the majority', async () => {
+    const notHeldRows = poolSeries('claude', 3, 2, (d, i) => notHeld(`n${d}-${i}`, NOW_MS - d * DAY));
+    const heldRows = poolSeries('claude', 3, 2, (d, i) => held(`h${d}-${i}`, NOW_MS - d * DAY));
+    const path = await ledger('led-trunc', [heldRows.join('\n'), ' '.repeat(17 * 1024 * 1024), ...notHeldRows]);
+    expect(await rewardBacklogItems({ repo: 'ashlrai/phantom', ledgerPath: path, now: NOW_MS })).toEqual([]);
+  });
+
+  it('waits until a future receipt enters the evidence window before emitting a brief', async () => {
+    const path = await ledger('led-future', [
+      notHeld('n1', NOW_MS - DAY),
+      notHeld('n2', NOW_MS - DAY),
+      notHeld('n3', NOW_MS),
+      held('h1', NOW_MS),
+      held('h2', NOW_MS),
+      notHeld('n4', NOW_MS + 1),
+    ]);
+    const opts = { repo: 'ashlrai/phantom', ledgerPath: path };
+    expect(await rewardBacklogItems({ ...opts, now: NOW_MS })).toEqual([]);
+    const items = await rewardBacklogItems({ ...opts, now: NOW_MS + 1 });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.prompt).toContain('4 of 6');
   });
 
   it('derives stable ids so a refresh re-adds nothing and honours the limit', async () => {

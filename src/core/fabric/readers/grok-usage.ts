@@ -59,7 +59,7 @@ export const GROK_USAGE_DOM_READ = `(() => {
 })()`;
 
 /** Existing Chrome tabs only: no navigation, login, network calls or browser profile access. */
-export async function readGrokChromePage(url: string): Promise<unknown> {
+async function readGrokChromePage(url: string): Promise<unknown> {
   const location = usageUrl(url);
   if (process.platform !== 'darwin' || !location) return null;
   const script = `if application "Google Chrome" is not running then return "null"

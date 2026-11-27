@@ -72,7 +72,7 @@ const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
-const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt', 'revertedAt', 'reverted_at'] as const;
 
 /** Terminal "no work" phases: the fleet's empty-outcome vocabulary (skill-nudge EMPTY_PHASES, launch_precheck _TERMINAL_EMPTY). */
 const EMPTY_PHASES: ReadonlySet<string> = new Set(['DONE-NOOP', 'EMPTY', 'EMPTY_DONE', 'SKIPPED-EMPTY', 'NOOP']);
@@ -121,17 +121,18 @@ const mergeEvidence = (row: Record<string, unknown>, event: string | null, phase
 
 /** Empty evidence: `empty: true` on a finish or outcome-ish row, or a terminal no-work phase on an outcome row. */
 const emptyEvidence = (row: Record<string, unknown>, event: string | null, phase: string): boolean =>
-  event !== null && (
+  row.launched !== false && event !== null && (
     (FINISH_EVENTS.has(event) && row['empty'] === true)
     || (OUTCOME_EVENTS.has(event) && (row['empty'] === true || EMPTY_PHASES.has(phase))));
 
 /** Fold the jobs ledger into one record per finished job, on the lane of its latest launch. Bad lines are skipped. */
 export function parseLaneJobs(ledger: string): LaneJob[] {
-  type Launch = { lane: string; at: number };
+  type Receipt = { at: number | null; seq: number };
+  type Launch = Receipt & { lane: string };
+  type Outcome = Receipt & { merged: boolean; reverted: boolean; finished: boolean; empty: boolean };
   const launches = new Map<string, Launch>();
-  const done = new Map<string, { at: number | null; empty: boolean; merged: boolean }>();
-  const reverted = new Set<string>();
-  for (const line of ledger.split('\n')) {
+  const outcomes = new Map<string, Outcome[]>();
+  for (const [seq, line] of ledger.split('\n').entries()) {
     let row: unknown;
     try { row = JSON.parse(line); } catch { continue; }
     if (!isObject(row)) continue;
@@ -143,26 +144,36 @@ export function parseLaneJobs(ledger: string): LaneJob[] {
     if (event === 'launch') {
       const lane = firstString(row, LANE_KEYS) ?? '';
       const prev = launches.get(id);
-      if (lane && (!prev || (at ?? 0) >= prev.at)) launches.set(id, { lane, at: at ?? 0 });
+      if (lane && (!prev || (at ?? 0) >= (prev.at ?? 0))) launches.set(id, { lane, at, seq });
       continue;
     }
-    if (hasRevertEvidence(row)) reverted.add(id);
+    const reverted = hasRevertEvidence(row);
     const merged = mergeEvidence(row, event, phase);
-    // A finish row always ends the job; an outcome-ish row ends it only when
-    // it carries empty evidence — resolved non-merge outcomes (CLOSED, OPEN,
-    // RECORDED) stay uncounted, as before.
-    const finished = event !== null && (FINISH_EVENTS.has(event)
-      || (OUTCOME_EVENTS.has(event) && (row['empty'] === true || EMPTY_PHASES.has(phase))));
-    if (!merged && !finished) continue;
-    const prev = done.get(id) ?? { at: null, empty: false, merged: false };
-    done.set(id, { at: Math.max(prev.at ?? 0, at ?? 0) || null, empty: prev.empty || emptyEvidence(row, event, phase), merged: prev.merged || merged });
+    // An outcome row without merge evidence only ends an attempt when it
+    // records empty work. A pre-launch skip cannot finish an earlier attempt.
+    const empty = emptyEvidence(row, event, phase);
+    const finished = empty || (row.launched !== false && event !== null && FINISH_EVENTS.has(event));
+    if (!merged && !finished && !reverted) continue;
+    const receipts = outcomes.get(id) ?? [];
+    receipts.push({ at, seq, merged, reverted, finished, empty });
+    outcomes.set(id, receipts);
   }
   const out: LaneJob[] = [];
-  for (const [job, d] of done) {
+  for (const [job, receipts] of outcomes) {
     const launch = launches.get(job);
     if (!launch) continue;
-    const merged = d.merged && !reverted.has(job);
-    out.push({ job, lane: launch.lane, at: d.at ?? (launch.at || null), merged, empty: d.empty && !merged });
+    const eligible = receipts.filter(receipt =>
+      receipt.at !== null && launch.at !== null && receipt.at !== launch.at
+        ? receipt.at > launch.at
+        : receipt.seq > launch.seq);
+    const finishes = eligible.filter(receipt => receipt.finished || receipt.merged);
+    if (finishes.length === 0) continue;
+    const merged = finishes.some(receipt => receipt.merged) && !eligible.some(receipt => receipt.reverted);
+    let at: number | null = null;
+    for (const finish of finishes) {
+      if (finish.at !== null && (at === null || finish.at > at)) at = finish.at;
+    }
+    out.push({ job, lane: launch.lane, at: at ?? launch.at, merged, empty: !merged && finishes.some(finish => finish.empty) });
   }
   return out;
 }

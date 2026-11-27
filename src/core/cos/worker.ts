@@ -33,18 +33,23 @@
  * as `id` and the replay job as `attemptId`.
  */
 import { spawn as nodeSpawn } from 'node:child_process';
-import { constants as osConstants, homedir, hostname } from 'node:os';
-import { join } from 'node:path';
+import { constants as osConstants, hostname } from 'node:os';
 import { refuseCloudForImessage } from '../agents/content-taint.js';
 import { readPlannerCandidates } from '../fleet/planner-candidates.js';
 import { readPlannerHealth, selectPlannerRunner, type PlannerCandidate } from '../fleet/planner-failover.js';
 import type { SpawnedPlannerProcess, SpawnLike } from '../fleet/planner-run.js';
 import { readRunsSwitches } from '../fleet/runs-switches.js';
 import type { QueueJob } from '../queue/schema.js';
-import { QueueStore } from '../queue/store.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { readCosFleetFacts } from './fleet-facts.js';
-import { draftCosResult } from './intake.js';
+import {
+  cosQueueStore,
+  draftCosResult,
+  isCosJobId,
+  parseCosIntakeRoute,
+  resolveCosRunsDir,
+  type CosRoute,
+} from './intake.js';
 import { memoryContext } from './memory.js';
 import { cosPeerPlanSchema, emitCosPeerPlanOnce, type CosPeerPlanOutcome } from './peer-plan.js';
 import type { PeerSession } from '../agentnet/slack-identities.js';
@@ -83,7 +88,6 @@ export type CosWorkResult =
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_STDOUT_CHARS = 64 * 1024;
 const MAX_DRAFT_CHARS = 16_000;
-const COS_JOB_ID = /^cos-[a-f0-9]{32}$/;
 const MAX_REPLAY_HOPS = 8;
 const UNTRUSTED_OPEN = '--- BEGIN UNTRUSTED USER REQUEST ---';
 const UNTRUSTED_CLOSE = '--- END UNTRUSTED USER REQUEST ---';
@@ -104,20 +108,14 @@ const PEER_PLAN_PROMPT = '\nReturn strict JSON {reply: string, peers: [], deadli
   + 'authenticated peers and the host repository/path/tier policy.\n';
 
 const nodeSpawnLike: SpawnLike = (program, args, options) => nodeSpawn(program, args, options);
-const record = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 const signalExitCode = (signal: NodeJS.Signals | null): number =>
   signal !== null && typeof osConstants.signals[signal] === 'number' ? 128 + osConstants.signals[signal] : 1;
 
-/** A job only qualifies when acceptance parses to a cos-intake CosRoute. */
-function isCosIntake(acceptance: string): boolean {
-  try {
-    const route: unknown = JSON.parse(acceptance);
-    if (!record(route) || route['kind'] !== 'cos-intake') return false;
-    const origin: unknown = route['origin'];
-    return record(origin) && typeof origin['channel'] === 'string' && typeof origin['senderId'] === 'string';
-  } catch { return false; }
-}
+const stripUntrustedMarkers = (text: string): string =>
+  text.split('\n')
+    .filter(line => !line.includes(UNTRUSTED_OPEN) && !line.includes(UNTRUSTED_CLOSE))
+    .join('\n')
+    .trim();
 
 /**
  * The root `cos-<32 hex>` id behind a job: its own id, or the first id that
@@ -129,7 +127,7 @@ export function cosRootId(job: QueueJob, jobs: readonly QueueJob[]): string | un
   const seen = new Set<string>();
   let current: QueueJob | undefined = job;
   for (let hop = 0; current && hop <= MAX_REPLAY_HOPS; hop += 1) {
-    if (COS_JOB_ID.test(current.id)) return current.id;
+    if (isCosJobId(current.id)) return current.id;
     if (seen.has(current.id) || current.replayOf === undefined) return undefined;
     seen.add(current.id);
     current = byId.get(current.replayOf);
@@ -138,21 +136,21 @@ export function cosRootId(job: QueueJob, jobs: readonly QueueJob[]): string | un
 }
 
 /** The oldest READY cos job (or replay of one) in queue order whose deps are all DONE. */
-function pickCosJob(jobs: readonly QueueJob[]): { job: QueueJob; rootId: string } | undefined {
+function pickCosJob(jobs: readonly QueueJob[]): { job: QueueJob; rootId: string; route: CosRoute } | undefined {
   const done = new Set(jobs.filter((job) => job.status === 'DONE').map((job) => job.id));
   for (const job of jobs) {
-    if (job.status !== 'READY' || !isCosIntake(job.acceptance) || !job.deps.every((dep) => done.has(dep))) continue;
+    if (job.status !== 'READY' || !job.deps.every((dep) => done.has(dep))) continue;
+    const route = parseCosIntakeRoute(job.acceptance);
+    if (!route) continue;
     const rootId = cosRootId(job, jobs);
-    if (rootId) return { job, rootId };
+    if (rootId) return { job, rootId, route };
   }
   return undefined;
 }
 
 function cosWorkerPrompt(scope: string, memory: string, facts: string | null = null, now = Date.now()): string {
-  const safeMemory = memory.split('\n')
-    .filter(line => !line.includes(UNTRUSTED_OPEN) && !line.includes(UNTRUSTED_CLOSE)).join('\n').trim();
-  const safeFacts = (facts ?? '').split('\n')
-    .filter(line => !line.includes(UNTRUSTED_OPEN) && !line.includes(UNTRUSTED_CLOSE)).join('\n').trim();
+  const safeMemory = stripUntrustedMarkers(memory);
+  const safeFacts = stripUntrustedMarkers(facts ?? '');
   return "You are Phantom's chief of staff. Answer the request below in plain text for Mason. "
     + 'Do not run commands that change files, send messages or spend money. '
     + 'If the request needs an action, say exactly which `ashlr` command or job would do it.\n\n'
@@ -202,16 +200,16 @@ async function runCosTurn(child: SpawnedPlannerProcess, prompt: string, timeoutM
 }
 
 export async function runCosWorkOnce(opts: CosWorkOptions = {}): Promise<CosWorkResult> {
-  const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const runsDir = resolveCosRunsDir(opts.runsDir);
   const now = typeof opts.now === 'function' ? opts.now() : opts.now ?? Date.now();
 
   const switches = await readRunsSwitches({ runsDir });
   if (switches.switches.some((row) => row.id === 'PAUSE' && row.on)) return { outcome: 'paused' };
 
-  const store = new QueueStore(join(runsDir, 'queue'), 250);
+  const store = cosQueueStore(runsDir);
   const picked = pickCosJob((await store.read()).jobs);
   if (!picked) return { outcome: 'idle' };
-  const { job, rootId } = picked;
+  const { job, rootId, route } = picked;
   const ids = rootId === job.id ? { id: rootId } : { id: rootId, attemptId: job.id };
 
   // Runner choice precedes the claim: no usable login leaves the job READY
@@ -229,7 +227,6 @@ export async function runCosWorkOnce(opts: CosWorkOptions = {}): Promise<CosWork
 
   // CLI runners choose their own backend; neither argv nor a provider label
   // proves a loopback endpoint. Refuse before claiming or exposing any prompt.
-  const route = JSON.parse(job.acceptance) as { origin: { channel: string } };
   try { refuseCloudForImessage(route.origin.channel, undefined); }
   catch { return { outcome: 'blocked', ...ids, reason: 'imessage-requires-loopback-endpoint' }; }
 

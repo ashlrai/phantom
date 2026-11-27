@@ -30,6 +30,12 @@
  *   - Rows may not share a rowId, because predictions are keyed by it.
  */
 
+import {
+  isFiniteNumber,
+  requireNullableNulFreeIdentifier as consumerOf,
+  requireNulFreeIdentifier as identifier,
+} from './validation.js';
+
 /** The source's inline floor on propensity in the importance weight. Documented, never implied. */
 export const SOURCE_PROPENSITY_FLOOR = 1e-3;
 
@@ -270,19 +276,8 @@ function tieKey(c: OfflineReplayCandidate): string {
   return `${c.poolId}:${c.consumer ?? ''}`;
 }
 
-function identifier(value: unknown, label: string): string {
-  if (typeof value !== 'string' || value.length === 0 || value.includes(NUL)) {
-    throw new TypeError(`${label} must be a non-empty string without NUL`);
-  }
-  return value;
-}
-
-function consumerOf(value: unknown, label: string): string | null {
-  return value === null ? null : identifier(value, label);
-}
-
 function finite(value: unknown, label: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) throw new TypeError(`${label} must be a finite number`);
+  if (!isFiniteNumber(value)) throw new TypeError(`${label} must be a finite number`);
   return value;
 }
 

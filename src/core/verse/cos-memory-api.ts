@@ -2,10 +2,10 @@
 import type { ApiModule } from './api-modules.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { MEMORY_KINDS, MemoryError, addMemory, forgetMemory, listMemory, type MemoryEntry, type MemoryKind } from '../cos/memory.js';
+import { MemoryError, addMemory, forgetMemory, isMemoryKind, listMemory, type MemoryEntry } from '../cos/memory.js';
 
-export const VERSE_COS_MEMORY_PATH = '/api/verse/cos/memory';
-export const VERSE_COS_MEMORY_FORGET_PATH = '/api/verse/cos/memory/forget';
+const VERSE_COS_MEMORY_PATH = '/api/verse/cos/memory';
+const VERSE_COS_MEMORY_FORGET_PATH = '/api/verse/cos/memory/forget';
 
 export interface CosMemoryApiDeps {
   /** Default: the user's home directory. */
@@ -29,11 +29,11 @@ export function createCosMemoryApi(deps: CosMemoryApiDeps = {}): ApiModule {
   async function list(req: Parameters<ApiModule>[1], res: Parameters<ApiModule>[2]): Promise<void> {
     let kind: string | null;
     try { kind = new URL(req.url ?? '/', 'http://localhost').searchParams.get('kind'); } catch { kind = null; }
-    if (kind !== null && !(MEMORY_KINDS as readonly string[]).includes(kind)) {
+    if (kind !== null && !isMemoryKind(kind)) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid kind' }); return;
     }
     try {
-      const entries = await listMemory({ home, ...(kind ? { kind: kind as MemoryKind } : {}) });
+      const entries = await listMemory({ home, ...(kind !== null ? { kind } : {}) });
       sendJson(res, 200, { v: 1, entries: entries.map(wire) });
     } catch { sendJson(res, 503, { code: 'MEMORY_UNAVAILABLE' }); }
   }
@@ -69,7 +69,8 @@ export function createCosMemoryApi(deps: CosMemoryApiDeps = {}): ApiModule {
   return async (ctx, req, res, path, method) => {
     const route = path === VERSE_COS_MEMORY_PATH ? 'memory' : path === VERSE_COS_MEMORY_FORGET_PATH ? 'forget' : null;
     if (route === null) return false;
-    if (method !== (route === 'memory' ? 'GET' : 'POST') && !(route === 'memory' && method === 'POST')) {
+    const allowed = route === 'memory' ? method === 'GET' || method === 'POST' : method === 'POST';
+    if (!allowed) {
       sendJson(res, 405, { error: 'method not allowed' }); return true;
     }
     if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }

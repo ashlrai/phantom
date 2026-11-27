@@ -13,10 +13,14 @@ import { readFleetBoard } from '../src/core/fleet/leader-journal.js';
 const now = Date.parse('2030-01-01T00:00:00Z');
 const hr = 3_600_000, iso = (ms: number) => new Date(ms).toISOString();
 const lanes = ['codex-personal', 'agy'];
+// A computer advertises provider caps, not market lanes: `codex` is what a
+// codex-personal job needs on a node (remoteLaneCap in unfed-market), and the
+// literal `agy` stands in for a cap this computer advertises for its own lane.
+const caps = ['codex', 'agy'];
 const deadline = iso(now + 2 * hr);
 const node: nodesView.NodeRow = { name: 'fixture', isSelf: true, reachable: true, lastSeen: iso(now), heartbeatAgeSeconds: 0,
   phantom: 'running', freeMemoryBytes: 8_000_000_000, freeMemoryPercent: 60, load: 1, cpuHeadroomPercent: 75,
-  lanes, jobsRunning: ['current'], freeSlots: 2, stateCode: 'ready', state: 'ready', joined: true, joinCommand: null };
+  lanes: caps, jobsRunning: ['current'], freeSlots: 2, stateCode: 'ready', state: 'ready', joined: true, joinCommand: null };
 const status = (last_tick = iso(now)) => ({ schema: 'dispatchd.status.v1', last_tick, lanes: Object.fromEntries(lanes.map(lane =>
   [lane, { running: 1, ceiling: 3, hard_cap: 2, held: false, queued: 10 }])) });
 const readings = [{ id: 'codex-personal', used: 18 }, { id: 'antigravity', used: 20 }].map(row =>
@@ -40,7 +44,7 @@ describe('fleet resource plan', () => {
 
   it('joins measured quota and job throughput with each lane cap and shared machine slots', async () => {
     const plan = buildFleetResourcePlan(live, [node], status(), ledger, now);
-    expect(plan.machines).toEqual([{ name: 'fixture', lanes, cpu_headroom_pct: 75, memory_headroom_pct: 60,
+    expect(plan.machines).toEqual([{ name: 'fixture', lanes: caps, cpu_headroom_pct: 75, memory_headroom_pct: 60,
       max_concurrency: 3, available_slots: 2 }]);
     for (const lane of lanes) expect(plan.lanes.find(row => row.lane === lane)).toMatchObject({
       running: 1, max_concurrency: 2, target_concurrency: 2, minutes_per_job: 20, tokens_per_job: 6000, additional_slots: 1,
@@ -57,6 +61,17 @@ describe('fleet resource plan', () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  it('counts machine slots only for the cap a market lane resolves to', () => {
+    // codex-personal resolves to the codex cap, so a remote codex computer backs
+    // its scale-up; agy is host-bound and no pool computer can take it.
+    const codexNode: nodesView.NodeRow = { ...node, name: 'codex-mac', isSelf: false, lanes: ['codex'], freeSlots: 4 };
+    const plan = buildFleetResourcePlan(live, [codexNode], status(), ledger, now);
+    const codex = plan.lanes.find(row => row.lane === 'codex-personal')!;
+    expect(codex.additional_slots).toBe(1);
+    expect(codex.target_concurrency).toBe(2);
+    expect(plan.lanes.find(row => row.lane === 'agy')!.additional_slots).toBeNull();
+  });
+
   it('does not double count shared slots and distinguishes unknown from known zero', () => {
     const plan = buildFleetResourcePlan(live, [{ ...node, freeSlots: 1 }], status(), ledger, now);
     expect(plan.lanes.find(row => row.lane === 'codex-personal')?.additional_slots).toBe(1);
@@ -68,6 +83,42 @@ describe('fleet resource plan', () => {
     expect(noEvidence.allowances.find(row => row.id === 'antigravity')?.projected_waste_at_deadline).toBeNull();
     expect(buildFleetResourcePlan(live, [node], status(iso(now - hr)), ledger, now).lanes.every(row => row.target_concurrency === null)).toBe(true);
     expect(buildFleetResourcePlan(null, [], null, ledger, now).allowances.find(row => row.id === 'codex-personal')?.remaining).toBeNull();
+  });
+
+  it('keeps advisory unfed slots unknown when only the dispatcher total is available', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'phantom-unfed-ready-'));
+    try {
+      await mkdir(join(dir, 'queue'));
+      const snapshot = status();
+      const plan = buildFleetResourcePlan(live, [node], snapshot, ledger, now);
+      await writeFile(join(dir, 'queue/status.json'), JSON.stringify({
+        ...snapshot,
+        lanes: { agy: { ...snapshot.lanes['agy'], target: 2 } },
+        unfed_capacity: { waiting: 2, lanes: { agy: { waiting_elsewhere: 1 } } },
+      }));
+      const options = { runsDir: dir, now: () => now, readCapacity: async () => plan };
+      const missing = await readUnfedReport(options);
+      expect(missing).toMatchObject({ source: 'dispatcher', waiting: 2, unfedSlots: 1 });
+      expect(missing.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: null });
+
+      await writeFile(join(dir, 'queue/ready.tsv'), '');
+      const empty = await readUnfedReport(options);
+      expect(empty).toMatchObject({ source: 'dispatcher', waiting: 2, unfedSlots: 1 });
+      expect(empty.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: 0 });
+
+      await writeFile(join(dir, 'queue/ready.tsv'), 'example\tphantom\tcodex-personal\twork\tfixture.md\n');
+      const observed = await readUnfedReport(options);
+      expect(observed.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: 1 });
+
+      await writeFile(join(dir, 'queue/ready.tsv'), [
+        'example\tphantom\tagy\tinvalid\tfixture.md',
+        'example\tphantom\tcodex-personal\twork\tfixture.md',
+        'example\tphantom\tagy\twork\tfixture.md',
+      ].join('\n'));
+      const duplicate = await readUnfedReport(options);
+      expect(duplicate).toMatchObject({ source: 'dispatcher', waiting: 2, unfedSlots: 1 });
+      expect(duplicate.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: 1 });
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
   it('includes an expiring reset proposal only when the allowance and bank evidence support it', () => {

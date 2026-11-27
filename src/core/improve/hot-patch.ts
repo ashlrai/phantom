@@ -44,6 +44,10 @@ export function readHotPatchLog(path: string): string {
     const buffer = Buffer.alloc(length);
     const read = readSync(fd, buffer, 0, length, stat.size - length);
     const text = buffer.subarray(0, read).toString('utf8');
-    return stat.size > length ? text.slice(text.indexOf('\n') + 1) : text;
+    if (stat.size <= length) return text;
+    // A truncated tail with no line boundary is one incomplete line: there is
+    // no complete first line to keep, so the honest read is empty.
+    const firstNewline = text.indexOf('\n');
+    return firstNewline === -1 ? '' : text.slice(firstNewline + 1);
   } finally { closeSync(fd); }
 }

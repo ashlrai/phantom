@@ -1,10 +1,10 @@
 /** Advice over an already admitted closed set, never a new admission or spend policy.
  * Provider sees ordinals and bounded task/timing metadata, not task/account IDs or text.
  * API/request bounds fall back for the whole set; eligible inventory is never truncated. */
-import { createHash } from 'node:crypto';
 import { forecastFit } from '../routing/reset-pressure.js';
 import type { AshlrConfig } from '../types.js';
 import type { ResourceChoiceCandidate } from '../routing/scheduling-types.js';
+import { cacheKey, DECISION_CACHE_MAX_ENTRIES, DECISION_CACHE_TTL_MS, setLruEntry, touchLruEntry } from './cache.js';
 import { decide, effectiveThreshold, jevReady } from './decide.js';
 import { TASK_CLASSES } from './registry.js';
 
@@ -19,8 +19,6 @@ interface AdviceOptions {
 interface Memo { choice: string | null; expiresAt: number }
 const memo = new Map<string, Memo>();
 const inflight = new Map<string, Promise<string | null>>();
-const CACHE_MS = 6 * 60 * 60 * 1000; // Same TTL / entry budget as the shared Jev cache.
-const MAX_ENTRIES = 1000;
 const MAX_CHOICES = 255; // Official choice cardinality: https://docs.typesafe.ai/api.
 const MAX_STATE_CHARS = 6000; // Existing client bound. Refuse rather than its head/tail truncation.
 const TASK_KINDS = new Set<string>([...TASK_CLASSES, 'issue', 'todo', 'test', 'dep', 'doc', 'plugin', 'self', 'lint', 'goal', 'hygiene', 'invent']);
@@ -29,7 +27,7 @@ const NON_ATTEMPTS = new Set(['no-key', 'disabled', 'killed', 'kind-disabled', '
 function normalize(candidates: readonly ResourceChoiceCandidate[], now: number) {
   if (!Array.isArray(candidates) || candidates.length < 2 || candidates.length > MAX_CHOICES) return null;
   const ids = new Set<string>();
-  let expiresAt = now + CACHE_MS;
+  let expiresAt = now + DECISION_CACHE_TTL_MS;
   const rows = [];
   for (const c of candidates) {
     if (!c || typeof c.id !== 'string' || !c.id || c.id.length > 512 || ids.has(c.id)) return null;
@@ -63,16 +61,23 @@ export async function adviseResourceChoice(candidates: readonly ResourceChoiceCa
     const input = normalize(candidates, Date.now());
     if (!input || !(await jevReady('resource-choice', options.cfg))) return null;
     const threshold = effectiveThreshold('resource-choice');
-    const key = createHash('sha256').update(JSON.stringify([
-      process.env['ASHLR_HOME'] ?? process.env['HOME'] ?? '', options.digest, input.ids, input.state, threshold,
-    ])).digest('hex');
+    const key = cacheKey([
+      process.env['ASHLR_HOME'] ?? process.env['HOME'] ?? '',
+      options.digest,
+      JSON.stringify(input.ids),
+      input.state,
+      String(threshold),
+    ]);
     const prior = memo.get(key);
-    if (prior && prior.expiresAt > Date.now()) return options.signal?.aborted ? null : prior.choice;
+    if (prior && prior.expiresAt > Date.now()) {
+      touchLruEntry(memo, key, prior);
+      return options.signal?.aborted ? null : prior.choice;
+    }
     memo.delete(key);
     // Bound concurrent bookkeeping as well as completed cache. No roster truncation.
     let pending = inflight.get(key);
     if (!pending) {
-      if (inflight.size >= MAX_ENTRIES) return null;
+      if (inflight.size >= DECISION_CACHE_MAX_ENTRIES) return null;
       pending = (async () => {
         const criteria = Object.fromEntries(input.ids.map((_, i) => [`c${i}`, 'This eligible pair best fits the task, available headroom and observed reset timing.']));
         const result = await decide<string | null>('resource-choice', input.state, {
@@ -81,7 +86,7 @@ export async function adviseResourceChoice(candidates: readonly ResourceChoiceCa
             instructions: 'Choose one already eligible pair using only observed metadata. Unknown is not zero. Prefer likely time fit; this advice cannot admit accounts, override limits or promise completion.',
           },
         }, {
-          fallback: null, cacheSalt: createHash('sha256').update(JSON.stringify([options.digest, input.ids])).digest('hex'), threshold,
+          fallback: null, cacheSalt: cacheKey([options.digest, JSON.stringify(input.ids)]), threshold,
           ...(options.cfg ? { cfg: options.cfg } : {}),
           ...(options.endpoint ? { endpoint: options.endpoint } : {}),
           ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
@@ -92,8 +97,7 @@ export async function adviseResourceChoice(candidates: readonly ResourceChoiceCa
         // Remember attempted failures too, so a timed-out selected batch doesn't become a per-poll paid call.
         // No-key/disabled/budget/cancellation remain immediately recoverable on a new operator choice.
         if (!options.signal?.aborted && !NON_ATTEMPTS.has(result.reason ?? '')) {
-          if (memo.size >= MAX_ENTRIES) memo.delete(memo.keys().next().value as string);
-          memo.set(key, { choice, expiresAt: input.expiresAt });
+          setLruEntry(memo, key, { choice, expiresAt: input.expiresAt }, DECISION_CACHE_MAX_ENTRIES);
         }
         return choice;
       })();

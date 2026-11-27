@@ -59,7 +59,11 @@ import {
 } from './timeline-types.js';
 import {
   CLOUD_BALANCE_URL,
+  CLOUD_SHA1_PATTERN,
   CLOUD_TASK_ID_PATTERN,
+  clipCloudText,
+  flattenControlWhitespace,
+  sameCloudRepo,
   type CloudDeliveryPin,
   type CloudSupersededBy,
   type CloudTaskPr,
@@ -103,7 +107,7 @@ export interface TimelineLaneWords {
   prNoun: string;
 }
 
-export const CLOUD_TIMELINE_WORDS: TimelineLaneWords = {
+const CLOUD_TIMELINE_WORDS: TimelineLaneWords = {
   record: 'cloud task record',
   tracker: 'GitHub, read by the cloud tracker',
   trackerAndGit: 'GitHub (cloud tracker) + local git',
@@ -165,9 +169,7 @@ export interface TimelineSources<T extends TimelineDeliveryTask = CloudTaskV1> {
 // ---------------------------------------------------------------------------
 
 export function clip(text: string, max: number): string {
-  // eslint-disable-next-line no-control-regex
-  const flat = scrubSecrets(text).replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}…`;
+  return clipCloudText(flattenControlWhitespace(scrubSecrets(text)), max);
 }
 
 const short = (sha: string): string => sha.slice(0, 7);
@@ -211,8 +213,6 @@ const ORIGIN_WORD: Record<CloudTaskV1['origin'], string> = {
 function prNumberOf(task: TimelineDeliveryTask): number | null {
   return task.pr?.number ?? task.deliveryPin?.number ?? null;
 }
-
-const sameRepo = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
 // ---------------------------------------------------------------------------
 // The pure builder
@@ -706,7 +706,6 @@ const CHECKOUT_CACHE_TTL_MS = 5 * 60_000;
 const TIMELINE_CACHE_TTL_MS = 15_000;
 const CACHE_MAX_ENTRIES = 256;
 const MAX_PROJECTS_PROBED = 40;
-const SHA_RE = /^[0-9a-f]{40}$/;
 /** A release-looking tag: `v3.12.0`, `3.12.0`, `v3.12.0-rc.1`. */
 const RELEASE_TAG_RE = /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
@@ -836,7 +835,7 @@ function findMergeRecord(task: TimelineDeliveryTask, deps: Required<Pick<Timelin
     const index = mergeIndex(deps, now);
     if (!index) return { state: 'unknown', reason: 'the fleet merge records could not be listed' };
     const pr = prNumberOf(task);
-    const hit = index.entries.find((e) => sameRepo(e.repo, task.repo) && (
+    const hit = index.entries.find((e) => sameCloudRepo(e.repo, task.repo) && (
       (pr !== null && (e.prNumber === pr || e.landingPrNumber === pr))
       || e.branch === task.branch
       || e.proposalId === task.id
@@ -868,9 +867,9 @@ async function gatherLedger(task: TimelineDeliveryTask, merge: MergeRecordSource
     let postMerge: PostMergeResult | null = null;
     for (const entry of result.entries) {
       if (entry.kind === 'gate:result') {
-        if (sameRepo(entry.data.repo, task.repo) && proposals.has(entry.data.proposalId)) gates.push({ ...entry.data, rowAt: entry.at });
+        if (sameCloudRepo(entry.data.repo, task.repo) && proposals.has(entry.data.proposalId)) gates.push({ ...entry.data, rowAt: entry.at });
       } else if (entry.kind === 'merge:landed') {
-        if (pr !== null && sameRepo(entry.data.repo, task.repo) && entry.data.prNumber === pr) landing = entry.data;
+        if (pr !== null && sameCloudRepo(entry.data.repo, task.repo) && entry.data.prNumber === pr) landing = entry.data;
       }
     }
     if (landing) {
@@ -887,7 +886,7 @@ async function gatherLedger(task: TimelineDeliveryTask, merge: MergeRecordSource
 function gatherWatch(task: TimelineDeliveryTask, landing: LandingRecord | null, mergeSha: string | null, list: () => PostMergeWatchView[]): WatchSource {
   try {
     const pr = prNumberOf(task);
-    const views = list().filter((v) => sameRepo(v.repo, task.repo) && v.kind === 'merge');
+    const views = list().filter((v) => sameCloudRepo(v.repo, task.repo) && v.kind === 'merge');
     const view = views.find((v) => (landing && v.landingId === landing.id) || (mergeSha !== null && v.mergeSha === mergeSha))
       ?? (pr !== null ? views.find((v) => v.prNumber === pr) : undefined)
       ?? null;
@@ -913,14 +912,14 @@ async function findMergeCommitInGit(git: GitRunner, cwd: string, task: TimelineD
     'log', '--all', '-n', '1', '--format=%H', '--fixed-strings', '--all-match',
     `--grep=Merge pull request #${pr} from `, `--grep=${task.branch}`,
   ]);
-  if (merged.ok && merged.lines[0] && SHA_RE.test(merged.lines[0])) return merged.lines[0];
+  if (merged.ok && merged.lines[0] && CLOUD_SHA1_PATTERN.test(merged.lines[0])) return merged.lines[0];
   const squash = await gitLines(git, cwd, ['log', '--all', '-n', '5', '--format=%H%x09%s', '--fixed-strings', `--grep=(#${pr})`]);
   if (!squash.ok) return null;
   for (const line of squash.lines) {
     const tab = line.indexOf('\t');
     const sha = line.slice(0, tab);
     const subject = line.slice(tab + 1);
-    if (SHA_RE.test(sha) && subject.endsWith(`(#${pr})`) && !/^revert\b/i.test(subject)) return sha;
+    if (CLOUD_SHA1_PATTERN.test(sha) && subject.endsWith(`(#${pr})`) && !/^revert\b/i.test(subject)) return sha;
   }
   return null;
 }
@@ -958,7 +957,7 @@ export function githubNameFromRemote(url: string): string | null {
 }
 
 /** Production checkout finder: the fleet mirror, else an enrolled project whose origin is `repo`. */
-export function defaultCheckoutFor(git: GitRunner): (repo: string) => Promise<string | null> {
+function defaultCheckoutFor(git: GitRunner): (repo: string) => Promise<string | null> {
   return async (repo) => {
     try {
       const mirror = mirrorPathFor(repo);
@@ -991,7 +990,7 @@ async function gatherGit(
   } catch {
     checkout = null;
   }
-  let mergeCommit: MergeCommit | null = landing && SHA_RE.test(landing.mergeSha) ? { sha: landing.mergeSha, basis: 'landing' } : null;
+  let mergeCommit: MergeCommit | null = landing && CLOUD_SHA1_PATTERN.test(landing.mergeSha) ? { sha: landing.mergeSha, basis: 'landing' } : null;
   if (!checkout) {
     return { mergeCommit, release: mergeCommit ? { state: 'unknown', reason: `No local mirror or checkout of ${task.repo} to read release tags from.` } : null };
   }
@@ -1037,7 +1036,7 @@ export async function gatherTimelineSources<T extends TimelineDeliveryTask = Clo
   }, now);
   const ledger = await gatherLedger(task, merge, deps.readLedger ?? readLedger, deps.ledgerBudgetMs ?? LEDGER_BUDGET_MS);
   const landing = merge.state === 'ok' && merge.record.landing ? merge.record.landing : ledger.state === 'ok' ? ledger.landing : null;
-  const recorded: MergeCommit | null = landing && SHA_RE.test(landing.mergeSha) ? { sha: landing.mergeSha, basis: 'landing' } : null;
+  const recorded: MergeCommit | null = landing && CLOUD_SHA1_PATTERN.test(landing.mergeSha) ? { sha: landing.mergeSha, basis: 'landing' } : null;
   const { mergeCommit, release } = await withBudget(
     deps.gitBudgetMs ?? GIT_TOTAL_BUDGET_MS,
     () => gatherGit(task, landing, { git, checkoutFor: deps.checkoutFor ?? defaultCheckoutFor(git) }, now),

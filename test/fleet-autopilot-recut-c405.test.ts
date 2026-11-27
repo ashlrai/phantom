@@ -113,7 +113,7 @@ describe('planFleetAutopilot', () => {
 
   it('holds an over-deep lane when a starved lane is blocked at the cap', () => {
     const report = planFleetAutopilot(state({
-      admission: admission([lane('devin', 0, 2, 4), lane('grok', 8, 4, 0)], 10, 8, true),
+      admission: admission([lane('devin', 0, 2, 4), lane('grok', 8, 4, 0)], 8, 8, true),
       queue: queueView({ byLane: [
         { lane: 'devin', ready: 4, parked: 0 },
         { lane: 'grok', ready: 14, parked: 0 },
@@ -140,6 +140,7 @@ describe('readFleetAutopilotState', () => {
   it('reads queue/status.json and injected sources through the real entry point', async () => {
     const dir = await tempRunsDir();
     await writeFile(join(dir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: '2026-11-08T00:00:00Z',
       admission: { cap: 8, running: 3, load1: 0.5, reason: null },
       lanes: { devin: { running: 3, target: 4, queued: 0, held: false } },
     }));

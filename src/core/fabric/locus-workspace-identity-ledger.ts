@@ -5,7 +5,6 @@
  * release, or any effect authority.
  */
 
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
@@ -25,6 +24,19 @@ import {
   type ImmutablePrivateRecordReadStopReason,
   type ImmutablePrivateRecordStoreConfig,
 } from '../util/immutable-private-record-store.js';
+import {
+  GIT_COMMIT_RE as COMMIT_RE,
+  SHA256_PREFIXED_DIGEST_RE as DIGEST_RE,
+  canonicalJsonString,
+  deepFreeze,
+  exactKeys,
+  hmacSha256Hex,
+  isCanonicalIsoTimestamp,
+  isSafeIntegerInRange as safeInteger,
+  sha256Prefixed,
+  strictPlainRecord as object,
+  timingSafeUtf8Equal as same,
+} from './external-contract-codec.js';
 import {
   compileExternalLocusWorkspaceIdentityObservationV1,
   EXTERNAL_LOCUS_WORKSPACE_IDENTITY_PROTOCOL,
@@ -52,9 +64,7 @@ const STAGE_DOMAIN = 'ashlr:locus-workspace-identity-ledger:stage:v1\0';
 const LOCUS_SOURCE_DIGEST_DOMAIN = 'ashlr:locus-workspace-identity-observation:v1\0';
 const EXTERNAL_DIGEST_DOMAIN = 'ashlr:external-locus-workspace-identity-observation:v1\0';
 const GENESIS_RECORD_DIGEST = `sha256:${'0'.repeat(64)}`;
-const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
 const PLAIN_DIGEST_RE = /^[a-f0-9]{64}$/;
-const COMMIT_RE = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const LOCUS_VERSION_RE = /^0\.5\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const RECORD_FILE_RE = /^[a-f0-9]{64}\.[0-9]{16}\.[a-f0-9]{64}\.json$/;
 const MAX_RECORD_BYTES = 32 * 1024;
@@ -277,83 +287,22 @@ const RECORD_FALSE_FLAGS = [
   'promotionEligible',
 ] as const;
 
-type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type UnsignedRecord = Omit<LocusWorkspaceIdentityLedgerRecordV1, 'recordDigest' | 'attestation'>;
 
-function object(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
-}
-
-function canonical(value: unknown, ancestors = new Set<object>(), depth = 0): Json {
-  if (depth > 16) throw new TypeError('canonical depth exceeded');
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new TypeError('non-finite number');
-    return Object.is(value, -0) ? 0 : value;
-  }
-  if (typeof value !== 'object' || ancestors.has(value)) throw new TypeError('non-json value');
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) return value.map((entry) => canonical(entry, ancestors, depth + 1));
-    const row = object(value);
-    if (!row) throw new TypeError('non-plain object');
-    return Object.fromEntries(Object.keys(row).sort().map((key) => [key, canonical(row[key], ancestors, depth + 1)]));
-  } finally {
-    ancestors.delete(value);
-  }
-}
-
 function canonicalBytes(value: unknown): Buffer {
-  return Buffer.from(JSON.stringify(canonical(value)), 'utf8');
+  return Buffer.from(canonicalJsonString(value, { maxDepth: 16 }), 'utf8');
 }
 
 function sha(domain: string, value: unknown): string {
-  return `sha256:${createHash('sha256').update(domain, 'utf8').update(canonicalBytes(value)).digest('hex')}`;
+  return sha256Prefixed(domain, canonicalBytes(value));
 }
 
 function hmac(key: Buffer, domain: string, values: readonly unknown[]): string {
-  return createHmac('sha256', key).update(domain, 'utf8').update(canonicalBytes(values)).digest('hex');
-}
-
-function same(left: unknown, right: unknown): boolean {
-  if (typeof left !== 'string' || typeof right !== 'string') return false;
-  const a = Buffer.from(left, 'utf8');
-  const b = Buffer.from(right, 'utf8');
-  return a.length === b.length && timingSafeEqual(a, b);
+  return hmacSha256Hex(key, domain, canonicalBytes(values));
 }
 
 function canonicalIso(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length !== 24) return false;
-  const time = Date.parse(value);
-  return Number.isFinite(time) && new Date(time).toISOString() === value;
-}
-
-function safeInteger(value: unknown, minimum: number, maximum: number): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
-}
-
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
-  if (value === null || typeof value !== 'object' || seen.has(value)) return value;
-  seen.add(value);
-  for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested, seen);
-  return Object.freeze(value);
+  return isCanonicalIsoTimestamp(value, 24);
 }
 
 function clone<T>(value: T): T {
@@ -683,7 +632,7 @@ function config(
 }
 
 /** Uses only the strict read-only key path for reads and writes; never provisions a key. */
-export function defaultLocusWorkspaceIdentityLedgerDependenciesV1(): LocusWorkspaceIdentityLedgerDependenciesV1 | null {
+function defaultLocusWorkspaceIdentityLedgerDependenciesV1(): LocusWorkspaceIdentityLedgerDependenciesV1 | null {
   try {
     const home = resolve(homedir());
     if (!isAbsolute(home) || home === parse(home).root) return null;

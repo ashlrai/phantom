@@ -62,6 +62,60 @@ describe('ready supply', () => {
     ]);
   });
 
+  it('counts each READY job once across lanes and open rows', async () => {
+    const dir = await fixture();
+    await writeFile(join(dir, 'queue', 'ready.tsv'), [
+      'RQ-PHX-HINTED\tPARKED-BYHAND.devin',
+      'RQ-PHX-HINTED\tphantom\tcodex\twork\t/q/hinted.md',
+      'RQ-PHX-HINTED\tphantom\t\twork\t/q/hinted.md',
+      'RQ-PHX-OPEN\tphantom\t\twork\t/q/open.md',
+      'RQ-PHX-OPEN\tphantom\tdevin\twork\t/q/open.md',
+    ].join('\n'));
+    const result = await readReadySupply({ runsDir: dir, now });
+    expect(result.unhinted).toEqual({ total: 1, phantom: 1, filler: 0 });
+    expect(result.lanes).toEqual([
+      { lane: 'codex', phxReady: 1, phxParked: 0, fillerReady: 0, fillerParked: 0, oldestPhxId: 'RQ-PHX-HINTED' },
+      { lane: 'devin', phxReady: 0, phxParked: 1, fillerReady: 0, fillerParked: 0, oldestPhxId: null },
+    ]);
+  });
+
+  it('attributes spec-less rows through their router-queue envelope', async () => {
+    const dir = await fixture();
+    await writeFile(join(dir, 'queue', 'ready.tsv'), [
+      // The lane column says codex; the envelope is what the market routes on.
+      'RQ-PHX-ENV\tphantom\tcodex\twork\t/abs/env.md',
+      'RQ-PHX-OPEN\tphantom\tcodex\twork\t/abs/open.md',
+      'RQ-FILL-COL\tother-repo\tcodex\twork\t/abs/col.md',
+    ].join('\n'));
+    await writeFile(join(dir, 'queue', 'router-queue.md'), [
+      '- READY phantom RQ-PHX-ENV (preferred_lane=claude): hinted work',
+      '- READY phantom RQ-PHX-OPEN (P2): open supply',
+    ].join('\n'));
+    const result = await readReadySupply({ runsDir: dir, now });
+    expect(result.lanes).toEqual([
+      { lane: 'claude', phxReady: 1, phxParked: 0, fillerReady: 0, fillerParked: 0, oldestPhxId: 'RQ-PHX-ENV' },
+      { lane: 'codex', phxReady: 0, phxParked: 0, fillerReady: 1, fillerParked: 0, oldestPhxId: null },
+    ]);
+    // The explicit-open envelope leaves the lane column: lane-open supply,
+    // counted in unhinted rather than under codex.
+    expect(result.unhinted).toEqual({ total: 1, phantom: 1, filler: 0 });
+    expect(result.totals.phxReady).toBe(1);
+  });
+
+  it('resolves envelopes when router-queue.md outgrows the old read bound', async () => {
+    const dir = await fixture();
+    await writeFile(join(dir, 'queue', 'ready.tsv'), 'RQ-PHX-DEEP\tphantom\tcodex\twork\t/abs/deep.md\n');
+    // router-queue.md is append-mostly history; past the old 2 MiB window the
+    // market still resolves the envelope, so this reader must too.
+    const pad = `# ${'y'.repeat(1024)}\n`.repeat(2200);
+    await writeFile(join(dir, 'queue', 'router-queue.md'), pad +
+      '- READY phantom RQ-PHX-DEEP (preferred_lane=claude): hinted work\n');
+    const result = await readReadySupply({ runsDir: dir, now });
+    expect(result.lanes).toEqual([
+      { lane: 'claude', phxReady: 1, phxParked: 0, fillerReady: 0, fillerParked: 0, oldestPhxId: 'RQ-PHX-DEEP' },
+    ]);
+  });
+
   it('reports missing and degraded sources without throwing', async () => {
     const dir = await fixture();
     expect((await readReadySupply({ runsDir: dir, now })).sourceState).toBe('missing');

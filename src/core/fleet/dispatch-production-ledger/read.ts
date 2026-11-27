@@ -89,7 +89,7 @@ export function readDispatchProductionEventsDetailed(
   let stopTraversal = false;
   for (const file of files) {
     if (stopTraversal) break;
-    if (opts.sinceMs !== undefined && !fileMayContainSince(file, opts.sinceMs)) continue;
+    if (!fileMayOverlapWindow(file, opts)) continue;
     if (result.rowsScanned >= maxRows) {
       pushStopReason(result.stopReasons, 'row-limit');
       result.complete = false;
@@ -178,6 +178,7 @@ export function readDispatchProductionEventsDetailed(
       }
       try {
         if (opts.sinceMs !== undefined && eventMs < opts.sinceMs) continue;
+        if (opts.asOfMs !== undefined && eventMs > opts.asOfMs) continue;
         if (result.events.length >= cap) {
           pushStopReason(result.stopReasons, 'event-limit');
           result.complete = false;
@@ -223,9 +224,12 @@ export function readDispatchProductionEvents(
   return readDispatchProductionEventsDetailed(opts).events;
 }
 
-function fileMayContainSince(file: string, sinceMs: number): boolean {
+function fileMayOverlapWindow(file: string, opts: ReadDispatchProductionEventsOptions): boolean {
   const match = DATE_LEDGER_FILE_RE.exec(file);
   if (!match) return true;
-  const endOfDayMs = Date.parse(`${match[1]}T23:59:59.999Z`);
-  return !Number.isFinite(endOfDayMs) || endOfDayMs >= sinceMs;
+  const startOfDayMs = Date.parse(`${match[1]}T00:00:00.000Z`);
+  if (!Number.isFinite(startOfDayMs)) return true;
+  const endOfDayMs = startOfDayMs + 86_400_000 - 1;
+  return (opts.sinceMs === undefined || endOfDayMs >= opts.sinceMs) &&
+    (opts.asOfMs === undefined || startOfDayMs <= opts.asOfMs);
 }

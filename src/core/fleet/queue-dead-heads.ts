@@ -16,10 +16,10 @@ export interface LaneDeadHeads {
  * Each skipped line costs one round, independent of launch capacity. A missing
  * marker means only that this report has no evidence preventing launch.
  */
-export function queueDeadHeads(readyTsv: string, skippedEmpty: ReadonlyMap<string, string>, perLaneCap: number): LaneDeadHeads[] {
+export function queueDeadHeads(readyTsv: string, skippedEmpty: ReadonlyMap<string, string>, perLaneCap: number, routerQueue?: string | null): LaneDeadHeads[] {
   if (!Number.isSafeInteger(perLaneCap) || perLaneCap < 1) throw new RangeError('per-lane cap must be a positive integer');
   const lanes = new Map<string, { report: LaneDeadHeads; position: number; launchable: number }>();
-  for (const row of parseReadyTsv(readyTsv).rows) {
+  for (const row of parseReadyTsv(readyTsv, routerQueue).rows) {
     if (row.status !== 'READY' || /^PARKED-/i.test(row.pool) || !row.id || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(row.id)) continue;
     let state = lanes.get(row.pool);
     if (!state) {
