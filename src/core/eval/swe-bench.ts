@@ -26,6 +26,8 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
 
+import { asRecord, isPathWithinDir, loadEvalJsonReports } from './dataset-jsonl.js';
+
 // ---------------------------------------------------------------------------
 // Security helpers
 // ---------------------------------------------------------------------------
@@ -376,21 +378,14 @@ export function saveReport(report: BenchReport): string {
   return file;
 }
 
+function isBenchReport(value: unknown): value is BenchReport {
+  const rec = asRecord(value);
+  return rec !== undefined && typeof rec['ts'] === 'string';
+}
+
 /** Load all persisted reports sorted by ts ascending. */
-export function loadReports(): BenchReport[] {
-  const dir = evalReportDir();
-  if (!fs.existsSync(dir)) return [];
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
-  const reports: BenchReport[] = [];
-  for (const f of files) {
-    try {
-      const raw = fs.readFileSync(path.join(dir, f), 'utf8');
-      reports.push(JSON.parse(raw) as BenchReport);
-    } catch {
-      // skip malformed files
-    }
-  }
-  return reports.sort((a, b) => a.ts.localeCompare(b.ts));
+function loadReports(): BenchReport[] {
+  return loadEvalJsonReports(evalReportDir(), isBenchReport, (report) => report.ts);
 }
 
 /** Load the most recent persisted report (or undefined if none). */
@@ -481,11 +476,7 @@ export function loadSweBenchDataset(jsonlPath: string, repoBasePath?: string): B
       // LOW-2: validate repo_path is absolute and, when repoBasePath is set,
       // resolves under repoBasePath.  Skip tasks with unsafe paths.
       if (rawRepoPath && !path.isAbsolute(rawRepoPath)) continue;
-      if (rawRepoPath && repoBasePath) {
-        const resolved = path.resolve(rawRepoPath);
-        const base = path.resolve(repoBasePath);
-        if (!resolved.startsWith(base + path.sep) && resolved !== base) continue;
-      }
+      if (rawRepoPath && repoBasePath && !isPathWithinDir(rawRepoPath, repoBasePath, true)) continue;
       const repoPath = rawRepoPath;
       const goldTestCommand = rec.test_cmd ?? rec.test_command ?? 'echo no-test';
       const failToPassRaw = rec.FAIL_TO_PASS ?? [];

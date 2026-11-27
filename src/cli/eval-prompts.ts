@@ -33,6 +33,7 @@ import {
   parsePromptExperimentSpec,
   type PromptExperimentSpec,
 } from '../core/eval/prompt-variants.js';
+import { isEvalHelpArgs, parseStrictEvalFlags, writeEvalJsonOutput } from './eval-cli-helpers.js';
 
 const USAGE = `Usage: phm eval prompts --dataset <jobs.jsonl> [--spec <experiment.json>] [--promote] [--write <report.json>] [--check <promotions.json>] [--json]
 
@@ -64,33 +65,16 @@ interface ParsedArgs {
 }
 
 function parseArgs(args: string[]): ParsedArgs {
-  const parsed: ParsedArgs = { promote: false, json: false };
-  const valueFlags = new Set(['--dataset', '--spec', '--write', '--check']);
-  const seen = new Set<string>();
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (seen.has(arg)) { parsed.usageError = `repeated argument: ${arg}`; return parsed; }
-    if (arg === '--json') { parsed.json = true; seen.add(arg); continue; }
-    if (arg === '--promote') { parsed.promote = true; seen.add(arg); continue; }
-    if (valueFlags.has(arg)) {
-      const value = args[++i];
-      if (value === undefined || value.startsWith('-')) {
-        parsed.usageError = `${arg} requires a value`;
-        return parsed;
-      }
-      parsed[arg.slice(2) as 'dataset' | 'spec' | 'write' | 'check'] = value;
-      seen.add(arg);
-      continue;
-    }
-    parsed.usageError = `unknown argument: ${arg}`;
-    return parsed;
-  }
-  return parsed;
+  const { booleans, values, usageError } = parseStrictEvalFlags(args, {
+    booleans: { '--json': 'json', '--promote': 'promote' },
+    values: { '--dataset': 'dataset', '--spec': 'spec', '--write': 'write', '--check': 'check' },
+  });
+  return { ...values, promote: booleans.promote, json: booleans.json, usageError };
 }
 
 /** The shipped experiment — class matchers and arms for the baked variants.
  * Parsed through parsePromptExperimentSpec so the match.task regexes compile. */
-export const DEFAULT_PROMPT_EXPERIMENT: PromptExperimentSpec = parsePromptExperimentSpec({
+const DEFAULT_PROMPT_EXPERIMENT: PromptExperimentSpec = parsePromptExperimentSpec({
   v: 1,
   id: 'prompt-ab-default',
   note: 'Builtin spec: docs/test/secrets job classes, plain vs adaptive prompts.',
@@ -152,7 +136,7 @@ export async function cmdEvalPrompts(args: string[], overrides: EvalPromptsCliDe
     now: new Date().toISOString(),
     ...overrides,
   };
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { deps.out(USAGE); return 0; }
+  if (isEvalHelpArgs(args)) { deps.out(USAGE); return 0; }
   const parsed = parseArgs(args);
   if (parsed.usageError) { deps.err(`error: ${parsed.usageError}\n${USAGE}`); return 2; }
   if (!parsed.dataset) { deps.err(`error: --dataset is required\n${USAGE}`); return 2; }
@@ -179,13 +163,8 @@ export async function cmdEvalPrompts(args: string[], overrides: EvalPromptsCliDe
   const report: PromptAbReport = evaluatePromptExperiment(dataset, spec, { now: deps.now });
   const registry = promotionsRegistry(report);
 
-  if (parsed.write !== undefined) {
-    try {
-      deps.writeFile(parsed.write, `${JSON.stringify(registry, null, 2)}\n`);
-    } catch {
-      deps.err('error: could not write the promotions file');
-      return 1;
-    }
+  if (parsed.write !== undefined && !writeEvalJsonOutput(deps.writeFile, parsed.write, registry, deps.err, 'error: could not write the promotions file')) {
+    return 1;
   }
 
   if (parsed.promote) {
