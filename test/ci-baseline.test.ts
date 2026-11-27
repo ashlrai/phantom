@@ -301,6 +301,20 @@ describe('CI baseline evidence', () => {
       expect(report.master.known).toBe(true);
     }
   });
+  it('withholds master pass evidence when the workflow failed but its only job passed', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, runConclusion: 'failure' }).gh);
+    expect(report.master.known).toBe(false);
+    expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
+    expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
+  });
+  it('withholds PR freshness when the workflow failed without a failed job', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({
+      count: 1, pass: true, masterRunConclusion: 'success', runConclusion: 'failure', prJobConclusion: 'success',
+    }).gh);
+    expect(report.master.known).toBe(true);
+    expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'incomplete-check' }]);
+    expect(report.groups).toEqual([]);
+  });
   it('tolerates inert no-checkout aggregator jobs but rejects unverifiable evidence', async () => {
     // Merge Gate never checks out the workspace, so its log cannot carry the
     // checkout SHA marker. An inert aggregator log is dropped from evidence

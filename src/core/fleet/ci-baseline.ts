@@ -2195,10 +2195,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     // never-started job counts the same as one whose partial log would
     // otherwise verify or drop silently.
     // The workflow can stop before starting other jobs. Its conclusion
-    // still applies when every listed job reached a verdict.
+    // still applies when every listed job reached a verdict. A failed
+    // workflow without a failed job has an unexplained failure.
     const incomplete = data.jobs.some(job => INCOMPLETE_CONCLUSIONS.has(job.conclusion)) ||
       (run.conclusion !== undefined && INCOMPLETE_CONCLUSIONS.has(run.conclusion)) ||
-      (data.jobs.length === 0 && run.conclusion === 'failure');
+      (run.conclusion === 'failure' && !data.jobs.some(job => job.conclusion === 'failure'));
     const result: { conclusion: string; text: string }[] = [];
     for (const job of data.jobs) {
       if (job.conclusion === 'skipped') continue;
@@ -2583,10 +2584,8 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     for (const run of latest) {
       if (run.status !== 'completed') { known = false; continue; }
       const evidence = await logs(run, pr.headRefOid);
-      // A run with an incomplete check — a job cancelled, timed out,
-      // awaiting action, failed to start or gone stale, or a jobless
-      // run that did not succeed — cannot prove the head's checks, so
-      // the PR reads unknown rather than fresh.
+      // An incomplete run cannot prove the head's checks, so the PR
+      // reads unknown.
       if (!evidence) { known = false; continue; }
       if (evidence.incomplete) { known = false; incomplete = true; continue; }
       for (const log of evidence.entries.filter(l => l.conclusion === 'failure')) {
