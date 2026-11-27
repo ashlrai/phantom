@@ -166,6 +166,7 @@ describe('readPlannerAutorunInput', () => {
     try {
       await writeFile(join(dir, 'queue', 'ready.tsv'), [
         'RQ-PHX-A\tphantom\tcodex-personal\twork\t/q/p/a.md',
+        'RQ-PHX-A\tphantom\t\twork\t/q/p/a.md',
         'RQ-PHX-B\tphantom\tPARKED-BYHAND.codex-local\twork\t/q/p/b.md',
         'RQ-OTHR-C\tother\tdevin\twork\t/q/p/c.md',
       ].join('\n'));
@@ -178,7 +179,7 @@ describe('readPlannerAutorunInput', () => {
         { lane: 'devin', running: 2, target: 2, held: false },
       ]);
       expect(read.health.status).toBe('ok');
-      expect(decidePlannerAutorun(read)).toMatchObject({ run: true, reason: 'low-supply', freeSlots: 2 });
+      expect(decidePlannerAutorun({ ...read, lowSupply: 2 })).toMatchObject({ run: true, reason: 'low-supply', freeSlots: 2 });
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 

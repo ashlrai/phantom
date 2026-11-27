@@ -60,10 +60,155 @@ describe('router calibration', () => {
     expect(() => calibrateRouting(jobs, JSON.stringify([{ job_id: 'TEST-job-2', total_tokens: 999 }]))).toThrow('Conflicting tokens');
     expect(() => calibrateRouting(jobs, '{}')).toThrow('PostHog export');
   });
+  it('finds terminal verdicts behind nonterminal aliases on outcome receipts', () => {
+    const launch = (job: string) => row({ event: 'launch', job, lane: 'codex', predicted_merge_rate: 0.8 });
+    const ledger = launch('RQ-MERGED') + launch('RQ-CLOSED') + launch('RQ-PUBLISH') +
+      row({ jobId: 'RQ-MERGED', phase: 'PUBLISHED', outcome: 'MERGED' }) +
+      row({ jobId: 'RQ-CLOSED', event: 'publish', phase: 'OPEN', outcome: 'CLOSED', source: 'metrics-outcomes-reconciler' }) +
+      row({ jobId: 'RQ-PUBLISH', event: 'publish', phase: 'PUBLISHED', outcome: 'MERGED' });
+    expect(calibrateRouting(ledger).arms).toMatchObject([
+      { arm: 'codex', jobs: 3, resolved: 2, observedMergeRate: 0.5, mergeRate: { actual: 0.5, paired: 2 } },
+    ]);
+    expect(() => calibrateRouting(launch('RQ-CONFLICT') +
+      row({ jobId: 'RQ-CONFLICT', phase: 'MERGED', outcome: 'CLOSED' }))).toThrow('Conflicting merged verdicts');
+  });
+  it('excludes dispatcher receipts for work that never launched', () => {
+    const skipped = row({ event: 'outcome', state: 'DONE-NOOP', job: 'RQ-SKIP', lane: 'codex', launched: false });
+    const exportJson = JSON.stringify([{ job_id: 'RQ-SKIP', total_tokens: 10 }]);
+    expect(calibrateRouting(skipped, exportJson)).toMatchObject({ arms: [], unmatchedPosthogRuns: 1 });
+
+    const launch = row({ event: 'launch', job: 'RQ-RUN', lane: 'codex', predicted_tokens: 120 });
+    const declined = row({ event: 'outcome', state: 'DONE-NOOP', job: 'RQ-RUN', launched: false, tokens_total: 0 });
+    const finish = row({ event: 'finish', job: 'RQ-RUN', tokens_total: 100 });
+    expect(calibrateRouting(skipped + declined + launch + finish).arms).toMatchObject([
+      { arm: 'codex', jobs: 1, resolved: 0, tokens: { predicted: 120, actual: 100, paired: 1 } },
+    ]);
+  });
+  it.each([
+    { event: 'outcome', merged: false, phase: 'MERGED' },
+    { event: 'result', merged: false, phase: 'MERGED' },
+    { type: 'resolved', outcome: 'REJECTED', phase: 'MERGED' },
+    { event: 'outcome', merged: true, phase: 'CLOSED' },
+    { event: 'merged', merged: false },
+    { event: 'publish', source: 'metrics-outcomes-reconciler', merged: false, outcome: 'MERGED' },
+    { event: 'outcome', outcome: 'rejected', phase: 'MERGED' },
+  ])('rejects a receipt with contradictory merge verdicts (%j)', (receipt) => {
+    const launch = row({ event: 'launch', job: 'RQ-CONFLICT', lane: 'codex', predicted_merge_rate: 0.8 });
+    expect(() => calibrateRouting(launch + row({ job: 'RQ-CONFLICT', ...receipt })))
+      .toThrow('Conflicting merged verdicts on a job receipt');
+  });
+  it.each([
+    { event: 'result', merged: false },
+    { type: 'resolved', result: 'FAILED' },
+    { kind: 'resolution', status: 'not_merged' },
+  ])('scores explicit negative verdicts in outcome event aliases (%j)', (receipt) => {
+    const launch = row({ event: 'launch', job: 'RQ-VERDICT', lane: 'codex', predicted_merge_rate: 0.5 });
+    const report = calibrateRouting(launch + row({ job: 'RQ-VERDICT', ...receipt }));
+    expect(report.arms).toMatchObject([{
+      arm: 'codex', resolved: 1, observedMergeRate: 0,
+      mergeRate: { predicted: 0.5, actual: 0, paired: 1 }, brier: 0.25,
+    }]);
+  });
+  it('accepts corroborating verdicts and ignores false merge flags on nonterminal publishes', () => {
+    const launch = (job: string) => row({ event: 'launch', job, lane: 'codex', predicted_merge_rate: 0.8 });
+    const ledger = launch('RQ-MERGED') + launch('RQ-CLOSED') + launch('RQ-PENDING') +
+      row({ job: 'RQ-MERGED', event: 'outcome', phase: 'MERGED', merged: true }) +
+      row({ job: 'RQ-CLOSED', event: 'outcome', phase: 'CLOSED', merged: false }) +
+      row({ job: 'RQ-PENDING', event: 'publish', phase: 'PUBLISHED', merged: false });
+    expect(calibrateRouting(ledger).arms).toMatchObject([
+      { arm: 'codex', jobs: 3, resolved: 2, mergeRate: { actual: 0.5, paired: 2 } },
+    ]);
+  });
+  it('counts a replayed timestamped launch once and rejects ambiguous duplicate launches', () => {
+    const launch = { event: 'launch', job: 'RQ-REPLAY', lane: 'codex',
+      ts: '2026-01-01T00:00:00Z', predicted_wall_time_ms: 2000 };
+    const finish = row({ event: 'finish', job: launch.job, ts: '2026-01-01T00:00:02Z' });
+    const merged = row({ job: launch.job, outcome: 'MERGED' });
+    const ledger = row(launch) + finish + merged;
+    const replay = row({ job: launch.job, event: launch.event, lane: launch.lane,
+      ts: launch.ts, predicted_wall_time_ms: launch.predicted_wall_time_ms });
+
+    expect(calibrateRouting(ledger + replay)).toEqual(calibrateRouting(ledger));
+    expect(calibrateRouting(ledger + replay).arms).toMatchObject([
+      { arm: 'codex', jobs: 1, resolved: 1, wallTimeMs: { predicted: 2000, actual: 2000, paired: 1 } },
+    ]);
+    expect(() => calibrateRouting(ledger + row({ ...launch, lane: 'other' }))).toThrow('Duplicate launch');
+    expect(() => calibrateRouting(ledger + row({ ...launch, ts: '2026-01-01T00:00:03Z' }))).toThrow('Duplicate launch');
+    const undated = row({ ...launch, ts: undefined });
+    expect(() => calibrateRouting(undated + undated)).toThrow('Duplicate launch');
+  });
+  it('calibrates a batch member from its claim and reconciled verdict', () => {
+    const report = calibrateRouting(
+      row({ event: 'batch_claim', job: 'RQ-MEMBER', batch: 'RQ-BATCH-A',
+        lane: 'codex', lane_hint: 'other', ts: '2026-01-01T00:00:00Z' }) +
+      row({ event: 'launch', job: 'RQ-BATCH-A', lane: 'codex' }) +
+      row({ event: 'finish', job: 'RQ-MEMBER', ts: '2026-01-01T00:00:03Z' }) +
+      row({ event: 'publish', jobId: 'RQ-MEMBER', outcome: 'MERGED', source: 'metrics-outcomes-reconciler' }),
+      JSON.stringify([{ job_id: 'RQ-MEMBER', predicted_merge_rate: 0.8, predicted_wall_time_ms: 3000 }]),
+    );
+    expect(report.unmatchedPosthogRuns).toBe(0);
+    expect(report.arms).toMatchObject([{ arm: 'codex', jobs: 1, resolved: 1,
+      mergeRate: { actual: 1, paired: 1 }, wallTimeMs: { actual: null, paired: 0 } }]);
+  });
+  it('uses a standalone launch after a batch claim and withholds ambiguous batch lanes', () => {
+    const report = calibrateRouting(
+      row({ event: 'batch_claim', job: 'RQ-SOLO', lane: 'other' }) +
+      row({ event: 'launch', job: 'RQ-SOLO', lane: 'codex' }) +
+      row({ event: 'batch_claim', job: 'RQ-AMBIGUOUS', lane: 'other' }) +
+      row({ event: 'batch_claim', job: 'RQ-AMBIGUOUS', lane: 'codex' }) +
+      row({ jobId: 'RQ-AMBIGUOUS', outcome: 'CLOSED' }) +
+      row({ event: 'batch_claim', job: 'RQ-NO-LANE', lane_hint: 'other' }),
+    );
+    expect(report.arms).toMatchObject([
+      { arm: 'codex', jobs: 1, resolved: 0 },
+      { arm: 'unknown', jobs: 2, resolved: 1 },
+    ]);
+  });
   it('does not treat publish or an unknown outcome as a negative merge', () => {
     const report = calibrateRouting(row({ event: 'launch', id: 'TEST-a', arm: 'a', predicted_merge_rate: 0.5 }) +
       row({ event: 'publish', id: 'TEST-a', status: 'published' }) + row({ event: 'outcome', id: 'TEST-a', outcome: 'pending' }));
     expect(report.arms[0]).toMatchObject({ resolved: 0, observedMergeRate: null, brier: null });
+  });
+  it.each([
+    ['2026-01-01T00:00:00Z', undefined, 2000],
+    ['2026-01-01T00:00:01Z', undefined, null],
+    ['2026-01-01T00:00:02Z', undefined, null],
+    ['2026-01-01T00:00:03Z', undefined, null],
+    ['2026-01-01T00:00:04Z', undefined, 2000],
+    [undefined, undefined, null],
+    ['invalid', undefined, null],
+    ['2026-01-01T00:00:02Z', 1500, 1500],
+  ])('calibrates wall time with claim time %s and explicit duration %s', (claimTime, duration, actual) => {
+    const report = calibrateRouting(
+      row({ event: 'launch', job: 'RQ-MEMBER', lane: 'codex',
+        ts: '2026-01-01T00:00:01Z', predicted_wall_time_ms: 2000 }) +
+      row({ event: 'finish', job: 'RQ-MEMBER', ts: '2026-01-01T00:00:03Z', wall_time_ms: duration }) +
+      row({ job: 'RQ-MEMBER', outcome: 'MERGED' }) +
+      row({ event: 'batch_claim', job: 'RQ-MEMBER', ts: claimTime }),
+    );
+    expect(report.arms).toMatchObject([{ arm: 'codex', resolved: 1,
+      wallTimeMs: { actual, paired: actual === null ? 0 : 1 } }]);
+  });
+  it.each([false, true])('keeps an unlabeled standalone launch out of the batch arm (claim last: %s)', (claimLast) => {
+    const claim = row({ event: 'batch_claim', job: 'RQ-FALLBACK', lane: 'codex', ts: '2026-01-01T00:00:00Z' });
+    const launch = row({ event: 'launch', job: 'RQ-FALLBACK', lane: 'unknown',
+      ts: '2026-01-01T00:00:01Z', predicted_merge_rate: 0.8 });
+    const verdict = row({ jobId: 'RQ-FALLBACK', outcome: 'MERGED' });
+    const report = calibrateRouting((claimLast ? launch + claim : claim + launch) + verdict);
+    expect(report.arms).toMatchObject([
+      { arm: 'unknown', jobs: 1, resolved: 1, mergeRate: { actual: 1, paired: 1 } },
+    ]);
+  });
+  it('skips unknown arm aliases and groups launches with no arm evidence as unknown', () => {
+    const report = calibrateRouting(
+      row({ event: 'launch', job: 'RQ-SOLO', arm: ' Unknown ', lane: 'codex' }) +
+      row({ event: 'batch_claim', job: 'RQ-MEMBER', lane: 'UNKNOWN', pool: 'codex' }) +
+      row({ event: 'launch', job: 'RQ-NO-ARM' }),
+    );
+    expect(report.arms).toMatchObject([
+      { arm: 'codex', jobs: 2 },
+      { arm: 'unknown', jobs: 1, observedMergeRate: null },
+    ]);
   });
   it('rejects reverse time and escapes markdown arm names', () => {
     expect(() => calibrateRouting(row({ event: 'launch', id: 'TEST-a', arm: 'a', timestamp: '2026-01-02T00:00:00Z' }) +

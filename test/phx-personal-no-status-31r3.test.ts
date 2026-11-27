@@ -78,16 +78,29 @@ describe('personal usage without a dispatch status lane', () => {
     expect(ledger.lanes).toEqual([]);
   });
 
-  it('preserves newer status for an existing lane', async () => {
+  it.each([0, 41])('preserves newer status with %s percent used', async usedPct => {
     const opts = await setup(JSON.stringify({ last_tick: '2036-10-31T11:00:00Z',
       lanes: { 'codex-personal': { running: 2, target: 4, held: false } },
-      budget: { 'codex-personal': { weekly_used_pct: 41, source: 'fake status', observed_at: '2036-10-31T11:00:00Z' } },
+      budget: { 'codex-personal': { weekly_used_pct: usedPct, source: 'fake status', observed_at: '2036-10-31T11:00:00Z' } },
     }));
     await session(opts.personalCodexHome, weekly);
     const ledger = await readResourceLedger({ ...opts, now: () => now });
     expect(ledger.lanes).toHaveLength(1);
-    expect(ledger.lanes[0]).toMatchObject({ running: 2, target: 4, held: false, usedPct: 41, source: 'fake status' });
+    expect(ledger.lanes[0]).toMatchObject({ running: 2, target: 4, held: false, usedPct, source: 'fake status' });
     expect(ledger.lanes[0]?.observation).toBeUndefined();
+  });
+
+  it.each([undefined, null, -1, '41'])('uses session quota when newer status usage is %s', async usedPct => {
+    const opts = await setup(JSON.stringify({ last_tick: '2036-10-31T11:00:00Z',
+      lanes: { 'codex-personal': { running: 2, target: 4, held: false } },
+      budget: { 'codex-personal': { weekly_used_pct: usedPct, source: 'fake status', observed_at: '2036-10-31T11:00:00Z' } },
+    }));
+    await session(opts.personalCodexHome, weekly);
+    const ledger = await readResourceLedger({ ...opts, now: () => now });
+    expect(ledger.lanes[0]).toMatchObject({
+      running: 2, target: 4, held: false, usedPct: 73, source: 'codex-personal-sessions',
+      quotaEvidence: { statusQuota: { usedPct: null }, measuredQuota: { usedPct: 73 } },
+    });
   });
 
   it('collects only the supplied personal home despite inherited CMP overrides', async () => {

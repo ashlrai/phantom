@@ -25,7 +25,7 @@
  *    touched. A missing or unreadable file yields no items.
  *  - Rows count only under the writer's contract: schema
  *    'work-market.v1', an epoch-seconds `ts` inside the window (the
- *    same ±5-minute future skew the unfed folds tolerate), and the
+ *    route-decision fold allows five minutes of future skew), and the
  *    per-event fields each cell validates. Malformed lines, other
  *    schemas and other events are skipped, never guessed.
  *  - Route decisions collapse to each job's latest in-window row —
@@ -34,7 +34,7 @@
  *    the unfed folds apply.
  *  - Recurring means recorded across days: every cell emits only when
  *    its evidence spans enough distinct UTC days plus its own count
- *    bar (unfed ticks for lanes, distinct jobs for decision cells).
+ *    bar (distinct dispatcher ticks for lanes, distinct jobs for decisions).
  *  - Mechanical codes never emit: lower_rank, saturated, held,
  *    hysteresis_* and the unfed-only admission codes are the market
  *    working as designed. Unfed lanes emit on recurrence regardless
@@ -53,6 +53,7 @@ import { join } from 'node:path';
 
 import { CLOUD_REPO_PATTERN } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
+import { unfedTickLanes } from '../fleet/unfed-market.js';
 import { readLedgerTail, ROUTER_MARKET_LEDGER_RELATIVE } from '../router/outcomes.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -140,9 +141,6 @@ const sha = (value: string): string => createHash('sha256').update(value).digest
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const count = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-
 const laneField = (value: unknown): string | null =>
   typeof value === 'string' && LANE.test(value) ? value : null;
 
@@ -198,17 +196,6 @@ interface MarketFold {
 
 const emptyFold = (): MarketFold => ({ unfed: new Map(), latest: new Map() });
 
-/** Recorded blocked/reason codes on one row: code-shaped keys with positive integer counts, capped. */
-function rowCodes(value: unknown): [string, number][] {
-  if (!isRecord(value)) return [];
-  const out: [string, number][] = [];
-  for (const [code, n] of Object.entries(value)) {
-    if (out.length >= MAX_CODES) break;
-    if (CODE.test(code) && count(n) && n > 0) out.push([code, n]);
-  }
-  return out;
-}
-
 /** A decision row's rejected_lanes entries — the same validation rejectedLanes() applies in unfed-capacity.ts. */
 function rejectedLanes(value: unknown): { lane: string; codes: string[] }[] {
   if (!Array.isArray(value)) return [];
@@ -255,6 +242,7 @@ const decisionCodes = (value: unknown): string[] => {
  */
 export function foldWorkMarket(text: string, nowMs: number, windowHours: number): MarketFold {
   const fold = emptyFold();
+  const unfedTicks = new Map<number, ReturnType<typeof unfedTickLanes>>();
   const since = nowMs / 1000 - windowHours * 3600;
   const until = nowMs / 1000 + 300;
   for (const line of text.split('\n')) {
@@ -265,33 +253,10 @@ export function foldWorkMarket(text: string, nowMs: number, windowHours: number)
     if (!isRecord(row) || row['schema'] !== 'work-market.v1') continue;
     const ts = row['ts'];
     if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > until) continue;
-    const day = dayOf(ts);
-    const atMs = ts * 1000;
     if (row['event'] === 'unfed_capacity') {
-      const lanes = row['lanes'];
-      if (!isRecord(lanes)) continue;
-      for (const [lane, value] of Object.entries(lanes)) {
-        if (!LANE.test(lane) || !isRecord(value)) continue;
-        // unfed === true is the writer's own verdict; the headroom and
-        // waiting_elsewhere counts are re-checked so a malformed row can
-        // never claim unfed capacity it does not record.
-        if (value['unfed'] !== true || !count(value['headroom']) || !count(value['waiting_elsewhere'])) continue;
-        if ((value['headroom'] as number) <= 0 || (value['waiting_elsewhere'] as number) <= 0) continue;
-        let cell = fold.unfed.get(lane);
-        if (cell === undefined) {
-          cell = { lane, ticks: 0, slotTicks: 0, days: new Set(), blocked: new Map(), firstMs: null, lastMs: null };
-          fold.unfed.set(lane, cell);
-        }
-        cell.ticks += 1;
-        cell.days.add(day);
-        cell.slotTicks += Math.min(value['headroom'] as number, value['waiting_elsewhere'] as number);
-        cell.firstMs = cell.firstMs === null ? atMs : Math.min(cell.firstMs, atMs);
-        cell.lastMs = cell.lastMs === null ? atMs : Math.max(cell.lastMs, atMs);
-        for (const [code, n] of rowCodes(value['blocked'])) {
-          if (!cell.blocked.has(code) && cell.blocked.size >= MAX_CODES) continue;
-          cell.blocked.set(code, (cell.blocked.get(code) ?? 0) + n);
-        }
-      }
+      if (ts > nowMs / 1000) continue;
+      const snapshot = unfedTickLanes(row).filter(({ lane }) => LANE.test(lane));
+      if (snapshot.length > 0) unfedTicks.set(ts, snapshot);
       continue;
     }
     if (row['event'] !== 'route_decision') continue;
@@ -316,7 +281,7 @@ export function foldWorkMarket(text: string, nowMs: number, windowHours: number)
     }
     fold.latest.set(job, {
       ts,
-      day,
+      day: dayOf(ts),
       chosen: laneField(row['chosen_lane']),
       overrideReason,
       overrideFrom,
@@ -324,6 +289,26 @@ export function foldWorkMarket(text: string, nowMs: number, windowHours: number)
       rejected: rejectedLanes(row['rejected_lanes']),
       decisionCodes: decisionCodes(row['reason_codes']),
     });
+  }
+  for (const [ts, snapshot] of unfedTicks) {
+    const day = dayOf(ts);
+    const atMs = ts * 1000;
+    for (const { lane, slots, blocked } of snapshot) {
+      let cell = fold.unfed.get(lane);
+      if (cell === undefined) {
+        cell = { lane, ticks: 0, slotTicks: 0, days: new Set(), blocked: new Map(), firstMs: null, lastMs: null };
+        fold.unfed.set(lane, cell);
+      }
+      cell.ticks += 1;
+      cell.days.add(day);
+      cell.slotTicks += slots;
+      cell.firstMs = cell.firstMs === null ? atMs : Math.min(cell.firstMs, atMs);
+      cell.lastMs = cell.lastMs === null ? atMs : Math.max(cell.lastMs, atMs);
+      for (const [code, n] of Object.entries(blocked)) {
+        if (!cell.blocked.has(code) && cell.blocked.size >= MAX_CODES) continue;
+        cell.blocked.set(code, (cell.blocked.get(code) ?? 0) + n);
+      }
+    }
   }
   return fold;
 }
@@ -398,7 +383,7 @@ const mechanical = (code: string): boolean =>
 export function marketDecisionCells(fold: MarketFold): EmittedCell[] {
   const cells = new Map<string, DecisionCell>();
   const cellFor = (kind: DecisionCell['kind'], lane: string | null, code: string | null): DecisionCell => {
-    const key = `${kind}${lane ?? ''}${code ?? ''}`;
+    const key = `${kind}:${lane ?? ''}:${code ?? ''}`;
     let cell = cells.get(key);
     if (cell === undefined) {
       cell = { kind, lane, code, jobs: 0, days: new Set(), pairs: new Map(), reasonCodes: new Map(), firstMs: null, lastMs: null };

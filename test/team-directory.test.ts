@@ -137,3 +137,37 @@ describe('phm team add --dry-run, pools and running jobs', () => {
     expect(await memberRunningJobs(people, async () => { throw new Error('x'); })).toEqual({ p1: { running: null, jobs: [] }, p2: { running: null, jobs: [] } });
   });
 });
+
+describe('phm team --json error envelope', () => {
+  const human = () => { for (const marker of AGENT_ENV_MARKERS) vi.stubEnv(marker, ''); };
+  const run = async (args: string[]) => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {}), error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try { const code = await cmdTeam([...args, '--team', team, '--json']); return { code, out: String(log.mock.calls.at(-1)?.[0] ?? ''), err: String(error.mock.calls.at(-1)?.[0] ?? '') }; }
+    finally { log.mockRestore(); error.mockRestore(); }
+  };
+  it('marks an agent-process join refusal as refused, not a plain error', async () => {
+    human(); vi.stubEnv('CLAUDECODE', '1');
+    const r = await run(['join']);
+    expect(r.code).toBe(1);
+    expect(JSON.parse(r.err)).toMatchObject({ schema: 'phantom.team.v1', version: 1, refused: true });
+    expect(JSON.parse(r.err).error).toMatch(/agent process/);
+  });
+  it('envelopes failures on verbs that used to print phm team: text', async () => {
+    human();
+    for (const args of [['say'], ['approve', 'missing-id'], ['remove', 'ghost-user'], ['bogus-verb']]) {
+      const r = await run(args);
+      expect(r.code).toBe(args[0] === 'bogus-verb' ? 2 : 1);
+      const body = JSON.parse(r.err);
+      expect(body).toMatchObject({ schema: 'phantom.team.v1', version: 1, refused: false });
+      expect(typeof body.error).toBe('string');
+      expect(body.error.length).toBeGreaterThan(0);
+    }
+    expect(JSON.parse((await run(['bogus-verb'])).err).error).toMatch(/Unknown team command/);
+  });
+  it('keeps phm team: text on stderr without --json', async () => {
+    human();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try { expect(await cmdTeam(['say', '--team', team])).toBe(1); expect(String(error.mock.calls.at(-1)?.[0])).toMatch(/^phm team: say needs text/); }
+    finally { error.mockRestore(); }
+  });
+});

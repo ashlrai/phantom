@@ -9,13 +9,17 @@
  */
 
 import { readFileSync } from 'node:fs';
+import {
+  CODING_CLI_ULTRA_CONSUMERS,
+  isFiniteNumber,
+  type CodingCliUltraConsumer,
+} from './validation.js';
 
 const POOL_IDS = ['codex-primary', 'codex-secondary', 'claude', 'devin', 'grok-build', 'local', 'grok-ultra-weekly', 'metered'] as const;
-const CONSUMERS = ['orchestrator', 'cloud-agent'] as const;
 const JOB_KINDS = ['coding', 'investigation', 'test-fixing', 'research', 'orchestration', 'review', 'merge-decision'] as const;
 
 export type DecisionPoolId = (typeof POOL_IDS)[number];
-export type DecisionConsumer = (typeof CONSUMERS)[number];
+export type DecisionConsumer = CodingCliUltraConsumer;
 export type DecisionJobKind = (typeof JOB_KINDS)[number];
 
 export interface DecisionEligibleRef {
@@ -43,9 +47,8 @@ export interface RecordedRouterDecision {
 
 const isPool = (v: unknown): v is DecisionPoolId => typeof v === 'string' && (POOL_IDS as readonly string[]).includes(v);
 const isConsumerOrNull = (v: unknown): v is DecisionConsumer | null =>
-  v === null || (typeof v === 'string' && (CONSUMERS as readonly string[]).includes(v));
+  v === null || (typeof v === 'string' && (CODING_CLI_ULTRA_CONSUMERS as readonly string[]).includes(v));
 const isJobKind = (v: unknown): v is DecisionJobKind => typeof v === 'string' && (JOB_KINDS as readonly string[]).includes(v);
-const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 /** Parse one JSONL line. Returns null for anything that is not a complete decision. */
 export function parseRouterDecision(line: string): RecordedRouterDecision | null {
@@ -69,9 +72,9 @@ export function parseRouterDecision(line: string): RecordedRouterDecision | null
   if (solver !== 'highs' && solver !== 'greedy') return null;
   if (row['grantsMergeAuthority'] !== false) return null;
   const propensity = row['propensity'];
-  if (!finite(propensity) || propensity < 0) return null;
+  if (!isFiniteNumber(propensity) || propensity < 0) return null;
   const netValue = row['netValue'];
-  if (netValue !== null && !finite(netValue)) return null;
+  if (netValue !== null && !isFiniteNumber(netValue)) return null;
   if (!Array.isArray(row['eligible'])) return null;
   const eligible = (row['eligible'] as unknown[]).flatMap((item): DecisionEligibleRef[] => {
     if (typeof item !== 'object' || item === null) return [];

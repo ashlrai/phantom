@@ -7,10 +7,11 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { canonicalJson } from '../authority/canonical-json.js';
 import type { SkillCard } from '../types.js';
 import type { MetricsJob } from './metrics-ingest.js';
 import { ledgerEventName, ledgerPhase } from './empty-cause.js';
-import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
+import { isNodePoolLedgerRow, ledgerEventTs } from './jobs-ledger-dialect.js';
 import { readSkillCardCorpus, recordSkillCard, sanitizeSkillCard } from './skill-records.js';
 import { hasRevertEvidence } from './slot-yield.js';
 import {
@@ -43,29 +44,34 @@ export function draftSkillNudges(jobs: readonly SkillNudgeJob[], ts: string): Sk
   const drafts = new Map<string, SkillCard>();
   for (const job of byId.values()) {
     if (conflicts.has(job.id) || !['merged', 'failed', 'empty', 'cancelled'].includes(job.outcome ?? '')) continue;
-    const key = JSON.stringify([job.lane, job.failureClass ?? 'recovery']);
+    const failureClass = job.failureClass?.toLowerCase() === 'unknown' ? undefined : job.failureClass;
+    const key = JSON.stringify([job.lane, failureClass ?? null]);
     const sources = seen.get(key) ?? [];
-    if (job.failureClass && job.outcome === 'failed') sources.push(job.id);
+    if (failureClass && job.outcome === 'failed') sources.push(job.id);
     seen.set(key, sources);
     if (job.outcome !== 'merged' || job.reverted === true) continue;
     const retry = positiveCount(job.retries), recut = positiveCount(job.recuts);
-    if (!retry && !recut && !(job.failureClass && sources.length >= 3)) continue;
-    const trigger = job.failureClass
-      ? `${job.lane}: recover from ${job.failureClass}`
+    if (!retry && !recut && !(failureClass && sources.length >= 3)) continue;
+    const trigger = failureClass
+      ? `${job.lane}: recover from ${failureClass}`
       : `${job.lane}: recover after ${recut ? 'recut' : 'retry'}`;
     const steps = [
       `Inspect the structured failure classification for ${job.lane}.`,
-      `Address ${job.failureClass ?? 'the failed attempt'} before retrying or recutting.`,
+      `Address ${failureClass ?? 'the failed attempt'} before retrying or recutting.`,
       'Run the affected verification and confirm a successful outcome before reuse.',
     ];
     const skillId = `skill.nudge.${createHash('sha256').update(JSON.stringify([trigger, steps])).digest('hex')}`;
     const old = drafts.get(skillId);
+    // Keep the recovery that justified this draft even when failures fill the cap.
+    const otherSources = new Set([...(old?.sourceJobIds ?? []), ...sources]);
+    otherSources.delete(job.id);
+    const sourceJobIds = [...[...otherSources].sort().slice(0, 15), job.id].sort();
     drafts.set(skillId, sanitizeSkillCard({
       schemaVersion: 1, skillId, revision: 1, ts,
       name: 'Draft recovery workflow', summary: trigger,
       status: 'candidate', source: 'imported', tags: ['skill-nudge', 'shadow'],
       trigger, steps,
-      sourceJobIds: [...new Set([...(old?.sourceJobIds ?? []), ...sources, job.id])].sort().slice(0, 16),
+      sourceJobIds,
       verification: { passed: false },
     }));
   }
@@ -96,7 +102,7 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 // its latest terminal outcome (or its last row while unresolved).
 //
 // Field provenance, all real ledger evidence:
-//   - id/lane: job plus the last execution-side lane (enqueue/queued rows are
+//   - id/lane: job plus the last execution-side lane (enqueue/enqueued/queued rows are
 //     queue hints and never set the lane).
 //   - outcome: the latest terminal lifecycle phase on any row — the phase
 //     fields (phase|state|outcome|status|result|conclusion via the shared
@@ -121,11 +127,12 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 //     claim rows not flagged launch_dedupe — dedupe claims pair with their
 //     launch and are one attempt) plus launch_failed rows whose action is
 //     'retry' (bounded launch-retry receipts for attempts that never spawned).
-//   - recuts: recut_admission rows whose action is defer or ready — skip only
-//     records an already-merged prior, not an attempt.
+//   - recuts: dispatch attempts preceded by an unconsumed ready recut
+//     decision. Polling the admission gate does not count as execution.
 //   - failureClass: the last identifier-safe classification a finish row
 //     carries (failure_class, then failure_reason, then pool_error) or a
-//     launch_failed/launch_terminal reason. Prose reasons never qualify.
+//     launch_failed/launch_terminal reason, reset when the known lane changes.
+//     Prose reasons never qualify.
 // Anything unresolved stays absent: no outcome means draftSkillNudges skips
 // the row, exactly like an MetricsJob without a terminal outcome.
 
@@ -141,7 +148,7 @@ const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
 /** Same identifier alphabet draftSkillNudges accepts for id, lane and failureClass. */
 const LEDGER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 
-const QUEUE_HINT_EVENTS: ReadonlySet<string> = new Set(['enqueue', 'queued']);
+const QUEUE_HINT_EVENTS: ReadonlySet<string> = new Set(['enqueue', 'enqueued', 'queued']);
 const ATTEMPT_EVENTS: ReadonlySet<string> = new Set(['launch', 'batch_claim']);
 const MERGED_PHASES: ReadonlySet<string> = new Set(['MERGED']);
 const FAILED_PHASES: ReadonlySet<string> = new Set(['CLOSED', 'FAILED', 'ERROR']);
@@ -152,16 +159,22 @@ const REVERT_PHASES: ReadonlySet<string> = new Set(['REVERT', 'REVERTED']);
 /** The resolved outcomes draftSkillNudges consumes; queued/running stay unresolved. */
 type NudgeOutcome = 'merged' | 'failed' | 'empty' | 'cancelled';
 
-interface NudgeJobAccum {
+interface NudgeRecoveryEvidence {
   lane: string | null;
-  outcome: NudgeOutcome | undefined;
-  /** PR URL on the row that set the standing outcome; null when that row carried none. */
-  verdictUrl: string | null;
-  reverted: boolean;
   attempts: number;
   retryReceipts: number;
   recuts: number;
   failureClass: string | null;
+}
+
+interface NudgeJobAccum {
+  evidence: NudgeRecoveryEvidence;
+  verdictEvidence: NudgeRecoveryEvidence | null;
+  outcome: NudgeOutcome | undefined;
+  /** Canonical PR key on the standing verdict row, when available. */
+  verdictPrKey: string | null;
+  reverted: boolean;
+  recutReady: boolean;
   lastLine: number;
   outcomeLine: number | null;
 }
@@ -174,14 +187,10 @@ function firstString(row: Record<string, unknown>, keys: readonly string[]): str
   return null;
 }
 
-/** First non-empty PR URL spelling on a ledger row; null when none is recorded. */
-function rowPrUrl(row: Record<string, unknown>): string | null {
-  return firstString(row, PR_URL_KEYS);
-}
-
 /** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
-function pullRequestKey(url: string): string | null {
-  const match = GITHUB_PULL_URL.exec(url);
+function rowPrKey(row: Record<string, unknown>): string | null {
+  const url = firstString(row, PR_URL_KEYS);
+  const match = url === null ? null : GITHUB_PULL_URL.exec(url);
   return match ? `${match[1]!.toLowerCase()}/${match[2]!.toLowerCase()}#${match[3]}` : null;
 }
 
@@ -200,17 +209,18 @@ function standingReverted(
   keys: ReadonlySet<string> | null | undefined,
 ): boolean {
   if (claims === null || keys === null || keys === undefined
-    || acc.outcome !== 'merged' || acc.verdictUrl === null) return false;
-  const claimants = claims.get(acc.verdictUrl);
-  if (claimants === undefined || claimants.size !== 1 || !claimants.has(id)) return false;
-  const key = pullRequestKey(acc.verdictUrl);
-  return key !== null && keys.has(key);
+    || acc.outcome !== 'merged' || acc.verdictPrKey === null) return false;
+  const claimants = claims.get(acc.verdictPrKey);
+  return claimants?.size === 1 && claimants.has(id) && keys.has(acc.verdictPrKey);
 }
 
 /** Event names (post-normalization, lowercase) that carry a terminal verdict with no phase field. */
-const EVENT_OUTCOMES: Readonly<Record<string, NudgeOutcome>> = {
-  merged: 'merged', closed: 'failed', revert: 'merged', reverted: 'merged',
-};
+const EVENT_OUTCOMES: ReadonlyMap<string, NudgeOutcome> = new Map([
+  ['merged', 'merged'],
+  ['closed', 'failed'],
+  ['revert', 'merged'],
+  ['reverted', 'merged'],
+]);
 
 /**
  * The job's terminal outcome on one row: the phase fields decide first (the
@@ -228,18 +238,26 @@ function outcomeOf(row: Record<string, unknown>): NudgeOutcome | undefined {
     if (CANCELLED_PHASES.has(phase)) return 'cancelled';
   }
   const event = ledgerEventName(row);
-  return event === null ? undefined : EVENT_OUTCOMES[event];
+  return event === null ? undefined : EVENT_OUTCOMES.get(event);
 }
 
 /** Fixed-label failure classifications only; anything else stays unknown. */
 function failureClassOf(row: Record<string, unknown>, event: string | null): string | null {
-  let raw: string | null = null;
+  let keys: readonly string[];
   if (event === 'finish') {
-    raw = firstString(row, ['failure_class', 'failureClass', 'failure_reason', 'failureReason', 'pool_error', 'poolError']);
+    keys = ['failure_class', 'failureClass', 'failure_reason', 'failureReason', 'pool_error', 'poolError'];
   } else if (event === 'launch_failed' || event === 'launch_terminal') {
-    raw = firstString(row, ['reason', 'class']);
+    keys = ['reason', 'class'];
+  } else {
+    return null;
   }
-  return raw !== null && LEDGER_ID_PATTERN.test(raw) ? raw : null;
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value !== 'string') continue;
+    const raw = value.trim();
+    if (validId(raw) && raw.toLowerCase() !== 'unknown') return raw;
+  }
+  return null;
 }
 
 /**
@@ -248,11 +266,14 @@ function failureClassOf(row: Record<string, unknown>, event: string | null): str
  * jobs). Pure; never throws; malformed lines and rows without a usable job id
  * are ignored.
  */
-export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: ReadonlySet<string> | null): SkillNudgeJob[] {
+export function skillNudgeJobsFromLedger(
+  text: string, revertedPrKeys?: ReadonlySet<string> | null, nowMs = Date.now(),
+): SkillNudgeJob[] {
   const jobs = new Map<string, NudgeJobAccum>();
-  // PR URL -> claiming job ids, collected only when the caller supplied
+  const recoveryReceipts = new Set<string>();
+  // PR key -> claiming job ids, collected only when the caller supplied
   // standing revert keys — the same unambiguous-claim evidence pass
-  // outcome-learning runs, so a contested or foreign URL never resolves.
+  // outcome-learning runs, so a contested or foreign PR never resolves.
   const claims = revertedPrKeys === undefined || revertedPrKeys === null || revertedPrKeys.size === 0
     ? null : new Map<string, Set<string>>();
   let lineNo = 0;
@@ -269,61 +290,102 @@ export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: Readonly
     // Batch members have their own rows. The session wrapper and node-pool
     // attempt telemetry do not supply job-level recovery evidence.
     if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
-    if (claims !== null) {
-      const url = rowPrUrl(row);
-      if (url !== null) {
-        const set = claims.get(url) ?? new Set<string>();
-        set.add(id);
-        claims.set(url, set);
+    const outcome = outcomeOf(row);
+    const rowAt = ledgerEventTs(row, null);
+    const terminalPhase = outcome === 'merged' ? 'MERGED' : outcome === 'failed' ? 'CLOSED' : null;
+    const terminalAt = terminalPhase === null ? null : ledgerEventTs(row, terminalPhase);
+    if ((rowAt !== null && rowAt > nowMs) || (terminalAt !== null && terminalAt > nowMs)) continue;
+    const event = ledgerEventName(row);
+    const revertAt = [row['revertedAt'], row['reverted_at']]
+      .map(value => typeof value === 'string' ? Date.parse(value) : NaN)
+      .find(Number.isFinite);
+    const futureRevert = revertAt !== undefined && revertAt > nowMs;
+    const phase = ledgerPhase(row);
+    if (futureRevert && ((phase !== null && REVERT_PHASES.has(phase))
+      || event === 'revert' || event === 'reverted')) continue;
+    const dispatched = (event !== null && ATTEMPT_EVENTS.has(event))
+      || (event === 'claim' && row['launch_dedupe'] !== true);
+    // A replay must not move a verdict past later failures or capture
+    // execution evidence recorded after the original verdict.
+    const datedVerdict = outcome !== undefined && (rowAt !== null || terminalAt !== null);
+    const datedRecovery = rowAt !== null && (dispatched || event === 'recut_admission'
+      || event === 'launch_failed' || event === 'launch_terminal' || event === 'finish');
+    if (datedVerdict || datedRecovery) {
+      let receipt = line.trim();
+      try {
+        receipt = canonicalJson(row);
+      } catch {
+        // Preserve exact-text deduplication for rows that cannot be canonicalized.
       }
+      if (recoveryReceipts.has(receipt)) continue;
+      recoveryReceipts.add(receipt);
+    }
+    const prKey = claims === null ? null : rowPrKey(row);
+    if (claims !== null && prKey !== null) {
+      const set = claims.get(prKey) ?? new Set<string>();
+      set.add(id);
+      claims.set(prKey, set);
     }
     if (!LEDGER_ID_PATTERN.test(id)) continue;
     let acc = jobs.get(id);
     if (acc === undefined) {
-      acc = { lane: null, outcome: undefined, verdictUrl: null, reverted: false, attempts: 0,
-        retryReceipts: 0, recuts: 0, failureClass: null, lastLine: lineNo, outcomeLine: null };
+      acc = {
+        evidence: { lane: null, attempts: 0, retryReceipts: 0, recuts: 0, failureClass: null },
+        verdictEvidence: null, outcome: undefined, verdictPrKey: null, reverted: false, recutReady: false,
+        lastLine: lineNo, outcomeLine: null,
+      };
       jobs.set(id, acc);
     }
     acc.lastLine = lineNo;
-    const event = ledgerEventName(row);
-    const outcome = outcomeOf(row);
+    const evidence = acc.evidence;
     if (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event)) {
-      const lane = firstString(row, LEDGER_LANE_KEYS);
-      if (lane !== null && hasKnownLane(lane)) acc.lane = lane;
+      for (const key of LEDGER_LANE_KEYS) {
+        const value = row[key];
+        if (typeof value !== 'string' || !hasKnownLane(value.trim())) continue;
+        const lane = value.trim();
+        if (evidence.lane !== null && evidence.lane !== lane) evidence.failureClass = null;
+        evidence.lane = lane;
+        break;
+      }
     }
-    if (event !== null && ATTEMPT_EVENTS.has(event)) acc.attempts += 1;
-    else if (event === 'claim' && row['launch_dedupe'] !== true) acc.attempts += 1;
+    if (dispatched) {
+      evidence.attempts += 1;
+      if (acc.recutReady) evidence.recuts += 1;
+      acc.recutReady = false;
+    }
     if (event === 'launch_failed' && firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase() === 'retry') {
-      acc.retryReceipts += 1;
+      evidence.retryReceipts += 1;
     }
     if (event === 'recut_admission') {
-      const action = firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase();
-      if (action === 'defer' || action === 'ready') acc.recuts += 1;
+      acc.recutReady = firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase() === 'ready';
     }
     const failureClass = failureClassOf(row, event);
-    if (failureClass !== null) acc.failureClass = failureClass;
-    if (hasRevertEvidence(row)) acc.reverted = true;
+    if (failureClass !== null) evidence.failureClass = failureClass;
+    if (!futureRevert && hasRevertEvidence(row)) acc.reverted = true;
     if (outcome !== undefined) {
+      acc.recutReady = false;
+      acc.verdictEvidence = { ...evidence };
       acc.outcome = outcome;
       acc.outcomeLine = lineNo;
-      // The standing verdict row's own PR URL is what the revert-set join
+      // The standing verdict row's own PR key is what the revert-set join
       // binds to — a later verdict of a different PR is a fresh merge era.
-      acc.verdictUrl = rowPrUrl(row);
+      acc.verdictPrKey = prKey;
     }
   }
   return [...jobs.entries()]
     .sort((a, b) => (a[1].outcomeLine ?? a[1].lastLine) - (b[1].outcomeLine ?? b[1].lastLine))
     .map(([id, acc]) => {
-      const retries = Math.max(0, acc.attempts - 1) + acc.retryReceipts;
+      const evidence = acc.verdictEvidence ?? acc.evidence;
+      const retries = Math.max(0, evidence.attempts - 1) + evidence.retryReceipts;
       const reverted = acc.reverted || standingReverted(id, acc, claims, revertedPrKeys);
       return {
         id,
-        lane: acc.lane ?? 'unknown',
+        lane: evidence.lane ?? 'unknown',
         ...(acc.outcome !== undefined ? { outcome: acc.outcome } : {}),
         ...(reverted ? { reverted: true } : {}),
         ...(retries > 0 ? { retries } : {}),
-        ...(acc.recuts > 0 ? { recuts: acc.recuts } : {}),
-        ...(acc.failureClass !== null ? { failureClass: acc.failureClass } : {}),
+        ...(evidence.recuts > 0 ? { recuts: evidence.recuts } : {}),
+        ...(evidence.failureClass !== null ? { failureClass: evidence.failureClass } : {}),
       };
     });
 }
@@ -371,13 +433,14 @@ export async function syncSkillNudgesFromJobsLedger(
   const jobsPath = join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
   const empty = { jobsPath, truncated: false, folded: 0, candidates: 0 };
   try {
+    const now = (opts.now ?? (() => new Date()))();
     const jobs = opts.jobsText !== undefined
       ? { state: 'read' as const, text: opts.jobsText, truncated: false }
       : await readLedgerTail(jobsPath);
     if (jobs.state !== 'read') return { state: jobs.state, ...empty };
     if (opts.signal?.aborted) return { state: 'read', ...empty, truncated: jobs.truncated };
-    const folded = skillNudgeJobsFromLedger(jobs.text, opts.revertedPrKeys);
-    const candidates = nudgeSkillsFromJobs(folded, (opts.now ?? (() => new Date()))().toISOString());
+    const folded = skillNudgeJobsFromLedger(jobs.text, opts.revertedPrKeys, now.getTime());
+    const candidates = nudgeSkillsFromJobs(folded, now.toISOString());
     return { state: 'read', jobsPath, truncated: jobs.truncated, folded: folded.length, candidates: candidates.length };
   } catch {
     return { state: 'error', ...empty };

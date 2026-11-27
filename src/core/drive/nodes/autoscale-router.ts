@@ -17,7 +17,7 @@
  */
 import { isDeepStrictEqual } from 'node:util';
 import { HARNESS_ADAPTERS } from './harness-adapters.js';
-import type { HarnessFootprint, NodeCapacityDoc } from './capacity-model.js';
+import { CAPACITY_POLICY, type HarnessFootprint, type NodeCapacityDoc } from './capacity-model.js';
 
 export interface HarnessModelCost {
   provider: string;
@@ -90,18 +90,21 @@ export interface Placement {
 export const ROUTER_DEFAULTS = Object.freeze({ maxAgeMs: 120_000, tokenWeight: 0.5 });
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+const MAX_CLOCK_SKEW_MS = 60_000;
 
-/** Select one observation per node, retaining conflicts at the newest timestamp. */
-function latestByNode<T>(items: readonly T[], docOf: (item: T) => NodeCapacityDoc) {
+/** Select one observation per node, retaining conflicts at the newest plausible timestamp. */
+function latestByNode<T>(items: readonly T[], docOf: (item: T) => NodeCapacityDoc, nowMs: number) {
   const latest = new Map<string, { item: T; at: number; conflict: boolean }>();
   for (const item of items) {
     const doc = docOf(item);
     const parsed = Date.parse(doc.measured_at);
-    const at = finite(parsed) ? parsed : -Infinity;
+    // Keep a placeholder for stale diagnostics, but never let an unusable
+    // timestamp displace a plausible observation of the same node.
+    const at = finite(parsed) && parsed <= nowMs + MAX_CLOCK_SKEW_MS ? parsed : -Infinity;
     const previous = latest.get(doc.node);
     if (!previous || at > previous.at) {
       latest.set(doc.node, { item, at, conflict: false });
-    } else if (at === previous.at && !isDeepStrictEqual(item, previous.item)) {
+    } else if (finite(at) && at === previous.at && !isDeepStrictEqual(item, previous.item)) {
       previous.conflict = true;
     }
   }
@@ -115,6 +118,12 @@ export function mergeRate(o: LaneOutcomes | undefined): number {
 }
 
 type FootprintCost = Pick<HarnessFootprint, 'mem_bytes_max' | 'cpu_cores_per_session'>;
+
+function footprintExpired(fp: HarnessFootprint | undefined, measuredAt: number, nowMs: number): boolean {
+  if (fp?.source !== 'learned') return false;
+  const learnedAt = typeof fp.learned_at === 'string' ? Date.parse(fp.learned_at) : NaN;
+  return !finite(learnedAt) || learnedAt > measuredAt || nowMs - learnedAt > CAPACITY_POLICY.learnedFootprintTtlMs;
+}
 
 /** Per-resource maxima for each harness, used on nodes that have not run it yet. */
 export function fleetFootprints(docs: NodeCapacityDoc[]): Record<string, FootprintCost> {
@@ -135,10 +144,12 @@ export function fleetFootprints(docs: NodeCapacityDoc[]): Record<string, Footpri
 
 interface NodeState {
   node: RouteNode;
-  /** Local models served now or loaded by an earlier placement in this plan. */
+  /** Provider/model/harness combinations loaded by earlier placements in this plan. */
   loaded: Set<string>;
   bytes: number;
   cores: number | null;
+  /** Allow for binary roundoff relative to the original CPU budget. */
+  cpuRoundoff: number;
   blocked: string | null;
 }
 
@@ -150,15 +161,24 @@ function capacityHold(doc: NodeCapacityDoc): 'pressure' | 'swap-growth' | null {
   return null;
 }
 
+function hasMeasuredMemory(doc: NodeCapacityDoc): boolean {
+  return doc.mem_free.pressure_level === 1 && doc.mem_free.headroom_bytes !== null;
+}
+
 function nodeStates(input: RouterInput): NodeState[] {
   const maxAge = input.maxAgeMs ?? ROUTER_DEFAULTS.maxAgeMs;
-  return latestByNode(input.nodes, node => node.doc)
+  return latestByNode(input.nodes, node => node.doc, input.nowMs)
     .sort((a, b) => a.item.doc.node.localeCompare(b.item.doc.node)).map(({ item: node, at, conflict }) => {
       const age = input.nowMs - at;
       const blocked = conflict ? 'capacity-conflict'
-        : !finite(age) || age < -60_000 || age > maxAge ? 'stale'
-        : capacityHold(node.doc) ?? (node.doc.mem_free.headroom_bytes === null ? 'unmeasured' : null);
-      return { node, loaded: new Set(node.localModels ?? []), bytes: node.doc.mem_free.headroom_bytes ?? 0, cores: node.doc.cpu.headroom_cores, blocked };
+        : !finite(age) || age > maxAge ? 'stale'
+        : capacityHold(node.doc) ?? (hasMeasuredMemory(node.doc) ? null : 'unmeasured');
+      const cores = node.doc.cpu.headroom_cores;
+      const footprints = Object.entries(node.doc.per_harness_footprint)
+        .filter(([, fp]) => !footprintExpired(fp, at, input.nowMs));
+      const currentNode = { ...node, doc: { ...node.doc, per_harness_footprint: Object.fromEntries(footprints) } };
+      return { node: currentNode, loaded: new Set(), bytes: node.doc.mem_free.headroom_bytes ?? 0,
+        cores, cpuRoundoff: (cores ?? 0) * Number.EPSILON, blocked };
     });
 }
 
@@ -177,25 +197,33 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
   for (const job of input.jobs) {
     const rejected: Record<string, number> = {};
     const reject = (why: string) => { rejected[why] = (rejected[why] ?? 0) + 1; };
-    type Cand = { state: NodeState; cost: HarnessModelCost; fp: FootprintCost; fpSource: 'node' | 'fleet'; load: number; p: number; perMTok: number; perHour: number };
+    type Cand = { state: NodeState; cost: HarnessModelCost; fp: FootprintCost; fpSource: 'node' | 'fleet'; load: number; localModelKey: string | null; p: number; perMTok: number; perHour: number };
     const cands: Cand[] = [];
     for (const cost of costs) {
       if (job.providers && !job.providers.includes(cost.provider)) { reject('provider-not-in-job'); continue; }
       if (job.models && !job.models.includes(cost.model)) { reject('model-not-in-job'); continue; }
       if (exhausted.has(cost.provider)) { reject('provider-exhausted'); continue; }
+      const localModelKey = cost.local ? JSON.stringify([cost.provider, cost.model, cost.harness]) : null;
       for (const state of states) {
         if (state.blocked) { reject(`node-${state.blocked}`); continue; }
         if (state.node.providers && !state.node.providers.includes(cost.provider)) { reject('provider-not-on-node'); continue; }
         // An unserved local model needs room for its weights; without a size it cannot be placed.
-        const load = cost.local && !state.loaded.has(cost.model) ? cost.modelBytes : 0;
+        const load = localModelKey !== null && !state.node.localModels?.includes(cost.model) &&
+          !state.loaded.has(localModelKey) ? cost.modelBytes : 0;
         if (!finite(load) || load < 0) { reject('model-not-served'); continue; }
         const own = state.node.doc.per_harness_footprint[cost.harness];
-        const fp = own ?? fleet[cost.harness];
-        if (!fp) { reject('footprint-unmeasured'); continue; }
+        const borrowed = fleet[cost.harness];
+        const memory = own ?? borrowed;
+        if (!memory) { reject('footprint-unmeasured'); continue; }
+        const fp = {
+          mem_bytes_max: memory.mem_bytes_max,
+          cpu_cores_per_session: own?.cpu_cores_per_session ?? borrowed?.cpu_cores_per_session ?? null,
+        };
         if (fp.mem_bytes_max + load > state.bytes) { reject('memory'); continue; }
-        if (state.cores === 0 || (state.cores !== null && fp.cpu_cores_per_session !== null && fp.cpu_cores_per_session > state.cores)) { reject('cpu'); continue; }
+        if (state.cores === 0 || (state.cores !== null && fp.cpu_cores_per_session !== null &&
+          fp.cpu_cores_per_session - state.cores > state.cpuRoundoff)) { reject('cpu'); continue; }
         const p = mergeRate(input.outcomes[cost.provider]);
-        cands.push({ state, cost, fp, fpSource: own ? 'node' : 'fleet', load, p,
+        cands.push({ state, cost, fp, fpSource: own ? 'node' : 'fleet', load, localModelKey, p,
           perMTok: p / cost.tokensPerJob * 1e6, perHour: p / (cost.minutesPerJob + Math.max(0, state.node.overheadMinutes ?? 0)) * 60 });
       }
     }
@@ -211,18 +239,27 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
     }
     const w = finite(job.tokenWeight) ? Math.max(0, Math.min(1, job.tokenWeight)) : ROUTER_DEFAULTS.tokenWeight;
     const bestTok = Math.max(...cands.map(c => c.perMTok)), bestHour = Math.max(...cands.map(c => c.perHour));
-    let best: Cand | null = null, bestScore = -1;
-    for (const c of cands) {
-      const score = (c.perMTok / bestTok) ** w * (c.perHour / bestHour) ** (1 - w);
-      // Strictly greater keeps the first candidate in (provider, model, node) order on ties.
-      if (score > bestScore + 1e-12) { best = c; bestScore = score; }
+    const scored = cands.map(candidate => ({
+      candidate,
+      score: (candidate.perMTok / bestTok) ** w * (candidate.perHour / bestHour) ** (1 - w),
+    }));
+    const highestScore = scored.reduce((highest, { score }) => score > highest ? score : highest, -1);
+    // Compare against the true maximum so successive ties cannot move the cutoff.
+    // Equal loads keep the first candidate in (provider, model, node) order.
+    const selected = scored.reduce<typeof scored[number] | undefined>((best, entry) => {
+      if (!(entry.score >= highestScore - 1e-12)) return best;
+      return !best || entry.candidate.load < best.candidate.load ? entry : best;
+    }, undefined);
+    const { candidate: best, score: bestScore } = selected ?? scored[0]!;
+    best.state.bytes -= best.fp.mem_bytes_max + best.load;
+    if (best.localModelKey !== null) best.state.loaded.add(best.localModelKey);
+    if (best.state.cores !== null && best.fp.cpu_cores_per_session !== null) {
+      const remaining = best.state.cores - best.fp.cpu_cores_per_session;
+      best.state.cores = remaining <= best.state.cpuRoundoff ? 0 : remaining;
     }
-    best!.state.bytes -= best!.fp.mem_bytes_max + best!.load;
-    if (best!.cost.local) best!.state.loaded.add(best!.cost.model);
-    if (best!.state.cores !== null && best!.fp.cpu_cores_per_session !== null) best!.state.cores -= best!.fp.cpu_cores_per_session;
     const r = (n: number) => Math.round(n * 1e4) / 1e4;
-    plan.push({ jobId: job.id, nodeId: best!.state.node.doc.node, provider: best!.cost.provider, model: best!.cost.model,
-      score: r(bestScore), mergeRate: r(best!.p), mergesPerMTok: r(best!.perMTok), mergesPerHour: r(best!.perHour), footprint: best!.fpSource });
+    plan.push({ jobId: job.id, nodeId: best.state.node.doc.node, provider: best.cost.provider, model: best.cost.model,
+      score: r(bestScore), mergeRate: r(best.p), mergesPerMTok: r(best.perMTok), mergesPerHour: r(best.perHour), footprint: best.fpSource });
   }
   return plan;
 }
@@ -233,14 +270,15 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
  * fresh node has a measured answer for that harness.
  */
 export function fleetRunnable(docs: NodeCapacityDoc[], nowMs: number, maxAgeMs = ROUTER_DEFAULTS.maxAgeMs): Record<string, number | null> {
-  const current = latestByNode(docs, doc => doc).filter(({ at, conflict }) => {
+  const current = latestByNode(docs, doc => doc, nowMs).filter(({ at, conflict }) => {
     const age = nowMs - at;
-    return !conflict && finite(age) && age >= -60_000 && age <= maxAgeMs;
-  }).map(({ item: doc }) => ({ doc, stopped: capacityHold(doc) !== null || doc.cpu.headroom_cores === 0 }));
+    return !conflict && finite(age) && age <= maxAgeMs;
+  }).map(({ item: doc, at }) => ({ doc, at, stopped: capacityHold(doc) !== null || doc.cpu.headroom_cores === 0 }));
   const out: Record<string, number | null> = {};
   for (const adapter of HARNESS_ADAPTERS) {
     let sum: number | null = null;
-    for (const { doc, stopped } of current) {
+    for (const { doc, at, stopped } of current) {
+      if (!stopped && (!hasMeasuredMemory(doc) || footprintExpired(doc.per_harness_footprint[adapter.id], at, nowMs))) continue;
       const n = doc.agents_runnable_now[adapter.id];
       if (Number.isSafeInteger(n)) sum = (sum ?? 0) + (stopped ? 0 : (n as number));
     }

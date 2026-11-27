@@ -22,8 +22,15 @@ export function versionCap(version: string | null): string | null {
   return cap !== null && SEMVER.test(version!.toLowerCase()) && validCap(cap) ? cap : null;
 }
 
+/** True for the `phm-<semver>` build marker a join advertises. It is
+ * observation metadata for self-update drift — never a lane or pack a job
+ * can require — so lane projections filter it out while `caps` keeps it. */
+export function isVersionCap(cap: string): boolean {
+  return cap.startsWith(VERSION_CAP_PREFIX) && SEMVER.test(cap.slice(VERSION_CAP_PREFIX.length));
+}
+
 export function versionFromCaps(caps: readonly string[]): string | null {
-  const cap = caps.find(c => c.startsWith(VERSION_CAP_PREFIX) && SEMVER.test(c.slice(VERSION_CAP_PREFIX.length)));
+  const cap = caps.find(isVersionCap);
   return cap ? cap.slice(VERSION_CAP_PREFIX.length) : null;
 }
 

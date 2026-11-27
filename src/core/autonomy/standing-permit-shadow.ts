@@ -12,11 +12,16 @@
  */
 
 import { createHash, timingSafeEqual } from 'node:crypto';
+import {
+  hasExactKeys as exactKeys,
+  isCanonicalIsoTimestamp,
+  strictPlainRecord as plainRecord,
+} from './protected-pr-handoff.js';
 
 export const STANDING_PERMIT_SHADOW_PROTOCOL = 'ashlr.standing-permit-shadow.v1' as const;
 export const STANDING_PERMIT_EVIDENCE_PROTOCOL = 'ashlr.standing-permit-evidence.v1' as const;
-export const STANDING_PERMIT_MAX_VALIDITY_MS = 30 * 24 * 60 * 60 * 1000;
-export const STANDING_PERMIT_EVIDENCE_MAX_AGE_MS = 5 * 60 * 1000;
+const STANDING_PERMIT_MAX_VALIDITY_MS = 30 * 24 * 60 * 60 * 1000;
+const STANDING_PERMIT_EVIDENCE_MAX_AGE_MS = 5 * 60 * 1000;
 
 const MAX_FUTURE_SKEW_MS = 30_000;
 const MAX_EVIDENCE_RECEIPTS = 128;
@@ -308,34 +313,7 @@ const CURRENT_ANCHOR_KEYS = new Set([
   'headSequence', 'minimumSequence', 'observedAt',
 ]);
 
-function plainRecord(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const keys = Reflect.ownKeys(value);
-    if (keys.some((key) => typeof key !== 'string')) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (keys.some((key) => {
-      const descriptor = descriptors[String(key)];
-      return !descriptor || !descriptor.enumerable || !('value' in descriptor);
-    })) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: ReadonlySet<string>): boolean {
-  const keys = Object.keys(value);
-  return keys.length === expected.size && keys.every((key) => expected.has(key));
-}
-
-function canonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > 40) return false;
-  const milliseconds = Date.parse(value);
-  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
-}
+const canonicalTimestamp = (value: unknown): value is string => isCanonicalIsoTimestamp(value, 40);
 
 function digest(value: unknown): value is string {
   return typeof value === 'string' && DIGEST_RE.test(value);
@@ -374,10 +352,6 @@ export function digestStandingPermitWindowV1(window: StandingPermitWindowV1): st
 
 export function digestStandingPermitBudgetV1(budget: StandingPermitBudgetV1): string {
   return hash('ashlr.standing-permit.budget.v1', budget);
-}
-
-function permitPayload(permit: Omit<StandingPermitContractV1, 'permitDigest'>): unknown {
-  return permit;
 }
 
 export function createStandingPermitContractV1(value: unknown): StandingPermitContractBuildResultV1 {
@@ -447,7 +421,7 @@ export function createStandingPermitContractV1(value: unknown): StandingPermitCo
   };
   const permit: StandingPermitContractV1 = {
     ...permitWithoutDigest,
-    permitDigest: hash('ashlr.standing-permit.contract.v1', permitPayload(permitWithoutDigest)),
+    permitDigest: hash('ashlr.standing-permit.contract.v1', permitWithoutDigest),
   };
   return { ok: true, permit, issues: [] };
 }
@@ -497,25 +471,15 @@ function validCurrentAnchor(value: unknown): value is StandingPermitCurrentEvide
     Number(row['minimumSequence']) <= Number(row['headSequence']) && canonicalTimestamp(row['observedAt']);
 }
 
-function receiptAuthenticated(
+function invokeVerifier<T>(
   verifier: StandingPermitEvidenceVerifierV1 | null | undefined,
-  receipt: StandingPermitEvidenceReceiptV1,
+  method: 'verifyReceipt' | 'verifyCurrentAnchor',
+  target: T,
 ): boolean {
-  if (!verifier || typeof verifier.verifyReceipt !== 'function') return false;
+  const fn = verifier?.[method] as ((value: Readonly<T>) => boolean) | undefined;
+  if (typeof fn !== 'function') return false;
   try {
-    return verifier.verifyReceipt(receipt) === true;
-  } catch {
-    return false;
-  }
-}
-
-function anchorAuthenticated(
-  verifier: StandingPermitEvidenceVerifierV1 | null | undefined,
-  anchor: StandingPermitCurrentEvidenceAnchorV1,
-): boolean {
-  if (!verifier || typeof verifier.verifyCurrentAnchor !== 'function') return false;
-  try {
-    return verifier.verifyCurrentAnchor(anchor) === true;
+    return fn.call(verifier, target) === true;
   } catch {
     return false;
   }
@@ -556,9 +520,9 @@ export function evaluateStandingPermitCanariesV1(
     baseSequence <= Number.MAX_SAFE_INTEGER - receipts.length &&
     (baseSequence === 1 ? basePreviousReceiptDigest === null : digest(basePreviousReceiptDigest));
   const anchor = validCurrentAnchor(dependencies?.currentAnchor) ? dependencies.currentAnchor : null;
-  const anchorVerified = anchor !== null && anchorAuthenticated(dependencies?.verifier, anchor);
+  const anchorVerified = anchor !== null && invokeVerifier(dependencies?.verifier, 'verifyCurrentAnchor', anchor);
   const receiptsAuthenticated = structurallyValid && receipts.every((receipt) =>
-    receiptAuthenticated(dependencies?.verifier, receipt));
+    invokeVerifier(dependencies?.verifier, 'verifyReceipt', receipt));
 
   const chainValid = structurallyValid && suffixBasisValid && receipts.every((receipt, index) =>
     receipt.sequence === baseSequence + index &&

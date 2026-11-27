@@ -153,6 +153,20 @@ describe('wiki-model', () => {
 });
 
 describe('WikiView', () => {
+  it('labels a source-anchored Cargo dependency in the ecosystem', async () => {
+    server({ map: systemGraph, ecosystem: {
+      status: 'current',
+      repos: [{ repo: 'acme/notes', commit: SHA }, { repo: 'acme/storage', commit: SHA }],
+      edges: [{ from: 'acme/notes', to: 'acme/storage', kind: 'cargo-dependency', anchor: { commit: SHA, file: 'Cargo.toml', line: 4 } }],
+    } });
+    render(<WikiView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'System map' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ecosystem' }));
+    const relationships = within(await screen.findByRole('complementary', { name: 'Repository relationships' }));
+    expect(relationships.getByText('Cargo dependency · outgoing')).toBeInTheDocument();
+    expect(relationships.getByRole('link', { name: /Open pinned source/ })).toHaveAttribute('href', `https://github.com/acme/notes/blob/${SHA}/Cargo.toml#L4`);
+  });
+
   it('opens the signed-scope ecosystem and cites the source repository at its indexed commit', async () => {
     const { calls } = server({ map: systemGraph, ecosystem: {
       status: 'current',

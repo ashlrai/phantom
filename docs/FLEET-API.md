@@ -51,8 +51,8 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/fleet/stranded` | days (default 3, up to 90), verify (1 compares pushed branches with the local main branch) | [StrandedWorkReport](../src/core/fleet/stranded-work.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/stranded?days=3'` |
 | GET | `/api/fleet` | none | [FleetStatus](../src/core/fleet/status.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet'` |
 | GET | `/api/fleet/lanes` | none | [FleetLaneSnapshot](../src/core/fleet/lane-console.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/lanes'` |
-| GET | `/api/fleet/message-graph` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound) | [FleetMessageGraph](../src/core/fleet/message-graph.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/message-graph?since=1h'` |
-| GET | `/api/fleet/map/messages` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound), limit (1 to 100; default 20), plus the `phm messages` filters agent, with, kind, priority, job, thread, channel, contains, from, excludeFrom, inReplyTo, id, bodyKind, to | [MapMessages](../src/core/fleet/map-messages.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/map/messages?limit=10'` |
+| GET | `/api/fleet/message-graph` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound), plus the `phm messages` filters agent, with, kind, priority, job, thread, channel, topic, contains, from, excludeFrom, inReplyTo, id, bodyKind, to, result | [FleetMessageGraph](../src/core/fleet/message-graph.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/message-graph?since=1h'` |
+| GET | `/api/fleet/map/messages` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound), limit (1 to 100; default 20), plus the `phm messages` filters agent, with, kind, priority, job, thread, channel, topic, contains, from, excludeFrom, inReplyTo, id, bodyKind, to | [MapMessages](../src/core/fleet/map-messages.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/map/messages?limit=10'` |
 | GET | `/api/fleet/activity` | hours, limit | [AgentActivityReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/activity?hours=6'` |
 | GET | `/api/fleet/verified-completion` | hours (claim window, default 24, max 168) | [VerifiedCompletionReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/verified-completion'` |
 | GET | `/api/fleet/sessions` | none | [FleetSessionsV1](../src/core/fleet/runs-sessions.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/sessions'` |
@@ -131,6 +131,29 @@ receipt proves coordination, not job execution.
 | GET | `/api/verse/leader/questions/` (QUESTION_PATH_RE or ANSWER_PATH_RE) + {questionId} | none | [inline {question: LeaderQuestionProjection, typedQuestionsSupported}](../src/core/vision/leader-thread-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader/questions/example-question'` |
 | POST | `/api/verse/leader/questions/` (QUESTION_PATH_RE or ANSWER_PATH_RE) + {questionId} + /answer | none | [AnswerLeaderQuestionResult or SubmitLeaderQuestionResult](../src/core/vision/leader-thread-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"text":"Proceed"}' 'http://127.0.0.1:7777/api/verse/leader/questions/example-question/answer'` |
 | POST | `/api/verse/leader/actions/` (APPROVE_PATH_RE) + {actionId} + /approve | none | [ApproveLeaderActionResult](../src/core/vision/leader-thread-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{}' 'http://127.0.0.1:7777/api/verse/leader/actions/example-action/approve'` |
+
+Usage history charts readings that name the current quota reset and were
+observed from the window start up to, but excluding, that reset. Pace and
+runway need at least two distinct observation times from that window. When
+multiple readings share an observation time, the first reading supplies the
+chart point and the evidence for reset detection and runway.
+Reset detection skips readings outside their own named quota window. A
+rollover compares the new reading with the last eligible reading even if a
+sample naming the expired window arrived in between.
+
+The Leader resource ledger keeps the Claude dispatcher quota when its recorded
+capture time is later than the usable native weekly reading, no later than
+report time, and any recorded weekly reset is still in the future. Native usage
+wins ties and takes precedence over dispatcher values with unknown capture
+times or a reset at or before report time. The controller tick is independent
+of quota capture.
+
+For Codex Personal, a weekly dispatcher quota with a reset at or before report
+time yields to a dated session reading whose weekly window has not reset.
+When both readings have no elapsed reset, the ledger compares their capture
+times and keeps the dispatcher reading on a tie. Expired session readings do
+not replace dispatcher data. The ledger preserves the dispatcher hold and
+records both quota readings when it selects the session reading.
 
 Computed route constants: `VERSE_FLEET_CONTROL_QUEUE_PATH` defines
 `/api/verse/fleet/control/queue`; `VERSE_FLEET_CONTROL_RUNS_PREFIX` defines the
@@ -527,14 +550,25 @@ reduced motion; phones always get the 2D rows. No 3D library is used.
 
 #### Map edges
 
-`phm map edges [--json] [--since 10m] [--before <10m|2h|1d|ISO|epoch>]` lists who
+`phm map edges [--json] [--since 10m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>]` lists who
 messaged whom, read from the
 same agent bus as `phm messages`. `--json` prints `fleet.map-edges.v1`
-(`version` 1), and `GET /api/verse/fleet/control/map-edges[?since=10m&before=1h]` serves
+(`version` 1), and `GET /api/verse/fleet/control/map-edges[?since=10m&before=1h&kind=ask]` serves
 the same read with a current read session. The default window is the last 15
 minutes, the same as the map. `--before` keeps only messages received strictly
 before its cutoff, so `--since` and `--before` read one closed
 `[since, before)` window.
+
+Every other flag is the `phm messages` filter vocabulary `phm agents messages`
+forwards — the matching rules `phm messages --help` describes — so "who
+messaged whom about job X" or "which lines reach agent Y" is one filtered read
+here too: the filters narrow the window's matched rows before the edges
+aggregate, `messages` counts exactly the rows they keep, and each edge's
+`count`, `lastAt` and `lastSummary` describe only that traffic. On the API
+every filter is a query param of the same name (camelCase where the flag is
+dashed), each once and validated by the same parser; there is no `limit`
+param because edges aggregate the whole matched set, and a filtered read is
+never served from the default window's 5-second cache.
 
 `phm map replay [--json] [--since 6h] [--step 5m]` replays the fleet one frame
 per step (default: the last 6 hours, every 5 minutes; at most 288 frames).
@@ -555,7 +589,7 @@ these frames, with a "Back to live" button.
 
 #### Recent bus messages
 
-`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--body-kind <kind>] [--json]` lists
+`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--body-kind <kind>] [--json]` lists
 agent-to-agent messages, newest
 first, as `bus.recent.v1`: `{schema, as_of, messages:[{at, from, to, kind,
 summary}]}`. `--before` keeps only messages received strictly before its
@@ -570,13 +604,24 @@ opens its messages.
 
 #### Message graph
 
-`phm fleet message-graph [--json] [--since 10m] [--before <10m|2h|1d|ISO|epoch>]` shows the same messages as
+`phm fleet message-graph [--json] [--since 10m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>]` shows the same messages as
 lines between organizations: the company behind each agent's lane, or
 `unknown` when the agent's name proves no lane (the leader included). `--json`
 prints `fleet.message-graph.v1` (`version` 1), and
-`GET /api/fleet/message-graph[?since=10m&before=1h]` serves the same read; the Fleet map
+`GET /api/fleet/message-graph[?since=10m&before=1h&job=RQ-1]` serves the same read; the Fleet map
 lists it under Messages. `--before` is the same exclusive upper bound `map
 edges` takes, so the two reads always describe one `[since, before)` window.
+
+Every other flag is the `phm messages` filter vocabulary `phm map edges`
+takes — the matching rules `phm messages --help` describes — narrowed onto
+the matched rows before the organization pairs aggregate, so "which
+organizations talked about job X" or "which lines carry P0 traffic" is one
+filtered read here too: `messages` counts exactly the rows the filters keep,
+and each group's `count`, `lastAt` and `edges[]` and each organization's
+`sent`/`received` describe only that traffic. On the API every filter is a
+query param of the same name (camelCase where the flag is dashed), each once
+and validated by the same parser; there is no `limit` param because the
+graph aggregates the whole matched set and never paginates.
 
 | Field | Meaning |
 | --- | --- |
@@ -587,7 +632,8 @@ edges` takes, so the two reads always describe one `[since, before)` window.
 Only names, counts and times are returned, never message text. When the bus
 cannot be read, `groups` and `organizations` are `null` (unknown, not zero),
 the CLI exits 1 and the route answers 503 with that same body. A bad `since`
-or `before`, or any other query, is exit 2 or 400.
+or `before`, an unknown or repeated filter, or a malformed filter value, is
+exit 2 or 400.
 
 - `edges[]`, newest first: `id`, `from`, `to`, `count`, `lastAt` and
   `lastSummary` (the first 80 characters of the newest message, one scrubbed
@@ -789,7 +835,7 @@ what is blocked, what moved lately — without shelling out to `phm`.
 
 #### Agent messages
 
-`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--body-kind <kind>] [--limit N] [--json]` lists recent
+`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--body-kind <kind>] [--limit N] [--json]` lists recent
 agent-to-agent messages from the same bus read (no new store), newest first.
 `--before` keeps only messages received strictly before its cutoff, so
 `--since` and `--before` read one closed `[since, before)` window.
@@ -807,7 +853,7 @@ rules and registered-identity resolution `phm messages --help` describes, so
 `--json` prints `agents.messages.v1` (`version` 1), and
 `GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50&kind=ask&from=claude]` serves the
 same read with a current read session; dashed flags arrive camelCase
-(`excludeFrom`, `inReplyTo`, `bodyKind`, `to`), each param once.
+(`excludeFrom`, `inReplyTo`, `bodyKind`, `to`, `topic`), each param once.
 
 - `messages[]`: `at`, `from`, `to`, `kind`, `summary` (at most 160
   characters), `threadId` when the message names a thread, then `fromName` and

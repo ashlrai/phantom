@@ -838,6 +838,45 @@ describe('pass^k eval alert items', () => {
     expect(await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toHaveLength(1);
   });
 
+  it('drops alerts stamped past the evaluation-time future skew', async () => {
+    // A still-measured regression whose only alert is stamped two hours
+    // ahead of the clock: corrupt or replayed evidence, no item.
+    writeEvalStore({
+      alerts: [alertRow(-2, 'passk-r1', TASK_REGRESSED)],
+      reports: [{ id: 'passk-r1', generatedAt: iso(-2), lanes: [evalLane()] }],
+      latestId: 'passk-r1',
+    });
+    expect(await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    // A future stamp cannot fake recurrence either: one legit alert plus
+    // one beyond the skew stays a one-report identity the cleared newest
+    // report silences.
+    writeEvalStore({
+      alerts: [
+        alertRow(50, 'passk-r1', TASK_REGRESSED),
+        alertRow(-2, 'passk-r2', TASK_REGRESSED),
+      ],
+      reports: [{
+        id: 'passk-r3', generatedAt: iso(2),
+        lanes: [evalLane({
+          tasks: [{
+            taskId: 'fix-add', trials: 4, passes: 4, pass1: 1, ci95: null, passAtK: 1, passPowK: 1,
+            dimensionRates: { tests: 1, diffQuality: 1, instructions: 1 }, trialsDetail: [],
+          }],
+        })],
+      }],
+      latestId: 'passk-r3',
+    });
+    expect(await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    // A stamp inside the skew still counts as same-host clock drift:
+    // -1/120 h = 30 s ahead of NOW.
+    writeEvalStore({
+      alerts: [alertRow(-1 / 120, 'passk-r1', TASK_REGRESSED)],
+      reports: [{ id: 'passk-r1', generatedAt: iso(-1 / 120), lanes: [evalLane()] }],
+      latestId: 'passk-r1',
+    });
+    expect(await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toHaveLength(1);
+  });
+
   it('emits nothing for a missing or degraded journal, or another repository', async () => {
     // Missing journal entirely.
     expect(await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
@@ -1225,6 +1264,18 @@ describe('cross-review findings', () => {
       return JSON.stringify(row);
     }));
     expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toHaveLength(1);
+  });
+
+  it.each([rejectFindings, failureFindings])('counts exact replays once and waits for future receipts', async (findings) => {
+    const [first, , second] = findings();
+    const future = JSON.stringify({ ...JSON.parse(second!), at: iso(-1) });
+    writeJournal([first!, second!, `  ${first!}  `, future]);
+
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+
+    const items = await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: new Date(iso(-1)) });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.prompt).toMatch(/3 recorded (reject|failed-review) rows across 2 distinct pull requests/);
   });
 
   it('turns recurring review failures into failure items and ignores non-finding rows', async () => {

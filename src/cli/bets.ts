@@ -13,7 +13,7 @@ import { killBet, launchBet, readBets, scoreCycle } from '../core/metrics/bets-s
 import { defaultLoopReaders, type LoopReaders } from '../core/metrics/loop-collect.js';
 import { LOOP_METRIC_KEYS } from '../core/metrics/loop.js';
 
-export const BETS_USAGE = `Usage: phm bets [--since 24h] [--stale-after 3h] [--json]
+const BETS_USAGE = `Usage: phm bets [--since 24h] [--stale-after 3h] [--json]
        phm bets <check|propose|suggest|explain|list|launch|score|kill> [--json]
   phm bets check "<goal text>" [--json]
   phm bets check --from-prompt <file> [--gate] [--json]

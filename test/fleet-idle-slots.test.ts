@@ -2,11 +2,20 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cmdFleetIdleSlots, readFleetIdleSlots } from '../src/cli/fleet-idle-slots.js';
+import {
+  cmdFleetIdleSlots,
+  IDLE_SLOTS_LOG_TAIL_MIN_BYTES,
+  readFleetIdleSlots,
+} from '../src/cli/fleet-idle-slots.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 
 const now = new Date(2026, 10, 3, 12).getTime();
 const tick = (time: string, run: object) => `2026-11-03 ${time} tick run=${JSON.stringify(run)} q=1 launched=0 reap=0 pause=False`;
+/** ~`bytes` of non-tick log lines, to push dispatchd.log over the bounded tail cap. */
+const padLines = (bytes: number): string => {
+  const line = 'x'.repeat(1000);
+  return `${Array.from({ length: Math.ceil(bytes / 1001) }, () => line).join('\n')}\n`;
+};
 const dirs: string[] = [];
 async function fixture(log: string[], slots: unknown = { work: { target: 4, floor: 0, ceiling: 6 }, fast: { target: 2 }, last_change_by: 'x' }) {
   const dir = await mkdtemp(join(tmpdir(), 'idle-slots-'));
@@ -51,6 +60,49 @@ describe('fleet idle-slots', () => {
     expect(log.mock.calls[1]![0]).toContain('work: average running 1, target 4, idle 0.3 slot-hours');
     for (const bad of [['--hours'], ['--hours', '0'], ['--hours', 'x'], ['--nope']]) expect(await cmdFleetIdleSlots(bad, { now })).toBe(2);
     expect(err).toHaveBeenCalled();
+  });
+  it('flags a capped log read and partial window coverage instead of hiding it', async () => {
+    // dispatchd.log is append-only and never rotated; past the tail cap only the
+    // newest bytes are read, so in-window ticks older than the tail are gone.
+    const runsDir = await fixture([padLines(IDLE_SLOTS_LOG_TAIL_MIN_BYTES + 65_536),
+      tick('11:00:00', { work: 1 }), tick('11:05:00', { work: 1 })]);
+    const r = (await readFleetIdleSlots({ runsDir, now }))!;
+    expect(r.logTruncated).toBe(true);
+    expect(r.windowTruncated).toBe(true);
+    expect(r.coveredFrom).toBe(new Date(2026, 10, 3, 11, 0).toISOString());
+    expect(r.ticks).toBe(2);
+    // Aggregation over the retained ticks is unaffected by the cut.
+    expect(r.lanes.find(l => l.lane === 'work')).toMatchObject({ idleSlotHours: 0.25 });
+  });
+  it('reports logTruncated without windowTruncated when the retained tail still reaches the window start', async () => {
+    // A pre-window tick inside the retained tail proves coverage back to
+    // windowStart even though older log content was cut.
+    const runsDir = await fixture([padLines(524_288), tick('09:00:00', { work: 0 }),
+      padLines(IDLE_SLOTS_LOG_TAIL_MIN_BYTES - 262_144),
+      tick('11:00:00', { work: 1 }), tick('11:05:00', { work: 1 })]);
+    const r = (await readFleetIdleSlots({ runsDir, now }))!;
+    expect(r.logTruncated).toBe(true);
+    expect(r.windowTruncated).toBe(false);
+    expect(r.coveredFrom).toBe(new Date(2026, 10, 3, 9, 0).toISOString());
+    expect(r.ticks).toBe(2);
+    expect(r.lanes.find(l => l.lane === 'work')).toMatchObject({ idleSlotHours: 0.25 });
+  });
+  it('marks coverage unknown when a capped log tail holds no tick lines', async () => {
+    const runsDir = await fixture([padLines(IDLE_SLOTS_LOG_TAIL_MIN_BYTES + 65_536)]);
+    const r = (await readFleetIdleSlots({ runsDir, now }))!;
+    expect(r.logTruncated).toBe(true);
+    expect(r.windowTruncated).toBe(true);
+    expect(r.coveredFrom).toBeNull();
+    expect(r.ticks).toBe(0);
+  });
+  it('reports coveredFrom from the earliest retained tick even when the file fits the cap', async () => {
+    const runsDir = await fixture([tick('08:00:00', { work: 0 }),
+      tick('11:00:00', { work: 1 }), tick('11:05:00', { work: 1 })]);
+    const r = (await readFleetIdleSlots({ runsDir, now }))!;
+    expect(r.logTruncated).toBe(false);
+    expect(r.windowTruncated).toBe(false);
+    expect(r.coveredFrom).toBe(new Date(2026, 10, 3, 8, 0).toISOString());
+    expect(r.ticks).toBe(2);
   });
   it('is registered as a fleet verb', () => { expect(FLEET_SUBCOMMAND_LOADERS['idle-slots']).toBeTypeOf('function'); });
 });

@@ -390,3 +390,61 @@ export function proposeFleetAssignment(input: { repo: string; task: string; to: 
     return { ok: true, value: { event: { version: 1, kind: 'assign', at: now, proposal }, value: proposal } };
   });
 }
+/** One durable RESULT intent whose receipt publish never landed — the
+ * `released-unposted` class `returnFleetClaim` reports once. The claim is
+ * already released, so nothing on the board read names it: only this
+ * projection can surface the orphaned intent before its expiry deletes it.
+ * Lease material (`leaseHash`, the retained owner claim) never leaves the
+ * store — a consumer needing the retry passes the owner-held lease itself. */
+export interface FleetPendingReturn {
+  /** Claim id the concluded return intent belongs to (scrubbed). */
+  id: string;
+  /** Returning agent label (scrubbed). */
+  agent: string;
+  /** When the durable intent was recorded. */
+  at: number;
+  /** The receipt awaiting publish — scrubbed fields, original expiry kept. */
+  message: FleetMessage;
+}
+/** The ledger's whole pending surface in one atomic read: live messages,
+ * live assignment proposals and unpublished return intents. `state` is
+ * tri-state like every other store read here — `missing` is a
+ * verified-absent ledger (never used), `known` a parsed one, `unknown` any
+ * refusal; unknown never reports an invented empty backlog. */
+export interface FleetCoordinationPending {
+  schema: 'fleet.coordination.v1';
+  state: 'missing' | 'known' | 'unknown';
+  messages: FleetMessage[];
+  proposals: FleetAssignment[];
+  returns: FleetPendingReturn[];
+}
+/**
+ * Fleet-wide pending read for surfaces that must see every pending class at
+ * once (the unified comms inbox). Pure read: it replays the ledger exactly
+ * like `readFleetBoard` but never takes the mutation path, so it cannot
+ * append an expiry row the way a default board read does — callers that
+ * want reaping still go through `readFleetBoard`. Messages reuse
+ * `boardMessages` so receipt selection and scrubbing can never disagree
+ * with the board; proposals and return intents get the same expiry filter
+ * and field scrubbing the board applies. A return intent whose receipt
+ * already expired is a dead intent (the next mutation drops it), so only
+ * unexpired intents list.
+ */
+export function readFleetCoordinationPending(options: FleetCoordinationOptions = {}): FleetCoordinationPending {
+  const now = options.now ?? Date.now();
+  try {
+    const { events, stat } = readEvents(options.path ?? fleetCoordinationPath(), true);
+    if (stat === null) return { schema: 'fleet.coordination.v1', state: 'missing', messages: [], proposals: [], returns: [] };
+    const state = replay(events);
+    return {
+      schema: 'fleet.coordination.v1', state: 'known',
+      messages: boardMessages(state, now, false),
+      proposals: state.proposals.filter(p => p.expiresAt > now).map(p => ({ ...p, id: scrubSecrets(p.id), repo: scrubSecrets(p.repo), task: scrubSecrets(p.task), to: scrubSecrets(p.to) })),
+      returns: [...state.pendingReturns.values()].filter(p => p.message.expiresAt > now).map(p => ({
+        id: scrubSecrets(p.id), agent: scrubSecrets(p.agent), at: p.at,
+        message: { id: scrubSecrets(p.message.id), from: scrubSecrets(p.message.from), to: scrubSecrets(p.message.to),
+          body: scrubSecrets(p.message.body), at: p.message.at, expiresAt: p.message.expiresAt },
+      })),
+    };
+  } catch { return { schema: 'fleet.coordination.v1', state: 'unknown', messages: [], proposals: [], returns: [] }; }
+}

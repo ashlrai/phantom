@@ -226,7 +226,7 @@ describe('phm router outcomes', () => {
     expect(report).toMatchObject({ spend_state: 'read', spend_truncated: true });
     const lines = routerOutcomeLines(report);
     expect(lines[0]).toContain('spend=read');
-    expect(lines).toContain('spend coverage: retained tail only; per-job costs are lower bounds');
+    expect(lines).toContain('spend coverage: truncated ledger, spend-derived job costs withheld');
 
     const h = harness(canned(read({ outcomes: [outcome('A')], spend_state: 'unreadable' })));
     expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(0);

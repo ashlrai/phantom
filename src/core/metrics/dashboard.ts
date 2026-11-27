@@ -3,7 +3,7 @@
  * no scripts), one primary number (value per 1M tokens) and one primary action.
  */
 import type { Rollup, ArmStats } from './scoring.js';
-import type { buildLeverageMix } from './leverage-mix.js';
+import type { LeverageMix } from './leverage-mix.js';
 import type { StewardReport } from '../steward/disk.js';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -18,7 +18,7 @@ function board(title: string, rows: ArmStats[]): string {
   return `<section><h2>${esc(title)}</h2><table><tr><th></th><th>Value / 1M tok</th><th>Value / hr</th><th>Value / $</th><th>PRs</th><th>Quality</th></tr>${rows.slice(0, 8).map((r) => `<tr><td>${esc(r.key)}</td><td>${fmt(r.valuePerMTok)}</td><td>${fmt(r.valuePerHour)}</td><td>${fmt(r.valuePerUsd)}</td><td>${r.prsShipped}</td><td>${fmt(r.avgQuality, 3)}</td></tr>`).join('')}</table></section>`;
 }
 
-export function renderDashboard(r: Rollup, steward?: StewardReport, generatedAt = new Date().toISOString(), leverage?: ReturnType<typeof buildLeverageMix>): string {
+export function renderDashboard(r: Rollup, steward?: StewardReport, generatedAt = new Date().toISOString(), leverage?: LeverageMix): string {
   const t = r.totals;
   const disk = steward ? steward.roots.filter((x) => x.exists).map((x) => `<tr><td>${esc(x.id)}</td><td>${fmt(x.bytes / 1048576, 0)} MB</td><td>${fmt(x.quotaBytes / 1048576, 0)} MB</td><td>${x.overQuota ? '<b class="warn">over</b>' : 'ok'}</td></tr>`).join('') : '';
   const over = steward?.roots.some((x) => x.overQuota);

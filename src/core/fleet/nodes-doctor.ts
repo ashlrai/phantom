@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { binaryCandidates } from '../drive/nodes/provider-binary.js';
 import { aliasMatches } from './pool-reach.js';
 import { UNKNOWN } from './runtime-identity.js';
-import { readNodesRegistry, readNodesView, type NodeRow, type NodesViewDeps } from './nodes-view.js';
+import { capServesLane, MIRROR_FRESH_MS, readNodesRegistry, readNodesView, type NodeRow, type NodesViewDeps } from './nodes-view.js';
 
 export const NODES_DOCTOR_SCHEMA = 'phantom.nodes-doctor.v1';
 /** Below this the node pool already holds jobs (see drive/nodes/capacity.ts). */
@@ -95,7 +95,8 @@ function laneStatus(lane: DoctorLane, probe: NodeProbeReply | null, caps: string
     return { lane, status: 'unknown', reason: `${lane} is installed but has no sign-in check Phantom can run` };
   }
   // No probe: a lane the node advertised in its heartbeat is installed and signed in.
-  if (caps !== UNKNOWN && caps.includes(lane)) return { lane, status: 'ready' };
+  // `local-model` is the report name; the advertisement is the oMLX cap family.
+  if (caps !== UNKNOWN && caps.some(cap => capServesLane(cap, lane))) return { lane, status: 'ready' };
   return { lane, status: 'unknown', reason: `${lane} is not advertised; installed or signed out is unknown until remote checks exist` };
 }
 
@@ -104,6 +105,12 @@ export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Pro
   let registry: ReturnType<typeof readNodesRegistry> | null = null;
   try { registry = deps.view.readRegistry(); } catch { /* disk stays unknown */ }
   const state = registry?.state ?? null;
+  // hostStats vouch for disk only while their session is live — the same rule
+  // the nodes view applies before showing memory/load. An expired record or a
+  // stale pool mirror leaves its last disk figure behind, not a measurement.
+  const nowMs = Date.parse(view.asOf);
+  const mirrorStale = registry?.source === 'pool-mirror' && state !== null && nowMs - state.observedAt > MIRROR_FRESH_MS;
+  const live = (record: { expiresAt: number }): boolean => !mirrorStale && record.expiresAt > nowMs;
   const safeProbe = async (row: NodeRow) => { try { return await deps.probe(row.name, row.isSelf); } catch { return null; } };
   const rows = view.nodes.filter(n => only === undefined || n.name === only);
   const selfProbe = await safeProbe(view.nodes.find(n => n.isSelf) ?? { name: view.self, isSelf: true } as NodeRow);
@@ -130,8 +137,8 @@ export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Pro
     // session first) — a peer sharing a local node id's name must not
     // inherit this machine's disk measurement.
     const record = registry?.source === 'local'
-      ? (row.isSelf ? [...(state?.nodes ?? [])].sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0] : undefined)
-      : state?.nodes.filter(r => [r.nodeId, r.capacity?.hostId].some(id => typeof id === 'string' && aliasMatches(id, row.name)))
+      ? (row.isSelf ? [...(state?.nodes ?? [])].filter(live).sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0] : undefined)
+      : state?.nodes.filter(r => live(r) && [r.nodeId, r.capacity?.hostId].some(id => typeof id === 'string' && aliasMatches(id, row.name)))
         .sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
     const diskBytes = probe?.diskFreeBytes ?? (row.reachable === false ? null : record?.hostStats?.diskFree ?? null);
     const diskFreeGb = diskBytes === null ? UNKNOWN : gb(diskBytes);

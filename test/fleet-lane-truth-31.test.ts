@@ -45,6 +45,13 @@ describe('lane truth fixtures', () => {
     expect(await verdict({}, [sample, { ...sample, usedPercent: 90 }])).toBe('ok');
     expect(await verdict({}, [sample, { ...sample, usedPercent: 90, sampledAt: '2026-10-31T10:00:00Z' }])).toBe('ok');
   });
+  it('uses dated observations when an unreadable timestamp interrupts the journal', async () => {
+    const older = { ...sample, usedPercent: 85, sampledAt: '2026-10-31T11:55:00Z' };
+    const undated = { ...sample, sampledAt: 'unreadable' };
+    expect(await verdict({}, [older, undated, sample])).toBe('reset_detected');
+    expect(await verdict({}, [undated, older, sample])).toBe('reset_detected');
+    expect(await verdict({}, [sample, { ...undated, window: 'session' }])).toBe('unknown');
+  });
   it('emits one row per lane and strips untrusted metadata', async () => {
     const result = await readLaneTruth({ lanes: async () => [lane, { ...lane, lane: 'claude', held_reason: 'fixture-secret' }], meters: async () => [sample] }, now);
     expect(result.lanes.map(row => row.verdict)).toEqual(['ok', 'unknown']);
@@ -76,6 +83,28 @@ it('reads newest personal rollout only, ignores the company home, and writes not
   expect(await readFile(path, 'utf8')).toBe(slots);
   await utimes(path, new Date(now - 3600_000), new Date(now - 3600_000));
   expect((await readLaneTruth(defaultLaneTruthReaders(home, now), now)).lanes[0]!.verdict).toBe('unknown');
+});
+
+it('preserves the rollout when one reading has an out-of-range reset', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'lane-truth-reset-')); dirs.push(home);
+  const sessions = join(home, '.codex-2/sessions/2026/10/31');
+  await mkdir(sessions, { recursive: true });
+  const rollout = join(sessions, 'rollout-test.jsonl');
+  const event = (timestamp: string, reset: number) => JSON.stringify({
+    timestamp, type: 'event_msg', payload: {
+      type: 'token_count', rate_limits: { secondary: { used_percent: 60, window_minutes: 10080, resets_at: reset } },
+    },
+  });
+  const valid = event(sample.sampledAt, Date.parse(sample.resetAt!) / 1000);
+  const malformed = event('2026-10-31T11:58:00Z', 9_000_000_000_000);
+  const readers = { ...defaultLaneTruthReaders(home, now), lanes: async () => [lane] };
+
+  await writeFile(rollout, [malformed, valid].join('\n'));
+  expect((await readers.meters()).map(reading => reading.resetAt)).toEqual([null, '2026-11-01T12:00:00.000Z']);
+  expect((await readLaneTruth(readers, now)).lanes[0]!.verdict).toBe('ok');
+
+  await writeFile(rollout, [valid, event('2026-10-31T12:00:00Z', 9_000_000_000_000)].join('\n'));
+  expect((await readLaneTruth(readers, now)).lanes[0]!.verdict).toBe('unknown');
 });
 
 it('validates CLI options before reading and emits JSON', async () => {

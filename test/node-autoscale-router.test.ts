@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { computeNodeCapacity, parseNodeCapacityDoc, type NodeSnapshot } from '../src/core/drive/nodes/capacity-model.js';
+import { CAPACITY_POLICY, computeNodeCapacity, parseNodeCapacityDoc, type NodeSnapshot } from '../src/core/drive/nodes/capacity-model.js';
 import {
   fleetFootprints, fleetRunnable, mergeRate, planAutoscaleRoutes, type HarnessModelCost, type RouteNode,
 } from '../src/core/drive/nodes/autoscale-router.js';
@@ -44,6 +44,95 @@ const COSTS: HarnessModelCost[] = [
 ];
 
 describe('autoscale router scoring', () => {
+  it('withholds both swap rates across a counter rollback and resumes on the next sample', () => {
+    const before = computeNodeCapacity(mbp());
+    const after = computeNodeCapacity(mbp({
+      measuredAtMs: T0 + 60_000,
+      swap: { usedBytes: 0, totalBytes: 8 * GIB, swapoutsTotal: 0 },
+    }), before);
+    expect(after.swap).toMatchObject({
+      used_bytes: 0, swapouts_total: 0,
+      swapouts_per_min: null, growth_bytes_per_min: null, growing: null,
+    });
+
+    const next = computeNodeCapacity(mbp({
+      measuredAtMs: T0 + 120_000,
+      swap: { usedBytes: MIB, totalBytes: 8 * GIB, swapoutsTotal: 1 },
+    }), after);
+    expect(next.swap).toMatchObject({ swapouts_per_min: 1, growth_bytes_per_min: MIB, growing: false });
+  });
+
+  it('expires learned costs for local placements, peer borrowing and runnable totals while the snapshot is fresh', () => {
+    const learnedAt = T0 - CAPACITY_POLICY.learnedFootprintTtlMs;
+    const prior = computeNodeCapacity(mbp({ measuredAtMs: learnedAt }));
+    const doc = computeNodeCapacity(mbp({ sessions: [] }), prior);
+    const peer = node(mbp8());
+    const input = { costs: [COSTS[0]!], outcomes: {}, jobs: [{ id: 'j' }] };
+    expect(doc.agents_runnable_now.codex).toBeGreaterThan(0);
+    expect(planAutoscaleRoutes({ ...input, nodes: [{ doc }], nowMs: T0 })[0]).toMatchObject({
+      nodeId: doc.node, footprint: 'node',
+    });
+    expect(planAutoscaleRoutes({ ...input, nodes: [{ doc, providers: [] }, peer], nowMs: T0 })[0]).toMatchObject({
+      nodeId: peer.doc.node, footprint: 'fleet',
+    });
+    expect(fleetRunnable([doc], T0).codex).toBe(doc.agents_runnable_now.codex);
+
+    const nowMs = T0 + 1;
+    expect(planAutoscaleRoutes({ ...input, nodes: [{ doc }, peer], nowMs })[0]).toMatchObject({
+      nodeId: null, rejected: { 'footprint-unmeasured': 2 },
+    });
+    expect(fleetRunnable([doc, peer.doc], nowMs).codex).toBeNull();
+    const freshDonor = node(mbp({ node: 'fresh', measuredAtMs: nowMs }), { providers: [] });
+    expect(planAutoscaleRoutes({ ...input, nodes: [{ doc }, freshDonor], nowMs })[0]).toMatchObject({
+      nodeId: doc.node, footprint: 'fleet',
+    });
+    expect(fleetRunnable([{ ...doc, swap: { ...doc.swap, growing: true } }], nowMs).codex).toBe(0);
+  });
+
+  it('rejects a learned footprint dated after its snapshot for local and borrowed placement', () => {
+    const prior = computeNodeCapacity(mbp({ measuredAtMs: T0 - 1_000 }));
+    const doc = computeNodeCapacity(mbp({ sessions: [] }), prior);
+    expect(doc.agents_runnable_now.codex).toBeGreaterThan(0);
+    doc.per_harness_footprint.codex!.learned_at = new Date(T0 + 1).toISOString();
+    const peer = node(mbp8());
+    const nowMs = T0 + 1_000;
+
+    expect(planAutoscaleRoutes({
+      nodes: [{ doc }, peer], costs: [COSTS[0]!], outcomes: {}, jobs: [{ id: 'j' }], nowMs,
+    })[0]).toMatchObject({ nodeId: null, rejected: { 'footprint-unmeasured': 2 } });
+    expect(fleetRunnable([doc, peer.doc], nowMs).codex).toBeNull();
+  });
+
+  it.each([
+    [84.95, 0.3, 1],
+    [84.92, 0.8, 0],
+    [84.875, 0.04, 25],
+  ])('uses sampled CPU precision at %s%% host utilization and %s%% session utilization', (busyPercent, cpuPercent, expected) => {
+    const routeNode = node(mbp({
+      cpu: { cores: 8, load: null, busyPercent },
+      sessions: [{ harness: 'codex', rootPid: 1, processes: 1, memBytes: 100 * MIB, cpuPercent }],
+    }));
+    expect(fleetRunnable([routeNode.doc], T0).codex).toBe(expected);
+    const plan = planAutoscaleRoutes({
+      nodes: [routeNode], costs: [COSTS[0]!], outcomes: {}, nowMs: T0,
+      jobs: Array.from({ length: expected + 1 }, (_, index) => ({ id: `j${index}` })),
+    });
+    expect(plan.slice(0, expected).map(row => row.nodeId)).toEqual(Array(expected).fill(routeNode.doc.node));
+    expect(plan.at(-1)).toMatchObject({ nodeId: null, rejected: { cpu: 1 } });
+  });
+
+  it.each([[0.30, 3], [0.29, 2]])('places exactly the jobs that fit in %s CPU cores', (headroom, expected) => {
+    const routeNode = node(mbp());
+    routeNode.doc.cpu.headroom_cores = headroom;
+    routeNode.doc.per_harness_footprint.codex!.cpu_cores_per_session = 0.10;
+    const plan = planAutoscaleRoutes({
+      nodes: [routeNode], costs: [COSTS[0]!], outcomes: {}, nowMs: T0,
+      jobs: Array.from({ length: 4 }, (_, index) => ({ id: `j${index}` })),
+    });
+    expect(plan.slice(0, expected).map(row => row.nodeId)).toEqual(Array(expected).fill(routeNode.doc.node));
+    for (const row of plan.slice(expected)) expect(row).toMatchObject({ nodeId: null, rejected: { cpu: 1 } });
+  });
+
   it.each(['pressure', 'swap-growth'] as const)('honors measured %s when limiter labels are absent', hold => {
     const { doc } = node(mbp());
     doc.basis.limiting = {};
@@ -56,6 +145,24 @@ describe('autoscale router scoring', () => {
     });
     expect(placement).toMatchObject({ nodeId: null, rejected: { [`node-${hold}`]: 1 } });
     expect(fleetRunnable([doc], T0)).toMatchObject({ codex: 0, devin: null });
+  });
+
+  it('excludes a node with unknown pressure from placement and runnable totals while using its footprint', () => {
+    const donor = node(mbp({ mem: { ...mbp().mem, pressureLevel: null } }));
+    const target = node(mbp8());
+    expect(donor.doc.agents_runnable_now.codex).toBeNull();
+    // A legacy count is insufficient without the current pressure reading.
+    donor.doc.agents_runnable_now.codex = 10;
+    const input = { costs: [COSTS[0]!], outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }] };
+    expect(planAutoscaleRoutes({ ...input, nodes: [donor] })[0]).toMatchObject({
+      nodeId: null, rejected: { 'node-unmeasured': 1 },
+    });
+    expect(planAutoscaleRoutes({ ...input, nodes: [donor, target] })[0]).toMatchObject({
+      nodeId: target.doc.node, footprint: 'fleet',
+    });
+    expect(fleetRunnable([donor.doc], T0).codex).toBeNull();
+    const measured = node(mbp({ node: 'measured' })).doc;
+    expect(fleetRunnable([donor.doc, measured], T0).codex).toBe(measured.agents_runnable_now.codex);
   });
 
   it('uses a Laplace-smoothed learned merge rate', () => {
@@ -112,6 +219,27 @@ describe('autoscale router scoring', () => {
     }
   });
 
+  it('borrows a fresh CPU cost when the node measured only harness memory', () => {
+    const target = node(mbp8({
+      sessions: [{ harness: 'codex', rootPid: 1, processes: 1, memBytes: 300 * MIB, cpuPercent: null }],
+    }));
+    // An imported snapshot can have host CPU headroom without a harness CPU cost.
+    target.doc.per_harness_footprint.codex!.cpu_cores_per_session = null;
+    target.doc.cpu.headroom_cores = 1;
+    const donor = node(mbp({
+      sessions: [{ harness: 'codex', rootPid: 1, processes: 1, memBytes: 3 * GIB, cpuPercent: 75 }],
+    }), { providers: [] });
+    const input = { nodes: [target, donor], costs: [COSTS[0]!], outcomes: {}, nowMs: T0,
+      jobs: [{ id: 'fits' }, { id: 'cpu-full' }] };
+
+    const [first, second] = planAutoscaleRoutes(input);
+    expect(first).toMatchObject({ nodeId: target.doc.node, footprint: 'node' });
+    expect(second).toMatchObject({ nodeId: null, rejected: { cpu: 1 } });
+
+    donor.doc.measured_at = new Date(T0 - 120_001).toISOString();
+    expect(planAutoscaleRoutes(input).map(p => p.nodeId)).toEqual([target.doc.node, target.doc.node]);
+  });
+
   it('never routes to a stale node, an exhausted provider, a provider not on the node, or an unserved local model', () => {
     const costs: HarnessModelCost[] = [...COSTS, { provider: 'local', model: 'qwen3-32b', harness: 'codex', tokensPerJob: 1, minutesPerJob: 60, local: true }];
     const stale = planAutoscaleRoutes({ nodes: [node(mbp())], costs, outcomes: {}, nowMs: T0 + 10 * 60_000, jobs: [{ id: 'j' }] });
@@ -153,6 +281,38 @@ describe('autoscale router scoring', () => {
     const plan = planAutoscaleRoutes({ nodes, costs: local(10 * GIB), outcomes: {}, nowMs: T0, jobs: [{ id: 'a' }, { id: 'b' }] });
     // first placement loads 10 GiB on the MBP; the second reuses the loaded weights there
     expect(plan.map(p => p.nodeId)).toEqual(['main-mbp', 'main-mbp']);
+  });
+
+  it.each([
+    { coldOverhead: 0, warmOverhead: 0, expectedNodes: ['z-warm', 'a-cold'] },
+    { coldOverhead: 0, warmOverhead: 6e-11, expectedNodes: ['z-warm', 'a-cold'] },
+    { coldOverhead: 6e-11, warmOverhead: 0, expectedNodes: ['z-warm', 'a-cold'] },
+    { coldOverhead: 0, warmOverhead: 1, expectedNodes: ['a-cold', null] },
+  ])('balances model loading and throughput with cold overhead $coldOverhead and warm overhead $warmOverhead',
+    ({ coldOverhead, warmOverhead, expectedNodes }) => {
+      const local = { harness: 'codex', tokensPerJob: 1, minutesPerJob: 60, local: true, modelBytes: 10 * GIB };
+      const plan = planAutoscaleRoutes({
+        nodes: [
+          node(mbp({ node: 'a-cold' }), { providers: ['local-a', 'local-b'], overheadMinutes: coldOverhead }),
+          node(mbp({ node: 'z-warm' }), { providers: ['local-a'], localModels: ['a'], overheadMinutes: warmOverhead }),
+        ],
+        costs: [{ ...local, provider: 'local-a', model: 'a' }, { ...local, provider: 'local-b', model: 'b' }],
+        outcomes: {}, nowMs: T0,
+        jobs: [{ id: 'a', providers: ['local-a'] }, { id: 'b', providers: ['local-b'] }],
+      });
+      expect(plan.map(p => p.nodeId)).toEqual(expectedNodes);
+    });
+
+  it('charges separately for same-named local models on different providers', () => {
+    const local = { model: 'm', harness: 'codex', tokensPerJob: 1, minutesPerJob: 60, local: true, modelBytes: 10 * GIB };
+    const plan = planAutoscaleRoutes({
+      nodes: [node(mbp())],
+      costs: [{ ...local, provider: 'local-a' }, { ...local, provider: 'local-b' }],
+      outcomes: {}, nowMs: T0,
+      jobs: [{ id: 'a', providers: ['local-a'] }, { id: 'b', providers: ['local-b'] }],
+    });
+    expect(plan[0]).toMatchObject({ nodeId: 'main-mbp', provider: 'local-a' });
+    expect(plan[1]).toMatchObject({ nodeId: null, rejected: { memory: 1, 'provider-not-in-job': 1 } });
   });
 
   it('routes over the recorded main-MBP capacity document (pgrep+footprint, 2026-11-16)', () => {
@@ -269,6 +429,30 @@ describe('autoscale router scoring', () => {
       expect(plan.every(p => p.nodeId === null && p.rejected?.['node-pressure'] === 1)).toBe(true);
       expect(fleetRunnable(nodes.map(n => n.doc), input.nowMs)).toEqual(fleetRunnable([held.doc], input.nowMs));
     }
+  });
+
+  it('keeps fresh capacity when a newer sample exceeds the clock skew allowance', () => {
+    const ready = node(mbp());
+    const held = (offset: number) => node(mbp({
+      measuredAtMs: T0 + offset,
+      mem: { ...mbp().mem, pressureLevel: 2 },
+    }));
+    const future = held(60_001);
+    const input = { costs: [COSTS[0]!], outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }] };
+    for (const nodes of [[ready, future], [future, ready]]) {
+      expect(planAutoscaleRoutes({ ...input, nodes })[0]?.nodeId).toBe(ready.doc.node);
+      expect(fleetRunnable(nodes.map(n => n.doc), T0).codex).toBe(ready.doc.agents_runnable_now.codex);
+    }
+    expect(planAutoscaleRoutes({ ...input, nodes: [future] })[0]).toMatchObject({
+      nodeId: null, rejected: { 'node-stale': 1 },
+    });
+    expect(fleetRunnable([future.doc], T0).codex).toBeNull();
+
+    const boundary = held(60_000);
+    expect(planAutoscaleRoutes({ ...input, nodes: [ready, boundary] })[0]).toMatchObject({
+      nodeId: null, rejected: { 'node-pressure': 1 },
+    });
+    expect(fleetRunnable([ready.doc, boundary.doc], T0).codex).toBe(0);
   });
 
   it('reports conflicting same-time capacity as unknown and keeps other nodes eligible', () => {

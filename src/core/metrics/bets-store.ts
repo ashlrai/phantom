@@ -25,7 +25,7 @@ function append(runsDir: string, events: readonly BetLedgerEvent[]): void {
 }
 
 /** Most recent loop report on disk (today's file), used as the launch baseline. */
-export async function latestLoopReport(runsDir: string, at: Date): Promise<LoopReport | null> {
+async function latestLoopReport(runsDir: string, at: Date): Promise<LoopReport | null> {
   const text = (await readTail(join(runsDir, 'metrics', `loop-${dayStamp(at)}.json`), LEDGER_MAX))?.text ?? null;
   try { const r = text ? JSON.parse(text) as LoopReport : null; return r?.schema === 'metrics.loop.v1' ? r : null; } catch { return null; }
 }

@@ -26,6 +26,8 @@
  *   - Returns a new arm only; the source's `{ id, arms }` wrapper is the caller's.
  */
 
+import { assertFiniteNumber, validatePosteriorArmState } from './validation.js';
+
 export interface PosteriorUpdateArm {
   alpha: number;
   beta: number;
@@ -57,30 +59,6 @@ export function posteriorPrior(): PosteriorUpdateArm {
   };
 }
 
-function finite(value: unknown, name: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) throw new RangeError(`${name} must be a finite number`);
-  return value;
-}
-
-function count(value: unknown, name: string): number {
-  if (!Number.isInteger(value) || (value as number) < 0) throw new RangeError(`${name} must be a non-negative integer`);
-  return value as number;
-}
-
-function validateArm(arm: PosteriorUpdateArm): void {
-  for (const name of ['alpha', 'beta'] as const) {
-    if (finite(arm[name], `arm.${name}`) <= 0) throw new RangeError(`arm.${name} must be > 0`);
-  }
-  for (const name of ['qualityMean', 'latencyMean', 'tokenMean'] as const) finite(arm[name], `arm.${name}`);
-  for (const name of ['qualityM2', 'latencyM2', 'tokenM2'] as const) {
-    if (finite(arm[name], `arm.${name}`) < 0) throw new RangeError(`arm.${name} must be >= 0`);
-  }
-  const observations = count(arm.observations, 'arm.observations');
-  if (count(arm.tokenObservations, 'arm.tokenObservations') > observations) {
-    throw new RangeError('arm.tokenObservations must not exceed arm.observations');
-  }
-}
-
 /** Same expression order as the source welford(), so the floats match. */
 function welford(mean: number, m2: number, n: number, observation: number): { mean: number; m2: number; n: number } {
   const next = n + 1;
@@ -96,13 +74,13 @@ function welford(mean: number, m2: number, n: number, observation: number): { me
  * Otherwise beta + 1 and quality observation 0. Never mutates `arm`.
  */
 export function updatePosteriorArm(arm: PosteriorUpdateArm, outcome: PosteriorUpdateOutcome): PosteriorUpdateArm {
-  validateArm(arm);
+  validatePosteriorArmState(arm);
   for (const name of ['merged', 'green', 'reverted'] as const) {
     if (typeof outcome[name] !== 'boolean') throw new TypeError(`outcome.${name} must be a boolean`);
   }
-  const reviewRounds = finite(outcome.reviewRounds, 'outcome.reviewRounds');
-  const wallMs = finite(outcome.wallMs, 'outcome.wallMs');
-  const tokens = outcome.tokens === null ? null : finite(outcome.tokens, 'outcome.tokens');
+  const reviewRounds = assertFiniteNumber(outcome.reviewRounds, 'outcome.reviewRounds');
+  const wallMs = assertFiniteNumber(outcome.wallMs, 'outcome.wallMs');
+  const tokens = outcome.tokens === null ? null : assertFiniteNumber(outcome.tokens, 'outcome.tokens');
 
   const success = outcome.merged && outcome.green && !outcome.reverted;
   const quality = welford(arm.qualityMean, arm.qualityM2, arm.observations, success ? 1 / (1 + Math.max(0, reviewRounds)) : 0);

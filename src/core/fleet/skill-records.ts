@@ -83,6 +83,8 @@ const MAX_TEXT = {
 
 export interface ReadSkillRecordsOptions {
   sinceMs?: number;
+  /** Inclusive upper timestamp bound for bounded reads. */
+  asOfMs?: number;
   limit?: number;
   maxFiles?: number;
   /** Scan every private date partition so lifecycle rows cannot age out. */
@@ -527,7 +529,7 @@ function boundedOption(value: number | undefined, fallback: number, max: number)
     : fallback;
 }
 
-function readFileTail(filePath: string): string | null {
+function readFileTail(filePath: string): { text: string; truncated: boolean } | null {
   let fd: number | undefined;
   try {
     const before = lstatSync(filePath);
@@ -538,7 +540,7 @@ function readFileTail(filePath: string): string | null {
       !permissionsArePrivate(before.mode)
     ) return null;
     const size = before.size;
-    if (size <= 0) return '';
+    if (size <= 0) return { text: '', truncated: false };
     const bytes = Math.min(size, MAX_FILE_BYTES);
     const start = Math.max(0, size - bytes);
     const buffer = Buffer.alloc(bytes);
@@ -551,7 +553,7 @@ function readFileTail(filePath: string): string | null {
       const firstNewline = text.indexOf('\n');
       text = firstNewline >= 0 ? text.slice(firstNewline + 1) : '';
     }
-    return text;
+    return { text, truncated: start > 0 || read < bytes };
   } catch {
     return null;
   } finally {
@@ -706,6 +708,11 @@ function fileMayContainSince(file: string, sinceMs: number): boolean {
   return !Number.isFinite(endOfDayMs) || endOfDayMs >= sinceMs;
 }
 
+function fileMayContainAsOf(file: string, asOfMs: number): boolean {
+  const startOfDayMs = Date.parse(`${file.slice(0, 10)}T00:00:00.000Z`);
+  return startOfDayMs <= asOfMs;
+}
+
 function fileIsNotFutureDated(file: string): boolean {
   const match = DATE_LEDGER_FILE_RE.exec(file);
   if (!match) return false;
@@ -716,11 +723,12 @@ function fileIsNotFutureDated(file: string): boolean {
     && startOfDayMs <= Date.now() + MAX_FUTURE_SKEW_MS;
 }
 
-function readRecordsWithDiagnostics<T>(
+function readRecordsWithDiagnostics<T extends { ts: string }>(
   dir: string,
   guard: (value: unknown) => value is T,
   sanitize: (record: T) => T,
   opts: ReadSkillRecordsOptions,
+  checkRowLimit = false,
 ): RecordsReadResult<T> {
   const complete = opts.complete === true;
   const limit = complete ? Number.POSITIVE_INFINITY : boundedOption(opts.limit, DEFAULT_READ_LIMIT, MAX_READ_LIMIT);
@@ -728,12 +736,14 @@ function readRecordsWithDiagnostics<T>(
   const sinceMs = !complete && typeof opts.sinceMs === 'number' && Number.isFinite(opts.sinceMs)
     ? opts.sinceMs
     : undefined;
+  const asOfMs = !complete && Number.isFinite(opts.asOfMs) ? opts.asOfMs : undefined;
   let sourcePresent = false;
   let filesScanned = 0;
   let unreadableFiles = 0;
   let invalidRows = 0;
   let bytesScanned = 0;
   let limitExceeded = false;
+  let partialTail = false;
   let rowsScanned = 0;
   const result = (records: T[], sourceState: RecordsReadResult<T>['sourceState']): RecordsReadResult<T> => ({
     records,
@@ -792,13 +802,15 @@ function readRecordsWithDiagnostics<T>(
     limitExceeded ||= listing.limitExceeded;
     if (limitExceeded || (complete && invalidRows > 0)) return result([], 'degraded');
     const completePartitionNames = complete ? [...listing.files] : undefined;
-    const files = listing.files;
+    const files = listing.files.filter((file) =>
+      (sinceMs === undefined || fileMayContainSince(file, sinceMs))
+      && (asOfMs === undefined || fileMayContainAsOf(file, asOfMs)));
+    const partialWindow = checkRowLimit && (sinceMs !== undefined || asOfMs !== undefined) && files.length > maxFiles;
     if (!complete) files.splice(maxFiles);
     const out: T[] = [];
     const completeSnapshots: Array<{ filePath: string; snapshot: BigIntStats }> = [];
-    for (const file of files) {
-      if (out.length >= limit) break;
-      if (sinceMs !== undefined && !fileMayContainSince(file, sinceMs)) continue;
+    partitions: for (const file of files) {
+      if (!checkRowLimit && out.length >= limit) break;
       filesScanned += 1;
       const filePath = join(canonicalDir, file);
       let raw: string | null;
@@ -816,7 +828,9 @@ function readRecordsWithDiagnostics<T>(
         completeSnapshots.push({ filePath, snapshot: completeRead.snapshot });
         raw = completeRead.text;
       } else {
-        raw = readFileTail(filePath);
+        const tail = readFileTail(filePath);
+        raw = tail?.text ?? null;
+        partialTail ||= checkRowLimit && tail?.truncated === true;
       }
       // A complete lifecycle read fails closed rather than selecting from a
       // corpus that may have lost a revocation or deprecation row.
@@ -825,7 +839,7 @@ function readRecordsWithDiagnostics<T>(
         continue;
       }
       for (const line of raw.split('\n').reverse()) {
-        if (out.length >= limit) break;
+        if (!checkRowLimit && out.length >= limit) break;
         if (!line.trim()) continue;
         rowsScanned += 1;
         if (complete && rowsScanned > MAX_COMPLETE_CORPUS_ROWS) {
@@ -838,10 +852,15 @@ function readRecordsWithDiagnostics<T>(
             invalidRows += 1;
             continue;
           }
+          if (asOfMs !== undefined && Date.parse(parsed.ts) > asOfMs) continue;
           const record = sanitize(parsed);
           if (sinceMs !== undefined) {
-            const recordMs = Date.parse((record as { ts: string }).ts);
+            const recordMs = Date.parse(record.ts);
             if (Number.isFinite(recordMs) && recordMs < sinceMs) continue;
+          }
+          if (out.length >= limit) {
+            limitExceeded = true;
+            break partitions;
           }
           out.push(record);
         } catch {
@@ -882,14 +901,14 @@ function readRecordsWithDiagnostics<T>(
       const current = lstatSync(entry.path);
       if (!sameDirectorySnapshot(entry.snapshot, current)) return result([], 'degraded');
     }
-    const degraded = unreadableFiles > 0 || invalidRows > 0 || limitExceeded;
+    const degraded = unreadableFiles > 0 || invalidRows > 0 || limitExceeded || partialTail || partialWindow;
     return result(complete && degraded ? [] : out, degraded ? 'degraded' : 'healthy');
   } catch {
     return result([], 'degraded');
   }
 }
 
-function readRecords<T>(
+function readRecords<T extends { ts: string }>(
   dir: string,
   guard: (value: unknown) => value is T,
   sanitize: (record: T) => T,
@@ -927,10 +946,12 @@ export function readSkillUseEventsWithDiagnostics(
   opts: ReadSkillRecordsOptions = {},
 ): SkillUseEventReadResult {
   const requested = boundedOption(opts.limit, DEFAULT_READ_LIMIT, MAX_READ_LIMIT);
+  // Allow room for replays and detect an additional eligible row before
+  // calling a full scan budget incomplete.
   const scanned = readRecordsWithDiagnostics(skillUseEventsDir(), isSkillUseEvent, sanitizeSkillUseEvent, {
     ...opts,
     limit: Math.min(MAX_READ_LIMIT, Math.max(requested, requested * 4)),
-  });
+  }, true);
   const byEventId = new Map<string, {
     fingerprint: string;
     event: SkillUseEvent;
@@ -950,7 +971,7 @@ export function readSkillUseEventsWithDiagnostics(
     .filter((entry) => !entry.conflict)
     .map((entry) => entry.event)
     .slice(0, requested);
-  const degraded = scanned.sourceState === 'degraded' || conflict;
+  const degraded = scanned.sourceState === 'degraded' || conflict || byEventId.size > requested;
   return {
     events,
     sourceState: degraded ? 'degraded' : scanned.sourceState,

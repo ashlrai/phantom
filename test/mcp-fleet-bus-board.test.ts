@@ -84,8 +84,8 @@ describe('fleet_bus_board argument parsing', () => {
   });
 
   it('maps the shared board filters onto the read options', () => {
-    expect(parseFleetBusBoardArgs({ job: 'RQ-1', contains: '  Frobnicate  ', since: '2h', before: '1h' }))
-      .toEqual({ job: 'RQ-1', contains: 'frobnicate', since: expect.any(Number), before: expect.any(Number) });
+    expect(parseFleetBusBoardArgs({ job: 'RQ-1', id: 'env-9', contains: '  Frobnicate  ', since: '2h', before: '1h' }))
+      .toEqual({ job: 'RQ-1', id: 'env-9', contains: 'frobnicate', since: expect.any(Number), before: expect.any(Number) });
     expect(parseFleetBusBoardArgs({ since: '2026-01-01T00:00:00.000Z' }))
       .toEqual({ since: Date.parse('2026-01-01T00:00:00.000Z') });
     expect(parseFleetBusBoardArgs({ since: '1767225600000' })).toEqual({ since: 1767225600000 });
@@ -106,6 +106,7 @@ describe('fleet_bus_board argument parsing', () => {
       { extra: 1 }, { root: '/tmp/fake' }, { path: '/tmp/x' }, { cwd: '/tmp' },
       { runsDir: '/tmp' }, { home: '/tmp' }, { busRoot: '/tmp' }, { limit: 5 }, { agent: 'bob' },
       { job: 'has space' }, { job: '' }, { job: 5 }, { job: null },
+      { id: 'has space' }, { id: '' }, { id: 5 }, { id: null }, { id: true },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 5 }, { contains: null },
       { since: 'bogus' }, { since: '0x10' }, { since: 5 }, { since: null }, { since: true },
       { before: 'bogus' }, { before: '0x10' }, { before: 5 }, { before: null }, { before: true },
@@ -124,8 +125,8 @@ describe('fleet_bus_board reader', () => {
       return okRead();
     };
     const before = Date.now();
-    const result = await readFleetBusBoard({ job: 'job-1', contains: 'review', since: 1_700_000_000_000, before: 1_800_000_000_000 }, { read });
-    expect(seen).toEqual([{ jobId: 'job-1', contains: 'review', sinceMs: 1_700_000_000_000, beforeMs: 1_800_000_000_000 }]);
+    const result = await readFleetBusBoard({ job: 'job-1', id: 'env-9', contains: 'review', since: 1_700_000_000_000, before: 1_800_000_000_000 }, { read });
+    expect(seen).toEqual([{ jobId: 'job-1', id: 'env-9', contains: 'review', sinceMs: 1_700_000_000_000, beforeMs: 1_800_000_000_000 }]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       source: 'available',
@@ -180,6 +181,7 @@ describe('fleet_bus_board MCP tool', () => {
       type: 'object',
       properties: {
         job: { type: 'string' },
+        id: { type: 'string' },
         contains: { type: 'string' },
         since: { type: 'string' },
         before: { type: 'string' },
@@ -192,7 +194,7 @@ describe('fleet_bus_board MCP tool', () => {
 
   it.each([
     [{ root: '/tmp/fake-root' }], [{ path: '/tmp/x' }], [{ cwd: '/tmp' }],
-    [{ busRoot: '/tmp/bus' }], [{ job: 'has space' }], [{ contains: '' }],
+    [{ busRoot: '/tmp/bus' }], [{ job: 'has space' }], [{ id: 'has space' }], [{ id: '' }], [{ id: 5 }], [{ contains: '' }],
     [{ contains: 'x'.repeat(513) }], [{ since: 'bogus' }], [{ since: 5 }], [{ extra: 1 }],
     [{ before: 'bogus' }], [{ before: 5 }], [{ before: '1969-12-31T23:59:59.000Z' }],
     [{ from: 'has space' }], [{ from: '' }], [{ from: 5 }], [{ excludeFrom: 'has space' }], [{ excludeFrom: 5 }],
@@ -212,14 +214,14 @@ describe('fleet_bus_board MCP tool', () => {
     };
     const busBoard = vi.fn(async (_args: FleetBusBoardArgs) => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), busBoard });
-    const { parsed } = await callBoard(client, { job: 'job-1', contains: 'review', since: '1d', before: '12h' });
+    const { parsed } = await callBoard(client, { job: 'job-1', id: 'env-9', contains: 'review', since: '1d', before: '12h' });
     const expectedSince = Date.now() - 86_400_000;
     const expectedBefore = Date.now() - 43_200_000;
     // The server-level reader seam sees the parsed MCP args — `since` and
     // `before` already resolved to epoch ms — exactly like every other
     // fleet tool.
     expect(busBoard).toHaveBeenCalledWith({
-      job: 'job-1', contains: 'review', since: expect.any(Number), before: expect.any(Number),
+      job: 'job-1', id: 'env-9', contains: 'review', since: expect.any(Number), before: expect.any(Number),
     });
     const call = busBoard.mock.calls[0]![0];
     expect(Math.abs((call.since ?? 0) - expectedSince)).toBeLessThan(5_000);

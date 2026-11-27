@@ -44,16 +44,45 @@ output goes through the public-JSON scrubber.
 A run that stays in one phase past its timeout gets a **stuck** badge with the
 phase and how long it has been there, instead of silently hanging. Timeouts:
 queued 30m, producing 45m, verifying 20m, judging 10m, landing 10m, reverting
-10m. `parked` and `watching` wait on the world by design and are never stuck.
-A stuck verdict requires a readable timestamp for the current phase. If that
-timestamp is missing or malformed, the run can still count as a call and its
-phase age stays unknown.
+10m. `parked`, `watching`, and runs handed off to the owner lane wait by
+design and are never flagged as stuck. An owner-lane handoff still counts as a
+call when its start is inside the window.
+A stuck verdict requires a readable timestamp for the current phase. That
+timestamp must be at or before report time and at or after the run start when
+one is recorded and readable. Queued runs can qualify using their phase
+timestamp alone. A run can still count as a call when its phase age is unknown.
+An end timestamp suppresses the alert only when it is readable and falls
+between the current phase start and report time, inclusive.
+
+## Lane truth quota evidence
+
+`phm fleet lane-truth --json` compares dated quota readings within each
+provider window. Readings with unreadable observation timestamps are excluded
+from ordering and reset detection. If an observed window has no dated reading,
+the lane verdict is unknown.
+An out-of-range Codex reset timestamp is recorded as an unknown reset without
+discarding the other readings in the rollout. If it is the latest reading for
+its window, the lane verdict stays unknown.
+
+The `idle_with_work` verdict requires a positive lane target, queued work,
+zero running workers, no hold and remaining quota in every observed window.
+A current reading of 100% used in any window suppresses the stall verdict,
+as does a measured target of zero. A missing target leaves the idle check
+unknown.
 
 ## Memory shed plan
+
+Both `phm fleet shed-plan` and `phm lanes pressure` classify the work
+market's on-host executors, `codex-local` and `omlx`, as local by default.
+For `phm lanes pressure`, a valid `memory_class` in `queue/slots.json`
+takes precedence.
 
 Run `phm fleet shed-plan` for the next suggested action, or add `--json` for
 `fleet.shed-plan.v1`. The read-only plan uses `~/.ashlr-runs/queue/status.json`:
 free memory at or below 30% is high pressure, matching the dispatcher's fallback.
+The snapshot's `last_tick` must be readable, at most 60 seconds old, and at or
+before report time. Otherwise the report keeps lane names and kinds, shows
+memory and lane measurements as unknown, and withholds shed and keep advice.
 Swap is shown as context; it has no independent threshold in this plan. Active
 local lanes come before cloud lanes, ordered within each kind by 24-hour merged
 PRs divided by lane RAM (`lanes.<lane>.ram_gb`, total GiB). Missing measurements

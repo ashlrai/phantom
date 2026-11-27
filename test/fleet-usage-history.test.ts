@@ -6,7 +6,7 @@ import { cmdFleetUsageHistory } from '../src/cli/fleet-usage-history.js';
 import { readResourceLedger } from '../src/core/fleet/runs-resource-ledger.js';
 import {
   appendUsageReadings, parseUsageHistory, poolUsageSeries, projectUsageHistory, readUsageHistory,
-  USAGE_HISTORY_MAX_AGE_MS, USAGE_HISTORY_SCHEMA, USAGE_WINDOW_MS, usageHistoryPath, type UsageHistoryV1, type UsageReading,
+  USAGE_HISTORY_MAX_AGE_MS, USAGE_HISTORY_SCHEMA, USAGE_WINDOW_MS, usageHistoryPath, usageRunway, type UsageHistoryV1, type UsageReading,
 } from '../src/core/fleet/usage-history.js';
 
 const NOW = Date.parse('2026-11-18T12:00:00.000Z');
@@ -100,11 +100,112 @@ describe('pool series', () => {
     expect(s.points).toEqual([{ at: iso(NOW - H), used_pct: 30 }]);
   });
 
+  it('counts repeated observation times only once for pace, runway and resets', () => {
+    const first = read(1, 30);
+    const sameTime = first.observed_at.replace('Z', '+00:00');
+    const duplicates = [{ ...read(1, 50), observed_at: sameTime }, read(1, 10)];
+    const [series] = projectUsageHistory([first, ...duplicates], NOW);
+    expect(series).toMatchObject({
+      points: [{ at: first.observed_at, used_pct: 30 }],
+      pace: 'unknown', resets: [], runway: { verdict: 'unknown', pace_per_hour: null },
+    });
+
+    const next = read(0, 32);
+    const [updated] = projectUsageHistory([first, ...duplicates], NOW, [next]);
+    expect(updated).toMatchObject({ resets: [], runway: { pace_per_hour: 2, pace_6h_per_hour: null } });
+    const points = [{ at: first.observed_at, used_pct: 30 }, { at: sameTime, used_pct: 50 }];
+    expect(usageRunway('claude', points, RESET, NOW))
+      .toMatchObject({ verdict: 'unknown', pace_per_hour: null });
+  });
+
+  it('requires two readings inside the quota window before reporting pace', () => {
+    const before = read(4 * 24 + 1, 15);
+    const first = read(0, 20);
+    expect(poolUsageSeries('claude', [before, first], NOW)).toMatchObject({
+      pace: 'unknown', reason: 'Only one reading in this window.',
+      points: [{ at: first.observed_at, used_pct: 20 }],
+      runway: { verdict: 'unknown' },
+    });
+    expect(poolUsageSeries('claude', [before], NOW)).toMatchObject({
+      pace: 'unknown', reason: 'No readings in this window.', points: [], used_pct: null,
+    });
+    const opening = read(4 * 24, 16);
+    expect(poolUsageSeries('claude', [before, opening, first], NOW)).toMatchObject({
+      pace: 'behind', points: [{ at: opening.observed_at, used_pct: 16 }, { at: first.observed_at, used_pct: 20 }],
+    });
+  });
+
+  it('ignores readings at or after the reset when they still name the expired window', () => {
+    const reset = iso(NOW - H);
+    const before = read(2, 40, reset);
+    const s = poolUsageSeries('claude', [before, read(1, 1, reset), read(0, 2, reset)], NOW);
+    expect(s).toMatchObject({
+      pace: 'unknown', reason: 'The window reset. Waiting for a new reading.',
+      used_pct: 40, points: [{ at: before.observed_at, used_pct: 40 }], resets: [],
+    });
+  });
+
+  it('does not infer a reset from a reading before its named window opened', () => {
+    const before = read(97, 90);
+    const opening = read(96, 5);
+    const latest = read(0, 20);
+    expect(poolUsageSeries('claude', [before, opening, latest], NOW)).toMatchObject({
+      resets: [], points: [{ at: opening.observed_at, used_pct: 5 }, { at: latest.observed_at, used_pct: 20 }],
+    });
+  });
+
+  it('compares a rollover to the last in-window reading when an expired sample intervenes', () => {
+    const oldReset = iso(NOW - 96 * H);
+    const old = read(97, 90, oldReset);
+    const expired = read(96, 1, oldReset);
+    const first = read(95, 5);
+    expect(poolUsageSeries('claude', [old, expired, first], NOW).resets).toEqual([
+      { at: first.observed_at, from_pct: 90, to_pct: 5 },
+    ]);
+  });
+
+  it('keeps quota pace and runway scoped to the same reset when windows overlap', () => {
+    const unknownReset = read(4, 10, null);
+    const previousReset = read(3, 20, iso(NOW + D));
+    const first = read(2, 25);
+    expect(poolUsageSeries('claude', [unknownReset, previousReset, first], NOW)).toMatchObject({
+      pace: 'unknown', reason: 'Only one reading in this window.',
+      points: [{ at: first.observed_at, used_pct: 25 }],
+      runway: { verdict: 'unknown', pace_per_hour: null },
+    });
+
+    const second = read(0, 29, RESET.replace('Z', '+00:00'));
+    expect(poolUsageSeries('claude', [unknownReset, previousReset, first, second], NOW)).toMatchObject({
+      pace: 'behind',
+      points: [{ at: first.observed_at, used_pct: 25 }, { at: second.observed_at, used_pct: 29 }],
+      runway: { pace_per_hour: 2 },
+    });
+  });
+
   it('shows a deduped current reading as the tail point so a flat run reaches its reading time', () => {
     const [s] = projectUsageHistory([read(20, 10), read(10, 30)], NOW, [read(0, 30)]);
     expect(s!.points.map(p => p.at)).toEqual([iso(NOW - 20 * H), iso(NOW - 10 * H), iso(NOW)]);
     // 30% used where the line expects 57%: behind, which a stale tail would hide.
     expect(s!.pace).toBe('behind');
+  });
+
+  it('keeps stale quota history visible while withholding current pace until a fresh reading arrives', () => {
+    const history = [read(8, 10), read(4, 30)];
+    const [stale] = projectUsageHistory(history, NOW);
+    expect(stale).toMatchObject({ pace: 'unknown', reason: 'Latest reading is stale.',
+      used_pct: 30, observed_at: iso(NOW - 4 * H),
+      points: [{ at: iso(NOW - 8 * H), used_pct: 10 }, { at: iso(NOW - 4 * H), used_pct: 30 }],
+      runway: { verdict: 'unknown', advice: null } });
+    const [fresh] = projectUsageHistory(history, NOW, [read(3, 30)]);
+    expect(fresh).toMatchObject({ pace: 'behind', reason: null, used_pct: 30, observed_at: iso(NOW - 3 * H) });
+  });
+
+  it('excludes future current readings from the live overlay and reset history', () => {
+    const history = [read(20, 10), read(10, 30)];
+    const current = [read(0, 30)];
+    const future = [read(-1, 5, iso(NOW + 7 * D)), read(-1, 99, RESET, 'codex-personal')];
+    expect(projectUsageHistory(history, NOW, [...current, ...future]))
+      .toEqual(projectUsageHistory(history, NOW, current));
   });
 });
 
@@ -132,6 +233,26 @@ describe('ledger recording, CLI and file', () => {
     expect(history.source_state).toBe('healthy');
     expect(history.pools.map(p => [p.pool, p.points.length, p.pace])).toEqual([['claude', 2, 'behind']]);
     expect(await readUsageHistory({ runsDir: dir, now: () => NOW, pool: 'nope' })).toMatchObject({ pools: [] });
+  });
+
+  it.each([
+    {},
+    { observed_at: iso(NOW), estimated: true },
+    { observed_at: iso(NOW), stale: true },
+  ])('does not turn a dispatcher tick into a measured usage sample (%j)', async (budget) => {
+    const dir = runs(40, iso(NOW - H));
+    await readUsageHistory({ runsDir: dir, now: () => NOW });
+    writeFileSync(join(dir, 'queue/status.json'), JSON.stringify({
+      last_tick: iso(NOW), lanes: { claude: {} },
+      budget: { claude: { weekly_used_pct: 50, reset_at: RESET, ...budget } },
+    }));
+
+    const history = await readUsageHistory({ runsDir: dir, now: () => NOW, pool: 'claude' });
+
+    expect(history.pools).toHaveLength(1);
+    expect(history.pools[0]).toMatchObject({ pace: 'unknown', points: [{ at: iso(NOW - H), used_pct: 40 }] });
+    const stored = JSON.parse(readFileSync(usageHistoryPath(dir), 'utf8')) as { rows: UsageReading[] };
+    expect(stored.rows.filter(row => row.pool === 'claude')).toEqual([read(1, 40)]);
   });
 
   it('reads an empty runs dir as missing without writing, and a damaged file as degraded without overwriting it', async () => {

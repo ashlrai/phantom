@@ -72,7 +72,7 @@ export const RETRO_ROOT_CAUSES = [
   'other',
 ] as const;
 
-export const ENGINE_ERROR_LABELS = [
+const ENGINE_ERROR_LABELS = [
   'authentication',
   'configuration',
   'command-missing',
@@ -84,7 +84,7 @@ export const ENGINE_ERROR_LABELS = [
   'execution',
 ] as const;
 
-export const COMPLETION_CLAIMS = ['claims-change', 'reports-blocked', 'answers-only', 'unknown'] as const;
+const COMPLETION_CLAIMS = ['claims-change', 'reports-blocked', 'answers-only', 'unknown'] as const;
 
 const spec = (s: DecisionKindSpec): DecisionKindSpec => s;
 

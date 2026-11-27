@@ -3,6 +3,12 @@ import { execFile } from 'node:child_process';
 import { MAX_READ_BYTES } from './scan.js';
 
 export const objectId = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+export type MapFreshness = {
+  commit: string;
+  defaultCommit: string | null;
+  ahead: number | null;
+  behind: number | null;
+};
 const BUFFER_LIMIT = 32 * 1024 * 1024;
 const BLOB_BATCH = 128;
 
@@ -16,6 +22,21 @@ export function mapGit(repo: string, args: readonly string[], input?: string): P
     child.stdin?.on('error', () => undefined);
     child.stdin?.end(input);
   });
+}
+
+export async function mapFreshness(repo: string, commit: string): Promise<MapFreshness> {
+  const result: MapFreshness = { commit, defaultCommit: null, ahead: null, behind: null };
+  const read = (args: readonly string[]) => mapGit(repo, args).then(value => value.toString().trim()).catch(() => '');
+  const ref = await read(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
+  if (!ref.startsWith('refs/remotes/origin/') || ref === 'refs/remotes/origin/HEAD') return result;
+  const base = await read(['rev-parse', '--verify', ref + '^{commit}']);
+  if (!objectId.test(base)) return result;
+  result.defaultCommit = base;
+  if (base === commit) return { ...result, ahead: 0, behind: 0 };
+  if (await read(['rev-parse', '--is-shallow-repository']) !== 'false') return result;
+  const counts = await read(['rev-list', '--left-right', '--count', commit + '...' + base, '--']);
+  const match = /^(\d+)\s+(\d+)$/.exec(counts);
+  return match ? { ...result, ahead: Number(match[1]), behind: Number(match[2]) } : result;
 }
 
 const regular = (mode: string) => mode === '100644' || mode === '100755';

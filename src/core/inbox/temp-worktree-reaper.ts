@@ -580,9 +580,9 @@ function reapUnregisteredLeftovers(
 }
 
 /** How long the start-time sweep waits for a busy mirror lease before skipping that repo. */
-export const START_SWEEP_MIRROR_LEASE_WAIT_MS = 2_000;
+const START_SWEEP_MIRROR_LEASE_WAIT_MS = 2_000;
 /** How long the start-time sweep waits for the outward mutation fence before skipping that repo. */
-export const START_SWEEP_FENCE_WAIT_MS = 2_000;
+const START_SWEEP_FENCE_WAIT_MS = 2_000;
 const MAX_GIT_POINTER_BYTES = 4_096;
 
 /**

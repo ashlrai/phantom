@@ -8,6 +8,7 @@
 import { claimNoticePassDeps } from './fleet-claim-notices.js';
 import { runClaimNoticePass, type ClaimNoticePassResult } from '../core/fleet/claim-notice-send.js';
 import { killSwitchOn } from '../core/sandbox/policy.js';
+import { recordSlackOutbound, type SlackOutboundNoticePass, type SlackOutboundRow } from '../core/agents/slack-outbound.js';
 
 export const CLAIM_NOTICE_TICK_INTERVAL_MS = 30_000;
 
@@ -30,11 +31,21 @@ export function createClaimNoticeTick(opts: {
   now?: () => number;
   pass?: () => Promise<ClaimNoticePassResult>;
   killed?: () => boolean;
+  /** Outbound-journal sink; defaults to the slack-bridge outbound journal. */
+  journal?: (row: SlackOutboundRow) => void;
 } = {}): ClaimNoticeTick {
   const intervalMs = opts.intervalMs ?? CLAIM_NOTICE_TICK_INTERVAL_MS;
   const now = opts.now ?? Date.now;
   const pass = opts.pass ?? (() => runClaimNoticePass(claimNoticePassDeps()));
   const killed = opts.killed ?? killSwitchOn;
+  const journal = opts.journal ?? ((row: SlackOutboundRow): void => { recordSlackOutbound(row); });
+  // Pass outcomes are fleet-health evidence for the improve fold; a journal
+  // failure must never turn into a tick failure.
+  const observe = (row: Omit<SlackOutboundNoticePass, 'at' | 'kind'>): void => {
+    try {
+      journal({ at: new Date().toISOString(), kind: 'notice-pass', ...row });
+    } catch { /* evidence append is best-effort */ }
+  };
   let lastAt: number | undefined;
   let inFlight = false;
   return {
@@ -61,6 +72,10 @@ export function createClaimNoticeTick(opts: {
           running.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
         });
         if (result === null) return { ran: false, reason: 'aborted' };
+        observe({
+          status: result.status, ...(result.reason !== undefined ? { reason: result.reason } : {}),
+          planned: result.planned, sent: result.sent, failed: result.failed, skipped: result.skipped,
+        });
         const counts = { ran: true as const, sent: result.sent, deduped: result.skipped, failed: result.failed };
         // These fixed codes keep arbitrary dependency errors out of the outcome.
         if (result.status === 'board-unavailable') {
@@ -78,6 +93,7 @@ export function createClaimNoticeTick(opts: {
         if (result.status === 'dry-run') return { ...counts, status: result.status };
         return counts;
       } catch {
+        observe({ status: 'error', reason: 'pass-error' });
         return { ran: false, reason: 'pass-error' };
       }
     },

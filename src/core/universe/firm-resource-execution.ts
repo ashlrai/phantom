@@ -1,14 +1,15 @@
 /** Explicit host enrollment bridges selection evidence to the existing resource runtime. */
 import { lstatSync } from 'node:fs';
-import { isAbsolute, join, parse, resolve } from 'node:path';
+import { join } from 'node:path';
 import { readKillSwitch } from '../sandbox/policy.js';
 import { readResourceJson } from '../resources/pool-runtime.js';
 import { validateResourcePool } from '../resources/pool-policy.js';
 import { validateResourceBindings } from '../resources/worker.js';
 import { verifyValueHypothesisV1, type ValueHypothesisV1 } from '../vision/value-portfolio.js';
-import { canonical, digest, inspectPrivateDirectory } from './artifacts.js';
+import { canonical, digest, hasExactOwnKeys, inspectPrivateDirectory, isPlainObject, isSha256Hex, isUniverseId } from './artifacts.js';
 import type { DecisionTraceKeyOptions } from './decision-trace.js';
 import { resourceGenerationTaskId } from './generation.js';
+import { isCanonicalAbsolutePath, snapshotBoundedJson } from './input-guards.js';
 import { generateResourceCompletion, validateResourceGenerationRuntime, type ResourceGenerationCompletion } from './resource-generation.js';
 import { readValueAllocations } from './value-allocation-store.js';
 
@@ -55,43 +56,15 @@ export interface FirmResourceExecutionResult {
   verifiedAccepted: false;
 }
 
-const HASH = /^[a-f0-9]{64}$/;
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 function exact(value: unknown, keys: string[]): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value) &&
-    [Object.prototype, null].includes(Object.getPrototypeOf(value)) &&
-    Reflect.ownKeys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+  return isPlainObject(value) && hasExactOwnKeys(value, keys);
 }
 function path(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= 4096 && isAbsolute(value) && resolve(value) === value &&
-    parse(value).root !== value && [...value].every((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127);
+  return isCanonicalAbsolutePath(value, { maxLength: 4_096, asciiControlsOnly: true });
 }
 /** Bounded JSON snapshot before touching storage; never invoke getters/toJSON. */
 function snapshot(value: unknown): unknown {
-  let nodes = 0; let bytes = 0;
-  const copy = (item: unknown, depth: number): unknown => {
-    if (++nodes > 30_000 || depth > 32) throw new Error();
-    if (item === null || typeof item === 'boolean' || typeof item === 'number' && Number.isFinite(item)) return item;
-    if (typeof item === 'string') { bytes += Buffer.byteLength(item); if (bytes > 1024 * 1024) throw new Error(); return item; }
-    if (!item || typeof item !== 'object') throw new Error();
-    if (Array.isArray(item)) {
-      if (Object.getPrototypeOf(item) !== Array.prototype || item.length > 4096 || Reflect.ownKeys(item).length !== item.length + 1) throw new Error();
-      return Array.from({ length: item.length }, (_, index) => {
-        const entry = Object.getOwnPropertyDescriptor(item, index);
-        if (!entry || !entry.enumerable || !('value' in entry)) throw new Error();
-        return copy(entry.value, depth + 1);
-      });
-    }
-    if (![Object.prototype, null].includes(Object.getPrototypeOf(item))) throw new Error();
-    const result: Record<string, unknown> = Object.create(null);
-    for (const key of Reflect.ownKeys(item)) {
-      const entry = Object.getOwnPropertyDescriptor(item, key)!;
-      if (typeof key !== 'string' || key.length > 256 || !entry.enumerable || !('value' in entry)) throw new Error();
-      result[key] = copy(entry.value, depth + 1);
-    }
-    return result;
-  };
-  return copy(value, 0);
+  return snapshotBoundedJson(value, { maxTotalStringBytes: 1024 * 1024 });
 }
 function stopped(root: string, signal: AbortSignal): boolean {
   if (signal.aborted) return true;
@@ -121,8 +94,8 @@ export async function executeFirmResourceTask(input: unknown, hostInput: FirmRes
     const request = snapshot(input); const host = snapshot(hostInput);
     if (!exact(request, ['allocationId', 'expectedReceiptDigest', 'hypothesisId', 'hypotheses', 'expectedHypothesesDigest',
       'prompt', 'timeoutMs', 'maxOutputTokens']) || !exact(host, ['allocationRoot', 'candidatePath', 'constitutionVersion', 'policyEpoch', 'enrollments']) ||
-      typeof request.allocationId !== 'string' || !ID.test(request.allocationId) ||
-      ![request.expectedReceiptDigest, request.hypothesisId, request.expectedHypothesesDigest].every((value) => typeof value === 'string' && HASH.test(value)) ||
+      !isUniverseId(request.allocationId) ||
+      ![request.expectedReceiptDigest, request.hypothesisId, request.expectedHypothesesDigest].every(isSha256Hex) ||
       !Array.isArray(request.hypotheses) || request.hypotheses.length < 1 || request.hypotheses.length > 12 ||
       typeof request.prompt !== 'string' || !request.prompt.trim() || request.prompt.includes('\0') || Buffer.byteLength(request.prompt) > 128 * 1024 ||
       !Number.isSafeInteger(request.timeoutMs) || Number(request.timeoutMs) < 1 || Number(request.timeoutMs) > 900_000 ||
@@ -171,9 +144,9 @@ export async function executeFirmResourceTask(input: unknown, hostInput: FirmRes
     const seen = new Set<string>();
     for (const enrollment of hostData.enrollments) {
       if (!exact(enrollment, ['executionIdentityDigest', 'resourceRuntime', 'runtimeDigest', 'poolId', 'poolDigest', 'workerId']) ||
-        ![enrollment.runtimeDigest, enrollment.poolDigest].every((value) => typeof value === 'string' && HASH.test(value)) ||
+        ![enrollment.runtimeDigest, enrollment.poolDigest].every(isSha256Hex) ||
         typeof enrollment.executionIdentityDigest !== 'string' || !/^(?:sha256:)?[a-f0-9]{64}$/.test(enrollment.executionIdentityDigest) ||
-        !path(enrollment.resourceRuntime) || ![enrollment.poolId, enrollment.workerId].every((value) => typeof value === 'string' && ID.test(value)) ||
+        !path(enrollment.resourceRuntime) || ![enrollment.poolId, enrollment.workerId].every(isUniverseId) ||
         seen.has(enrollment.executionIdentityDigest)) return held(phase);
       seen.add(enrollment.executionIdentityDigest);
     }

@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
-import type { DriveNodes, JobClaim } from './index.js';
+import type { DriveNodes, JobClaim, NodeProfile } from './index.js';
+import { isVersionCap } from './phm-version.js';
 import type { NodeAuth, NodeCapacitySample } from './state.js';
 import { isNodeCapacity, isHostStats, validCap, validId, validSecretName } from './state.js';
+import { jobBlockers, routable, type RouteAssignment } from './router.js';
 import { NODE_TASK_LIMIT, validNodeTask } from './task.js';
 
 export class UsageError extends Error {
@@ -59,16 +61,18 @@ const need = (flags: Map<string, string>, name: string): string => {
 };
 
 const csv = (value: string | undefined): string[] => (value ? value.split(',').map(v => v.trim()).filter(Boolean) : []);
-const num = (flags: Map<string, string>, name: string): number => {
+/** The default fix names where lease numbers come from; self-reported flags
+ * (--slots, --usage) pass their own, since join and pull never print them. */
+const num = (flags: Map<string, string>, name: string, fix = 'Pass the number printed by phm node join or pull.'): number => {
   const raw = need(flags, name);
-  if (!/^\d{1,15}$/.test(raw)) throw new UsageError('bad-number', `${name} must be a non-negative integer.`, `Pass the number printed by phm node join or pull.`);
+  if (!/^\d{1,15}$/.test(raw)) throw new UsageError('bad-number', `${name} must be a non-negative integer.`, fix);
   return Number(raw);
 };
 /** Integer flag under the store's documented ceiling (slots 0-64, usage permille
  * 0-1000). Out-of-range is bad usage — exit 2 naming the flag — never the masked
  * store failure the DriveNodes bound check would surface as. */
 const boundedNum = (flags: Map<string, string>, name: string, max: number, fix: string): number => {
-  const value = num(flags, name);
+  const value = num(flags, name, fix);
   if (value > max) throw new UsageError(`bad-${name.slice(2)}`, `${name} must be an integer from 0 to ${max}.`, fix);
   return value;
 };
@@ -84,6 +88,15 @@ const ID_FIX = 'Ids start with a letter or digit and use only letters, digits an
 const CAP_FIX = 'Capabilities start with a lowercase letter or digit and use only lowercase letters, digits and . _ : - (64 characters max). Run: phm node --help';
 const SECRET_FIX = 'Secret flags take NAMES such as DEPLOY_KEY, never values. Run: phm node --help';
 const LIST_FIX = 'Separate entries with commas; at most 64 entries. Run: phm node --help';
+const HELP_POINTER = 'Run: phm node --help';
+/** A fix that joins two sentences prints the help pointer once, at the end:
+ * verbatim `${A_FIX} ${B_FIX}` reads "… --help Separate entries …", as if the
+ * pointer took arguments. Each part keeps its own pointer when thrown alone;
+ * joinFix moves every part's pointer to the single trailing one. */
+const joinFix = (...parts: string[]): string => {
+  const bodies = parts.map(part => part.endsWith(HELP_POINTER) ? part.slice(0, -HELP_POINTER.length).trimEnd() : part);
+  return `${bodies.join(' ')}${parts.some(part => part.endsWith(HELP_POINTER)) ? ` ${HELP_POINTER}` : ''}`;
+};
 
 const badFlag = (name: string, message: string, fix: string): UsageError =>
   new UsageError(`bad-${name.slice(2)}`, message, fix);
@@ -101,14 +114,14 @@ const optId = (flags: Map<string, string>, name: string): string | undefined => 
 const needIdList = (flags: Map<string, string>, name: string): string[] => {
   const items = csv(need(flags, name));
   if (items.length === 0 || items.length > 64 || !items.every(validId)) {
-    throw badFlag(name, `${name} must be a comma-separated list of 1-64 ids.`, `${ID_FIX} ${LIST_FIX}`);
+    throw badFlag(name, `${name} must be a comma-separated list of 1-64 ids.`, joinFix(ID_FIX, LIST_FIX));
   }
   return items;
 };
 const optCapList = (flags: Map<string, string>, name: string): string[] => {
   const items = csv(flags.get(name));
   if (items.length > 64 || !items.every(validCap)) {
-    throw badFlag(name, `${name} must be a comma-separated list of up to 64 capabilities.`, `${CAP_FIX} ${LIST_FIX}`);
+    throw badFlag(name, `${name} must be a comma-separated list of up to 64 capabilities.`, joinFix(CAP_FIX, LIST_FIX));
   }
   return items;
 };
@@ -133,18 +146,65 @@ function claimOf(flags: Map<string, string>): JobClaim {
  * validCap caps, bounded-integer slots), so the hint can never carry shell
  * metacharacters into a paste. `phm nodes` prints the same hint for an expired
  * local session and `phm node status`/`list` names it per expired node, so
- * every surface restores the full advertised profile. */
-export function joinHintCommand(nodeId: string, profile: { owners?: string[]; caps?: string[]; slots?: number } | null): string {
-  if (!validId(nodeId)) return 'phm node join --node <id> --owner <scope>';
+ * every surface restores the full advertised profile. The `phm-<version>`
+ * build marker is the exception: join manages it — a standalone join
+ * re-derives it from the running build and discards any version cap passed in
+ * `--caps` — so the hint leaves it out rather than teach the operator to
+ * carry a cap they never chose. */
+export function joinHintCommand(nodeId: string, profile: { owners?: string[]; caps?: string[]; slots?: number } | null,
+  opts: { watch?: boolean } = {}): string {
+  // watch names `join --watch`, the standalone keep-alive: a bare join's
+  // session dies 30 s after its last beat, so a hint whose job is restoring
+  // "Phantom running" must also hold the session. Pool callers never pass it —
+  // a pool join releases its probe session and workers hold their own.
+  const watch = opts.watch === true ? ['--watch'] : [];
+  if (!validId(nodeId)) return ['phm node join', '--node <id>', '--owner <scope>', ...watch].join(' ');
+  const caps = (profile?.caps ?? []).filter(cap => !isVersionCap(cap));
   return ['phm node join', `--node ${nodeId}`,
     profile?.owners?.length ? `--owner ${profile.owners.join(',')}` : '--owner <scope>',
-    ...(profile?.caps?.length ? [`--caps ${profile.caps.join(',')}`] : []),
-    ...(profile?.slots === undefined ? [] : [`--slots ${profile.slots}`])].join(' ');
+    ...(caps.length ? [`--caps ${caps.join(',')}`] : []),
+    ...(profile?.slots === undefined ? [] : [`--slots ${profile.slots}`]),
+    ...watch].join(' ');
 }
 
 /** Rejoin command for a dead session's fix text. */
-function joinHint(nodes: DriveNodes, nodeId: string): string {
-  return joinHintCommand(nodeId, nodes.nodeProfile(nodeId));
+function joinHint(nodes: DriveNodes, nodeId: string, watch = false): string {
+  return joinHintCommand(nodeId, nodes.nodeProfile(nodeId), { watch });
+}
+
+/** What a join stops advertising relative to the expired profile it replaces.
+ * A re-join names only the owners, caps and slot bound it is given, so each
+ * omission is a silent opt-out — the same failure org join's droppedLanes
+ * reports. Version-report caps never count: join re-derives the build marker
+ * every time, the rule joinHintCommand already follows. */
+function joinDrops(prior: NodeProfile | null, next: NodeProfile):
+  { owners?: string[]; caps?: string[]; slots?: number } | undefined {
+  if (!prior) return undefined;
+  const nextOwners = new Set(next.owners);
+  const nextCaps = new Set((next.caps ?? []).filter(cap => !isVersionCap(cap)));
+  const owners = prior.owners.filter(o => !nextOwners.has(o));
+  const caps = (prior.caps ?? []).filter(c => !isVersionCap(c) && !nextCaps.has(c));
+  const slots = prior.slots !== undefined && next.slots === undefined ? prior.slots : undefined;
+  if (!owners.length && !caps.length && slots === undefined) return undefined;
+  return { ...(owners.length ? { owners } : {}), ...(caps.length ? { caps } : {}),
+    ...(slots === undefined ? {} : { slots }) };
+}
+
+/** planRoutes' unrouted-job fix can end in a bare `phm node join`; on the
+ * standalone registry the keep-alive is `join --watch` — a bare join's session
+ * dies 30 s after its last beat — so the hint must carry it, the same rule
+ * joinHintCommand's watch option follows. The owner fix is the only route fix
+ * that names a join command and it always ends with its flag arguments, so the
+ * tail pattern only ever matches that form; any other wording is left alone
+ * rather than rewritten. rejoinWatch is set only on the standalone CLI path —
+ * the pool endpoint leaves it off because pool joins release their probe
+ * session and refuse --watch. */
+const JOIN_FIX_TAIL = /phm node join(?:\s+--[a-z][a-z-]*(?:\s+[^\s`]+)?)+\s*$/;
+function routeFixWithJoinWatch(fix: string): string {
+  return fix.includes('--watch') || !JOIN_FIX_TAIL.test(fix) ? fix : `${fix} --watch`;
+}
+function routesWithJoinWatch(routes: RouteAssignment[], watch: boolean): RouteAssignment[] {
+  return watch ? routes.map(a => a.fix === undefined ? a : { ...a, fix: routeFixWithJoinWatch(a.fix) }) : routes;
 }
 
 /** The session a node id is live under right now, or null. Read-only, and used
@@ -162,9 +222,10 @@ function liveSession(nodes: DriveNodes, nodeId: string): number | null {
 }
 
 /** The owner scopes a store already knows — node profiles and job owners —
- * deduped and sorted, for the missing --owner refusal. null when the store
- * cannot be read, so the fix never claims scopes it could not see. */
-function knownOwnerScopes(nodes: DriveNodes): string[] | null {
+ * deduped and sorted, for the missing --owner refusal and the empty-scope
+ * status/list hint. null when the store cannot be read, so a fix never
+ * claims scopes it could not see. */
+export function knownOwnerScopes(nodes: DriveNodes): string[] | null {
   try {
     const state = nodes.snapshot();
     const scopes = new Set<string>();
@@ -196,7 +257,8 @@ function requireOwnerFlag(flags: Map<string, string>, nodes: DriveNodes, verb: s
   }
 }
 
-export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: DriveNodes, probeAuth: () => NodeAuth): Record<string, unknown> {
+export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: DriveNodes, probeAuth: () => NodeAuth,
+  opts: { rejoinWatch?: boolean } = {}): Record<string, unknown> {
   const session = (): { nodeId: string; session: number } => ({ nodeId: needId(flags, '--node'), session: num(flags, '--session') });
   const stale = (nodeId: string, attempted?: number) => {
     const live = liveSession(nodes, nodeId);
@@ -204,7 +266,27 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       `Node '${nodeId}' has no live session (it expired, left, or was replaced).`,
       live !== null && live !== attempted
         ? `Node '${nodeId}' is live as session ${live}: retry with --session ${live}, or run phm node leave --node ${nodeId} --session ${live} and rejoin.`
-        : `Rejoin with: ${joinHint(nodes, nodeId)}; then use the new session.`, 1);
+        // rejoinWatch is set only on the standalone path (cmdNodeFleet): there
+        // `join --watch` both creates the session and holds it live. The SSH
+        // endpoint leaves it off — pool joins release their probe session.
+        : `Rejoin with: ${joinHint(nodes, nodeId, opts.rejoinWatch === true)}; then use the new session.`, 1);
+  };
+  /** A claim verb refused while its session is dead is a session failure, not
+   * a lease failure: the session's death fenced the claim, so "pull again"
+   * under it can never work — the node must rejoin before renew, complete or
+   * release can succeed. beat and pull already answer session-expired for the
+   * same condition; the claim verbs name it too. Unlike stale()'s fix — which
+   * has beat/pull reuse the new session — the claim's tokens died with the
+   * old one, so this fix ends at re-pull: rejoin (or name the session already
+   * live) and pull the job again. */
+  const claimRefusal = (claim: JobClaim, leaseLost: UsageError): UsageError => {
+    if (nodes.sessionLive(claim)) return leaseLost;
+    const live = liveSession(nodes, claim.nodeId);
+    return new UsageError('session-expired',
+      `Node '${claim.nodeId}' has no live session (it expired, left, or was replaced), so its claim is fenced.`,
+      live !== null
+        ? `Node '${claim.nodeId}' is live as session ${live}: the claim died with session ${claim.session} — pull the job again under session ${live}.`
+        : `Rejoin with: ${joinHint(nodes, claim.nodeId, opts.rejoinWatch === true)}; then pull the job again — the claim's tokens died with the session.`, 1);
   };
   switch (verb) {
     case 'join': {
@@ -212,15 +294,37 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       const owners = needIdList(flags, '--owner');
       const caps = optCapList(flags, '--caps');
       const nodeId = needId(flags, '--node');
-      const joined = nodes.join(nodeId, { owners, caps,
-        ...(flags.has('--slots') ? { slots: boundedNum(flags, '--slots', 64, SLOTS_FIX) } : {}) });
+      const slots = flags.has('--slots') ? boundedNum(flags, '--slots', 64, SLOTS_FIX) : undefined;
+      const profile: NodeProfile = { owners, caps, ...(slots === undefined ? {} : { slots }) };
+      // The profile this join replaces is still readable before join swaps it
+      // (a live record makes join refuse below, so `prior` only ever describes
+      // an expired predecessor or nothing). The read is advisory like
+      // liveSession's: a racing join can leave it one profile stale.
+      const prior = nodes.nodeProfile(nodeId);
+      const joined = nodes.join(nodeId, profile);
       if (!joined) {
         const live = liveSession(nodes, nodeId);
         throw new UsageError('node-live', 'A live node already uses that ID.',
           live === null ? 'Pick another --node, wait for its lease to expire, or run phm node leave from that node.'
             : `It is live as session ${live}: keep it with --session ${live} on beat, pull and leave, or run phm node leave --node ${nodeId} --session ${live} to replace it.`, 1);
       }
-      return { nodeId: joined.nodeId, session: joined.session, owners: [...new Set(owners)].sort(), caps: [...new Set(caps)].sort() };
+      const dropped = joinDrops(prior, profile);
+      // The restore command keeps the new profile and adds back what it
+      // dropped, so running it can never lose this join's own additions —
+      // the same rule org join's open-lane note follows. --watch follows the
+      // caller's registry: standalone joins hold the session, pool joins do not.
+      let restore: string | undefined;
+      if (dropped !== undefined) {
+        const bound = slots ?? dropped.slots;
+        restore = joinHintCommand(nodeId, {
+          owners: [...new Set([...owners, ...(dropped.owners ?? [])])].sort(),
+          caps: [...new Set([...caps, ...(dropped.caps ?? [])])],
+          ...(bound === undefined ? {} : { slots: bound }),
+        }, { watch: opts.rejoinWatch === true });
+      }
+      return { nodeId: joined.nodeId, session: joined.session, owners: [...new Set(owners)].sort(), caps: [...new Set(caps)].sort(),
+        ...(slots === undefined ? {} : { slots }),
+        ...(dropped === undefined ? {} : { dropped: { ...dropped, restore } }) };
     }
     case 'beat': {
       let hostStats: unknown;
@@ -268,7 +372,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         const digest = need(flags, '--task-sha256');
         if (!/^sha256:[0-9a-f]{64}$/.test(digest)) {
           throw new UsageError('bad-task-sha256', 'Invalid embedded node task: --task-sha256 must be sha256: followed by 64 lowercase hex characters.',
-            'Digest the exact --task-part text, for example: printf %s "$TASK" | shasum -a 256. Run: phm node --help');
+            'Digest the exact --task-part text — sha256sum on Linux or shasum -a 256 on macOS — for example: printf %s "$TASK" | sha256sum. Run: phm node --help');
         }
         const sha256 = digest.slice(7);
         if (createHash('sha256').update(text, 'utf8').digest('hex') !== sha256) {
@@ -289,7 +393,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         ...(pack === undefined ? {} : { pack }), secrets, ...(task ? { task } : {}) });
       return { jobId, enqueued: added };
     }
-    case 'plan': return { routes: nodes.plan(optId(flags, '--owner')) };
+    case 'plan': return { routes: routesWithJoinWatch(nodes.plan(optId(flags, '--owner')), opts.rejoinWatch === true) };
     case 'pull': {
       const s = session();
       const pulled = nodes.pull(s);
@@ -303,29 +407,44 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         const state = nodes.snapshot();
         const rec = state.nodes.find(n => n.nodeId === s.nodeId && n.session === s.session);
         if (rec === undefined || rec.expiresAt <= state.observedAt) throw stale(s.nodeId, s.session);
+        // An empty pull has three honest readings: nothing open to this
+        // session's scopes, open work this session cannot run (a cap, auth or
+        // decline fence — not counted), or open work that fit but routed to
+        // other nodes or waits on a free slot. `open` counts the last group
+        // from the same snapshot, so "no job" never masquerades as an empty
+        // queue while work this node could do sits elsewhere.
+        const open = state.jobs.filter(j => j.owner !== undefined && rec.owners?.includes(j.owner) === true &&
+          routable(j, state.observedAt) && jobBlockers(rec, j).length === 0).length;
         return { pulled: false,
           ...(rec.slots === undefined ? {} : { slots: rec.slots }),
-          ...(rec.capacity?.held ? { held: rec.capacity.held } : {}) };
+          ...(rec.capacity?.held ? { held: rec.capacity.held } : {}),
+          ...(open > 0 ? { open } : {}) };
       }
       const { claim, job } = pulled;
       return { pulled: true, job, claim: { jobId: claim.jobId, nodeId: claim.nodeId, session: claim.session,
         token: claim.token, leaderToken: claim.leaderToken, expiresAt: claim.expiresAt } };
     }
     case 'renew': {
-      const claim = nodes.renewClaim(claimOf(flags));
-      if (!claim) throw new UsageError('lease-lost', 'The lease is gone: it expired, was reassigned, or the leader changed. Stop work on this job.',
-        'Do not run effects for it. Pull again; a newer token fences this one.', 1);
+      const request = claimOf(flags);
+      const claim = nodes.renewClaim(request);
+      if (!claim) throw claimRefusal(request, new UsageError('lease-lost',
+        'The lease is gone: it expired, was reassigned, or the leader changed. Stop work on this job.',
+        'Do not run effects for it. Pull again; a newer token fences this one.', 1));
       return { jobId: claim.jobId, expiresAt: claim.expiresAt };
     }
     case 'complete': {
-      const done = nodes.complete(claimOf(flags), flags.get('--result') ?? '');
-      if (!done) throw new UsageError('lease-lost', 'Completion refused: the lease is gone or the job is already complete.',
-        'Discard this run\'s result. Another node holds a newer token or the job finished.', 1);
+      const request = claimOf(flags);
+      const done = nodes.complete(request, flags.get('--result') ?? '');
+      if (!done) throw claimRefusal(request, new UsageError('lease-lost',
+        'Completion refused: the lease is gone or the job is already complete.',
+        'Discard this run\'s result. Another node holds a newer token or the job finished.', 1));
       return { jobId: need(flags, '--job'), completed: true };
     }
     case 'release': {
-      if (!nodes.release(claimOf(flags), flags.has('--decline'))) throw new UsageError('lease-lost', 'Release refused: the lease is gone or the job is already complete.',
-        'Nothing to hand back. Another node holds a newer token or the job finished.', 1);
+      const request = claimOf(flags);
+      if (!nodes.release(request, flags.has('--decline'))) throw claimRefusal(request, new UsageError('lease-lost',
+        'Release refused: the lease is gone or the job is already complete.',
+        'Nothing to hand back. Another node holds a newer token or the job finished.', 1));
       return { jobId: need(flags, '--job'), released: true, declined: flags.has('--decline') };
     }
     case 'withdraw': {
@@ -343,7 +462,8 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
     case 'list':
     case 'status': {
       requireOwnerFlag(flags, nodes, verb);
-      return { ...nodes.view(needIdList(flags, '--owner')) };
+      const view = nodes.view(needIdList(flags, '--owner'));
+      return { ...view, routes: routesWithJoinWatch(view.routes, opts.rejoinWatch === true) };
     }
     default: {
       const s = session();

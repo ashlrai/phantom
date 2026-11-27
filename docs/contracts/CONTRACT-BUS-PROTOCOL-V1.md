@@ -69,8 +69,8 @@ engine (`src/core/fleet/bus-work-claims.ts`, `bus-next-claim.ts`). They add no
 new state:
 
 - `next --to <address|topic> --owner <label> --lease-ms <1..3600000>
-  [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>]
-  [--priority <P0|P1|P2|P3>] [--channel <name>] [--from <agent>]
+  [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>]
+  [--priority <P0|P1|P2|P3>] [--channel <name>] [--topic <topic>] [--from <agent>]
   [--exclude-from <agent>]`
   claims
   the oldest highest-priority live task addressed to `--to`. When `--to`
@@ -79,13 +79,17 @@ new state:
   to a `group:<channel>:<topic>` address of a registry channel the identity
   belongs to, minus the identity's own channel posts — is eligible; a `--to`
   that names no identity, membership in no channel, or an unreadable registry,
-  keeps exact-label matching. `--contains`, `--since`, `--before`,
-  `--priority`, `--channel`, `--from` and `--exclude-from` apply
-  the same rules every bus read's filters do — the scrubbed one-line summary
+  keeps exact-label matching. `--id` keeps only the receipt whose own wire id
+  is strictly equal — the same exact-envelope match every bus `--id` read
+  applies — so a hinted or listed envelope claims in one step under the same
+  addressed-to, claimable-work and filter rules; `--contains`, `--since`, `--before`,
+  `--priority`, `--channel`, `--topic`, `--from` and `--exclude-from` apply
+  the same rules every bus read's filters do — the exact wire id, the scrubbed one-line summary
   substring, the inclusive `receivedAt` cutoff, the exclusive `receivedAt`
   ceiling composing with `--since` into one `[since, before)` window, the
-  exact P0..P3 band, the `group:<name>:*` room prefix on the raw `to` label,
-  and the sender identity-label match `agentRefAddressMatcher` shares
+  exact P0..P3 band, the `group:<name>:*` room prefix and the exact topic
+  component of a well-formed `group:<room>:<topic>` address on the raw `to`
+  label, and the sender identity-label match `agentRefAddressMatcher` shares
   (a sender ref resolving through the registry matches every label of that
   identity; an unresolvable ref or unreadable registry keeps exact-label
   matching) —

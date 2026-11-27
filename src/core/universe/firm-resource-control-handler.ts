@@ -1,10 +1,10 @@
-import { canonical, digest } from './artifacts.js';
+import { canonical, digest, isSha256Hex } from './artifacts.js';
 import type { ControlGraphHandlerRegistration, ControlHandlerResult } from './control-graph.js';
 import type { DecisionTraceKeyOptions, DecisionTraceV1 } from './decision-trace.js';
 import { executeFirmResourceTask, type FirmResourceExecutionHost, type FirmResourceExecutionRequest } from './firm-resource-execution.js';
+import { snapshotBoundedJson } from './input-guards.js';
 
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const MAX_RESULT_BYTES = 48 * 1024;
 
@@ -16,34 +16,10 @@ export interface FirmResourceControlBinding {
 
 /** Detach host enrollment without invoking getters, including array accessors. */
 function snapshot<T>(value: unknown): T {
-  let nodes = 0; let bytes = 0;
-  const copy = (item: unknown, depth: number): unknown => {
-    if (++nodes > 30_000 || depth > 32) throw new Error('Invalid resource control enrollment');
-    if (item === null || typeof item === 'boolean' || typeof item === 'number' && Number.isFinite(item)) return item;
-    if (typeof item === 'string') {
-      bytes += Buffer.byteLength(item);
-      if (bytes > 1024 * 1024) throw new Error('Invalid resource control enrollment');
-      return item;
-    }
-    if (!item || typeof item !== 'object') throw new Error('Invalid resource control enrollment');
-    if (Array.isArray(item)) {
-      if (Object.getPrototypeOf(item) !== Array.prototype || item.length > 4096 || Reflect.ownKeys(item).length !== item.length + 1) throw new Error('Invalid resource control enrollment');
-      return Array.from({ length: item.length }, (_, index) => {
-        const entry = Object.getOwnPropertyDescriptor(item, index);
-        if (!entry || !entry.enumerable || !('value' in entry)) throw new Error('Invalid resource control enrollment');
-        return copy(entry.value, depth + 1);
-      });
-    }
-    if (![Object.prototype, null].includes(Object.getPrototypeOf(item))) throw new Error('Invalid resource control enrollment');
-    const result: Record<string, unknown> = Object.create(null);
-    for (const key of Reflect.ownKeys(item)) {
-      const entry = Object.getOwnPropertyDescriptor(item, key)!;
-      if (typeof key !== 'string' || key.length > 256 || !entry.enumerable || !('value' in entry)) throw new Error('Invalid resource control enrollment');
-      result[key] = copy(entry.value, depth + 1);
-    }
-    return result;
-  };
-  return copy(value, 0) as T;
+  return snapshotBoundedJson<T>(value, {
+    maxTotalStringBytes: 1024 * 1024,
+    errorMessage: 'Invalid resource control enrollment',
+  });
 }
 
 function exact(value: unknown, keys: string[]): value is Record<string, unknown> {
@@ -70,7 +46,7 @@ export function createFirmResourceControlHandler(hostInput: FirmResourceExecutio
   for (const request of Object.values(requests)) {
     if (!exact(request, ['allocationId', 'expectedReceiptDigest', 'hypothesisId', 'hypotheses', 'expectedHypothesesDigest',
       'prompt', 'timeoutMs', 'maxOutputTokens']) ||
-      ![request.expectedReceiptDigest, request.hypothesisId, request.expectedHypothesesDigest].every((value) => typeof value === 'string' && HASH.test(value))) {
+      ![request.expectedReceiptDigest, request.hypothesisId, request.expectedHypothesesDigest].every(isSha256Hex)) {
       throw new Error('Invalid resource control request');
     }
   }

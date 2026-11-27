@@ -45,7 +45,7 @@
  *    the backlog addresses owner/name, so evidence recorded against a
  *    different repository never lands on this one.
  *  - Recurring means recorded. A verdict group emits only at
- *    CI_RERUN_FAIL_RECURRING fail verdicts spanning at least two distinct
+ *    CI_RERUN_FAIL_RECURRING distinct run failures spanning at least two distinct
  *    heads inside the journal's own recurrence window
  *    (RECURRING_FLAKE_WINDOW_MS — the same 7 days the flake fold uses), so
  *    one PR's stubborn failure and a single unlucky rerun never queue a
@@ -72,7 +72,7 @@ import { join } from 'node:path';
 
 import { ashlrHome, CLOUD_REPO_PATTERN } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
-import { readCiReruns } from '../fleet/ci-rerun.js';
+import { observedAttempts, readCiReruns } from '../fleet/ci-rerun.js';
 import { JOURNAL_TEST_MAX, RECURRING_FLAKE_WINDOW_MS } from '../fleet/ci-flakes.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -123,7 +123,7 @@ function fieldText(value: string, max: number): string {
 
 const inWindow = (entry: RerunEntry, nowMs: number, windowMs: number): boolean => {
   const at = Date.parse(entry.at);
-  return Number.isFinite(at) && at >= nowMs - windowMs;
+  return Number.isFinite(at) && at >= nowMs - windowMs && at <= nowMs;
 };
 
 interface VerdictGroup {
@@ -150,7 +150,7 @@ function verdictPrompt(group: VerdictGroup, repo: string): string {
   const headList = shown.map((head) => head.slice(0, 12)).join(', ')
     + (heads.length > shown.length ? `, and ${heads.length - shown.length} more` : '');
   const verdicts = `Recorded rerun verdicts inside the ${Math.round(CI_RERUN_WINDOW_MS / 86_400_000)}-day window: ${group.fails} failed, ${group.passes} passed, ${group.inconclusive} inconclusive.`
-    + (group.attempts > 0 ? ` ${group.attempts} rerun attempt rows were recorded for the same test.` : '');
+    + (group.attempts > 0 ? ` ${group.attempts} distinct rerun attempts were recorded for the same test.` : '');
   return [
     `Phantom's CI rerun journal shows test '${test}' on ${repo} keeps failing its reruns — the probable-flake classification is not holding, the self-improvement work this backlog exists for.`,
     '',
@@ -214,27 +214,43 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
     const windowMs = CI_RERUN_WINDOW_MS;
     const journalPath = opts.journalPath ?? join(ashlrHome(), CI_RERUN_JOURNAL_RELATIVE);
     const { entries } = readCiReruns(journalPath, nowMs);
+    const repoEntries = entries.filter(entry => entry.repo.toLowerCase() === repoKey);
 
     // Every folded row names the target repo (case-insensitive), so test
     // alone keys a verdict group and the call tally is a single pair.
     const verdicts = new Map<string, VerdictGroup>();
+    const runVerdicts = new Map<number, RerunEntry | null>();
     const attempts = new Map<string, number>();
-    let callFailed = 0;
-    let callOk = 0;
-    for (const entry of entries) {
-      if (typeof entry.repo !== 'string' || entry.repo.toLowerCase() !== repoKey) continue;
-      if (!inWindow(entry, nowMs, windowMs)) continue;
-      if (entry.outcome === 'ok') { callOk += 1; continue; }
-      if (entry.outcome === 'failed') { callFailed += 1; continue; }
-      if (entry.outcome === 'attempt') {
-        const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
-        for (const test of new Set(tests)) {
-          if (typeof test !== 'string' || !test || test.length > JOURNAL_TEST_MAX) continue;
-          attempts.set(test, (attempts.get(test) ?? 0) + 1);
-        }
+    const callResults = new Map<string, RerunEntry | null>();
+    for (const entry of repoEntries) {
+      if (Date.parse(entry.at) > nowMs) continue;
+      if (entry.outcome === 'ok' || entry.outcome === 'failed') {
+        const key = `${entry.runId}:${entry.head}`;
+        const prior = callResults.get(key);
+        if (prior === null) continue;
+        if (prior && prior.outcome !== entry.outcome) callResults.set(key, null);
+        else if (!prior || Date.parse(entry.at) < Date.parse(prior.at)) callResults.set(key, entry);
         continue;
       }
-      if (entry.outcome !== 'verdict' || typeof entry.test !== 'string' || !entry.test) continue;
+      if (entry.outcome !== 'verdict') continue;
+      const prior = runVerdicts.get(entry.runId);
+      if (prior === null) continue;
+      if (prior && (prior.head !== entry.head || prior.test !== entry.test || prior.verdict !== entry.verdict)) {
+        runVerdicts.set(entry.runId, null);
+      } else if (!prior || Date.parse(entry.at) < Date.parse(prior.at)) {
+        runVerdicts.set(entry.runId, entry);
+      }
+    }
+    for (const entry of observedAttempts(repoEntries, nowMs)) {
+      if (!inWindow(entry, nowMs, windowMs)) continue;
+      const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
+      for (const test of new Set(tests)) {
+        if (typeof test !== 'string' || !test || test.length > JOURNAL_TEST_MAX) continue;
+        attempts.set(test, (attempts.get(test) ?? 0) + 1);
+      }
+    }
+    for (const entry of runVerdicts.values()) {
+      if (!entry || !inWindow(entry, nowMs, windowMs) || typeof entry.test !== 'string' || !entry.test) continue;
       const group = verdicts.get(entry.test) ?? { test: entry.test, fails: 0, passes: 0, inconclusive: 0, failHeads: new Set<string>(), attempts: 0 };
       if (entry.verdict === 'fail') {
         group.fails += 1;
@@ -244,6 +260,14 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
       verdicts.set(entry.test, group);
     }
     for (const group of verdicts.values()) group.attempts = attempts.get(group.test) ?? 0;
+
+    let callFailed = 0;
+    let callOk = 0;
+    for (const entry of callResults.values()) {
+      if (!entry || !inWindow(entry, nowMs, windowMs)) continue;
+      if (entry.outcome === 'failed') callFailed += 1;
+      else callOk += 1;
+    }
 
     const candidates: CloudBacklogItem[] = [];
     // The call tally gates the whole loop, so its item survives limit truncation first.

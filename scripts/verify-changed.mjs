@@ -49,6 +49,21 @@ const CARGO_LOCK_FILE = /(?:^|\/)Cargo\.lock$/;
 const TSBUILDINFO_FILE = /\.tsbuildinfo$/;
 
 /**
+ * .json files whose own consumers parse JSON-with-comments (JSONC) — the
+ * grammar tsc applies to tsconfig and jsconfig files, VS Code applies to
+ * .vscode settings and *.code-snippets, and Deno applies to deno.json:
+ * line and block comments plus trailing commas are legal there even
+ * though strict JSON.parse rejects them. For exactly these paths the
+ * JSON check reads the normalized text normalizeJsonc produces; every
+ * other .json — package.json, manifests, schemas, registries, the PWA
+ * webmanifest and build-info records — keeps the strict grammar its
+ * consumer enforces.
+ * A name that only resembles a member (my-tsconfig.json, tsconfigfoo.json)
+ * stays strict: the segment must start with the tool's own filename.
+ */
+const JSONC_TOLERANT_FILE = /(?:^|\/)(?:tsconfig(?:\.[^/]*)?|jsconfig|deno)\.json$|(?:^|\/)\.vscode\/.*\.json$|\.code-snippets$/;
+
+/**
  * src/raycast and examples/universe-site own their toolchains: eslint.config.js
  * ignores both trees and no root tsconfig includes them, so a changed script
  * there escapes lint, typecheck and the shebang buckets — shipped authored
@@ -60,21 +75,67 @@ const DETACHED_SCRIPT_TREE = /^(?:src\/raycast|examples\/universe-site)\//;
 const DETACHED_SCRIPT_FILE = /\.(?:[cm]?[jt]sx?)$/;
 
 /**
- * contrib/router/*.ts is the Ashlr issue→PR router supervisor — operational
- * fleet machinery that dispatches, reviews and merges pull requests. It runs
- * under tsx, which transpiles without type checking, and no tsconfig project
- * covers the tree: the backend project includes only src/, the web and
- * desktop projects their own trees. ESLint's flat config still lints the
- * files, but no check ever type-checked them — SUPERVISOR.md documents a
- * manual `tsc --noEmit` invocation nothing ran on a diff. The program's only
- * reach outside the directory is src/core/authority/protected-paths.ts, and
- * a dependency bump can break it through the shared manifests, so the
- * trigger names those inputs; a new cross-boundary import must extend it.
+ * The contrib/ TypeScript surface is operational fleet machinery — the
+ * Ashlr issue→PR router supervisor and the Mac bridge's memory guard —
+ * that runs under tsx or node directly: ESLint's flat config still lints
+ * the files, but no tsconfig project covers the tree (the backend project
+ * includes only src/, the web and desktop projects their own trees) and
+ * no check ever type-checked them. verify-changed closes the hole with
+ * one tsc file-list run over the whole contrib TypeScript surface, the
+ * invocation contrib/router/SUPERVISOR.md documents.
+ *
+ * Two program boundaries feed that run:
+ *  - contrib/router keeps its documented non-recursive boundary: top-level
+ *    *.ts only — lib/ holds shell helpers and router_io.cjs (a spawned
+ *    subprocess payload, never imported) and test/ a bash suite — so
+ *    nested files are never program roots; they still join through
+ *    imports.
+ *  - Every other .ts-family file under contrib/, at any depth, is a
+ *    satellite root — today contrib/mac/memguard, the Mac bridge's memory
+ *    guard backend tests import, which sat in the same hole.
+ *
+ * The program's only reach outside contrib/ is
+ * src/core/authority/protected-paths.ts, and a dependency bump can break
+ * it through the shared manifests, so the trigger names those inputs; a
+ * new cross-boundary import must extend it. examples/, test/ and the
+ * root configs stay outside every project on their own boundaries —
+ * each needs its own verified program before a check can claim it.
  */
+const CONTRIB_DIR = 'contrib';
 const CONTRIB_ROUTER_DIR = 'contrib/router';
 const ROUTER_PROGRAM_FILE = /\.ts$/;
+const TS_FAMILY_FILE = /\.[cm]?tsx?$/;
 const ROUTER_SRC_BOUNDARY = 'src/core/authority/protected-paths.ts';
 const SHARED_MANIFEST_FILE = /^package(?:-lock)?\.json$/;
+
+/**
+ * The scripts/ TypeScript surface is operational tooling — fleet and
+ * evaluator scripts run through tsx (`npm run eval:memory`,
+ * `bench:memory`, `conformance:ecosystem`, ...) and the preparation
+ * evaluator .ts sources bundle into the shipped dist builtin — that no
+ * tsconfig project covers: the backend project includes only src/ and
+ * its program never sees these files, while ESLint lints them but
+ * cannot type-check. tsx transpiles without checking types, so a type
+ * error here ships silently until the script runs — exactly the hole
+ * the contrib check closed for its tree. verify-changed closes it the
+ * same way: one tsc file-list run over every .ts-family file under
+ * scripts/, at any depth, pruned only at node_modules (there is no
+ * documented non-recursive boundary like contrib/router's).
+ *
+ * The program's reach outside scripts/ is the backend src/ tree: the
+ * ~60 direct src imports pull a transitive closure of roughly 2 900 src
+ * files — most of src/core — so the trigger names the whole backend
+ * src/ boundary (the same src/(?!web-ui|raycast) prefix the backend
+ * project selects on) rather than a file list that would silently rot;
+ * a new cross-boundary import needs no trigger edit. A dependency bump
+ * can also break the program through @types, so the shared manifests
+ * join the trigger. test/, docs/, examples/ and the root configs stay
+ * outside: scripts import no test/ module (the shipped fixture bundle
+ * rejects test/ inputs outright), and each remaining tree needs its own
+ * verified program before a check can claim it.
+ */
+const SCRIPTS_DIR = 'scripts';
+const BACKEND_SRC_FILE = /^src\/(?!web-ui\/|raycast\/)/;
 
 /**
  * Shipped .html pages embed three grammars no other check reads: classic and
@@ -142,16 +203,21 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     quarantineCheck: changed.some((path) => QUARANTINE_TEST_FILE.test(path) || path === QUARANTINE_LEDGER),
     rustFiles: changed.filter((path) => existing.has(path) && /\.rs$/.test(path)),
     swiftFiles: changed.filter((path) => existing.has(path) && /\.swift$/.test(path)),
-    yamlFiles: changed.filter((path) => existing.has(path) && /\.ya?ml$/.test(path)),
+    yamlFiles: changed.filter((path) => existing.has(path) && /\.(?:ya?ml|cff)$/.test(path)),
     tomlFiles: changed.filter((path) => existing.has(path) && (/\.toml$/.test(path) || CARGO_LOCK_FILE.test(path))),
     cssFiles: changed.filter((path) => existing.has(path) && /\.css$/i.test(path)),
     snapFiles: changed.filter((path) => existing.has(path) && /\.snap$/i.test(path)),
     patchFiles: changed.filter((path) => existing.has(path) && /\.(?:patch|diff)$/i.test(path)),
     htmlFiles: changed.filter((path) => existing.has(path) && HTML_FILE.test(path) && !path.startsWith('test/fixtures/')),
+    seatbeltFiles: changed.filter((path) => existing.has(path) && /\.sb$/i.test(path)),
+    mdcFiles: changed.filter((path) => existing.has(path) && /\.mdc$/i.test(path)),
     detachedScriptFiles: changed.filter((path) => existing.has(path) && DETACHED_SCRIPT_TREE.test(path) && DETACHED_SCRIPT_FILE.test(path)),
-    contribRouterTypecheck: changed.some((path) =>
-      (path.startsWith(`${CONTRIB_ROUTER_DIR}/`) && ROUTER_PROGRAM_FILE.test(path)) ||
+    contribTypecheck: changed.some((path) =>
+      (path.startsWith(`${CONTRIB_DIR}/`) && TS_FAMILY_FILE.test(path)) ||
       path === ROUTER_SRC_BOUNDARY || SHARED_MANIFEST_FILE.test(path)),
+    scriptsTypecheck: changed.some((path) =>
+      (path.startsWith(`${SCRIPTS_DIR}/`) && TS_FAMILY_FILE.test(path)) ||
+      SHARED_MANIFEST_FILE.test(path) || BACKEND_SRC_FILE.test(path)),
     realioLaneCheck: changed.some((path) => REALIO_LANE_TEST_FILE.test(path) || REALIO_LANE_INPUTS.has(path)),
     verseSyncIoCheck: changed.some((path) => VERSE_ROUTE_FILE.test(path) || path === VERSE_SYNC_IO_CHECKER),
   };
@@ -290,6 +356,37 @@ export function selectConflictScanFiles(changedPaths, existingPaths) {
   const existing = new Set(existingPaths);
   return [...new Set(changedPaths)].filter(Boolean).sort()
     .filter((path) => existing.has(path) && !CONFLICT_SCAN_EXEMPT.test(path));
+}
+
+/**
+ * Editor and patch leftovers whose trailing token claims no grammar: the
+ * file's real extension already named its type, so ESLint, every syntax
+ * bucket and the test collectors all skip the name — a committed
+ * `foo.test.ts-E` sits beside the live suite vitest never sees, and
+ * `docs/CLI-REFERENCE.md.backup` beside the doc it copies. The class:
+ * `.orig`/`.rej` from patch(1) and merge tools, `.bak`/`.backup`/`.save`
+ * editor copies, vim `.swp`/`.swo`/`.swn` swaps, `.tmp`/`.temp`/`.old`
+ * scratch renames, a trailing `~`, and the `<ext>-<letter><digits>` tag
+ * (`foo.ts-E`, `foo.md-W2`). `git ls-files` shows the class is otherwise
+ * empty in this repo, and .gitignore's lone `*.bak` rule cannot stop a
+ * force-added or bridge-committed file. `test/fixtures/` payloads are
+ * exempt — a fixture may legitimately carry a `.orig`/`.rej` name as tool
+ * input — and deletions pass: removing a stray is the fix, not the
+ * offense. The `-[a-z]` clause requires a dotted extension before it, so
+ * extensionless names like `plan-E` stay untouched.
+ */
+const STRAY_BACKUP_FILE = /(?:\.(?:orig|rej|bak|backup|save|swp|swo|swn|tmp|temp|old)|~|\.[^/.]+-[a-z]\d*)$/i;
+const STRAY_BACKUP_EXEMPT = /^test\/fixtures\//;
+
+/**
+ * Bucket changed, existing files whose names are editor/patch leftovers.
+ * Name-scoped like selectConflictScanFiles: every changed path still on
+ * disk is a candidate, deduped and sorted.
+ */
+export function strayBackupFiles(changedPaths, existingPaths) {
+  const existing = new Set(existingPaths);
+  return [...new Set(changedPaths)].filter(Boolean).sort()
+    .filter((path) => existing.has(path) && !STRAY_BACKUP_EXEMPT.test(path) && STRAY_BACKUP_FILE.test(path));
 }
 
 /**
@@ -757,6 +854,87 @@ export function runNodeSyntaxCheck(root, files, spawn = spawnSync) {
 }
 
 /**
+ * Reduce JSONC text to the strict JSON JSON.parse reads: drop a leading
+ * BOM, line and block comments, and commas that only precede a closing
+ * brace or bracket. String literals — escapes included — pass through
+ * verbatim, so "http://x" and ",}" inside quotes survive. A comma is
+ * dropped only when the last significant character emitted is not one of
+ * `{`, `[`, `:` or `,` itself, so `[,]`, `{,}` and `[1,,]` still fail
+ * instead of being silently repaired into valid JSON. Parse-error
+ * positions in the result refer to the normalized text, which stays
+ * line-aligned because comments are removed without touching newlines.
+ */
+export function normalizeJsonc(text) {
+  const source = typeof text === 'string' ? text : String(text);
+  // Pass 1: strip a leading BOM and every comment, copying string
+  // literals whole so comment markers inside them are never seen.
+  let stripped = '';
+  let i = source.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const n = source.length;
+  while (i < n) {
+    const c = source[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < n) {
+        const d = source[j];
+        if (d === '\\') { j += 2; continue; }
+        if (d === '"') { j += 1; break; }
+        j += 1;
+      }
+      stripped += source.slice(i, j);
+      i = j;
+      continue;
+    }
+    if (c === '/' && source[i + 1] === '/') {
+      const newline = source.indexOf('\n', i + 2);
+      i = newline === -1 ? n : newline;
+      continue;
+    }
+    if (c === '/' && source[i + 1] === '*') {
+      const end = source.indexOf('*/', i + 2);
+      i = end === -1 ? n : end + 2;
+      continue;
+    }
+    stripped += c;
+    i += 1;
+  }
+  // Pass 2: drop trailing commas — a comma whose next non-space character
+  // closes the container AND which follows a completed value.
+  let out = '';
+  let lastSignificant = '';
+  i = 0;
+  const m = stripped.length;
+  while (i < m) {
+    const c = stripped[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < m) {
+        const d = stripped[j];
+        if (d === '\\') { j += 2; continue; }
+        if (d === '"') { j += 1; break; }
+        j += 1;
+      }
+      out += stripped.slice(i, j);
+      lastSignificant = '"';
+      i = j;
+      continue;
+    }
+    if (c === ',') {
+      let j = i + 1;
+      while (j < m && /\s/.test(stripped[j])) j += 1;
+      if ((stripped[j] === '}' || stripped[j] === ']') && !'{[,:'.includes(lastSignificant)) {
+        i += 1;
+        continue;
+      }
+    }
+    out += c;
+    if (!/\s/.test(c)) lastSignificant = c;
+    i += 1;
+  }
+  return out;
+}
+
+/**
  * Strict-parse changed .json, .webmanifest and .tsbuildinfo files with
  * JSON.parse — the same grammar tscCachePaths already applies to
  * tsconfig.json and sync-plan's checkSyntax applies to fleet machinery,
@@ -765,15 +943,21 @@ export function runNodeSyntaxCheck(root, files, spawn = spawnSync) {
  * incremental-build record is written in — so a failure is a real break
  * for package.json, manifests, schemas, registries, the PWA manifest the
  * web UI ships and tracked build-info files like
- * src/web-ui/tsconfig.minimal.tsbuildinfo. No external interpreter is
- * needed, so unlike the Python and shell checks there is no preflight or
- * SKIP path; every failing path is named with its parse error.
+ * src/web-ui/tsconfig.minimal.tsbuildinfo. Files whose own tool parses
+ * JSON-with-comments instead — tsconfig and jsconfig files, deno.json,
+ * .vscode *.json and *.code-snippets (JSONC_TOLERANT_FILE) — are normalized by
+ * normalizeJsonc first, so a legal comment or trailing comma in one of
+ * those configs no longer fails a file tsc or the editor accepts. No
+ * external interpreter is needed, so unlike the Python and shell checks
+ * there is no preflight or SKIP path; every failing path is named with
+ * its parse error.
  */
 export function runJsonSyntaxCheck(root, files, read = readFileSync) {
   const failures = [];
   for (const path of files) {
     try {
-      JSON.parse(read(resolve(root, path), 'utf8'));
+      const text = read(resolve(root, path), 'utf8');
+      JSON.parse(JSONC_TOLERANT_FILE.test(path) ? normalizeJsonc(text) : text);
     } catch (error) {
       failures.push(`${path}: ${error.message}`);
     }
@@ -943,14 +1127,15 @@ export function runSwiftSyntaxCheck(root, files, spawn = spawnSync) {
 }
 
 /**
- * .yaml/.yml and .toml files — GitHub workflows, dependabot, codecov,
+ * .yaml/.yml, .cff and .toml files — GitHub workflows, dependabot, codecov,
  * socket, the pnpm workspace and lock manifests, agent-network, lexicon
- * and cliff configs, Cargo.toml — are consumed by parsers a text diff can
- * never prove. `yaml` and `smol-toml` are already bundled dependencies, so
- * the grammar steps use the same parsers the codebase itself ships, but
- * they run in a child node process: a top-level import here would keep
- * this script from loading at all when node_modules is absent, while the
- * preflight reports that case as SKIP like the ESLint and docs checks.
+ * and cliff configs, CITATION.cff, Cargo.toml — are consumed by parsers a
+ * text diff can never prove. `yaml` and `smol-toml` are already bundled
+ * dependencies, so the grammar steps use the same parsers the codebase
+ * itself ships, but they run in a child node process: a top-level import
+ * here would keep this script from loading at all when node_modules is
+ * absent, while the preflight reports that case as SKIP like the ESLint
+ * and docs checks.
  * Bare specifiers resolve against the spawned cwd (the repo root), which
  * is where npm ci and install:worktree place the packages.
  */
@@ -989,7 +1174,7 @@ for (const path of process.argv.slice(1)) {
 process.exit(failed ? 1 : 0);
 `;
 
-/** Syntax-check changed .yaml/.yml files with the bundled yaml parser; false on any parse failure. */
+/** Syntax-check changed .yaml/.yml/.cff files with the bundled yaml parser; false on any parse failure. */
 export function runYamlSyntaxCheck(root, files, spawn = spawnSync) {
   const result = spawn(process.execPath, ['--input-type=module', '-e', YAML_SYNTAX_CHECK, ...files], {
     cwd: root, encoding: 'utf8', timeout: 120000,
@@ -1002,6 +1187,67 @@ export function runYamlSyntaxCheck(root, files, spawn = spawnSync) {
     return false;
   }
   console.log('PASS yaml syntax check');
+  return true;
+}
+
+/**
+ * `.mdc` files are agent rule files (Cursor rules under .cursor/rules/)
+ * whose optional YAML frontmatter — the `---` fenced block the rule
+ * loader reads for description/globs/alwaysApply — no other gate step
+ * parses: eslint's JS/TS globs, the markdown docs check's curated list and
+ * every tsconfig skip them, and the markdown body itself has no grammar
+ * worth a step. A file that opens with a `---` line promises frontmatter:
+ * an unterminated fence or a block the yaml parser rejects fails here,
+ * the same rejection the loader's own YAML read applies. Files without a
+ * leading fence are plain markdown and pass untouched. The child shares
+ * the yaml package and its SKIP preflight with the .yaml/.yml/.cff check.
+ */
+const MDC_SYNTAX_CHECK = `import { readFileSync } from 'node:fs';
+import pkg from 'yaml';
+const { parseAllDocuments } = pkg;
+const firstLine = (error) => String(error && error.message ? error.message : error).split('\\n')[0];
+const FENCE = /^---[ \\t]*$/;
+const CLOSE = /^(?:---|\\.\\.\\.)[ \\t]*$/;
+let failed = false;
+for (const path of process.argv.slice(1)) {
+  const errors = [];
+  try {
+    const lines = readFileSync(path, 'utf8').replace(/^\\uFEFF/, '').split('\\n').map((line) => line.replace(/\\r$/, ''));
+    if (FENCE.test(lines[0] ?? '')) {
+      let close = -1;
+      for (let index = 1; index < lines.length; index += 1) {
+        if (CLOSE.test(lines[index] ?? '')) { close = index; break; }
+      }
+      if (close === -1) {
+        errors.push(new Error('unterminated frontmatter fence'));
+      } else {
+        const frontmatter = lines.slice(1, close).join('\\n');
+        for (const doc of parseAllDocuments(frontmatter)) errors.push(...doc.errors);
+      }
+    }
+  } catch (error) {
+    errors.push(error);
+  }
+  for (const error of errors.slice(0, 8)) console.error(path + ': ' + firstLine(error));
+  if (errors.length > 8) console.error(path + ': ' + (errors.length - 8) + ' more errors');
+  if (errors.length) failed = true;
+}
+process.exit(failed ? 1 : 0);
+`;
+
+/** Syntax-check changed .mdc agent-rule files' YAML frontmatter; false on any parse failure. */
+export function runMdcSyntaxCheck(root, files, spawn = spawnSync) {
+  const result = spawn(process.execPath, ['--input-type=module', '-e', MDC_SYNTAX_CHECK, ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL mdc frontmatter syntax check');
+    return false;
+  }
+  console.log('PASS mdc frontmatter syntax check');
   return true;
 }
 
@@ -1128,6 +1374,140 @@ export function runSnapSyntaxCheck(root, files, read = readFileSync) {
     return false;
   }
   console.log('PASS snap syntax check');
+  return true;
+}
+
+/**
+ * `.sb` files are macOS Seatbelt (SBPL) sandbox profiles — the GATES-v3
+ * confinement boundary the fleet lanes run under (contrib/mac/
+ * host-integration/*.sb, contrib/mac/sandbox/*.sb). sandbox-exec compiles a
+ * profile at launch; a truncated or garbled one fails inside the launcher,
+ * far from the edit that broke it, and no other gate step reads the
+ * grammar: eslint's JS/TS globs, every tsconfig include, the shebang
+ * buckets and the per-extension parsers all skip it. The language is
+ * s-expressions — `(version 1)`, `(allow file-read* (subpath "..."))`,
+ * `(deny ...)`, `(define (wp n) ...)`, `(require-all ...)`, regex literals
+ * `#"..."` and `;` comments — so the grammar step here is a structural
+ * parse: balanced parentheses, terminated string and regex literals, and
+ * every top-level form a proper list headed by an atom. Operation names
+ * and filter semantics stay unchecked on purpose — SBPL grows new
+ * operations and a whitelist would reject valid future profiles; what
+ * sandbox-exec's own reader rejects first is exactly what this catches.
+ * Like the snap check the parse runs in-process, so there is no preflight
+ * or SKIP path.
+ */
+const SEATBELT_MAX_DEPTH = 1000;
+
+/** First structural error in SBPL text as {line, column, message}, or null. Never throws. */
+function seatbeltSyntaxError(text) {
+  const tokens = [];
+  let i = 0;
+  let line = 1;
+  let column = 1;
+  const length = text.length;
+  const space = (c) => c === ' ' || c === '\t' || c === '\r' || c === '\f' || c === '\v' || c === '\n';
+  while (i < length) {
+    const ch = text[i];
+    if (ch === '\n') { line += 1; column = 1; i += 1; continue; }
+    if (space(ch)) { column += 1; i += 1; continue; }
+    if (ch === ';') {
+      while (i < length && text[i] !== '\n') { i += 1; column += 1; }
+      continue;
+    }
+    if (ch === '(' || ch === ')') {
+      tokens.push({ kind: ch, line, column });
+      i += 1; column += 1;
+      continue;
+    }
+    const startLine = line;
+    const startColumn = column;
+    const quoted = ch === '"' ? 'string' : ch === '#' && text[i + 1] === '"' ? 'regex' : null;
+    if (quoted !== null) {
+      i += quoted === 'regex' ? 2 : 1;
+      column += quoted === 'regex' ? 2 : 1;
+      let closed = false;
+      while (i < length) {
+        const c = text[i];
+        if (c === '\\') {
+          i += 1; column += 1;
+          if (i < length) {
+            if (text[i] === '\n') { line += 1; column = 1; i += 1; }
+            else { i += 1; column += 1; }
+          }
+          continue;
+        }
+        if (c === '"') { i += 1; column += 1; closed = true; break; }
+        if (c === '\n') { line += 1; column = 1; i += 1; continue; }
+        i += 1; column += 1;
+      }
+      if (!closed) return { line: startLine, column: startColumn, message: `unterminated ${quoted} literal` };
+      tokens.push({ kind: quoted, line: startLine, column: startColumn });
+      continue;
+    }
+    while (i < length) {
+      const c = text[i];
+      if (space(c) || c === '(' || c === ')' || c === ';' || c === '"') break;
+      i += 1; column += 1;
+    }
+    tokens.push({ kind: 'atom', line: startLine, column: startColumn });
+  }
+  let pos = 0;
+  const parse = (depth) => {
+    if (depth > SEATBELT_MAX_DEPTH) {
+      const tok = tokens[pos];
+      return { error: { line: tok ? tok.line : line, column: tok ? tok.column : column, message: `nesting deeper than ${SEATBELT_MAX_DEPTH} levels` } };
+    }
+    const tok = tokens[pos];
+    if (!tok || tok.kind !== '(') {
+      if (tok && tok.kind === ')') return { error: { line: tok.line, column: tok.column, message: 'unexpected )' } };
+      if (tok) pos += 1;
+      return {};
+    }
+    const open = tok;
+    pos += 1;
+    const head = tokens[pos];
+    if (!head) return { error: { line: open.line, column: open.column, message: 'unclosed list' } };
+    if (head.kind === ')') { pos += 1; return {}; }
+    if (head.kind !== 'atom') return { error: { line: head.line, column: head.column, message: 'list head must be an atom' } };
+    pos += 1;
+    while (pos < tokens.length && tokens[pos].kind !== ')') {
+      const element = parse(depth + 1);
+      if (element.error) return element;
+    }
+    if (pos >= tokens.length) return { error: { line: open.line, column: open.column, message: 'unclosed list' } };
+    pos += 1;
+    return {};
+  };
+  while (pos < tokens.length) {
+    if (tokens[pos].kind !== '(') {
+      const tok = tokens[pos];
+      return { line: tok.line, column: tok.column, message: 'top-level form must be a list' };
+    }
+    const form = parse(0);
+    if (form.error) return form.error;
+  }
+  return null;
+}
+
+/** Syntax-check changed .sb Seatbelt profiles; false on the first structural error per file. */
+export function runSeatbeltSyntaxCheck(root, files, read = readFileSync) {
+  const failures = [];
+  for (const path of files) {
+    let text;
+    try {
+      text = read(resolve(root, path), 'utf8');
+    } catch (error) {
+      failures.push(`${path}: unreadable (${String(error && error.message ? error.message : error).split('\n')[0]})`);
+      continue;
+    }
+    const error = seatbeltSyntaxError(text);
+    if (error) failures.push(`${path}:${error.line}:${error.column}: ${error.message}`);
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(`FAIL seatbelt syntax check: ${failure}`);
+    return false;
+  }
+  console.log('PASS seatbelt syntax check');
   return true;
 }
 
@@ -1385,16 +1765,61 @@ export function contribRouterProgramFiles(root, readdir = readdirSync) {
 }
 
 /**
- * Type-check the whole contrib/router program in one tsc run with the flags
- * SUPERVISOR.md documents — file-list mode ignores tsconfig.json, so the
- * flags are the contract, and tsc follows the program's
- * ../../src/core/authority/protected-paths.js import into src/ on its own.
- * Diagnostics already carry path:line. The child gets a generous heap: the
- * src import closure peaks near 1.5 GB, which the default ceiling clips
- * under load. The caller holds a typecheck slot like the project checks —
- * a compiler is a compiler on a shared machine.
+ * Every .ts-family file under contrib/ outside the router subtree, sorted
+ * for a deterministic command line. The router keeps its documented
+ * non-recursive boundary, so the walk prunes the whole contrib/router/
+ * subtree rather than re-admitting nested files the boundary excludes;
+ * node_modules is pruned the same way — vendored trees are never program
+ * roots. An absent or unreadable directory yields an empty list for that
+ * branch — the caller skips rather than fails.
  */
-export function runContribRouterTypecheck(root, files, spawn = spawnSync) {
+export function contribSatelliteProgramFiles(root, readdir = readdirSync) {
+  const files = [];
+  const walk = (rel) => {
+    let entries;
+    try {
+      entries = readdir(resolve(root, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const child = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || child === CONTRIB_ROUTER_DIR) continue;
+        walk(child);
+      } else if (entry.isFile() && TS_FAMILY_FILE.test(entry.name)) {
+        files.push(child);
+      }
+    }
+  };
+  walk(CONTRIB_DIR);
+  return files.sort();
+}
+
+/**
+ * The whole contrib TypeScript program: the router's documented
+ * top-level *.ts boundary plus every other .ts-family file under
+ * contrib/. Sorted and deduplicated for a deterministic command line, so
+ * one tsc run can never split the program's verdict.
+ */
+export function contribProgramFiles(root, readdir = readdirSync) {
+  return [...new Set([
+    ...contribRouterProgramFiles(root, readdir),
+    ...contribSatelliteProgramFiles(root, readdir),
+  ])].sort();
+}
+
+/**
+ * Type-check a file-list program in one tsc run with the flags the
+ * contrib and scripts checks share — file-list mode ignores
+ * tsconfig.json, so the flags are the contract, and tsc follows each
+ * program's src/ imports on its own. Diagnostics already carry
+ * path:line. The child gets a generous heap: the scripts src import
+ * closure is a few thousand files, which the default ceiling clips
+ * under load. The caller holds a typecheck slot like the project
+ * checks — a compiler is a compiler on a shared machine.
+ */
+function runFileListTypecheck(root, files, spawn, label) {
   const result = spawn(process.execPath,
     ['--max-old-space-size=4096', 'node_modules/typescript/bin/tsc', '--noEmit',
      '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022',
@@ -1404,11 +1829,68 @@ export function runContribRouterTypecheck(root, files, spawn = spawnSync) {
     if (result.stdout) console.log(result.stdout.trimEnd());
     if (result.stderr) console.error(result.stderr.trimEnd());
     if (result.error) console.error(result.error.message);
-    console.log('FAIL contrib router typecheck');
+    console.log(`FAIL ${label} typecheck`);
     return false;
   }
-  console.log('PASS contrib router typecheck');
+  console.log(`PASS ${label} typecheck`);
   return true;
+}
+
+/**
+ * Type-check the whole contrib program in one tsc run with the flags
+ * SUPERVISOR.md documents — file-list mode ignores tsconfig.json, so the
+ * flags are the contract, and tsc follows the program's
+ * ../../src/core/authority/protected-paths.js import into src/ on its own.
+ * Diagnostics already carry path:line. The child gets a generous heap: the
+ * src import closure peaks near 1.5 GB, which the default ceiling clips
+ * under load. The caller holds a typecheck slot like the project checks —
+ * a compiler is a compiler on a shared machine.
+ */
+export function runContribTypecheck(root, files, spawn = spawnSync) {
+  return runFileListTypecheck(root, files, spawn, 'contrib');
+}
+
+/**
+ * Every .ts-family file under scripts/, sorted for a deterministic
+ * command line. scripts/ has no documented non-recursive boundary like
+ * contrib/router's, so the walk covers the whole tree at any depth;
+ * node_modules is pruned — vendored trees are never program roots. An
+ * absent or unreadable directory yields an empty list — the caller
+ * skips rather than fails.
+ */
+export function scriptsProgramFiles(root, readdir = readdirSync) {
+  const files = [];
+  const walk = (rel) => {
+    let entries;
+    try {
+      entries = readdir(resolve(root, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const child = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules') continue;
+        walk(child);
+      } else if (entry.isFile() && TS_FAMILY_FILE.test(entry.name)) {
+        files.push(child);
+      }
+    }
+  };
+  walk(SCRIPTS_DIR);
+  return files.sort();
+}
+
+/**
+ * Type-check the whole scripts program in one tsc run — the same
+ * file-list invocation runContribTypecheck documents, because both
+ * trees execute under tsx/node which transpiles without checking types
+ * and no tsconfig project covers either. tsc follows the program's
+ * src/ imports on its own; the scripts closure is a few thousand files,
+ * so the shared 4 GB heap ceiling applies here too.
+ */
+export function runScriptsTypecheck(root, files, spawn = spawnSync) {
+  return runFileListTypecheck(root, files, spawn, 'scripts');
 }
 
 /** Shared root for the typecheck cache and slots; worktrees resolve to the git common dir. */
@@ -1834,7 +2316,7 @@ function main() {
     const projectScope = projectNames.length > 1
       ? `${projectNames.slice(0, -1).join(', ')} and ${projectNames.at(-1)}`
       : projectNames[0] ?? null;
-    const scope = [projectScope, selection.contribRouterTypecheck && 'contrib router'].filter(Boolean).join(' and ') || 'typecheck skipped';
+    const scope = [projectScope, selection.contribTypecheck && 'contrib', selection.scriptsTypecheck && 'scripts'].filter(Boolean).join(' and ') || 'typecheck skipped';
     console.log(`verify: ${new Set(changed).size} changed files (${comparison?.mode ?? 'merge-base'}), ${scope}${projects.backend || projects.web || projects.desktop ? ', incremental' : changed.length ? ': no project change' : ': no changes'}`);
     const shebangScripts = selectShebangScripts(changed, existing, (path) => readFirstLine(root, path));
     pythonFiles = [...new Set([...selection.pythonFiles, ...shebangScripts.python])];
@@ -1851,6 +2333,14 @@ function main() {
       return;
     }
     console.log('PASS empty test check');
+    const strayBackups = strayBackupFiles(changed, existing);
+    if (strayBackups.length) {
+      for (const path of strayBackups) console.error(`FAIL stray backup file check: ${path}`);
+      console.error('Editor and patch leftovers name no grammar — lint, typecheck and every syntax check skip them, so the file would ship silently. Delete or rename it; test/fixtures/ payloads are exempt and deletions pass.');
+      process.exitCode = 1;
+      return;
+    }
+    console.log('PASS stray backup file check');
   } catch (error) {
     console.error(`FAIL file selection: ${error.message}`);
     process.exitCode = 1;
@@ -2011,7 +2501,7 @@ function main() {
     }
   }
   if (selection.yamlFiles.length === 0) {
-    console.log('PASS yaml syntax check skipped: no yaml change');
+    console.log('PASS yaml syntax check skipped: no yaml or cff change');
   } else {
     const yaml = parserPackagePreflight(root, 'yaml');
     if (!yaml.ok) {
@@ -2060,6 +2550,21 @@ function main() {
       process.exitCode = 1;
     }
   }
+  if (selection.seatbeltFiles.length === 0) {
+    console.log('PASS seatbelt syntax check skipped: no .sb change');
+  } else if (!runSeatbeltSyntaxCheck(root, selection.seatbeltFiles)) {
+    process.exitCode = 1;
+  }
+  if (selection.mdcFiles.length === 0) {
+    console.log('PASS mdc frontmatter syntax check skipped: no .mdc change');
+  } else {
+    const mdc = parserPackagePreflight(root, 'yaml');
+    if (!mdc.ok) {
+      console.log(`SKIP mdc frontmatter syntax check: ${mdc.reason}`);
+    } else if (!runMdcSyntaxCheck(root, selection.mdcFiles)) {
+      process.exitCode = 1;
+    }
+  }
   if (conflictFiles.length === 0) {
     console.log('PASS conflict marker check skipped: no changed file to scan');
   } else if (!runConflictMarkerCheck(root, conflictFiles)) {
@@ -2085,24 +2590,39 @@ function main() {
   } else {
     run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
   }
-  if (projects.backend || projects.web || projects.desktop || selection.contribRouterTypecheck) try {
+  if (projects.backend || projects.web || projects.desktop || selection.contribTypecheck || selection.scriptsTypecheck) try {
     const timeout = Number(process.env.PHANTOM_TSC_TIMEOUT_SECONDS ?? 900);
     if (!Number.isFinite(timeout) || !Number.isInteger(timeout * 1000) || timeout * 1000 < 1 || timeout * 1000 > 2_147_483_647) {
       throw new Error('PHANTOM_TSC_TIMEOUT_SECONDS must be a positive number of seconds within the supported timeout range');
     }
     const held = withTscSlot(tscSlotsDir(root), { count: tscSlotCount(), maxWaitMs: timeout * 1000 }, () => {
       mkdirSync(resolve(root, '.ashlr-gate/verify'), { recursive: true });
-      if (!selection.contribRouterTypecheck) {
-        console.log('PASS contrib router typecheck skipped: no router program input changed');
+      if (!selection.contribTypecheck) {
+        console.log('PASS contrib typecheck skipped: no contrib program input changed');
       } else {
-        const router = parserPackagePreflight(root, 'typescript');
-        if (!router.ok) {
-          console.log(`SKIP contrib router typecheck: ${router.reason}`);
+        const contrib = parserPackagePreflight(root, 'typescript');
+        if (!contrib.ok) {
+          console.log(`SKIP contrib typecheck: ${contrib.reason}`);
         } else {
-          const routerFiles = contribRouterProgramFiles(root);
-          if (routerFiles.length === 0) {
-            console.log('PASS contrib router typecheck skipped: no program files under contrib/router/');
-          } else if (!runContribRouterTypecheck(root, routerFiles)) {
+          const contribFiles = contribProgramFiles(root);
+          if (contribFiles.length === 0) {
+            console.log('PASS contrib typecheck skipped: no program files under contrib/');
+          } else if (!runContribTypecheck(root, contribFiles)) {
+            process.exitCode = 1;
+          }
+        }
+      }
+      if (!selection.scriptsTypecheck) {
+        console.log('PASS scripts typecheck skipped: no scripts program input changed');
+      } else {
+        const scripts = parserPackagePreflight(root, 'typescript');
+        if (!scripts.ok) {
+          console.log(`SKIP scripts typecheck: ${scripts.reason}`);
+        } else {
+          const scriptsFiles = scriptsProgramFiles(root);
+          if (scriptsFiles.length === 0) {
+            console.log('PASS scripts typecheck skipped: no program files under scripts/');
+          } else if (!runScriptsTypecheck(root, scriptsFiles)) {
             process.exitCode = 1;
           }
         }

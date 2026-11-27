@@ -6,7 +6,7 @@
  * Not a second bus: a read-only projection of the durable bus inbox through
  * the shared `phm messages` pipeline (agent-messages.ts) with the map's own
  * agent-to-agent rule and the same filter vocabulary `phm messages` parses —
- * agent/with, kind, priority, job, thread, channel, contains,
+ * agent/with, kind, priority, job, thread, channel, topic, contains,
  * from/exclude-from, in-reply-to, id, body-kind and to all match exactly the way
  * that read matches them, so a filtered question about the map feed gets the
  * same answer every other bus read gives. Display text and a short summary
@@ -32,7 +32,7 @@ export const MAP_MESSAGES_MAX_LIMIT = 100;
 export interface MapMessagesFlags {
   since?: string; before?: string; limit?: string;
   agent?: string; with?: string; kind?: string; priority?: string; job?: string;
-  thread?: string; channel?: string; contains?: string;
+  thread?: string; channel?: string; topic?: string; contains?: string;
   from?: string; excludeFrom?: string; inReplyTo?: string; id?: string; bodyKind?: string; to?: string;
   result?: string;
 }
@@ -121,7 +121,7 @@ export function parseMapMessagesQuery(input: MapMessagesFlags = {}, now = Date.n
   }
   const shared = parseAgentMessagesQuery({
     agent: input.agent, with: input.with, kind: input.kind, priority: input.priority, job: input.job,
-    thread: input.thread, channel: input.channel, contains: input.contains,
+    thread: input.thread, channel: input.channel, topic: input.topic, contains: input.contains,
     from: input.from, excludeFrom: input.excludeFrom, inReplyTo: input.inReplyTo, id: input.id,
     bodyKind: input.bodyKind, to: input.to, result: input.result,
   }, now);
@@ -156,7 +156,7 @@ export function readMapMessages(input: MapMessagesFlags = {}, options: MapMessag
 
 /** The query keys the read accepts — the CLI filter dimensions plus `limit`. */
 const MAP_MESSAGES_QUERY_KEYS = ['since', 'before', 'limit', 'agent', 'with', 'kind', 'priority',
-  'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to',
+  'job', 'thread', 'channel', 'topic', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to',
   'result'] as const;
 
 /** GET /api/fleet/map/messages[?since=15m&before=1h&limit=20&…]: 200 the messages, 400 a bad query, 503 the typed "unknown" read. */

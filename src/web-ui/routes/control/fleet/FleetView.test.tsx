@@ -60,7 +60,7 @@ const LANES = {
   sources: {
     queue: { state: 'healthy', file: 'ready.tsv', rows: 3, dropped: 0, unhinted: 0 },
     queueState: { state: 'healthy', file: 'queue.v1.json', jobs: 4 },
-    ledger: { state: 'healthy', file: 'jobs.jsonl', events: 2, dropped: 0 },
+    ledger: { state: 'healthy', file: 'jobs.jsonl', events: 2, dropped: 0, mergeWindow: 'complete' },
     usage: { state: 'missing', files: [], pools: 0, dropped: 0 },
     budgets: { state: 'healthy' },
   },

@@ -19,35 +19,27 @@
  * report is emitted without calling the non-empty waiter.
  */
 import type { CiReceiptAwaitBatchDeps, CiReceiptAwaitBatchReport, CiReceiptAwaitBatchTarget } from './ci-receipt-await-batch.js';
-import { awaitCiReceiptBatch, parseCiReceiptAwaitBatchInput } from './ci-receipt-await-batch.js';
+import {
+  awaitCiReceiptBatch,
+  CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS,
+  parseCiReceiptAwaitBatchInput,
+} from './ci-receipt-await-batch.js';
+import {
+  CI_RECEIPT_ENTRY_KEYS,
+  CI_RECEIPT_OUTCOMES,
+  CI_RECEIPT_REPORT_KEYS,
+  hasExactKeys,
+  isNonNegativeInt,
+  isPlainRecord,
+} from './ci-receipt-shared.js';
 
 export const CI_RECEIPT_RETRY_MAX_INPUT_BYTES = 64 * 1024;
-export const CI_RECEIPT_RETRY_MAX_RETRIES = 16;
-
+const REPORT_KEY_SET = new Set<string>(CI_RECEIPT_REPORT_KEYS);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$/;
-
-/** The exact schema the previous await batch produced. */
-export interface CiReceiptRetryBatchInput {
-  version: 1;
-  total: number;
-  bound: number;
-  failed: number;
-  notStarted: number;
-  timedOut: boolean;
-  aborted: boolean;
-  entries: Array<Record<string, unknown>>;
-  /** Optional ISO-8601 emitted when the previous await ran. */
-  emittedAt?: string;
-  /** Optional user-provided note carried verbatim. */
-  note?: string;
-}
 
 export type CiReceiptRetryParse =
   | { ok: true; targets: CiReceiptAwaitBatchTarget[] }
   | { ok: false; reason: string };
-
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  v !== null && typeof v === 'object' && !Array.isArray(v);
 
 /** Return an empty successful report — no network work. */
 function emptyReport() {
@@ -60,23 +52,23 @@ function emptyReport() {
 
 /** Extract unresolved targets from a validated previous report. */
 function extractTargets(
-  entries: unknown[],
+  entries: Record<string, unknown>[],
 ): { ok: true; targets: CiReceiptAwaitBatchTarget[] }
   | { ok: false; reason: string } {
   const targets: CiReceiptAwaitBatchTarget[] = [];
   const all: CiReceiptAwaitBatchTarget[] = [];
   for (const raw of entries) {
-    if (!isRecord(raw) || Object.keys(raw).sort().join(',') !== 'artifactName,attempt,outcome,prior,reason,repo,run') {
+    if (!hasExactKeys(raw, CI_RECEIPT_ENTRY_KEYS)
+      || typeof raw.outcome !== 'string' || !CI_RECEIPT_OUTCOMES.has(raw.outcome)
+      || (raw.prior !== null && !isPlainRecord(raw.prior))
+      || (raw.reason !== null && typeof raw.reason !== 'string')) {
       return { ok: false, reason: 'target_invalid' };
     }
-    if (!['bound', 'failed', 'not-started'].includes(String(raw.outcome))
-      || (raw.prior !== null && !isRecord(raw.prior))
-      || (raw.reason !== null && typeof raw.reason !== 'string')) return { ok: false, reason: 'target_invalid' };
     const target = { repo: raw.repo, run: raw.run, attempt: raw.attempt, artifactName: raw.artifactName };
     all.push(target as CiReceiptAwaitBatchTarget);
     if (raw.outcome !== 'bound') targets.push(target as CiReceiptAwaitBatchTarget);
   }
-  if (all.length > CI_RECEIPT_RETRY_MAX_RETRIES) return { ok: false, reason: 'retry_target_count' };
+  if (all.length > CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS) return { ok: false, reason: 'retry_target_count' };
   if (all.length && !parseCiReceiptAwaitBatchInput(JSON.stringify({ version: 1, targets: all })).ok) {
     return { ok: false, reason: 'target_invalid' };
   }
@@ -90,55 +82,42 @@ function extractTargets(
 export function parseCiReceiptRetryBatchInput(text: string): CiReceiptRetryParse {
   let doc: unknown;
   try { doc = JSON.parse(text); } catch { return { ok: false, reason: 'not_json' }; }
-  if (!isRecord(doc)) return { ok: false, reason: 'not_object' };
+  if (!isPlainRecord(doc)) return { ok: false, reason: 'not_object' };
   const keys = Object.keys(doc);
-  // Allow version + total + bound + failed + notStarted + timedOut +
-  // aborted + entries (+ optional emittedAt/note).
-  if (keys.length < 8 || !keys.includes('version') || !keys.includes('entries')
-    || !keys.includes('total') || !keys.includes('bound') || !keys.includes('failed')
-    || !keys.includes('notStarted') || !keys.includes('timedOut') || !keys.includes('aborted')) {
+  // Allow the required version-1 batch report keys plus optional emittedAt/note.
+  if (!CI_RECEIPT_REPORT_KEYS.every((key) => keys.includes(key))) {
     return { ok: false, reason: 'unknown_or_missing_fields' };
   }
-  const extraKeys = keys.filter(k =>
-    !['version', 'total', 'bound', 'failed', 'notStarted', 'timedOut', 'aborted', 'entries'].includes(k));
-  // Optional fields: emittedAt (ISO-8601) and note (any string).
-  for (const ek of extraKeys) {
-    if (ek === 'emittedAt') {
-      const emittedAt = doc.emittedAt;
-      if (typeof emittedAt !== 'string' || !ISO_DATE.test(emittedAt)) {
+  for (const key of keys) {
+    if (REPORT_KEY_SET.has(key)) continue;
+    if (key === 'emittedAt') {
+      if (typeof doc.emittedAt !== 'string' || !ISO_DATE.test(doc.emittedAt)) {
         return { ok: false, reason: 'unknown_or_missing_fields' };
       }
-    } else if (ek === 'note') {
-      if (typeof (doc as Record<string, unknown>).note !== 'string') {
+    } else if (key === 'note') {
+      if (typeof doc.note !== 'string') {
         return { ok: false, reason: 'unknown_or_missing_fields' };
       }
     } else {
       return { ok: false, reason: 'unknown_or_missing_fields' };
     }
   }
-  const ver = doc.version;
-  if (ver !== 1) return { ok: false, reason: 'unsupported_version' };
-  const tot = doc.total;
-  if (typeof tot !== 'number' || !Number.isSafeInteger(tot) || tot < 0) {
-    return { ok: false, reason: 'malformed_counts' };
-  }
-  const bnd = doc.bound;
-  const fld = doc.failed;
-  const nst = doc.notStarted;
-  if (typeof bnd !== 'number' || !Number.isSafeInteger(bnd) || typeof fld !== 'number' || !Number.isSafeInteger(fld)
-    || typeof nst !== 'number' || !Number.isSafeInteger(nst)
-    || bnd < 0 || fld < 0 || nst < 0 || bnd + fld + nst !== tot) {
+  if (doc.version !== 1) return { ok: false, reason: 'unsupported_version' };
+  if (!isNonNegativeInt(doc.total) || !isNonNegativeInt(doc.bound)
+    || !isNonNegativeInt(doc.failed) || !isNonNegativeInt(doc.notStarted)
+    || doc.bound + doc.failed + doc.notStarted !== doc.total) {
     return { ok: false, reason: 'malformed_counts' };
   }
   if (!Array.isArray(doc.entries)) return { ok: false, reason: 'entries_missing' };
-  if (doc.entries.some(e => !isRecord(e))) return { ok: false, reason: 'target_invalid' };
-  if (doc.entries.length !== tot || typeof doc.timedOut !== 'boolean' || typeof doc.aborted !== 'boolean'
-    || doc.entries.filter(e => isRecord(e) && e.outcome === 'bound').length !== bnd
-    || doc.entries.filter(e => isRecord(e) && e.outcome === 'failed').length !== fld
-    || doc.entries.filter(e => isRecord(e) && e.outcome === 'not-started').length !== nst) {
+  if (doc.entries.some((e) => !isPlainRecord(e))) return { ok: false, reason: 'target_invalid' };
+  const entries = doc.entries as Record<string, unknown>[];
+  if (entries.length !== doc.total || typeof doc.timedOut !== 'boolean' || typeof doc.aborted !== 'boolean'
+    || entries.filter((e) => e.outcome === 'bound').length !== doc.bound
+    || entries.filter((e) => e.outcome === 'failed').length !== doc.failed
+    || entries.filter((e) => e.outcome === 'not-started').length !== doc.notStarted) {
     return { ok: false, reason: 'malformed_counts' };
   }
-  return extractTargets(doc.entries);
+  return extractTargets(entries);
 }
 
 export interface CiReceiptRetryBatchOptions {
@@ -149,10 +128,6 @@ export interface CiReceiptRetryBatchOptions {
 export interface CiReceiptRetryBatchDeps extends CiReceiptAwaitBatchDeps {
   /** Test seam: defaults to awaitCiReceiptBatch. */
   retry?: typeof awaitCiReceiptBatch;
-  /** Monotonic milliseconds. */
-  now?: () => number;
-  /** Resolves after ms or as soon as the signal aborts. */
-  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 /**

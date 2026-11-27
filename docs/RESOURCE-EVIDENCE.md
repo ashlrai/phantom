@@ -283,7 +283,10 @@ is published; credentials stay local. Exit 0 means published or already fresh,
 1 means unavailable (follow the returned recovery instruction), and 2 means bad
 arguments or configuration. Unknown usage remains ineligible; publishing does
 not guarantee a seat qualifies. Resident daemons start the publisher at startup
-and check every minute outside tick dispatch, sampling at most every five minutes.
+and check every minute outside tick dispatch. The daemon normally waits five
+minutes between its own samples. A snapshot dated after the local clock triggers
+a fresh collection attempt through the existing lease checks. That future-dated
+snapshot is ineligible for the daemon's capacity history.
 `ASHLR_DAEMON_CAPACITY_PUBLISHER=0` disables automatic daemon publication.
 
 The Resources rail reads `<runs>/state/resource-live.json`, not `capacity.json`.
@@ -392,3 +395,10 @@ The free-preview Devin CLI models (SWE-2 Lightning and Flash) are the
 without a grant or fresh reading the projection is unknown. Home's Pools card
 uses these same rows (also on the phone) through the existing runway refresh.
 Solid is used, light is projected use, and the right mark is reset or expiry.
+
+`phm fleet usage-history` requires a quota measurement timestamp for each
+point. Dispatcher ticks can republish cached values. Status quotas with a
+missing measurement timestamp or a stale or estimated flag contribute no
+new point. Stored history and the live overlay both exclude observations
+timestamped after the report time. Prior measured history retains its original
+timestamps.

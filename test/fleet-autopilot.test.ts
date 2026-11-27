@@ -110,6 +110,61 @@ describe('planFleetAutopilot', () => {
     expect(report.action).toMatchObject({ kind: 'no-op', reason: 'capacity-bound' });
   });
 
+  it.each([
+    { secondHeld: true, expected: { kind: 'no-op', reason: 'capacity-bound', detail: expect.stringContaining('jobs on held lanes') } },
+    { secondHeld: false, expected: { kind: 'hold-lane', lane: 'claude' } },
+  ])('checks whether existing holds can drain below the cap (second held: $secondHeld)', ({ secondHeld, expected }) => {
+    const report = planFleetAutopilot(state({
+      admission: admission([
+        admissionLane('devin', 0, 2, 6),
+        admissionLane('codex', 1, 1, 0, true),
+        admissionLane('codex-local', 1, 1, 0),
+        admissionLane('claude', 2, 2, 8),
+      ], 3, 4),
+      operatorHolds: new Set(secondHeld ? ['codex-local'] : []),
+      queue: queueView({ byLane: [{ lane: 'devin', ready: 6, parked: 0 }, { lane: 'claude', ready: 8, parked: 0 }] }),
+    }));
+    expect(report.topGap).toMatchObject({ kind: 'starved-lane', lane: 'devin' });
+    expect(report.action).toMatchObject(expected);
+  });
+
+  it.each([
+    { cap: 2, expected: { kind: 'hold-lane', lane: 'claude' } },
+    { cap: 1, expected: { kind: 'no-op', reason: 'capacity-bound' } },
+  ])('checks whether a sibling can drain below a reduced cap of $cap', ({ cap, expected }) => {
+    const report = planFleetAutopilot(state({
+      admission: admission([
+        admissionLane('devin', 0, 2, 6),
+        admissionLane('codex', 1, 1, 12),
+        admissionLane('claude', 2, 2, 8),
+      ], cap, 3),
+      queue: queueView({ byLane: [
+        { lane: 'devin', ready: 6, parked: 0 },
+        { lane: 'codex', ready: 12, parked: 0 },
+        { lane: 'claude', ready: 8, parked: 0 },
+      ] }),
+    }));
+    expect(report.topGap).toMatchObject({ kind: 'starved-lane', lane: 'devin' });
+    expect(report.action).toMatchObject(expected);
+  });
+
+  it.each([
+    { cap: 2, expected: { kind: 'hold-lane', lane: 'claude', detail: expect.stringContaining('already-held lanes') } },
+    { cap: 1, expected: { kind: 'no-op', reason: 'capacity-bound' } },
+  ])('counts existing and proposed holds together at cap $cap', ({ cap, expected }) => {
+    const report = planFleetAutopilot(state({
+      admission: admission([
+        admissionLane('devin', 0, 2, 6),
+        admissionLane('codex', 1, 1, 0, true),
+        admissionLane('claude', 1, 1, 8),
+        admissionLane('grok', 1, 1, 0),
+      ], cap, 3),
+      queue: queueView({ byLane: [{ lane: 'devin', ready: 6, parked: 0 }, { lane: 'claude', ready: 8, parked: 0 }] }),
+    }));
+    expect(report.topGap).toMatchObject({ kind: 'starved-lane', lane: 'devin' });
+    expect(report.action).toMatchObject(expected);
+  });
+
   it('answers dispatch-stall when a lane is starved while the fleet is under the cap', () => {
     const report = planFleetAutopilot(state({
       admission: admission([admissionLane('devin', 0, 2, 4), admissionLane('codex-local', 2, 2, 2)], 18, 2),
@@ -167,6 +222,18 @@ describe('planFleetAutopilot', () => {
     expect(report.action).toMatchObject({ kind: 'enqueue', type: 'restock', count: 3, lane: 'devin' });
   });
 
+  it.each([
+    { running: 3, closed: false, expected: { kind: 'enqueue', type: 'restock', count: 1, lane: 'devin' } },
+    { running: 4, closed: false, expected: { kind: 'no-op', reason: 'capacity-bound' } },
+    { running: 3, closed: true, expected: { kind: 'no-op', reason: 'admission-closed' } },
+  ])('honors shared admission for restock with $running of 4 slots used and gate closed=$closed', ({ running, closed, expected }) => {
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 0, 3, 0)], 4, running, undefined, closed),
+    }));
+    expect(report.topGap).toMatchObject({ kind: 'missing-restock', evidence: { freeSlots: 3 } });
+    expect(report.action).toMatchObject(expected);
+  });
+
   it('does not propose restock while lane-open rows wait as open supply', () => {
     // Unhinted READY rows are launchable supply the market may place on any
     // lane — a free lane is fed-pending, not missing restock.
@@ -209,6 +276,48 @@ describe('planFleetAutopilot', () => {
     expect(report.action).toMatchObject({ kind: 'no-op', reason: 'fleet-healthy' });
   });
 
+  it.each([0, 5])('honors a new slots hold before dispatcher status catches up with %i ready rows', (ready) => {
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 0, 2, ready)], 4, 0),
+      queue: queueView({ byLane: [{ lane: 'devin', ready, parked: 0 }] }),
+      slots: slotsView([slotLane('devin', 2, true)]),
+    }));
+    expect(report.lanes[0]).toMatchObject({ held: true, freeSlots: null, ready });
+    expect(report.gaps).toEqual([]);
+    expect(report.action.kind).toBe('no-op');
+  });
+
+  it.each([0, 5])('honors a lower configured target before the next tick with %i ready rows', (ready) => {
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 1, 3, ready)], 4, 1),
+      queue: queueView({ byLane: [{ lane: 'devin', ready, parked: 0 }] }),
+      slots: slotsView([slotLane('devin', 1)]),
+    }));
+    expect(report.lanes[0]).toMatchObject({ running: 1, target: 1, utilization: 1, freeSlots: 0 });
+    expect(report.gaps).toEqual([]);
+    expect(report.action).toMatchObject({ kind: 'no-op', reason: 'fleet-healthy' });
+  });
+
+  it('keeps the last tick’s launch ceiling when the configured target is higher', () => {
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 1, 1, 5)], 4, 1),
+      queue: queueView({ byLane: [{ lane: 'devin', ready: 5, parked: 0 }] }),
+      slots: slotsView([slotLane('devin', 3)]),
+    }));
+    expect(report.lanes[0]).toMatchObject({ target: 1, freeSlots: 0 });
+    expect(report.gaps).toEqual([]);
+  });
+
+  it('skips a sibling already held in slots when looking for a lane to hold', () => {
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 0, 2, 5), admissionLane('codex', 2, 2, 12)], 2, 2),
+      queue: queueView({ byLane: [{ lane: 'devin', ready: 5, parked: 0 }, { lane: 'codex', ready: 12, parked: 0 }] }),
+      slots: slotsView([slotLane('codex', 2, true)]),
+    }));
+    expect(report.topGap).toMatchObject({ kind: 'starved-lane', lane: 'devin' });
+    expect(report.action).toMatchObject({ kind: 'no-op', reason: 'capacity-bound' });
+  });
+
   it('does not flag a lane whose only queued rows are parked (unmet deps are waiting, not starvation)', () => {
     const report = planFleetAutopilot(state({
       admission: admission([admissionLane('devin', 0, 2, 1)]),
@@ -240,6 +349,24 @@ describe('planFleetAutopilot', () => {
     expect(report.action.kind).toBe('no-op');
   });
 
+  it.each(['missing', 'degraded'] as const)('keeps queue gaps unknown when ready supply is %s', (source) => {
+    const report = planFleetAutopilot(state({
+      sources: { status: 'healthy', queue: source, slots: 'healthy', rebase: 'unconfigured' },
+      admission: admission([
+        admissionLane('devin', 0, 2, 6),
+        admissionLane('codex-local', 0, 2, 0),
+      ]),
+      queue: queueView({ sources: { ready: source, skips: 'healthy' } }),
+    }));
+
+    expect(report.lanes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ lane: 'devin', ready: null, queued: 6 }),
+      expect.objectContaining({ lane: 'codex-local', ready: null, queued: 0 }),
+    ]));
+    expect(report.gaps).toEqual([]);
+    expect(report.action).toMatchObject({ kind: 'no-op', detail: expect.stringContaining('ready queue supply is unknown') });
+  });
+
   it('joins a lane seen only in slots with unknown utilization and no free slots', () => {
     const [lane] = autopilotLanes(state({
       admission: admission([]),
@@ -264,6 +391,7 @@ describe('readFleetAutopilotState', () => {
       runsDir: dir,
       repos: ['ashlrai/phantom'],
       statusText: async () => JSON.stringify({
+        last_tick: '2026-11-06T23:59:00Z',
         admission: { cap: 4, running: 2, load1: 1, reason: null },
         lanes: { devin: { running: 1, target: 2, queued: 1, held: false } },
       }),
@@ -282,6 +410,56 @@ describe('readFleetAutopilotState', () => {
     expect(assembled.sources).toEqual({ status: 'healthy', queue: 'healthy', slots: 'healthy', rebase: 'ok' });
     expect(assembled.admission?.lanes[0]).toMatchObject({ lane: 'devin', running: 1, target: 2 });
     expect(assembled.rebase).toEqual([{ repo: 'ashlrai/phantom', source: 'ok', conflicting: 2, uncovered: 1, staleHeadOnly: 0 }]);
+  });
+
+  it.each([undefined, 'invalid', '2026-11-06T23:58:59.999Z', '2026-11-07T00:00:00.001Z'])(
+    'withholds utilization recommendations when the dispatcher tick is %s',
+    async (last_tick) => {
+      const state = await readFleetAutopilotState({
+        now: () => new Date('2026-11-07T00:00:00Z'),
+        statusText: async () => JSON.stringify({
+          last_tick,
+          admission: { cap: 4, running: 1, load1: 1, reason: null },
+          lanes: {
+            devin: { running: 1, target: 2, queued: 1, held: false },
+            codex: { running: 0, target: 2, queued: 0, held: false },
+          },
+        }),
+        queue: async () => queueView({ byLane: [{ lane: 'devin', ready: 1, parked: 0 }] }),
+        slots: async () => slotsView([slotLane('devin', 2), slotLane('codex', 2)]),
+      });
+      const report = planFleetAutopilot(state);
+      expect(report.sources.status).toBe('degraded');
+      expect(report.global).toMatchObject({ running: null, cap: null, atCap: null });
+      expect(report.lanes.find((lane) => lane.lane === 'devin')).toMatchObject({
+        running: null, queued: null, freeSlots: null, ready: 1, target: 2,
+      });
+      expect(report.gaps).toEqual([]);
+      expect(report.action).toMatchObject({ kind: 'no-op' });
+    },
+  );
+
+  it.each([
+    ['2026-11-07T00:00:00Z', 'healthy', 'enqueue'],
+    ['2026-11-06T23:59:30Z', 'degraded', 'no-op'],
+    [null, 'degraded', 'no-op'],
+  ])('checks embedded admission tick %s against fresh dispatcher status', async (ts, source, action) => {
+    const lastTick = '2026-11-07T00:00:00Z';
+    const assembled = await readFleetAutopilotState({
+      now: () => new Date(lastTick),
+      statusText: async () => JSON.stringify({
+        last_tick: lastTick,
+        admission: { ts, cap: 4, running: 1, load1: 1 },
+        lanes: { devin: { running: 0, target: 2, queued: 0, held: false } },
+      }),
+      queue: async () => queueView(),
+      slots: async () => slotsView([slotLane('devin', 2)]),
+    });
+    const report = planFleetAutopilot(assembled);
+    expect(report.sources.status).toBe(source);
+    expect(report.global.cap).toBe(source === 'healthy' ? 4 : null);
+    expect(report.lanes[0]).toMatchObject({ ready: 0, target: 2 });
+    expect(report.action.kind).toBe(action);
   });
 
   it('reports missing status and skips rebase reads without --repo', async () => {
@@ -440,6 +618,36 @@ describe('readFleetQueue depDetail metDeps', () => {
 });
 
 describe('fleet autopilot end-to-end on a fixture runs dir', () => {
+  it('honors operator lane holds before the next dispatcher tick', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fleet-autopilot-e2e-'));
+    dirs.push(dir);
+    await mkdir(join(dir, 'queue'));
+    await writeFile(join(dir, 'HOLD'), 'devin\t\ncodex-local\n');
+    await writeFile(join(dir, 'queue', 'ready.tsv'),
+      'READY\tRQ-NEW\tdevin\twork\tphantom\tprompts/x.md\n');
+    await writeFile(join(dir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: '2026-11-07T00:00:00Z',
+      admission: { cap: 4, running: 1, load1: 1, reason: null },
+      lanes: {
+        devin: { running: 1, target: 2, queued: 1, held: false },
+        'codex-local': { running: 0, target: 2, queued: 0, held: false },
+        claude: { running: 0, target: 1, queued: 0, held: false },
+      },
+    }));
+
+    const state = await readFleetAutopilotState({ runsDir: dir, now: () => new Date('2026-11-07T00:00:00Z') });
+    const report = planFleetAutopilot(state);
+    expect(report.lanes).toMatchObject([
+      { lane: 'claude', held: false, freeSlots: 1 },
+      { lane: 'codex-local', held: true, freeSlots: null },
+      { lane: 'devin', held: true, freeSlots: null },
+    ]);
+    expect(report.gaps.map(({ kind, lane }) => ({ kind, lane }))).toEqual([
+      { kind: 'missing-restock', lane: 'claude' },
+    ]);
+    expect(report.action).toMatchObject({ kind: 'enqueue', type: 'restock', count: 1, lane: 'claude' });
+  });
+
   it('proposes an unpark sweep from real queue/status/slots files', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fleet-autopilot-e2e-'));
     dirs.push(dir);
@@ -452,6 +660,7 @@ describe('fleet autopilot end-to-end on a fixture runs dir', () => {
     await writeFile(join(dir, 'metrics', 'jobs.jsonl'),
       `${JSON.stringify({ event: 'outcome', state: 'MERGED', job: 'RQ-DONE' })}\n`);
     await writeFile(join(dir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: '2026-11-07T00:00:00Z',
       admission: { cap: 4, running: 2, load1: 1, reason: null },
       lanes: { devin: { running: 2, target: 2, queued: 1, held: false } },
     }));
@@ -476,13 +685,14 @@ describe('fleet autopilot end-to-end on a fixture runs dir', () => {
     await writeFile(join(dir, 'queue', 'ready.tsv'),
       'READY\tRQ-NEW\tdevin\twork\tphantom\tprompts/x.md\n');
     await writeFile(join(dir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: '2026-11-07T00:00:00Z',
       admission: { cap: 4, running: 1, load1: 1, reason: null },
       lanes: {
         devin: { running: 1, target: 1, queued: 1, held: false },
         'codex-local': { running: 0, target: 2, queued: 0, held: false },
       },
     }));
-    const st = await readFleetAutopilotState({ runsDir: dir });
+    const st = await readFleetAutopilotState({ runsDir: dir, now: () => new Date('2026-11-07T00:00:00Z') });
     const report = planFleetAutopilot(st);
     expect(report.topGap?.kind).toBe('missing-restock');
     expect(report.action).toMatchObject({ kind: 'enqueue', type: 'restock', count: 2, lane: 'codex-local' });

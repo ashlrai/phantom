@@ -8,6 +8,8 @@
  * divergences are listed in BRIDGE_NOTES.md.
  */
 
+import { isExitCode, isNonEmptyString, isRecord } from './validation.js';
+
 export const RECORDED_AVAILABILITY_PROVENANCE = Object.freeze({
   sourcePr: 5952,
   sourceSha: '3d6c8fb7c7f7d52655fb3e0f13ef239686f7b886',
@@ -29,7 +31,6 @@ export const UNPROVEN_AVAILABILITY_CLAIMS = Object.freeze([
 const GROK_METERED_PATTERN = /XAI_API_KEY/i;
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const LOGIN_CLASSES: readonly string[] = ['in', 'out', 'unknown'];
-const MAX_EXIT_CODE = 0xffff_ffff;
 
 /** Structural adapter shape. Its commands are configuration and are never executed. */
 export interface RecordedAvailabilityAdapter {
@@ -94,10 +95,6 @@ function project(fields: Fields): RecordedAvailabilityProjection {
   return Object.freeze({ provenance: RECORDED_AVAILABILITY_PROVENANCE, ...fields, unprovenClaims: UNPROVEN_AVAILABILITY_CLAIMS });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
@@ -107,10 +104,7 @@ function asRecording(value: unknown): RecordedCommandResult | null | undefined {
   if (value === undefined || value === null) return null;
   const ok =
     isRecord(value) &&
-    typeof value.code === 'number' &&
-    Number.isInteger(value.code) &&
-    value.code >= 0 &&
-    value.code <= MAX_EXIT_CODE &&
+    isExitCode(value.code) &&
     typeof value.stdout === 'string' &&
     typeof value.stderr === 'string';
   return ok ? { code: value.code as number, stdout: value.stdout as string, stderr: value.stderr as string } : undefined;
@@ -151,7 +145,7 @@ export function projectRecordedAvailability(evidence: RecordedAvailabilityEviden
   const base = { id, billingAsRecorded: billing, meteredStatusObservation: false, login: 'unknown' } as const;
 
   // Stage 1. Source: `!adapter.bin || adapter.versionArgs.length === 0`.
-  if (typeof bin !== 'string' || bin.trim() === '' || adapter.versionArgs.length === 0) {
+  if (!isNonEmptyString(bin) || adapter.versionArgs.length === 0) {
     return project({ ...base, stage: 'no-binary-configured', versionCheck: 'not-configured', statusCheck: 'not-reached' });
   }
   // Absent is unknown, not failed. Status evidence is not read without a version.

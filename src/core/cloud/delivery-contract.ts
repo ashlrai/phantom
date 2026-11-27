@@ -7,7 +7,15 @@
  * delivers anywhere but `ashlr-cloud/<taskId>` is invisible to the tracker,
  * and one that merges bypasses custody — so both are spelled out, every time.
  */
-import { CLOUD_PR_TITLE_PREFIX, CLOUD_REPORT_FENCE, type CloudTaskReport, type CloudTaskV1 } from './types.js';
+import {
+  CLOUD_PR_TITLE_PREFIX,
+  CLOUD_REPORT_FENCE,
+  CLOUD_REPORT_STATUSES,
+  clipCloudText,
+  isCloudRecord,
+  type CloudTaskReport,
+  type CloudTaskV1,
+} from './types.js';
 
 /** A report block is a few hundred bytes; past this it is not a report, it is a dump. */
 export const CLOUD_REPORT_MAX_BLOCK_CHARS = 32 * 1024;
@@ -75,8 +83,6 @@ export function companionToolsBlock(servers: readonly string[]): string {
   ].join('\n');
 }
 
-const STATUSES: readonly CloudTaskReport['status'][] = ['done', 'partial', 'blocked', 'no-change'];
-
 /**
  * The full prompt handed to `claude --cloud`: the task text, then the
  * contract — create and work on branch `task.branch` from `task.baseBranch`;
@@ -139,8 +145,6 @@ export function buildCloudPrompt(task: CloudTaskV1, knowledge = '', playbook = '
   ].join('\n');
 }
 
-const clip = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
-
 function stringList(value: unknown): string[] | null {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) return null;
@@ -148,7 +152,7 @@ function stringList(value: unknown): string[] | null {
   for (const entry of value) {
     if (typeof entry !== 'string') return null;
     const text = entry.trim();
-    if (text !== '' && out.length < MAX_LIST_ITEMS) out.push(clip(text, MAX_LIST_ITEM_CHARS));
+    if (text !== '' && out.length < MAX_LIST_ITEMS) out.push(clipCloudText(text, MAX_LIST_ITEM_CHARS));
   }
   return out;
 }
@@ -170,28 +174,27 @@ function reportFromBlock(text: string): CloudTaskReport | null {
  * structured output, SessionResponse.structured_output). Bounded, never trusted.
  */
 export function cloudReportFromValue(value: unknown): CloudTaskReport | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  const status = record['status'];
-  if (typeof status !== 'string' || !STATUSES.includes(status as CloudTaskReport['status'])) return null;
-  const summary = typeof record['summary'] === 'string' ? record['summary'].trim() : '';
+  if (!isCloudRecord(value)) return null;
+  const status = value['status'];
+  if (typeof status !== 'string' || !CLOUD_REPORT_STATUSES.includes(status as CloudTaskReport['status'])) return null;
+  const summary = typeof value['summary'] === 'string' ? value['summary'].trim() : '';
   if (summary === '') return null;
-  const testsRun = stringList(record['testsRun']);
-  const risks = stringList(record['risks']);
+  const testsRun = stringList(value['testsRun']);
+  const risks = stringList(value['risks']);
   if (!testsRun || !risks) return null;
   const report: CloudTaskReport = {
     status: status as CloudTaskReport['status'],
-    summary: clip(summary, MAX_SUMMARY_CHARS),
+    summary: clipCloudText(summary, MAX_SUMMARY_CHARS),
     testsRun,
     risks,
   };
-  const toolsUsed = record['toolsUsed'];
+  const toolsUsed = value['toolsUsed'];
   if (toolsUsed !== undefined && toolsUsed !== null) {
     // Telemetry only: a malformed list is dropped, never a reason to reject the report.
     const tools = stringList(toolsUsed);
     if (tools) report.toolsUsed = tools;
   }
-  const files = record['filesChanged'];
+  const files = value['filesChanged'];
   // An invalid count is dropped rather than failing a report that is otherwise fine.
   if (typeof files === 'number' && Number.isInteger(files) && files >= 0 && files <= 1_000_000) report.filesChanged = files;
   return report;

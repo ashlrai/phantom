@@ -39,7 +39,7 @@
  *    transient burst: a pool's cell emits only when its in-window rows
  *    reach REWARD_MIN_ROWS, its not-held rows reach REWARD_MIN_NOT_HELD,
  *    not-held rows are a strict majority of the pool's resolved rows,
- *    and the evidence spans at least REWARD_MIN_DAYS distinct UTC days.
+ *    and the not-held rows span at least REWARD_MIN_DAYS distinct UTC days.
  *    The bars mirror outcome learning's own low-merge cell (a good-merge
  *    rate under half with enough attempts to mean something).
  *  - 'unknown' is the calibration arm's own label for a row whose pool
@@ -47,13 +47,12 @@
  *    unattributed resolutions group together and the prompt says the
  *    attribution itself is missing.
  *  - Fleet machinery only: the ledger is this install's dispatch record,
- *    so items emit only when the backlog target's repository name is
- *    'phantom', the same last-segment rule the sibling fleet-evidence
- *    sources apply. Row-level repo names are quoted as evidence, never
+ *    so items emit only for 'ashlrai/phantom' or its bare shorthand
+ *    'phantom'. Row-level repo names are quoted as evidence, never
  *    used to filter — a pool's arm quality is fleet-level in
  *    calibration.
- *  - Truncation is stated, never hidden: when the bounded tail cuts
- *    older rows, every prompt says the counts are a lower bound.
+ *  - A truncated ledger yields no items. The omitted rows can change
+ *    the majority verdict and which row was recorded first for a job.
  *  - Dedup is downstream: item ids hash the pool identity — never the
  *    counts or timestamps — so a refresh re-derives the same ids and
  *    appendUserBacklogItems adds only what is new; a pool that recovers
@@ -75,8 +74,6 @@ export const REWARD_BACKLOG_MAX_ITEMS = 8;
 const REWARD_BACKLOG_ITEM_HARD_MAX = 25;
 /** Evidence window: seven days, the same convention the sibling feeds anchor on. */
 export const REWARD_BACKLOG_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-/** Future-skew allowance on row timestamps, same convention the sibling folds apply. */
-const REWARD_BACKLOG_FUTURE_SKEW_MS = 60_000;
 /**
  * Resolved rows one pool needs inside the window before its outcomes
  * count as recurring — the same order the sibling per-cell bars use. A
@@ -86,10 +83,10 @@ const REWARD_BACKLOG_FUTURE_SKEW_MS = 60_000;
 export const REWARD_MIN_ROWS = 6;
 /** Not-held rows a pool needs inside the window — the recurring floor. */
 export const REWARD_MIN_NOT_HELD = 4;
-/** Distinct UTC days the evidence must span — recurring means recorded across days. */
+/** Distinct UTC days on which not-held outcomes must be recorded. */
 export const REWARD_MIN_DAYS = 2;
 /** The fleet's own repository label: ledger evidence is this install's machinery, never another target's. */
-const FLEET_REPO_NAME = 'phantom';
+const FLEET_REPO = 'ashlrai/phantom';
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
 const MAX_TITLE_CHARS = 200;
 /** Distinct UTC days quoted inside one prompt before the rest is summarized. */
@@ -114,11 +111,6 @@ export interface RewardBacklogItemsOptions {
   now?: number;
 }
 
-/** The repository name both vocabularies record: the last path segment, lowercased. */
-function fleetRepoName(repo: string): string {
-  return (repo.split('/').pop() ?? repo).trim().toLowerCase();
-}
-
 const sha = (value: string): string => createHash('sha256').update(value).digest('hex').slice(0, 16);
 
 const dayOfMs = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
@@ -137,6 +129,8 @@ export interface RewardPoolTally {
   notHeld: number;
   /** Distinct UTC days the rows span, keyed on recordedAt. */
   days: Set<string>;
+  /** Distinct UTC days with at least one not-held row. */
+  notHeldDays: Set<string>;
   firstMs: number | null;
   lastMs: number | null;
   /** Recorded repo tallies (null repo counts under 'unattributed'). */
@@ -162,7 +156,6 @@ export function foldRewardJournal(text: string, nowMs: number, windowMs: number)
   const fold: RewardJournalFold = { records: 0, invalidRows: 0, pools: new Map() };
   const seenJobs = new Set<string>();
   const since = nowMs - windowMs;
-  const until = nowMs + REWARD_BACKLOG_FUTURE_SKEW_MS;
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
     if (trimmed === '') continue;
@@ -172,17 +165,23 @@ export function foldRewardJournal(text: string, nowMs: number, windowMs: number)
     if (seenJobs.has(row.jobId)) continue;
     seenJobs.add(row.jobId);
     const atMs = Date.parse(row.recordedAt);
-    if (!Number.isFinite(atMs) || atMs < since || atMs > until) continue;
+    if (!Number.isFinite(atMs) || atMs < since || atMs > nowMs) continue;
     fold.records += 1;
     const key = row.pool ?? UNATTRIBUTED_KEY;
     let tally = fold.pools.get(key);
     if (tally === undefined) {
-      tally = { pool: row.pool, rows: 0, held: 0, notHeld: 0, days: new Set(), firstMs: null, lastMs: null, repos: new Map() };
+      tally = { pool: row.pool, rows: 0, held: 0, notHeld: 0, days: new Set(), notHeldDays: new Set(), firstMs: null, lastMs: null, repos: new Map() };
       fold.pools.set(key, tally);
     }
     tally.rows += 1;
-    if (row.merged) tally.held += 1; else tally.notHeld += 1;
-    tally.days.add(dayOfMs(atMs));
+    const day = dayOfMs(atMs);
+    if (row.merged) {
+      tally.held += 1;
+    } else {
+      tally.notHeld += 1;
+      tally.notHeldDays.add(day);
+    }
+    tally.days.add(day);
     tally.firstMs = tally.firstMs === null ? atMs : Math.min(tally.firstMs, atMs);
     tally.lastMs = tally.lastMs === null ? atMs : Math.max(tally.lastMs, atMs);
     const repoKey = row.repo ?? 'unattributed';
@@ -208,25 +207,26 @@ export interface RewardPoolCell {
   share: number;
   /** Distinct UTC days the evidence spans, sorted. */
   days: string[];
+  /** Distinct UTC days with at least one not-held row, sorted. */
+  notHeldDays: string[];
   firstSeen: string | null;
   lastSeen: string | null;
   /** Top recorded repo tallies for prompt evidence, repo name → row count. */
   repos: [string, number][];
-  lowerBound: boolean;
 }
 
 /**
  * Pure: the recurring pool cells the fold justifies. A cell emits only
  * while its resolved rows reach REWARD_MIN_ROWS, its not-held rows reach
- * REWARD_MIN_NOT_HELD and are a strict majority, and the evidence spans
+ * REWARD_MIN_NOT_HELD and are a strict majority, and the not-held rows span
  * REWARD_MIN_DAYS distinct UTC days. Sorted worst-first by not-held
  * count, then rows, then pool name.
  */
-export function rewardCells(fold: RewardJournalFold, lowerBound = false): RewardPoolCell[] {
+export function rewardCells(fold: RewardJournalFold): RewardPoolCell[] {
   const cells: RewardPoolCell[] = [];
   for (const tally of fold.pools.values()) {
     if (tally.rows < REWARD_MIN_ROWS || tally.notHeld < REWARD_MIN_NOT_HELD ||
-        tally.notHeld * 2 <= tally.rows || tally.days.size < REWARD_MIN_DAYS) continue;
+        tally.notHeld * 2 <= tally.rows || tally.notHeldDays.size < REWARD_MIN_DAYS) continue;
     cells.push({
       pool: tally.pool,
       rows: tally.rows,
@@ -234,10 +234,10 @@ export function rewardCells(fold: RewardJournalFold, lowerBound = false): Reward
       notHeld: tally.notHeld,
       share: tally.notHeld / tally.rows,
       days: [...tally.days].sort(),
+      notHeldDays: [...tally.notHeldDays].sort(),
       firstSeen: isoOrNull(tally.firstMs),
       lastSeen: isoOrNull(tally.lastMs),
       repos: [...tally.repos.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, MAX_PROMPT_REPOS),
-      lowerBound,
     });
   }
   return cells.sort((a, b) => b.notHeld - a.notHeld || b.rows - a.rows ||
@@ -260,10 +260,7 @@ const daysText = (days: readonly string[]): string => {
 };
 
 const cellDaysText = (cell: RewardPoolCell): string =>
-  `across ${cell.days.length} UTC day(s) (${daysText(cell.days)})`;
-
-const boundNote = (lowerBound: boolean): string =>
-  lowerBound ? ' The ledger tail was truncated at the bounded read, so these counts cover only the retained window — a lower bound, not the full window.' : '';
+  `across ${cell.notHeldDays.length} UTC day(s) (${daysText(cell.notHeldDays)})`;
 
 const repoText = (repos: readonly [string, number][]): string => {
   if (repos.length === 0) return 'no recorded repo';
@@ -279,7 +276,7 @@ function rewardPrompt(cell: RewardPoolCell): string {
     '',
     `merged:false is the substrate's held-merge verdict: the job's PR closed without merging (rejected, superseded or abandoned) or a verified merge was later reverted — either way the dispatch produced no lasting change. The ledger only records resolved jobs, so in-flight work never counts; a strict majority of one pool's resolutions not holding is the same low-merge signature outcome learning's own cells flag, now visible per calibration arm.`,
     '',
-    `First recorded ${cell.firstSeen ?? 'unknown'}, last ${cell.lastSeen ?? 'unknown'}.${boundNote(cell.lowerBound)}`,
+    `First recorded ${cell.firstSeen ?? 'unknown'}, last ${cell.lastSeen ?? 'unknown'}.`,
     '',
     EVIDENCE,
     '',
@@ -310,17 +307,18 @@ function rewardItem(cell: RewardPoolCell, repo: string): CloudBacklogItem {
 export async function rewardBacklogItems(opts: RewardBacklogItemsOptions): Promise<CloudBacklogItem[]> {
   try {
     const repo = opts.repo.trim();
-    if (repo === '' || fleetRepoName(repo) !== FLEET_REPO_NAME) return [];
+    const repoKey = repo.toLowerCase();
+    if (repoKey !== FLEET_REPO && repoKey !== 'phantom') return [];
     const nowMs = opts.now ?? Date.now();
     const windowMs = opts.windowMs !== undefined && Number.isFinite(opts.windowMs) && opts.windowMs > 0
       ? opts.windowMs
       : REWARD_BACKLOG_WINDOW_MS;
     const path = opts.ledgerPath ?? rewardSignalPath(opts.homeDir);
     const tail = await readLedgerTail(path, REWARD_SIGNAL_MAX_BYTES);
-    if (tail.state !== 'read') return [];
+    if (tail.state !== 'read' || tail.truncated) return [];
     const fold = foldRewardJournal(tail.text, nowMs, windowMs);
     if (fold.records === 0) return [];
-    const cells = rewardCells(fold, tail.truncated);
+    const cells = rewardCells(fold);
     const limit = Math.max(1, Math.min(opts.limit ?? REWARD_BACKLOG_MAX_ITEMS, REWARD_BACKLOG_ITEM_HARD_MAX));
     return cells.slice(0, limit).map((cell) => rewardItem(cell, repo));
   } catch {

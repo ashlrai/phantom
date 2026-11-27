@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -16,7 +16,7 @@ const NOW = Date.parse('2026-11-09T12:00:00.000Z');
 const view = (pctUsed: number, hours: number) => buildResourceView({ readings: { 'claude-max': {
   pool: 'claude-max', source: 'claude-max-reader', fetchedAt: new Date(NOW - 60_000).toISOString(), pctUsed,
   resetAt: new Date(NOW + hours * 3_600_000).toISOString() } } }, NOW);
-const joined = (member: string, lanes: [string, number][]): JoinRecord => ({ v: 1, member, machine: 'm', lanes: lanes.map(([lane, share]) => ({ lane, share })), joinedAt: '2026-11-09T00:00:00.000Z' });
+const joined = (member: string, lanes: [string, number][], machine = 'm'): JoinRecord => ({ v: 1, member, machine, lanes: lanes.map(([lane, share]) => ({ lane, share })), joinedAt: '2026-11-09T00:00:00.000Z' });
 
 describe('org.toml validation', () => {
   it('accepts the shipped example', () => {
@@ -39,6 +39,17 @@ describe('org.toml validation', () => {
   it('loads from a file and reports a missing one plainly', () => {
     expect(() => loadOrg(join(tmp(), 'org.toml'))).toThrow(/No org file/);
     expect(loadOrg('docs/examples/org.toml').leader).toBe('mason-wyatt');
+  });
+  it('names the line of a malformed org.toml and points at the leader', () => {
+    const file = join(tmp(), 'org.toml');
+    writeFileSync(file, 'version = 1\nleader = "boss"\n[[members]]\nid = "a"\nbad line here\n');
+    // A member cannot repair org.toml — the leader owns it — so the refusal
+    // names the broken line for the report back, never echoes file content.
+    let message = '';
+    try { loadOrg(file); } catch (e) { message = String(e); }
+    expect(message).toMatch(/not valid TOML at line 5\./);
+    expect(message).toMatch(/org leader/);
+    expect(message).not.toContain('bad line here');
   });
 });
 
@@ -68,6 +79,27 @@ describe('init', () => {
     catch (e) { expect(String(e)).not.toContain(secret); }
     // Every refused init left nothing behind.
     for (const f of ['a.toml', 'b.toml', 'c.toml', 'd.toml']) expect(existsSync(join(dir, f))).toBe(false);
+  });
+  it('writes declared agents as implementers on the init machine reporting to the founder', () => {
+    const file = join(tmp(), 'org.toml');
+    const r = initOrg({ member: 'ada', machine: 'ada-mac', lanes: [{ lane: 'claude', share: 100 }, { lane: 'devin', share: 50 }],
+      agents: [{ id: 'ada-claude', lane: 'claude' }, { id: 'ada-devin', lane: 'devin' }] }, file);
+    expect(r.org.members[0]!.agents).toEqual([
+      { id: 'ada-claude', lane: 'claude', machine: 'ada-mac', roles: ['implementer'], reports_to: 'ada' },
+      { id: 'ada-devin', lane: 'devin', machine: 'ada-mac', roles: ['implementer'], reports_to: 'ada' },
+    ]);
+    // The file round-trips: loadOrg accepts what init wrote.
+    expect(loadOrg(file).members[0]!.agents).toHaveLength(2);
+    // An agent on a lane the member never declared, a repeated agent id and an
+    // agent id colliding with the member id are all refused before anything is written.
+    const dir = tmp();
+    expect(() => initOrg({ member: 'ok', machine: 'm', lanes: [{ lane: 'claude', share: 100 }],
+      agents: [{ id: 'a1', lane: 'devin' }] }, join(dir, 'a.toml'))).toThrow(/not a contribution/);
+    expect(() => initOrg({ member: 'ok', machine: 'm', lanes: [{ lane: 'claude', share: 100 }],
+      agents: [{ id: 'a1', lane: 'claude' }, { id: 'a1', lane: 'claude' }] }, join(dir, 'b.toml'))).toThrow(/Duplicate id/);
+    expect(() => initOrg({ member: 'ok', machine: 'm', lanes: [{ lane: 'claude', share: 100 }],
+      agents: [{ id: 'ok', lane: 'claude' }] }, join(dir, 'c.toml'))).toThrow(/Duplicate id/);
+    for (const f of ['a.toml', 'b.toml', 'c.toml']) expect(existsSync(join(dir, f))).toBe(false);
   });
 });
 
@@ -184,6 +216,25 @@ describe('plan', () => {
     expect(p.budgets[0]).toMatchObject({ usage: 'unknown', budgetPct: 7.5 });
     expect(p.unassigned).toHaveLength(7);
   });
+  it('budgets a multi-machine lane at the largest committed share, never record order', () => {
+    // mason-mac offers claude=30 and mason-mac-2 offers claude=90. Both offers
+    // draw on the member's one declared claude pool, so they do not add up:
+    // the member's ceiling is 90 and the plan must say so whichever join
+    // record comes first. Unknown usage: 25 points of headroom x 90% = 22.5.
+    const lowFirst = [joined('mason-wyatt', [['claude', 30]], 'mason-mac'), joined('mason-wyatt', [['claude', 90]], 'mason-mac-2')];
+    const highFirst = [...lowFirst].reverse();
+    for (const joins of [lowFirst, highFirst]) {
+      const p = planOrg(org, joins, null, [{ id: 'J1', priority: 5, costPct: 20, lane: 'claude' }], now);
+      expect(p.budgets.find((b) => b.member === 'mason-wyatt' && b.lane === 'claude')).toMatchObject({ share: 90, budgetPct: 22.5 });
+      expect(p.assignments).toHaveLength(1);
+      expect(p.unassigned).toEqual([]);
+    }
+    // A zero-share machine beside a real offer does not hold the lane.
+    const mixed = [joined('mason-wyatt', [['claude', 0]], 'mason-mac'), joined('mason-wyatt', [['claude', 40]], 'mason-mac-2')];
+    const p = planOrg(org, mixed, null, [], now);
+    expect(p.held.map((h) => `${h.member}/${h.lane}`)).not.toContain('mason-wyatt/claude');
+    expect(p.budgets.find((b) => b.member === 'mason-wyatt' && b.lane === 'claude')).toMatchObject({ share: 40 });
+  });
   it('gives a red pool no budget and uses reset urgency for known pools', () => {
     const red = planOrg(org, [joined('mason-wyatt', [['claude', 100]])], view(100, 2), jobs(1), now);
     expect(red.assignments).toEqual([]);
@@ -262,6 +313,35 @@ describe('cmdOrg', () => {
     vi.unstubAllEnvs();
   });
 
+  it('show names the machines behind each opt-in and says the records are this machine\'s', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = 'docs/examples/org.toml';
+    // Only mason-scofield's record exists here, so every other lane must read
+    // "not opted in" — and the footer must say that is this machine's view.
+    expect(await cmdOrg(['join', '--file', file, '--member', 'mason-scofield', '--machine', 'sco-mac', '--lane', 'codex-personal=20'])).toBe(0);
+    logs.pop();
+    expect(await cmdOrg(['show', '--file', file])).toBe(0);
+    const text = logs.pop()!;
+    expect(text).toContain('lane codex-personal: 30% declared, opted in on sco-mac');
+    expect(text).toContain('lane claude: 100% declared, not opted in');
+    expect(text).toContain(`Opt-in counts join records held on this machine (${join(home, 'org', 'joins')})`);
+    expect(await cmdOrg(['show', '--file', file, '--json'])).toBe(0);
+    const shown = JSON.parse(logs.pop()!);
+    expect(shown.schema).toBe('org.show.v1');
+    expect(shown.joinsDir).toBe(join(home, 'org', 'joins'));
+    expect(shown.joins).toHaveLength(1);
+    // Plan carries the same scope note in text and the directory in JSON.
+    expect(await cmdOrg(['plan', '--file', file])).toBe(0);
+    expect(logs.pop()!).toContain('the plan covers only those records');
+    expect(await cmdOrg(['plan', '--file', file, '--json'])).toBe(0);
+    const planned = JSON.parse(logs.pop()!);
+    expect(planned.schema).toBe('org.plan.v1');
+    expect(planned.joinsDir).toBe(join(home, 'org', 'joins'));
+    vi.unstubAllEnvs();
+  });
+
   it('join reports the lanes a re-join dropped, in JSON and text', async () => {
     const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
     const logs: string[] = [];
@@ -285,6 +365,80 @@ describe('cmdOrg', () => {
     const text = logs.pop()!;
     expect(text).toContain('no longer opts in: codex-personal (was 10%)');
     expect(text).toContain('Name the lane again with --lane to restore it.');
+    vi.unstubAllEnvs();
+  });
+
+  it('join names the declared lanes the record has not opted into', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = 'docs/examples/org.toml';
+    // mason-wyatt declares claude and codex-personal; a join naming only claude
+    // leaves codex-personal open, and the reply must say so in both modes.
+    const base = ['join', '--file', file, '--member', 'mason-wyatt', '--machine', 'mason-mac'];
+    expect(await cmdOrg([...base, '--lane', 'claude=50', '--json'])).toBe(0);
+    expect(JSON.parse(logs.pop()!).availableLanes).toEqual([{ lane: 'codex-personal', share: 100 }]);
+    expect(await cmdOrg([...base, '--lane', 'claude=50'])).toBe(0);
+    const partial = logs.pop()!;
+    expect(partial).toContain('Not opted in on this machine: codex-personal (declared 100%)');
+    // The hinted re-join keeps the recorded claude share and adds the open lane
+    // at its declared share — a bare "--lane codex-personal" alone would drop claude.
+    expect(partial).toContain('phm org join --member mason-wyatt --machine mason-mac --lane claude=50 --lane codex-personal');
+    // Opting into every declared lane leaves nothing open.
+    expect(await cmdOrg([...base, '--lane', 'claude', '--lane', 'codex-personal=40', '--json'])).toBe(0);
+    expect(JSON.parse(logs.pop()!).availableLanes).toEqual([]);
+    // The zero-lane first run contributes nothing; the note names every lane it
+    // could still opt into instead of ending at "no lanes".
+    expect(await cmdOrg(['join', '--file', file, '--member', 'evan-deloria', '--machine', 'evan-mac'])).toBe(0);
+    const empty = logs.pop()!;
+    expect(empty).toContain('no lanes (nothing contributed)');
+    expect(empty).toContain('Not opted in on this machine: claude (declared 30%)');
+    expect(empty).toContain('phm org join --member evan-deloria --machine evan-mac --lane claude');
+    vi.unstubAllEnvs();
+  });
+
+  it('join without --machine hands back the runnable fix or names the declared machines', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = 'docs/examples/org.toml';
+    // Every member in the example declares exactly one machine, and `phm org
+    // show` does not list machine ids — so the refusal prints the complete
+    // join command, lanes included, instead of dead-ending on a lookup.
+    expect(await cmdOrg(['join', '--file', file, '--member', 'evan-deloria', '--lane', 'claude=20', '--json'])).toBe(1);
+    const single = JSON.parse(logs.pop()!);
+    expect(single).toMatchObject({ schema: 'org.error.v1', command: 'join', error: { code: 'rejected' } });
+    expect(single.error.message).toContain('join needs --machine');
+    expect(single.error.message).toContain('run: phm org join --member evan-deloria --machine evan-mac --lane claude=20');
+    // The fix is a command to run, not a silent join: nothing was recorded.
+    expect(readJoins()).toEqual([]);
+    // A member with several declared machines gets the choice named, not a guess.
+    const multi = join(home, 'multi.toml');
+    writeFileSync(multi, [
+      'version = 1', 'leader = "ada"', '',
+      '[[members]]', 'id = "ada"', 'name = "Ada"', 'role = "founder"',
+      'machines = [{ id = "ada-mac" }, { id = "ada-laptop" }]',
+      'contributions = [{ lane = "claude", share = 50 }]', '',
+    ].join('\n'));
+    expect(await cmdOrg(['join', '--file', multi, '--member', 'ada', '--json'])).toBe(1);
+    expect(JSON.parse(logs.pop()!).error.message)
+      .toContain('join needs --machine. ada declares machines: ada-mac, ada-laptop — pass --machine <id>.');
+    // A member declaring no machines is told to ask the leader, not handed a command.
+    const empty = join(home, 'empty.toml');
+    writeFileSync(empty, [
+      'version = 1', 'leader = "ada"', '',
+      '[[members]]', 'id = "ada"', 'name = "Ada"', 'role = "founder"',
+      'contributions = [{ lane = "claude", share = 50 }]', '',
+    ].join('\n'));
+    expect(await cmdOrg(['join', '--file', empty, '--member', 'ada', '--json'])).toBe(1);
+    expect(JSON.parse(logs.pop()!).error.message).toContain('ada declares no machines in org.toml');
+    // Unknown member and missing --member keep naming what is actually missing.
+    expect(await cmdOrg(['join', '--file', file, '--member', 'ghost', '--json'])).toBe(1);
+    expect(JSON.parse(logs.pop()!).error.message).toContain('Unknown member ghost');
+    expect(await cmdOrg(['join', '--file', file, '--machine', 'evan-mac', '--json'])).toBe(1);
+    expect(JSON.parse(logs.pop()!).error.message).toContain('join needs --member.');
+    expect(await cmdOrg(['join', '--file', file, '--json'])).toBe(1);
+    expect(JSON.parse(logs.pop()!).error.message).toContain('join needs --member and --machine.');
     vi.unstubAllEnvs();
   });
 
@@ -372,6 +526,65 @@ describe('cmdOrg', () => {
     vi.unstubAllEnvs();
   });
 
+  it('init --agent declares implementers so a fresh org can actually plan work', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = join(home, 'org.toml');
+    // The first-run path in one pass: init with an agent, opt the machine in,
+    // then plan — before --agent existed this dead-ended on "no implementer".
+    expect(await cmdOrg(['init', '--member', 'ada', '--machine', 'ada-mac', '--lane', 'claude',
+      '--agent', 'ada-claude:claude', '--json'])).toBe(0);
+    const init = JSON.parse(logs.pop()!);
+    expect(init.agents).toEqual([{ id: 'ada-claude', lane: 'claude', machine: 'ada-mac',
+      roles: ['implementer'], reports_to: 'ada' }]);
+    expect(await cmdOrg(['join', '--file', file, '--member', 'ada', '--machine', 'ada-mac', '--lane', 'claude', '--json'])).toBe(0);
+    logs.pop();
+    const queue = join(home, 'jobs.json');
+    writeFileSync(queue, JSON.stringify([{ id: 'RQ-1', priority: 3, costPct: 2, lane: 'claude' }]));
+    expect(await cmdOrg(['plan', '--file', file, '--queue', queue, '--json'])).toBe(0);
+    const plan = JSON.parse(logs.pop()!);
+    expect(plan.assignments).toEqual([{ job: 'RQ-1', member: 'ada', agent: 'ada-claude', lane: 'claude', costPct: 2 }]);
+    expect(plan.unassigned).toEqual([]);
+    // Text mode names the agents the file declares.
+    const other = join(home, 'other.toml');
+    expect(await cmdOrg(['init', '--file', other, '--member', 'grace', '--machine', 'g-mac',
+      '--lane', 'devin=50', '--lane', 'codex', '--agent', 'grace-devin:devin', '--agent', 'grace-codex:codex'])).toBe(0);
+    const text = logs.pop()!;
+    expect(text).toContain('agents grace-devin (implementer on devin), grace-codex (implementer on codex)');
+    vi.unstubAllEnvs();
+  });
+
+  it('refuses malformed --agent arguments with the org envelope', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = join(home, 'org.toml');
+    const base = ['init', '--member', 'ada', '--machine', 'ada-mac', '--lane', 'claude'];
+    const malformed: [string[], string][] = [
+      [[...base, '--agent', 'ada-claude', '--json'], '--agent takes <id>:<lane>'],   // no lane
+      [[...base, '--agent', ':claude', '--json'], '--agent takes <id>:<lane>'],    // empty id
+      [[...base, '--agent', 'ada-claude:', '--json'], '--agent takes <id>:<lane>'],// empty lane
+      [[...base, '--agent', 'a:b:c', '--json'], '--agent takes <id>:<lane>'],      // extra colon
+      [[...base, '--agent', 'x:devin', '--json'], 'not a contribution'],           // lane never declared
+      [[...base, '--agent', 'ada:claude', '--json'], 'Duplicate id'],              // agent id is the member id
+      [[...base, '--agent', 'a1:claude', '--agent', 'a1:claude', '--json'], 'more than once'],
+      [[...base, '--agent', '--json'], '--agent needs a value'],
+    ];
+    for (const [args, said] of malformed) {
+      expect(await cmdOrg(args), args.join(' ')).toBe(1);
+      const failure = JSON.parse(logs.pop()!);
+      expect(failure).toMatchObject({ schema: 'org.error.v1', command: 'init', error: { code: 'rejected' } });
+      expect(failure.error.message).toContain(said);
+    }
+    // A repeated agent id on different lanes is still one agent id — refused.
+    expect(await cmdOrg([...base, '--agent', 'a1:claude', '--agent', 'a1:devin', '--json'])).toBe(1);
+    expect(JSON.parse(logs.pop()!).error.message).toContain('more than once');
+    // Nothing was written by any refused init.
+    expect(existsSync(file)).toBe(false);
+    vi.unstubAllEnvs();
+  });
+
   it('refuses malformed init arguments with the org envelope', async () => {
     const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
     const logs: string[] = [];
@@ -426,6 +639,27 @@ describe('cmdOrg', () => {
     vi.unstubAllEnvs();
   });
 
+  it('plans without evidence or market files and distinguishes missing org configuration', async () => {
+    const home = tmp(), runs = tmp();
+    vi.stubEnv('ASHLR_HOME', home);
+    vi.stubEnv('ASHLR_RUNS_DIR', runs);
+    try {
+      mkdirSync(join(runs, 'queue'));
+      writeFileSync(join(runs, 'queue', 'status.json'), JSON.stringify({
+        schema: 'dispatchd.status.v1', last_tick: '2026-11-26T02:26:30-0500', paused: false,
+        lanes: { 'codex-personal': { running: 1, target: 20, queued: 59, held: false } },
+      }));
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      expect(await cmdOrg(['plan', '--json'])).toBe(1);
+      expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ schema: 'org.error.v1', command: 'plan',
+        error: { code: 'rejected', message: expect.stringContaining('No org file') } });
+      expect(await cmdOrg(['plan', '--file', 'docs/examples/org.toml', '--json'])).toBe(0);
+      expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ schema: 'org.plan.v1', assignments: [] });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('plan text names each held lane and the join that opts it in', async () => {
     const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
     const logs: string[] = [];
@@ -442,7 +676,9 @@ describe('cmdOrg', () => {
     const text = logs.pop()!;
     expect(text).toContain('2 lanes held');
     expect(text).toContain('held mason-wyatt/claude: zero share');
-    expect(text).toContain('phm org join --member mason-wyatt --machine mason-mac --lane claude');
+    // The fix keeps the record's other opt-in (codex-personal=50) — a bare
+    // --lane claude re-join would replace the whole record and drop it.
+    expect(text).toContain('phm org join --member mason-wyatt --machine mason-mac --lane codex-personal=50 --lane claude');
     expect(text).toContain('held evan-deloria/claude: not opted in');
     expect(text).toContain('phm org join --member evan-deloria --machine evan-mac --lane claude');
     expect(text).not.toContain('held mason-scofield/');
@@ -450,6 +686,53 @@ describe('cmdOrg', () => {
     expect(await cmdOrg(['plan', '--file', file, '--json'])).toBe(0);
     const plan = JSON.parse(logs.pop()!);
     expect(plan.held.map((h: any) => `${h.member}/${h.lane}`)).toEqual(['mason-wyatt/claude', 'evan-deloria/claude']);
+    vi.unstubAllEnvs();
+  });
+
+  it('plan held fix keeps every opt-in the machine record already carries', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    // The printed fix names no --file: it is written for the member's machine,
+    // where org.toml sits at the default path. Stage the example there.
+    const file = join(home, 'org.toml');
+    writeFileSync(file, readFileSync('docs/examples/org.toml', 'utf8'));
+    // mason-wyatt opts claude in at zero share and codex-personal at 50, so claude
+    // is held. The printed fix must re-join with both lanes or codex-personal drops.
+    expect(await cmdOrg(['join', '--member', 'mason-wyatt', '--machine', 'mason-mac',
+      '--lane', 'claude=0', '--lane', 'codex-personal=50', '--json'])).toBe(0);
+    logs.length = 0;
+    expect(await cmdOrg(['plan'])).toBe(0);
+    const fixLine = logs.pop()!.split('\n').find((l) => l.includes('held mason-wyatt/claude'))!;
+    const command = fixLine.slice(fixLine.indexOf('phm org join'));
+    expect(command).toBe('phm org join --member mason-wyatt --machine mason-mac --lane codex-personal=50 --lane claude');
+    // Run the printed fix verbatim: nothing the record carried may be dropped.
+    const argv = command.replace(/^phm org /, '').split(' ');
+    expect(await cmdOrg([...argv, '--json'])).toBe(0);
+    const reply = JSON.parse(logs.pop()!);
+    expect(reply.droppedLanes).toEqual([]);
+    expect(reply.record.lanes).toEqual([{ lane: 'codex-personal', share: 50 }, { lane: 'claude', share: 100 }]);
+    vi.unstubAllEnvs();
+  });
+
+  it('plan held fix names the recorded machine when a member has several', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = join(home, 'org.toml');
+    writeFileSync(file, 'version = 1\nleader = "ada"\n\n'
+      + '[[members]]\nid = "ada"\nname = "Ada"\nrole = "founder"\n'
+      + 'machines = [{ id = "ada-mac-a" }, { id = "ada-mac-b" }]\n'
+      + 'contributions = [{ lane = "claude", share = 50 }, { lane = "devin", share = 20 }]\n');
+    // Only ada-mac-a has a record (claude opted in); devin is held. The fix names
+    // ada-mac-a concretely and keeps claude=50 instead of the <a|b> placeholder.
+    expect(await cmdOrg(['join', '--file', file, '--member', 'ada', '--machine', 'ada-mac-a',
+      '--lane', 'claude', '--json'])).toBe(0);
+    logs.length = 0;
+    expect(await cmdOrg(['plan', '--file', file])).toBe(0);
+    const text = logs.pop()!;
+    expect(text).toContain('held ada/devin: not opted in');
+    expect(text).toContain('phm org join --member ada --machine ada-mac-a --lane claude=50 --lane devin');
     vi.unstubAllEnvs();
   });
 });

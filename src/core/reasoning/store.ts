@@ -45,7 +45,7 @@ import {
   writeSync,
   type Stats,
 } from 'node:fs';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, readdir, readFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -60,16 +60,16 @@ import {
   type ReasoningStepKind,
   type ReasoningStepV1,
 } from './types.js';
-import type { SignatureCount, TurnFeaturesV1 } from './extractors.js';
+import { isReasoningRecord, type SignatureCount, type TurnFeaturesV1 } from './extractors.js';
 
 // ---------------------------------------------------------------------------
 // Bounds
 // ---------------------------------------------------------------------------
 
 /** One day of steps. A day past this drops further steps (counted) rather than growing without bound. */
-export const MAX_STEP_FILE_BYTES = 32 * 1024 * 1024;
+const MAX_STEP_FILE_BYTES = 32 * 1024 * 1024;
 /** One day of turn features (rows are ~1–3 KB; 8 MB is thousands of turns). */
-export const MAX_FEATURE_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_FEATURE_FILE_BYTES = 8 * 1024 * 1024;
 /** Whole-store ceiling; retention evicts oldest day files past it. */
 export const MAX_STORE_BYTES = 512 * 1024 * 1024;
 /** A single JSONL row. Step text is ≤ 8 KB, so anything larger is malformed. */
@@ -92,13 +92,18 @@ export type StoreKind = 'steps' | 'features';
 // Paths
 // ---------------------------------------------------------------------------
 
-/** `$ASHLR_HOME/reasoning` when ASHLR_HOME is absolute, else `~/.ashlr/reasoning` (resolved per call so a test HOME is honored). */
-export function reasoningRoot(): string {
-  const configured = process.env['ASHLR_HOME'];
+/** Resolve `$<envVar>/<subdir>` when `<envVar>` is an absolute path, else `~/<defaultDotDir>/<subdir>`. */
+export function resolveHomeSubdir(envVar: string, defaultDotDir: string, subdir: string): string {
+  const configured = process.env[envVar];
   const base = typeof configured === 'string' && configured.trim() !== '' && isAbsolute(configured)
     ? configured
-    : join(homedir(), '.ashlr');
-  return join(base, 'reasoning');
+    : join(homedir(), defaultDotDir);
+  return join(base, subdir);
+}
+
+/** `$ASHLR_HOME/reasoning` when ASHLR_HOME is absolute, else `~/.ashlr/reasoning` (resolved per call so a test HOME is honored). */
+export function reasoningRoot(): string {
+  return resolveHomeSubdir('ASHLR_HOME', '.ashlr', 'reasoning');
 }
 
 function kindDir(root: string, kind: StoreKind | 'state'): string {
@@ -155,11 +160,15 @@ export function cleanLabel(value: unknown, maxChars: number): string | null {
   return cleaned.length > maxChars ? cleaned.slice(0, maxChars) : cleaned;
 }
 
+/** Printable ASCII identifier without whitespace or control chars (1..maxLength chars). */
+export function isPrintableAsciiId(value: string, maxLength = 256): boolean {
+  return value !== '' && value.length <= maxLength && /^[\x21-\x7e]+$/.test(value);
+}
+
 function cleanId(value: unknown): string | null {
-  if (typeof value !== 'string' || value === '' || value.length > 256) return null;
   // Ids are keys, not prose: refuse anything with whitespace/control chars
   // instead of silently rewriting it (a rewritten id would break dedupe).
-  return /^[\x21-\x7e]+$/.test(value) ? value : null;
+  return typeof value === 'string' && isPrintableAsciiId(value) ? value : null;
 }
 
 function isoOrNull(value: unknown, nowMs: number): string | null {
@@ -179,7 +188,7 @@ function countOrNull(value: unknown): number | null {
  * row the store must not write (bad enum, no conversation id, unusable time).
  */
 export function normalizeStep(input: ReasoningStepV1, nowMs = Date.now()): ReasoningStepV1 | null {
-  if (!input || typeof input !== 'object') return null;
+  if (!isReasoningRecord(input)) return null;
   const id = cleanId(input.id);
   const at = isoOrNull(input.at, nowMs);
   if (!id || !at || !SOURCES.has(input.source) || !KINDS.has(input.kind)) return null;
@@ -215,7 +224,7 @@ export function normalizeStep(input: ReasoningStepV1, nowMs = Date.now()): Reaso
 
 /** Structural check for a row read back from disk (rows were normalised on write). */
 export function isStepRow(value: unknown): value is ReasoningStepV1 {
-  if (!value || typeof value !== 'object') return false;
+  if (!isReasoningRecord(value)) return false;
   const row = value as Partial<ReasoningStepV1>;
   return row.v === 1 && typeof row.id === 'string' && typeof row.at === 'string' &&
     typeof row.engine === 'string' && typeof row.text === 'string' &&
@@ -225,7 +234,7 @@ export function isStepRow(value: unknown): value is ReasoningStepV1 {
 
 /** Structural check for a feature row read back from disk. */
 export function isFeatureRow(value: unknown): value is TurnFeaturesV1 {
-  if (!value || typeof value !== 'object') return false;
+  if (!isReasoningRecord(value)) return false;
   const row = value as Partial<TurnFeaturesV1>;
   return row.v === 1 && row.type === 'turn' && typeof row.id === 'string' &&
     typeof row.engine === 'string' && typeof row.at === 'string' &&
@@ -233,7 +242,7 @@ export function isFeatureRow(value: unknown): value is TurnFeaturesV1 {
 }
 
 function cleanEvidence(value: unknown): ReasoningEvidence | null {
-  if (!value || typeof value !== 'object') return null;
+  if (!isReasoningRecord(value)) return null;
   const { ref, at } = value as { ref?: unknown; at?: unknown };
   const cleanRef = cleanId(ref);
   return cleanRef && typeof at === 'string' && Number.isFinite(Date.parse(at)) ? { ref: cleanRef, at } : null;
@@ -327,7 +336,7 @@ const verifiedDirs = new Map<string, number>();
 const DIR_RECHECK_MS = 30_000;
 
 /** Ensure root and the given subdirectory exist privately. */
-export function ensureStoreDir(root: string, kind: StoreKind | 'state'): string | null {
+function ensureStoreDir(root: string, kind: StoreKind | 'state'): string | null {
   const dir = kindDir(root, kind);
   const verifiedAt = verifiedDirs.get(dir);
   if (verifiedAt !== undefined && Date.now() - verifiedAt < DIR_RECHECK_MS) return dir;
@@ -483,7 +492,7 @@ export async function appendStepsChunked(steps: ReasoningStepV1[], root = reason
   let written = 0;
   for (let i = 0; i < steps.length; i += sliceSize) {
     written += appendSteps(steps.slice(i, i + sliceSize), root);
-    if (i + sliceSize < steps.length) await new Promise<void>((resolve) => setImmediate(resolve));
+    if (i + sliceSize < steps.length) await yieldToLoop();
   }
   return written;
 }
@@ -501,11 +510,11 @@ export function appendFeatures(features: TurnFeaturesV1[], root = reasoningRoot(
       const at = isoOrNull(feature?.at, nowMs);
       const normalized = at && isFeatureRow(feature) ? normalizeFeature(feature, at) : null;
       const line = normalized ? serialize(normalized) : null;
-      if (!at || !line) {
+      if (!normalized || !line) {
         droppedRows += 1;
         continue;
       }
-      rows.push({ day: at.slice(0, 10), line });
+      rows.push({ day: normalized.at.slice(0, 10), line });
     }
     return appendGrouped(root, 'features', rows, MAX_FEATURE_FILE_BYTES);
   } catch {
@@ -600,7 +609,11 @@ function rowTimeMs(row: { at?: unknown }): number {
 }
 
 const VISIT_SLICE = 500;
-const yieldToLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+/** Yield to the Node event loop between slices so large scans/ingests stay responsive. */
+export function yieldToLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
 
 async function scanKind<T extends { at: string }>(
   kind: StoreKind,
@@ -689,7 +702,7 @@ export async function scanFeatures(
  * Replace `path` with `content` atomically (temp file in the same dir, 0600,
  * O_EXCL|O_NOFOLLOW, then rename). The existing target must be a safe file.
  */
-export function writePrivateAtomic(path: string, content: string): boolean {
+function writePrivateAtomic(path: string, content: string): boolean {
   const tmp = `${path}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
   let fd: number | undefined;
   try {
@@ -740,6 +753,49 @@ export function writeStoreState(name: string, value: unknown, root = reasoningRo
   }
   if (Buffer.byteLength(content, 'utf8') > MAX_STATE_BYTES) return false;
   return writePrivateAtomic(join(dir, `${name}.json`), content);
+}
+
+/** Read a version-1 map cursor (`{ v: 1, [field]: Record<string, T> }`), defaulting to an empty map. */
+export function readCursorMap<T>(
+  name: string,
+  field: string,
+  root = reasoningRoot(),
+): Record<string, T> {
+  const prior = readStoreState<Record<string, unknown>>(name, root);
+  if (prior?.['v'] === 1 && isReasoningRecord(prior[field])) {
+    return { ...(prior[field] as Record<string, T>) };
+  }
+  return {};
+}
+
+/** Prune absent keys from a version-1 map cursor and persist it atomically. */
+export function writeCursorMap<T>(
+  name: string,
+  field: string,
+  entries: Record<string, T>,
+  present: ReadonlySet<string>,
+  root = reasoningRoot(),
+): boolean {
+  const pruned: Record<string, T> = {};
+  for (const [key, value] of Object.entries(entries)) {
+    if (present.has(key)) pruned[key] = value;
+  }
+  return writeStoreState(name, { v: 1, [field]: pruned }, root);
+}
+
+/** Read a bounded, non-symlink JSON object file (e.g. Verse session records). Null on missing/oversized/malformed. */
+export async function readBoundedJsonRecord(
+  path: string,
+  maxBytes = 1024 * 1024,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const stat = await lstat(path);
+    if (!stat.isFile() || stat.size > maxBytes) return null;
+    const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
+    return isReasoningRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Remove a day file (retention). Refuses unsafe entries. */

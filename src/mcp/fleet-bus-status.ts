@@ -10,8 +10,18 @@
  * table, message-id claim journal, claim-drift verdict, work-feed
  * projection, legacy mailbox, owner-chat receipts ledger, shared task
  * board and fleet queue, bot-seat store, peer work-dispatch journal, peer
- * coordination ledger, the session-handoff journal store behind
- * `phm checkpoint handoff list|show` and `fleet_session_handoffs`, and the
+ * coordination ledger, the agentnet peer session bindings and dispatch
+ * policy every `peers` verb authenticates and gates against, the pending
+ * peer-mail backlog `peers read` would return for live-enrolled
+ * callsigns, the transport dead-letter sink's retained
+ * delivery-failure reports (pending count by recorded reason and
+ * truncation — never envelope ids or bodies), the
+ * session-handoff journal store behind
+ * `phm checkpoint handoff list|show` and `fleet_session_handoffs`, the
+ * advisory fleet coordination ledger's pending surface (`fleetCoordination`
+ * — live messages, proposals and unposted returns counts behind `work
+ * mine`'s coordination section, `phm fleet coordination` and the unified
+ * inbox coordination source), and the
  * outbound send gate (`sendGate.state`
  * open/blocked/unknown with the kill-switch and comms-pause verdicts
  * kept separate) an agent can check before assuming a write would land.

@@ -43,6 +43,10 @@ identity. A primary or backup retains its role; repeat join never resets its wit
 If this computer's node id already holds a live pool session — a running worker
 batch or an unexpired join — the repeat join is refused with `node-live`: stop
 the worker or wait about 30 seconds for the session to expire, then retry.
+Usage refusals during enrollment name the flag at fault — a missing `--owner`
+or `--node`, one alias reused for `--primary` and `--backup`, or a repeat join
+that changes a saved identity flag — as exit-2 errors instead of one generic
+identity refusal.
 When the pool cannot be reached at all, join prints per-host approval steps
 instead: the host-check and `ssh-copy-id` commands to run on this computer, and
 a reminder that each pool Mac needs Phantom installed with `phm` on its SSH PATH.
@@ -71,10 +75,12 @@ marked "not joined" with its one join command (`phm node join`, run on that
 computer); `--json` adds `discovered` with the same rows, and every row carries
 `joined` and `joinCommand`. The desktop Computers pane draws not-joined computers
 grey and joined ones in color from the same JSON.
-It is read only: it reads `tailscale status` and the node list already on
-this computer, and changes nothing. A fact it cannot confirm (Tailscale missing,
-the node list on another computer) is `unknown` with the reason. The desktop
-Computers pane shows the same rows as cards.
+It is read only: it reads `tailscale status` — the CLI on PATH, or the copy
+bundled in the macOS app and the usual install locations, so a standard
+Tailscale.app install counts without a PATH entry — and the node list already
+on this computer, and changes nothing. A fact it cannot confirm (Tailscale
+missing, the node list on another computer) is `unknown` with the reason. The
+desktop Computers pane shows the same rows as cards.
 
 Then run one bounded worker batch:
 
@@ -300,7 +306,9 @@ poster checks `conversations.info` (`is_shared`, `is_ext_shared`,
 `conversations.members` (each member's workspace `team_id`, guest,
 deleted and bot flags). Slack Connect, shared channels, guests, unknown
 bots and any member who is not an allowlisted team identity refuse; anything
-that cannot be proved stays a draft. Explicitly mapped DMs require the same authenticated membership proof. A durable intent precedes one post; uncertain outcomes are reconciled by client message ID through history, never blindly resent. Rate limits stop the bounded pass.
+that cannot be proved stays a draft. Explicitly mapped DMs require the same authenticated membership proof. A durable intent precedes one post; uncertain outcomes are reconciled by client message ID through history, never blindly resent. Rate limits stop the bounded pass. Sends still unconfirmed surface as `slack-sends` items in `phm comms inbox` — the same send-store receipts `phm channels slack status` counts as `uncertainSends` — until a later pass proves or leaves them uncertain.
+
+Every delivery outcome — `sent`, `duplicate`, `uncertain` or `refused`, including refusals that never reach the send store — is journaled metadata-only (ids, timestamps, status and reason codes, the bus topic; never text or tokens) to `<runs>/slack-bridge/outbound.jsonl` beside the inbound `journal.jsonl`, and each claim-notice pass the `run` tick executes lands there as well. The self-improvement backlog folds recurring adverse cells — unproved or refused sends per topic and reason, halted or degraded notice passes — into work; healthy outcomes count as context only.
 
 ```sh
 phm channels slack status --json
@@ -365,10 +373,13 @@ roles (`leader`, `implementer`, `reviewer`, `researcher`) and `reports_to` lines
 holds ids and numbers only, never tokens, mail or messages, and secret-shaped values
 are refused. Spending stays with each member; nothing here changes billing.
 
-- `phm org init --member <id> --machine <id> [--name <name>] [--lane <lane>[=<share>]]... --json`
+- `phm org init --member <id> --machine <id> [--name <name>] [--lane <lane>[=<share>]]... [--agent <id>:<lane>]... --json`
   writes a starter `org.toml` (default `~/.ashlr/org.toml`, or `--file`) declaring the
   member as leader (founder) of a new org on that machine. A bare `--lane` declares
-  share 100; `=<share>` sets 0-100. It refuses to overwrite an existing file — add the
+  share 100; `=<share>` sets 0-100. Each `--agent` declares an implementer agent on
+  that machine for the named lane, reporting to the founder — declare at least one
+  per contributed lane or `phm org plan` can assign nothing ("no implementer agent
+  declared"). It refuses to overwrite an existing file — add the
   other members, their machines, agents and lanes by editing it, then share a copy with
   each member (ids and shares only, never credentials).
 - `phm org show --json` prints the org and which lanes each member has opted into.
@@ -382,20 +393,29 @@ are refused. Spending stays with each member; nothing here changes billing.
   record lands in `~/.ashlr/org/joins/`; copy another machine's record there to count it.
   Re-running join replaces the machine's whole record, so a lane you stop naming drops
   to zero — the output lists each dropped lane (`droppedLanes` under `--json`) and how
-  to restore it, so a share tweak never silently starves a lane.
+  to restore it, so a share tweak never silently starves a lane. The reply also lists
+  the member's declared lanes this record has not opted into (`availableLanes` under
+  `--json`): a join with no `--lane` contributes nothing until a re-join names one,
+  and the text output gives the re-join that keeps every current opt-in while adding
+  the open lanes.
 - `phm org plan [--queue jobs.json] --json` proposes assignments of queue work
   (`[{"id": "RQ-1", "priority": 3, "costPct": 2, "lane": "claude"}]`) and agent roles to
   maximize merged output per unit of pooled usage. Jobs are ordered by priority per
   cost; each goes to the opted-in lane with the most urgent remaining budget, using the
   router's usage and reset data for the contribution's `pool`. A lane's budget is its
-  headroom times the contributed share; a red pool gets none, and a lane with no
-  telemetry is planned with a conservative 25 points of headroom. Leftover work is
-  returned in `unassigned` with a reason naming the blocker: no opted-in
-  contribution on the job's lane, no implementer agent declared on the covering
-  lanes (a fresh `phm org init` writes none — add `agents` entries to org.toml),
-  or no contributed budget left. Text output also lists each held lane
+  headroom times the contributed share; when several of a member's machines are joined
+  to the same lane the offers draw on that one pool, so the member contributes the
+  largest share any machine committed — they never add up. A red pool gets none, and a
+  lane with no telemetry is planned with a conservative 25 points of headroom.
+  Leftover work is returned in `unassigned` with a reason naming the blocker:
+  no opted-in contribution on the job's lane, no implementer agent declared on
+  the covering lanes (`phm org init` writes none unless `--agent` names them —
+  add `agents` entries to org.toml), or no contributed budget left. Text output also lists each held lane
   (`held <member>/<lane>: <reason>`) with the `phm org join` command that opts it
   in on that member's machine, so a member can see why a contribution is unused.
+  Because a re-join replaces the machine's whole record, the printed command
+  keeps the opt-ins that machine's record already carries at their recorded
+  shares and adds the held lane — running it never drops a sibling opt-in.
 
 With `--json`, a failed `phm org` call prints
 `{"schema":"org.error.v1","command","error":{"code","message"}}` on stdout —
@@ -415,7 +435,10 @@ The leader starts with `phm org show --json` to identify declared members,
 machines, lane contributions, agent roles and reporting lines. Each co-founder
 uses `phm org join` on their own machine to opt in only the lane share they
 intend to contribute. Join records do not transfer provider sign-in or permit
-another agent to enroll someone else's capacity.
+another agent to enroll someone else's capacity. Opt-in status counts the join
+records held on the machine running `phm org show` or `phm org plan`: a member's
+own machine holds only the records joined there, so other members' lanes read
+`not opted in` until their records reach the leader's joins directory.
 
 The leader then reads `phm org plan --json`, or supplies an explicit queue
 snapshot with `--queue`, and uses the returned assignments, roles and
@@ -477,10 +500,21 @@ phm agentnet identity register reviewer --json
 ```
 
 `peers read` accepts the shared bus filters (`--from`, `--exclude-from`,
-`--to`, `--since`, `--before`, `--contains`, `--id`, `--kind`, `--peer-kind`,
-`--thread`, `--job`, `--result`) applied to the admitted page only — they
-narrow the view, never the admission, and the cursor still advances over every
-scanned row.
+`--to`, `--since`, `--before`, `--contains`, `--id`, `--kind`, `--body-kind`,
+`--priority`, `--peer-kind`, `--thread`, `--job`, `--result`) applied to the
+admitted page only — they narrow the view, never the admission, and the cursor
+still advances over every scanned row. `--body-kind` is the shared bus reads'
+spelling of the body-kind discriminator `--kind` also selects; both may appear
+but must agree. `--priority` keeps one exact P0..P3 envelope band — the same
+match every other bus read's `--priority` applies. `peers work-feed` accepts
+the shared work-feed query instead —
+`--claims`, `--open`, `--claimable`, `--status`, `--job`, `--repo`,
+`--provider`, `--tier`, `--to`, `--owner`, `--exclude-owner`, `--channel`,
+`--topic`, `--result`, `--id`,
+`--since`, `--before`, `--contains` and `--limit` — the same
+`parseBusWorkFeedQuery` validation `phm fleet work-feed` and the feed
+HTTP/MCP surfaces apply, projected through `readPeerFleet`'s authenticated
+read. `peers mesh` takes no filters.
 
 Channel proposals preview by default; `--apply` and identity registration record
 local drafts. Actual bot/channel provisioning needs a reviewed provisioner and

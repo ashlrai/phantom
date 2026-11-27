@@ -7,7 +7,7 @@ import type { AntigravityExecutionContext, AntigravityUsageGroup, ResourceLiveRe
 
 export const ANTIGRAVITY_USAGE_TIMEOUT_MS = 30_000;
 const exec = promisify(execFile);
-export const DEFAULT_ANTIGRAVITY_MODEL = 'gemini-4-neon';
+const DEFAULT_ANTIGRAVITY_MODEL = 'gemini-4-neon';
 const usageSchema = z.object({
   status: z.literal('SUCCESS'),
   num_turns: z.literal(0),

@@ -83,6 +83,13 @@ export const LIVE_CONFIG_MAX_ITEMS = 8;
 const LIVE_CONFIG_ITEM_HARD_MAX = 25;
 /** The window every fold anchors on: the fleet's recurring-evidence week. */
 export const LIVE_CONFIG_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Future-skew ceiling on audit `at` stamps, the sibling feeds' one-minute
+ * tolerance for same-host clock drift: a row stamped further ahead than
+ * the evaluation time is corrupt or replayed evidence and never reaches
+ * a cell.
+ */
+export const LIVE_CONFIG_FUTURE_SKEW_MS = 60_000;
 /** Change rows one cell needs inside the window… */
 export const LIVE_CONFIG_MIN_ROWS = 3;
 /** …spread across at least this many distinct UTC days. */
@@ -243,8 +250,10 @@ export interface LiveConfigFold {
 
 /**
  * Pure: fold validated rows into the churn and off-contract cells. Rows
- * outside the window contribute nothing. Contract rows (recognized
- * mutable key) fold per key; off-contract rows (key null) fold globally.
+ * outside the window — before its start or past the evaluation time
+ * plus the sibling feeds' future skew — contribute nothing. Contract
+ * rows (recognized mutable key) fold per key; off-contract rows (key
+ * null) fold globally.
  */
 export function foldLiveConfigAuditRows(
   rows: readonly LiveConfigAuditRow[],
@@ -253,8 +262,9 @@ export function foldLiveConfigAuditRows(
 ): LiveConfigFold {
   const fold: LiveConfigFold = { churn: new Map(), offContract: newTrack() };
   const windowStart = nowMs - windowMs;
+  const until = nowMs + LIVE_CONFIG_FUTURE_SKEW_MS;
   for (const row of rows) {
-    if (row.atMs < windowStart) continue;
+    if (row.atMs < windowStart || row.atMs > until) continue;
     if (row.key === null) {
       trackRow(fold.offContract, row);
       continue;

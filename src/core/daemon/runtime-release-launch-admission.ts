@@ -1,12 +1,12 @@
-import { createHash } from 'node:crypto';
+import { domainBytesSha256 } from './runtime-protocol-shared.js';
 import {
   observeRuntimeReleaseLaunchInputs,
   type RuntimeReleaseLaunchObservationOptions,
 } from './runtime-release-launch-revalidation.js';
 import { parseUnsignedRuntimeReleaseManifest } from './runtime-release-manifest.js';
 
-export const RUNTIME_RELEASE_LAUNCH_ADMISSION_SCHEMA_VERSION = 2 as const;
-export const RUNTIME_RELEASE_LAUNCH_ADMISSION_AUTHORITY = 'observation-only' as const;
+const RUNTIME_RELEASE_LAUNCH_ADMISSION_SCHEMA_VERSION = 2 as const;
+const RUNTIME_RELEASE_LAUNCH_ADMISSION_AUTHORITY = 'observation-only' as const;
 
 const RECEIPT_DIGEST_DOMAIN =
   'ashlr:runtime-release-launch-admission-observation-receipt:v2';
@@ -78,11 +78,7 @@ function pinInputs(
 }
 
 function receiptDigest(canonicalJson: string): string {
-  return createHash('sha256')
-    .update(RECEIPT_DIGEST_DOMAIN, 'utf8')
-    .update('\n', 'utf8')
-    .update(canonicalJson, 'utf8')
-    .digest('hex');
+  return domainBytesSha256(RECEIPT_DIGEST_DOMAIN, canonicalJson);
 }
 
 function permanentAuthorityBlockers(

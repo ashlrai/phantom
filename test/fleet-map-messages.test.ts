@@ -119,6 +119,11 @@ describe('fleet map messages', () => {
     // only bodies carrying that exact discriminator — the kindless mail
     // never matches.
     expect(summaries({ channel: 'build' })).toEqual(['build notes here']);
+    // --topic keeps only the well-formed group:<room>:<topic> address's topic
+    // component; composing with --channel narrows to one room AND one topic.
+    expect(summaries({ topic: 'general' })).toEqual(['build notes here']);
+    expect(summaries({ channel: 'build', topic: 'general' })).toEqual(['build notes here']);
+    expect(summaries({ topic: 'gone' })).toEqual([]);
     expect(summaries({ inReplyTo: 'm1' })).toEqual(['answering you']);
     expect(summaries({ id: 'm1' })).toEqual(['on it?']);
     expect(summaries({ id: 'm-gone' })).toEqual([]);
@@ -212,7 +217,7 @@ describe('fleet map messages', () => {
     expect((mapMessagesResponse(`${MAP_MESSAGES_PATH}?bodyKind=note`, options).body as MapMessages).matched).toBe(0);
     expect((mapMessagesResponse(`${MAP_MESSAGES_PATH}?result=failed`, options).body as MapMessages).matched).toBe(0);
     for (const query of ['since=soon', 'since=1m&since=2m', 'root=/tmp', 'limit=0', 'limit=101', 'limit=x', 'limit=1&limit=2',
-      'before=soon', 'before=', 'before=1h&before=2h', 'since=1h&bogus=1', 'kind=bogus', 'channel=BAD!', 'with=codex',
+      'before=soon', 'before=', 'before=1h&before=2h', 'since=1h&bogus=1', 'kind=bogus', 'channel=BAD!', 'topic=BAD!', 'with=codex',
       'id=has%20space', 'contains=', 'agent=', 'bodyKind=has%20space', 'to=has%20space', 'result=released']) {
       expect(mapMessagesResponse(`${MAP_MESSAGES_PATH}?${query}`, options).status).toBe(400);
     }
@@ -231,17 +236,17 @@ describe('fleet map messages', () => {
     expect(out.mock.lastCall![0]).toContain('--in-reply-to');
     for (const args of [['--since'], ['--json', '--json'], ['--since', 'soon'], ['--limit', '0'], ['--limit'], ['--apply'],
       ['--before'], ['--before', 'soon'], ['--before', '1h', '--before', '2h'], ['--kind'], ['--kind', 'bogus'],
-      ['--with', 'codex'], ['--channel', 'BAD CHANNEL!'], ['--id', 'has space'], ['--from', 'a', '--from', 'b'],
+      ['--with', 'codex'], ['--channel', 'BAD CHANNEL!'], ['--topic', 'BAD TOPIC'], ['--id', 'has space'], ['--from', 'a', '--from', 'b'],
       ['--agent', 'claude', '--agent', 'codex'], ['--contains', 'two', '--contains', 'words'], ['--job'],
       ['--body-kind'], ['--body-kind', 'has space'], ['--to', 'has space'], ['--result'], ['--result', 'bogus']]) {
       expect(cmdFleetMapMessages(args)).toBe(2);
     }
-    expect(err).toHaveBeenCalledTimes(23);
+    expect(err).toHaveBeenCalledTimes(24);
     expect(cmdFleetMapMessages(['--json', '--limit', '5'])).toBe(0);
     expect(JSON.parse(out.mock.lastCall![0])).toMatchObject({ schema: 'fleet.map-messages.v1', version: 1 });
     expect(cmdFleetMapMessages(['--json', '--before', '1h'])).toBe(0);
     expect(cmdFleetMapMessages(['--json', '--kind', 'ask', '--from', 'claude', '--contains', 'docs',
-      '--channel', 'build', '--in-reply-to', 'm1', '--id', 'm2', '--agent', 'claude', '--with', 'codex',
+      '--channel', 'build', '--topic', 'general', '--in-reply-to', 'm1', '--id', 'm2', '--agent', 'claude', '--with', 'codex',
       '--exclude-from', 'leader', '--priority', 'P2', '--job', 'RQ-ONE-1', '--thread', 'build',
       '--body-kind', 'note', '--to', 'leader', '--result', 'failed'])).toBe(0);
     expect(JSON.parse(out.mock.lastCall![0])).toMatchObject({ schema: 'fleet.map-messages.v1' });

@@ -1,4 +1,4 @@
-import { NODE_FLEET_USAGE, NODE_FLEET_VERBS } from './node-fleet-usage.js';
+import { NODE_FLEET_USAGE, NODE_FLEET_VERBS, nodeFleetVerbUsage } from './node-fleet-usage.js';
 
 /** `bootstrap` is planning only: no provisioning, host inspection, credentials, or registry I/O.
  * The other verbs (see node-fleet.ts) are the local node registry, router and job leases.
@@ -25,6 +25,85 @@ export function nodeBootstrapPlan() {
 }
 
 const USAGE = 'Usage: phm node bootstrap --dry-run [--json]';
+
+const NODE_POOL_HEADER = 'Multi-Mac pool (explicit team SSH aliases only):';
+const NODE_HELP_POINTER = 'All node commands: phm node --help';
+
+/** The non-fleet node commands, one line each, exactly as `phm node --help`
+ * lists them. Per-verb help shows only the matching lines, so the two can
+ * never drift apart. */
+const NODE_EXTRA_USAGE = `phm node pool --role primary|backup --node <id> --owner <scope> --primary <alias> --backup <alias> --json
+phm node join [--node <id>] --owner <scope> --primary <alias> --backup <alias> --json
+phm node join --json (repeat on an already configured Mac)
+phm node watch [--once] --json
+phm node worker --runner /absolute/host-owned-runner [--light] --json
+phm node run-once [--json] < request.json (reviewed runner stdin endpoint)
+phm node light restock [--apply] --json (bounded muse slice; preview by default)
+phm node light status --json (observed completions)
+phm node light run (fixed recipe runner stdin protocol)
+phm node rpc --json (SSH stdin endpoint)
+phm node lanes [--json] (local oMLX lane plan: model pick, caps, backoff)
+phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json] (measured agents runnable now per harness)
+phm node measure [--json] (print the measured --capacity sample for phm node beat)
+phm node route --capacity <file>... --costs <file> --jobs <file> [--outcomes <file>] [--outcomes-ledger] [--runs-dir <dir>] [--nodes <file>] [--exhausted <p,p>] [--json] (node, provider, model scoring; --outcomes-ledger derives lane merge tallies from metrics/jobs.jsonl)
+phm node self-update [--owner <scope>] [--target <x.y.z>] [--json] (plan only: per-node phm version drift)
+phm node bridge [--owner <scope>] [--apply] [--json] (ready.tsv rows that would offload to nodes and why; dry run by default)`;
+
+/** Usage lines for the given extra verbs, in command-list order. */
+function extraUsageLines(...verbs: string[]): string {
+  return NODE_EXTRA_USAGE.split('\n')
+    .filter(line => verbs.some(verb => line.startsWith(`phm node ${verb} `)))
+    .join('\n');
+}
+
+/** The pool enrollment cluster: config, join, watch, worker and the runner
+ * stdin endpoints — the commands a multi-Mac setup runs together. */
+const NODE_POOL_USAGE = `${NODE_POOL_HEADER}\n${extraUsageLines('pool', 'join', 'watch', 'worker', 'run-once', 'rpc')}`;
+
+/**
+ * Help scoped to the verb the user asked about, so `phm node join --help`
+ * leads with join's usage instead of the whole command list. Returns null for
+ * bare or unknown verbs, which keep the full list. Usage texts that live in
+ * the delegated modules are imported lazily: `phm node --help` itself never
+ * loads them.
+ */
+async function scopedNodeHelp(
+  verb: string | undefined,
+  args: string[],
+  fleetVerb: (typeof NODE_FLEET_VERBS)[number] | undefined,
+): Promise<string | null> {
+  if (!verb || verb.startsWith('-')) return null;
+  const pointer = `\n\n${NODE_HELP_POINTER}`;
+  if (verb === 'join' && (args.includes('--primary') || args.includes('--backup'))) {
+    return `${NODE_POOL_USAGE}${pointer}`;
+  }
+  if (fleetVerb) {
+    const usage = nodeFleetVerbUsage(fleetVerb);
+    if (usage) return `${usage}${pointer}`;
+  }
+  switch (verb) {
+    case 'bootstrap':
+      return `${USAGE}\nbootstrap is a planning stub: no VM creation, login, or registry calls.${pointer}`;
+    case 'capacity':
+    case 'route':
+      return `${(await import('./node-capacity.js')).NODE_CAPACITY_USAGE}${pointer}`;
+    case 'measure':
+      return `${(await import('./node-measure.js')).NODE_MEASURE_USAGE}${pointer}`;
+    case 'self-update':
+      return `${(await import('./node-self-update.js')).SELF_UPDATE_USAGE}${pointer}`;
+    case 'pool':
+    case 'watch':
+    case 'worker':
+    case 'run-once':
+    case 'rpc':
+      return `${NODE_POOL_USAGE}${pointer}`;
+    case 'light':
+    case 'lanes':
+      return `${extraUsageLines(verb)}${pointer}`;
+    default:
+      return null;
+  }
+}
 
 export async function cmdNode(args: string[]): Promise<number> {
   if (args[0] === 'run-once' && !args.includes('--help') && !args.includes('-h')) {
@@ -77,23 +156,12 @@ export async function cmdNode(args: string[]): Promise<number> {
   }
   const fleetVerb = NODE_FLEET_VERBS.find(verb => verb === args[0]);
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`${USAGE}\nbootstrap is a planning stub: no VM creation, login, or registry calls.\n\n${NODE_FLEET_USAGE}\n\nMulti-Mac pool (explicit team SSH aliases only):
-phm node pool --role primary|backup --node <id> --owner <scope> --primary <alias> --backup <alias> --json
-phm node join [--node <id>] --owner <scope> --primary <alias> --backup <alias> --json
-phm node join --json (repeat on an already configured Mac)
-phm node watch [--once] --json
-phm node worker --runner /absolute/host-owned-runner [--light] --json
-phm node run-once [--json] < request.json (reviewed runner stdin endpoint)
-phm node light restock [--apply] --json (bounded muse slice; preview by default)
-phm node light status --json (observed completions)
-phm node light run (fixed recipe runner stdin protocol)
-phm node rpc --json (SSH stdin endpoint)
-phm node lanes [--json] (local oMLX lane plan: model pick, caps, backoff)
-phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json] (measured agents runnable now per harness)
-phm node measure [--json] (print the measured --capacity sample for phm node beat)
-phm node route --capacity <file>... --costs <file> --jobs <file> [--outcomes <file>] [--outcomes-ledger] [--runs-dir <dir>] [--nodes <file>] [--exhausted <p,p>] [--json] (node, provider, model scoring; --outcomes-ledger derives lane merge tallies from metrics/jobs.jsonl)
-phm node self-update [--owner <scope>] [--target <x.y.z>] [--json] (plan only: per-node phm version drift)
-phm node bridge [--owner <scope>] [--apply] [--json] (ready.tsv rows that would offload to nodes and why; dry run by default)`);
+    // `bridge` owns its --help text (it adds the dry-run note); every other
+    // verb gets help scoped to what was asked. Bare and unknown verbs keep
+    // the full command list.
+    if (args[0] === 'bridge') return (await import('./node-bridge.js')).cmdNodeBridge(args.slice(1));
+    const help = await scopedNodeHelp(args[0], args, fleetVerb);
+    console.log(help ?? `${USAGE}\nbootstrap is a planning stub: no VM creation, login, or registry calls.\n\n${NODE_FLEET_USAGE}\n\n${NODE_POOL_HEADER}\n${NODE_EXTRA_USAGE}`);
     return 0;
   }
   // `beat --watch` / `renew --watch` are dispatcher-level keep-alives, not

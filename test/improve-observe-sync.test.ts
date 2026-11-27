@@ -12,6 +12,7 @@ import {
   syncCloudOutcomeObservations,
 } from '../src/core/improve/observe-sync.js';
 import type { CloudTaskOutcome, CloudTaskV1 } from '../src/core/cloud/types.js';
+import type { DevinTaskV1 } from '../src/core/devin/types.js';
 import type { FleetMergeStateRead, FleetMergeStateV1 } from '../src/core/fleet/fleet-merge-state.js';
 
 const M1 = 'a'.repeat(40), M2 = 'b'.repeat(40), M3 = 'c'.repeat(40);
@@ -48,6 +49,13 @@ const superseded = (over: { outcome?: Partial<CloudTaskOutcome> } & Record<strin
   supersededBy: { repo: REPO, number: 77 },
   ...over,
 });
+
+/** A Devin-lane task: the same PR/intake shapes, but no `outcome` block at all. */
+const devinTask = (over: Record<string, unknown> = {}): DevinTaskV1 => ({
+  id: 'dv_20261126T0100_abcdef', repo: REPO, state: 'merged',
+  pr: { number: 5, url: `https://github.com/${REPO}/pull/5`, state: 'merged', draft: false, title: 't' },
+  ...over,
+} as unknown as DevinTaskV1);
 
 /** The fleet merge-state record cloud intake's proposal produced (only the fields the fold reads). */
 const fleetRecord = (over: Record<string, unknown> = {}): FleetMergeStateV1 => ({
@@ -228,6 +236,43 @@ describe('syncCloudOutcomeObservations', () => {
     }
     // Only the carrier re-key was appended across all four passes.
     expect(records().filter((r) => r.type === 'pr' && r.proposalId === '1111111111').map((r) => (r as { number: number }).number)).toEqual([5, 77]);
+  });
+
+  it('observes a Devin-lane merge and standing revert through the revert journal', () => {
+    write(...reg('1111111111'));
+    // No outcome block on a Devin task: the journal supplies mergeSha and the revert verdict.
+    const res = sync({ devinTasks: () => [devinTask()], reverts: () => revertRead([revertRecord()]) });
+    expect(res).toMatchObject({ matched: 1, appended: 2, merged: 1, reverted: 1 });
+    const obs = records().filter((r): r is LedgerRecord & { type: 'observed' } => r.type === 'observed');
+    expect(obs.map((o) => [o.observation, o.sha])).toEqual([['merged', M1], ['reverted', R1]]);
+  });
+
+  it('re-keys and observes a Devin task through its fleet merge-state record', () => {
+    write(...reg('1111111111'));
+    const t = devinTask({
+      pr: { number: 5, url: `https://github.com/${REPO}/pull/5`, state: 'closed', draft: false, title: 't' },
+      supersededBy: { repo: REPO, number: 77 },
+      intake: { headSha: 'a'.repeat(40), proposalId: 'prop-1', diffHash: null, refused: null, at: '2026-11-25T00:00:00Z' },
+    });
+    const res = sync({
+      devinTasks: () => [t],
+      fleetState: (key: string): FleetMergeStateRead => (key === 'prop-1' ? fleetOk(fleetRecord()) : { state: 'missing' }),
+    });
+    expect(res).toMatchObject({ matched: 1, appended: 2, merged: 1, reverted: 0, rekeyed: 1 });
+    expect(records().at(-1)).toMatchObject({ type: 'observed', observation: 'merged', sha: LAND });
+  });
+
+  it('appends nothing for a Devin task whose PR has no checkout-free evidence', () => {
+    write(...reg('1111111111'));
+    // Merged PR but no outcome block, no supersede, no journal record: unknown stays unknown.
+    const res = sync({ devinTasks: () => [devinTask()] });
+    expect(res).toMatchObject({ matched: 0, appended: 0, merged: 0, reverted: 0 });
+  });
+
+  it('still observes cloud tasks when the Devin store is unreadable', () => {
+    write(...reg('1111111111'));
+    const res = sync({ tasks: () => [task()], devinTasks: () => { throw new Error('store down'); } });
+    expect(res).toMatchObject({ matched: 1, appended: 1, merged: 1 });
   });
 });
 

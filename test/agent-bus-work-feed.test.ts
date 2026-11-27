@@ -453,6 +453,51 @@ describe('work-feed view filters', () => {
     expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['room-a']);
   });
 
+  it('keeps jobs announced to group:<room>:<topic> under the exact topic component', () => {
+    const result = okResult([
+      viewJob({ id: 'release-general', to: 'group:release:general', updatedAt: 500 }),
+      viewJob({ id: 'release-deploy', to: 'group:release:deploy', updatedAt: 400 }),
+      viewJob({ id: 'ops-deploy', to: 'group:ops:deploy', updatedAt: 300 }),
+      viewJob({ id: 'bare-room', to: 'group:release', updatedAt: 200 }),
+      viewJob({ id: 'deep-label', to: 'group:release:deploy:extra', updatedAt: 150 }),
+      viewJob({ id: 'empty-room', to: 'group::deploy', updatedAt: 100 }),
+      viewJob({ id: 'bad-room', to: 'group:Release:deploy', updatedAt: 90 }),
+      viewJob({ id: 'direct', to: 'agent:nova', updatedAt: 80 }),
+      viewJob({ id: 'leaders', to: 'leaders', updatedAt: 70 }),
+    ]);
+    // The topic component matches across every room — the same
+    // groupAddressTopicOf parse work next --topic and comms bus next --topic
+    // apply on the raw routing label.
+    expect(ids(projectBusWorkFeedView(result, { topic: 'deploy' }))).toEqual(['release-deploy', 'ops-deploy']);
+    expect(ids(projectBusWorkFeedView(result, { topic: 'general' }))).toEqual(['release-general']);
+    expect(ids(projectBusWorkFeedView(result, { topic: 'ghost' }))).toEqual([]);
+    // Only a well-formed two-component group address carries a topic: a bare
+    // group:<room>, a deeper label, an empty or malformed component and every
+    // non-group label resolve to no topic and never match.
+    for (const id of ['bare-room', 'deep-label', 'empty-room', 'bad-room', 'direct', 'leaders']) {
+      for (const topic of ['deploy', 'general', 'release', 'extra']) {
+        expect(ids(projectBusWorkFeedView(result, { topic }))).not.toContain(id);
+      }
+    }
+    // The match is exact and case-sensitive like every other feed filter.
+    expect(ids(projectBusWorkFeedView(result, { topic: 'Deploy' }))).toEqual([]);
+    expect(ids(projectBusWorkFeedView(result, { topic: 'deploy2' }))).toEqual([]);
+    // It composes with --channel into one room AND one topic, and holds
+    // still regroup under the shown jobs only.
+    expect(ids(projectBusWorkFeedView(result, { channel: 'release', topic: 'deploy' }))).toEqual(['release-deploy']);
+    expect(ids(projectBusWorkFeedView(result, { channel: 'ops', topic: 'deploy' }))).toEqual(['ops-deploy']);
+    expect(ids(projectBusWorkFeedView(result, { channel: 'release', topic: 'general' }))).toEqual(['release-general']);
+    const claims: BusWorkFeedClaims = { source: 'available', truncated: false, holds: [
+      { jobId: 'release-deploy', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:x' },
+      { jobId: 'ops-deploy', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:y' },
+    ] };
+    const view = projectBusWorkFeedView(okResult(result.status === 'ok' ? result.jobs : [], claims), { topic: 'deploy' });
+    expect(ids(view)).toEqual(['release-deploy', 'ops-deploy']);
+    expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['release-deploy', 'ops-deploy']);
+  });
+
   it('keeps jobs whose newest work.result citation carries the --result outcome', () => {
     const report = (outcome: 'reserved' | 'admitted' | 'complete' | 'failed') =>
       ({ id: 'm-r', from: 'agent:worker', outcome, receivedAt: 150 });
@@ -606,6 +651,58 @@ describe('work-feed view filters', () => {
         writeFileSync(join(bad, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
         expect(shown('atlas', bad)).toEqual([]);
         expect(shown('agent:atlas', bad)).toEqual(['handle']);
+      } finally { rmSync(bad, { recursive: true, force: true }); }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('matches --exclude-owner under the same identity-label rule, inverted', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bus-feed-exclude-owner-'));
+    try {
+      expect(registerAgentIdentity({ handle: 'atlas', aliases: ['a-cloud'] }, { root }).status).toBe('created');
+      expect(registerAgentIdentity({ handle: 'nova' }, { root }).status).toBe('created');
+      const result = okResult([
+        viewJob({ id: 'handle', owner: 'agent:atlas', updatedAt: 400 }),
+        viewJob({ id: 'alias', owner: 'a-cloud', updatedAt: 300 }),
+        viewJob({ id: 'caseenv', owner: 'Atlas', updatedAt: 200 }),
+        viewJob({ id: 'other', owner: 'agent:nova', updatedAt: 100 }),
+      ]);
+      const shown = (owner: string, at: string = root): string[] => {
+        const view = projectBusWorkFeedView(result, { excludeOwnerMatch: busWorkFeedOwnerMatcher(owner, { root: at }) });
+        if (view.status !== 'ok') throw new Error('expected an ok view');
+        return view.jobs.map(job => job.id).sort();
+      };
+      // atlas and every spelling of her identity are excluded — the
+      // case-folded 'Atlas' owner label still resolves to her identity, so
+      // only nova's job survives.
+      for (const ref of ['atlas', 'a-cloud', 'agent:atlas']) {
+        expect(shown(ref)).toEqual(['other']);
+      }
+      // 'Atlas' names no registered label exactly, so as an exclude ref it
+      // keeps exact-label matching: only the job literally owned 'Atlas'
+      // drops — the identity's handle and alias announcements survive.
+      expect(shown('Atlas')).toEqual(['alias', 'handle', 'other']);
+      expect(shown('ghost')).toEqual(['alias', 'caseenv', 'handle', 'other']);
+      // The pair composes include-then-exclude like every sender filter.
+      const both = projectBusWorkFeedView(result, {
+        ownerMatch: busWorkFeedOwnerMatcher('atlas', { root }),
+        excludeOwnerMatch: busWorkFeedOwnerMatcher('atlas', { root }),
+      });
+      expect(ids(both)).toEqual([]);
+      const narrowed = projectBusWorkFeedView(result, {
+        ownerMatch: busWorkFeedOwnerMatcher('atlas', { root }),
+        excludeOwnerMatch: busWorkFeedOwnerMatcher('nova', { root }),
+      });
+      expect(ids(narrowed)).toEqual(['handle', 'alias', 'caseenv']);
+      // An unreadable registry never widens: 'atlas' falls back to the
+      // literal owner label, so only a job literally owned 'atlas' would
+      // drop — here none does, while the literal 'agent:atlas' ref still
+      // excludes its own row.
+      const bad = mkdtempSync(join(tmpdir(), 'bus-feed-exclude-owner-bad-'));
+      try {
+        mkdirSync(join(bad, 'agent-identities'), { mode: 0o700 });
+        writeFileSync(join(bad, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+        expect(shown('atlas', bad)).toEqual(['alias', 'caseenv', 'handle', 'other']);
+        expect(shown('agent:atlas', bad)).toEqual(['alias', 'caseenv', 'other']);
       } finally { rmSync(bad, { recursive: true, force: true }); }
     } finally { rmSync(root, { recursive: true, force: true }); }
   });

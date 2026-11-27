@@ -1,19 +1,63 @@
-/** Pure operation contract. No transport, config writes or merge authority. */
-import type { ProtectedPrObservedBypass, ProtectedRemoteRepositoryExpectation } from '../types.js';
+/** Pure operation contract and shared autonomy validation helpers. No transport, config writes or merge authority. */
+import type { AshlrConfig, ProtectedPrObservedBypass, ProtectedRemoteRepositoryExpectation } from '../types.js';
 
 export const PROTECTED_PR_HANDOFF_OPERATION = 'protected-pr-handoff-v1' as const;
 const MAX_ENTRIES = 100;
 
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return null;
-  if (!Reflect.ownKeys(value).every((key) => {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    return typeof key === 'string' && descriptor?.enumerable === true && Object.hasOwn(descriptor, 'value');
-  })) return null;
-  return value as Record<string, unknown>;
+export const AUTONOMY_RISK_ORDER: Readonly<Record<'low' | 'medium' | 'high', number>> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+};
+
+export function configuredAutoMergeMaxRisk(cfg: AshlrConfig): 'low' | 'medium' | 'high' {
+  const value = cfg.foundry?.autoMerge?.maxRisk;
+  return value === 'medium' || value === 'high' ? value : 'low';
 }
+
+export function strictPlainRecord(value: unknown): Record<string, unknown> | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    if (!Reflect.ownKeys(value).every((key) => {
+      if (typeof key !== 'string') return false;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return descriptor?.enumerable === true && Object.hasOwn(descriptor, 'value');
+    })) return null;
+    return value as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+export function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[] | ReadonlySet<string>,
+): boolean {
+  const keys = Object.keys(value);
+  if (expected instanceof Set) {
+    return keys.length === expected.size && keys.every((key) => expected.has(key));
+  }
+  const expectedList = expected as readonly string[];
+  return keys.length === expectedList.length && expectedList.every((key) => Object.hasOwn(value, key));
+}
+
+export function isCanonicalIsoTimestamp(value: unknown, maxLength?: number): value is string {
+  if (typeof value !== 'string') return false;
+  if (maxLength !== undefined && value.length > maxLength) return false;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) && new Date(ms).toISOString() === value;
+}
+
+export function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+export function finiteNumberOrNull(value: unknown): number | null {
+  return isFiniteNumber(value) ? value : null;
+}
+
 function list(value: unknown): unknown[] | null {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > MAX_ENTRIES) return null;
   const keys = Reflect.ownKeys(value);
@@ -24,9 +68,6 @@ function list(value: unknown): unknown[] | null {
     return descriptor?.enumerable === true && Object.hasOwn(descriptor, 'value');
   })) return null;
   return value;
-}
-function exact(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 }
 function text(value: unknown, max: number): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= max && value.trim() === value &&
@@ -43,8 +84,8 @@ export function normalizeProtectedPrObservedBypass(value: unknown): ProtectedPrO
   const seen = new Set<string>();
   const output: ProtectedPrObservedBypass[] = [];
   for (const item of rows) {
-    const actor = record(item);
-    if (!actor || !exact(actor, ['rulesetId', 'sourceType', 'source', 'actorType', 'actorId', 'bypassMode']) ||
+    const actor = strictPlainRecord(item);
+    if (!actor || !hasExactKeys(actor, ['rulesetId', 'sourceType', 'source', 'actorType', 'actorId', 'bypassMode']) ||
       !id(actor['rulesetId']) || !text(actor['source'], 512) || !id(actor['actorId']) ||
       (actor['sourceType'] !== 'Repository' && actor['sourceType'] !== 'Organization' && actor['sourceType'] !== 'Enterprise') ||
       actor['actorType'] !== 'RepositoryRole' ||
@@ -65,8 +106,8 @@ export function normalizeProtectedRemoteRegistry(value: unknown): ProtectedRemot
   const names = new Set<string>(); const identities = new Set<string>();
   const output: ProtectedRemoteRepositoryExpectation[] = [];
   for (const item of rows) {
-    const entry = record(item);
-    if (!entry || !exact(entry, ['nameWithOwner', 'repositoryId', 'defaultBranch', 'operation', 'branchProtection', 'requiredChecks', 'observedRulesetBypassActors']) ||
+    const entry = strictPlainRecord(item);
+    if (!entry || !hasExactKeys(entry, ['nameWithOwner', 'repositoryId', 'defaultBranch', 'operation', 'branchProtection', 'requiredChecks', 'observedRulesetBypassActors']) ||
       !text(entry['nameWithOwner'], 512) || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(entry['nameWithOwner']) ||
       !text(entry['repositoryId'], 256) || !text(entry['defaultBranch'], 256) ||
       entry['operation'] !== PROTECTED_PR_HANDOFF_OPERATION || typeof entry['branchProtection'] !== 'boolean' ||
@@ -75,8 +116,8 @@ export function normalizeProtectedRemoteRegistry(value: unknown): ProtectedRemot
     // still decides exact authority. Do not retain arbitrary nested config data.
     const checks: ProtectedRemoteRepositoryExpectation['requiredChecks'] = [];
     for (const value of list(entry['requiredChecks'])!) {
-      const check = record(value);
-      if (!check || !exact(check, ['context', 'appId']) || !text(check['context'], 256) ||
+      const check = strictPlainRecord(value);
+      if (!check || !hasExactKeys(check, ['context', 'appId']) || !text(check['context'], 256) ||
           !(id(check['appId']) || typeof check['appId'] === 'number' && Number.isSafeInteger(check['appId']) && check['appId'] > 0)) return null;
       checks.push({ context: check['context'], appId: String(check['appId']) });
     }
@@ -94,7 +135,7 @@ export function normalizeProtectedRemoteRegistry(value: unknown): ProtectedRemot
 
 /** Both fields are paired: malformed/new operation data cannot become legacy authority. */
 export function protectedPrOperationShape(value: unknown): 'legacy' | 'handoff' | 'invalid' {
-  const evidence = record(value);
+  const evidence = strictPlainRecord(value);
   if (!evidence) return 'invalid';
   const operation = Object.hasOwn(evidence, 'operation');
   const actors = Object.hasOwn(evidence, 'observedRulesetBypassActors');
@@ -106,7 +147,7 @@ export function protectedPrOperationShape(value: unknown): 'legacy' | 'handoff' 
 
 /** Read-only summary compatibility with CURRENT configured PR routing. */
 export function protectedPrEvidenceMatchesRegistry(value: unknown, configured: unknown): boolean {
-  const evidence = record(value);
+  const evidence = strictPlainRecord(value);
   const registry = normalizeProtectedRemoteRegistry(configured);
   if (!evidence || !registry || protectedPrOperationShape(evidence) !== 'handoff' ||
       typeof evidence['nameWithOwner'] !== 'string') return false;
@@ -117,8 +158,8 @@ export function protectedPrEvidenceMatchesRegistry(value: unknown, configured: u
       !list(evidence['requiredCheckBindings'])) return false;
   const observed: string[] = [];
   for (const item of list(evidence['requiredCheckBindings'])!) {
-    const check = record(item);
-    if (!check || !exact(check, ['context', 'appId']) || !text(check['context'], 256) || !id(check['appId'])) return false;
+    const check = strictPlainRecord(item);
+    if (!check || !hasExactKeys(check, ['context', 'appId']) || !text(check['context'], 256) || !id(check['appId'])) return false;
     observed.push(`${check['context']}\0${check['appId']}`);
   }
   if (observed.length > MAX_ENTRIES) return false;

@@ -5,7 +5,12 @@
  * (`phm fleet reverts --record` detections of fleet PRs). Keys are
  * `prKey(repo, number)`. A ledger outcome counts only while its last
  * observation is a revert, so a re-landed change is not in the set; the same
- * newest-record rule resolves recorded scan detections.
+ * newest-record rule resolves recorded scan detections. A cloud task's
+ * `revertedBy` is the one mutable claim here — only `phm improve observe`
+ * rewrites it — so where the scan journal already resolved the same PR's
+ * newest record as re-landed (`relandedBy` set), the task's stale flag
+ * yields: the append-only, scan-verified journal wins, the same rule
+ * observe-sync applies when it folds the two sources.
  *
  * The other half is the 72h-window revert detector the router reads:
  * `detectRevertOutcomes` / `revertOutcomeRecords` scan a default-branch
@@ -33,7 +38,21 @@ export function revertedPrKeys(
 ): Set<string> {
   const keys = new Set<string>();
   for (const o of scoreOutcomes(records)) if (o.reverted && o.pr) keys.add(prKey(o.pr.repository, o.pr.number));
-  for (const t of tasks) if (t.outcome?.revertedBy && t.pr) keys.add(prKey(t.repo, t.pr.number));
+  // The newest scan record per PR is the journal's freshest verdict on that
+  // merge. A task's revertedBy can only be cleared by a manual
+  // `phm improve observe` pass, so it stays positive after a re-land the
+  // journal has already recorded — where the two disagree the journal's
+  // reland resolution wins and the stale flag contributes nothing. A PR the
+  // journal never scanned keeps the task's recorded claim, and a corrupt
+  // ledger resolves nothing at all.
+  const newestScan = new Map<string, RevertOutcomeRecord>();
+  if (scan.intact) for (const record of scan.records) newestScan.set(record.pr, record);
+  for (const t of tasks) {
+    if (!t.outcome?.revertedBy || !t.pr) continue;
+    const key = prKey(t.repo, t.pr.number);
+    if (newestScan.get(key)?.relandedBy != null) continue;
+    keys.add(key);
+  }
   // Recorded `phm fleet reverts --record` detections: git-history reverts of
   // fleet PRs that no jobs-ledger or cloud-task row ever named. A non-intact
   // ledger contributes nothing — corrupt evidence withholds nothing.

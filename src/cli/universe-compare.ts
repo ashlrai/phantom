@@ -1,5 +1,7 @@
 import { resolve } from 'node:path';
+import { isUniverseId } from '../core/universe/artifacts.js';
 import { readUniverseCampaignComparison, type UniverseCampaignComparison, type UniverseComparisonArm } from '../core/universe/index.js';
+import { containsControlChars as controls } from '../core/universe/input-guards.js';
 
 const USAGE = `usage: ashlr universe compare <baseline> <challenger>
        [--root <private directory>] [--json]
@@ -17,13 +19,6 @@ Exit codes: 0 healthy comparison-eligible, 1 incomplete/unmatched, 2 invalid arg
 
 class UsageError extends Error {}
 interface Options { baseline?: string; challenger?: string; root?: string; json: boolean; help: boolean }
-
-function controls(value: string): boolean {
-  return [...value].some((character) => {
-    const code = character.charCodeAt(0);
-    return code < 32 || (code >= 127 && code <= 159);
-  });
-}
 
 function parse(args: string[]): Options {
   const positional: string[] = [];
@@ -50,7 +45,7 @@ function parse(args: string[]): Options {
     else positional.push(arg);
   }
   if (positional.length > 2 || (!help && positional.length !== 2)) throw new UsageError('compare requires two campaign ids');
-  if (positional.some((id) => !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id))) throw new UsageError('Invalid Universe campaign id');
+  if (positional.some((id) => !isUniverseId(id))) throw new UsageError('Invalid Universe campaign id');
   const [baseline, challenger] = positional;
   if (baseline !== undefined && baseline === challenger) throw new UsageError('Comparison requires two distinct campaign ids');
   return { baseline, challenger, root, json, help };

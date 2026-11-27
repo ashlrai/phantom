@@ -49,6 +49,33 @@ function readTelemetry(): Array<Record<string, unknown>> {
     .filter((row) => row['action'] === 'self-improve:written');
 }
 
+/** Seed one failed swarm whose task carries `error` into ~/.ashlr/swarms/. */
+function seedFailedSwarm(id: string, error: string): void {
+  const dir = path.join(tmpHome, '.ashlr', 'swarms');
+  fs.mkdirSync(dir, { recursive: true });
+  const swarm = {
+    id,
+    goal: 'fix the flaky test',
+    specId: null,
+    project: null,
+    createdAt: FIXED_ISO,
+    updatedAt: FIXED_ISO,
+    budget: { maxSteps: 50, maxTokens: 100000, maxUsd: 5, maxWallClockMs: 600000 },
+    usage: { tokensIn: 1000, tokensOut: 500, steps: 3, estCostUsd: 0 },
+    parallel: 1,
+    status: 'failed',
+    plan: { specId: null, goal: 'fix the flaky test', tasks: [{ id: `${id}-t1`, phase: 'build' }] },
+    tasks: [{ id: `${id}-t1`, phase: 'build', status: 'failed', error }],
+  };
+  fs.writeFileSync(path.join(dir, `${id}.json`), JSON.stringify(swarm, null, 2), 'utf8');
+}
+
+function readHarnessState(): { hypotheses?: Array<{ id: string }> } {
+  const statePath = path.join(tmpHome, '.ashlr', 'learn', 'harness', 'state.json');
+  if (!fs.existsSync(statePath)) return {};
+  return JSON.parse(fs.readFileSync(statePath, 'utf8')) as { hypotheses?: Array<{ id: string }> };
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(FIXED_MS);
@@ -258,5 +285,56 @@ describe('runReflectionCycle', () => {
     const result = await runReflectionCycle(cfg, {});
     expect(result.report).toBeDefined();
     expect(result.report.swarmsAnalyzed).toBe(0);
+  });
+
+  it('records recurring-failure tuning suggestions as OPEN harness hypotheses', async () => {
+    const cfg = makeCfg();
+    // Two swarms failing the same way -> one recurring failure cluster ->
+    // deriveTuning emits a playbook.failure.* suggestion ->
+    // harnessHypothesesFromTuning turns it into a prompt hypothesis.
+    const error = "TypeError: cannot read properties of undefined (reading 'x')";
+    seedFailedSwarm('s-fail-1', error);
+    seedFailedSwarm('s-fail-2', error);
+
+    const result = await runReflectionCycle(cfg, {});
+
+    expect(result.tuning).toBeDefined();
+    expect(result.tuning!.suggestions).toBeGreaterThanOrEqual(1);
+    expect(result.tuning!.hypothesesAccepted.length).toBeGreaterThanOrEqual(1);
+
+    // The accepted ids are persisted OPEN in the harness state file — DATA
+    // only; nothing is applied (experiments + adoption gate are separate).
+    const openIds = (readHarnessState().hypotheses ?? []).map((h) => h.id);
+    for (const id of result.tuning!.hypothesesAccepted) {
+      expect(id).toMatch(/^tuning-[0-9a-f]{16}$/);
+      expect(openIds).toContain(id);
+    }
+  });
+
+  it('a repeat cycle accepts no duplicate hypotheses (deterministic ids dedupe)', async () => {
+    const cfg = makeCfg();
+    const error = 'Error: build failed at step 3';
+    seedFailedSwarm('s-fail-3', error);
+    seedFailedSwarm('s-fail-4', error);
+
+    const first = await runReflectionCycle(cfg, {});
+    expect(first.tuning!.hypothesesAccepted.length).toBeGreaterThanOrEqual(1);
+
+    vi.setSystemTime(FIXED_MS + 60_000);
+    const second = await runReflectionCycle(cfg, {});
+    expect(second.tuning!.suggestions).toBe(first.tuning!.suggestions);
+    expect(second.tuning!.hypothesesAccepted).toHaveLength(0);
+  });
+
+  it('derives and records no tuning hypotheses when selfImprove is off', async () => {
+    const cfg = makeCfg({ selfImprove: false });
+    const error = 'Error: lint exploded';
+    seedFailedSwarm('s-fail-5', error);
+    seedFailedSwarm('s-fail-6', error);
+
+    const result = await runReflectionCycle(cfg, {});
+
+    expect(result.tuning).toBeUndefined();
+    expect(fs.existsSync(path.join(tmpHome, '.ashlr', 'learn', 'harness', 'state.json'))).toBe(false);
   });
 });

@@ -6,8 +6,9 @@
  * work, and joins each against the standing revert set so a merged-then-
  * reverted community change is visible evidence. Read-only: it runs `gh pr
  * list` and reads the local revert ledger; it never merges, records or
- * dispatches. Agent/model stay null — gh never records which agent produced
- * a change.
+ * dispatches. Agent is convention attribution (recorded branch/login
+ * convention, null when unmatched); model is always null — gh never
+ * records which model produced a change.
  */
 import { listOutsidePrOutcomes, type OutsidePrOutcomesV1 } from '../core/fleet/outside-pr-outcomes.js';
 
@@ -16,9 +17,10 @@ const usage = `Usage: phm fleet outside-outcomes [--days <n>] [--json]
 Merged outside-PR outcomes on fleet repos (default window: 30 days).
 Per repo: merged PRs outside work touched, each marked reverted yes/no/
 unknown against the standing revert ledger (unreadable ledger → unknown,
-never "not reverted"). Per author: merged and reverted counts; agent and
-model are always null — gh records only the PR author login. gh absent →
-sourceState "missing". Read-only.`;
+never "not reverted"). Per author: merged and reverted counts; per agent:
+the same tallies attributed by recorded branch/login convention (unmatched
+→ unattributed, never guessed); model is always null — gh records none.
+gh absent → sourceState "missing". Read-only.`;
 
 interface Parsed { json: boolean; days?: number; help: boolean }
 
@@ -45,12 +47,16 @@ function renderText(r: OutsidePrOutcomesV1): string {
     const reverted = repo.prs.filter((p) => p.reverted === 'yes').length;
     lines.push(`${repo.repo}: ${repo.prs.length} merged outside PR(s)${repo.state === 'degraded' ? ' (degraded)' : ''}${repo.hitLimit ? ' (hit gh limit)' : ''}, ${reverted} reverted.`);
     for (const pr of repo.prs) {
-      lines.push(`  #${pr.number} ${pr.title} — ${pr.author ?? 'unknown author'} — merged ${pr.mergedAt.slice(0, 10)} — reverted ${pr.reverted}`);
+      lines.push(`  #${pr.number} ${pr.title} — ${pr.author ?? 'unknown author'}${pr.agent !== null ? ` [${pr.agent}]` : ''} — merged ${pr.mergedAt.slice(0, 10)} — reverted ${pr.reverted}`);
     }
   }
   if (r.authors.length > 0) {
-    lines.push('Authors (agent/model never recorded by gh — null):');
+    lines.push('Authors (one login pushes work for many agents — attribution lives on the agents rollup):');
     for (const a of r.authors) lines.push(`  ${a.author ?? 'unknown'}: ${a.prs} merged, ${a.reverted} reverted.`);
+  }
+  if (r.agents.length > 0) {
+    lines.push('Agents (branch/login convention attribution; model never recorded):');
+    for (const a of r.agents) lines.push(`  ${a.agent ?? 'unattributed'}: ${a.prs} merged, ${a.reverted} reverted.`);
   }
   return lines.join('\n');
 }

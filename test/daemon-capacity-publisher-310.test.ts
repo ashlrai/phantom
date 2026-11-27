@@ -165,6 +165,28 @@ describe('daemon capacity publisher (c8)', () => {
     expect(h.published).toHaveLength(1);
   });
 
+  it('samples instead of deferring to a future-dated Verse snapshot', async () => {
+    const h = harness();
+    h.snapshot.current = foreign(h, -60_000);
+    h.deps.recordHistory = vi.fn(() => null);
+    const pub = createDaemonCapacityPublisher(cfg, h.deps);
+    expect((await pub.cycle()).state).toBe('published');
+    expect(h.started).toBe(1);
+    expect(h.deps.recordHistory).toHaveBeenCalledExactlyOnceWith(h.snapshot.current);
+  });
+
+  it('resamples its own future-dated snapshot after the clock moves backward', async () => {
+    const h = harness();
+    const pub = createDaemonCapacityPublisher(cfg, h.deps);
+    const first = await pub.cycle();
+    h.clock.now -= 60_000;
+    const second = await pub.cycle();
+    expect(second.state).toBe('published');
+    expect(second.lastPublishedAt).toBe(new Date(h.clock.now).toISOString());
+    expect(second.lastPublishedAt).not.toBe(first.lastPublishedAt);
+    expect(h.started).toBe(2);
+  });
+
   it('re-samples its own snapshot only every SAMPLE_EVERY_MS (well inside the 15-minute staleness limit)', async () => {
     const h = harness();
     const pub = createDaemonCapacityPublisher(cfg, h.deps);

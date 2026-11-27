@@ -21,6 +21,8 @@
  * fallback, reserves, resets or dispatch.
  */
 
+import { clamp01, isFiniteNumber } from './validation.js';
+
 export const RECORDED_DEADLINE_EVIDENCE_PROVENANCE = {
   sourcePr: 5952,
   sourceSha: '3d6c8fb7c7f7d52655fb3e0f13ef239686f7b886',
@@ -54,8 +56,6 @@ export interface RecordedDeadlineEvidence {
   provenance: typeof RECORDED_DEADLINE_EVIDENCE_PROVENANCE;
 }
 
-const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-
 export function recordedDeadlineEvidence(input: RecordedDeadlineInput): RecordedDeadlineEvidence {
   const { asOfMs, carryover } = input;
   if (!isFiniteNumber(asOfMs)) throw new RangeError('asOfMs must be a finite number');
@@ -85,7 +85,7 @@ export function recordedDeadlineEvidence(input: RecordedDeadlineInput): Recorded
   }
   // Candidates are distinct by construction (expiry < reset), so ordering is total.
   const picked = candidates.reduce((a, b) => (b.at < a.at ? b : a));
-  const urgency = Math.max(0, Math.min(1, 1 - (picked.at - asOfMs) / windowMs));
+  const urgency = clamp01(1 - (picked.at - asOfMs) / windowMs);
   return {
     deadlineMs: picked.at,
     reason: picked.reason,

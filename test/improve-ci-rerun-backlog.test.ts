@@ -89,7 +89,7 @@ describe('ciRerunBacklogItems', () => {
     expect(item.title).toContain('alpha.test.ts');
     expect(item.prompt).toContain('3 recorded rerun verdicts concluded failure');
     expect(item.prompt).toContain('1 passed, 1 inconclusive');
-    expect(item.prompt).toContain('5 rerun attempt rows');
+    expect(item.prompt).toContain('5 distinct rerun attempts');
     expect(item.prompt).toContain('3 distinct head(s)');
     expect(item.prompt).toContain('phm ci reruns');
     expect(item.prompt).toContain('phm ci baseline');
@@ -110,8 +110,39 @@ describe('ciRerunBacklogItems', () => {
       ]),
     });
     expect(items).toHaveLength(1);
-    expect(items[0]?.prompt).toContain('6 rerun attempt rows');
+    expect(items[0]?.prompt).toContain('6 distinct rerun attempts');
     expect(items[0]?.prompt).toContain('3 recorded rerun verdicts concluded failure');
+  });
+
+  it('counts the earliest receipt for each attempt before applying the window', async () => {
+    const shared = { at: daysAgo(1), repo: REPO, head: sha(7), runId: 7, pr: 7, outcome: 'attempt' as const, tests: [TEST_A, TEST_B] };
+    const expired = { ...shared, head: sha(8), runId: 8, at: daysAgo(8) };
+    const items = await ciRerunBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        ...failingVerdicts(),
+        { ...shared, at: daysAgo(0.5), repo: 'AshlrAI/Phantom' },
+        shared,
+        { ...expired, at: daysAgo(1) },
+        expired,
+      ]),
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.prompt).toContain('6 distinct rerun attempts');
+  });
+
+  it('does not let a replay bring an expired verdict back into the window', async () => {
+    const expired = rerun(REPO, TEST_A, sha(3), 13, 'fail', 8);
+    const items = await ciRerunBacklogItems({
+      repo: REPO, now: NOW,
+      journalPath: writeJournal([
+        ...rerun(REPO, TEST_A, sha(1), 11, 'fail', 1),
+        ...rerun(REPO, TEST_A, sha(2), 12, 'fail', 2),
+        { ...expired[2]!, at: daysAgo(0.5) },
+        ...expired,
+      ]),
+    });
+    expect(items).toEqual([]);
   });
 
   it('stays quiet below the recurring bar, on a single head, or outside the window', async () => {
@@ -140,6 +171,51 @@ describe('ciRerunBacklogItems', () => {
       journalPath: writeJournal([...rerun(REPO, TEST_C, sha(7), 26, 'pass', 1), ...rerun(REPO, TEST_C, sha(8), 27, 'inconclusive', 2)]),
     });
     expect(clean).toEqual([]);
+  });
+
+  it('waits for future-dated verdicts and call failures to enter the window', async () => {
+    const journalPath = writeJournal([
+      ...rerun(REPO, TEST_A, sha(1), 11, 'fail', 1),
+      ...rerun(REPO, TEST_A, sha(2), 12, 'fail', 2),
+      ...rerun(REPO, TEST_A, sha(3), 13, 'fail', -1),
+      ...Array.from({ length: 4 }, (_, i): Row => ({
+        at: daysAgo(-1), repo: REPO, head: sha(40 + i), runId: 40 + i, pr: 40 + i, outcome: 'failed',
+      })),
+    ]);
+    expect(await ciRerunBacklogItems({ repo: REPO, journalPath, now: NOW })).toEqual([]);
+    const items = await ciRerunBacklogItems({ repo: REPO, journalPath, now: new Date(daysAgo(-1)) });
+    expect(items.map(({ id }) => id.slice(0, -17)).sort()).toEqual(['ci-rerun-calls', 'ci-rerun-verdict']);
+  });
+
+  it('requires distinct runs and withholds conflicting per-test verdicts', async () => {
+    const rows = [
+      ...rerun(REPO, TEST_A, sha(1), 11, 'fail', 1),
+      ...rerun(REPO, TEST_A, sha(2), 12, 'fail', 2),
+    ];
+    const replay = { ...rows[2]!, at: daysAgo(0.5), repo: 'AshlrAI/Phantom' };
+    const third = rerun(REPO, TEST_A, sha(1), 13, 'fail', 3);
+    const discover = (evidence: Row[]) => ciRerunBacklogItems({
+      repo: REPO, journalPath: writeJournal(evidence), now: NOW,
+    });
+
+    expect(await discover([...rows, replay])).toEqual([]);
+    const items = await discover([...rows, replay, ...third]);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.prompt).toContain('3 recorded rerun verdicts concluded failure');
+    expect(await discover([...rows, ...third, { ...replay, verdict: 'pass' }, replay])).toEqual([]);
+    expect(await discover([...rows, ...third, { ...replay, test: undefined }])).toEqual([]);
+  });
+
+  it('omits disputed attempts from per-test backlog context', async () => {
+    const rows = [
+      ...rerun(REPO, TEST_A, sha(1), 11, 'fail', 1),
+      ...rerun(REPO, TEST_A, sha(2), 12, 'fail', 2),
+      ...rerun(REPO, TEST_A, sha(3), 13, 'fail', 3),
+    ];
+    const journalPath = writeJournal([...rows, { ...rows[0]!, at: daysAgo(0.5), test: TEST_B }]);
+    const items = await ciRerunBacklogItems({ repo: REPO, journalPath, now: NOW });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.prompt).toContain('2 distinct rerun attempts were recorded for the same test');
   });
 
   it('ignores verdict rows without a test id and rows for other repositories', async () => {
@@ -181,6 +257,30 @@ describe('ciRerunBacklogItems', () => {
     expect(item.prompt).toContain('4 failed rerun call(s) against 1 successful');
     expect(item.prompt).toContain('ci-reruns/status.json');
     expect(item.prompt).toContain('no-change');
+  });
+
+  it('counts each observed call result once and withholds conflicting receipts', async () => {
+    const failures: Row[] = [41, 42, 43, 44].map((runId) => ({
+      at: daysAgo(1), repo: REPO, head: sha(runId), runId, pr: runId, outcome: 'failed',
+    }));
+    const [first, second, third, fourth] = failures;
+    const success: Row = { ...first!, head: sha(45), outcome: 'ok' };
+    const replay = (row: Row): Row => ({ ...row, at: daysAgo(0.5), repo: 'AshlrAI/Phantom' });
+    const discover = (rows: Row[]) => ciRerunBacklogItems({
+      repo: REPO, now: NOW, journalPath: writeJournal(rows),
+    });
+
+    expect(await discover([first!, second!, replay(first!), replay(second!)])).toEqual([]);
+    const items = await discover([
+      ...failures, success, ...Array.from({ length: 4 }, () => replay(success)),
+      { ...third!, outcome: 'ok' },
+      { ...fourth!, outcome: 'ok', at: daysAgo(-1) },
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.prompt).toContain('3 failed rerun call(s) against 1 successful');
+    expect(await discover([
+      replay(first!), second!, third!, { ...first!, at: daysAgo(8) },
+    ])).toEqual([]);
   });
 
   it('keeps call failures quiet below the bar or when ok calls dominate', async () => {

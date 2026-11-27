@@ -36,23 +36,14 @@ import * as path from 'path';
 import * as os from 'os';
 
 // ---------------------------------------------------------------------------
-// Historical exports retained for API compatibility, not provider quotas.
+// Historical export retained for API compatibility, not provider quotas.
 // ---------------------------------------------------------------------------
 
 /**
- * @deprecated Historical estimates. Do not use these as provider limits or
- * zero-config routing defaults; use observed provider readings instead.
+ * @deprecated Historical estimate. Do not use this as a provider limit or
+ * zero-config routing default; use observed provider readings instead.
  */
-export const DEFAULT_5H_MESSAGE_CAP_PRO   = 900;
-export const DEFAULT_5H_MESSAGE_CAP_MAX5  = 4500;
-export const DEFAULT_5H_MESSAGE_CAP_MAX20 = 9000;
-
-/**
- * @deprecated Historical extrapolations, not observed weekly allowances.
- */
-export const DEFAULT_7D_MESSAGE_CAP_PRO   = DEFAULT_5H_MESSAGE_CAP_PRO   * Math.floor((7 * 24) / 5); // ≈30k
-export const DEFAULT_7D_MESSAGE_CAP_MAX5  = DEFAULT_5H_MESSAGE_CAP_MAX5  * Math.floor((7 * 24) / 5); // ≈150k
-export const DEFAULT_7D_MESSAGE_CAP_MAX20 = DEFAULT_5H_MESSAGE_CAP_MAX20 * Math.floor((7 * 24) / 5); // ≈300k
+export const DEFAULT_5H_MESSAGE_CAP_PRO = 900;
 
 // ---------------------------------------------------------------------------
 // Public types

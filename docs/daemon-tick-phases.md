@@ -54,23 +54,45 @@ writes only learning reports and append-only genome entries and does not take
 the outward mutation fence. On the same self-improvement cadence a
 `reward-sync` off-tick job folds the jobs-ledger tail into the append-only
 reward-signal ledger (`src/core/metrics/reward-feed.ts`), discounting merges
-the standing revert set proves did not hold. It takes the lane and dispatch
+the standing revert set proves did not hold. The fold reads the first
+`MERGED` or `CLOSED` verdict across `phase`, `state`, `outcome`, `status`,
+`result` and `conclusion`. A `merged` or `closed` event supplies the verdict
+when those fields contain only blanks, missing values or `unknown`.
+A standing revert requires
+an exclusive job claim on the merge's PR. The claim check uses the lowercase
+`owner/repo#n` key, so repository case and a trailing slash do not distinguish
+claims. Future-dated claims can contest attribution once their receipt time
+is reached. A standalone revert can contest a claim once both its receipt
+time and effective revert time are reached. A merge or close receipt can
+still establish a claim while its revert metadata is future-dated. Undated
+claims can still make attribution ambiguous.
+Ledger revert receipts with a PR link apply only to that PR, including links
+under `html_url`. An unparseable link supplies no revert evidence. A receipt
+without a PR link can still supply job-wide revert evidence.
+The fold takes the lane and dispatch
 time from the latest dispatch at or before the outcome, using GitHub's
 merge timestamp when available for a held merge. A closed-unmerged PR uses
 `closedAt` or `closed_at` to select the dispatch and bound CI timing. If
 neither field has a parseable time, the fold uses the receipt timestamp.
-Closures dated after the observation time are ignored. It skips jobs without
-an eligible dispatch. The job is best-effort, never throws, and writes only
+Merge or close receipts tied on both resolution time and receipt time
+retain all their PR claims. Conflicting claims withhold PR-specific revert
+attribution and CI timing, and conflicting repositories leave the reward's
+repository unknown. Replaying one of the tied receipts cannot break the tie.
+Closures dated after the observation time are ignored. The fold skips jobs
+without an eligible dispatch and jobs with an undated dispatch receipt, which
+could supersede a dated one. The job is best-effort, never throws, and writes only
 under `~/.ashlr/metrics`. A `skill-nudge`
 off-tick job on the same cadence folds the same tail into candidate shadow
 skill cards (`src/core/fleet/skill-nudge.ts`), discounting merges the
 standing revert set proves did not hold; it writes only candidate
 records under `~/.ashlr/skills`. An `empty-tag-sync` off-tick job on the
-same cadence folds the tail's windowed empty finishes into
+same cadence folds the tail's windowed worker empty finishes into
 `metrics/empty-tags.jsonl` and the matching dupcheck outcome rows
 (`src/core/fleet/empty-tag-sync.ts`) — the records `phm jobs empty
 --record` appends by hand, now automatic; it is best-effort, never throws,
-and writes only under the runs dir. A `visit-sync` off-tick job on the
+and writes only under the runs dir. Precheck skips stay out of both
+the log-classification budget and the dupcheck outcome feed.
+A `visit-sync` off-tick job on the
 same cadence folds the same jobs-ledger tail plus the live READY rows of
 `queue/router-queue.md` into the queue visit journal
 (`src/core/queue/visit-sync.ts`) — the records `phm queue visits-sync

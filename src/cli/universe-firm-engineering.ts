@@ -1,8 +1,8 @@
-import { canonical, digest, inspectPrivateDirectory } from '../core/universe/artifacts.js';
+import { canonical, digest, inspectPrivateDirectory, isSha256Hex } from '../core/universe/artifacts.js';
+import { containsControlChars, isCanonicalAbsolutePath } from '../core/universe/input-guards.js';
 import { readResourceJson } from '../core/resources/pool-runtime.js';
 import { createFirmEngineeringControlHandler, type FirmEngineeringControlHost } from '../core/universe/firm-engineering-control-handler.js';
 import { runControlGraph, validateControlGraph } from '../core/universe/control-graph.js';
-import { isAbsolute, resolve } from 'node:path';
 
 const FIRM_ENGINEERING_HELP = `Usage: ashlr universe firm engineer --root <existing-private-graph-dir>
        --enrollment <private-canonical-json> [--check] [--json]
@@ -60,19 +60,17 @@ export async function cmdUniverseFirmEngineering(args: string[]): Promise<number
       console.error('Unknown engineering option. Use --help.'); return 2;
     }
     const value = args[++index];
-    if (!value || value.startsWith('-') || value.length > 4096 || [...value].some((character) => {
-      const code = character.charCodeAt(0); return code < 32 || code >= 127 && code <= 159;
-    })) {
+    if (!value || value.startsWith('-') || value.length > 4096 || containsControlChars(value)) {
       console.error('Missing or invalid engineering option value. Use --help.'); return 2;
     }
     values.set(flag, value);
   }
   const root = values.get('--root'); const file = values.get('--enrollment');
   const expected = values.get('--expected-enrollment-digest');
-  if (!root || !file || !check && !expected || expected !== undefined && !/^[a-f0-9]{64}$/.test(expected)) {
+  if (!root || !file || !check && !expected || expected !== undefined && !isSha256Hex(expected)) {
     console.error('Engineering requires --root, --enrollment and an exact digest unless --check is supplied.'); return 2;
   }
-  if (![root, file].every((path) => isAbsolute(path) && resolve(path) === path && resolve(path, '..') !== path)) {
+  if (![root, file].every((path) => isCanonicalAbsolutePath(path, { maxLength: 4_096 }))) {
     console.error('Engineering paths must be explicit canonical absolute paths.'); return 2;
   }
   const controller = new AbortController(); const cancel = () => controller.abort();

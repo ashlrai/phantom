@@ -99,12 +99,12 @@ export function parseMacSwap(text: string | null): number | null {
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-export function parseLinuxMemory(text: string | null): { totalBytes: number; freeBytes: number; swapUsedBytes: number } | null {
+export function parseLinuxMemory(text: string | null): { totalBytes: number; freeBytes: number; swapUsedBytes: number; swapTotalBytes: number } | null {
   const read = (key: string) => Number(text?.match(new RegExp(`^${key}:\\s+(\\d+) kB$`, 'm'))?.[1]) * 1024;
   const totalBytes = read('MemTotal'), freeBytes = read('MemAvailable'), swapTotal = read('SwapTotal'), swapFree = read('SwapFree');
   if (![totalBytes, freeBytes, swapTotal, swapFree].every(value => Number.isSafeInteger(value) && value >= 0) ||
       totalBytes <= 0 || freeBytes > totalBytes || swapFree > swapTotal) return null;
-  return { totalBytes, freeBytes, swapUsedBytes: swapTotal - swapFree };
+  return { totalBytes, freeBytes, swapUsedBytes: swapTotal - swapFree, swapTotalBytes: swapTotal };
 }
 
 export function parseDisks(text: string | null): Array<{ volume: string; freeBytes: number }> | null {

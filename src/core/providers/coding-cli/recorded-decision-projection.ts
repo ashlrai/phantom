@@ -29,6 +29,13 @@
  *  - Output objects are fresh; inputs are never mutated.
  */
 
+import {
+  isFiniteNumber,
+  isNonEmptyString as isNonEmpty,
+  isRecord as isPlainObject,
+  round6,
+} from './validation.js';
+
 /** Pinned provenance. Every projection carries it; it describes a recording, never a live decision. */
 export const RECORDED_DECISION_PROVENANCE = Object.freeze({
   source: 'historical-offline',
@@ -116,15 +123,7 @@ export class RecordedDecisionProjectionError extends Error {
 
 const MAX_DATE_MS = 8.64e15;
 const SOLVERS: readonly string[] = ['highs', 'greedy'];
-const isNonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
-const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 const keyOf = (poolId: string, consumer: string | null): string => JSON.stringify([poolId, consumer]);
-const round6 = (value: number): number => {
-  const rounded = Math.round(value * 1_000_000) / 1_000_000;
-  return rounded === 0 ? 0 : rounded; // Normalise -0 so the objective never serialises as "-0".
-};
 
 function checkAlternative(alt: unknown, where: string): RecordedDecisionAlternative {
   if (!isPlainObject(alt)) throw new RecordedDecisionProjectionError(`${where} must be an object`);

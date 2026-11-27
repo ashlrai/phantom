@@ -108,6 +108,17 @@ describe('phm fleet stuck', () => {
     expect(out()[0]).toContain('on lane some-lane; cause lane_refused_repo');
   });
 
+  it('resolves the ready row lane through its envelope when router-queue.md outgrows the old read bound', async () => {
+    writeLog(ticks('DEVIN_FLASH_REFUSED RQ-FAKE-DEEP-1 size-not-sm'));
+    writeFileSync(join(dir, 'queue/ready.tsv'), 'RQ-FAKE-DEEP-1\tphantom\tcodex-personal\twork\t/abs/deep.md\n');
+    const pad = `# ${'y'.repeat(1024)}\n`.repeat(8400);
+    writeFileSync(join(dir, 'queue/router-queue.md'), pad +
+      '- READY phantom RQ-FAKE-DEEP-1 (preferred_lane=claude): hinted work\n');
+    const report = await readStuckJobs({ runsDir: dir }, NOW);
+    expect(report.jobs).toHaveLength(1);
+    expect(report.jobs[0]).toMatchObject({ job: 'RQ-FAKE-DEEP-1', lane: 'claude' });
+  });
+
   it('reads only the end of a large log', async () => {
     const filler = Array.from({ length: 70_000 }, () => line(10, 0, 'DEVIN_FLASH_REFUSED RQ-FAKE-OLD-1 size-not-sm padding-padding-padding-padding'));
     writeLog([...filler, ...ticks('DEVIN_FLASH_REFUSED RQ-FAKE-1 size-not-sm')]);

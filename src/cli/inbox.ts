@@ -109,7 +109,6 @@ export function buildProposalMarkdown(p: Proposal): string {
 type ListProposalsFn  = (filter?: { status?: ProposalStatus }) => Proposal[];
 type LoadProposalFn   = (id: string) => Proposal | null;
 type SetStatusFn      = (id: string, status: ProposalStatus, result?: string) => boolean | void;
-type PendingCountFn   = () => number;
 type ApplyProposalFn  = (id: string, opts: { confirmed: boolean }) => Promise<import('../core/types.js').ApplyResult>;
 type AutoMergeResult  = {
   ok: boolean;
@@ -130,7 +129,6 @@ type SubmitProtectedPrFn = (
 let _listProposals:  ListProposalsFn  | null | undefined;
 let _loadProposal:   LoadProposalFn   | null | undefined;
 let _setStatus:      SetStatusFn      | null | undefined;
-let _pendingCount:   PendingCountFn   | null | undefined;
 let _applyProposal:  ApplyProposalFn  | null | undefined;
 let _autoMerge:      AutoMergeFn      | null | undefined;
 let _submitProtectedPr: SubmitProtectedPrFn | null | undefined;
@@ -142,20 +140,34 @@ async function loadStoreModule(): Promise<boolean> {
         listProposals:  ListProposalsFn;
         loadProposal:   LoadProposalFn;
         setStatus:      SetStatusFn;
-        pendingCount:   PendingCountFn;
       };
       _listProposals = mod.listProposals;
       _loadProposal  = mod.loadProposal;
       _setStatus     = mod.setStatus;
-      _pendingCount  = mod.pendingCount;
     } catch {
       _listProposals = null;
       _loadProposal  = null;
       _setStatus     = null;
-      _pendingCount  = null;
     }
   }
   return _listProposals !== null;
+}
+
+async function loadInboxConfig(
+  jsonMode: boolean,
+  col: ReturnType<typeof makeColors>,
+): Promise<import('../core/types.js').AshlrConfig | null> {
+  try {
+    const { loadConfig } = await import('../core/config.js') as {
+      loadConfig: () => import('../core/types.js').AshlrConfig;
+    };
+    return loadConfig();
+  } catch {
+    const msg = 'could not load config (src/core/config.ts).';
+    if (jsonMode) console.log(JSON.stringify({ ok: false, error: msg }));
+    else console.error(col.red('error: ') + msg);
+    return null;
+  }
 }
 
 async function loadApplyModule(): Promise<boolean> {
@@ -323,16 +335,13 @@ function printTable(proposals: Proposal[], tty: boolean): void {
 /** Print a status summary line: counts by status. */
 function printStatusCounts(proposals: Proposal[], tty: boolean): void {
   const col = makeColors(tty);
-  const counts: Partial<Record<ProposalStatus, number>> = {};
-  for (const p of proposals) {
-    counts[p.status] = (counts[p.status] ?? 0) + 1;
-  }
+  const counts = buildCounts(proposals);
 
   const all: ProposalStatus[] = ['pending', 'approved', 'rejected', 'awaiting-host-merge', 'applied', 'failed'];
   const parts = all
-    .filter(s => (counts[s] ?? 0) > 0)
+    .filter(s => counts[s] > 0)
     .map(s => {
-      const n = counts[s] ?? 0;
+      const n = counts[s];
       const colorFn = col[STATUS_COLORS[s]] as (s: string) => string;
       return colorFn(`${n} ${s}`);
     });
@@ -372,7 +381,7 @@ const INBOX_STATUS_FILTERS = new Set<ProposalStatus | 'all'>([
 ]);
 
 /** Options accepted by `ashlr inbox [list]` — see cmdInbox's flag parsing. */
-export interface InboxListOptions {
+interface InboxListOptions {
   /** Explicit --status filter. Omitted → default (pending, unless --since narrows to history). */
   status?: ProposalStatus | 'all';
   /** Epoch-ms lower bound from --since (records with createdAt < this are dropped). */
@@ -389,7 +398,7 @@ async function cmdInboxList(opts: InboxListOptions): Promise<number> {
   const col = makeColors(tty);
 
   const storeOk = await loadStoreModule();
-  if (!storeOk || !_listProposals || !_pendingCount) {
+  if (!storeOk || !_listProposals) {
     console.error(col.red('error: ') + 'inbox requires src/core/inbox/store.ts (M23 module not yet built).');
     return 1;
   }
@@ -684,18 +693,8 @@ async function cmdInboxSubmit(id: string, yes: boolean, jsonMode: boolean): Prom
     return 1;
   }
 
-  let cfg: import('../core/types.js').AshlrConfig;
-  try {
-    const { loadConfig } = await import('../core/config.js') as {
-      loadConfig: () => import('../core/types.js').AshlrConfig;
-    };
-    cfg = loadConfig();
-  } catch {
-    const msg = 'could not load config (src/core/config.ts).';
-    if (jsonMode) console.log(JSON.stringify({ ok: false, error: msg }));
-    else console.error(col.red('error: ') + msg);
-    return 1;
-  }
+  const cfg = await loadInboxConfig(jsonMode, col);
+  if (!cfg) return 1;
 
   if (!jsonMode) process.stdout.write(col.dim(observingExisting
     ? '  Rechecking existing protected PR handoff…'
@@ -970,21 +969,8 @@ async function cmdInboxAutoMerge(id: string, jsonMode: boolean): Promise<number>
   }
 
   // Load the active config so the gate can read cfg.foundry.autoMerge / mergeAuthority.
-  let cfg: import('../core/types.js').AshlrConfig;
-  try {
-    const { loadConfig } = await import('../core/config.js') as {
-      loadConfig: () => import('../core/types.js').AshlrConfig;
-    };
-    cfg = loadConfig();
-  } catch {
-    const msg = 'could not load config (src/core/config.ts).';
-    if (jsonMode) {
-      console.log(JSON.stringify({ ok: false, error: msg }));
-    } else {
-      console.error(col.red('error: ') + msg);
-    }
-    return 1;
-  }
+  const cfg = await loadInboxConfig(jsonMode, col);
+  if (!cfg) return 1;
 
   if (!jsonMode) {
     process.stdout.write(col.dim('  Evaluating auto-merge gates…') + (tty ? '\r' : '\n'));
@@ -1097,7 +1083,7 @@ export async function cmdInbox(args: string[]): Promise<number> {
   const col = makeColors(process.stdout.isTTY === true);
 
   // ── Parse args ─────────────────────────────────────────────────────────
-  let subcmd = 'list';
+  let subcmd: keyof typeof INBOX_USAGE = 'list';
   let targetId = '';
   let yes = false;
   let jsonMode = false;
@@ -1169,7 +1155,7 @@ export async function cmdInbox(args: string[]): Promise<number> {
   if (wantsHelp) {
     console.log(subcmd === 'list' && positionals[0] !== 'list'
       ? INBOX_TOP_LEVEL_USAGE
-      : INBOX_USAGE[subcmd as keyof typeof INBOX_USAGE]);
+      : INBOX_USAGE[subcmd]);
     return 0;
   }
 
@@ -1186,9 +1172,5 @@ export async function cmdInbox(args: string[]): Promise<number> {
       return cmdInboxReject(targetId, jsonMode);
     case 'automerge':
       return cmdInboxAutoMerge(targetId, jsonMode);
-    default:
-      console.error(col.red('error: ') + `Unknown inbox subcommand: ${subcmd}`);
-      console.error(col.dim(INBOX_TOP_LEVEL_USAGE));
-      return 2;
   }
 }

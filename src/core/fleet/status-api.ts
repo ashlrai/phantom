@@ -30,7 +30,9 @@ export async function fleetStatusApi(runsDir?: string, now: () => number = Date.
     queue: queue.sources.ready === 'healthy' ? { ready: queue.ready, parked: queue.parked } : null,
     lanes: runs.lanes.filter(l => safe(l.lane)).slice(0, 200).map(l => ({
       lane: l.lane, running: l.running, target: l.target, effectiveTarget: l.effectiveTarget ?? null, held: l.held,
-      available: fresh && runs.paused === false ? (l.held ? 0 : Math.max(0, laneLaunchTarget(l.target, l.effectiveTarget) - l.running)) : null,
+      available: fresh && runs.paused === false
+        ? (l.held ? 0 : Math.min(runs.admissionHeadroom ?? Infinity, Math.max(0, laneLaunchTarget(l.target, l.effectiveTarget) - l.running)))
+        : null,
       merged24h: l.merged24h,
     })),
     lanesTruncated: runs.lanes.length > 200,

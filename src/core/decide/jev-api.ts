@@ -17,14 +17,14 @@ import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { effectiveThreshold } from './decide.js';
 import { ALL_DECISION_KINDS, DECISION_KINDS } from './registry.js';
 import { jevStatus } from './status.js';
-import { readJevConfig, updateJevCallBudget } from './ledger.js';
+import { isPlainRecord, isValidCallBudget, readJevConfig, updateJevCallBudget } from './ledger.js';
 import { VERSE_JEV_CONFIG_PATH, VERSE_JEV_PATH, type JevResponse } from './jev-types.js';
 
 /** A few seconds: the card polls while visible; the ledger is append-only. */
 const CACHE_MS = 5_000;
 let cached: { at: number; body: JevResponse } | null = null;
 
-export function buildJevResponse(cfg: AshlrConfig): JevResponse {
+function buildJevResponse(cfg: AshlrConfig): JevResponse {
   return {
     generatedAt: new Date().toISOString(),
     config: { dailyCallBudget: readJevConfig().dailyCallBudget },
@@ -49,11 +49,11 @@ export const handleJevApi: ApiModule = async (ctx, req: IncomingMessage, res: Se
     if (!passesMutationGate(req, res, ctx.token)) return true;
     let body: unknown;
     try { body = JSON.parse(await readBody(req)); } catch { sendJson(res, 400, { error: 'invalid Jev preferences' }); return true; }
-    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 1 || !Object.hasOwn(body, 'dailyCallBudget')) {
+    if (!isPlainRecord(body) || Object.keys(body).length !== 1 || !Object.hasOwn(body, 'dailyCallBudget')) {
       sendJson(res, 400, { error: 'invalid Jev preferences' }); return true;
     }
-    const value = (body as Record<string, unknown>)['dailyCallBudget'];
-    if (value !== null && !(typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)) {
+    const value = body['dailyCallBudget'];
+    if (!isValidCallBudget(value)) {
       sendJson(res, 400, { error: 'dailyCallBudget must be a nonnegative safe integer or null' }); return true;
     }
     try {

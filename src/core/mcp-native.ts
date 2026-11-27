@@ -52,6 +52,7 @@ import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 import { desktopOperatorTools } from './desktop/operator-mcp.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, type OwnerThreadSettings } from './comms/owner-channel.js';
 import type { OwnerThreadReadFilter } from './comms/owner-thread.js';
+import type { CommsDraftsFilter, CommsDraftStatusFilter } from './comms-agent/run.js';
 
 // Handler-only dependencies are imported lazily inside each handler so
 // `tools/list` pays for schemas and the safety gate only — not the ~300-file
@@ -1674,13 +1675,24 @@ const TOOLS: NativeToolImpl[] = [
   },
   {
     name: 'ashlr_comms_agent_drafts',
-    description: 'List Comms drafts waiting for the owner. Read-only. Approval is not a send.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    description: 'List Comms reply drafts. Defaults to pending owner approvals; status=sent|all and transport narrow the read to delivered replies or one channel. Read-only. Approval is not a send.',
+    inputSchema: { type: 'object', properties: {
+      status: { type: 'string', enum: ['pending', 'sent', 'all'] },
+      transport: { type: 'string' },
+    }, additionalProperties: false },
     safety: 'read',
-    handler: async () => {
+    handler: async args => {
       const { commsDrafts } = await import('./comms-agent/run.js');
       const { commsRunsRoot } = await import('./comms-agent/store.js');
-      return commsDrafts(commsRunsRoot());
+      const { COMMS_TRANSPORTS, isCommsTransport } = await import('./comms-agent/policy.js');
+      const transport = args.transport;
+      if (transport !== undefined && (typeof transport !== 'string' || !isCommsTransport(transport))) {
+        throw new Error(`transport must be one of: ${COMMS_TRANSPORTS.join(', ')}.`);
+      }
+      const filter: CommsDraftsFilter = {};
+      if (args.status !== undefined) filter.status = args.status as CommsDraftStatusFilter;
+      if (transport !== undefined) filter.transport = transport;
+      return commsDrafts(commsRunsRoot(), filter);
     },
   },
   {

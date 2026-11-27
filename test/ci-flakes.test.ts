@@ -51,6 +51,22 @@ describe('recurringFlakes', () => {
     expect(recurringFlakes(rows, { nowMs: NOW })).toEqual([]);
   });
 
+  it('combines recurrence and verdict evidence across repository casing changes', () => {
+    const rows = [
+      attempt({ repo: 'Org/Repo', head: HEADS[0] }),
+      attempt({ repo: 'org/repo', head: HEADS[1] }),
+      attempt({ repo: 'ORG/REPO', head: HEADS[2] }),
+      verdict({ repo: 'org/Repo', verdict: 'fail' }),
+      verdict({ repo: 'org/other', verdict: 'pass' }),
+    ];
+    expect(recurringFlakes(rows, { nowMs: NOW })).toEqual([
+      flake({ verdicts: { pass: 0, fail: 1, inconclusive: 0 } }),
+    ]);
+    const test = rows[0]!.test!;
+    expect(flakeJobId('Org/Repo', test)).toBe(flakeJobId('org/repo', test));
+    expect(flakeJobId('org/repo', test.toUpperCase())).not.toBe(flakeJobId('org/repo', test));
+  });
+
   it('ignores ok/failed outcome rows, rows without a test id and malformed repos', () => {
     const rows = [
       attempt({ head: HEADS[0] }),
@@ -75,6 +91,22 @@ describe('recurringFlakes', () => {
     expect(recurringFlakes([fresh, boundary, ...stale.slice(0, 1)], { nowMs: NOW })).toHaveLength(0);
     const third = attempt({ head: HEADS[2], at: '2026-01-08T10:00:00Z' });
     expect(recurringFlakes([fresh, boundary, third], { nowMs: NOW })).toHaveLength(1);
+  });
+
+  it('counts attempts and verdicts only once their recorded time is reached', () => {
+    const at = new Date(NOW + 1).toISOString();
+    const rows = [
+      attempt({ head: HEADS[0] }),
+      attempt({ head: HEADS[1] }),
+      attempt({ head: HEADS[2], at }),
+      verdict({ verdict: 'fail', at }),
+    ];
+    expect(recurringFlakes(rows, { nowMs: NOW })).toEqual([]);
+    expect(recurringFlakes(rows, { nowMs: NOW, minHeads: 2 })[0]?.verdicts.fail).toBe(0);
+    expect(recurringFlakes(rows, { nowMs: NOW + 1 })[0]).toMatchObject({
+      attempts: 3,
+      verdicts: { fail: 1 },
+    });
   });
 
   it('honors custom window and threshold bounds', () => {
