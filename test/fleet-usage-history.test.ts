@@ -145,6 +145,25 @@ describe('pool series', () => {
     });
   });
 
+  it('does not infer a reset from a reading before its named window opened', () => {
+    const before = read(97, 90);
+    const opening = read(96, 5);
+    const latest = read(0, 20);
+    expect(poolUsageSeries('claude', [before, opening, latest], NOW)).toMatchObject({
+      resets: [], points: [{ at: opening.observed_at, used_pct: 5 }, { at: latest.observed_at, used_pct: 20 }],
+    });
+  });
+
+  it('compares a rollover to the last in-window reading when an expired sample intervenes', () => {
+    const oldReset = iso(NOW - 96 * H);
+    const old = read(97, 90, oldReset);
+    const expired = read(96, 1, oldReset);
+    const first = read(95, 5);
+    expect(poolUsageSeries('claude', [old, expired, first], NOW).resets).toEqual([
+      { at: first.observed_at, from_pct: 90, to_pct: 5 },
+    ]);
+  });
+
   it('keeps quota pace and runway scoped to the same reset when windows overlap', () => {
     const unknownReset = read(4, 10, null);
     const previousReset = read(3, 20, iso(NOW + D));

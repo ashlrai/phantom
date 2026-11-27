@@ -179,15 +179,20 @@ export function ledgerUsageReadings(ledger: ResourceLedgerV1): UsageReading[] {
   });
 }
 
-/** True when `cur` begins a new window after `prev`. */
+/** Compare readings that have already been checked against their own windows. */
 function startsWindow(prev: UsageReading, cur: UsageReading): boolean {
   const prevReset = ms(prev.reset_at), curReset = ms(cur.reset_at);
   if (!Number.isFinite(prevReset) || !Number.isFinite(curReset)) return false;
   const observedAt = ms(cur.observed_at);
-  if (observedAt >= curReset) return false;
   // A drop with the same or a later reset time, or the old reset passed and a later one is reported.
   return (cur.used_pct < prev.used_pct && curReset >= prevReset)
     || (prevReset <= observedAt && curReset > prevReset);
+}
+
+function withinQuotaWindow(reading: UsageReading, windowMs: number): boolean {
+  const reset = ms(reading.reset_at);
+  const observed = ms(reading.observed_at);
+  return !Number.isFinite(reset) || (observed >= reset - windowMs && observed < reset);
 }
 
 const pts = (n: number): string => `${Math.round(n * 100) / 100}`;
@@ -263,21 +268,22 @@ export function poolUsageSeries(pool: string, rows: readonly UsageReading[], now
   const mine = distinctObservations(rows.filter(r => r.pool === pool), r => r.observed_at, nowMs);
   const resets: UsageResetEvent[] = [];
   let start = 0;
-  for (let i = 1; i < mine.length; i++) {
-    if (!startsWindow(mine[i - 1]!, mine[i]!)) continue;
-    start = i;
-    if (mine[i]!.used_pct < mine[i - 1]!.used_pct) {
-      resets.push({ at: mine[i]!.observed_at, from_pct: mine[i - 1]!.used_pct, to_pct: mine[i]!.used_pct });
+  let previous: UsageReading | undefined;
+  for (const [i, reading] of mine.entries()) {
+    if (!withinQuotaWindow(reading, windowMs)) continue;
+    if (previous && startsWindow(previous, reading)) {
+      start = i;
+      if (reading.used_pct < previous.used_pct) {
+        resets.push({ at: reading.observed_at, from_pct: previous.used_pct, to_pct: reading.used_pct });
+      }
     }
+    previous = reading;
   }
   const resetAt = mine.at(-1)?.reset_at ?? null;
   const resetMs = ms(resetAt);
   const startMs = resetMs - windowMs;
   const known = Number.isFinite(resetMs);
-  const window = mine.slice(start).filter(r => {
-    const observedAt = ms(r.observed_at);
-    return !known || (ms(r.reset_at) === resetMs && observedAt >= startMs && observedAt < resetMs);
-  });
+  const window = mine.slice(start).filter(r => !known || (ms(r.reset_at) === resetMs && withinQuotaWindow(r, windowMs)));
   const latest = window.at(-1) ?? null;
   const points = window.map(r => ({ at: r.observed_at, used_pct: r.used_pct }));
   const idealAt = (t: number): number => round1(Math.min(100, Math.max(0, (t - startMs) / windowMs * 100)));
