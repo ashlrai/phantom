@@ -1761,6 +1761,29 @@
  *     on both sides of the recent split; items emit only for the
  *     fleet's own repository since the exports describe this
  *     install's fleet;
+ *   - the bot-seat handoff journal's recurring churn: the
+ *     phantom-bot-handoff.v1 rows applySeatHandoff(s) appends to
+ *     ~/.phantom/bots/handoffs.jsonl when `phm bots handoffs --apply`
+ *     releases a draining or idle-with-work seat's claims and node
+ *     jobs — until now read only by the plan side (the handoffs dry
+ *     run, the unified inbox seats source, bus work-mine's seats
+ *     section, fleet_seat_handoffs), point-in-time "what would move"
+ *     answers, so a seat that kept exhausting quota and scattering
+ *     its claims, or one work ref that kept bouncing between seats
+ *     that could not hold it, never became work
+ *     (botHandoffBacklogItems below). Rows count only under the
+ *     writer's contract — schema literal, deterministic 64-hex
+ *     handoffId (replays count once), bot-pattern seatId,
+ *     node-job|bus-claim kind with a bounded control-free ref,
+ *     string done/left placeholders never read as outcomes, nullable
+ *     bounded branch/pr and a parseable createdAt inside the
+ *     7-day window plus skew tolerance — a seat-churn cell emits per
+ *     seat at three rows across two distinct UTC days, a
+ *     work-rehomed cell per work ref at three recorded releases, a
+ *     corrupt-lines cell at three contract failures inside the
+ *     retained tail, truncated tails are stated as lower bounds, and
+ *     items emit only for the fleet's own repository since the
+ *     journal describes this install's bot seats;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1918,6 +1941,7 @@ import { capacityHistoryBacklogItems } from './capacity-history-backlog.js';
 import { laneTargetChangesBacklogItems } from './lane-target-changes-backlog.js';
 import { amplifyBacklogItems } from './amplify-backlog.js';
 import { fleetHopSpoolBacklogItems } from './fleet-hop-spool-backlog.js';
+import { botHandoffBacklogItems } from './bot-handoff-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4081,6 +4105,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the item since the spool describes this
   // install's telemetry pipe.
   items.push(...await fleetHopSpoolBacklogItems({ repo }));
+
+  // Bot-seat handoff journal (~/.phantom/bots/handoffs.jsonl): the
+  // phantom-bot-handoff.v1 rows applySeatHandoff(s) appends when
+  // `phm bots handoffs --apply` releases a draining or idle-with-work
+  // seat's claims and node jobs (botHandoffBacklogItems below). Until
+  // now the journal's only readers were the plan side — the handoffs
+  // dry run, the unified inbox seats source, bus work-mine's seats
+  // section and fleet_seat_handoffs — point-in-time "what would move"
+  // reads, so a seat that kept exhausting quota and scattering its
+  // claims, or one work ref that kept bouncing between seats that
+  // could not hold it, never became work. A seat-churn cell emits per
+  // seat at three rows across two distinct UTC days inside the
+  // 7-day window; a work-rehomed cell emits per work ref at three
+  // recorded releases; corrupt-lines emits at three contract failures
+  // inside the retained tail; done/left placeholders are never read
+  // as outcomes, handoffId replays count once, truncated tails are
+  // stated as lower bounds, and only the fleet's own repository
+  // inherits the items since the journal describes this install's bot
+  // seats and carries no repo column.
+  items.push(...await botHandoffBacklogItems({ repo }));
   return { items, errors };
 }
 
