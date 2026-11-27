@@ -2,7 +2,7 @@
  * In-memory host for tests, and the path guard shared with the node host.
  * System calls stay behind AutofixHost.exec so a test never touches launchd.
  */
-import { forbiddenPath, isForbiddenExecArgv } from './guard.js';
+import { REFUSED_EXEC, assertAllowedPath, forbiddenPath, isForbiddenExecArgv } from './guard.js';
 import type { AutofixHost, ExecResult } from './types.js';
 
 export interface MemoryHost extends AutofixHost {
@@ -46,17 +46,17 @@ export function createMemoryHost(opts: MemoryHostOptions = {}): MemoryHost {
     exists: (path) => !forbiddenPath(path) && files.has(path),
     readText: (path) => forbiddenPath(path) ? null : files.get(path) ?? null,
     writeFile: (path, text) => {
-      if (forbiddenPath(path)) throw new Error('refused path');
+      assertAllowedPath(path);
       writes.push(path);
       files.set(path, text);
     },
     appendFile: (path, text) => {
-      if (forbiddenPath(path)) throw new Error('refused path');
+      assertAllowedPath(path);
       writes.push(path);
       files.set(path, `${files.get(path) ?? ''}${text}`);
     },
     unlink: (path) => {
-      if (forbiddenPath(path)) throw new Error('refused path');
+      assertAllowedPath(path);
       files.delete(path);
     },
     statMtime: (path) => forbiddenPath(path) ? null : mtimes.get(path) ?? null,
@@ -65,7 +65,7 @@ export function createMemoryHost(opts: MemoryHostOptions = {}): MemoryHost {
     exec: (argv) => {
       calls.push([...argv]);
       if (isForbiddenExecArgv(argv)) {
-        return { code: 1, stdout: '', stderr: 'refused' };
+        return { ...REFUSED_EXEC };
       }
       return host.onExec(argv);
     },
