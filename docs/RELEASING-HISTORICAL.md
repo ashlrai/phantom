@@ -902,6 +902,21 @@ vendor and configuration digests; source/dependency drift and failed cleanup
 withhold the App check. The full host Cargo cache is never granted to candidates.
 Windows Cargo preparation and unsupported source recipes fail closed.
 
+On hosts where `runVerifySubprocessAsync` can prove process-group settlement
+(Windows is rejected), base-derived Node package-manager commands are prepared
+from a `pnpm` v9, text `bun.lock` v1, or npm lockfile v3 at the command
+directory or repository root. Every remote package must use the public npm
+registry and carry sha512 integrity; git, external local links, custom
+registries, patched dependencies, binary `bun.lockb`, and unsafe
+package-manager config are refused before network access. The host runs the
+locked install with lifecycle scripts disabled, a private temporary home/cache,
+Corepack network disabled, and a scrubbed environment. Candidate commands use
+the public npm registry in offline mode. Its `node-locked-v1` receipt binds the
+source tree, lockfile bytes, package count, and installed `node_modules` tree
+identity. Lockfile and dependency identity are rechecked before and after each
+candidate command; tool binaries outside the worktree receive read-only
+confinement grants only.
+
 Exit 0 confirms the exact App check; exit 1 withholds verification; exit 2 means
 invalid arguments. Unsupported dependencies or unavailable pinned toolchains remain
 infrastructure failures. Do not retry with weaker confinement or convert local

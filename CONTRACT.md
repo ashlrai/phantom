@@ -2370,6 +2370,27 @@ publisher captures actual staged Git and runner artifacts before publication;
 executing commands. Agent assertions alone never establish proof. See
 [the fleet proof contract](docs/contracts/CONTRACT-FLEET-PROOF-V1.md) for schema,
 trust boundary, bounds, redaction and Security-pinned deployment requirements.
+
+## Maintainer PR dependency preparation
+
+`MaintainerRunEvidence.nodeDependencies` is a list of
+`MaintainerNodeReceipt` values (`v: 1`, `recipe: 'node-locked-v1'`, manager,
+source tree, lockfile SHA-256, package count, and installed `node_modules`
+tree SHA-256). `needsMaintainerNode(commands)` selects `pnpm`, `bun`, `npm`,
+`npx`, and `yarn` verification commands. The host validates every selected
+lockfile before network access, then runs only frozen/clean installs with
+lifecycle scripts disabled, a temporary credential-free home/cache, and a
+scrubbed environment. `MaintainerNodeAttachment.assertCurrent(worktree)` binds
+lockfile bytes and installed dependency-tree identity across each confined
+command; `close()` removes the temporary cache root. Tool directories are
+granted read-only confinement only when required by the selected package
+manager. `prepareMaintainerNodeDependencies` accepts the exact worktree, source
+tree, base-derived commands, cancellation signal, and authorization check; its
+optional resolver/subprocess dependencies are injection seams for hermetic
+callers, not alternate production authority. The detailed `verify-pr` operator
+contract is in
+[the releasing guide](docs/RELEASING-HISTORICAL.md#verify-an-existing-maintainer-pr).
+
 ## Bridge publisher diff scope (`contrib/mac/publish.sh`)
 
 The publisher stages only the job's change set, never ambient worktree state.

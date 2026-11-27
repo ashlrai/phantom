@@ -14,6 +14,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import type { HostMergeDeps, GithubReply } from './host-merge.js';
 import { ASHLR_VERIFY_CHECK_NAME } from './verify-check-run.js';
 import { needsMaintainerCargo, type MaintainerCargoReceipt } from './maintainer-cargo-dependencies.js';
+import { needsMaintainerNode, type MaintainerNodeReceipt } from './maintainer-node-dependencies.js';
 
 const SHA = /^[0-9a-f]{40}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
@@ -54,6 +55,7 @@ export interface MaintainerRunEvidence {
   sourceUnchanged: boolean;
   worktreeRemoved: boolean;
   cargoDependencies?: MaintainerCargoReceipt;
+  nodeDependencies?: readonly MaintainerNodeReceipt[];
   dependenciesRemoved?: boolean;
 }
 
@@ -193,6 +195,16 @@ export function maintainerRunFailure(pins: MaintainerPrPins, run: MaintainerRunE
     const { receiptSha256, ...payload } = deps;
     if (createHash('sha256').update(JSON.stringify(payload)).digest('hex') !== receiptSha256) return 'Cargo dependency receipt digest is invalid';
   }
+  if (needsMaintainerNode(run.expectedCommands)) {
+    const deps = run.nodeDependencies;
+    if (!deps?.length || run.dependenciesRemoved !== true || deps.some((receipt) =>
+      receipt.v !== 1 || receipt.recipe !== 'node-locked-v1' ||
+      !['pnpm', 'bun', 'npm'].includes(receipt.manager) || receipt.sourceTree !== pins.treeSha ||
+      !Number.isSafeInteger(receipt.packageCount) || receipt.packageCount < 0 || receipt.packageCount > 20_000 ||
+      !DIGEST.test(receipt.lockSha256) || !DIGEST.test(receipt.nodeModulesSha256))) {
+      return 'Node dependency evidence or cleanup is missing';
+    }
+  } else if (run.nodeDependencies?.length) return 'unexpected Node dependency evidence';
   if (run.expectedCommands.length === 0 || run.commands.length !== run.expectedCommands.length) return 'no complete base-derived command suite ran';
   for (let i = 0; i < run.expectedCommands.length; i++) {
     const expected = run.expectedCommands[i]!;
@@ -260,6 +272,8 @@ export async function verifyMaintainerPr(input: { repo: string; pr: number; conf
         contractSha256: run.contractSha256, commands: run.expectedCommands,
         ...(run.cargoDependencies ? { cargo: { recipe: run.cargoDependencies.recipe, inputsSha256: run.cargoDependencies.inputsSha256,
           lockSha256: run.cargoDependencies.lockSha256, toolchainSha256: run.cargoDependencies.toolchainSha256, vendorSha256: run.cargoDependencies.vendorSha256 } } : {}),
+        ...(run.nodeDependencies ? { node: run.nodeDependencies.map(({ recipe, manager, sourceTree, lockSha256, packageCount, nodeModulesSha256 }) =>
+          ({ recipe, manager, sourceTree, lockSha256, packageCount, nodeModulesSha256 })) } : {}),
       })}`;
       const prior = checks.find((item) => {
         const check = object(item);

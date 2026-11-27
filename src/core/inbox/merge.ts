@@ -2476,14 +2476,19 @@ export function confinedWorkspaceBins(
  * caller must fail closed, never run the suite unconfined.
  *
  * `readOnlyPaths` re-allows reads the run needs beyond the worktree (the
- * mirror's `node_modules`, which verification symlinks in). Residuals, stated
- * rather than hidden: the suite can reach anything listening on loopback, and
- * a suite that writes caches outside its worktree (e.g. into a symlinked
+ * mirror's symlinked `node_modules` and host-created tool directories). Node
+ * attachment `node_modules` lives in the worktree. Residuals, stated rather
+ * than hidden: the suite can reach anything listening on loopback, and a suite
+ * that writes caches outside its worktree (e.g. into a symlinked
  * `node_modules/.vite`) fails — closed — until the repo points them inside.
  */
 export async function openStandingVerificationConfinement(
   worktree: string,
-  opts: { readOnlyPaths?: readonly string[]; cargoAttachment?: import('../fleet/maintainer-cargo-dependencies.js').MaintainerCargoAttachment } = {},
+  opts: {
+    readOnlyPaths?: readonly string[];
+    cargoAttachment?: import('../fleet/maintainer-cargo-dependencies.js').MaintainerCargoAttachment;
+    nodeAttachment?: import('../fleet/maintainer-node-dependencies.js').MaintainerNodeAttachment;
+  } = {},
 ): Promise<StandingVerificationConfinement | null> {
   let live: boolean;
   try {
@@ -2521,6 +2526,8 @@ export async function openStandingVerificationConfinement(
     chmodSync(runTmpDir, 0o700);
     const base = overlayMod.buildAutonomousEnvOverlay({ engine: 'local', runTmpDir, home, seatId: null });
     const cargo = opts.cargoAttachment;
+    const node = opts.nodeAttachment;
+    const nodeManagers = new Set(node?.receipts.map((receipt) => receipt.manager) ?? []);
     if (cargo) {
       const { requireMaintainerCargoAttachment } = await import('../fleet/maintainer-cargo-dependencies.js');
       requireMaintainerCargoAttachment(cargo);
@@ -2530,16 +2537,35 @@ export async function openStandingVerificationConfinement(
       if (base.writablePaths.some((path) => isInsideDir(cargo.cargoHome, path) || isInsideDir(cargo.vendor, path)) ||
           isInsideDir(cargo.cargoHome, worktree) || isInsideDir(cargo.vendor, worktree)) throw new VerificationConfinementError('Cargo attachment overlaps writable source/cache');
     }
+    if (node) {
+      const { requireMaintainerNodeAttachment } = await import('../fleet/maintainer-node-dependencies.js');
+      requireMaintainerNodeAttachment(node);
+      node.assertCurrent(worktree);
+      if (node.toolBins.some((path) =>
+        isInsideDir(path, worktree) || isInsideDir(worktree, path) ||
+        base.writablePaths.some((writable) => isInsideDir(path, writable) || isInsideDir(writable, path)))) {
+        throw new VerificationConfinementError('Node package-manager path overlaps writable source/cache');
+      }
+    }
     const cargoRuntimeHome = cargo ? join(runTmpDir, 'cargo-runtime') : null;
     if (cargoRuntimeHome) mkdirSync(cargoRuntimeHome, { mode: 0o700 });
+    const nodeCache = node ? join(runTmpDir, 'node-cache') : null;
+    const nodeUserConfig = node ? join(runTmpDir, 'node-npmrc') : null;
+    const nodeGlobalConfig = node ? join(runTmpDir, 'node-global-npmrc') : null;
+    const nodeCorepackHome = node ? join(runTmpDir, 'node-corepack') : null;
+    if (nodeCache) mkdirSync(nodeCache, { mode: 0o700 });
+    if (nodeUserConfig) writeFileSync(nodeUserConfig, '', { mode: 0o600 });
+    if (nodeGlobalConfig) writeFileSync(nodeGlobalConfig, '', { mode: 0o600 });
+    if (nodeCorepackHome) mkdirSync(nodeCorepackHome, { mode: 0o700 });
     const toolchain = nodeToolchainPrefix(home, base.deniedReadPaths);
     const readOnly = [...base.readOnlyPaths];
     // The caller's grants that survived the checks below (real paths): the
     // only dirs outside the worktree a workspace bin entry may resolve into.
     const callerGrants: string[] = [];
     const cargoPaths = cargo ? [cargo.cargoHome, cargo.vendor, cargo.toolchainBin] : [];
-    const callerPaths = new Set([...(opts.readOnlyPaths ?? []), ...cargoPaths]);
-    for (const p of [...(toolchain ? [toolchain] : []), ...(opts.readOnlyPaths ?? []), ...cargoPaths]) {
+    const nodePaths = node ? [...node.toolBins] : [];
+    const callerPaths = new Set([...(opts.readOnlyPaths ?? []), ...cargoPaths, ...nodePaths]);
+    for (const p of [...(toolchain ? [toolchain] : []), ...(opts.readOnlyPaths ?? []), ...cargoPaths, ...nodePaths]) {
       const real = realpathOrNull(p);
       if (!real) continue;
       // A re-allowed read may never reach a protected directory (the profile's
@@ -2555,12 +2581,26 @@ export async function openStandingVerificationConfinement(
         if (callerPaths.has(p) && p !== real && lstatSync(p).isSymbolicLink() && !readOnly.includes(p)) readOnly.push(p);
       } catch { /* vanished: nothing to traverse */ }
     }
+    if (node && nodePaths.some((path) => {
+      const real = realpathOrNull(path);
+      return !real || !callerGrants.includes(real);
+    })) throw new VerificationConfinementError('Node package-manager path is protected or unavailable');
     const overlay = {
       ...base,
       readOnlyPaths: Object.freeze(readOnly),
       set: Object.freeze({
         ...base.set,
-        ...(toolchain ? { PATH: `${join(toolchain, 'bin')}${delimiter}${base.set['PATH'] ?? ''}` } : {}),
+        ...(node ? { npm_config_registry: 'https://registry.npmjs.org/', npm_config_offline: 'true' } : {}),
+        ...(nodeCache ? {
+          npm_config_cache: nodeCache,
+          ...(nodeManagers.has('pnpm') ? { npm_config_store_dir: nodeCache } : {}),
+          ...(nodeManagers.has('bun') ? { BUN_INSTALL_CACHE_DIR: nodeCache } : {}),
+          npm_config_userconfig: nodeUserConfig!, npm_config_globalconfig: nodeGlobalConfig!,
+        } : {}),
+        ...(nodeCorepackHome ? { COREPACK_HOME: nodeCorepackHome, COREPACK_ENABLE_NETWORK: '0' } : {}),
+        ...((nodePaths.length || toolchain) ? {
+          PATH: [...nodePaths, ...(toolchain ? [join(toolchain, 'bin')] : []), base.set['PATH'] ?? ''].filter(Boolean).join(delimiter),
+        } : {}),
         ...(cargo ? { CARGO_HOME: cargoRuntimeHome!, CARGO_NET_OFFLINE: 'true', RUSTC: join(cargo.toolchainBin, 'rustc'), RUSTDOC: join(cargo.toolchainBin, 'rustdoc') } : {}),
       }),
     };
@@ -2576,8 +2616,14 @@ export async function openStandingVerificationConfinement(
       // Keep the verifier's workspace bins (node_modules/.bin inside the
       // worktree) ahead of the overlay's sanitized PATH; drop every other entry.
       const workspaceBins = confinedWorkspaceBins(subprocessOpts.env['PATH'] ?? '', worktree, worktreeReal, callerGrants);
-      const env = overlayMod.applyAutonomousEnvOverlay(subprocessOpts.env, overlay);
+      const sourceEnv = { ...subprocessOpts.env };
+      if (node) for (const key of Object.keys(sourceEnv)) {
+        if (/^(?:npm_config_|PNPM_|BUN_|YARN_|COREPACK_)/i.test(key) ||
+            /^(?:NPM_TOKEN|NODE_AUTH_TOKEN|YARN_NPM_AUTH_TOKEN)$/i.test(key)) delete sourceEnv[key];
+      }
+      const env = overlayMod.applyAutonomousEnvOverlay(sourceEnv, overlay);
       env['PATH'] = [...workspaceBins, overlay.set['PATH'] ?? ''].filter(Boolean).join(delimiter);
+      node?.assertCurrent(worktree);
       if (cargo) {
         cargo.assertCurrent(worktree);
         // Inherited source/config/wrapper variables cannot replace this pinned
