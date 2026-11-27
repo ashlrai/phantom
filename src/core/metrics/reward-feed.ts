@@ -169,6 +169,7 @@ function standingReverted(
 interface DispatchMark {
   ms: number;
   lane: string | null;
+  prKeys: string[];
   /** null means conflicting evidence, undefined means no repository was observed. */
   repo: string | null | undefined;
 }
@@ -348,7 +349,7 @@ export function foldJobsLedgerRewards(
       if (dispatch) acc.dispatchUndated = true;
       if (ciBoundary) acc.ciBoundaryUndated = true;
     } else if (dispatch) {
-      acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row, prKeys) });
+      acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row, prKeys), prKeys });
       if (name === 'batch_claim') acc.batchClaims.add(at);
     } else if (ciBoundary) {
       noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at, prKeys, repoOf(row, prKeys));
@@ -390,27 +391,33 @@ export function foldJobsLedgerRewards(
 }
 
 /** Latest dispatch at or before the outcome, regardless of ledger row order. */
-function dispatchBefore(acc: RewardJobAccum, boundMs: number) {
+function dispatchBefore(acc: RewardJobAccum, resolution: ResolutionMark) {
   if (acc.dispatchUndated) return null;
   let latestMs: number | null = null;
   const lanes = new Set<string>();
   const repos = new Set<string | null>();
+  const prKeys = new Set<string>();
   for (const dispatch of acc.dispatches) {
-    if (dispatch.ms > boundMs || (latestMs !== null && dispatch.ms < latestMs)) continue;
+    if (dispatch.ms > resolution.resolvedMs || (latestMs !== null && dispatch.ms < latestMs)) continue;
     if (dispatch.ms !== latestMs) {
       latestMs = dispatch.ms;
       lanes.clear();
       repos.clear();
+      prKeys.clear();
     }
     if (dispatch.lane !== null) lanes.add(dispatch.lane);
     if (dispatch.repo !== undefined) repos.add(dispatch.repo);
+    for (const key of dispatch.prKeys) prKeys.add(key);
   }
+  const executionPrKeys = [...new Set([...prKeys, ...resolution.prKeys])];
+  if (prKeys.size > 0 && resolution.prKeys.length > 0 && executionPrKeys.length > 1) return null;
   // The dispatcher stamps receipts to the second. Conflicting lanes at the
   // same timestamp cannot prove which pool earned the reward.
   return latestMs === null ? null : {
     ms: latestMs,
     lane: lanes.size === 1 ? [...lanes][0]! : null,
     repo: repos.size > 1 ? null : repos.values().next().value,
+    prKeys: executionPrKeys,
   };
 }
 
@@ -428,7 +435,7 @@ function rewardInput(
   if (acc.merge !== null) {
     const merge = acc.merge;
     const key = merge.prKeys.length === 1 ? merge.prKeys[0]! : null;
-    const dispatch = dispatchBefore(acc, merge.resolvedMs);
+    const dispatch = dispatchBefore(acc, merge);
     if (dispatch === null) return null;
     const repo = merge.repo === undefined ? dispatch.repo : merge.repo;
     const revertedAt = Math.max(
@@ -441,7 +448,7 @@ function rewardInput(
       jobId: id, pool: dispatch.lane, repo: repo ?? null,
       merged: heldMerge, dispatchedAt: iso(dispatch.ms), mergedAt: heldMerge ? iso(merge.resolvedMs) : null,
       costUsd: cost,
-      ...ciWallEvidence(acc, dispatch.ms, merge.resolvedMs, merge.prKeys, repo),
+      ...ciWallEvidence(acc, dispatch.ms, merge.resolvedMs, dispatch.prKeys, repo),
     };
   }
   // A revert can resolve a job on its own, but it cannot extend the
@@ -449,14 +456,14 @@ function rewardInput(
   const resolution = acc.close ?? acc.latestRevert;
   if (resolution !== null && resolution.resolvedMs > 0) {
     const resolutionMs = resolution.resolvedMs;
-    const dispatch = dispatchBefore(acc, resolutionMs);
+    const dispatch = dispatchBefore(acc, resolution);
     if (dispatch === null) return null;
     const repo = resolution.repo === undefined ? dispatch.repo : resolution.repo;
     return {
       jobId: id, pool: dispatch.lane, repo: repo ?? null,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
       costUsd: cost,
-      ...ciWallEvidence(acc, dispatch.ms, resolutionMs, resolution.prKeys, repo),
+      ...ciWallEvidence(acc, dispatch.ms, resolutionMs, dispatch.prKeys, repo),
     };
   }
   return null;
