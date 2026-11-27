@@ -122,6 +122,11 @@ receipt proves coordination, not job execution.
 
 ## Leader
 
+The Leader board reports `queueDepthByTier` as null when `ready.tsv` is
+unavailable or the `router-queue.md` read is degraded. When `router-queue.md`
+is absent, five-column rows use the lane column as a fallback. Conflict
+counts use job IDs from `ready.tsv` and remain available when that file is readable.
+
 The Leader board and Fleet lane console share merge attribution. When a merge
 receipt lacks a lane and attribution falls back to the job's ledger history,
 events with an observation or merge timestamp after report time are excluded.
