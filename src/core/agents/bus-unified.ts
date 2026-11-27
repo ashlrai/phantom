@@ -21,7 +21,8 @@ import { join } from 'node:path';
 import { appendBusInbox, listBusInboxAfter, scanBusInbox, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxOptions, type BusInboxPost, type BusInboxReceipt, type BusInboxScan } from '../fleet/bus-inbox.js';
 import { BUS_PRIORITIES, isClaimableWork, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
-import { groupAddress, isGroupPresenceBody } from '../fleet/bus-group.js';
+import { GROUP_PRESENCE_TTL_MS, groupAddress, groupChannelPresence, isGroupPresenceBody,
+  type GroupChannelPresenceMember, type GroupChannelPresenceTopic } from '../fleet/bus-group.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { createBusWakeHook, type BusWakeResult } from '../fleet/bus-wake.js';
@@ -245,6 +246,47 @@ export async function postChannelMessage(input: ChannelPostInput, options: Unifi
     id: base.id, from: `${AGENT_ADDRESS_PREFIX}${sender.handle}`, to, priority: base.priority, ttl: base.ttl,
     body: noteBody(input), ...metadata(sender, 'bus', to),
   }, shouldWake(base.priority, input.wake), options);
+}
+
+export interface ChannelHeartbeatInput extends SendCommon {
+  channel: string;
+  /** Presence topic; default the channel's `general` topic, the same default `postChannelMessage` posts to. */
+  topic?: string;
+  state: 'online' | 'offline';
+}
+
+/**
+ * Publish this agent's `group.presence` heartbeat on a channel — the write
+ * half of the observation read `readAgentChannelPresence` (and the legacy
+ * `comms bus group heartbeat`/`groupPresence` pair) serves. The sender must
+ * be a registered identity and a current channel member, the same gate
+ * `postChannelMessage` applies; the member the observation names is the
+ * sender's own `agent:<handle>` label — never a caller-chosen member, so a
+ * heartbeat can only speak for its author. The body is the fixed
+ * `{kind:'group.presence', state}` shape at P3 with the five-minute
+ * observation TTL; it wakes nobody and goes through the same send gate,
+ * scrub check and id-dedup every bus post passes. Priority and ttl inputs
+ * do not apply — presence rows are always P3 observations.
+ */
+export async function postChannelHeartbeat(input: ChannelHeartbeatInput, options: UnifiedBusOptions = {}): Promise<UnifiedSendResult> {
+  if (input.state !== 'online' && input.state !== 'offline') return refuse('invalid', 'State must be online or offline.');
+  if (!agentChannelNameSchema.safeParse(input.channel).success) return refuse('invalid', 'Invalid channel name.');
+  let to: string;
+  try { to = groupAddress(input.channel, input.topic ?? DEFAULT_CHANNEL_TOPIC); }
+  catch { return refuse('invalid', 'Invalid channel topic.'); }
+  const base = common({ from: input.from, id: input.id }, { priority: 'P3', ttl: GROUP_PRESENCE_TTL_MS });
+  if ('status' in base) return base;
+  const reg = registry(options);
+  if ('status' in reg) return reg;
+  const sender = resolveAgent(reg, input.from);
+  if (!sender) return refuse('unknown-sender', 'Sender is not a registered identity.');
+  const channel = findAgentChannel(reg, input.channel);
+  if (!channel) return refuse('unknown-recipient', 'Channel does not exist.');
+  if (!channel.members.includes(sender.handle)) return refuse('not-member', 'Sender is not a member of this channel.');
+  return post({
+    id: base.id, from: `${AGENT_ADDRESS_PREFIX}${sender.handle}`, to, priority: 'P3', ttl: GROUP_PRESENCE_TTL_MS,
+    body: { kind: 'group.presence', state: input.state }, ...metadata(sender, 'bus', to),
+  }, false, options);
 }
 
 /**
@@ -2383,6 +2425,64 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   annotateLiveEvidence(messages, options);
   return { status: 'ok', channel: name, messages, nextCursor: cursor,
     ...(countMatched ? { matched } : {}) };
+}
+
+export interface ChannelPresenceMember extends GroupChannelPresenceMember {
+  /**
+   * Registered handle the member label resolves to (`agent:<handle>` folds to
+   * its handle); null when the label names no identity or the registry is
+   * unreadable — the raw `member` label is always present either way.
+   */
+  memberAgent: string | null;
+}
+export interface ChannelPresenceTopic extends Omit<GroupChannelPresenceTopic, 'members'> {
+  members: ChannelPresenceMember[];
+}
+export type ChannelPresencePage =
+  | { status: 'ok'; channel: string; topics: ChannelPresenceTopic[] }
+  | { status: 'invalid' | 'unknown-channel' | 'unavailable' | 'retryable'; reason: string };
+
+/**
+ * The channel's live `group.presence` snapshot — the read `channel read`
+ * points at when it excludes heartbeats from the transcript, and the
+ * unified-surface counterpart of `comms bus group presence <room> <topic>`.
+ * `topic` narrows to one `group:<name>:<topic>` address; omitted, every
+ * topic the room carries reports its own online-member list, the same
+ * "default every topic" rule `channel read` applies. The fold is the shared
+ * `groupChannelPresence` one: latest heartbeat per (topic, member) wins,
+ * `offline` removes until a later `online`, observations past the
+ * five-minute TTL, malformed addresses and non-member labels never count,
+ * and only `online` members list — a snapshot, never proof of identity,
+ * membership or authority. The channel must be a registry channel
+ * (`unknown-channel` otherwise, the same verdict `channel read` gives) but
+ * reading needs no identity and no membership: membership gates posting
+ * only. An unreadable registry or store answers `unavailable`, a stalled
+ * scan `retryable` — never an empty snapshot passed off as "nobody is
+ * here".
+ */
+export function readAgentChannelPresence(name: string, page: { topic?: string } = {},
+  options: UnifiedBusOptions = {}): ChannelPresencePage {
+  if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
+    return { status: 'invalid', reason: 'Invalid channel name.' };
+  }
+  if (page.topic !== undefined) {
+    if (typeof page.topic !== 'string') return { status: 'invalid', reason: 'Invalid channel topic.' };
+    try { groupAddress(name, page.topic); }
+    catch { return { status: 'invalid', reason: 'Invalid channel topic.' }; }
+  }
+  const read = readAgentRegistry(options);
+  if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
+  if (!findAgentChannel(read.registry, name)) return { status: 'unknown-channel', reason: 'Channel does not exist.' };
+  const presence = groupChannelPresence(name, page.topic, { root: options.root, now: options.now });
+  if (presence.status !== 'ok') {
+    return { status: presence.status === 'invalid' ? 'invalid' : presence.status === 'retryable' ? 'retryable' : 'unavailable',
+      reason: 'Bus store is not readable.' };
+  }
+  return { status: 'ok', channel: name, topics: presence.topics.map(topic => ({
+    topic: topic.topic,
+    members: topic.members.map(member => ({ ...member,
+      memberAgent: resolveAgent(read.registry, member.member)?.handle ?? null })),
+  })) };
 }
 
 export interface BusEnvelopeLookupMessage {

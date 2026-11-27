@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { groupAddress, groupAddressTopicOf, groupPresence, publishGroupMessage, publishGroupPresence, subscribeGroup, GROUP_PRESENCE_TTL_MS } from '../src/core/fleet/bus-group.js';
+import { groupAddress, groupAddressTopicOf, groupChannelPresence, groupPresence, publishGroupMessage, publishGroupPresence, subscribeGroup, GROUP_PRESENCE_TTL_MS } from '../src/core/fleet/bus-group.js';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -46,6 +46,51 @@ describe('group bus', () => {
     expect(presence('4', 'claude', 'online', 103, 'other').status).toBe('posted');
     expect(groupPresence('team', 'work', { root, now: () => 104 })).toEqual({ status: 'ok', members: [{ member: 'codex', state: 'online', receivedAt: 101 }] });
     expect(groupPresence('team', 'work', { root, now: () => 104 + GROUP_PRESENCE_TTL_MS })).toEqual({ status: 'ok', members: [] });
+  });
+  it('folds every topic of a room into one sorted presence snapshot', () => {
+    const root = setup();
+    const presence = (id: string, member: string, state: 'online' | 'offline', at: number, topic = 'work', room = 'team') =>
+      publishGroupPresence({ id, room, topic, member, state }, { root, now: () => at });
+    expect(presence('1', 'devin', 'online', 100).status).toBe('posted');
+    expect(presence('2', 'codex', 'online', 101, 'deploy').status).toBe('posted');
+    expect(presence('3', 'claude', 'online', 102).status).toBe('posted');
+    expect(presence('4', 'devin', 'offline', 103).status).toBe('posted');
+    // A second room's heartbeat and a non-presence post on the same room never count.
+    expect(presence('5', 'orion', 'online', 104, 'work', 'other').status).toBe('posted');
+    expect(publishGroupMessage({ id: 'm1', room: 'team', topic: 'work', from: 'devin', ttl: 60000, body: { text: 'hi' } }, { root, now: () => 105 }).status).toBe('posted');
+    const all = groupChannelPresence('team', undefined, { root, now: () => 106 });
+    expect(all).toEqual({ status: 'ok', topics: [
+      { topic: 'deploy', members: [{ member: 'codex', receivedAt: 101 }] },
+      { topic: 'work', members: [{ member: 'claude', receivedAt: 102 }] },
+    ] });
+    // One topic narrows to that pair's members; offline removed devin and the
+    // later online on another topic never leaks across.
+    expect(groupChannelPresence('team', 'work', { root, now: () => 106 })).toEqual({ status: 'ok', topics: [
+      { topic: 'work', members: [{ member: 'claude', receivedAt: 102 }] },
+    ] });
+    // A fresh online after the offline brings the member back on that topic.
+    expect(presence('6', 'devin', 'online', 107).status).toBe('posted');
+    expect(groupChannelPresence('team', 'work', { root, now: () => 108 })).toEqual({ status: 'ok', topics: [
+      { topic: 'work', members: [{ member: 'claude', receivedAt: 102 }, { member: 'devin', receivedAt: 107 }] },
+    ] });
+    // Expired observations and bad grammar answer honestly.
+    expect(groupChannelPresence('team', 'work', { root, now: () => 108 + GROUP_PRESENCE_TTL_MS }))
+      .toEqual({ status: 'ok', topics: [] });
+    expect(groupChannelPresence('../team', undefined, { root })).toEqual({ status: 'invalid' });
+    expect(groupChannelPresence('team', 'bad topic', { root })).toEqual({ status: 'invalid' });
+  });
+  it('keeps (topic, member) pairs distinct when their labels could concatenate', () => {
+    const root = setup();
+    const presence = (id: string, member: string, state: 'online' | 'offline', at: number, topic: string) =>
+      publishGroupPresence({ id, room: 'team', topic, member, state }, { root, now: () => at });
+    // 'a'+'bc' and 'ab'+'c' are different pairs; a fold keyed on the raw
+    // concatenation would merge them and let one offline erase the other.
+    expect(presence('x1', 'bc', 'online', 100, 'a').status).toBe('posted');
+    expect(presence('x2', 'c', 'online', 101, 'ab').status).toBe('posted');
+    expect(presence('x3', 'bc', 'offline', 102, 'a').status).toBe('posted');
+    expect(groupChannelPresence('team', undefined, { root, now: () => 103 })).toEqual({ status: 'ok', topics: [
+      { topic: 'ab', members: [{ member: 'c', receivedAt: 101 }] },
+    ] });
   });
 });
 

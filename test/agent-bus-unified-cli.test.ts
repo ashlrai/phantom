@@ -374,6 +374,44 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['channel', 'read', 'release', '--frame', 'gemini'])).toMatchObject({ code: 2 });
   });
 
+  it('heartbeats presence and reads the live per-topic snapshot', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json).toMatchObject({ status: 'created' });
+    // --state is required and closed; a non-member or unknown channel refuses.
+    expect(await run(['channel', 'heartbeat', 'release', '--from', 'atlas'])).toMatchObject({ code: 2 });
+    expect(await run(['channel', 'heartbeat', 'release', '--from', 'atlas', '--state', 'away'])).toMatchObject({ code: 2 });
+    expect(await run(['channel', 'heartbeat', 'release', '--from', 'ghost', '--state', 'online'])).toMatchObject({ code: 1, json: { status: 'unknown-sender' } });
+    expect((await run(['id', 'register', 'orion'])).json).toMatchObject({ status: 'created' });
+    expect(await run(['channel', 'heartbeat', 'release', '--from', 'orion', '--state', 'online'])).toMatchObject({ code: 1, json: { status: 'not-member' } });
+    expect(await run(['channel', 'heartbeat', 'missing', '--from', 'atlas', '--state', 'online'])).toMatchObject({ code: 1, json: { status: 'unknown-recipient' } });
+
+    expect((await run(['channel', 'heartbeat', 'release', '--from', 'atlas', '--state', 'online', '--id', 'hb-a'])).json)
+      .toMatchObject({ status: 'posted', to: 'group:release:general', wake: 'not-requested' });
+    expect((await run(['channel', 'heartbeat', 'release', '--from', 'nova', '--topic', 'deploy', '--state', 'online'])).json)
+      .toMatchObject({ status: 'posted', to: 'group:release:deploy' });
+    // Presence reads need no identity; the snapshot groups online members per topic.
+    const all = await run(['channel', 'presence', 'release']);
+    expect(all.code).toBe(0);
+    expect(all.json).toMatchObject({ status: 'ok', channel: 'release' });
+    expect(all.json.topics).toEqual([
+      { topic: 'deploy', members: [{ member: 'agent:nova', memberAgent: 'nova', receivedAt: expect.any(Number) }] },
+      { topic: 'general', members: [{ member: 'agent:atlas', memberAgent: 'atlas', receivedAt: expect.any(Number) }] },
+    ]);
+    expect((await run(['channel', 'presence', 'release', '--topic', 'deploy'])).json.topics).toHaveLength(1);
+    // Offline clears the member; the transcript still shows no heartbeat rows.
+    await run(['channel', 'heartbeat', 'release', '--from', 'atlas', '--state', 'offline']);
+    expect((await run(['channel', 'presence', 'release', '--topic', 'general'])).json).toMatchObject({ topics: [] });
+    expect((await run(['channel', 'read', 'release'])).json.messages).toEqual([]);
+    expect(await run(['channel', 'presence', 'missing'])).toMatchObject({ code: 1, json: { status: 'unknown-channel' } });
+    expect(await run(['channel', 'presence', 'release', 'extra'])).toMatchObject({ code: 2 });
+    // Human output prints one line per topic with resolved handles.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['channel', 'presence', 'release', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('topics=1');
+    expect(text.join('\n')).toContain('#release:deploy  online=agent:nova(nova)');
+  });
+
   it('resolves one retained envelope by id without needing an identity', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

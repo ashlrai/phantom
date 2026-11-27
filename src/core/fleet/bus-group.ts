@@ -91,3 +91,71 @@ export function groupPresence(room: string, topic: string, options: BusInboxOpti
   }
   return { status: 'ok' as const, members: [...members.values()].filter(member => member.state === 'online') };
 }
+
+/** One member's live presence on one topic — the `groupPresence` row shape, per topic. */
+export interface GroupChannelPresenceMember {
+  /** The heartbeat's `from` label — the member name the observation was published under. */
+  member: string;
+  /** When the winning heartbeat was received; a later heartbeat refreshes it. */
+  receivedAt: number;
+}
+
+/** Every member currently online on one topic of the room. */
+export interface GroupChannelPresenceTopic {
+  topic: string;
+  members: GroupChannelPresenceMember[];
+}
+
+/**
+ * The whole room's live presence snapshot — `groupPresence` widened from one
+ * `group:<room>:<topic>` pair to every topic the room carries, or narrowed
+ * back to one `topic` when given. The same fold rules apply per (topic,
+ * member): the latest valid heartbeat wins, `offline` removes the member
+ * until a later `online`, rows past `GROUP_PRESENCE_TTL_MS` remaining TTL,
+ * non-presence bodies, malformed topics and member labels that fail the
+ * member grammar never count. Only members whose latest state is `online`
+ * list, grouped under their topic and sorted — a snapshot, never proof of
+ * identity, membership or authority. An unreadable store answers its own
+ * status; callers must handle failures.
+ */
+export function groupChannelPresence(room: string, topic: string | undefined, options: BusInboxOptions = {}) {
+  if (!NAME.test(room)) return { status: 'invalid' as const };
+  let exact: string | undefined;
+  if (topic !== undefined) {
+    try { exact = groupAddress(room, topic); }
+    catch { return { status: 'invalid' as const }; }
+  }
+  const prefix = `group:${room}:`;
+  const observations = new Map<string, { topic: string; member: string; state: 'online' | 'offline'; receivedAt: number }>();
+  let cursor = 0;
+  for (;;) {
+    const page = listBusInboxAfter(cursor, 100, options);
+    if (page.status !== 'ok') return { status: page.status };
+    for (const row of page.messages) {
+      const envelope = row.envelope;
+      if (!envelope.to.startsWith(prefix)) continue;
+      if (exact !== undefined && envelope.to !== exact) continue;
+      const name = envelope.to.slice(prefix.length);
+      if (!NAME.test(name)) continue;
+      const body = envelope.body;
+      if (!body || typeof body !== 'object' || Array.isArray(body)) continue;
+      const kind = (body as Record<string, unknown>).kind;
+      const state = (body as Record<string, unknown>).state;
+      if (kind !== 'group.presence' || (state !== 'online' && state !== 'offline')) continue;
+      if (envelope.ttl > GROUP_PRESENCE_TTL_MS || !MEMBER.test(envelope.from)) continue;
+      observations.set(`${name} ${envelope.from}`, { topic: name, member: envelope.from, state, receivedAt: row.receivedAt });
+    }
+    if (page.nextCursor === cursor) break;
+    cursor = page.nextCursor;
+  }
+  const byTopic = new Map<string, GroupChannelPresenceMember[]>();
+  for (const observation of observations.values()) {
+    if (observation.state !== 'online') continue;
+    const members = byTopic.get(observation.topic) ?? [];
+    members.push({ member: observation.member, receivedAt: observation.receivedAt });
+    byTopic.set(observation.topic, members);
+  }
+  return { status: 'ok' as const, topics: [...byTopic.entries()]
+    .map(([name, members]) => ({ topic: name, members: members.sort((a, b) => a.member.localeCompare(b.member)) }))
+    .sort((a, b) => a.topic.localeCompare(b.topic)) };
+}

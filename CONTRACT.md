@@ -4525,14 +4525,21 @@ alias and no label post may claim),
 with a `reason`); they never throw for bad input or storage faults.
 
 `src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
-`postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
+`postChannelHeartbeat`, `postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
 `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
 carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
 check `thread` gets, and `kind` — `note` or `context`, the v2 conversational
 body kind `postLabelMessage` already exposed, now shared by all three so a
-DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, with?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?, bodyKind?, result?}, options?)`
+DM or channel post can carry reference material too; `postChannelHeartbeat`
+takes `{from, channel, topic?, state, id?}` and posts the fixed
+`{kind:'group.presence', state}` observation at P3 with the five-minute
+presence TTL to `group:<channel>:<topic>` (default `general`) under the
+same registered-sender and channel-membership gate `postChannelMessage`
+applies — the member named is always the sender's own `agent:<handle>`
+label, `state` is `online`|`offline`, and priority/ttl/wake inputs do not
+apply), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, with?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?, bodyKind?, result?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every
@@ -4788,6 +4795,19 @@ the cited job resolved through the same one-read-per-page annotation
 registry answers
 `unknown-channel`, and an unreadable registry or store answers
 `unavailable`/`retryable`, never an empty page passed off as history),
+`readAgentChannelPresence(name, {topic?}, options?)`
+(the channel's live `group.presence` snapshot — the read `channel read`
+points at when it excludes heartbeats — folding every heartbeat under
+`group:<name>:*`, or the one `topic`, with the shared `groupChannelPresence`
+rules: latest heartbeat per (topic, member) wins, `offline` removes until a
+later `online`, observations past the five-minute TTL, malformed addresses
+and non-member labels never count, and only `online` members list grouped
+per topic with `memberAgent` — the resolved handle beside the raw label,
+null when the label names no identity; the channel must be a registry
+channel like `readAgentChannel` (`unknown-channel` otherwise) but reading
+needs no identity and no membership, an unreadable registry or store
+answers `unavailable`/`retryable`, never an empty snapshot passed off as
+"nobody is here"),
 `readBusEnvelopeById(id, options?)` (one retained envelope by its wire id —
 the key wake hints, claim operations and `work mine` items cite — via the
 same bounded page walk; live rows only so an expired or never-posted id
