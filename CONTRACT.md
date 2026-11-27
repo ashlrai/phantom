@@ -929,7 +929,11 @@ Merge-events rows never create outcomes. GitHub pull URLs that differ only
 in case or a trailing slash share one claim identity for URL-only jobs
 rows and all PR evidence joins. Multiple jobs claiming that identity
 count once in `ambiguous_urls` and receive no evidence through it. Other
-URLs still match literally for URL-only jobs rows. The same joined check record
+URLs still match literally for URL-only jobs rows. When the supported URL
+fields on one row identify different claims, a URL-only row stays
+unattached. A row with a job ID retains its job-level evidence, but cannot
+supply PR-scoped evidence. Each claim on that row still counts when
+determining whether another job has an exclusive claim. The same joined check record
 resolves `ci_first_pass` fill-only when the jobs ledger supplies no
 attributable verdict. PR-scoped verdicts require a unique job claim and
 must match the standing PR. Job-only verdicts are usable with no PR
