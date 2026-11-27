@@ -391,6 +391,10 @@ the tier tally falls back to the row's own fields.
 `phm fleet ready-supply` uses the same rule for hinted and lane-open jobs.
 The planner uses those counts for its supply floor, so repeated READY rows
 cannot inflate the backlog. Parked rows are counted separately.
+Planner autorun measures lane headroom against the configured target capped
+by the dispatcher snapshot's `effective_target` when present. A readable
+queue below the critical supply floor can still trigger a pass with zero
+headroom.
 
 An executor is unfed when it has free slots while runnable rows wait under
 another lane's hint. Each tick the dispatcher computes this after its launches
