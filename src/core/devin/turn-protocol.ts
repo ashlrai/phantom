@@ -13,7 +13,9 @@
  * Nothing here is ever a secret: the key is read by the turn process from the
  * Keychain and never printed; messages are scrubbed before they are printed.
  */
+import { scrubSecrets } from '../util/scrub.js';
 import type { VerseRemoteState } from '../verse/types.js';
+import { isDevinRecord, redactDevinKeys } from './types.js';
 
 export type DevinTurnLine =
   /** The conversation this turn is bound to (cloud: the Devin task id `dv_…`; CLI: the ACP session id). */
@@ -75,7 +77,7 @@ export interface DevinTurnVerseMcp {
 
 function parseVerseMcp(raw: unknown): DevinTurnVerseMcp | null | undefined {
   if (raw === undefined || raw === null) return null;
-  if (!isRecord(raw)) return undefined;
+  if (!isDevinRecord(raw)) return undefined;
   const { url, token, tokenFile, stdio, scopes } = raw;
   if (typeof url !== 'string' || !/^http:\/\/127\.0\.0\.1:\d{1,5}\/api\/verse\/agent-tools\/mcp$/.test(url)) return undefined;
   if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) return undefined;
@@ -86,13 +88,17 @@ function parseVerseMcp(raw: unknown): DevinTurnVerseMcp | null | undefined {
 }
 
 export const DEVIN_TURN_PAYLOAD_MAX_BYTES = 1024 * 1024;
+const DEFAULT_TURN_TEXT_MAX = 60_000;
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
+/** Scrub secrets (`cog_…` keys included) and bound text emitted by a Devin turn runner. */
+export function scrubDevinTurnText(text: string, max = DEFAULT_TURN_TEXT_MAX): string {
+  const scrubbed = redactDevinKeys(scrubSecrets(text));
+  return scrubbed.length > max ? `${scrubbed.slice(0, max - 1)}…` : scrubbed;
+}
 
 /** Validate a stdin payload; null when anything is off (the process then exits 2 without doing anything). */
 export function parseDevinTurnPayload(raw: unknown): DevinTurnPayload | null {
-  if (!isRecord(raw) || raw['v'] !== 1) return null;
+  if (!isDevinRecord(raw) || raw['v'] !== 1) return null;
   const lane = raw['lane'];
   if (lane !== 'cloud' && lane !== 'cli') return null;
   const str = (key: string, max: number): string | null => {

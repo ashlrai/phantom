@@ -29,6 +29,7 @@ import {
   DEVIN_ORG_ID_PATTERN,
   DEVIN_PLAYBOOK_ID_PATTERN,
   isDevinOpaqueSelfId,
+  isDevinRecord as isRecord,
   isDevinSelfIdentity,
   type DevinSelfIdentity,
   DEVIN_SESSION_ID_PATTERN,
@@ -194,9 +195,6 @@ const MAX_PROMPT_CHARS = 60_000;
 
 const SESSION_STATUSES: readonly DevinSessionStatus[] = ['new', 'claimed', 'running', 'exit', 'error', 'suspended', 'resuming'];
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => {
   const t = setTimeout(resolve, ms);
   t.unref?.();
@@ -308,9 +306,8 @@ export function parseDevinSession(raw: unknown): DevinSession | null {
   };
 }
 
-/** PaginatedResponse[SessionResponse] — https://docs.devin.ai/api-reference/concepts/pagination. Unparseable items are dropped. */
 /** Array of SessionAttachment; any malformed row fails the whole read closed. */
-export function parseDevinSessionAttachments(raw: unknown): DevinSessionAttachment[] | null {
+function parseDevinSessionAttachments(raw: unknown): DevinSessionAttachment[] | null {
   if (!Array.isArray(raw) || raw.length > 1000) return null;
   const out: DevinSessionAttachment[] = [];
   for (const row of raw) {
@@ -332,6 +329,7 @@ export interface DevinSessionPage {
   complete?: boolean;
 }
 
+/** PaginatedResponse[SessionResponse] — https://docs.devin.ai/api-reference/concepts/pagination. Unparseable items are dropped. */
 export function parseDevinSessionPage(raw: unknown): DevinSessionPage | null {
   if (!isRecord(raw) || !Array.isArray(raw['items'])) return null;
   const items: DevinSession[] = [];
@@ -358,7 +356,7 @@ const MAX_MESSAGE_CHARS = 100_000;
  * source or a string message is dropped (never guessed); a very long message
  * is clipped rather than refused, so one huge reply cannot wedge the stream.
  */
-export function parseDevinMessagePage(raw: unknown): { items: DevinSessionMessage[]; endCursor: string | null; hasNextPage: boolean } | null {
+function parseDevinMessagePage(raw: unknown): { items: DevinSessionMessage[]; endCursor: string | null; hasNextPage: boolean } | null {
   if (!isRecord(raw) || !Array.isArray(raw['items'])) return null;
   const items: DevinSessionMessage[] = [];
   for (const item of raw['items'].slice(0, 500)) {

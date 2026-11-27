@@ -24,11 +24,12 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
-import { devinHome, ensureDevinDirectory } from './store.js';
+import { writePrivateFileAtomic } from '../verse/preferences.js';
+import { devinHome, ensureDevinDirectory, readDevinJsonFile } from './store.js';
+import { isDevinRecord } from './types.js';
 
-export const DEVIN_CLI_PRS_DIR = 'cli-prs';
-export const DEVIN_CLI_PRS_DISMISSED_FILE = 'cli-prs-dismissed.json';
+const DEVIN_CLI_PRS_DIR = 'cli-prs';
+const DEVIN_CLI_PRS_DISMISSED_FILE = 'cli-prs-dismissed.json';
 /** How long a CLI chat's PR stays in Needs-you (nothing tracks it to its merge). */
 export const DEVIN_CLI_PR_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -72,31 +73,18 @@ function chatFile(sessionId: string): string {
   return join(devinHome(), DEVIN_CLI_PRS_DIR, `${sessionId}.json`);
 }
 
-function readJson(path: string): unknown {
-  const file = readPrivateFileCapped(path, MAX_FILE_BYTES);
-  if (!file || file.truncated) return undefined;
-  try {
-    return JSON.parse(file.text) as unknown;
-  } catch {
-    return undefined;
-  }
-}
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
 function isPr(value: unknown): value is DevinCliPr {
-  return isRecord(value)
+  return isDevinRecord(value)
     && typeof value['url'] === 'string' && PR_URL_EXACT.test(value['url'])
     && typeof value['repo'] === 'string' && value['url'].startsWith(`https://github.com/${value['repo']}/pull/`)
     && Number.isSafeInteger(value['number']) && value['url'].endsWith(`/pull/${value['number'] as number}`)
     && typeof value['seenAt'] === 'string' && Number.isFinite(Date.parse(value['seenAt']));
 }
 
-export function readDevinCliChatPrs(sessionId: string): DevinCliChatPrs | null {
+function readDevinCliChatPrs(sessionId: string): DevinCliChatPrs | null {
   if (!CHAT_ID.test(sessionId)) return null;
-  const value = readJson(chatFile(sessionId));
-  if (!isRecord(value) || value['v'] !== 1 || value['sessionId'] !== sessionId || !Array.isArray(value['prs'])) return null;
+  const value = readDevinJsonFile(chatFile(sessionId), MAX_FILE_BYTES);
+  if (!isDevinRecord(value) || value['v'] !== 1 || value['sessionId'] !== sessionId || !Array.isArray(value['prs'])) return null;
   return { sessionId, prs: value['prs'].filter(isPr).slice(0, MAX_PRS_PER_CHAT) };
 }
 
@@ -142,8 +130,8 @@ export function listDevinCliPrs(): DevinCliChatPrs[] {
 export const devinCliPrKey = (sessionId: string, url: string): string => `${sessionId} ${url.toLowerCase()}`;
 
 export function readDismissedDevinCliPrs(): Set<string> {
-  const value = readJson(join(devinHome(), DEVIN_CLI_PRS_DISMISSED_FILE));
-  if (!isRecord(value) || value['v'] !== 1 || !Array.isArray(value['keys'])) return new Set();
+  const value = readDevinJsonFile(join(devinHome(), DEVIN_CLI_PRS_DISMISSED_FILE), MAX_FILE_BYTES);
+  if (!isDevinRecord(value) || value['v'] !== 1 || !Array.isArray(value['keys'])) return new Set();
   return new Set(value['keys'].filter((k): k is string => typeof k === 'string' && k.length <= 2200));
 }
 

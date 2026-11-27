@@ -42,7 +42,7 @@ import { CLOUD_TIMELINE_SCHEMA_VERSION, type CloudTimelineResponse, type Timelin
 import { readDevinBudget, readDevinTask } from './store.js';
 import { DEVIN_REPORT_FENCE, DEVIN_TASK_ID_PATTERN, DEVIN_USAGE_URL, type DevinTaskV1 } from './types.js';
 
-export const DEVIN_TIMELINE_WORDS: TimelineLaneWords = {
+const DEVIN_TIMELINE_WORDS: TimelineLaneWords = {
   record: 'Devin task record',
   tracker: 'GitHub, read by the Devin tracker',
   trackerAndGit: 'GitHub (Devin tracker) + local git',
@@ -61,13 +61,12 @@ const ORIGIN_WORD: Record<DevinTaskV1['origin'], string> = {
 type Step = TimelineStep;
 
 /**
- * The message count the service keeps (an OPTIONAL field on DevinTaskV1 —
- * read through a narrow local type so this file does not depend on when it
- * lands). Only messages Verse sent are counted; ones typed in Devin's own app
- * are not, and the session response's own history is never used to guess.
+ * The message count the service keeps on `DevinTaskV1.messagesSent`. Only
+ * messages Phantom sent are counted; ones typed in Devin's own app are not,
+ * and the session response's own history is never used to guess.
  */
 export function devinMessagesLine(task: DevinTaskV1): string {
-  const raw = (task as DevinTaskV1 & { messagesSent?: unknown }).messagesSent;
+  const raw: unknown = task.messagesSent;
   if (raw === undefined || raw === null) return 'No messages recorded as sent from Phantom.';
   if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw < 0) return 'Messages sent from Phantom: unknown.';
   if (raw === 0) return 'No messages sent from Phantom.';

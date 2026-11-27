@@ -31,7 +31,6 @@
  * is read from the Keychain by `connectedClient` and never leaves the client.
  */
 import { resolveGitHubOriginAuthorityAsync } from '../git.js';
-import { scrubSecrets } from '../util/scrub.js';
 import type { VerseRemoteState } from '../verse/types.js';
 import {
   DevinApiError,
@@ -50,7 +49,7 @@ import {
 import { connectedClient, launchDevinTask, type DevinServiceDeps } from './service.js';
 import { readDevinTask } from './store.js';
 import { DEVIN_PROMPT_MAX_CHARS, DEVIN_TASK_ID_PATTERN } from './types.js';
-import type { DevinTurnLine, DevinTurnPayload } from './turn-protocol.js';
+import { scrubDevinTurnText as clean, type DevinTurnLine, type DevinTurnPayload } from './turn-protocol.js';
 
 export interface DevinTurnIo {
   emit(line: DevinTurnLine): void;
@@ -85,7 +84,6 @@ const QUIET_POLLS_BEFORE_EASING = 3;
 const MAX_PAGES_PER_POLL = 10;
 const ACU_EMIT_STEP = 0.5;
 const ACU_EMIT_EVERY_MS = 60_000;
-const MAX_TEXT = 60_000;
 
 const WAITING = new Set(['waiting_for_user', 'waiting_for_approval']);
 
@@ -103,11 +101,6 @@ const SUSPEND_WORDS: Readonly<Record<string, string>> = {
   contract_expired: 'Devin stopped: the contract has expired.',
   error: 'Devin suspended the session after an error. Send a message to try again.',
 };
-
-function clean(text: string, max = MAX_TEXT): string {
-  const scrubbed = scrubSecrets(text).replace(/\bcog_[A-Za-z0-9_-]+/g, '[REDACTED]');
-  return scrubbed.length > max ? `${scrubbed.slice(0, max - 1)}…` : scrubbed;
-}
 
 /** Where the session stands, in the transcript's words; `ends` = the turn hands back to the operator. */
 export function remoteStateOf(session: Pick<DevinSession, 'status' | 'statusDetail'>): { state: VerseRemoteState; message: string; ends: boolean } {
