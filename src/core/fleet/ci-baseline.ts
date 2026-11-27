@@ -2049,6 +2049,164 @@ const TEST_RUNNER_INPUTS: Record<string, readonly string[]> = {
   [TEST_CI_SHARDED_NAMES]: [TEST_CI_SHARDED_FILE, 'scripts/test-shard-plan.mjs', 'scripts/test-ci.mjs', 'test/helpers/test-durations.json', ...TEST_RUNNER_COMMON_INPUTS],
 };
 
+// The native-macos-broker-foundation job (rustfmt --check, cargo check,
+// cargo clippy --lib --locked -- -D warnings, cargo test --lib --locked)
+// and the release-build job's cargo/tauri compile print three toolchain
+// shapes no other parser reads, so a red master in the Rust broker used
+// to mark every open PR unknown and queue no fix.
+//
+// rustc and clippy emit `error[EXXXX]:`/`error:` headers at column 0;
+// each diagnostic's primary span is a `--> <path>:<line>:<col>` line
+// whose path is relative to the crate root (desktop/src-tauri). Only
+// error-level diagnostics group: `cargo clippy -D warnings` renders
+// denied lints as `error:` while plain `warning:` output never fails
+// the step, matching the eslint parser's errors-only rule. cargo test
+// runtime failures print `thread '<test>' panicked at
+// <path>:<line>:<col>:` — with `-- --nocapture` the panic streams live
+// with no `---- stdout ----` wrapper, so the thread name is correlated
+// against the run's `test <name> ... FAILED` lines and a
+// `test result: FAILED` verdict is required before any panic counts;
+// a caught panic inside a passing test can never mint a group. rustfmt
+// --check prints `Diff in <path> at line <n>:` per unformatted file,
+// the argv path already repo-relative. Registry and sysroot paths are
+// absolute or ~-rooted and never match the crate-relative shapes, so
+// dependency diagnostics stay unparsed rather than guessed. Like the
+// other non-test identities these group per file under parenthesized
+// names and can never resolve through a vitest pass line:
+// shared-baseline, pr-caused or unknown -- never probable-flake.
+const RUST_NAMES = '(rust)';
+const RUST_TEST_NAMES = '(rust-test)';
+const RUSTFMT_NAMES = '(rustfmt)';
+const RUST_MAX = 100;
+const RUST_CRATE_ROOT = 'desktop/src-tauri';
+const RUST_HEADER = /^(error|warning)(?:\[[^\]]+\])?:\s+\S/;
+const RUST_SPAN = /^-->\s+(\S+?):(\d+):(\d+)$/;
+const RUST_TEST_FAILED = /^test\s+(\S+)\s+\.\.\.\s+FAILED\s*$/;
+const RUST_TEST_VERDICT = /^test result: FAILED/;
+const RUST_PANIC = /^thread '([^']+)'\s+panicked at\s+(?:'[^'\n]*',\s*)?(\S+?):(\d+):(\d+)/;
+const RUSTFMT_DIFF = /^Diff in\s+(.+?)\s+at line\s+\d+:/;
+// Crate-relative shapes rustc/cargo print for this package's own files:
+// src/**, tests/**, benches/**, examples/**, build.rs or a bare *.rs at
+// the package root. Dependency and sysroot paths never match.
+const RUST_CRATE_REL = /^(?:src\/|tests?\/|benches\/|examples?\/|build\.rs$|[^/]+\.rs$)/;
+
+// Map a printed path to its repo-relative .rs file, or null. Accepts
+// crate-relative paths (prefixed with the crate root), paths already
+// repo-relative under the crate root (rustfmt echoes its argv), and
+// absolute runner paths resolved through the same `/<repo>/<repo>/`
+// checkout marker as TAP locations and lint headers.
+function rustRepoFile(path: string, repo: string | undefined): string | null {
+  let rel = path.replace(/\\/g, '/');
+  if (rel.startsWith('/')) {
+    const repoName = repo?.split('/')[1];
+    if (repoName === undefined) return null;
+    const marker = `/${repoName}/${repoName}/`;
+    const at = rel.indexOf(marker);
+    if (at < 0) return null;
+    rel = rel.slice(at + marker.length);
+  }
+  if (rel.startsWith(`${RUST_CRATE_ROOT}/`)) {
+    // Already repo-relative.
+  } else if (rel.startsWith('/') || rel.startsWith('~') || rel.startsWith('<')) {
+    return null;
+  } else {
+    if (!RUST_CRATE_REL.test(rel)) return null;
+    rel = `${RUST_CRATE_ROOT}/${rel}`;
+  }
+  if (!rel.endsWith('.rs')) return null;
+  if (posix.normalize(rel) !== rel || rel.includes('..') || posix.isAbsolute(rel)) return null;
+  return rel;
+}
+
+function parseRustFailures(log: string, repo: string | undefined): Failure[] {
+  const ls = lines(log);
+  const groups = new Map<string, Failure>();
+  const add = (names: string, file: string, chunk: string) => {
+    if (groups.size >= RUST_MAX) return;
+    const testId = `${file} > ${names}`;
+    const existing = groups.get(testId);
+    if (existing !== undefined) {
+      existing.excerpt = clean(`${existing.excerpt}\n${chunk}`);
+      return;
+    }
+    groups.set(testId, { file, names, testId, excerpt: clean(chunk) });
+  };
+
+  // rustc/clippy diagnostics: each `-->` span attributes to the most
+  // recent error/warning header; warning spans and header-less output
+  // (cargo summaries, snippet text) never group.
+  let header: string | null = null;
+  let headerIsError = false;
+  for (let i = 0; i < ls.length && groups.size < RUST_MAX; i++) {
+    const line = ls[i]!;
+    const head = RUST_HEADER.exec(line);
+    if (head !== null) {
+      header = line;
+      headerIsError = head[1] === 'error';
+      continue;
+    }
+    const span = RUST_SPAN.exec(line);
+    if (span === null || header === null || !headerIsError) continue;
+    const file = rustRepoFile(span[1]!, repo);
+    if (file === null) continue;
+    // The label line (`| ^^^ expected ...`) carries the diagnostic's
+    // payload; take the first caret line inside the snippet window.
+    let label = '';
+    for (let j = i + 1; j < Math.min(i + 12, ls.length); j++) {
+      const cand = ls[j]!;
+      if (cand === '' || RUST_HEADER.test(cand) || RUST_SPAN.test(cand)) break;
+      if (/\^/.test(cand)) { label = cand; break; }
+    }
+    add(RUST_NAMES, file, label === '' ? `${header}\n${line}` : `${header}\n${line}\n${label}`);
+  }
+
+  // cargo test runtime failures: panic locations count only when the
+  // run recorded a FAILED verdict and the panicking thread is a test
+  // the run reported FAILED (or no per-test FAILED lines were printed
+  // at all); `<unnamed>` threads and caught panics in passing tests
+  // stay unattributed. A `main`-thread panic is never a test thread --
+  // it is a build script or harness-level failure -- so it groups under
+  // (rust) without the test verdict.
+  const failedTests = new Set<string>();
+  let sawTestFailure = false;
+  for (const line of ls) {
+    const verdict = RUST_TEST_VERDICT.exec(line);
+    if (verdict !== null) { sawTestFailure = true; continue; }
+    const failed = RUST_TEST_FAILED.exec(line);
+    if (failed !== null) failedTests.add(failed[1]!);
+  }
+  for (let i = 0; i < ls.length && groups.size < RUST_MAX; i++) {
+    const panic = RUST_PANIC.exec(ls[i]!);
+    if (panic === null) continue;
+    const name = panic[1]!;
+    if (name === '<unnamed>') continue;
+    const isTestPanic = name !== 'main';
+    if (isTestPanic && (!sawTestFailure || (failedTests.size > 0 && !failedTests.has(name)))) continue;
+    const file = rustRepoFile(panic[2]!, repo);
+    if (file === null) continue;
+    const message = ls[i + 1] ?? '';
+    const chunk = message === '' ? ls[i]! : `${ls[i]}\n${message}`;
+    add(isTestPanic ? RUST_TEST_NAMES : RUST_NAMES, file, chunk);
+  }
+
+  // rustfmt --check: one `Diff in <path> at line <n>:` header per
+  // unformatted file followed by the diff body.
+  for (let i = 0; i < ls.length && groups.size < RUST_MAX; i++) {
+    const diff = RUSTFMT_DIFF.exec(ls[i]!);
+    if (diff === null) continue;
+    const file = rustRepoFile(diff[1]!.trim(), repo);
+    if (file === null) continue;
+    const body: string[] = [ls[i]!];
+    for (let j = i + 1; j < Math.min(i + 8, ls.length) && body.length < 7; j++) {
+      const cand = ls[j]!;
+      if (cand === '' || RUSTFMT_DIFF.test(cand) || RUST_HEADER.test(cand)) break;
+      body.push(cand);
+    }
+    add(RUSTFMT_NAMES, file, body.join('\n'));
+  }
+  return [...groups.values()];
+}
+
 export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -2163,6 +2321,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     result.push(failure);
   }
   for (const failure of parseTestRunnerFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseRustFailures(log, repo)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
@@ -2345,6 +2507,19 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // (release metadata for sync-candidate-version); seed them so a PR
       // touching any input counts as touched.
       for (const input of STATIC_FAILURE_INPUTS[file] ?? []) visited.add(input);
+      // Rust diagnostics name .rs files, which have no JS import closure:
+      // the crate compiles as one unit, so the dependency set is the
+      // workflow's own native-input fingerprint -- every tracked input
+      // ci.yml's cargo-inputs step hashes for the native cache key --
+      // enumerated once from the master tree. An unreadable or truncated
+      // tree fails the closure closed (unknown), never an empty set.
+      if (file.endsWith('.rs')) {
+        const inputs = await nativeCompileInputs();
+        if (inputs === null) return null;
+        for (const input of inputs) visited.add(input);
+        visited.add(file);
+        return visited;
+      }
       // Only code has an import closure: a Markdown report, JSON or asset
       // failure file depends on itself alone. Scanning prose for import
       // syntax would let a doc's code sample fail the whole closure closed.
@@ -2503,25 +2678,71 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   // scripts/lib/docs-pages.mjs. The page set comes from one recursive master
   // tree listing per analysis; an unreadable or truncated tree fails the
   // generated-file closure closed (unknown), never an empty page set.
-  let docsPagesListing: Promise<Set<string> | null> | null = null;
-  function publicDocsPages(): Promise<Set<string> | null> {
-    docsPagesListing ??= (async () => {
+  interface TreeEntry { path?: unknown; type?: unknown; mode?: unknown }
+  let masterTreeListing: Promise<TreeEntry[] | null> | null = null;
+  function masterTree(): Promise<TreeEntry[] | null> {
+    masterTreeListing ??= (async () => {
       try {
         const r = await gh(['api', `repos/${repo}/git/trees/${ref}?recursive=1`]);
         if (!r.ok) return null;
         const data = JSON.parse(r.stdout) as { tree?: unknown; truncated?: unknown } | null;
         if (!Array.isArray(data?.tree) || data.truncated === true) return null;
-        const pages = new Set<string>();
-        for (const entry of data.tree as { path?: unknown; type?: unknown; mode?: unknown }[]) {
-          if (entry?.type !== 'blob' || (entry.mode !== '100644' && entry.mode !== '100755')) continue;
-          const path = entry.path;
-          if (typeof path !== 'string' || !path.startsWith('docs/') || !path.endsWith('.md') || path.startsWith('docs/internal/')) continue;
-          pages.add(path);
-        }
-        return pages;
+        return data.tree as TreeEntry[];
       } catch { return null; }
     })();
+    return masterTreeListing;
+  }
+  let docsPagesListing: Promise<Set<string> | null> | null = null;
+  function publicDocsPages(): Promise<Set<string> | null> {
+    docsPagesListing ??= (async () => {
+      const tree = await masterTree();
+      if (tree === null) return null;
+      const pages = new Set<string>();
+      for (const entry of tree) {
+        if (entry?.type !== 'blob' || (entry.mode !== '100644' && entry.mode !== '100755')) continue;
+        const path = entry.path;
+        if (typeof path !== 'string' || !path.startsWith('docs/') || !path.endsWith('.md') || path.startsWith('docs/internal/')) continue;
+        pages.add(path);
+      }
+      return pages;
+    })();
     return docsPagesListing;
+  }
+
+  // Rust diagnostics name .rs files whose dependency set is the crate,
+  // not an import closure. The native-macos-broker-foundation and
+  // release-build jobs fingerprint their compile inputs with the
+  // cargo-inputs step in ci.yml; this mirrors that exact membership --
+  // the same exact files and src/capabilities/icons prefixes -- so a PR
+  // touching anything that can change the native build counts as
+  // touched. The tree lists blobs only, matching git ls-files membership.
+  const NATIVE_EXACT_INPUTS = new Set([
+    '.github/workflows/ci.yml', 'Cargo.toml', 'Cargo.lock',
+    '.cargo/config', '.cargo/config.toml', 'rust-toolchain', 'rust-toolchain.toml',
+    'desktop/src-tauri/Cargo.toml', 'desktop/src-tauri/Cargo.lock',
+    'desktop/src-tauri/build.rs', 'desktop/src-tauri/tauri.conf.json',
+    'desktop/src-tauri/Info.plist', 'desktop/src-tauri/Entitlements.plist',
+    'desktop/src-tauri/.cargo/config', 'desktop/src-tauri/.cargo/config.toml',
+    'desktop/src-tauri/rust-toolchain', 'desktop/src-tauri/rust-toolchain.toml',
+  ]);
+  const NATIVE_PREFIX_INPUTS = ['desktop/src-tauri/src/', 'desktop/src-tauri/capabilities/', 'desktop/src-tauri/icons/'] as const;
+  const isNativeInput = (path: string) =>
+    NATIVE_EXACT_INPUTS.has(path) || NATIVE_PREFIX_INPUTS.some(prefix => path.startsWith(prefix));
+  let nativeInputsListing: Promise<Set<string> | null> | null = null;
+  function nativeCompileInputs(): Promise<Set<string> | null> {
+    nativeInputsListing ??= (async () => {
+      const tree = await masterTree();
+      if (tree === null) return null;
+      const inputs = new Set<string>();
+      for (const entry of tree) {
+        if (entry?.type !== 'blob' || (entry.mode !== '100644' && entry.mode !== '100755')) continue;
+        const path = entry.path;
+        if (typeof path !== 'string' || !isNativeInput(path)) continue;
+        inputs.add(path);
+      }
+      return inputs;
+    })();
+    return nativeInputsListing;
   }
 
   const harnessFileCache = new Map<string, Promise<Set<string> | null>>();
@@ -2624,7 +2845,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // the harness, and the secret-shape/
       // secret-scan/version-provenance trust gates have no vitest harness
       // at all, so the ambient set cannot reach any of them.
-      const usesHarness = !(failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === BUILD_STEP_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file));
+      const usesHarness = !(failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === BUILD_STEP_NAMES || failure.names === RUST_NAMES || failure.names === RUST_TEST_NAMES || failure.names === RUSTFMT_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file));
       const ambient = usesHarness ? await harnessAmbient(failure.file) : new Set<string>();
       let touched: boolean | null = null;
       if (pr.files?.some(f => f.path === failure.file)) {

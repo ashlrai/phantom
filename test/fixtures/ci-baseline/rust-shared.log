@@ -1,0 +1,60 @@
+Diff in desktop/src-tauri/src/lib.rs at line 10:
+     let count: i32 = "hello";
+-    let other=1;
++    let other = 1;
+     let third = 3;
+
+   Compiling phantom v3.30.60 (/home/runner/work/repo/repo/desktop/src-tauri)
+error[E0308]: mismatched types
+  --> src/lib.rs:10:5
+   |
+10 |     let count: i32 = "hello";
+   |                  ^^^^^^^ expected `i32`, found `&str`
+   |
+   = note: expected type `i32`
+              found type `&'static str`
+
+error[E0432]: unresolved import `crate::missing`
+ --> src/voice/mod.rs:3:12
+  |
+3 |     use crate::missing::Thing;
+  |            ^^^^^^^^^^^^ could not find `missing` in the crate root
+
+warning: unused variable: `x`
+ --> src/lib.rs:20:9
+  |
+20 |     let x = 1;
+  |         ^ help: if this is intentional, prefix it with an underscore: `_x`
+
+error: aborting due to 2 previous errors
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `phantom` (lib) due to 2 previous errors
+error: failed to run custom build command for `phantom v3.30.60 (/home/runner/work/repo/repo/desktop/src-tauri)`
+thread 'main' panicked at build.rs:10:5:
+failed to copy icon resources
+     Running unittests src/lib.rs (target/debug/deps/phantom-0123456789abcdef)
+
+running 4 tests
+test voice::tests::parses ... ok
+thread 'tests::ok' panicked at src/other.rs:5:1:
+caught panic inside a passing test
+test tests::ok ... ok
+thread 'tests::broken' panicked at src/lib.rs:42:9:
+assertion `left == right` failed
+  left: 1
+ right: 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::broken ... FAILED
+thread '<unnamed>' panicked at src/voice/worker.rs:8:3:
+background thread panic
+test tests::also_broken ... ok
+
+failures:
+
+failures:
+    tests::broken
+
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass '--lib'

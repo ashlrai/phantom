@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40), s
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; sameHead?: boolean; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
+function github(options: { count?: number; sameHead?: boolean; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; rust?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -65,7 +65,7 @@ function github(options: { count?: number; sameHead?: boolean; touched?: string;
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/') || endpoint.includes('/jobs/30/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.installSmoke ? 'install-smoke-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.installSmoke ? 'install-smoke-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.rust ? 'rust-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : prHead;
       let prefix: string;
       if (options.checkoutRef !== undefined) {
@@ -2342,6 +2342,105 @@ describe('CI baseline evidence', () => {
     // A singleton unaffected failure can never prove a master pass: the
     // parenthesized runner identity is not passable, so it stays unknown.
     const singleton = await analyzeCiBaseline('owner/repo', github({ runner: true, count: 1, pass: true, filePass: true }).gh);
+    for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses rust toolchain failures as per-file gate identities', () => {
+    // The native broker jobs print rustfmt diffs, rustc/clippy
+    // diagnostics, build-script panics and --nocapture cargo test
+    // panics; none of them carry a vitest, TAP or tsc shape.
+    const failures = parseBaselineFailures(fixture('rust-shared'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual([
+      'desktop/src-tauri/src/lib.rs > (rust)',
+      'desktop/src-tauri/src/voice/mod.rs > (rust)',
+      'desktop/src-tauri/build.rs > (rust)',
+      'desktop/src-tauri/src/lib.rs > (rust-test)',
+      'desktop/src-tauri/src/lib.rs > (rustfmt)',
+    ]);
+    expect(failures[0]?.excerpt).toContain('error[E0308]: mismatched types').toContain('--> src/lib.rs:10:5').toContain('expected `i32`, found `&str`');
+    expect(failures[1]?.excerpt).toContain('error[E0432]: unresolved import');
+    expect(failures[2]?.excerpt).toContain("thread 'main' panicked at build.rs:10:5:");
+    expect(failures[3]?.excerpt).toContain("thread 'tests::broken' panicked at src/lib.rs:42:9:");
+    expect(failures[4]?.excerpt).toContain('Diff in desktop/src-tauri/src/lib.rs at line 10:');
+    // Timestamped job-log lines keep every shape.
+    const stamped = fixture('rust-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    // Absolute runner paths resolve through the checkout marker like
+    // TAP locations and lint headers.
+    const absolute = parseBaselineFailures('error[E0308]: mismatched types\n  --> /home/runner/work/repo/repo/desktop/src-tauri/src/deep/mod.rs:7:3', 'owner/repo');
+    expect(absolute.map(f => f.testId)).toEqual(['desktop/src-tauri/src/deep/mod.rs > (rust)']);
+  });
+  it('keeps unrecognized rust output unparsed', () => {
+    for (const log of [
+      // cargo's own summaries carry no span.
+      'error: could not compile `phantom` (lib) due to 1 previous error',
+      // Warnings never fail cargo check/clippy without -D, so their
+      // spans stay unattributed like eslint's warning rows.
+      'warning: unused variable: `x`\n --> src/lib.rs:20:9\n  |\n20 |     let x = 1;',
+      // Dependency and sysroot paths are absolute or ~-rooted and never
+      // resolve through the crate-relative shapes.
+      'error[E0308]: mismatched types\n  --> /home/runner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs:1:1',
+      'error[E0308]: mismatched types\n  --> ~/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs:1:1',
+      // A test panic needs the FAILED verdict and a FAILED test name:
+      // a caught panic inside a passing test mints no group.
+      "thread 'tests::ok' panicked at src/lib.rs:42:9:\nassertion failed",
+      'test result: ok. 4 passed; 0 failed',
+      // rustfmt diffs name .rs files only.
+      'Diff in README.md at line 3:',
+      'Diff in src/styles.css at line 3:',
+    ]) {
+      expect(parseBaselineFailures(log, 'owner/repo'), log.split('\n')[0]).toEqual([]);
+    }
+    // A FAILED verdict with no matching test name still attributes the
+    // panic when no per-test FAILED lines were printed at all.
+    const bare = parseBaselineFailures("test result: FAILED. 0 passed; 1 failed\nthread 'tests::x' panicked at src/lib.rs:9:9:\nboom", 'owner/repo');
+    expect(bare.map(f => f.testId)).toEqual(['desktop/src-tauri/src/lib.rs > (rust-test)']);
+  });
+  it('groups rust toolchain failures and attributes the native input set', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ rust: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      'desktop/src-tauri/build.rs > (rust)',
+      'desktop/src-tauri/src/lib.rs > (rust)',
+      'desktop/src-tauri/src/lib.rs > (rust-test)',
+      'desktop/src-tauri/src/lib.rs > (rustfmt)',
+      'desktop/src-tauri/src/voice/mod.rs > (rust)',
+    ]);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    // The crate compiles as one unit: every tracked native input -- the
+    // exact files and src/capabilities/icons prefixes ci.yml's
+    // cargo-inputs step fingerprints -- counts as touched for every rust
+    // group. The fixture tree lists only the files the test needs.
+    const tree = [
+      '.github/workflows/ci.yml', 'Cargo.toml', 'Cargo.lock',
+      'desktop/src-tauri/Cargo.toml', 'desktop/src-tauri/Cargo.lock',
+      'desktop/src-tauri/build.rs', 'desktop/src-tauri/tauri.conf.json',
+      'desktop/src-tauri/Info.plist', 'desktop/src-tauri/Entitlements.plist',
+      'desktop/src-tauri/src/lib.rs', 'desktop/src-tauri/src/voice/mod.rs',
+      'desktop/src-tauri/src/voice/other.rs', 'desktop/src-tauri/capabilities/main.json',
+      'desktop/src-tauri/icons/icon.png',
+    ].map(path => ({ path, type: 'blob', mode: '100644' }));
+    for (const touched of ['desktop/src-tauri/src/lib.rs', 'desktop/src-tauri/src/voice/other.rs', 'desktop/src-tauri/tauri.conf.json', 'desktop/src-tauri/icons/icon.png', '.github/workflows/ci.yml']) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ rust: true, touched, tree }).gh);
+      expect(caused.groups.every(g => g.action === 'pr-caused'), touched).toBe(true);
+    }
+    // Inputs outside the fingerprint stay unattributed: the crate's own
+    // tree membership, not every repo file, decides touched.
+    for (const touched of ['docs/README.md', 'package.json', 'src/core/status.ts', 'desktop/src-tauri/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ rust: true, touched, tree }).gh);
+      expect(shared.groups.every(g => g.action === 'queue-master-fix'), touched).toBe(true);
+    }
+    // An unreadable or truncated master tree fails the native-input
+    // closure closed: touched stays unknown and no group can classify.
+    for (const options of [{ treeError: true }, { treeTruncated: true }] as const) {
+      const unknown = await analyzeCiBaseline('owner/repo', github({ rust: true, tree, ...options }).gh);
+      expect(unknown.groups.every(g => g.classification === 'unknown'), JSON.stringify(options)).toBe(true);
+    }
+    // A singleton unaffected failure can never prove a master pass: the
+    // parenthesized rust identities are not passable, so it stays unknown.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ rust: true, count: 1, pass: true, filePass: true }).gh);
     for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('keeps TAP indentation on timestamped job-log lines', () => {
