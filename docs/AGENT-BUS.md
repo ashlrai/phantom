@@ -2477,7 +2477,8 @@ address of a registry channel the identity belongs to, minus the identity's
 own channel posts: the same membership rule the inbox, wake and `work mine`
 reads apply, through the same identity registry the message filters use; a
 `--to` naming no identity, membership in no channel, or an unreadable registry
-keeps exact-label matching and never widens. All four claim surfaces —
+keeps exact-label matching and never widens. All four one-shot claim
+surfaces —
 `agents bus work next` (whose `--wait-ms` flag runs the same bounded wait
 `fleet bus-wait-claim` provides, so the unified surface needs no fleet
 verb to block for work), `fleet bus-next`, `fleet bus-wait-claim` and
@@ -2501,7 +2502,12 @@ of that identity while an unresolvable ref or unreadable registry keeps
 exact-label matching, so unknown identity state never widens a claim),
 so the claimable set is exactly what the matching read
 would list and a filtered claim can never pick work the read would hide —
-including work newer than the window it reviewed.
+including work newer than the window it reviewed. The multi-job
+executors `fleet bus-work-loop` and `fleet bus-work-pool` — which run the
+same `waitClaimBusWork` scan once per claimed job — take the identical
+flag set, so every claim poll inside the loop or each pool consumer
+applies the same filters and a malformed value is `invalid` before the
+first launch rather than a mid-run `failed`.
 When nothing is acquirable the
 result is `{status:'empty', candidates, held}` rather than a bare `empty`:
 `candidates` counts every live claimable receipt the bounded scan found
