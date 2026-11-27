@@ -545,9 +545,12 @@ job-memory, lifecycle (`started`/`exited`), aggregate
 unparsed: `exited` lines fire on ordinary test failures and on the
 stop-others SIGTERM cascade, so they can never be runner identities.
 
-Two unaffected fresh PRs at distinct head commits sharing a failure produce
-`queue-master-fix` and a ready brief. PRs at the same commit remain visible in
-the group but contribute only one head toward that threshold. Test/import
+An unaffected fresh PR gets `queue-master-fix` and a ready brief when the same
+failure appears on a second unaffected PR head or in a checkout-verified
+failed job on current master. A failed master job can corroborate the failure
+even when its workflow is incomplete. Matching output from a passing or
+incomplete master job cannot corroborate it. PRs at the same commit remain
+visible in the group and contribute one head. Test/import
 changes produce `pr-caused`. A singleton unaffected failure with an explicit
 test pass on master's current run produces
 `rerun-failed`. A green Vitest module summary with skipped or todo cases
