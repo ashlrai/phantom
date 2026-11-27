@@ -353,6 +353,12 @@ configured lane target and the last fresh tick's launch target (which includes
 any controller shed). A target decrease can suppress a recommendation before
 the next tick. A higher target needs dispatcher confirmation.
 
+When the fresh tick's timestamped admission record explicitly defers both
+routine and critical work for a lane, autopilot excludes that lane from
+starvation and restock recommendations. Its running, ready and headroom
+counts remain visible. Either class admitting work, or an incomplete
+verdict, leaves the usual gap checks in place.
+
 Autopilot reports empty ready queues against lane-local headroom. A restock
 proposal is limited to the smaller of that headroom and the remaining shared
 fleet slots. A full fleet cap or closed admission gate yields a no-op while
