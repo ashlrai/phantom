@@ -8,6 +8,7 @@ import { assertPermitted, cloudSubjectPermitted } from '../policy/local-only.js'
 import { ENFORCED_PROVIDER_AUTHORITY, MAX_GOVERNED_OUTPUT_TOKENS } from './model-call-authority.js';
 import type { AshlrConfigWithGateways } from '../config.js';
 import { gatewayRequestUrl, gatewayViaMarker, resolveGatewayTarget } from './gateway-target.js';
+import { isRecord } from './tool-calls.js';
 
 /** Internal host binding, never an HTTP/CLI DTO or a serialized admission. */
 export interface ClaudeApiExecutionBinding {
@@ -35,7 +36,6 @@ const PRICES: Readonly<Record<string, { input: bigint; output: bigint; maxInputT
 const HASH = /^[a-f0-9]{64}$/;
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const NAME = /^[A-Za-z0-9_-]{1,64}$/;
-function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function integer(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) >= 0; }
 function refuse(reason: string): never { throw new ClaudeApiRequestError(reason, false); }
 
@@ -56,9 +56,9 @@ function requestBody(model: string, messages: ChatMessage[], tools: unknown[] | 
   if (!Array.isArray(messages) || messages.length < 1 || messages.length > 128 || (tools?.length ?? 0) > 64) refuse('request-invalid');
   const names = new Set<string>();
   const definitions = (tools ?? []).map(tool => {
-    if (!record(tool) || tool.type !== 'function' || !record(tool.function)) refuse('tool-unsupported');
+    if (!isRecord(tool) || tool.type !== 'function' || !isRecord(tool.function)) refuse('tool-unsupported');
     const fn = tool.function;
-    if (typeof fn.name !== 'string' || !NAME.test(fn.name) || names.has(fn.name) || !record(fn.parameters) || (fn.description !== undefined && typeof fn.description !== 'string')) refuse('tool-unsupported');
+    if (typeof fn.name !== 'string' || !NAME.test(fn.name) || names.has(fn.name) || !isRecord(fn.parameters) || (fn.description !== undefined && typeof fn.description !== 'string')) refuse('tool-unsupported');
     names.add(fn.name);
     return { name: fn.name, ...(fn.description !== undefined ? { description: fn.description } : {}), input_schema: fn.parameters };
   });
@@ -67,7 +67,7 @@ function requestBody(model: string, messages: ChatMessage[], tools: unknown[] | 
   const outstanding = new Set<string>();
   const replayIds = new Set<string>();
   for (const message of messages) {
-    if (!record(message) || typeof message.content !== 'string') refuse('request-invalid');
+    if (!isRecord(message) || typeof message.content !== 'string') refuse('request-invalid');
     if (message.role === 'system') {
       if (turns.length || message.toolCalls || message.toolCallId) refuse('request-invalid');
       system.push(message.content); continue;
@@ -84,7 +84,7 @@ function requestBody(model: string, messages: ChatMessage[], tools: unknown[] | 
       if (message.toolCalls?.length) {
         if (role !== 'assistant' || message.toolCalls.length > 64) refuse('tool-replay-invalid');
         for (const call of message.toolCalls) {
-          if (!record(call) || typeof call.id !== 'string' || !ID.test(call.id) || replayIds.has(call.id) || !names.has(call.name) || !record(call.arguments)) refuse('tool-replay-invalid');
+          if (!isRecord(call) || typeof call.id !== 'string' || !ID.test(call.id) || replayIds.has(call.id) || !names.has(call.name) || !isRecord(call.arguments)) refuse('tool-replay-invalid');
           replayIds.add(call.id);
           outstanding.add(call.id); blocks.push({ type: 'tool_use', id: call.id, name: call.name, input: call.arguments });
         }
@@ -132,9 +132,9 @@ async function readResponse(response: Response, signal: AbortSignal): Promise<un
 }
 
 function parseResponse(value: unknown, model: string, names: Set<string>, replayIds: Set<string>, maxOutput: number, maxInput: number): Omit<ChatResult, 'billing'> & { requestId: string } {
-  if (!record(value) || value.type !== 'message' || value.role !== 'assistant' || value.model !== model || typeof value.id !== 'string' || !/^msg_[A-Za-z0-9_-]{1,120}$/.test(value.id) || !Array.isArray(value.content) || value.content.length > 64 || !['end_turn', 'tool_use'].includes(value.stop_reason as string) || value.stop_sequence != null || value.container != null) throw new Error();
+  if (!isRecord(value) || value.type !== 'message' || value.role !== 'assistant' || value.model !== model || typeof value.id !== 'string' || !/^msg_[A-Za-z0-9_-]{1,120}$/.test(value.id) || !Array.isArray(value.content) || value.content.length > 64 || !['end_turn', 'tool_use'].includes(value.stop_reason as string) || value.stop_sequence != null || value.container != null) throw new Error();
   const usage = value.usage;
-  if (!record(usage) || !integer(usage.input_tokens) || usage.input_tokens > maxInput || !integer(usage.output_tokens) || usage.output_tokens > maxOutput) throw new Error();
+  if (!isRecord(usage) || !integer(usage.input_tokens) || usage.input_tokens > maxInput || !integer(usage.output_tokens) || usage.output_tokens > maxOutput) throw new Error();
   const allowedUsage = new Set(['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'cache_creation', 'server_tool_use', 'service_tier', 'inference_geo', 'output_tokens_details']);
   if (Object.keys(usage).some(key => !allowedUsage.has(key)) || (usage.service_tier !== undefined && usage.service_tier !== 'standard') || (usage.inference_geo !== undefined && usage.inference_geo !== 'global')) throw new Error();
   for (const key of ['cache_creation_input_tokens', 'cache_read_input_tokens']) if (usage[key] !== undefined && usage[key] !== 0) throw new Error();
@@ -144,13 +144,13 @@ function parseResponse(value: unknown, model: string, names: Set<string>, replay
     ['output_tokens_details', ['thinking_tokens']],
   ] as const) {
     const part = usage[key];
-    if (part !== undefined && (!record(part) || Object.keys(part).some(field => !(allowed as readonly string[]).includes(field) || part[field] !== 0))) throw new Error();
+    if (part !== undefined && (!isRecord(part) || Object.keys(part).some(field => !(allowed as readonly string[]).includes(field) || part[field] !== 0))) throw new Error();
   }
   const texts: string[] = []; const calls: NonNullable<ChatResult['toolCalls']> = []; const ids = new Set<string>();
   for (const block of value.content) {
-    if (!record(block)) throw new Error();
+    if (!isRecord(block)) throw new Error();
     if (block.type === 'text' && typeof block.text === 'string' && Object.keys(block).every(key => ['type', 'text'].includes(key))) texts.push(block.text);
-    else if (block.type === 'tool_use' && typeof block.id === 'string' && ID.test(block.id) && typeof block.name === 'string' && names.has(block.name) && record(block.input) && !ids.has(block.id) && !replayIds.has(block.id) && Object.keys(block).every(key => ['type', 'id', 'name', 'input'].includes(key))) {
+    else if (block.type === 'tool_use' && typeof block.id === 'string' && ID.test(block.id) && typeof block.name === 'string' && names.has(block.name) && isRecord(block.input) && !ids.has(block.id) && !replayIds.has(block.id) && Object.keys(block).every(key => ['type', 'id', 'name', 'input'].includes(key))) {
       ids.add(block.id); calls.push({ id: block.id, name: block.name, arguments: block.input });
     } else throw new Error();
   }

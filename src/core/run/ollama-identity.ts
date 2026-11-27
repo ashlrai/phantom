@@ -7,6 +7,7 @@
  */
 
 import { scrubSecrets } from '../util/scrub.js';
+import { isRecord } from './tool-calls.js';
 
 const SHA256_RE = /^sha256:[0-9a-f]{64}$/;
 const BARE_SHA256_RE = /^[0-9a-f]{64}$/;
@@ -108,19 +109,18 @@ function loopbackTagsUrl(baseUrl: string): URL | undefined {
 }
 
 function sanitizeDetails(value: unknown): OllamaModelDetails | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const raw = value as Record<string, unknown>;
+  if (!isRecord(value)) return undefined;
   const details: OllamaModelDetails = {};
   for (const key of ['parent_model', 'format', 'family', 'parameter_size', 'quantization_level'] as const) {
-    const field = raw[key];
+    const field = value[key];
     if (field === undefined) continue;
     const text = boundedDetailText(field);
     if (text === undefined) return undefined;
     details[key] = text;
   }
-  if (raw['families'] !== undefined) {
-    if (!Array.isArray(raw['families']) || raw['families'].length > MAX_FAMILIES) return undefined;
-    const families = raw['families'].map(boundedDetailText);
+  if (value['families'] !== undefined) {
+    if (!Array.isArray(value['families']) || value['families'].length > MAX_FAMILIES) return undefined;
+    const families = value['families'].map(boundedDetailText);
     if (families.some((family) => family === undefined)) return undefined;
     details.families = families as string[];
   }
@@ -128,14 +128,13 @@ function sanitizeDetails(value: unknown): OllamaModelDetails | undefined {
 }
 
 function parseIdentity(value: unknown, requestedModel: string): OllamaModelIdentity | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const raw = value as Record<string, unknown>;
-  const name = boundedText(raw['name']);
-  const model = raw['model'] === undefined ? undefined : boundedText(raw['model']);
+  if (!isRecord(value)) return undefined;
+  const name = boundedText(value['name']);
+  const model = value['model'] === undefined ? undefined : boundedText(value['model']);
   if (!name || (name !== requestedModel && model !== requestedModel)) return undefined;
-  const digest = normalizeDigest(raw['digest']);
-  const size = raw['size'];
-  const details = sanitizeDetails(raw['details']);
+  const digest = normalizeDigest(value['digest']);
+  const size = value['size'];
+  const details = sanitizeDetails(value['details']);
   if (!digest || !Number.isSafeInteger(size) || Number(size) < 0 || !details) return undefined;
   return { name, digest, size: Number(size), details };
 }
@@ -235,17 +234,16 @@ export async function verifyOllamaModelIdentity(
     } catch {
       return { ok: false, reason: 'invalid-response' };
     }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (!isRecord(parsed)) {
       return { ok: false, reason: 'invalid-response' };
     }
-    const models = (parsed as Record<string, unknown>)['models'];
+    const models = parsed['models'];
     if (!Array.isArray(models) || models.length > 10_000) {
       return { ok: false, reason: 'invalid-response' };
     }
     const exactRaw = models.find((entry) => {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
-      const raw = entry as Record<string, unknown>;
-      return raw['name'] === model || raw['model'] === model;
+      if (!isRecord(entry)) return false;
+      return entry['name'] === model || entry['model'] === model;
     });
     if (exactRaw === undefined) return { ok: false, reason: 'model-not-found' };
     const identity = parseIdentity(exactRaw, model);

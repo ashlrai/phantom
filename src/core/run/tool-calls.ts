@@ -60,7 +60,7 @@ export interface EmbeddedToolCalls {
   cleanedContent: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
@@ -73,7 +73,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * string is kept verbatim so the executor can report it), null/undefined
  * becomes {}, everything else passes through untouched.
  */
-export function coerceToolCallArguments(raw: unknown): unknown {
+function coerceToolCallArguments(raw: unknown): unknown {
   if (raw === undefined || raw === null) return {};
   if (typeof raw !== 'string') return raw;
   const trimmed = raw.trim();
@@ -497,7 +497,7 @@ function callsFromToolCallFrame(
  * removed. Returns undefined when no markup parses — the caller then falls
  * back to the bare-JSON M118 path.
  */
-export function parseTaggedToolCalls(
+function parseTaggedToolCalls(
   content: string,
   toolNames: Set<string>,
 ): EmbeddedToolCalls | undefined {
