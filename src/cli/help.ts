@@ -1667,10 +1667,22 @@ function renderAll(): void {
   console.log('');
 }
 
-/** The one help-table reader: entries whose command or description contains `term` (case-insensitive). Shared by `help --search` and `bets check`. */
+/** The one help-table reader: entries whose command or description contains
+ * every word of `term` (case-insensitive). A multi-word query is an AND —
+ * "join computer" finds the node-join row without needing the exact phrase —
+ * while a single word keeps the plain substring behavior, so callers that
+ * pass one stemmed term (`bets check`, `plan`) see no change. Words are split
+ * on whitespace with edge punctuation dropped, so "computer," still finds
+ * "computer". Shared by `help --search` and `bets check`. */
 export function searchHelpEntries(term: string, entries: readonly HelpEntry[] = HELP_ENTRIES): HelpEntry[] {
-  const t = term.toLowerCase();
-  return entries.filter((e) => e.cmd.toLowerCase().includes(t) || e.desc.toLowerCase().includes(t));
+  const words = term.toLowerCase().split(/\s+/)
+    .map(w => w.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ''))
+    .filter(Boolean);
+  if (!words.length) return [];
+  return entries.filter((e) => {
+    const haystack = `${e.cmd} ${e.desc}`.toLowerCase();
+    return words.every(w => haystack.includes(w));
+  });
 }
 
 /** `ashlr help [<topic>] [--search <term>] [--all]` — exit 0, except 2 for an unknown topic. */
@@ -1692,7 +1704,11 @@ export async function cmdHelp(args: string[]): Promise<number> {
     const hits = searchHelpEntries(term);
     console.log('');
     if (hits.length === 0) {
-      console.log(c.dim(`  no commands match "${term}" — try \`ashlr help --all\``));
+      // A multi-word query ANDs its words, so a miss is often one wrong word:
+      // say so instead of leaving the reader to guess at the matching rule.
+      const widen = term.trim().split(/\s+/).filter(Boolean).length > 1
+        ? ' — drop a word and retry, or' : '';
+      console.log(c.dim(`  no commands match "${term}"${widen} try \`ashlr help --all\``));
     } else {
       console.log(renderEntries(hits));
     }
