@@ -55,6 +55,28 @@ describe('readyHints', () => {
 });
 
 describe('currentUnfed', () => {
+  it('honors operator holds added after a published tick without changing its queue evidence', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1',
+      last_tick: new Date().toISOString(),
+      lanes: LANES,
+      unfed_capacity: {
+        waiting: 2,
+        lanes: { 'codex-cmp': { waiting_elsewhere: 2, blocked: { missing_capability: 2 } } },
+      },
+    }));
+    writeFileSync(join(dir, 'HOLD'), 'another-lane\t codex-cmp\n');
+
+    const { code, lines } = await run();
+    expect(code).toBe(0);
+    const report = JSON.parse(lines[0]!);
+    expect(report).toMatchObject({ source: 'dispatcher', waiting: 2, unfedLanes: [], unfedSlots: 0 });
+    expect(report.resources).toContainEqual(expect.objectContaining({
+      lane: 'codex-cmp', held: true, headroom: 3, unfed: false,
+      waitingElsewhere: 2, blocked: { missing_capability: 2 },
+    }));
+  });
+
   it('derives unfed lanes from counts and hints when the dispatcher publishes no block', () => {
     const report = currentUnfed(JSON.stringify({ lanes: LANES }), READY);
     expect(report.source).toBe('derived');
@@ -1221,7 +1243,7 @@ describe('derived market reasons', () => {
     expect(report.source).toBe('dispatcher');
     expect(report.derivedReasons).toBe(false);
     expect(report.resources.find(r => r.lane === 'codex-personal')).toMatchObject({
-      held: false, unfed: true, readyHinted: 1, waitingElsewhere: 1, blocked: { saturated: 1 },
+      held: true, unfed: false, readyHinted: 1, waitingElsewhere: 1, blocked: { saturated: 1 },
     });
   });
 });

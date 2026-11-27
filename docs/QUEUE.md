@@ -398,6 +398,10 @@ When the dispatcher omits its unfed block, a valid lower target in
 `queue/slots.json` also bounds the derived headroom. A target increase
 requires dispatcher confirmation. Published unfed blocks use their own tick's
 targets.
+The runs-root `HOLD` file excludes newly held lanes from the live unfed
+verdict and slot total even when the dispatcher has already published an
+unfed block. The published waiting counts and blocker reasons still describe
+that tick.
 The fleet-wide `unfedSlots` upper bound sums each unfed lane's smaller
 count of headroom and rows waiting elsewhere, capped by total waiting rows
 because lanes can see the same work. If `ready.tsv` is unavailable, queue-derived
