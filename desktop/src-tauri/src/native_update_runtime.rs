@@ -397,6 +397,14 @@ mod platform {
         })
         .await
         .map_err(|_| "host-status-unavailable")??;
+        // A finished failed install attempt is history, not a fence: forget the
+        // stage so the next check downloads a fresh signed stage of the same
+        // version instead of holding adoption on update-attempt-already-recorded.
+        if matches!(checked.state.as_str(), "rollback-held" | "rolled-back") {
+            let home = crate::fleet_ops::home_dir().ok_or("unsafe-stage")?;
+            policy::forget_stage(&home, &stage.id).map_err(|_| "unsafe-stage")?;
+            return Err("update-attempt-failed");
+        }
         let mut i = lock(&updates.0);
         if i.epoch != epoch || !i.state.enabled {
             return Err("disabled");
