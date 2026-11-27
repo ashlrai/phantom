@@ -650,10 +650,10 @@ the rerun verdicts. Reports and the hourly cap count rows through the
 evaluation time, inclusive. Future-dated receipts still prevent duplicate
 reruns and duplicate verdict writes.
 Attempt totals, the hourly cap, and flake recurrence use the earliest
-observed attempt receipt for each repository, head SHA and run ID within
+observed attempt receipt for each repository and run ID within
 the retained journal. Ties use journal order. Replays leave the original
 attempt time in effect, and recent entries still show each observed receipt.
-If visible attempt receipts disagree on the set of triggering tests, the
+If visible attempt receipts disagree on the head SHA or the set of triggering tests, the
 attempt still consumes its hourly slot but supplies no per-test attempt
 evidence to stabilization or discovery. Test order and duplicate test IDs
 within a receipt do not affect the comparison.
@@ -690,8 +690,8 @@ for runs with a consistent call result.
 Later receipts cannot reset the settle or expiry clock. When these receipts
 disagree on the triggering test, the workflow verdict still counts in the
 overall tally and its per-test attribution is withheld.
-When recording a verdict, a visible attempt must identify the same single
-test as the successful call to retain per-test attribution. Multiple tests,
+When recording a verdict, a visible attempt must identify the same head SHA
+and single test as the successful call to retain per-test attribution. Multiple tests,
 conflicting attempt receipts, and mismatched test IDs yield a workflow-only
 verdict. A successful call can still supply attribution when its attempt
 receipt is absent from the retained journal.
@@ -715,7 +715,7 @@ rerun firing rules are unchanged. In recurring-failure briefs from
 `phm improve discover`, a shared attempt counts once for each recorded
 triggering test. The shared workflow verdict does not count toward any
 test's recurring-failure threshold.
-Discovery counts one attempt per repository, head SHA and workflow run ID,
+Discovery counts one attempt per repository and workflow run ID,
 and at most one verdict per repository and workflow run ID. The earliest
 observed receipt sets each attempt or verdict's time in the recurrence
 window, so a replay cannot bring expired evidence back into the window.
