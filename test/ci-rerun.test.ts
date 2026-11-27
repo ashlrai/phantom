@@ -17,7 +17,7 @@ function setup(classification = 'probable-flake') {
 }
 
 describe('resident CI reruns', () => {
-  it('journals before rerunning, deduplicates repeated ticks, permits a new head', async () => {
+  it('journals before rerunning and deduplicates by workflow run even when the reported head changes', async () => {
     const { opts, gh, report } = setup();
     gh.mockImplementation(async () => {
       expect(readCiReruns(opts.journalPath, opts.now!()).recent.at(-1)?.outcome).toBe('attempt');
@@ -29,8 +29,26 @@ describe('resident CI reruns', () => {
     expect(second.repos['org/repo']?.skippedDuplicate).toBe(1);
     expect(gh).toHaveBeenCalledTimes(1);
     report.groups[0]!.runs[0]!.head = 'c'.repeat(40);
+    const conflicting = await runCiRerunMaintenance(opts);
+    expect(conflicting.repos['org/repo']?.skippedDuplicate).toBe(1);
+    expect(gh).toHaveBeenCalledTimes(1);
+
+    report.groups[0]!.runs[0]!.runId = 124;
     await runCiRerunMaintenance(opts);
     expect(gh).toHaveBeenCalledTimes(2);
+  });
+
+  it('withholds dispatch when the report assigns two heads to a run', async () => {
+    const { opts, gh, report } = setup();
+    const group = report.groups[0]!;
+    const run = group.runs[0]!;
+    group.runs.push({ ...run, head: 'c'.repeat(40) }, { ...run, runId: 124 });
+
+    const status = await runCiRerunMaintenance(opts);
+
+    expect(status.repos['org/repo']?.errors).toEqual(['conflicting heads for workflow run 123']);
+    expect(gh.mock.calls).toEqual([[['run', 'rerun', '124', '--failed', '--repo', 'org/repo']]]);
+    expect(readCiReruns(opts.journalPath, opts.now!()).recent.map(entry => entry.runId)).toEqual([124, 124]);
   });
   it('enforces a global hourly cap across repos and expires old attempts', async () => {
     const { opts, gh } = setup();
