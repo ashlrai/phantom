@@ -20,6 +20,10 @@ export interface GeneratorYieldReport {
 type Job = { generator: string | null; explicit: boolean; empty: boolean | null; pr: boolean; merged: boolean; diff: number | null; tokens: number | null;
   launched: boolean };
 const string = (v: unknown): string | null => typeof v === 'string' && v.trim() ? v.trim() : null;
+function observedSource(value: unknown): string | null {
+  const source = string(value);
+  return source?.toLowerCase() === 'unknown' ? null : source;
+}
 const count = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 /** jobs.jsonl field dialects, the same sets dispatchd `_vc_pick` accepts:
  * ids job|job_id|jobId|id, events event|type|kind, phases
@@ -94,13 +98,16 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
       continue;
     }
     if (event === 'drafted' || event === 'rejected') {
-      const source = string(r.src) ?? 'unknown', group = generation.get(source) ?? new Map<string, { drafted: boolean; reasons: Set<string> }>();
+      const observed = observedSource(r.src);
+      const source = observed ?? 'unknown', group = generation.get(source) ?? new Map<string, { drafted: boolean; reasons: Set<string> }>();
       const decision = group.get(id) ?? { drafted: false, reasons: new Set<string>() };
       if (event === 'drafted') {
         decision.drafted = true;
-        const sources = drafts.get(id) ?? new Set<string>();
-        sources.add(source);
-        drafts.set(id, sources);
+        if (observed !== null) {
+          const sources = drafts.get(id) ?? new Set<string>();
+          sources.add(observed);
+          drafts.set(id, sources);
+        }
       }
       else decision.reasons.add(string(r.reason) ?? 'unknown');
       group.set(id, decision); generation.set(source, group); continue;
@@ -118,7 +125,7 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
     if (seenReceipts.has(receipt)) continue;
     seenReceipts.add(receipt);
     const job = jobs.get(id) ?? { generator: null, explicit: false, empty: null, pr: false, merged: false, diff: null, tokens: null, launched: false };
-    const src = string(r.src);
+    const src = observedSource(r.src);
     if (src) { job.generator = src; job.explicit = true; }
     else if (!job.explicit) job.generator = generator(id);
     const phase = pickString(r, PHASE_KEYS);

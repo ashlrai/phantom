@@ -1427,8 +1427,9 @@ Run `phm queue yield --since 24h --json` to compare generators from the local
 Events in the window are joined by job ID. Job lifecycle evidence comes from
 `jobs.jsonl` and draft or rejection decisions come from `generation.jsonl`.
 Decision rows use their own timestamps even if they carry outcome fields.
-An explicit `src` takes precedence
-over the job ID pattern; unrecognized sources are `unknown`. The fold uses
+An observed `src` takes precedence
+over the job ID pattern. A missing or case-insensitive `unknown` source
+leaves earlier source evidence intact. The fold uses
 recorded timestamps, with ledger order breaking ties. Late arrivals with
 older timestamps cannot overwrite newer recorded measurements. Jobs and
 generation decisions use the first parseable timestamp in ledger field order.
@@ -1470,8 +1471,11 @@ and completed targets retain their source; targets without an ID use a title
 hash. Counts deduplicate by source and target within the window; stages can
 overlap. The latest explicit `src` on a job receipt takes precedence over draft
 evidence. Without an explicit job source, a single recorded draft source receives
-credit for the job's launches and PRs. Competing draft sources leave that credit
-under `unknown`, while each source retains its own draft count.
+credit for the job's launches and PRs. Competing observed draft sources leave
+that credit under `unknown`, while each source retains its own draft count.
+Decisions with missing or case-insensitive `unknown` sources count in the
+`unknown` bucket and leave job attribution to the observed sources or job ID
+pattern.
 Rejections never claim another generator's results. `generationKnown: false`
 means the generation ledger is unavailable; `jobsKnown` does the same for the
 jobs ledger. If either journal is missing or unreadable, the report still
