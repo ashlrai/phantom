@@ -150,9 +150,11 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
   if (!tree) gaps.push('Org unknown: lane structure and messages could not be read.');
   if (liveSource ? !jobsKnown : tree && !tree.jobsKnown) gaps.push('Running jobs unknown: no job source answered.');
   const laneId = (lane: string) => `lane:${lane}`;
-  const orgLanes = new Map(org?.nodes.filter(row => row.kind === 'lane').map(row => [row.lane ?? row.label, row]));
-  const addLane = (lane: string, status = 'unknown', detail = 'counts unknown') =>
-    node('lane', laneId(lane), orgLanes.get(lane)?.label ?? lane, status, detail, orgLanes.get(lane)?.provider ?? providerFor(lane).name);
+  const orgLanes = new Map(org?.nodes.filter(row => row.kind === 'lane' && !row.machine).map(row => [row.lane ?? row.label, row]));
+  const addLane = (lane: string, status = 'unknown', detail = 'counts unknown', machine?: string) =>
+    machine
+      ? node('lane', `peer:${machine}:${lane}`, `${lane} @ ${machine}`, status, detail, providerFor(lane).name)
+      : node('lane', laneId(lane), orgLanes.get(lane)?.label ?? lane, status, detail, orgLanes.get(lane)?.provider ?? providerFor(lane).name);
   const processLive = new Map(org?.nodes.filter(row => row.kind === 'job').map(row => [row.jobId!, row.processLive ?? 'unknown']));
   const localJobs: string[] = [];
   const addJob = (job: OrgTreeJob, lane: string | null) => {
@@ -162,8 +164,8 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
     if (processLive.get(job.id) === 'yes') localJobs.push(id);
   };
   for (const lane of tree?.lanes ?? []) {
-    const status = lane.held ? 'held' : lane.running === null ? 'unknown' : lane.running > 0 ? 'running' : 'idle';
-    edge('reports-to', addLane(lane.lane, status, orgLaneCounts(lane)), 'leader');
+    const status = lane.source ? lane.state : lane.held ? 'held' : lane.running === null ? 'unknown' : lane.running > 0 ? 'running' : 'idle';
+    edge('reports-to', addLane(lane.lane, status, lane.source ? lane.doing : orgLaneCounts(lane), lane.source ? lane.machine : undefined), 'leader');
     if (!liveSource) for (const job of lane.jobs) addJob(job, lane.lane);
   }
   if (jobsKnown) for (const job of [...inputs.jobs!.jobs].sort((a, b) => cmp(a.lane, b.lane) || cmp(a.id, b.id))) {
@@ -177,7 +179,7 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
     edge('reports-to', id, laneId(job.lane));
     if (job.processLive) localJobs.push(id);
   }
-  if (liveSource) for (const lane of nodes.values()) if (lane.kind === 'lane') {
+  if (liveSource) for (const lane of nodes.values()) if (lane.kind === 'lane' && lane.id.startsWith('lane:')) {
     const running = jobsKnown ? [...nodes.values()].filter(job => job.kind === 'job' && `lane:${job.lane ?? 'unknown'}` === lane.id).length : null;
     if (lane.status !== 'held') lane.status = running === null ? 'unknown' : running ? 'running' : 'idle';
     lane.detail = running === null ? 'running unknown' : `${running} running`;

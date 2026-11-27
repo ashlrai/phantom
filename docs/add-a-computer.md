@@ -137,6 +137,21 @@ reaches this node. To share one queue across computers you control — or to
 join a team's pool — set up the SSH pool: [NODES.md](NODES.md) covers the
 design and [AGENT-NETWORK.md](AGENT-NETWORK.md) the join commands.
 
+## Read the same fleet as the leader
+
+On an enrolled worker, use the existing approved SSH alias for your fleet
+leader (replace `leader-mac` with that alias):
+
+```sh
+phm node replica sync --leader leader-mac --json
+phm org --text
+phm fleet lane-slots --json
+```
+
+Look for the leader's machine and observation time, and for "Governed by
+leader grant #…" in the lane slots. This is a read-only view, not authority to
+run the leader's lanes locally. See [One fleet across enrolled Macs](NODE-ROUTER.md#one-fleet-across-enrolled-macs) for automatic refresh and the offline behavior.
+
 ## Leave
 
 ```sh

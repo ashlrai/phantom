@@ -152,6 +152,20 @@ describe('feedback scan and digest', () => {
     ].map(r => JSON.stringify(r)).join('\n');
     expect(feedbackDigest(s, partial, now)).toMatchObject({ needsReview: [], failures: [], stillRunning: [] });
   });
+  it('distinguishes absent job history, an empty ledger and actual history with wiki telemetry', async () => {
+    const d = { ingest: async () => snapshot() };
+    const read = () => runFeedback({ ...options(), command: 'digest', now }, d);
+    expect(await read()).toMatchObject({ sources: { jobs: 'unavailable' }, digest: { failures: null } });
+    await mkdir(join(root, 'metrics'));
+    const path = join(root, 'metrics/jobs.jsonl');
+    await writeFile(path, '');
+    expect(await read()).toMatchObject({ sources: { jobs: 'ok' }, digest: { failures: [] } });
+    await writeFile(path, [
+      { job: 'DONE', event: 'wiki_slice', repo: 'phantom', ts: now - 2000 },
+      { job: 'DONE', event: 'finish', repo: 'phantom', ts: now - 1000, exit_code: 1 },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    expect(await read()).toMatchObject({ sources: { jobs: 'ok' }, digest: { failures: ['DONE'] } });
+  });
   it('reads jobs-ledger dialect spellings in the digest ledger', () => {
     const s = snapshot();
     const ledger = [

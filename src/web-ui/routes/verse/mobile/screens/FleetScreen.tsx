@@ -288,7 +288,7 @@ export function FleetScreen() {
                 key={lane.lane}
                 title={LANE_LABEL[lane.lane] ?? lane.lane}
                 subtitle={lane.capReason ?? undefined}
-                trailing={lane.slots === 0 ? 'off' : `${lane.busy} of ${lane.slots} busy`}
+                trailing={lane.slots === null ? 'capacity unknown' : lane.slots === 0 ? 'off' : `${lane.busy ?? 'unknown'} of ${lane.slots} busy`}
                 onClick={() => navigate({ screen: 'runs' })}
               />
             ))}

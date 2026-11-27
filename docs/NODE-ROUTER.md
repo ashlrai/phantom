@@ -289,6 +289,34 @@ machine's version (or `--target x.y.z`) and prints a plan. It is plan only: it
 never updates or restarts a node. A node showing `unreported` predates this or
 has not rejoined. Update primary and backup first, then workers.
 
+## One fleet across enrolled Macs
+
+The fleet leader serves a read-only `fleet.replica.v1` snapshot on the existing
+authenticated Node RPC over SSH. No listener, copied grant or shared provider
+login is needed. With an approved, host-key-pinned SSH alias to the fleet
+leader, run on a worker:
+
+```sh
+phm node replica sync --leader leader-mac --json
+phm node replica status --json
+```
+
+The alias overrides the pool's primary alias; omit it on pool workers whose
+primary also runs the fleet leader. A leader without a node-pool config must
+have a readable Leader board before it serves snapshots. The authenticated
+worker sends a bounded observation of its lane loops and node-worker claims,
+not command lines, credentials or grant data.
+
+`phm node worker` and `phm node beat --watch` refresh observations in the
+background, at most once every 30 seconds per machine. Fleet CLI and API
+reads also refresh if no sync was attempted in the last 30 seconds, even
+without a pool worker, and wait at most five seconds for the refresh.
+A failed snapshot exchange does not affect heartbeat,
+claim or fencing behavior. The worker keeps the last good observation for
+two minutes, then reports unavailable with its last successful timestamp
+instead of counting unknown capacity as zero. Check `lastError` in status
+for the most recent sync failure.
+
 ## Live pool awareness
 
 Configured multi-Mac pools consume the capacity slice of `fleet.awareness.v1`
@@ -333,11 +361,15 @@ projection does not enqueue production jobs twice or install any fleet scripts.
 the row would go to a node, and gives a reason code for each row that stays
 local. `phm node bridge --apply --json` runs one claim and reconcile pass. When
 `~/.ashlr/node-bridge.json` holds `{"enabled": true, "owner": "<scope>"}`, the
-resident daemon runs the same pass as the bounded `node-bridge` tick phase
-(30 s deadline, AbortSignal, status record). The phase spawns
+resident daemon runs the same pass as a single-flight `node-bridge`
+background job. The tick records the handoff and continues without waiting.
+The job spawns
 `src/core/drive/nodes/ready-bridge-child.ts` by path and does not import it,
-so the bridge stays out of the daemon's Tier-1 import closure. On abort the
-phase sends SIGTERM, then SIGKILL after 2 s. Optional settings are `maxPerPass`
+so the bridge stays out of the daemon's Tier-1 import closure. At its 30 s
+deadline (or on daemon shutdown) it sends SIGTERM, then SIGKILL after 2 s
+if the child has not exited. The tick does not wait for this cleanup, and
+the next pass cannot start until the previous child closes. Direct live
+ticks wait at most for the deadline, with no abort grace. Optional settings are `maxPerPass`
 (default 4) and `pendingTtlMs` (default 300000).
 
 The bridge uses the claim that dispatchd already honors, so the pinned

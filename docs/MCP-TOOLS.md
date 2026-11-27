@@ -90,6 +90,9 @@ or control apps.
 | `phm_team_access_request` | File a workspace access request: invite-member (human:<name>), link-repo (owner/name) or change-role (admin|member). Recorded as a pending approval a human owner/admin decides with phm team approve|deny; an approved request applies with the approver as its audit actor. Agents can request, never decide. |
 | `phm_team_context_add` | Add shared context scoped by owner (personal/company/client:<name>), project and person, with provenance. Credential-shaped values are refused; use phm_<name> references. |
 | `phm_team_context_get` | Retrieve cited context within a token budget. Client and personal scopes remain isolated. |
+| `phm_wiki_brain` | Read system map evidence and freshness for an enrolled repository, optionally focused on an exact node ID. |
+| `phm_wiki_ecosystem` | Read commit-pinned relationships across the signed repository scope. |
+| `phm_wiki_map` | Read a commit-pinned source map for an enrolled repository, optionally focused on an exact node ID. |
 
 ## `ashlr_` — Knowledge, Fleet & Proposals
 

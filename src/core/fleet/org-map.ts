@@ -7,6 +7,7 @@ import type { PortableFleetLane } from './portable-lanes.js';
 
 export interface FleetMapNode {
   id: string; kind: 'leader' | 'lane' | 'job' | 'guardian' | 'channel';
+  machine?: string;
   label: string; provider: ProviderName; status: string;
   jobId?: string; lane?: string; model?: string; repo?: string; ageSeconds?: number | null;
   /** Jobs only. Start instant, and whether a worker process was seen when the map was built. */
@@ -84,7 +85,9 @@ export function fleetOrgMap(snapshot: FleetLiveSnapshotV1 | null, options: {
   };
   for (const profile of profileLanes.values()) if (profile.state === 'ready') addLane(profile.id);
   options.observedLanes?.forEach(addLane);
-  for (const lane of snapshot?.lanes ?? []) if (lane.slots > 0 || lane.busy > 0) addLane(lane.lane);
+  for (const lane of snapshot?.lanes ?? []) {
+    if ((lane.slots !== null && lane.slots > 0) || (lane.busy !== null && lane.busy > 0)) addLane(lane.lane);
+  }
   const jobs = new Set<string>();
   interface JobFacts { jobId: string; lane: string | null; model: string | null; repo: string | null; status: string; seconds: number | null;
     startedAt: string | null; processLive?: FleetMapNode['processLive']; title?: string | null; tier?: string | null; published?: boolean; prUrl?: string | null }

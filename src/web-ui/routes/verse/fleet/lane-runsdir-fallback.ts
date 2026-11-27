@@ -10,7 +10,7 @@
  * Pure and framework-free; a null result keeps the chip's existing
  * unknown-capacity text.
  */
-import type { FleetEngine, FleetLaneState } from '../../../../core/fleet/fleet-types.js';
+import type { FleetEngine, FleetLiveLaneState } from '../../../../core/fleet/fleet-types.js';
 import type { FleetRunsLane } from '../../../../core/fleet/runs-dir-state.js';
 import { formatRelative } from '../autonomy/format.js';
 
@@ -46,7 +46,7 @@ export type FallbackRunsLane = Pick<FleetRunsLane, 'lane' | 'running' | 'target'
  * older than 15 minutes (`readAt` is dispatchd's last tick — the figures' own
  * instant, so a dead dispatcher keeps answering "unknown" rather than a lie).
  */
-export function laneFallback(lane: FleetLaneState, runs: readonly FallbackRunsLane[] | null, readAt: string | null, now: number): { slots: string; note: string } | null {
+export function laneFallback(lane: FleetLiveLaneState, runs: readonly FallbackRunsLane[] | null, readAt: string | null, now: number): { slots: string; note: string } | null {
   if (lane.slots !== 0 || lane.capReason !== STALE_STANDING_LANES) return null;
   const match = runs?.find((r) => r.lane === DISPATCHD_LANE[lane.lane]);
   if (!match) return null;

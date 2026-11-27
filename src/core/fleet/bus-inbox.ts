@@ -190,7 +190,12 @@ export function appendBusInbox(input: unknown, options: BusInboxOptions = {}): B
     if (!options.root) { ensurePrivateDirectory(ashlrHome()); privatePath(ashlrHome(), 'directory', ashlrHome()); }
     ensurePrivateDirectory(root); privatePath(root, 'directory', root);
     ensurePrivateDirectory(directory); privatePath(directory, 'directory', root);
-    const acquired = acquireLocalStoreLockWithOutcome(join(directory, 'writer.lock'), 0, { anchorPath: root, exactPrivateStorage: true });
+    const lockPath = join(directory, 'writer.lock');
+    const lockOptions = { anchorPath: root, exactPrivateStorage: true };
+    let acquired = acquireLocalStoreLockWithOutcome(lockPath, 0, lockOptions);
+    if (acquired.state === 'unavailable' && missing(lockPath)) {
+      acquired = acquireLocalStoreLockWithOutcome(lockPath, 0, lockOptions);
+    }
     if (acquired.state !== 'acquired') return { status: acquired.state === 'contended' ? 'retryable' : 'unavailable' };
     try {
       const snapshot = loadSnapshot(root);

@@ -98,13 +98,20 @@ function submissionState(cell: FbCell, shippedRefs: ReadonlySet<string>): Feedba
 /** Latest measured job state; a finish is reviewable, never evidence of shipment. */
 export function feedbackDigest(snapshot: FeedbackSnapshot, ledger: string, now: number,
     queuedEntries: readonly FeedbackQueuedEntry[] | null = null) {
+  return buildFeedbackDigest(snapshot, ledger, now, queuedEntries).digest;
+}
+
+function buildFeedbackDigest(snapshot: FeedbackSnapshot, ledger: string, now: number,
+    queuedEntries: readonly FeedbackQueuedEntry[] | null) {
   const latest = new Map<string, { at: number; event: string; state: string; failed: boolean }>();
   const records: Record<string, unknown>[] = [], repos = new Map<string, string>(), jobsByPR = new Map<string, string>();
   let invalidRows = 0;
+  let wikiSliceRows = 0;
   for (const line of ledger.split('\n').filter(Boolean)) {
     try {
       const r = JSON.parse(line);
       if (!r || typeof r !== 'object' || Array.isArray(r)) throw new Error();
+      if (first(r, EVENT_KEYS) === 'wiki_slice') { wikiSliceRows++; continue; }
       records.push(r);
       const id = first(r, JOB_KEYS), pr = first(r, PR_KEYS);
       if (typeof id !== 'string') continue;
@@ -177,9 +184,12 @@ export function feedbackDigest(snapshot: FeedbackSnapshot, ledger: string, now: 
       state: submissionState(cell, shippedRefs), pr: cell.pr, at: at > 0 ? new Date(at).toISOString() : null });
   }
   submissions.sort((a, b) => (b.at ?? '').localeCompare(a.at ?? '') || a.job.localeCompare(b.job));
-  return { windowHours: 12, shipped: snapshot.shipped.filter(r => r.at >= now - 12 * 3600000 && r.at <= now).map(r => r.ref),
-    needsReview, failures, stillRunning, invalidRows, submissions: submissions.slice(0, MAX_SUBMISSIONS),
-    runningEvidence: 'last recorded launch; liveness unverified' };
+  return {
+    wikiSliceOnly: wikiSliceRows > 0 && records.length === 0,
+    digest: { windowHours: 12, shipped: snapshot.shipped.filter(r => r.at >= now - 12 * 3600000 && r.at <= now).map(r => r.ref),
+      needsReview, failures, stillRunning, invalidRows, submissions: submissions.slice(0, MAX_SUBMISSIONS),
+      runningEvidence: 'last recorded launch; liveness unverified' },
+  };
 }
 
 export async function runFeedback(options: FeedbackOptions, overrides: Partial<FeedbackCycleDeps> = {}) {
@@ -197,8 +207,8 @@ export async function runFeedback(options: FeedbackOptions, overrides: Partial<F
     catch { report.sources.jobs = 'unavailable'; }
     const queuedRead = await readFeedbackQueued(root);
     report.sources['feedback-queued'] = queuedRead.state === 'unavailable' ? 'unavailable' : 'ok';
-    const digest = feedbackDigest(snapshot, ledger, now, queuedRead.state === 'ok' ? queuedRead.entries : null);
-    if (digest.invalidRows) report.sources.jobs = 'unavailable';
+    const { digest, wikiSliceOnly } = buildFeedbackDigest(snapshot, ledger, now, queuedRead.state === 'ok' ? queuedRead.entries : null);
+    if (digest.invalidRows || wikiSliceOnly) report.sources.jobs = 'unavailable';
     return { ...report, digest: { ...digest, ...(report.sources.merges === 'unavailable' ? { shipped: null } : {}),
       ...(report.sources.jobs === 'unavailable' ? { needsReview: null, failures: null, stillRunning: null, submissions: null } : {}) } };
   }

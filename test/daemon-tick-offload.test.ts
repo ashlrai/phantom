@@ -1,8 +1,18 @@
+import { EventEmitter } from 'node:events';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { AshlrConfig, DaemonTick } from '../src/core/types.js';
 import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
 
-const mocks = vi.hoisted(() => ({ heal: vi.fn(), ancillary: vi.fn(), reflection: vi.fn(), backlog: vi.fn(), dispatch: vi.fn(), merge: vi.fn() }));
+const mocks = vi.hoisted(() => ({ heal: vi.fn(), ancillary: vi.fn(), reflection: vi.fn(), backlog: vi.fn(), dispatch: vi.fn(), merge: vi.fn(), bridge: vi.fn() }));
+vi.mock('node:child_process', async original => {
+  const actual = await original<typeof import('node:child_process')>();
+  return { ...actual, spawn: (...args: Parameters<typeof actual.spawn>) =>
+    Array.isArray(args[1]) && args[1].some(arg => /[/\\]ready-bridge-child\.[jt]s$/.test(arg))
+      ? mocks.bridge() : actual.spawn(...args) };
+});
 vi.mock('../src/core/daemon/activation-permit.js', () => ({ consumeDaemonActivationPermit: () => ({ authorized: true, required: false, reason: 'test-authorized' }), isDaemonActivationCapability: () => true }));
 vi.mock('../src/core/fleet/self-heal.js', () => ({ runSelfHealCycle: mocks.heal, runSelfHealCycleForRepos: mocks.heal, queueSelfHealItem: () => true, pruneQueuedSelfHealItems: () => ({ scanned: 0, removed: 0, failed: false }) }));
 vi.mock('../src/core/fleet/counterfactual.js', () => ({ runCounterfactualReplay: mocks.ancillary }));
@@ -86,6 +96,28 @@ it('keeps maintenance in-tick and auto-merge after dispatch without the flag', a
   expect(offTickJobsSnapshot()).toEqual([]);
 });
 
+it('does not wait for or overlap a configured resident node bridge', async () => {
+  writeFileSync(join(process.env.ASHLR_HOME!, 'node-bridge.json'), JSON.stringify({ enabled: true, owner: 'test' }));
+  const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), kill: vi.fn() });
+  let closed = false;
+  release = () => {
+    if (closed) return;
+    closed = true;
+    child.stdout.end('{"claimed":[]}');
+    child.emit('close', 0);
+  };
+  mocks.bridge.mockReturnValue(child);
+
+  expect(phase(await tickWithLedger(true), 'node-bridge')).toMatchObject({
+    status: 'off-tick', durationMs: 0, offTick: { state: 'started', run: 1 },
+  });
+  expect(phase(await tickWithLedger(true), 'node-bridge')?.offTick).toMatchObject({ state: 'running', run: 1 });
+  expect(mocks.bridge).toHaveBeenCalledTimes(1);
+  release();
+  await vi.waitFor(() => expect(offTickJobsSnapshot().find(job => job.name === 'node-bridge'))
+    .toMatchObject({ running: false, lastStatus: 'ok' }));
+});
+
 it('refreshes an empty backlog after the in-tick self-heal without repeating auto-merge', async () => {
   mocks.backlog.mockResolvedValue({ generatedAt: new Date().toISOString(), repos: [], items: [] });
   const result = await tickWithLedger(true);
@@ -135,9 +167,11 @@ it('refreshes a green self-heal before dispatching its stale backlog item', asyn
 });
 
 it('ignores offloading for dry runs', async () => {
+  writeFileSync(join(process.env.ASHLR_HOME!, 'node-bridge.json'), JSON.stringify({ enabled: true, owner: 'test' }));
   const result = await tickWithLedger(true, true);
   expect(result.phases?.some((row) => row.status === 'off-tick')).toBe(false);
   expect(mocks.heal).not.toHaveBeenCalled();
+  expect(mocks.bridge).not.toHaveBeenCalled();
   expect(offTickJobsSnapshot()).toEqual([]);
 });
 

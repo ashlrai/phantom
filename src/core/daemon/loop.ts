@@ -1402,6 +1402,7 @@ const SEAT_SHADOW_MAX_IN_FLIGHT = 2;
  * stay out of this module's Tier-1 import closure. Abort sends SIGTERM, then SIGKILL after 2 s.
  */
 function runNodeBridgeChild(signal: AbortSignal): Promise<Record<string, unknown> | TickPhaseSkipped> {
+  if (signal.aborted) return Promise.reject(signal.reason);
   const entry = fileURLToPath(new URL(import.meta.url.endsWith('.ts')
     ? '../drive/nodes/ready-bridge-child.ts' : '../drive/nodes/ready-bridge-child.js', import.meta.url));
   return new Promise((resolveChild, rejectChild) => {
@@ -6625,10 +6626,15 @@ export async function tick(
   const batchParallelCeiling = dcfg.mode !== 'continuous' &&
     typeof liveCfg.daemon?.parallel === 'number' && Number.isSafeInteger(liveCfg.daemon.parallel) && liveCfg.daemon.parallel > 0
     ? liveCfg.daemon.parallel : null;
-  // RQ-NODE-BRIDGE-1: offload eligible ready.tsv rows to idle node-router workers. No
-  // awaited stage (and no phase record) until ~/.ashlr/node-bridge.json exists.
-  if (existsSync(join(ashlrHome(), 'node-bridge.json'))) {
-    await runPhase('node-bridge', TICK_PHASE_NODE_BRIDGE_MS, runNodeBridgeChild);
+  // RQ-NODE-BRIDGE-1: offload eligible ready.tsv rows to idle node-router workers.
+  if (!opts.dryRun && existsSync(join(ashlrHome(), 'node-bridge.json'))) {
+    if (offTickMaintenance) {
+      launchOffTickJob('node-bridge', runNodeBridgeChild, {
+        deadlineMs: TICK_PHASE_NODE_BRIDGE_MS, graceMs: 0, parentSignal: opts.signal, log: phaseLog,
+      });
+    } else {
+      await runPhase('node-bridge', TICK_PHASE_NODE_BRIDGE_MS, runNodeBridgeChild, 0);
+    }
   }
   const fleetMonitor = localFleetMonitor();
   const localFleet: LocalFleetSettings = readLocalFleetSettings(routingCfg);

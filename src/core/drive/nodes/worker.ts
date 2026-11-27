@@ -98,6 +98,12 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
     } catch { return []; }
   };
   let active = 0;
+  const activeClaims = new Map<string, string>();
+  const syncReplica = () => {
+    void import('../../fleet/fleet-replica.js')
+      .then(({ syncFleetReplica }) => syncFleetReplica({ claims: [...activeClaims.values()] }))
+      .catch(() => undefined);
+  };
   // Router slots include this session's active claims, not just the host's free slots.
   // A lease this attempt already owns is counted in both terms, so it is subtracted once.
   const routerSlots = (observed: NodeCapacity, owned = 0) => observed.held ? 0 : Math.min(capacity.slots, active + observed.slots - owned);
@@ -155,6 +161,8 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       const child = spawn(runner, ['run'], { shell: false, detached: true,
         env: { PATH: process.env['PATH'], HOME: homedir() }, stdio: ['pipe', 'pipe', 'ignore'] });
       active++;
+      const lane = job.requires.find(cap => lanes.includes(cap));
+      if (lane) activeClaims.set(claim.jobId, lane);
       let fenced = false;
       const output: Buffer[] = [];
       let bytes = 0;
@@ -197,6 +205,7 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       catch { stop(); } // Retain the host slot until close even if writing stdin fails synchronously.
     });
     active--;
+    activeClaims.delete(claim.jobId);
     if (reply.kind === 'stopped') return { completed: false, held: 'runner-stopped' };
     if (reply.kind === 'error') {
       // An error result returns the job to pending; the second consecutive failure hands it to another node.
@@ -209,6 +218,9 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
     const completed = callPool(config, 'complete', [...lease, '--result', reply.resultRef]);
     return { jobId: claim.jobId, completed: completed.result['completed'] === true };
   };
+  syncReplica();
+  const replicaTimer = setInterval(syncReplica, 30_000);
+  replicaTimer.unref();
   try {
     // A short light batch may finish between restock ticks. Fill its isolated slice
     // after joining too, so recurring workers do not depend on that race.
@@ -228,6 +240,7 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
     const attempts = settled.map(result => result.status === 'fulfilled' ? result.value : { held: 'attempt-unavailable' });
     return attempts.length === 1 ? attempts[0]! : { slots: capacity.slots, attempts };
   } finally {
+    clearInterval(replicaTimer);
     try { callPool(config, 'leave', identity); } catch { /* expiry fences uncertain sessions */ }
   }
 }

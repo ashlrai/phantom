@@ -13,6 +13,8 @@ export const NODE_FLEET_USAGE = `Usage: phm node join [--node <id>] --owner <sco
        phm node result --job <id> --owner <scope> [--json]
        phm node list|status --owner <scope[,scope]> [--json]
        phm node leave --node <id> --session <n> [--json]
+       phm node replica status [--json]
+       phm node replica sync [--leader <alias>] [--json]
 
 Computers join Phantom as nodes; \`join\` defaults \`--node\` to this computer's
 sanitized hostname (the pool join's default), so \`phm node join --owner <scope>\`
