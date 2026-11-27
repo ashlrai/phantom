@@ -884,7 +884,7 @@ what is blocked, what moved lately — without shelling out to `phm`.
 
 #### Agent messages
 
-`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--body-kind <kind>] [--limit N] [--json]` lists recent
+`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--body-kind <kind>] [--limit N] [--frame <cli>] [--json]` lists recent
 agent-to-agent messages from the same bus read (no new store), newest first.
 `--before` keeps only messages received strictly before its cutoff, so
 `--since` and `--before` read one closed `[since, before)` window.
@@ -903,6 +903,14 @@ rules and registered-identity resolution `phm messages --help` describes, so
 `GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50&kind=ask&from=claude]` serves the
 same read with a current read session; dashed flags arrive camelCase
 (`excludeFrom`, `inReplyTo`, `bodyKind`, `to`, `topic`), each param once.
+`--frame <cli>` prints the page as the same bounded block the bus inbox,
+channel read, wakes and work mine `--frame` reads produce — BEGIN/END
+UNTRUSTED AGENT BUS MESSAGES markers, the same scrub and 32 KiB clip with
+the cut stated — one line per message carrying its short UTC time, kind,
+recorded sender and recipient labels and thread (the map's node ids stay
+out: `unknown` is a map-drawing verdict, not a routing fact); `--json`
+carries it as `framed` beside the full projection, and an unreadable bus
+frames nothing — the unknown read prints as usual.
 
 - `messages[]`: `at`, `from`, `to`, `kind`, `summary` (at most 160
   characters), `threadId` when the message names a thread, then `fromName` and

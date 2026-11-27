@@ -5076,7 +5076,15 @@ already-formatted `formatBusWorkMine` lines — through the same markers'
 discipline, scrub and 32 KiB bound under BEGIN/END UNTRUSTED AGENT BUS WORK
 DIGEST markers, newline and tab flattened so one digest line never opens a
 second framed row and the cut stated; `--json` carries it as `framed`
-beside the full projection. Identities
+beside the full projection. `frameBusAgentMessages(cli, messages)` renders
+one `agents messages` page (`phm agents messages --frame <cli>`) — the
+fleet-wide agent-to-agent timeline — through the same inbox markers, scrub
+and bound: each line carries the short UTC time, the classified kind, the
+recorded sender and recipient routing labels and the named thread when the
+body carried one, while the map's node ids stay out (`unknown` is a
+map-drawing verdict, not a routing fact); `--json` carries it as `framed`
+beside the full projection and an unreadable bus (`messages: null`) frames
+nothing. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
