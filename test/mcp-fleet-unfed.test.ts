@@ -52,7 +52,7 @@ const report = (over: Partial<UnfedReport> = {}): UnfedReport => ({
   marketTruncated: false,
   history: { windowHours: 24, available: false, ticks: 0, lanes: [] },
   overrides: { available: false, decided: 0, overridden: 0, byReason: {}, lanes: [] },
-  claims: { available: false, truncated: false, claimed: 0, overridden: 0, byReason: {}, lanes: [] },
+  claims: { available: false, truncated: false, claimed: null, overridden: null, byReason: {}, lanes: [] },
   decisionOutcomes: {
     available: false, jobsAvailable: false, jobsTruncated: false, decided: 0,
     hinted: { decided: 0, known: 0, merged: 0, unmerged: 0, reverted: 0, unresolved: 0 },
@@ -153,6 +153,7 @@ describe('readFleetUnfed', () => {
       schema: 'fleet.unfed.v1', readOnly: true, source: 'derived',
       waiting: 4, unfedLanes: ['codex-cmp'], unfedSlots: 3,
       statusAsOf: new Date(NOW).toISOString(), statusFresh: true,
+      claims: { available: false, claimed: null, overridden: null },
     });
     const resources = (result as UnfedReport).resources;
     expect(resources.find(r => r.lane === 'codex-cmp')).toMatchObject({

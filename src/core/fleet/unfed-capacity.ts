@@ -90,20 +90,23 @@ export interface UnfedClaimLane {
 }
 
 /** lane_override accounting over the window's jobs.jsonl claim events. */
-export interface UnfedClaims {
-  /** False when metrics/jobs.jsonl is absent or unreadable. */
-  available: boolean;
-  /** True when the ledger exceeded the retained tail: counts are a lower bound. */
-  truncated: boolean;
-  /** Job claim events in the window, including batch members. */
-  claimed: number;
-  /** Of those, launches that left their hinted lane (a lane_override was recorded). */
-  overridden: number;
+export type UnfedClaims = {
   /** overridden count by lane_override reason. */
   byReason: Record<string, number>;
   /** overridden count by hinted->launched lane and reason, largest first. */
   lanes: UnfedClaimLane[];
-}
+} & (
+  | { available: false; truncated: false; claimed: null; overridden: null }
+  | {
+    available: true;
+    /** True when the ledger exceeded the retained tail: counts are a lower bound. */
+    truncated: boolean;
+    /** Job claim events in the window, including batch members. */
+    claimed: number;
+    /** Of those, launches that left their hinted lane (a lane_override was recorded). */
+    overridden: number;
+  }
+);
 
 export type FleetStopCode = 'admission_stopped' | 'global_admission';
 
@@ -608,11 +611,13 @@ export function foldMarketOverrides(jsonl: string | null, nowMs: number, windowH
 export function foldClaimOverrides(
   jsonl: string | null, nowMs: number, windowHours: number, truncated = false,
 ): UnfedClaims {
+  if (jsonl === null) {
+    return { available: false, truncated: false, claimed: null, overridden: null, byReason: {}, lanes: [] };
+  }
   const tally: UnfedClaims = {
-    available: jsonl !== null, truncated: jsonl !== null && truncated,
+    available: true, truncated,
     claimed: 0, overridden: 0, byReason: {}, lanes: [],
   };
-  if (jsonl === null) return tally;
   const since = nowMs - windowHours * 3_600_000;
   const pairs = new Map<string, UnfedClaimLane>();
   for (const line of jsonl.split('\n')) {
@@ -881,8 +886,10 @@ export function renderUnfed(report: UnfedReport): string[] {
     }
   }
   const c = report.claims;
-  if (c.available) {
-    if (c.claimed === 0) lines.push(`Last ${h.windowHours}h: no claims recorded.`);
+  if (!c.available) {
+    lines.push(`Last ${h.windowHours}h: claim counts unknown — metrics/jobs.jsonl is missing or unreadable.`);
+  } else {
+    if (c.claimed === 0) lines.push(`Last ${h.windowHours}h: no claims recorded${c.truncated ? ' (ledger tail only)' : ''}.`);
     else {
       lines.push(`Last ${h.windowHours}h: ${c.claimed} claim(s) launched, ${c.overridden} left their hinted lane${c.truncated ? ' (ledger tail only)' : ''}.`);
       if (c.overridden > 0) {

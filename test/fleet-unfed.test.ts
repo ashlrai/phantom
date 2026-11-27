@@ -535,7 +535,7 @@ describe('foldClaimOverrides', () => {
   it('marks a tail-truncated ledger as a lower bound', () => {
     const journal = claim('RQ-A', iso(now - 1000));
     expect(foldClaimOverrides(journal, now, 24, true)).toMatchObject({ available: true, truncated: true, claimed: 1 });
-    expect(foldClaimOverrides(null, now, 24, true)).toEqual({ available: false, truncated: false, claimed: 0, overridden: 0, byReason: {}, lanes: [] });
+    expect(foldClaimOverrides(null, now, 24, true)).toEqual({ available: false, truncated: false, claimed: null, overridden: null, byReason: {}, lanes: [] });
     expect(foldClaimOverrides('', now, 24)).toEqual({ available: true, truncated: false, claimed: 0, overridden: 0, byReason: {}, lanes: [] });
   });
 });
@@ -848,6 +848,30 @@ describe('phm fleet unfed', () => {
     expect(JSON.parse(empty.lines[0]!)).toMatchObject({ waiting: 0, invalidRows: 0, unfedSlots: 0 });
   });
 
+  it.each(['missing', 'unreadable'])('reports unknown claim counts through the CLI for a %s jobs ledger', async unavailable => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(), lanes: LANES,
+    }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), '');
+    const ledger = join(dir, 'metrics', 'jobs.jsonl');
+    if (unavailable === 'unreadable') mkdirSync(ledger);
+
+    const json = await run();
+    expect(JSON.parse(json.lines[0]!)).toMatchObject({
+      claims: { available: false, claimed: null, overridden: null },
+    });
+    vi.restoreAllMocks();
+    expect((await run([])).lines.join('\n')).toContain('claim counts unknown');
+
+    vi.restoreAllMocks();
+    if (unavailable === 'unreadable') rmSync(ledger, { recursive: true });
+    writeFileSync(ledger, '');
+    const empty = await run();
+    expect(JSON.parse(empty.lines[0]!)).toMatchObject({
+      claims: { available: true, claimed: 0, overridden: 0 },
+    });
+  });
+
   it('preserves published unfed counts when ready.tsv is unavailable', () => {
     const report = currentUnfed(JSON.stringify({
       lanes: LANES,
@@ -990,6 +1014,7 @@ describe('phm fleet unfed', () => {
       'No unfed capacity: 0 rows waiting.',
       'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.',
       'Last 24h: no metrics/work-market.jsonl history.',
+      'Last 24h: claim counts unknown — metrics/jobs.jsonl is missing or unreadable.',
     ]);
   });
 

@@ -502,6 +502,9 @@ before launch never counts. Batch members count through their own
 `batch_claim` events, and the synthetic `RQ-BATCH-*` session claim is excluded
 from the total. A claim whose hint and launch lane match counts
 as a launch only, even if it carries an override code.
+A missing or unreadable jobs ledger leaves `claims.claimed` and
+`claims.overridden` unknown (null in JSON). A readable ledger with no
+matching events supplies zero counts.
 `claims.truncated` is true when the ledger
 exceeded the retained tail, so those counts are a lower bound.
 The same collapsed decisions also join the retained tail of
