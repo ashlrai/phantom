@@ -41,6 +41,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
+import { formatPct } from '../core/eval/dataset-jsonl.js';
 import {
   runBenchmark,
   loadSweBenchDataset,
@@ -210,13 +211,12 @@ function buildFixtureRepo(taskId: string): string {
 // ---------------------------------------------------------------------------
 
 function renderReport(report: BenchReport, delta: ReportDelta | null): void {
-  const pct = (r: number) => `${(r * 100).toFixed(1)}%`;
   console.log('');
   console.log(bold('  ashlr eval swe-bench') + dim(` — ${report.ts}`));
   console.log('');
   console.log(`  Engine  : ${cyan(report.engine)}`);
   console.log(`  Tasks   : ${report.total}`);
-  console.log(`  Resolved: ${report.resolved}/${report.total} (${pct(report.resolveRate)})`);
+  console.log(`  Resolved: ${report.resolved}/${report.total} (${formatPct(report.resolveRate)})`);
   console.log('');
 
   // Per-task table

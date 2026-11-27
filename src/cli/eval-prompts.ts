@@ -90,7 +90,7 @@ function parseArgs(args: string[]): ParsedArgs {
 
 /** The shipped experiment — class matchers and arms for the baked variants.
  * Parsed through parsePromptExperimentSpec so the match.task regexes compile. */
-export const DEFAULT_PROMPT_EXPERIMENT: PromptExperimentSpec = parsePromptExperimentSpec({
+const DEFAULT_PROMPT_EXPERIMENT: PromptExperimentSpec = parsePromptExperimentSpec({
   v: 1,
   id: 'prompt-ab-default',
   note: 'Builtin spec: docs/test/secrets job classes, plain vs adaptive prompts.',

@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 
 import type { EvalLane } from '../core/eval/agent-output.js';
+import { formatPct } from '../core/eval/dataset-jsonl.js';
 import {
   derivePassKAlerts,
   laneScoresPath,
@@ -163,7 +164,7 @@ function parseRunArgs(args: string[]): ParsedRunArgs {
 // ---------------------------------------------------------------------------
 
 function pct(v: number | null): string {
-  return v === null ? 'n/a' : `${(v * 100).toFixed(1)}%`;
+  return v === null ? 'n/a' : formatPct(v);
 }
 
 function renderReport(report: PassKReport): void {
