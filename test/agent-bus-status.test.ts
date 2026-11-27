@@ -24,7 +24,7 @@ import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
-function setup(at = 1_000): UnifiedBusStatusOptions & { clock: { now: number } } {
+function setup(at = 1_000): UnifiedBusStatusOptions & { clock: { now: number }; now: () => number } {
   const base = mkdtempSync(join(tmpdir(), 'agent-bus-status-'));
   dirs.push(base);
   const clock = { now: at };
@@ -1379,5 +1379,22 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('sendGate open kill=inactive:missing pause=clear');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
     expect(lines.join('\n')).toContain('hoplog missing bytes=0 hops=0 skipped=0 truncated=false');
+  });
+
+  it('names the blamed receipt on the human feed line when the projection refuses', async () => {
+    // The CLI probe reads the wall clock, so the poison post needs a real
+    // receipt time or its TTL is already spent when status runs.
+    const options = setup(Date.now());
+    // A retained post with no resolvable provider poisons the whole feed;
+    // the probe blames that envelope — the same receipt `work feed` prints.
+    expect(appendBusInbox({ id: 'poison-1', from: 'agent:ghost', to: 'leaders', priority: 'P2', ttl: 60_000,
+      body: { kind: 'work.post', jobId: 'RQ-POISON', title: 'x', repo: 'a/b', claimKeys: [] } }, options).status)
+      .toBe('posted');
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['status', '--root', options.root!], t => text.push(t), () => {}, {})).toBe(0);
+    const feedLine = text.join('\n').split('\n').find(line => line.startsWith('feed '));
+    expect(feedLine).toContain('refused');
+    expect(feedLine).toContain('jobs=unknown');
+    expect(feedLine).toContain('receipt=poison-1');
   });
 });
