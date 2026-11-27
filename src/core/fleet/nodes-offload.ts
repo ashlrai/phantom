@@ -226,7 +226,11 @@ export async function readNodesOffload(deps: NodesOffloadDeps, opts: { dryRun: b
   const live = enabled && !opts.dryRun;
   const written = live ? (deps.record ?? recordOffloadMoves)(plan.moves, view.self, now) : 0;
   const n = plan.moves.length;
+  // An unreadable queue means "unknown", never "nothing is queued": the plan
+  // early-returns before candidates() runs, so neither half of that sentence
+  // was actually checked.
   const summary = host.state !== 'busy' ? `${host.why} No job moves.`
+    : queue === null ? `${host.why} The ready queue could not be read, so whether jobs are waiting is unknown.`
     : n === 0 ? `${host.why} No computer is ready, so ${plan.stays.length ? 'jobs keep waiting here' : 'nothing is queued'}.`
       : !enabled ? `Offload is off. ${count(n, 'job would', 'jobs would')} move if you run \`phm nodes offload on\`.`
         : live ? `${count(written, 'job', 'jobs')} chosen for another computer.` : `${count(n, 'job would', 'jobs would')} move (dry run, nothing recorded).`;
