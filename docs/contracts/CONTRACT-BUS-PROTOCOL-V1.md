@@ -46,6 +46,15 @@ status.
 - `--thread <label>` matches the v2 `thread` field on `note`/`context`
   bodies only; every other body kind never matches. The label is printable
   ASCII, 1 to 128 characters; anything else exits 2.
+- `--body-kind <kind>` keeps only envelopes whose body carries that exact
+  kind discriminator — the same `busBodyKind` own-field match `agents bus
+  inbox --body-kind`, `channel read --body-kind`, `wakes --body-kind`,
+  `fleet bus-follow --body-kind` and `phm messages --body-kind` apply: the
+  v2 `kind` field, else a bus-transport v1 `protocol.kind`, else the
+  `type`/`schema` a kindless notice keys on, matched exactly and
+  case-sensitively. A body carrying no discriminator never matches, and an
+  unrecognized but printable value is an honest empty page. The value is
+  printable ASCII, 1 to 128 characters; anything else exits 2.
 - `--to`, `--from` and `--exclude-from` match the literal routing label or
   any other label of the same registered agent identity (handle, `agent:`
   address, stable id or alias), resolved once when the read starts; an
