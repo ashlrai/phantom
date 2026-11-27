@@ -1298,6 +1298,20 @@ describe('derived market reasons', () => {
       held: true, unfed: false, readyHinted: 1, waitingElsewhere: 1, blocked: { saturated: 1 },
     });
   });
+
+  it('serves every repo when the slots repos allowlist is absent or null', () => {
+    // work_market.lane_view guards on `slot.get("repos") is not None`: an absent
+    // or explicit-null advertisement is no allowlist. A present value still restricts.
+    const ready = [mrow('RQ-OPEN', 'codex-personal', 'work')].join('\n');
+    const lanes = { claude: { running: 0, target: 2, held: false } };
+    const codes = (repos: unknown) => currentUnfed(JSON.stringify({ lanes }), ready, {
+      slots: JSON.stringify({ claude: { repos } }),
+    }).resources.map(({ lane, blocked }) => [lane, blocked]);
+    expect(codes(undefined)).toEqual([['claude', { deferred_after_selection: 1 }]]);
+    expect(codes(null)).toEqual([['claude', { deferred_after_selection: 1 }]]);
+    expect(codes([])).toEqual([['claude', { repo_unserved: 1 }]]);
+    expect(codes(['other-repo'])).toEqual([['claude', { repo_unserved: 1 }]]);
+  });
 });
 
 describe('ready row validation', () => {

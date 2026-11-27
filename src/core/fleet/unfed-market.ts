@@ -492,7 +492,10 @@ export function marketLaneView(
   const knownQuota = [finite(slot.quota), ctx.quota.get(lane)?.remainingPct ?? null, ctx.quota.get(lane)?.creditsRemaining ?? null]
     .filter((n): n is number => n !== null);
   let repos: ReadonlySet<string> | null = null;
-  if (slot.repos !== undefined) {
+  // work_market.lane_view guards on `slot.get("repos") is not None`: an absent
+  // or explicit-null advertisement is no allowlist (every repo is served); only
+  // a present value — valid list or garbage — restricts.
+  if (slot.repos !== undefined && slot.repos !== null) {
     repos = Array.isArray(slot.repos) && slot.repos.every(r => typeof r === 'string' && MARKET_NAME.test(r))
       ? new Set(slot.repos as string[]) : new Set<string>();
   }
