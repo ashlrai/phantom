@@ -29,6 +29,9 @@ returns `{schema: "fleet.lane-rank.v1", tier, lanes}` ordered by nearest budget 
 `routes.json` maps pool names to existing `routeBackend` decisions, e.g.
 `{"codex-personal":{"backend":"codex","tier":"frontier","reason":"prior route"}}`.
 Supply currently free slots; missing routes, slots or usable budgets exclude a lane.
+For the capacity-only `local-omlx` lane, ranking reports the smaller of the
+dispatcher slot count and the observed remaining capacity rounded down to
+whole jobs. The lane is omitted when fewer than one whole slot is available.
 Each observed budget bucket must be at most two hours old. A manual reading
 with a declared reset can qualify until that reset. Spill forecasts still
 require a reading from the last two hours.

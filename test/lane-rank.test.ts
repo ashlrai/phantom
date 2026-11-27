@@ -43,6 +43,22 @@ describe('lane ranking', () => {
     expect(ranked.map(l => l.pool)).toEqual(['grok-build', 'codex-personal']);
     expect(ranked[1]).toMatchObject({ spillRecommended: true, projectedExhaustion: '2026-10-30T12:30:00.000Z' });
   });
+  it.each([
+    [2, 5, 2],
+    [5, 2, 2],
+    [2.5, 5, 2],
+    [0.5, 5, null],
+    [null, 5, null],
+  ])('bounds local slots by measured capacity %s and dispatcher slots %s', (remaining, freeSlots, expected) => {
+    const input: LaneResourceSnapshot = {
+      budgets: projectPoolBudgets(remaining === null ? [] : [{
+        pool: 'local-omlx', bucket: 'capacity', remaining, timestamp: now, resetAt: null, source: 'cli',
+      }], new Date(now)),
+      routes: { 'local-omlx': { backend: 'local-coder', tier: 'local', reason: 'test' } },
+    };
+    expect(rankLanes('local', input, { 'local-omlx': freeSlots }).map(l => l.availableSlots))
+      .toEqual(expected === null ? [] : [expected]);
+  });
   it('excludes a lane when any observed bucket is older than two hours', () => {
     const input = snapshot();
     const buckets = input.budgets.pools['codex-personal'].buckets;
