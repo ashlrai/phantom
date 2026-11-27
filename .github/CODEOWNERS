@@ -618,6 +618,7 @@
 /test/improve-claude-recovery-backlog.test.ts @masonwyatt23
 /test/improve-cli-boundary.test.ts @masonwyatt23
 /test/improve-comms-requests-backlog.test.ts @masonwyatt23
+/test/improve-comms-run-backlog.test.ts @masonwyatt23
 /test/improve-controller-backlog.test.ts @masonwyatt23
 /test/improve-coordination-backlog.test.ts @masonwyatt23
 /test/improve-cos-reconcile-backlog.test.ts @masonwyatt23
