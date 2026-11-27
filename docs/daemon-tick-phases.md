@@ -236,6 +236,13 @@ owner's Mac). Now:
 - `~/.ashlr/self-heal-cursor.json` names the last repo reached, and the next
   cycle starts after it. A large enrollment is covered over several ticks.
   The result reports `deferred` (repos not reached) and `budgetExhausted`.
+- each rotation also appends one `fleet.self-heal-cycle.v1` line to
+  `metrics/self-heal-cycles.jsonl` under the fleet runs directory
+  (`~/.ashlr-runs` or `$ASHLR_RUNS_DIR`): enrolled/checked counts, the broken
+  checkout paths, heal proposals, `deferred` and `budgetExhausted`.
+  `phm improve discover` folds recurring deferred tails and persistently
+  broken repos into the self-improvement backlog; targeted
+  `runSelfHealCycleForRepos` verification re-checks do not journal.
 
 ## A stopped tick loop is a liveness state
 

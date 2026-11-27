@@ -18,10 +18,14 @@
  *    covered over several ticks instead of timing out every tick.
  *  - Proposal-only: proposeHeal returns a WorkItem for the backlog; nothing
  *    is applied or merged here.
+ *  - Evidence: each enrollment rotation appends one fleet.self-heal-cycle.v1
+ *    line to metrics/self-heal-cycles.jsonl under the fleet runs dir
+ *    (~/.ashlr-runs or $ASHLR_RUNS_DIR) for `phm improve discover`.
  */
 
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -29,7 +33,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { AshlrConfig, WorkItem } from '../types.js';
 import {
   canonicalEnrollmentPath,
@@ -323,6 +327,68 @@ function selfHealQueuePath(): string {
 
 function backlogPath(): string {
   return join(homedir(), '.ashlr', 'backlog.json');
+}
+
+// ---------------------------------------------------------------------------
+// Cycle journal — one fleet.self-heal-cycle.v1 line per enrollment rotation
+// ---------------------------------------------------------------------------
+
+/** Schema stamp every cycle-journal row carries. */
+export const SELF_HEAL_CYCLE_SCHEMA = 'fleet.self-heal-cycle.v1';
+/** Bound one row's broken list; brokenTotal keeps the true count. */
+export const SELF_HEAL_CYCLE_BROKEN_MAX = 50;
+
+function selfHealRunsDir(): string {
+  const env = process.env['ASHLR_RUNS_DIR']?.trim();
+  return env !== undefined && env !== '' ? env : join(homedir(), '.ashlr-runs');
+}
+
+/** Absolute path to the cycle journal under the fleet runs dir. */
+export function selfHealCycleJournalPath(runsDir: string = selfHealRunsDir()): string {
+  return join(runsDir, 'metrics', 'self-heal-cycles.jsonl');
+}
+
+/**
+ * Pure: render one cycle's outcome as a journal line. `enrolled` is the
+ * rotation's list length (checked + deferred), so a reader can tell a
+ * fully-covered cycle from one the budget cut short without trusting
+ * either count alone.
+ */
+export function selfHealCycleRow(
+  result: SelfHealCycleResult,
+  at: Date = new Date(),
+): string {
+  const deferred = result.deferred ?? 0;
+  const enrolled = result.checked + deferred;
+  const broken = result.broken.slice(0, SELF_HEAL_CYCLE_BROKEN_MAX);
+  return JSON.stringify({
+    schema: SELF_HEAL_CYCLE_SCHEMA,
+    at: at.toISOString(),
+    enrolled,
+    checked: result.checked,
+    broken,
+    brokenTotal: result.broken.length,
+    healProposed: result.healItems.length,
+    ...(deferred > 0 ? { deferred } : {}),
+    ...(result.budgetExhausted === true ? { budgetExhausted: true } : {}),
+  });
+}
+
+/**
+ * Best-effort append of one rotation's outcome. The journal is evidence
+ * for `phm improve discover`, never authority: a failed write must not
+ * fail the cycle that produced it.
+ */
+function appendSelfHealCycleRow(result: SelfHealCycleResult): void {
+  try {
+    // An empty enrollment rotation carries no evidence; skip the row.
+    if (result.checked + (result.deferred ?? 0) === 0) return;
+    const path = selfHealCycleJournalPath();
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    appendFileSync(path, `${selfHealCycleRow(result)}\n`, { encoding: 'utf8', mode: 0o600 });
+  } catch {
+    // Best-effort — the cycle result still reaches its caller.
+  }
 }
 
 function readWorkItemsArrayStrict(
@@ -856,6 +922,10 @@ export async function runSelfHealCycleForRepos(
     const checkedRepos = new Set<string>();
     pruneInvalidSelfHealItemsForRepos(targets, enrolled, authorizedTargets, checkedRepos);
     if (!authorizedTargets()) return { checked: 0, checkedRepos: [], broken: [], healItems: [] };
+    // Targeted verification re-checks of already-queued repos are not
+    // journaled: they are follow-ups on known breakage, not coverage
+    // evidence — only the enrollment rotation in runSelfHealCycle writes
+    // metrics/self-heal-cycles.jsonl.
     return await runSelfHealCycleForRepoList(targets, cfg, authority, opts, checkedRepos);
   } catch {
     return { checked: 0, checkedRepos: [], broken: [], healItems: [] };
@@ -897,7 +967,12 @@ export async function runSelfHealCycle(
     const checkedRepos = new Set<string>();
     pruneInvalidSelfHealItems(repos, authorizedCycle, checkedRepos);
     if (!authorizedCycle()) return { checked: 0, checkedRepos: [], broken: [], healItems: [] };
-    return await runSelfHealCycleForRepoList(repos, cfg, authority, opts, checkedRepos);
+    const result = await runSelfHealCycleForRepoList(repos, cfg, authority, opts, checkedRepos);
+    // Journal the rotation's outcome for `phm improve discover`: which
+    // repos were reached, which stayed broken and whether the budget cut
+    // the list short — evidence the queue file alone cannot carry.
+    appendSelfHealCycleRow(result);
+    return result;
   } catch {
     return { checked: 0, checkedRepos: [], broken: [], healItems: [] };
   } finally {
