@@ -17,7 +17,7 @@ export interface LoginHealthLane {
 export async function readLoginHealth(reader: LoginHealthReader = path => readFile(path, 'utf8')) {
   const unknown = { schema: 'fleet.login-health.v1', status: 'unknown', lanes: null } as const;
   let contents: string;
-  try { contents = await reader(join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl')); }
+  try { contents = await reader(join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'metrics', 'jobs.jsonl')); }
   catch { return unknown; }
   const events: { lane: string; ts: string; time: number; event: unknown; pattern: unknown; empty: unknown }[] = [];
   for (const line of contents.split('\n').filter(line => line.trim())) {
