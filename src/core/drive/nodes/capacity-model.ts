@@ -108,6 +108,8 @@ function footprints(s: NodeSnapshot, prev: NodeCapacityDoc | null, notes: string
   const out: Record<string, HarnessFootprint> = {};
   const busyCores = finite(s.cpu.busyPercent) ? s.cpu.cores * s.cpu.busyPercent / 100 : null;
   const live = s.sessions ?? [];
+  const previousAt = prev?.node === s.node ? Date.parse(prev.measured_at) : NaN;
+  const previousFootprints = previousAt < s.measuredAtMs ? prev?.per_harness_footprint : undefined;
   let cpuFromHost = false;
   for (const adapter of HARNESS_ADAPTERS) {
     const sessions = live.filter(x => x.harness === adapter.id);
@@ -123,8 +125,7 @@ function footprints(s: NodeSnapshot, prev: NodeCapacityDoc | null, notes: string
         cpu_cores_per_session: cpu, source: 'measured', learned_at: null };
       continue;
     }
-    const old = prev?.node === s.node ? prev.per_harness_footprint?.[adapter.id] : undefined;
-    const previousAt = prev ? Date.parse(prev.measured_at) : NaN;
+    const old = previousFootprints?.[adapter.id];
     const learnedAt = old?.source === 'learned'
       ? Date.parse(old.learned_at ?? '')
       : previousAt;

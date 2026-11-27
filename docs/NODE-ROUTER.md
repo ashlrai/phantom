@@ -510,6 +510,8 @@ needs a readable learning timestamp at or before the snapshot that carries it.
 Resampling preserves that timestamp and discards learned footprints with
 missing or impossible timestamps. Expired or invalid learned evidence cannot
 supply a local or borrowed cost, and a runnable count based on it becomes unknown.
+A baseline must be strictly older than the current sample to carry its
+footprints forward, even if the original learning timestamp predates both.
 A measured host-wide stop can still establish zero for a reported count.
 Each live session of a harness needs a positive memory reading to refresh its
 footprint. A zero RSS total leaves that harness on its eligible learned
