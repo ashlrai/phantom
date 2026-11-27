@@ -494,6 +494,10 @@ with the reason codes that say why (`missing_capability`, `quota_exhausted`,
 with its reason counts and `byReason` counts each job once per reason
 across all its rejected lanes; `unrouted` counts decisions that chose no
 lane at all. Malformed entries or codes are skipped, never guessed.
+When the final decision has no chosen lane and records `global_admission`,
+the fleet cap or per-tick launch limit blocked the job. The report counts it
+once under `byReason.global_admission` and omits its provisional lane rejections
+from the lane totals.
 The same window's `claim` and `batch_claim` rows in
 `metrics/jobs.jsonl` fold into `claims`: launches that actually left their
 hinted lane, counted as events — a re-launched attempt is another real
