@@ -1781,7 +1781,9 @@ re-pinning before dispatcher installation; no live cutover is part of this chang
 Run `phm fleet parked --json` for the read-only `health` summary
 (`fleet.queue-health.v1`). It separates ready and parked counts and groups
 repeated precheck skips, including `RESTOCK`, by job, code and reason over the
-last 24 hours. A READY row's lane hint resolves like `work_market.requirements`:
+last 24 hours. Each job counts once in each side: a repeated READY row or a
+duplicated parked hold counts at its first valid row, so `parked`, `byLane`,
+`groups`, `total` and the health parked count all name jobs, not lines. A READY row's lane hint resolves like `work_market.requirements`:
 the requirements JSON's `preferred_lane` wins over the lane cell and explicit
 `null` is lane-open, while an absent key falls back to the lane cell. A row
 carrying no requirements cell resolves its spec from the matching
