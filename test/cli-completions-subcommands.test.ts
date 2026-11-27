@@ -59,7 +59,10 @@ describe('completions offer every dispatched verb', () => {
     inbox: ['submit'],
     authority: ['resident'],
     daemon: ['pause', 'resume', 'doctor'],
-    fleet: ['stray-slots', 'stray-stop'],
+    fleet: ['stray-slots', 'stray-stop', 'lane-truth', 'merge-recover'],
+    nodes: ['offload'],
+    map: ['edges', 'replay'],
+    org: ['show', 'join', 'plan', 'init'],
     universe: [
       'controller', 'console', 'resources', 'firm', 'preparation-measurement',
       'preparation-measurement-capture', 'preparation-measurement-compare',
