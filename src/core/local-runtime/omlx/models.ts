@@ -203,6 +203,8 @@ export interface OmlxLaneInput {
   headroom: HostHeadroom | null;
   /** Parsed local-lanes.json; null or enabled:false disables the lane. */
   config?: OmlxLaneConfig | null;
+  /** Path the disabled hint names; defaults to the conventional ~/.ashlr spelling. */
+  configPath?: string;
   catalog?: OmlxModelCatalog;
   /** oMLX only runs on Apple Silicon macOS; anything else never advertises. */
   platform?: string;
@@ -238,7 +240,7 @@ export function planOmlxLocalLanes(input: OmlxLaneInput): OmlxLanePlan {
   }
   if (!Number.isSafeInteger(total) || total <= 0) return base({ backoff: 'telemetry-unavailable', backoffReason: 'Unknown physical RAM' });
   const budget = Math.floor(total * LANE_MODEL_ENVELOPE_FRACTION / MIB) * MIB;
-  if (input.config?.enabled !== true) return base({ budgetBytes: budget, backoff: 'disabled', backoffReason: 'Enable with ~/.ashlr/local-lanes.json {"schemaVersion":1,"enabled":true}' });
+  if (input.config?.enabled !== true) return base({ budgetBytes: budget, backoff: 'disabled', backoffReason: `Enable with ${input.configPath ?? '~/.ashlr/local-lanes.json'} {"schemaVersion":1,"enabled":true}` });
   const decision = assessHostHeadroom(input.headroom);
   if (!decision.allowed) {
     return base({ budgetBytes: budget,
