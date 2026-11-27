@@ -72,6 +72,24 @@ describe('fleet resource plan', () => {
     expect(plan.lanes.find(row => row.lane === 'agy')!.additional_slots).toBeNull();
   });
 
+  it('requires lane coverage when planning from the eligible ready queue', () => {
+    const demand = new Map([['codex-personal', ['RQ-ELIGIBLE']]]);
+    const plan = buildFleetResourcePlan(live, [node], status(), ledger, now, [], undefined, demand);
+    expect(plan.lanes.find(row => row.lane === 'codex-personal')).toMatchObject({
+      queued_jobs: 1, target_concurrency: 2, additional_slots: 1,
+    });
+    expect(plan.lanes.find(row => row.lane === 'agy')).toMatchObject({
+      queued_jobs: null, target_concurrency: null, additional_slots: null,
+    });
+    expect(plan.allowances.find(row => row.id === 'antigravity')?.projected_waste_at_deadline).toBeNull();
+
+    demand.set('agy', []);
+    const empty = buildFleetResourcePlan(live, [node], status(), ledger, now, [], undefined, demand);
+    expect(empty.lanes.find(row => row.lane === 'agy')).toMatchObject({
+      queued_jobs: 0, target_concurrency: 1, additional_slots: 0,
+    });
+  });
+
   it('does not double count shared slots and distinguishes unknown from known zero', () => {
     const plan = buildFleetResourcePlan(live, [{ ...node, freeSlots: 1 }], status(), ledger, now);
     expect(plan.lanes.find(row => row.lane === 'codex-personal')?.additional_slots).toBe(1);

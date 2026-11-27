@@ -68,7 +68,9 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     const running = count(row['running']), ceiling = count(row['ceiling']), hard = count(row['hard_cap']);
     const cap = ceiling === null || hard === null ? null : Math.min(ceiling, hard);
     const held = typeof row['held'] === 'boolean' ? row['held'] || Boolean(dispatch['paused']) : null;
-    const queued = demand?.get(lane)?.length ?? count(row['queued']);
+    // A detailed demand view covers only lanes with known included eligibility.
+    // Its missing entries cannot be filled with unfiltered dispatcher counts.
+    const queued = demand === undefined ? count(row['queued']) : demand.get(lane)?.length ?? null;
     const recent = jobs.filter(job => job.lane === lane);
     const tokenJobs = recent.filter(job => job.tokens !== null);
     const exhaustedUntil = (lane === 'agy' || lane === 'agy-neon') ? antigravity.reset_at : null;
