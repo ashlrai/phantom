@@ -1071,6 +1071,12 @@ set `ASHLR_RUNS_DIR` to inspect another runs directory.
 
 `launchable` reports zero free slots for a lane with `held: true`, while
 keeping its published occupancy, launch target and ready supply visible.
+Each lane's free slots are also bounded by the dispatcher snapshot's remaining
+shared fleet slots. A pause or admission stop reduces them to zero while
+preserving ready supply. A timestamped admission record must match
+`last_tick`. With no usable admission evidence, the report uses the lane's
+own headroom. The bounds describe each lane individually and share the same
+fleet slots.
 
 The leader's compact brief (`leader.compact-brief.v1`) counts each lane's
 `queued`/`queuedReady` by the same market-resolved hint, reports lane-open
