@@ -943,9 +943,9 @@ export interface RouterOutcome {
    * run, or the change escalated before a model was asked) — and `at`
    * the review record's own timestamp for staleness judgment (`null`
    * when the row's `at` was not a parseable timestamp). The newest
-   * appended review row for the PR stands, matching the ledger's own
-   * newest-wins rule; `kind:'decision'` rows are merge-action evidence,
-   * never review verdicts, and never join. Null when the cross-review
+   * recorded review for the PR stands if it can be placed at or before
+   * the standing merge or close when that verdict is dated. Only
+   * `kind:'review'` rows supply a verdict. Null when the cross-review
    * ledger was not read, the job never claimed a canonical github.com
    * pull URL unambiguously, or no review row named that PR — unknown,
    * never a guessed review. A verdict binds to the head the reviewer
@@ -2357,7 +2357,13 @@ function foldRouterOutcomesWithCiCoverage(
       }
       if (opts.crossReviews !== undefined) {
         const review = opts.crossReviews.get(prKey);
-        if (review !== undefined) o.cross_review = { ...review };
+        // Use the timestamp of the winning jobs-ledger verdict. The review
+        // summary only carries the latest receipt for the PR.
+        const resolvedAt = mergedAt.get(o.job_id);
+        if (review !== undefined && (resolvedAt === undefined || !Number.isFinite(resolvedAt) ||
+            (review.at !== null && Date.parse(review.at) <= resolvedAt))) {
+          o.cross_review = { ...review };
+        }
       }
     }
   }

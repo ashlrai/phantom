@@ -2307,8 +2307,8 @@ describe('router outcome merge-events join', () => {
       mergeEvent(77, 'checks_passed'),
     ].map(row => JSON.stringify(row)).join('\n'));
     const crossReviews = new Map<string, CrossReviewEvidence>([
-      ['ashlrai/phantom#42', { outcome: 'reject', at: null }],
-      ['ashlrai/phantom#77', { outcome: 'approve', at: null }],
+      ['ashlrai/phantom#42', { outcome: 'reject', at: '2026-11-21T00:00:00Z' }],
+      ['ashlrai/phantom#77', { outcome: 'approve', at: '2026-11-21T00:00:00Z' }],
     ]);
     const { outcomes } = foldRouterOutcomes(rows.map(row => JSON.stringify(row)).join('\n'), { mergeEvents, crossReviews });
     const expectedKey = `ashlrai/phantom#${expectedPr}`;
@@ -2690,7 +2690,7 @@ describe('router outcome cross-review join', () => {
     ]);
     const fold = foldRouterOutcomes([
       // J1 claims PR 42 unambiguously -> joins.
-      '{"job":"J1","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J1","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42","ts":"2026-11-23T00:00:00Z"}',
       // J2 and J3 contest PR 43 -> ambiguous, never joins.
       '{"job":"J2","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/43"}',
       '{"job":"J3","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/43"}',
@@ -2698,7 +2698,7 @@ describe('router outcome cross-review join', () => {
       '{"job":"J4","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42/files"}',
       // J5 claims PR 88 first, then PR 77 — the newest standing claim joins.
       '{"job":"J5","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/88"}',
-      '{"job":"J5","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/77","ts":"2026-11-02T00:00:00Z"}',
+      '{"job":"J5","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/77","ts":"2026-11-23T00:00:00Z"}',
       // J6 claims a PR with no recorded review -> cross_review stays null.
       '{"job":"J6","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/99"}',
     ].join('\n'), { crossReviews: reviews });
@@ -2715,9 +2715,9 @@ describe('router outcome cross-review join', () => {
 
   it('joins recorded review verdicts onto outcomes and never creates outcomes for review-only PRs', async () => {
     const root = runsDir([
-      '{"job":"J1","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42","ts":"2026-11-01T00:00:00Z"}',
-      '{"job":"J2","lane":"alpha","phase":"CLOSED","pr_url":"https://github.com/ashlrai/phantom/pull/43","ts":"2026-11-01T00:00:00Z"}',
-      '{"job":"J3","lane":"beta","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J1","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42","ts":"2026-11-23T00:00:00Z"}',
+      '{"job":"J2","lane":"alpha","phase":"CLOSED","pr_url":"https://github.com/ashlrai/phantom/pull/43","ts":"2026-11-23T00:00:00Z"}',
+      '{"job":"J3","lane":"beta","phase":"VERIFIED","ts":"2026-11-23T00:00:00Z"}',
     ].join('\n'));
     const ashlar = crossReviewLedger([
       crossReview(42, 'approve'),
@@ -2761,6 +2761,31 @@ describe('router outcome cross-review join', () => {
     } finally {
       clock.mockRestore();
     }
+  });
+
+  it('withholds the standing review when it cannot be placed by the recorded merge or close', async () => {
+    const resolvedAt = '2026-11-22T00:00:00Z';
+    const root = runsDir([
+      { pr: 42, phase: 'MERGED', mergedAt: resolvedAt },
+      { pr: 43, phase: 'CLOSED', closedAt: resolvedAt },
+      { pr: 44, phase: 'MERGED', mergedAt: resolvedAt },
+    ].map(({ pr, ...verdict }) => JSON.stringify({
+      job: `J${pr}`, pr_url: `https://github.com/ashlrai/phantom/pull/${pr}`,
+      ts: '2026-11-20T00:00:00Z', ...verdict,
+    })).join('\n'));
+    const ashlarDir = crossReviewLedger([
+      crossReview(42, 'approve'),
+      crossReview(42, 'reject', { at: '2026-11-23T00:00:00Z' }),
+      crossReview(43, 'reject', { at: resolvedAt }),
+      crossReview(44, 'approve', { at: null }),
+    ]);
+
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir, authorityEvidence: null });
+    expect(result.outcomes).toMatchObject([
+      { job_id: 'J42', merged: true, cross_review: null },
+      { job_id: 'J43', merged: false, cross_review: { outcome: 'reject', at: resolvedAt } },
+      { job_id: 'J44', merged: true, cross_review: null },
+    ]);
   });
 
   it('keeps cross_review null and reports cross_review_state when the ledger is absent or refused', async () => {
