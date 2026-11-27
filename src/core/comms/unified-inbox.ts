@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirty-eight local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates forty local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -724,6 +724,36 @@
  *               read 'unavailable', never an empty queue passed off as
  *               fact. Act: `phm fleet queue-parked`, `phm fleet parked`,
  *               `phm fleet autopilot --once`.
+ *   stuck-fixes  guardian FIXUP-MAIN jobs whose published pull request
+ *               never reached a terminal outcome — the same
+ *               `findStuckFixes`/`readStuckFixes` fold `phm fleet
+ *               stuck-fixes`, `phm fleet main-health`, the verse
+ *               runs-history `stuck-fixes` route and the web-ui
+ *               needs-you strip serve, over `<runsDir>/metrics/jobs.jsonl`,
+ *               so this source and those surfaces can never disagree.
+ *               Until now a fix PR sitting open past the 20-minute
+ *               terminal-outcome bound had no item-level surface here:
+ *               the jobs-stuck source reads run markers, the queue
+ *               sources read ready/router rows, and every bus/feed/board
+ *               read looks at work not yet claimed — while a guardian
+ *               fix that published and then stalled was invisible to the
+ *               one view an agent checks for work. Each stuck row lists
+ *               once as a warn `stuck-fix` — 'high' once the PR has been
+ *               stuck an hour, the same escalation the needs-you strip
+ *               applies — naming the repo ('unknown repo' when no repo
+ *               is on record), the PR url and the job id, `since` the
+ *               recorded publish time and `expiresAt` null: a stuck fix
+ *               waits for a merge or close decision, never a guessed
+ *               deadline; the job id is the item's own citation, so
+ *               `--job` matches. `phm fleet main-health`'s own rule
+ *               applies — a verified-absent ledger means no fix PR was
+ *               ever published, so 'missing' (verified-empty); a ledger
+ *               that exists but cannot be folded, or a path that cannot
+ *               be inspected, is 'unavailable' — the stuck set is
+ *               unknown, never an empty list passed off as fact; the
+ *               fold itself never throws and skips torn lines by
+ *               contract. Act: `phm fleet stuck-fixes`, `phm fleet
+ *               main-health`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -802,6 +832,7 @@ import type { WorkItemState } from './work-item-state.js';
 import { readKillSwitch, type KillSwitchReadResult } from '../sandbox/policy.js';
 import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
 import { readStuckJobs, type StuckJob as RunningStuckJob, type StuckJobsReport } from '../fleet/running-stuck.js';
+import { readStuckFixes, type StuckFixRow } from '../fleet/stuck-fixes.js';
 import { isDependencyParkedReason, readFleetQueue, type FleetQueueV1, type ParkedGroup, type ParkedMetDep, type ParkedUnmetDep } from '../fleet/runs-parked-queue.js';
 import { readChannelHealth } from '../fleet/channel-health.js';
 import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
@@ -820,6 +851,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'peer-dispatch', 'peer-inbox', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
   'send-gate', 'router-queue', 'jobs-stuck', 'channel-health', 'queue-parked',
+  'stuck-fixes',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -852,7 +884,7 @@ export const UNIFIED_INBOX_KINDS = [
   'send-gate-kill', 'send-gate-pause', 'router-queue-job',
   'stuck-ghost', 'stuck-job',
   'channel-blocked', 'channel-degraded', 'channel-unknown',
-  'parked-dep-waiting', 'parked-dep-stale', 'parked-group',
+  'parked-dep-waiting', 'parked-dep-stale', 'parked-group', 'stuck-fix',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -880,8 +912,8 @@ export interface UnifiedInboxItem extends AttentionItem {
    * the job-carrying-thread rule `BusBoard.pendingFor` applies), a
    * conversation thread's `jobs`, a teammate task's `jobId`, a seat handoff's
    * node-job refs, a peer-dispatch receipt's peer-announced `jobId`, a
-   * session-handoff journal's job id, a router-queue row's own READY id, or
-   * a jobs-stuck marker's own job id.
+   * session-handoff journal's job id, a router-queue row's own READY id, a
+   * jobs-stuck marker's own job id, or a stuck-fix row's own job id.
    * Absent when the item names no job — unknown stays out of a
    * `--job` match rather than being guessed in.
    */
@@ -1033,6 +1065,19 @@ export interface QueueParkedRead {
   waiting: readonly ParkedUnmetDep[];
   stale: readonly ParkedMetDep[];
   groups: readonly ParkedGroup[];
+}
+
+/** The resolved stuck-fixes read: `readStuckFixes`'s ledger fold mapped onto
+ * the unified source states — 'missing' a verified-absent
+ * `metrics/jobs.jsonl` (no job rows can exist, so no fix PR can be on
+ * record — `phm fleet main-health`'s own rule), 'unavailable' a ledger
+ * that exists but cannot be folded or a path that cannot be inspected
+ * (the stuck set is unknown, never an empty list), 'healthy' the full
+ * read. `stuck` stays empty whenever the state is 'missing'/
+ * 'unavailable'. */
+export interface StuckFixesSourceRead {
+  state: UnifiedInboxSourceState;
+  stuck: readonly StuckFixRow[];
 }
 
 /** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
@@ -1192,6 +1237,11 @@ export interface UnifiedInboxOptions {
    * same bounded read `phm fleet queue-parked` and the autopilot's
    * `stale-parked-deps` gap serve. */
   readQueueParked?: (options: { runsDir?: string; now?: () => number }) => Promise<QueueParkedRead>;
+  /** Stuck-fixes seam; default reads `<runsDir>/metrics/jobs.jsonl` through
+   * `readStuckFixes` — the same fold `phm fleet stuck-fixes`, `phm fleet
+   * main-health`, the verse runs-history route and the web-ui needs-you
+   * strip serve. */
+  readStuckFixes?: (options: { runsDir?: string; now?: () => number }) => Promise<StuckFixesSourceRead>;
   /** Channel-health seam; default reads `readChannelHealth` — the same
    * slack/imessage bridge projection `phm fleet channel-health` and
    * `phm channels` serve. */
@@ -4253,6 +4303,76 @@ async function readQueueParkedSource(options: { runsDir?: string; now?: () => nu
   }
 }
 
+/** A fix PR stuck this long lists 'high' — the same hour mark the web-ui
+ * needs-you strip's urgent band applies to the same rows. */
+const STUCK_FIX_HIGH_MINUTES = 60;
+
+/**
+ * Guardian FIXUP-MAIN jobs whose published pull request never reached a
+ * terminal outcome — the same `findStuckFixes`/`readStuckFixes` fold `phm
+ * fleet stuck-fixes`, `phm fleet main-health`, the verse runs-history
+ * `stuck-fixes` route and the web-ui needs-you strip serve, over
+ * `<runsDir>/metrics/jobs.jsonl`, so this source and those surfaces can
+ * never disagree. Until now a fix PR sitting open past the 20-minute
+ * terminal-outcome bound had no item-level surface here: the jobs-stuck
+ * source reads run markers, the queue sources read ready/router rows, and
+ * every bus/feed/board read looks at work not yet claimed — while a
+ * guardian fix that published and then stalled was invisible to the one
+ * view an agent checks for work. Each stuck row lists once as a
+ * `stuck-fix` — warn, 'high' once the PR has been stuck an hour, the
+ * same escalation the needs-you strip applies — naming the repo
+ * ('unknown repo' when no repo is on record), the PR url and the job
+ * id, `since`
+ * the recorded publish time and `expiresAt` null: a stuck fix waits for
+ * a merge or close decision, never a guessed deadline. The job id is the
+ * item's own citation, so `--job` matches. `phm fleet main-health`'s own
+ * rule applies — a verified-absent ledger means no fix PR was ever
+ * published, so 'missing' (verified-empty); a ledger that exists but
+ * cannot be folded is 'unavailable' — the stuck set is unknown, never an
+ * empty list passed off as fact.
+ */
+async function stuckFixItems(read: NonNullable<UnifiedInboxOptions['readStuckFixes']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: StuckFixesSourceRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const items = result.stuck.map((fix): Omit<UnifiedInboxItem, 'priority'> => ({
+    id: `stuck-fixes:${fix.job}`,
+    source: 'stuck-fixes',
+    kind: 'stuck-fix',
+    severity: fix.ageMinutes >= STUCK_FIX_HIGH_MINUTES ? 'high' : 'warn',
+    blocking: false,
+    title: oneLine(`${fix.repo ?? 'unknown repo'} fix PR stuck ${fix.ageMinutes} min`, TITLE_MAX),
+    detail: oneLine(`job ${fix.job} · ${fix.prUrl} · no MERGED/CLOSED outcome recorded`, DETAIL_MAX) || null,
+    since: fix.publishedAt,
+    expiresAt: null,
+    jobIds: [fix.job],
+    act: ['phm fleet stuck-fixes', 'phm fleet main-health'],
+  }));
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real stuck-fixes read: `readStuckFixes` on the shared runs dir. The
+ * fold itself never throws — an unreadable ledger comes back `known:false`
+ * — so existence is probed first, the same convention `jobs-stuck` and
+ * `phm fleet main-health` apply: a verified-absent `metrics/jobs.jsonl`
+ * means no fix PR was ever published ('missing', verified-empty), while a
+ * ledger that exists but cannot be folded is 'unavailable' — the stuck
+ * set is unknown, never an empty list passed off as fact. */
+async function readStuckFixesSource(options: { runsDir?: string; now?: () => number }): Promise<StuckFixesSourceRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  try {
+    lstatSync(join(dir, 'metrics', 'jobs.jsonl'));
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? 'missing' : 'unavailable', stuck: [] };
+  }
+  const report = await readStuckFixes({ runsDir: dir, now: options.now });
+  return report.known ? { state: 'healthy', stuck: report.stuck } : { state: 'unavailable', stuck: [] };
+}
+
 /** Display label and deep links per channel-health leg; telegram's acts differ because its diagnostic is `phm comms health`, not `phm fleet channel-health`. */
 const channelHealthPresentation = (channel: string): { label: string; acts: readonly string[] } =>
   channel === 'slack'
@@ -4579,6 +4699,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const jobsStuck = await jobsStuckItems(options.readJobsStuck ?? readJobsStuckSource, options);
   const channelHealth = await channelHealthItems(options);
   const queueParked = await queueParkedItems(options.readQueueParked ?? readQueueParkedSource, options);
+  const stuckFixes = await stuckFixItems(options.readStuckFixes ?? readStuckFixesSource, options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -4620,8 +4741,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'jobs-stuck': jobsStuck.report,
     'channel-health': channelHealth.report,
     'queue-parked': queueParked.report,
+    'stuck-fixes': stuckFixes.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...commsMail.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...commsMail.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items, ...stuckFixes.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
