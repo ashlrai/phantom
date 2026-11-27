@@ -3,9 +3,33 @@ import { readStableRegularFile } from '../util/stable-file-read.js';
 
 const MAX_BYTES = 1024 * 1024;
 const DAY_MS = 86_400_000;
+export const DEFAULT_HARNESS_STALE_DAYS = 7;
 // Limits apply per source to the UTF-8 bytes of the returned takeaway strings.
 export const MAX_TAKEAWAYS = 20;
 export const MAX_TAKEAWAY_BYTES = 4096;
+
+/** Midnight UTC epoch-ms for `now`'s UTC calendar date. */
+export function utcDayStartMs(now: Date): number {
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+}
+
+/** Strict YYYY-MM-DD UTC calendar date parser (rejects rollover dates like 2026-02-30). */
+export function parseUtcCalendarDate(value: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(date) && new Date(date).toISOString().slice(0, 10) === value ? date : null;
+}
+
+/** True when a valid UTC calendar date `checkedAt` is older than `staleDays` before `now`'s UTC day. */
+export function isHarnessDateStale(
+  checkedAt: string | null,
+  now: Date,
+  staleDays = DEFAULT_HARNESS_STALE_DAYS,
+): boolean {
+  if (checkedAt === null) return false;
+  const date = parseUtcCalendarDate(checkedAt);
+  return date !== null && utcDayStartMs(now) - date > staleDays * DAY_MS;
+}
 
 type IssueCode = 'malformed_id' | 'duplicate_id' | 'missing_checked' | 'invalid_checked' | 'future_checked' | 'missing_urls';
 export interface Source {
@@ -30,10 +54,10 @@ export interface HarnessDigest {
 }
 
 /** Parse data only; neither Markdown nor the cited URLs are executed or fetched. */
-export function parseHarnessDigest(markdown: string, now: Date, staleDays = 7): HarnessDigest {
+export function parseHarnessDigest(markdown: string, now: Date, staleDays = DEFAULT_HARNESS_STALE_DAYS): HarnessDigest {
   const result: HarnessDigest = { v: 1, sources: [], issues: [] };
   const seen = new Set<string>();
-  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const today = utcDayStartMs(now);
   let source: Source | null = null;
   let checked: string | null = null;
   let hasChecked = false;
@@ -83,8 +107,8 @@ export function parseHarnessDigest(markdown: string, now: Date, staleDays = 7): 
     const id = source.id;
     if (!hasChecked) result.issues.push({ id, code: 'missing_checked' });
     else {
-      const date = checked && /^\d{4}-\d{2}-\d{2}$/.test(checked) ? Date.parse(`${checked}T00:00:00Z`) : NaN;
-      if (!Number.isFinite(date) || new Date(date).toISOString().slice(0, 10) !== checked) {
+      const date = checked ? parseUtcCalendarDate(checked) : null;
+      if (date === null) {
         result.issues.push({ id, code: 'invalid_checked' });
       } else if (date > today) result.issues.push({ id, code: 'future_checked' });
       else {
@@ -178,7 +202,7 @@ export function parseHarnessDigest(markdown: string, now: Date, staleDays = 7): 
 }
 
 /** Read a bounded, stable regular file. Failure details never contain a path. */
-export function readHarnessDigest(file: string, now: Date, staleDays = 7): HarnessDigest | null {
+export function readHarnessDigest(file: string, now: Date, staleDays = DEFAULT_HARNESS_STALE_DAYS): HarnessDigest | null {
   const absolute = resolve(file);
   const read = readStableRegularFile(absolute, { anchorPath: dirname(absolute), maxFileBytes: MAX_BYTES, remainingBytes: MAX_BYTES });
   return read.ok ? parseHarnessDigest(read.text, now, staleDays) : null;

@@ -35,7 +35,7 @@ import { diffPaths, retroFromCloud, retroFromFleet, retroFromLeader, retroFromEx
 import type { ExecutionFeedbackSnapshot } from '../../fleet/execution-feedback.js';
 import { enqueueCandidates } from './knowledge.js';
 import { RETRO_MODEL_CALLS_PER_DAY, loadRetroModel, refineRetro, type RetroModel } from './model.js';
-import { pruneRetros, readSweepState, retroExists, retroIdFor, saveRetro, writeSweepState } from './store.js';
+import { pruneRetros, readSweepState, retroExists, saveRetro, writeSweepState } from './store.js';
 import type { RetroV1 } from './types.js';
 import { isPlaybookRef, type PlaybookRef } from '../../playbooks/types.js';
 
@@ -87,8 +87,8 @@ export interface RetroSweepResult {
   sweptAt: string;
 }
 
-export const RETRO_SWEEP_WINDOW_DAYS = 30;
-export const RETRO_SWEEP_MAX_NEW = 40;
+const RETRO_SWEEP_WINDOW_DAYS = 30;
+const RETRO_SWEEP_MAX_NEW = 40;
 
 const LEDGER_KINDS = ['gate:result', 'pr:opened', 'pr:closed', 'merge:landed', 'post-merge:result', 'revert:landed', 'revert:failed'] as const;
 
@@ -217,7 +217,7 @@ export function fleetEndsFromLedger(entries: readonly LedgerEntry[], load: (id: 
 }
 
 /** Inbox ends the ledger does not carry (the non-standing paths). */
-export function fleetEndsFromInbox(proposals: readonly SweepProposal[], sinceIso: string): FleetEndInput[] {
+function fleetEndsFromInbox(proposals: readonly SweepProposal[], sinceIso: string): FleetEndInput[] {
   const out: FleetEndInput[] = [];
   for (const p of proposals) {
     const endedAt = p.decidedAt ?? p.createdAt;
@@ -472,6 +472,3 @@ export async function loadDefaultRetroSweepDeps(cfg: unknown): Promise<RetroSwee
     labelRootCauses: async (retros) => (await import('../../decide/retro.js')).labelRetroRootCauses(retros, cfg ? { cfg: cfg as never } : {}),
   };
 }
-
-/** Retro id for a source key (re-exported for callers that pre-check). */
-export { retroIdFor };

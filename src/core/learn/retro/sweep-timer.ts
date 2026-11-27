@@ -43,7 +43,7 @@ export const RETRO_SWEEP_INTERVAL_MS = 60 * 60_000;
 /** A tick this soon after the last sweep (any caller's) skips. Matches the Lessons GET's stale window. */
 export const RETRO_SWEEP_MIN_GAP_MS = 10 * 60_000;
 /** stop() waits at most this long for a tick in flight. */
-export const RETRO_SWEEP_STOP_WAIT_MS = 5_000;
+const RETRO_SWEEP_STOP_WAIT_MS = 5_000;
 
 export type RetroSweepTickOutcome = 'swept' | 'skipped-recent' | 'skipped-busy' | 'failed' | 'stopped';
 

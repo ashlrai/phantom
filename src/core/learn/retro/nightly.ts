@@ -2,7 +2,7 @@
 import { deriveNightlyImprovements } from '../../fleet/self-improve.js';
 import { extractNightlyJob, extractNightlyReview } from './extract.js';
 import { ensureNightlyInputs } from './feed.js';
-import { NIGHTLY_MAX_RECORDS, readNightlyInputs, updateNightlyState } from './store.js';
+import { isRecord, NIGHTLY_MAX_RECORDS, readNightlyInputs, updateNightlyState } from './store.js';
 import type { NightlyJob, NightlyReview } from './nightly-types.js';
 
 export interface NightlyRetroResult {
@@ -38,7 +38,7 @@ function reconcile<T extends NightlyJob | NightlyReview>(old: T[], incoming: T[]
  */
 export async function runNightlyRetro(cfg: unknown, nowMs = Date.now()): Promise<NightlyRetroResult> {
   const empty = { jobs: 0, reviews: 0, proposals: 0 };
-  if (!cfg || typeof cfg !== 'object' || (cfg as { foundry?: { selfImprove?: unknown } }).foundry?.selfImprove !== true) {
+  if (!isRecord(cfg) || !isRecord(cfg['foundry']) || cfg['foundry']['selfImprove'] !== true) {
     return { status: 'disabled', ...empty };
   }
   if (!Number.isFinite(nowMs)) return { status: 'unavailable', ...empty };

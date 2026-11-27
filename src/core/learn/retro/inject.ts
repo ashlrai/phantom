@@ -188,7 +188,13 @@ export function scoreKnowledge(notes: readonly KnowledgeNoteV1[], target: Knowle
 /** At most this many notes reach one task prompt once more than this many match its scope. */
 export const KNOWLEDGE_INJECT_MAX_NOTES = 8;
 /** Rare-word weight a note must share with the task text when nothing in its scope ties it to the task. */
-export const KNOWLEDGE_RELEVANCE_MIN = 0.75;
+const KNOWLEDGE_RELEVANCE_MIN = 0.75;
+
+function compareByUsageAndRecency(a: KnowledgeNoteV1, b: KnowledgeNoteV1): number {
+  return b.hits - a.hits
+    || (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt)
+    || a.id.localeCompare(b.id);
+}
 
 /**
  * Approved notes that match, most specific / most used / newest first. Pure.
@@ -202,10 +208,8 @@ export const KNOWLEDGE_RELEVANCE_MIN = 0.75;
  * Evidence first, then relevance, at most MAX notes.
  */
 export function selectKnowledge(notes: readonly KnowledgeNoteV1[], target: KnowledgeTarget): KnowledgeNoteV1[] {
-  const order = (a: KnowledgeNoteV1, b: KnowledgeNoteV1): number => specificity(b.scope) - specificity(a.scope)
-    || b.hits - a.hits
-    || (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt)
-    || a.id.localeCompare(b.id);
+  const order = (a: KnowledgeNoteV1, b: KnowledgeNoteV1): number =>
+    specificity(b.scope) - specificity(a.scope) || compareByUsageAndRecency(a, b);
   const approved = notes.filter((n) => n.status === 'approved');
   const matched = approved.filter((n) => scopeMatches(n.scope, target)).sort(order);
   if (!target.text?.trim()) return matched;
@@ -450,7 +454,7 @@ export function leaderLessons(opts: { notes?: readonly KnowledgeNoteV1[]; vetoes
     const cap = opts.capBytes ?? KNOWLEDGE_INJECT_CAP_BYTES;
     const notes = [...(opts.notes ?? readApprovedKnowledgeSync())]
       .filter((n) => n.status === 'approved')
-      .sort((a, b) => b.hits - a.hits || (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt) || a.id.localeCompare(b.id));
+      .sort(compareByUsageAndRecency);
     const vetoes = opts.vetoes ? vetoLessons(opts.vetoes) : readVetoLessonsSync();
     const out: LeaderLessonsEvidence = { vetoes: [], knowledge: [] };
     let used = 0;

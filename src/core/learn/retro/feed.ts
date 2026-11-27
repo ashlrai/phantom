@@ -58,7 +58,6 @@
  *     deduplication evidence.
  */
 import { randomBytes } from 'node:crypto';
-import { lstat, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -72,7 +71,16 @@ import { readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../../router/out
 import { writePrivateFileAtomicallyAsync } from '../../util/private-file-write.js';
 import { extractNightlyJob, extractNightlyReview } from './extract.js';
 import type { NightlyJob, NightlyReview } from './nightly-types.js';
-import { learnHome, NIGHTLY_MAX_BYTES, NIGHTLY_MAX_RECORDS, readNightlyFile } from './store.js';
+import {
+  inspectNightlyDirectory,
+  isRecord,
+  learnHome,
+  NIGHTLY_MAX_BYTES,
+  NIGHTLY_MAX_RECORDS,
+  readNightlyFile,
+  RETRO_ID_PATTERN,
+  RETRO_REPO_PATTERN,
+} from './store.js';
 
 const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const STATE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
@@ -87,8 +95,6 @@ const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const PLAYBOOK_KEYS = ['playbook', 'work_class'] as const;
 const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;
 
-const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/;
-const REPO_PATTERN = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 const PR_URL_PATTERN = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/\d+\/?$/;
 
 const SUCCEEDED_STATES = new Set(['MERGED', 'SUCCEEDED', 'SUCCESS', 'PASSED']);
@@ -161,31 +167,31 @@ function terminalStatus(row: Record<string, unknown>): NightlyJob['status'] | nu
 /** owner/repo from the row's repo field, or proven by its GitHub PR URL. */
 function repoOf(row: Record<string, unknown>): string | null {
   const repo = firstString(row, ['repo']);
-  if (repo && REPO_PATTERN.test(repo)) return repo;
+  if (repo && RETRO_REPO_PATTERN.test(repo)) return repo;
   const url = firstString(row, URL_KEYS);
   const match = url ? PR_URL_PATTERN.exec(url.replace(/\/+$/, '')) : null;
   if (!match) return null;
   const derived = `${match[1]}/${match[2]}`;
-  return REPO_PATTERN.test(derived) ? derived : null;
+  return RETRO_REPO_PATTERN.test(derived) ? derived : null;
 }
 
 /** The routing arm: lane/pool/arm first, then the model as `model:<name>` so namespaces never conflate. */
 function armOf(row: Record<string, unknown>): string | null {
   for (const key of LANE_KEYS) {
     const value = firstString(row, [key]);
-    if (value && ID_PATTERN.test(value)) return value;
+    if (value && RETRO_ID_PATTERN.test(value)) return value;
   }
   const model = firstString(row, ['model']);
   if (model) {
     const arm = `model:${model}`;
-    if (ID_PATTERN.test(arm)) return arm;
+    if (RETRO_ID_PATTERN.test(arm)) return arm;
   }
   return null;
 }
 
 function playbookOf(row: Record<string, unknown>): string | null {
   const value = firstString(row, PLAYBOOK_KEYS);
-  return value && ID_PATTERN.test(value) ? value : null;
+  return value && RETRO_ID_PATTERN.test(value) ? value : null;
 }
 
 interface JobAccum {
@@ -209,11 +215,11 @@ export function foldFleetJobs(text: string, nowMs: number): NightlyJob[] {
     let row: Record<string, unknown>;
     try {
       const parsed: unknown = JSON.parse(line);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-      row = parsed as Record<string, unknown>;
+      if (!isRecord(parsed)) continue;
+      row = parsed;
     } catch { continue; }
     const id = firstString(row, JOB_ID_KEYS);
-    if (!id || !ID_PATTERN.test(id)) continue;
+    if (!id || !RETRO_ID_PATTERN.test(id)) continue;
     const at = ledgerTs(row);
     if (at === null || at > nowMs) continue;
     let acc = jobs.get(id);
@@ -236,7 +242,7 @@ export function foldFleetJobs(text: string, nowMs: number): NightlyJob[] {
     if (acc.status === null || acc.repo === null || acc.arm === null || !acc.updatedAt) continue;
     out.push({ v: 1, id, repo: acc.repo, arm: acc.arm, playbook: acc.playbook, status: acc.status, updatedAt: acc.updatedAt });
   }
-  return out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return out.sort(byId);
 }
 
 // ---------------------------------------------------------------------------
@@ -271,7 +277,7 @@ function taskTimestamp(raw: unknown, nowMs: number): string | null {
 
 function taskPlaybook(ref: { id: string } | null | undefined): string | null {
   const id = ref?.id;
-  return typeof id === 'string' && ID_PATTERN.test(id) ? id : null;
+  return typeof id === 'string' && RETRO_ID_PATTERN.test(id) ? id : null;
 }
 
 function byId<T extends { id: string }>(a: T, b: T): number {
@@ -308,14 +314,14 @@ export function foldCloudTasks(
   const reviews: NightlyReviewInput[] = [];
   for (const task of tasks) {
     if (task.supersededBy) continue;
-    if (!ID_PATTERN.test(task.id) || !REPO_PATTERN.test(task.repo)) continue;
+    if (!RETRO_ID_PATTERN.test(task.id) || !RETRO_REPO_PATTERN.test(task.repo)) continue;
     const outcome = task.outcome ?? null;
     if (TASK_TERMINAL_STATES.has(task.state)) {
       const updatedAt = taskTimestamp(task.updatedAt, nowMs);
       if (updatedAt !== null) {
         const status: NightlyJob['status'] = task.state === 'merged' && !outcome?.revertedBy ? 'succeeded' : 'failed';
         const seat = task.seat.trim();
-        const arm = seat !== '' && ID_PATTERN.test(seat) ? `cloud:${seat}` : 'cloud';
+        const arm = seat !== '' && RETRO_ID_PATTERN.test(seat) ? `cloud:${seat}` : 'cloud';
         jobs.push({ v: 1, id: task.id, repo: task.repo, arm, playbook: taskPlaybook(task.playbookRef), status, updatedAt });
       }
     }
@@ -345,10 +351,10 @@ export function foldDevinTasks(tasks: readonly DevinTaskV1[], nowMs: number): Ni
   for (const task of tasks) {
     if (!TASK_TERMINAL_STATES.has(task.state) || task.supersededBy) continue;
     if (task.origin === 'chat' && !task.pr) continue;
-    if (!ID_PATTERN.test(task.id) || !REPO_PATTERN.test(task.repo)) continue;
+    if (!RETRO_ID_PATTERN.test(task.id) || !RETRO_REPO_PATTERN.test(task.repo)) continue;
     const updatedAt = taskTimestamp(task.updatedAt, nowMs);
     if (updatedAt === null) continue;
-    const arm = ID_PATTERN.test(task.devinMode) ? `devin:${task.devinMode}` : 'devin';
+    const arm = RETRO_ID_PATTERN.test(task.devinMode) ? `devin:${task.devinMode}` : 'devin';
     jobs.push({
       v: 1, id: task.id, repo: task.repo, arm,
       playbook: taskPlaybook(task.playbookRef),
@@ -358,8 +364,10 @@ export function foldDevinTasks(tasks: readonly DevinTaskV1[], nowMs: number): Ni
   return jobs.sort(byId);
 }
 
+type NightlyObservation = { repo: string; id: string; updatedAt: string };
+
 /** Latest observation per (repo,id); ties keep the existing row so inputs stay stable. */
-function mergeLatestObservations<T extends { repo: string; id: string; updatedAt: string }>(
+function mergeLatestObservations<T extends NightlyObservation>(
   existing: readonly T[], incoming: readonly T[],
 ): T[] {
   const byKey = new Map<string, T>();
@@ -377,7 +385,7 @@ function mergeLatestObservations<T extends { repo: string; id: string; updatedAt
  * order. Skipping the write preserves externally supplied file bytes and
  * avoids a pointless atomic replace every due night.
  */
-function unchangedObservations<T extends { repo: string; id: string; updatedAt: string }>(
+function unchangedObservations<T extends NightlyObservation>(
   merged: readonly T[], existing: readonly T[],
 ): boolean {
   const sortedExisting = mergeLatestObservations(existing, []);
@@ -385,50 +393,72 @@ function unchangedObservations<T extends { repo: string; id: string; updatedAt: 
     merged.every((row, index) => JSON.stringify(row) === JSON.stringify(sortedExisting[index]));
 }
 
-/** Same private-directory discipline as the nightly store: no symlinked or shared-writable parents. */
-async function ensureRetroInputDir(dir: string): Promise<void> {
-  for (const directory of [join(homedir(), '.ashlr'), learnHome(), dir]) {
-    await mkdir(directory, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'EEXIST') throw error;
-    });
-    const s = await lstat(directory);
-    if (!s.isDirectory() || s.isSymbolicLink() ||
-      (typeof process.getuid === 'function' && s.uid !== process.getuid()) ||
-      (process.platform !== 'win32' && (s.mode & 0o022) !== 0)) throw new Error('Unsafe nightly input directory');
-  }
-}
-
 /**
- * Existing jobs.jsonl as validated contract rows. `existed` distinguishes an
- * absent file (the feed must create it, even when it merges to zero rows)
- * from a present one; null means unsafe/unparseable/conflicting — the feed
- * then leaves the file alone and the nightly run fails closed exactly as it
- * would have.
+ * Read an existing nightly input JSONL file as validated rows. `existed`
+ * distinguishes an absent file (the feed must create it, even when it merges
+ * to zero rows) from a present one; null means unsafe/unparseable/conflicting
+ * — the feed then leaves the file alone so the nightly run fails closed.
  */
-async function readExistingJobs(path: string): Promise<{ rows: NightlyJob[]; existed: boolean } | null> {
+async function readExistingNightlyRows<T extends NightlyObservation>(
+  path: string,
+  parseRow: (parsed: unknown) => T | null,
+): Promise<{ rows: T[]; existed: boolean } | null> {
   let raw: string;
   try {
     raw = await readNightlyFile(path, true);
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'ENOENT' ? { rows: [], existed: false } : null;
   }
-  const rows: NightlyJob[] = [];
+  const rows: T[] = [];
   const versions = new Map<string, string>();
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
-    let job: NightlyJob;
+    let row: T | null;
     try {
-      job = extractNightlyJob(JSON.parse(line) as unknown);
+      row = parseRow(JSON.parse(line) as unknown);
     } catch {
       return null;
     }
-    const version = JSON.stringify([JSON.stringify([job.repo, job.id]), job.updatedAt]);
-    const bytes = JSON.stringify(job);
+    if (row === null) return null;
+    const version = JSON.stringify([[row.repo, row.id], row.updatedAt]);
+    const bytes = JSON.stringify(row);
     if (versions.has(version) && versions.get(version) !== bytes) return null;
     versions.set(version, bytes);
-    rows.push(job);
+    rows.push(row);
   }
   return { rows, existed: true };
+}
+
+function parseExistingReviewInput(parsed: unknown): NightlyReviewInput | null {
+  const review: NightlyReview = extractNightlyReview(parsed);
+  const body = (parsed as Record<string, unknown>)['body'];
+  if (typeof body !== 'string' || body.length > REVIEW_BODY_MAX) return null;
+  return {
+    v: 1, id: review.id, jobId: review.jobId, repo: review.repo,
+    kind: 'review-block', updatedAt: review.updatedAt, body,
+  };
+}
+
+/** Merge incoming rows into an existing nightly input file and publish atomically when changed. */
+async function writeMergedNightlyInput<T extends NightlyObservation>(
+  path: string,
+  incoming: readonly T[],
+  parseRow: (parsed: unknown) => T | null,
+  label: string,
+): Promise<void> {
+  const existing = await readExistingNightlyRows(path, parseRow);
+  if (existing === null) return;
+  const merged = mergeLatestObservations(existing.rows, incoming);
+  if (merged.length > NIGHTLY_MAX_RECORDS || (existing.existed && unchangedObservations(merged, existing.rows))) return;
+  const text = merged.length ? `${merged.map((row) => JSON.stringify(row)).join('\n')}\n` : '';
+  if (Buffer.byteLength(text) > NIGHTLY_MAX_BYTES) return;
+  // The nightly state lock is already held by updateNightlyState; the fence is a no-op here.
+  await writePrivateFileAtomicallyAsync(
+    `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`,
+    path,
+    text,
+    { anchorPath: homedir(), label, beforePublish: () => undefined },
+  );
 }
 
 export interface NightlyFeedOptions {
@@ -458,71 +488,14 @@ function collectTaskEvidence(
   }
 }
 
-/**
- * Existing review-blocks.jsonl as validated wire rows, [] when absent, or
- * null when present but unsafe/unparseable/conflicting — same fail-closed
- * contract as readExistingJobs. Rows keep their `body`: the file is the
- * pre-extraction input shape, not the persisted NightlyReview shape.
- */
-async function readExistingReviews(path: string): Promise<{ rows: NightlyReviewInput[]; existed: boolean } | null> {
-  let raw: string;
-  try {
-    raw = await readNightlyFile(path, true);
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? { rows: [], existed: false } : null;
-  }
-  const rows: NightlyReviewInput[] = [];
-  const versions = new Map<string, string>();
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      return null;
-    }
-    let review: NightlyReview;
-    try {
-      review = extractNightlyReview(parsed);
-    } catch {
-      return null;
-    }
-    const body = (parsed as Record<string, unknown>)['body'];
-    if (typeof body !== 'string' || body.length > REVIEW_BODY_MAX) return null;
-    const row: NightlyReviewInput = {
-      v: 1, id: review.id, jobId: review.jobId, repo: review.repo,
-      kind: 'review-block', updatedAt: review.updatedAt, body,
-    };
-    const version = JSON.stringify([[row.repo, row.id], row.updatedAt]);
-    const bytes = JSON.stringify(row);
-    if (versions.has(version) && versions.get(version) !== bytes) return null;
-    versions.set(version, bytes);
-    rows.push(row);
-  }
-  return { rows, existed: true };
-}
-
 /** Refresh retro-input/jobs.jsonl. Runs inside the nightly state lock, once per due night. */
 async function feedJobsInput(
   dir: string, runsDir: string, taskJobs: readonly NightlyJob[], nowMs: number,
 ): Promise<void> {
-  const jobsPath = join(dir, 'jobs.jsonl');
   const tail = await readLedgerTail(join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE), NIGHTLY_MAX_BYTES);
   if (tail.state !== 'read') return;
   const incoming = [...foldFleetJobs(tail.text, nowMs), ...taskJobs];
-  const existing = await readExistingJobs(jobsPath);
-  if (existing === null) return;
-  const merged = mergeLatestObservations(existing.rows, incoming);
-  if (merged.length > NIGHTLY_MAX_RECORDS || (existing.existed && unchangedObservations(merged, existing.rows))) return;
-  const text = merged.length ? `${merged.map((job) => JSON.stringify(job)).join('\n')}\n` : '';
-  if (Buffer.byteLength(text) > NIGHTLY_MAX_BYTES) return;
-  // The nightly state lock is already held by updateNightlyState; the fence is a no-op here.
-  await writePrivateFileAtomicallyAsync(
-    `${jobsPath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`,
-    jobsPath,
-    text,
-    { anchorPath: homedir(), label: 'nightly job feed', beforePublish: () => undefined },
-  );
+  await writeMergedNightlyInput(join(dir, 'jobs.jsonl'), incoming, extractNightlyJob, 'nightly job feed');
 }
 
 /**
@@ -535,19 +508,7 @@ async function feedReviewsInput(
   dir: string, taskReviews: readonly NightlyReviewInput[] | null,
 ): Promise<void> {
   if (taskReviews === null) return;
-  const reviewPath = join(dir, 'review-blocks.jsonl');
-  const existing = await readExistingReviews(reviewPath);
-  if (existing === null) return;
-  const merged = mergeLatestObservations(existing.rows, taskReviews);
-  if (merged.length > NIGHTLY_MAX_RECORDS || (existing.existed && unchangedObservations(merged, existing.rows))) return;
-  const text = merged.length ? `${merged.map((row) => JSON.stringify(row)).join('\n')}\n` : '';
-  if (Buffer.byteLength(text) > NIGHTLY_MAX_BYTES) return;
-  await writePrivateFileAtomicallyAsync(
-    `${reviewPath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`,
-    reviewPath,
-    text,
-    { anchorPath: homedir(), label: 'nightly review feed', beforePublish: () => undefined },
-  );
+  await writeMergedNightlyInput(join(dir, 'review-blocks.jsonl'), taskReviews, parseExistingReviewInput, 'nightly review feed');
 }
 
 /**
@@ -561,13 +522,13 @@ export async function ensureNightlyInputs(opts: NightlyFeedOptions = {}): Promis
   const dir = join(learnHome(), 'retro-input');
   const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   try {
-    await ensureRetroInputDir(dir);
+    await inspectNightlyDirectory(true, true);
     await feedJobsInput(dir, runsDir, tasks?.jobs ?? [], nowMs);
   } catch {
     // Best-effort producer: readNightlyInputs() remains the availability gate.
   }
   try {
-    await ensureRetroInputDir(dir);
+    await inspectNightlyDirectory(true, true);
     await feedReviewsInput(dir, tasks === null ? null : tasks.reviews);
   } catch {
     // Same: an unwritable review file leaves the run unavailable, never fatal.

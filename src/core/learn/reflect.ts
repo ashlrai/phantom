@@ -543,7 +543,7 @@ export interface ReflectionCycleResult {
  * One batched Jev pass over recent swarm goals so classifyGoal can use typed
  * labels. Never throws; with no key it does no I/O beyond reading config.
  */
-export async function primeGoalClasses(cfg: AshlrConfig, maxRuns = 50, signal?: AbortSignal): Promise<void> {
+async function primeGoalClasses(cfg: AshlrConfig, maxRuns = 50, signal?: AbortSignal): Promise<void> {
   try {
     const goals = listSwarms().slice(0, maxRuns).map((s) => s?.goal);
     await primeTaskClasses(goals, { cfg, ...(signal ? { signal } : {}) });

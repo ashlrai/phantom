@@ -44,23 +44,23 @@ import {
 /** Retro files kept on disk; the oldest are pruned past this. */
 export const MAX_RETROS = 500;
 /** Notes kept in the queue file; the oldest REJECTED are pruned first. */
-export const MAX_NOTES = 400;
+const MAX_NOTES = 400;
 /** The hits log is compacted once it passes this size. */
 const HITS_COMPACT_BYTES = 256 * 1024;
 
 export function learnHome(): string {
   return join(homedir(), '.ashlr', 'learn');
 }
-export function retrosDir(): string {
+function retrosDir(): string {
   return join(learnHome(), 'retros');
 }
 export function knowledgePath(): string {
   return join(learnHome(), 'knowledge.json');
 }
-export function knowledgeHitsPath(): string {
+function knowledgeHitsPath(): string {
   return join(learnHome(), 'knowledge-hits.jsonl');
 }
-export function sweepStatePath(): string {
+function sweepStatePath(): string {
   return join(learnHome(), 'retro-sweep.json');
 }
 
@@ -72,7 +72,7 @@ export function nightlyProposalsPath(): string {
 }
 
 /** Refuse redirected or externally writable paths, including parent directories. */
-async function inspectNightlyDirectory(input: boolean, create = false): Promise<void> {
+export async function inspectNightlyDirectory(input: boolean, create = false): Promise<void> {
   const directories = [join(homedir(), '.ashlr'), learnHome()];
   if (input) directories.push(join(learnHome(), 'retro-input'));
   for (const directory of directories) {
@@ -178,7 +178,7 @@ export async function updateNightlyState(
 
 export const NIGHTLY_REPORT_SCHEMA = 'learn.nightly-report.v1';
 /** Per-section item cap; counts always report the exact retained totals. */
-export const NIGHTLY_REPORT_LIST_LIMIT = 200;
+const NIGHTLY_REPORT_LIST_LIMIT = 200;
 
 export interface NightlyReportCounts {
   jobs: number;
@@ -290,17 +290,18 @@ export function cleanText(value: unknown, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 }
 
-const REPO_PATTERN = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
+export const RETRO_REPO_PATTERN = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
+export const RETRO_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/;
 const GLOB_PATTERN = /^[A-Za-z0-9_.*?{},/@+-]{1,160}$/;
+const KNOWLEDGE_NOTE_ID_PATTERN = /^kn_[0-9a-f]{16}$/;
 
 /** Validate + normalize a scope; returns null when it is not one. */
 export function normalizeScope(raw: unknown): KnowledgeScope | null {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
-  const r = raw as Record<string, unknown>;
-  const repo = r['repo'] === null || r['repo'] === undefined ? null : typeof r['repo'] === 'string' && REPO_PATTERN.test(r['repo']) ? r['repo'] : undefined;
+  if (!isRecord(raw)) return null;
+  const repo = raw['repo'] === null || raw['repo'] === undefined ? null : typeof raw['repo'] === 'string' && RETRO_REPO_PATTERN.test(raw['repo']) ? raw['repo'] : undefined;
   if (repo === undefined) return null;
-  const globsRaw = r['pathGlobs'] ?? [];
-  const kindsRaw = r['taskKinds'] ?? [];
+  const globsRaw = raw['pathGlobs'] ?? [];
+  const kindsRaw = raw['taskKinds'] ?? [];
   if (!Array.isArray(globsRaw) || !Array.isArray(kindsRaw) || globsRaw.length > 12 || kindsRaw.length > TASK_KINDS.length) return null;
   const pathGlobs: string[] = [];
   for (const g of globsRaw) {
@@ -317,17 +318,16 @@ export function normalizeScope(raw: unknown): KnowledgeScope | null {
   return { repo, pathGlobs, taskKinds };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function isRetro(raw: unknown): raw is RetroV1 {
+function isRetro(raw: unknown): raw is RetroV1 {
   return isRecord(raw) && raw['v'] === 1 && typeof raw['id'] === 'string' && typeof raw['sourceKey'] === 'string'
     && typeof raw['endedAt'] === 'string' && (RETRO_END_KINDS as readonly string[]).includes(String(raw['endKind']))
     && Array.isArray(raw['candidates']) && Array.isArray(raw['doDifferently']);
 }
 
-const EVIDENCE_REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 const EVIDENCE_SHA = /^[0-9a-f]{40}$/;
 
 /** Valid evidence refs only, deduplicated, at most KNOWLEDGE_EVIDENCE_MAX (newest kept); undefined when none. */
@@ -337,7 +337,7 @@ export function normalizeEvidence(raw: unknown): KnowledgeEvidenceRef[] | undefi
   const seen = new Set<string>();
   for (const r of raw) {
     if (!isRecord(r) || (r['kind'] !== 'pr' && r['kind'] !== 'ci' && r['kind'] !== 'review')) continue;
-    if (typeof r['repository'] !== 'string' || !EVIDENCE_REPO.test(r['repository'])) continue;
+    if (typeof r['repository'] !== 'string' || !RETRO_REPO_PATTERN.test(r['repository'])) continue;
     const number = Number.isSafeInteger(r['number']) && (r['number'] as number) > 0 ? r['number'] as number : null;
     const sha = typeof r['sha'] === 'string' && EVIDENCE_SHA.test(r['sha']) ? r['sha'] : null;
     const detail = typeof r['detail'] === 'string' ? cleanText(r['detail'], 120) || null : null;
@@ -378,16 +378,20 @@ async function ensurePrivateDir(dir: string): Promise<void> {
 }
 
 /** tmp (0600, exclusive) + rename. */
-async function writePrivateJson(path: string, value: unknown, dir: string): Promise<void> {
-  await ensurePrivateDir(dir);
+async function writePrivateAtomic(path: string, content: string): Promise<void> {
   const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
   try {
-    await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    await writeFile(tmp, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
     await rename(tmp, path);
   } catch (err) {
     await unlink(tmp).catch(() => undefined);
     throw err;
   }
+}
+
+async function writePrivateJson(path: string, value: unknown, dir: string): Promise<void> {
+  await ensurePrivateDir(dir);
+  await writePrivateAtomic(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 async function readJson(path: string): Promise<unknown> {
@@ -537,7 +541,7 @@ export function updateKnowledge<T>(mutate: (notes: KnowledgeNoteV1[]) => { notes
 
 /** Append one hit line per injected note. Fire-and-forget safe: never rejects. */
 export async function recordKnowledgeHits(ids: readonly string[], at: string = new Date().toISOString()): Promise<void> {
-  const clean = ids.filter((id) => /^kn_[0-9a-f]{16}$/.test(id));
+  const clean = ids.filter((id) => KNOWLEDGE_NOTE_ID_PATTERN.test(id));
   if (clean.length === 0) return;
   try {
     await ensurePrivateDir(learnHome());
@@ -581,13 +585,7 @@ export async function readKnowledgeHits(): Promise<Map<string, HitTotals>> {
 async function compactHits(): Promise<void> {
   const totals = await readKnowledgeHits();
   const lines = [...totals].map(([id, t]) => JSON.stringify({ id, at: t.lastHitAt, n: t.hits })).join('\n');
-  const tmp = `${knowledgeHitsPath()}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-  try {
-    await writeFile(tmp, lines ? `${lines}\n` : '', { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-    await rename(tmp, knowledgeHitsPath());
-  } catch {
-    await unlink(tmp).catch(() => undefined);
-  }
+  await writePrivateAtomic(knowledgeHitsPath(), lines ? `${lines}\n` : '').catch(() => undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -627,7 +625,7 @@ export async function recordKnowledgeRuns(
   ids: readonly string[],
   at: string = new Date().toISOString(),
 ): Promise<void> {
-  const clean = [...new Set(ids.filter((id) => /^kn_[0-9a-f]{16}$/.test(id)))].sort();
+  const clean = [...new Set(ids.filter((id) => KNOWLEDGE_NOTE_ID_PATTERN.test(id)))].sort();
   if (!RUN_ID_PATTERN.test(trajectoryId) || clean.length === 0) return;
   try {
     await ensurePrivateDir(learnHome());
@@ -683,7 +681,7 @@ export async function readKnowledgeRuns(): Promise<KnowledgeRunsRead> {
       if (typeof row.trajectoryId !== 'string' || !RUN_ID_PATTERN.test(row.trajectoryId) ||
         !Array.isArray(row.ids)) continue;
       for (const id of row.ids) {
-        if (typeof id !== 'string' || !/^kn_[0-9a-f]{16}$/.test(id)) continue;
+        if (typeof id !== 'string' || !KNOWLEDGE_NOTE_ID_PATTERN.test(id)) continue;
         const set = out.byNote.get(id) ?? new Set<string>();
         set.add(row.trajectoryId);
         out.byNote.set(id, set);
@@ -706,13 +704,7 @@ async function compactRuns(): Promise<void> {
   }
   const lines = raw.split('\n').filter((line) => line.trim());
   const kept = lines.slice(-RUNS_KEEP_ROWS);
-  const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-  try {
-    await writeFile(tmp, kept.length ? `${kept.join('\n')}\n` : '', { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-    await rename(tmp, file);
-  } catch {
-    await unlink(tmp).catch(() => undefined);
-  }
+  await writePrivateAtomic(file, kept.length ? `${kept.join('\n')}\n` : '').catch(() => undefined);
 }
 
 // ---------------------------------------------------------------------------

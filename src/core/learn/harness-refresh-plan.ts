@@ -1,6 +1,4 @@
-import type { HarnessDigest } from './harness-digest-reader.js';
-
-const DAY_MS = 86_400_000;
+import { isHarnessDateStale, type HarnessDigest } from './harness-digest-reader.js';
 
 /** A single queued source, never mutating the original digest. */
 export interface RefreshQueueEntry {
@@ -9,19 +7,6 @@ export interface RefreshQueueEntry {
   urls: string[];
   checkedAt: string | null;
   reason: 'repair' | 'stale';
-}
-
-/** Return true when `entry`'s checkedAt falls outside `staleDays` of `now`. */
-function staleSince(
-  entry: { checkedAt: string | null },
-  now: Date,
-  staleDays = 7,
-): boolean {
-  if (entry.checkedAt === null) return false;
-  const date = Date.parse(`${entry.checkedAt}T00:00:00Z`);
-  if (!Number.isFinite(date)) return false;
-  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  return today - date > staleDays * DAY_MS;
 }
 
 /** Plan a deterministic, bounded research queue from a parsed harness digest. */
@@ -48,7 +33,7 @@ export function planHarnessRefresh(
   for (const src of seen.values()) {
     if (issuesBy.has(src.id)) {
       repair.push({ id: src.id, title: src.title, urls: src.urls, checkedAt: src.checkedAt, reason: 'repair' });
-    } else if (staleSince(src, now)) {
+    } else if (isHarnessDateStale(src.checkedAt, now)) {
       stale.push({ id: src.id, title: src.title, urls: src.urls, checkedAt: src.checkedAt, reason: 'stale' });
     }
   }

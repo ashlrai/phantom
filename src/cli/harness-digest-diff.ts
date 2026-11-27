@@ -1,6 +1,6 @@
 import type { HarnessDigest } from '../core/learn/harness-digest-reader.js';
 
-export type Source = HarnessDigest['sources'][number];
+type Source = HarnessDigest['sources'][number];
 interface TakeawayChange { id: string; text: string; urls: string[]; checkedAt: string | null }
 interface ChangedSource {
   id: string;
