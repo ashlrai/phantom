@@ -32,6 +32,8 @@ Without `--json` the command prints one line per lane, for example
 
 Error rate and latency use runs with a recorded outcome and a readable end
 timestamp between their start and the end of the report window, inclusive.
+A current phase start inside that interval also sets a lower bound on the
+end timestamp.
 A run with a valid start in the window still counts as a call if its
 completion evidence is missing or invalid.
 
