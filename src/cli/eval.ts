@@ -17,6 +17,7 @@
 
 import type { RunOptions, RunState, AshlrConfig } from '../core/types.js';
 import { EVAL_FIXTURES, type EvalFixture } from './eval-fixtures.js';
+import { isLocalProviderReachable } from './eval-shared.js';
 import { makeColors, isTty, pad } from './ui.js';
 
 const { bold, dim, yellow, red, cyan, gray } = makeColors(isTty());
@@ -310,13 +311,9 @@ export async function cmdEval(args: string[]): Promise<number> {
     return 1;
   }
 
-  // Guard: a local provider must be reachable. getActiveClient throws when no
-  // local provider is up (and allowCloud:false). If so, the eval cannot run —
-  // print a clear hint and return 0 (graceful, not an error).
-  try {
-    const { getActiveClient } = await import('../core/run/provider-client.js');
-    await getActiveClient(cfg, { allowCloud: false });
-  } catch {
+  // Guard: a local provider must be reachable (allowCloud:false). If not, the
+  // eval cannot run — print a clear hint and return 0 (graceful, not an error).
+  if (!(await isLocalProviderReachable(cfg))) {
     const msg =
       'eval needs a local model — start Ollama or LM Studio, then re-run `ashlr eval`.';
     if (parsed.json) {

@@ -15,6 +15,7 @@ import { writeFileSync } from 'node:fs';
 
 import { foldRouterEvalDataset, routerEvalDatasetText } from '../core/eval/router-dataset.js';
 import { readRouterOutcomes, type RouterOutcomeRead } from '../core/router/outcomes.js';
+import { isEvalHelpRequest } from './eval-shared.js';
 
 const USAGE = `Usage: phm eval dataset [--runs-dir <dir>] [--lane <lane>] [--out <jobs.jsonl>] [--json]
 
@@ -73,7 +74,7 @@ export async function cmdEvalDataset(args: string[], overrides: EvalDatasetCliDe
     now: () => new Date(),
     ...overrides,
   };
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { deps.out(USAGE); return 0; }
+  if (isEvalHelpRequest(args)) { deps.out(USAGE); return 0; }
   const parsed = parseArgs(args);
   if (parsed.usageError) { deps.err(`error: ${parsed.usageError}\n${USAGE}`); return 2; }
 

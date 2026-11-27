@@ -33,6 +33,7 @@ import {
   parsePromptExperimentSpec,
   type PromptExperimentSpec,
 } from '../core/eval/prompt-variants.js';
+import { isEvalHelpRequest } from './eval-shared.js';
 
 const USAGE = `Usage: phm eval prompts --dataset <jobs.jsonl> [--spec <experiment.json>] [--promote] [--write <report.json>] [--check <promotions.json>] [--json]
 
@@ -90,7 +91,7 @@ function parseArgs(args: string[]): ParsedArgs {
 
 /** The shipped experiment — class matchers and arms for the baked variants.
  * Parsed through parsePromptExperimentSpec so the match.task regexes compile. */
-export const DEFAULT_PROMPT_EXPERIMENT: PromptExperimentSpec = parsePromptExperimentSpec({
+const DEFAULT_PROMPT_EXPERIMENT: PromptExperimentSpec = parsePromptExperimentSpec({
   v: 1,
   id: 'prompt-ab-default',
   note: 'Builtin spec: docs/test/secrets job classes, plain vs adaptive prompts.',
@@ -152,7 +153,7 @@ export async function cmdEvalPrompts(args: string[], overrides: EvalPromptsCliDe
     now: new Date().toISOString(),
     ...overrides,
   };
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { deps.out(USAGE); return 0; }
+  if (isEvalHelpRequest(args)) { deps.out(USAGE); return 0; }
   const parsed = parseArgs(args);
   if (parsed.usageError) { deps.err(`error: ${parsed.usageError}\n${USAGE}`); return 2; }
   if (!parsed.dataset) { deps.err(`error: --dataset is required\n${USAGE}`); return 2; }

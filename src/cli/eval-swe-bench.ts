@@ -41,6 +41,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
+import { formatEvalPercent } from '../core/eval/router-eval.js';
 import {
   runBenchmark,
   loadSweBenchDataset,
@@ -210,13 +211,12 @@ function buildFixtureRepo(taskId: string): string {
 // ---------------------------------------------------------------------------
 
 function renderReport(report: BenchReport, delta: ReportDelta | null): void {
-  const pct = (r: number) => `${(r * 100).toFixed(1)}%`;
   console.log('');
   console.log(bold('  ashlr eval swe-bench') + dim(` — ${report.ts}`));
   console.log('');
   console.log(`  Engine  : ${cyan(report.engine)}`);
   console.log(`  Tasks   : ${report.total}`);
-  console.log(`  Resolved: ${report.resolved}/${report.total} (${pct(report.resolveRate)})`);
+  console.log(`  Resolved: ${report.resolved}/${report.total} (${formatEvalPercent(report.resolveRate)})`);
   console.log('');
 
   // Per-task table
@@ -234,7 +234,7 @@ function renderReport(report: BenchReport, delta: ReportDelta | null): void {
   // Regression gate delta
   if (delta) {
     const sign = delta.resolveRateDelta >= 0 ? '+' : '';
-    const deltaStr = `${sign}${(delta.resolveRateDelta * 100).toFixed(1)}%`;
+    const deltaStr = `${sign}${formatEvalPercent(delta.resolveRateDelta)}`;
     const colour = delta.regressed ? red : delta.improved ? green : dim;
     console.log(`  vs prior: ${colour(deltaStr)}`);
     if (delta.newlyBroken.length > 0) {
@@ -390,7 +390,7 @@ export async function cmdSweBench(
     if (delta.regressed) {
       process.stderr.write(
         red('gate: REGRESSED') +
-          ` (${delta.newlyBroken.length} newly broken, resolve-rate ${(delta.resolveRateDelta * 100).toFixed(1)}%)\n`,
+          ` (${delta.newlyBroken.length} newly broken, resolve-rate ${formatEvalPercent(delta.resolveRateDelta)})\n`,
       );
       return 3;
     }
