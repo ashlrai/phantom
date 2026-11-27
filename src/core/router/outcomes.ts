@@ -2430,8 +2430,10 @@ function foldRouterOutcomesWithCiCoverage(
  * collector's per-call spend feed. A row attributes to a job through
  * job|job_id|id and reports cost as cost_usd|usd|cost, the precedence the
  * fleet spend readers (runs-job-cost, runs-resource-ledger) already use.
- * Rows that are not objects or name no job are skipped. A job with any
- * attributed call that lacks a usable price stays absent from the map.
+ * An undecodable nonblank receipt leaves every job total unknown because
+ * it cannot be attributed or dated. Decoded rows that name no job are
+ * skipped. A job with any attributed call that lacks a usable price stays
+ * absent from the map.
  * Estimated costs (cost_estimated) report a USD figure and count toward the sum.
  * Dated receipts after asOfMs are excluded before checking price coverage.
  */
@@ -2441,7 +2443,7 @@ export function foldSpendCosts(text: string, asOfMs = Infinity): Map<string, num
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     const r = parseJsonObjectLine(line);
-    if (r === null) continue;
+    if (r === null) return new Map();
     const at = parseLedgerTs(r['ts']) ?? parseLedgerTs(r['at']) ?? parseLedgerTs(r['timestamp']);
     if (at !== null && at > asOfMs) continue;
     const j = str(r, 'job', 'job_id', 'id');

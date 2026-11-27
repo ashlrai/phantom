@@ -1250,6 +1250,15 @@ describe('syncRewardSignalsFromJobsLedger', () => {
     expect(rewardRows()).toMatchObject([{ jobId: 'RQ-A', merged: true, cost: { costUsd: null } }]);
   });
 
+  it('records the merge without persisting a partial spend total from a malformed journal', async () => {
+    writeJobs([launch('RQ-A'), merged('RQ-A')].join('\n'));
+    writeSpend([line({ job: 'RQ-A', cost_usd: 2.5 }), '{"job":"RQ-A"'].join('\n'));
+
+    const result = await syncRewardSignalsFromJobsLedger({ runsDir, home, now: NOW });
+    expect(result).toMatchObject({ state: 'read', spendState: 'read', recorded: 1 });
+    expect(rewardRows()).toMatchObject([{ jobId: 'RQ-A', merged: true, cost: { costUsd: null } }]);
+  });
+
   it('folds a standing-reverted merge as merged:false when the caller supplies the revert set', async () => {
     // merged('RQ-A') claims https://github.com/ashlrai/phantom/pull/4.
     writeJobs([launch('RQ-A'), merged('RQ-A'), claim('RQ-C'), closed('RQ-C')].join('\n'));
