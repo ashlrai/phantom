@@ -150,7 +150,12 @@ the shared `busBodyKind` own-field rule a body carrying no discriminator
 never passes), `channel` (envelopes addressed to
 `group:<name>:*` — one room's whole traffic under every topic, the same raw
 `to`-prefix the `phm comms bus read --channel` and `fleet bus-follow
---channel` flags apply), `since` (a `15m`/`2h`/`1d`, epoch-ms or ISO cutoff),
+--channel` flags apply), `groupTopic` (envelopes addressed to a well-formed
+`group:<room>:<topic>` label carrying that exact topic component — the same
+`groupAddressTopicOf` match `phm comms bus read|watch --group-topic` and
+`fleet bus-follow --group-topic` apply, composing with `channel` into one
+room AND one topic while `topic` stays the protocol-v1 body topic),
+`since` (a `15m`/`2h`/`1d`, epoch-ms or ISO cutoff),
 `before` (the exclusive upper bound on the same grammar, composing with
 `since` into one `[since, before)` window), `contains` (a
 case-insensitive substring over each envelope's scrubbed

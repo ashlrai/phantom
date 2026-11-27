@@ -100,6 +100,9 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     [{ channel: 'Eng' }], [{ channel: 'has space' }], [{ channel: 'x'.repeat(33) }],
     [{ channel: '-lead' }], [{ channel: 'group:eng' }], [{ channel: 'eng:general' }],
     [{ channel: '' }], [{ channel: 5 }], [{ channel: null }],
+    [{ groupTopic: 'Eng' }], [{ groupTopic: 'has space' }], [{ groupTopic: 'x'.repeat(33) }],
+    [{ groupTopic: '-lead' }], [{ groupTopic: 'group:eng' }], [{ groupTopic: 'eng:general' }],
+    [{ groupTopic: '' }], [{ groupTopic: 5 }], [{ groupTopic: null }],
     [{ since: 'not-a-time' }], [{ since: '' }], [{ since: 1735689600000 }], [{ since: '999999d' }], [{ since: null }],
     [{ before: 'not-a-time' }], [{ before: '' }], [{ before: 1735689600000 }], [{ before: '999999d' }], [{ before: null }],
     [{ contains: '' }], [{ contains: '   ' }], [{ contains: 'x'.repeat(513) }], [{ contains: 42 }],
@@ -135,6 +138,9 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     await client.callTool({ name: 'fleet_bus_inbox', arguments: { channel: 'eng' } });
     expect(busInbox).toHaveBeenLastCalledWith({ after: 0, limit: 50, to: undefined, from: undefined,
       filters: { channel: 'eng' } });
+    await client.callTool({ name: 'fleet_bus_inbox', arguments: { groupTopic: 'general' } });
+    expect(busInbox).toHaveBeenLastCalledWith({ after: 0, limit: 50, to: undefined, from: undefined,
+      filters: { groupTopic: 'general' } });
   });
 
   it('reads durable envelopes with bodies by cursor and resumes without replay', async () => {
@@ -308,6 +314,37 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     expect(rows(narrowed.parsed).map(row => row.envelope.id)).toEqual(['eng-alerts']);
     const none = await callInbox(client, { channel: 'missing' });
     expect(none.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 6 });
+  });
+
+  it('applies the group-topic read filter across every room', async () => {
+    expect(post('eng-general', { to: 'group:eng:general' }).status).toBe('posted');
+    expect(post('ops-general', { to: 'group:ops:general' }).status).toBe('posted');
+    expect(post('eng-alerts', { to: 'group:eng:alerts' }).status).toBe('posted');
+    expect(post('protocol-mail', { to: 'fleet.deploy',
+      body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' } } }).status).toBe('posted');
+    expect(post('direct', { to: 'worker' }).status).toBe('posted');
+    expect(post('eng-bare', { to: 'group:eng' }).status).toBe('posted');
+    expect(post('bad-room', { to: 'group:Eng:general' }).status).toBe('posted');
+    expect(post('bad-topic', { to: 'group:eng:General' }).status).toBe('posted');
+    expect(post('deep', { to: 'group:eng:general:extra' }).status).toBe('posted');
+    const client = await connect();
+    const topic = await callInbox(client, { groupTopic: 'general' });
+    expect(topic.parsed).toMatchObject({ sourceState: 'ok', filters: { groupTopic: 'general' } });
+    // One topic across every room; agent addresses, bare rooms, protocol-topic
+    // mail and malformed group labels never match.
+    expect(rows(topic.parsed).map(row => row.envelope.id)).toEqual(['eng-general', 'ops-general']);
+    // channel composes into one room AND one topic.
+    const narrowed = await callInbox(client, { channel: 'eng', groupTopic: 'general' });
+    expect(rows(narrowed.parsed).map(row => row.envelope.id)).toEqual(['eng-general']);
+    // topic stays the protocol-v1 body topic: a protocol message addressed to
+    // its topic name matches topic but never groupTopic, and the two filters
+    // compose conjunctively into an honest empty page.
+    const protocol = await callInbox(client, { topic: 'fleet.*' });
+    expect(rows(protocol.parsed).map(row => row.envelope.id)).toEqual(['protocol-mail']);
+    const both = await callInbox(client, { groupTopic: 'general', topic: 'fleet.*' });
+    expect(both.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 9 });
+    const none = await callInbox(client, { groupTopic: 'missing' });
+    expect(none.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 9 });
   });
 
   it('excludes expired records while the cursor still skips them', async () => {
