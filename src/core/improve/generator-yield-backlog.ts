@@ -113,7 +113,11 @@ const FLEET_REPO = 'ashlrai/phantom';
 /** Example job ids quoted per cell inside one prompt. */
 const MAX_EXAMPLES = 3;
 /** The catch-all src bucket — a missing src is corrupt evidence, never a channel. */
-const UNKNOWN_SRC = 'unknown';
+const UNKNOWN = 'unknown';
+
+function attributedLabel(value: string | null): string {
+  return value === null || value.toLowerCase() === UNKNOWN ? UNKNOWN : value;
+}
 
 export interface GeneratorYieldItemsOptions {
   /** Backlog target in owner/name form; items emit only for the fleet's own repository. */
@@ -241,11 +245,9 @@ function readGenerationRejections(
       incomplete = true;
       continue;
     }
-    const src = firstString(row, SRC_KEYS) ?? UNKNOWN_SRC;
-    if (src === UNKNOWN_SRC) incomplete = true;
-    const recordedReason = firstString(row, REASON_KEYS);
-    if (event === 'rejected' && recordedReason === null) incomplete = true;
-    const reason = event === 'rejected' ? recordedReason ?? 'unknown' : null;
+    const src = attributedLabel(firstString(row, SRC_KEYS));
+    const reason = event === 'rejected' ? attributedLabel(firstString(row, REASON_KEYS)) : null;
+    if (src === UNKNOWN || reason === UNKNOWN) incomplete = true;
     const decisionKey = JSON.stringify([job, src, event, reason, atMs]);
     if (seenDecisions.has(decisionKey)) continue;
     seenDecisions.add(decisionKey);
@@ -269,7 +271,7 @@ function readGenerationRejections(
   }
 
   const firing = [...cells.values()]
-    .filter((cell) => cell.src !== UNKNOWN_SRC
+    .filter((cell) => cell.src !== UNKNOWN && cell.reason !== UNKNOWN
       && cell.events >= GENERATION_CELL_MIN_EVENTS
       && cell.days.size >= GENERATION_CELL_MIN_DAYS)
     .sort((a, b) => b.events - a.events || a.src.localeCompare(b.src) || a.reason.localeCompare(b.reason));

@@ -172,6 +172,22 @@ describe('generatorYieldBacklogItems', () => {
     expect(items[0]?.prompt).toContain('4 of 5 recorded autofill:bet decisions');
   });
 
+  it('requires an attributed source and reason for recurring rejection briefs', async () => {
+    const unattributed = [
+      ...recurringRows(' Unknown ', 'duplicate', 4, [4, 3], 'unknown-source'),
+      ...recurringRows('autofill:idea', ' UNKNOWN ', 4, [4, 3], 'unknown-reason'),
+      ...[4, 3, 4, 3].map((day, index) => gen(`reasonless-${index}`, 'autofill:bet', 'rejected', at(day))),
+    ];
+    const options = { repo: REPO, now: NOW };
+    expect(await generatorYieldBacklogItems({ ...options, ledgerText: unattributed.join('\n') })).toEqual([]);
+
+    const valid = recurringRows('autofill:idea', 'duplicate', 4, [4, 3], 'valid');
+    const items = await generatorYieldBacklogItems({ ...options, ledgerText: [...valid, ...unattributed].join('\n') });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.title).toContain('duplicate (4 in 7d)');
+    expect(items[0]?.prompt).toContain('full-window refusal share is unknown');
+  });
+
   it('never emits the unknown-src catch-all and ignores malformed or out-of-window rows', async () => {
     const text = [
       // Unknown src: 10 rejections across 5 days — the catch-all never emits.

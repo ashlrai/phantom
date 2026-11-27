@@ -1474,7 +1474,9 @@ same job still count. When the bounded journal read clips older decisions,
 the brief labels the counts as retained evidence and withholds the
 full-window refusal share. Malformed JSON lines and generation decisions
 with missing, invalid or unattributed evidence also withhold the share when
-they could affect the window. Valid decisions still establish recurrence.
+they could affect the window. Missing sources or reasons and
+case-insensitive `unknown` values withhold the share and cannot establish
+a recurring refusal. Attributed decisions can still establish recurrence.
 
 Run `phm fleet lane-reward --json` to see reward and measured token usage by
 lane. The report attributes a PR outcome that carries only a URL when exactly
