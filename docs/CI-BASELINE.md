@@ -632,8 +632,11 @@ evidence, and journal rows written before the test field existed never count.
 Both stabilization and `phm improve discover` use a seven-day recurrence
 window that ends at the evaluation time. Future-dated rows contribute only
 once their recorded time falls inside that window.
-The repository, head SHA and run ID prevent repeated attempts even after a
-crash or failed call; a new head is eligible. Reads tolerate malformed rows and
+The repository and workflow run ID prevent repeated dispatches even after a
+crash, a failed call, or a change in the reported head SHA. A new workflow
+run remains eligible. When the baseline report assigns multiple heads to one
+run, maintenance records a status error and skips dispatch for that run.
+Reads tolerate malformed rows and
 are bounded to the last 4 MiB, so deduplication, counts and recurrence cover
 that retained read window. Rerun identity compares repository names
 case-insensitively, so a configuration casing change preserves duplicate

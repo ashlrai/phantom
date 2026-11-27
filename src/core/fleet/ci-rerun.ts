@@ -235,6 +235,7 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
     for (const repo of opts.repos) {
       opts.signal.throwIfAborted();
       const repoKey = repo.toLowerCase();
+      const recordedRuns = new Set(journal.filter(entry => entry.repo.toLowerCase() === repoKey).map(entry => entry.runId));
       const s: RepoStatus = { groups: 0, attempted: 0, ok: 0, failed: 0, skippedDuplicate: 0, skippedCap: 0, queued: 0, flakeFixesQueued: 0, recurringFlakes: 0, verdictsPending: 0, verdictsResolved: 0, queueBlocked: null, errors: [] };
       const previousRepo = Object.keys(previous?.repos ?? {}).find(name => name.toLowerCase() === repoKey);
       s.verdictCursor = previousRepo === undefined ? undefined : previous?.repos[previousRepo]?.verdictCursor;
@@ -249,6 +250,7 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
         const rerunGroups = new Set(eligibleGroups);
         const runsWithOtherFailures = new Set<string>();
         const testsByRun = new Map<string, Set<string>>();
+        const headsByRun = new Map<number, string | null>();
         for (const group of report.groups) {
           // A shortened or redacted ID can collide with a different test.
           const test = rerunGroups.has(group) && typeof group.testId === 'string'
@@ -256,6 +258,8 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
             ? group.testId
             : '';
           for (const run of group.runs) {
+            const head = headsByRun.get(run.runId);
+            headsByRun.set(run.runId, head === undefined || head === run.head ? run.head : null);
             const key = rerunKey({ repo, ...run });
             if (!test) {
               runsWithOtherFailures.add(key);
@@ -266,20 +270,25 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
             testsByRun.set(key, tests);
           }
         }
+        for (const [runId, head] of headsByRun) {
+          if (head === null) s.errors.push(`conflicting heads for workflow run ${runId}`);
+        }
         for (const group of eligibleGroups) {
           opts.signal.throwIfAborted();
           for (const run of group.runs) {
             opts.signal.throwIfAborted();
-            const key = rerunKey({ repo, ...run });
-            if (journal.some(e => rerunKey(e) === key)) { s.skippedDuplicate++; continue; }
+            if (headsByRun.get(run.runId) === null) continue;
+            if (recordedRuns.has(run.runId)) { s.skippedDuplicate++; continue; }
             const cap = opts.maxPerHour ?? 10;
             const evaluatedAt = now();
             if (!Number.isFinite(cap) || hourlyAttempts(observedAttempts(journal, evaluatedAt), evaluatedAt) >= Math.max(0, cap)) { s.skippedCap++; continue; }
             const entry: Entry = { at: new Date(now()).toISOString(), repo, ...run, outcome: 'attempt' };
+            const key = rerunKey({ repo, ...run });
             const tests = [...(testsByRun.get(key) ?? [])];
             if (tests.length === 1) entry.test = tests[0];
             else if (tests.length > 1) entry.tests = tests;
             append(entry);
+            recordedRuns.add(run.runId);
             s.attempted++;
             let ok = false;
             try { ok = (await gh(['run', 'rerun', String(run.runId), '--failed', '--repo', repo])).ok; }
