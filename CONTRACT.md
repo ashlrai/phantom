@@ -5220,7 +5220,8 @@ descriptive facts only, never routing labels or wire ids. `work mine`'s
 deadLetters section and `agents bus dead-letters` both read through it.
 
 `src/core/agents/bus-dead-letters.ts`: `readBusDeadLetters(options?)` is the
-fleet-level dead-letter list behind `phm agents bus dead-letters` — every
+fleet-level dead-letter list behind `phm agents bus dead-letters` and the
+`fleet_bus_dead_letters` fleet MCP tool — every
 LIVE envelope addressed to `bus.dead-letter` in the same bus store
 `agents bus status`'s deadLetters probe counts, walked by the same bounded
 `listBusInboxAfter` live-receipt paging `work mine`'s pending-work sections

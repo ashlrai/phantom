@@ -2262,7 +2262,13 @@ attempt log; read it with a file transport whose addresses include
 `ashlr agents bus dead-letters` — the unified bus's fleet-level list of the
 same live letters, each with its parsed delivery-failure report and the
 `exhausted`/`expired`/`no-route`/`other` classification `agents bus status`
-tallies. The read filters on the letter envelope and the report's kept
+tallies. `fleet_bus_dead_letters` (the isolated fleet MCP tool) serves the
+same read with the same filters as arguments — `reason`, `id`, the
+`from`/`excludeFrom`/`to` original-party matchers, `channel`/`topic` on the
+original recipient's room address, `bodyKind`, `priority`, `since`/`before`,
+`contains` and `limit` — under server-owned roots, where `fleet_bus_status`
+reports only the pending count by reason and `fleet_comms_inbox` keeps
+letters inside its capped mixed page. The read filters on the letter envelope and the report's kept
 evidence — `--since`/`--before`, `--contains`, `--priority`, `--id`,
 `--reason`, the `--from`/`--exclude-from`/`--to` sender and recipient
 matchers, `--channel`/`--topic` on the original recipient's room address
