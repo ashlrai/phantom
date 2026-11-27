@@ -266,6 +266,31 @@ describe('CI baseline evidence', () => {
       }
     }
   });
+  it.each([
+    ['master', `/actions/runs?head_sha=${master}`],
+    ['PR', '/actions/runs?branch=feature'],
+  ])('withholds %s evidence when run grouping has invalid workflow IDs', async (source, endpoint) => {
+    const { gh } = github({ count: 1, pass: true });
+    for (const workflowId of [undefined, null, 0, '1', 1.5]) {
+      const report = await analyzeCiBaseline('owner/repo', async args => {
+        const result = await gh(args);
+        if (!args[1]?.includes(endpoint)) return result;
+        const page = JSON.parse(result.stdout);
+        const run = { ...page.workflow_runs[0], workflow_id: workflowId };
+        page.workflow_runs = [run, { ...run, id: 99, status: 'in_progress' }];
+        page.total_count = page.workflow_runs.length;
+        return { ...result, stdout: JSON.stringify(page) };
+      });
+      if (source === 'master') {
+        expect(report.master.known).toBe(false);
+        expect(report.groups[0]).toMatchObject({ classification: 'unknown', master: 'unknown' });
+      } else {
+        expect(report.master.known).toBe(true);
+        expect(report.freshness[0]?.state).toBe('unknown');
+        expect(report.groups).toEqual([]);
+      }
+    }
+  });
   it('reads jobs that never reached a verdict as unknown, never fresh', async () => {
     // A cancelled, timed-out, action-required, startup-failed or stale job
     // produced no verdict even when its log verifies: the run cannot prove

@@ -586,8 +586,10 @@ resolves any failure identity in that file because every test the module
 contains passed on that run. Other pass output does not establish a test
 pass. The scan caps open PRs, runs, and jobs
 at 100 each. A run or job listing supplies evidence only when its item count
-matches `total_count` and each item has a distinct, valid ID. Incomplete or
-capped listings leave that evidence unknown. Master reproduction remains an
+matches `total_count` and each item has a distinct, valid ID. Each workflow
+run must also have a positive integer workflow ID before the analyzer can
+select the newest run per workflow. Incomplete, malformed or capped
+listings leave that evidence unknown. Master reproduction remains an
 explicit step in the fix brief.
 
 `phm ci baseline --queue --json` appends only master-fix briefs to
