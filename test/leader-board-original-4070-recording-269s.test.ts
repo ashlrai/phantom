@@ -78,6 +78,28 @@ it('keeps a bounded conflict trend, then reports unknown when ready.tsv disappea
   expect(read.board?.conflictingPrs.count).toBeNull();
 });
 
+it('compares a retried or backdated tick only with distinct earlier observations', async () => {
+  await seed();
+  await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS - 60_000 });
+  const readyPath = join(queueDir, 'ready.tsv');
+  await writeFile(readyPath, row('READY', 'RQ-REBASE-PHANTOM-1234-abc1234', 'devin', 'work'));
+  await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+
+  const retry = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  expect(retry.wrote && retry.board.conflictingPrs).toEqual({
+    count: 1, delta: -1, trend: 'falling',
+    history: [{ at: minutesAgo(1), count: 2 }, { at: minutesAgo(0), count: 1 }],
+  });
+
+  await writeFile(readyPath, '');
+  const rolledBackAt = NOW_MS - 30_000;
+  const rolledBack = await recordLeaderBoard({ runsDir: root, nowMs: rolledBackAt });
+  expect(rolledBack.wrote && rolledBack.board.conflictingPrs).toEqual({
+    count: 0, delta: -2, trend: 'falling',
+    history: [{ at: minutesAgo(1), count: 2 }, { at: new Date(rolledBackAt).toISOString(), count: 0 }],
+  });
+});
+
 it('counts lane-open work by tier without attributing it to a lane', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), [
     'RQ-OPEN\tphantom\t\tfrontier\tprompts/open.md',
