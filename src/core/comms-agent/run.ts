@@ -477,6 +477,28 @@ export async function commsDrafts(runsDir: string, filter: CommsDraftsFilter = {
   };
 }
 
+export interface CommsInboxFilter {
+  /** Narrow to one transport (`email`, `imessage`, `linkedin`, `bus`,
+   * `slack`, `telegram`, `handoff`). */
+  transport?: CommsTransport;
+}
+
+/**
+ * The pending half of the Comms store `status` counts but cannot name: the
+ * inbox messages a pass kept and no delivered reply has resolved yet,
+ * verbatim from `inbox.json`. A missing inbox file is a verified-empty
+ * store and returns an empty list; an unreadable one throws like every
+ * other private read — the caller reports the failure, never a padded
+ * empty inbox. The read writes nothing and sends nothing.
+ */
+export async function commsInbox(runsDir: string, filter: CommsInboxFilter = {}): Promise<{ ok: true; messages: InboxMessage[] }> {
+  const inbox = await readInbox(runsDir);
+  return {
+    ok: true,
+    messages: inbox.messages.filter(message => filter.transport === undefined || message.transport === filter.transport),
+  };
+}
+
 export function preservedIds(before: readonly InboxMessage[], kept: readonly InboxMessage[], archived: readonly InboxMessage[]): boolean {
   const after = new Set([...kept, ...archived].map(message => message.id));
   return before.length === after.size && before.every(message => after.has(message.id));

@@ -218,6 +218,86 @@ describe('phm comms-agent', () => {
     expect(await cmdCommsAgent(['run', '--transport', 'email', '--dir', runsDir, '--json'])).toBe(2);
   });
 
+  it('inbox lists pending messages verbatim and narrows by transport', async () => {
+    const runsDir = temp();
+    await writeInbox(runsDir, [
+      { id: 'mail-1', transport: 'email', from: 'ada@example.com', subject: 'Question', body: 'Can you look?', labels: ['person'] },
+      { id: 'msg-1', transport: 'imessage', from: '+15551234567', subject: '', body: 'on my way' },
+    ]);
+
+    const all = capture();
+    expect(await cmdCommsAgent(['inbox', '--dir', runsDir, '--json'])).toBe(0);
+    const listed = JSON.parse(all.lines.at(-1) ?? '{}') as {
+      ok: boolean;
+      messages: Array<{ id: string; transport: string; from: string; subject: string; body: string; labels?: string[] }>;
+    };
+    all.restore();
+    expect(listed.ok).toBe(true);
+    expect(listed.messages.map(message => message.id).sort()).toEqual(['mail-1', 'msg-1']);
+    expect(listed.messages.find(message => message.id === 'mail-1')).toMatchObject({
+      transport: 'email', from: 'ada@example.com', subject: 'Question', body: 'Can you look?', labels: ['person'],
+    });
+
+    const email = capture();
+    expect(await cmdCommsAgent(['inbox', '--transport', 'email', '--dir', runsDir, '--json'])).toBe(0);
+    const narrowed = JSON.parse(email.lines.at(-1) ?? '{}') as { messages: Array<{ id: string }> };
+    email.restore();
+    expect(narrowed.messages.map(message => message.id)).toEqual(['mail-1']);
+
+    // A missing inbox file is verified empty — a real empty list, not unknown.
+    const empty = capture();
+    expect(await cmdCommsAgent(['inbox', '--dir', temp(), '--json'])).toBe(0);
+    expect(JSON.parse(empty.lines.at(-1) ?? '{}')).toEqual({ ok: true, messages: [] });
+    empty.restore();
+
+    // An unreadable inbox is an error, never a padded empty list.
+    const bad = temp();
+    mkdirSync(join(bad, 'comms-agent'), { recursive: true });
+    writeFileSync(join(bad, 'comms-agent', 'inbox.json'), '{ not json', { mode: 0o600 });
+    const failed = capture();
+    expect(await cmdCommsAgent(['inbox', '--dir', bad, '--json'])).toBe(1);
+    const failure = JSON.parse(failed.lines.at(-1) ?? '{}') as { ok: boolean; error: string };
+    failed.restore();
+    expect(failure.ok).toBe(false);
+    expect(failure.error).toContain('Inbox file');
+
+    // --status stays drafts-only; --transport stays off status|run.
+    expect(await cmdCommsAgent(['inbox', '--status', 'sent', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['inbox', '--transport', 'bogus', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['status', '--transport', 'email', '--dir', runsDir, '--json'])).toBe(2);
+  });
+
+  it('ashlr_comms_agent_inbox accepts the transport filter', async () => {
+    const runsDir = temp();
+    await writeInbox(runsDir, [
+      { id: 'mail-1', transport: 'email', from: 'ada@example.com', subject: 'Question', body: 'Can you look?' },
+      { id: 'msg-1', transport: 'imessage', from: '+15551234567', subject: '', body: 'on my way' },
+    ]);
+
+    const previous = process.env.ASHLR_RUNS_DIR;
+    process.env.ASHLR_RUNS_DIR = runsDir;
+    try {
+      const text = (result: { content: Array<{ type: string; text?: string }> }): string =>
+        result.content.map(part => part.type === 'text' ? part.text ?? '' : '').join('');
+      const all = await callNativeTool('ashlr_comms_agent_inbox', {});
+      expect(all.isError).toBeUndefined();
+      const parsed = JSON.parse(text(all)) as { ok: boolean; messages: Array<{ id: string }> };
+      expect(parsed.ok).toBe(true);
+      expect(parsed.messages.map(message => message.id).sort()).toEqual(['mail-1', 'msg-1']);
+
+      const imessage = await callNativeTool('ashlr_comms_agent_inbox', { transport: 'imessage' });
+      expect(imessage.isError).toBeUndefined();
+      expect((JSON.parse(text(imessage)) as { messages: Array<{ id: string }> }).messages.map(message => message.id)).toEqual(['msg-1']);
+
+      // An unknown transport is refused before the handler reads the store.
+      const bad = await callNativeTool('ashlr_comms_agent_inbox', { transport: 'bogus' });
+      expect(bad.isError).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.ASHLR_RUNS_DIR;
+      else process.env.ASHLR_RUNS_DIR = previous;
+    }
+  });
+
   it('ashlr_comms_agent_drafts accepts the same status and transport filters', async () => {
     const runsDir = temp();
     const draft = (id: string, status: 'pending' | 'sent', transport: CommsTransport): CommsDraft => ({

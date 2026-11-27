@@ -894,8 +894,9 @@ export function agentDocsText(): string {
   lines.push('Read-only observation tools: world_model, phantom_observe, phantom_observe_session,');
   lines.push('phantom_spend_budget, phm_context_brief, phm_claim_acquire, phm_claim_release,');
   lines.push('phantom_leader_status, phantom_leader_org, phantom_leader_inbox, phantom_leader_ask,');
-  lines.push('phantom_leader_assign, ashlr_comms_agent_status, ashlr_comms_agent_drafts,');
-  lines.push('ashlr_comms_agent_run. Unknown evidence stays unknown and grants no send or spend.');
+  lines.push('phantom_leader_assign, ashlr_comms_agent_status, ashlr_comms_agent_inbox,');
+  lines.push('ashlr_comms_agent_drafts, ashlr_comms_agent_run. Unknown evidence stays unknown');
+  lines.push('and grants no send or spend.');
   lines.push('Desktop operator tools: desktop_list_apps, desktop_windows, desktop_read,');
   lines.push('desktop_screenshot, desktop_doctor, desktop_focus, desktop_scroll, desktop_type,');
   lines.push('desktop_click. Reads do not post to the bus. Focus, scroll, type and click post');
@@ -1193,7 +1194,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'backlog --json',               desc: 'Emit raw JSON backlog.', topic: 'autonomy' },
   { cmd: 'inbox',                        desc: 'Approval inbox: list pending proposals (the outward-action gate).', topic: 'autonomy' },
   { cmd: 'drafts list|show|approve|reject [--json]', desc: 'Outbound drafts waiting for owner approval; approve records, never sends. See docs/DRAFTS.md.', topic: 'autonomy' },
-  { cmd: 'comms-agent status|run|drafts [--json]', desc: 'Comms role under the Leader. Triage archives bulk and bot mail and drafts replies. Sends need an owner standing approval. No lane is hard-coded. See docs/COMMS-AGENT.md.', topic: 'autonomy' },
+  { cmd: 'comms-agent status|run|inbox|drafts [--json]', desc: 'Comms role under the Leader. Triage archives bulk and bot mail and drafts replies. Sends need an owner standing approval. No lane is hard-coded. See docs/COMMS-AGENT.md.', topic: 'autonomy' },
   { cmd: 'inbox show <id>',              desc: 'Full detail of a proposal incl. diff (read-only).', topic: 'autonomy' },
   { cmd: 'inbox approve <id>',           desc: 'Confirm + apply an approved proposal to its dedicated local branch.', topic: 'autonomy' },
   { cmd: 'inbox approve <id> --yes',     desc: 'Approve without interactive prompt (non-TTY safe).', topic: 'autonomy' },

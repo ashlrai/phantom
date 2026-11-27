@@ -1,18 +1,19 @@
 /**
- * `phm comms-agent status|run|drafts [--status pending|sent|all] [--transport <transport>] [--json]`.
+ * `phm comms-agent status|run|inbox|drafts [--status pending|sent|all] [--transport <transport>] [--json]`.
  * Thin handler. The role, triage and send policy live in src/core/comms-agent/.
  */
-import { COMMS_DRAFT_STATUSES, commsDrafts, commsStatus, runCommsAgent, type CommsDraftsFilter, type CommsDraftStatusFilter } from '../core/comms-agent/run.js';
+import { COMMS_DRAFT_STATUSES, commsDrafts, commsInbox, commsStatus, runCommsAgent, type CommsDraftsFilter, type CommsDraftStatusFilter, type CommsInboxFilter } from '../core/comms-agent/run.js';
 import { isCommsTransport } from '../core/comms-agent/policy.js';
 import { commsRunsRoot } from '../core/comms-agent/store.js';
 
 const USAGE = `phm comms-agent status [--dir <runs>] [--json]
 phm comms-agent run [--lanes <lane,lane>] [--dir <runs>] [--json]
+phm comms-agent inbox [--transport <transport>] [--dir <runs>] [--json]
 phm comms-agent drafts [--status pending|sent|all] [--transport <transport>] [--dir <runs>] [--json]
 The Comms role is under the Leader. The router picks the lane; none is hard-coded.
 Sends require an owner standing approval. See docs/COMMS-AGENT.md.`;
 
-const VERBS = ['status', 'run', 'drafts'] as const;
+const VERBS = ['status', 'run', 'inbox', 'drafts'] as const;
 
 function emit(json: boolean, value: unknown): void {
   console.log(JSON.stringify(value, null, json ? undefined : 2));
@@ -54,23 +55,28 @@ export async function cmdCommsAgent(args: string[]): Promise<number> {
     return 0;
   }
   if (rest.length === 0) {
-    emit(json, { ok: false, error: 'Use phm comms-agent status|run|drafts --json' });
+    emit(json, { ok: false, error: 'Use phm comms-agent status|run|inbox|drafts --json' });
     if (!json) console.error(USAGE);
     return 2;
   }
   const [verb, ...extra] = rest;
   const usageFail = (): number => {
-    emit(json, { ok: false, error: 'Use phm comms-agent status|run|drafts --json' });
+    emit(json, { ok: false, error: 'Use phm comms-agent status|run|inbox|drafts --json' });
     if (!json) console.error(USAGE);
     return 2;
   };
   if (extra.length > 0 || !VERBS.includes(verb as typeof VERBS[number]) || rest.some(arg => arg.startsWith('-'))) {
     return usageFail();
   }
-  // --status/--transport narrow the drafts read only; on status|run they are
-  // a usage error rather than silently ignored flags.
+  // --status narrows the drafts read only; --transport narrows the drafts and
+  // inbox reads. On status|run either is a usage error rather than silently
+  // ignored flags.
   const draftsFilter: CommsDraftsFilter = {};
-  if (verb !== 'drafts' && (statusFlag.value !== undefined || transportFlag.value !== undefined)) {
+  const inboxFilter: CommsInboxFilter = {};
+  if (verb !== 'drafts' && statusFlag.value !== undefined) {
+    return usageFail();
+  }
+  if ((verb === 'status' || verb === 'run') && transportFlag.value !== undefined) {
     return usageFail();
   }
   if (verb === 'drafts') {
@@ -78,9 +84,12 @@ export async function cmdCommsAgent(args: string[]): Promise<number> {
       if (!(COMMS_DRAFT_STATUSES as readonly string[]).includes(statusFlag.value)) return usageFail();
       draftsFilter.status = statusFlag.value as CommsDraftStatusFilter;
     }
+  }
+  if (verb === 'drafts' || verb === 'inbox') {
     if (transportFlag.value !== undefined) {
       if (!isCommsTransport(transportFlag.value)) return usageFail();
-      draftsFilter.transport = transportFlag.value;
+      if (verb === 'drafts') draftsFilter.transport = transportFlag.value;
+      else inboxFilter.transport = transportFlag.value;
     }
   }
   const runsDir = commsRunsRoot(dir.value);
@@ -92,6 +101,10 @@ export async function cmdCommsAgent(args: string[]): Promise<number> {
     }
     if (verb === 'drafts') {
       emit(json, await commsDrafts(runsDir, draftsFilter));
+      return 0;
+    }
+    if (verb === 'inbox') {
+      emit(json, await commsInbox(runsDir, inboxFilter));
       return 0;
     }
     emit(json, await runCommsAgent({ runsDir, lanes }));
