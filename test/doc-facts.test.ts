@@ -58,9 +58,9 @@ const DOCS = [
   'docs/AGENTS-MD-AUDIT.md',
   // Pages CONTRIBUTING.md, the contributor guide, AGENT-OPERATIONS.md and
   // AGENT-TOOLCHAIN.md link a contributor to next. Linked pages still missing:
-  // CLI-REFERENCE is generated from src/cli/help.ts and names `fleet verbs`,
-  // whose --help exits 2; RESIDENT-RUNTIME names deleted commands on purpose;
-  // desktop/README.md documents its own package.json scripts.
+  // CLI-REFERENCE is generated from src/cli/help.ts (`phm docs cli
+  // --check` guards its drift); RESIDENT-RUNTIME names deleted commands on
+  // purpose; desktop/README.md documents its own package.json scripts.
   'docs/ARCHITECTURE.md',
   'docs/BUN-SHARDS.md',
   'docs/CLOUD.md',
@@ -74,11 +74,12 @@ const DOCS = [
   'docs/RESOURCE-POOLS.md',
   'docs/contracts/CONTRACT-SELECTOR.md',
   'docs/verify-changed.md',
-  // Operating guides AGENTS.md and README.md link to. Linked guides that are
-  // missing here name a verb completions SUBCOMMANDS does not offer: QUEUE
-  // (`queue yield`, whose --help exits 2, and a `phm foo bar` example),
-  // AGENT-BUS (`agents mesh status`, whose --help exits 2) and FLEET-API
-  // (`fleet merge-recover`, whose -h exits 2).
+  // Operating guides AGENTS.md and README.md link to. The linked guide still
+  // missing here is QUEUE: it names queue verbs completions SUBCOMMANDS does
+  // not offer (`queue dupcheck`, `queue batches`, `queue autofill` and
+  // friends) plus a `phm foo bar` example that is not a real command.
+  // AGENT-BUS and FLEET-API rejoined once `agents mesh`, `fleet merge-recover`,
+  // `fleet pace`, `fleet lane-truth` and `nodes offload` were offered.
   'docs/AGENT-APPS.md',
   'docs/AGENT-NETWORK-CHANNELS.md',
   'docs/AGENT-PROFILES.md',
@@ -94,6 +95,10 @@ const DOCS = [
   'docs/EVAL-PASSK.md',
   'docs/FLEET-LANE-FRESHNESS.md',
   'docs/LANE-HEALTH.md',
+  'docs/COS.md',
+  'docs/IMESSAGE.md',
+  'docs/AGENT-BUS.md',
+  'docs/FLEET-API.md',
   'docs/MEMORY.md',
   'docs/NODES.md',
   'docs/NODE-ROUTER.md',
@@ -159,9 +164,9 @@ const DOCS = [
   'docs/WORKTREE-PRUNE.md',
   'docs/WORLD.md',
   // Fleet operating guides, held out until completion offered the fleet verbs
-  // they document. COS.md and IMESSAGE.md wait on `fleet cos` and
-  // `fleet imessage-acks`, whose --help does not yet pass
-  // test/cli-help-no-side-effects.
+  // they document. COS.md and IMESSAGE.md rejoined once `fleet cos` and
+  // `fleet imessage-acks` passed test/cli-help-no-side-effects and completions
+  // offered them.
   'docs/BRIEF-SEND.md',
   'docs/DISK-MAINT.md',
   'docs/FLEET-EMPTIES.md',

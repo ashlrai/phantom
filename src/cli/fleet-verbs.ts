@@ -14,6 +14,7 @@ export function readVerbSource(verb: string): string | null {
 }
 
 export async function cmdFleetVerbs(args: string[], deps: { verbs?: string[]; readSource?: (verb: string) => string | null } = {}): Promise<number> {
+  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(USAGE); return 0; }
   let json = false;
   let grep: string | undefined;
   for (let i = 0; i < args.length; i++) {

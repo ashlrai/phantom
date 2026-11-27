@@ -8,6 +8,12 @@ import { join } from 'node:path';
 const now = Date.parse('2026-11-09T12:00:00Z');
 const row = (fields: object) => JSON.stringify({ ts: '2026-11-09T10:00:00Z', ...fields });
 describe('generator yield', () => {
+  it('prints usage and exits 0 for --help and -h', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdQueueYield(['--help'])).toBe(0);
+    expect(await cmdQueueYield(['-h'])).toBe(0);
+    expect(log.mock.calls.flat().join('\n')).toContain('Usage: phm queue yield');
+  });
   it('joins events, groups generators, and counts malformed lines', () => {
     const report = generatorYield([
       row({ job: 'RQ-FOOA123Q8', event: 'launch' }),

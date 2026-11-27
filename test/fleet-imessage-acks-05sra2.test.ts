@@ -20,6 +20,15 @@ async function run(dir: string, args: string[]) {
 }
 
 describe('fleet imessage-acks', () => {
+  it('prints usage and exits 0 for --help and -h without reading the store', async () => {
+    const { dir } = fixture();
+    for (const flag of ['--help', '-h']) {
+      const result = await run(dir, [flag]);
+      expect(result.code).toBe(0);
+      expect(result.out).toContain('Usage: phm fleet imessage-acks');
+      expect(result.errors).toBe('');
+    }
+  });
   it('projects and redacts records in both formats, and does not claim delivery', async () => {
     const { dir, file } = fixture();
     writeFileSync(file, `${row(1, { text: 'FAKE_PRIVATE_TEXT', receipt: 'FAKE_RECEIPT', extra: 'FAKE_EXTRA' })}\n${row(2, { status: 'duplicate', delivery: 'FAKE_PRIVATE_DELIVERY' })}\n`);
@@ -70,7 +79,7 @@ describe('fleet imessage-acks', () => {
       const result = await run(dir, args);
       expect(result.code).toBe(2);
       expect(result.out).toBe('');
-      expect(result.errors).toBe('Usage: phm fleet imessage-acks [--limit N] [--json]');
+      expect(result.errors).toBe('Usage: phm fleet imessage-acks [--limit N] [--rowid N] [--json]');
     }
   });
 });

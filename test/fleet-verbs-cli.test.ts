@@ -27,6 +27,13 @@ describe('fleet verbs', () => {
     expect(await cmdFleetVerbs(['--grep'], deps)).toBe(2);
   });
 
+  it('prints usage and exits 0 for --help and -h', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdFleetVerbs(['--help'], deps)).toBe(0);
+    expect(await cmdFleetVerbs(['-h'], deps)).toBe(0);
+    expect(log.mock.calls.flat().join('\n')).toContain('Usage: ashlr fleet verbs');
+  });
+
   it('reads real registered source files', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdFleetVerbs(['--json'])).toBe(0);

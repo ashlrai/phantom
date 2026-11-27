@@ -93,4 +93,11 @@ describe('cos CLI round-trip (isolated temp home)', () => {
     const usage = output.mock.calls.at(-1)![0] as string;
     expect(usage).toContain('cos ask');
   });
+
+  it('-h returns 0 with usage naming the fleet cos command', async () => {
+    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exit = await cmdCos(['-h']);
+    expect(exit).toBe(0);
+    expect(output.mock.calls.at(-1)![0] as string).toContain('phm fleet cos ask');
+  });
 });
