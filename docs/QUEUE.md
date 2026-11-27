@@ -371,6 +371,9 @@ capacity-bound no-op when no additional sibling qualifies.
 The shared fleet queue projection counts a job once in ready supply, using
 the first valid READY row for its lane hint or lane-open status. Later copies
 add no ready supply. Parked rows are still reported separately.
+A job with a valid READY row is excluded from dependency recovery, even when
+the same snapshot also contains a PARKED-DEP row for that job. This applies
+to lane-hinted and lane-open READY rows in either file order.
 The Leader's compact brief follows the same first-valid-row rule when
 counting hinted and lane-open supply for its starvation headline.
 The Fleet lane console uses the same rule for its ready-file queue depth
