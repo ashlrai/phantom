@@ -1620,6 +1620,28 @@
  *     audit line, truncated tails are stated as lower bounds and
  *     items emit only for the fleet's own repository since the
  *     journal describes this install's lane configuration;
+ *   - the Comms role's own run journal's recurring non-delivery
+ *     evidence: the comms-agent.run.v1 records `phm comms-agent
+ *     run` appends to comms-agent/runs.jsonl under the runs root —
+ *     per-pass triage depth and per-send sent/drafted/refused
+ *     outcomes with producer reason strings — until now read only
+ *     by readRunJournal → commsStatus's last-pass display, a
+ *     point-in-time answer never a trend, so a transport whose
+ *     sends kept being refused or drafting for the same machinery
+ *     reason (no registered adapter, an untrusted approvals file,
+ *     a connector that does not exist, a bus store that never
+ *     accepts) never became work (commsRunBacklogItems below).
+ *     Records count only under the producer's contract — the run
+ *     schema, an in-window completion timestamp, sends inside the
+ *     closed transport and status vocabularies — 'sent' rows and
+ *     the designed KILL/pause/owner-approval states never count,
+ *     reasons classify into a closed class set and are never
+ *     quoted (adapter reasons are free text; recipients are
+ *     handles), a cell emits only at the recurring bars of three
+ *     distinct completed passes across two UTC days inside the
+ *     7-day window, truncated tails are stated as lower bounds,
+ *     and items emit only for the fleet's own repository since
+ *     the journal describes this install's comms machinery;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -1763,6 +1785,7 @@ import { diskSweepBacklogItems } from './disk-sweep-backlog.js';
 import { outcomeLedgerBacklogItems } from './outcome-ledger-backlog.js';
 import { resetReleaseBacklogItems } from './reset-release-backlog.js';
 import { nodesOffloadBacklogItems } from './nodes-offload-backlog.js';
+import { commsRunBacklogItems } from './comms-run-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 import { reviewBlocksBacklogItems } from './review-blocks-backlog.js';
 import { capacityHistoryBacklogItems } from './capacity-history-backlog.js';
@@ -3762,6 +3785,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // describes this install's lane configuration and carries no repo
   // column.
   items.push(...await laneTargetChangesBacklogItems({ repo }));
+
+  // Comms-agent run journal (comms-agent/runs.jsonl under the runs
+  // root): the comms-agent.run.v1 records runCommsAgent appends per
+  // completed `phm comms-agent run` pass — per-send
+  // sent/drafted/refused outcomes with producer reason strings
+  // (commsRunBacklogItems below). Until now the journal's only
+  // reader was readRunJournal → commsStatus's last-pass display —
+  // a point-in-time answer, never a trend — so sends that kept
+  // failing or drafting for the same machinery reason never became
+  // work. Same bounded tail read; a (transport, status, reason
+  // class) cell emits only at the recurring bars of three distinct
+  // completed passes across two UTC days inside the 7-day window,
+  // 'sent' rows and the designed KILL/pause/owner-approval states
+  // never count, reasons classify into a closed class set and are
+  // never quoted (adapter reasons are free text; recipients are
+  // handles), truncated tails are stated as lower bounds, and only
+  // the fleet's own repository inherits the items since the journal
+  // carries no repo column.
+  items.push(...await commsRunBacklogItems({ repo }));
   return { items, errors };
 }
 
