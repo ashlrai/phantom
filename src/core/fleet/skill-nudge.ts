@@ -303,8 +303,9 @@ export function skillNudgeJobsFromLedger(
     const phase = ledgerPhase(row);
     if (futureRevert && ((phase !== null && REVERT_PHASES.has(phase))
       || event === 'revert' || event === 'reverted')) continue;
-    const dispatched = (event !== null && ATTEMPT_EVENTS.has(event))
-      || (event === 'claim' && row['launch_dedupe'] !== true);
+    const executionEvidence = row['launched'] !== false;
+    const dispatched = executionEvidence && ((event !== null && ATTEMPT_EVENTS.has(event))
+      || (event === 'claim' && row['launch_dedupe'] !== true));
     // A replay must not move a verdict past later failures or capture
     // execution evidence recorded after the original verdict.
     const datedVerdict = outcome !== undefined && (rowAt !== null || terminalAt !== null);
@@ -338,7 +339,7 @@ export function skillNudgeJobsFromLedger(
     }
     acc.lastLine = lineNo;
     const evidence = acc.evidence;
-    if (row['launched'] !== false && (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event))) {
+    if (executionEvidence && (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event))) {
       for (const key of LEDGER_LANE_KEYS) {
         const value = row[key];
         if (typeof value !== 'string' || !hasKnownLane(value.trim())) continue;
@@ -353,13 +354,14 @@ export function skillNudgeJobsFromLedger(
       if (acc.recutReady) evidence.recuts += 1;
       acc.recutReady = false;
     }
-    if (event === 'launch_failed' && firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase() === 'retry') {
+    if (executionEvidence && event === 'launch_failed'
+      && firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase() === 'retry') {
       evidence.retryReceipts += 1;
     }
     if (event === 'recut_admission') {
       acc.recutReady = firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase() === 'ready';
     }
-    const failureClass = failureClassOf(row, event);
+    const failureClass = executionEvidence ? failureClassOf(row, event) : null;
     if (failureClass !== null) evidence.failureClass = failureClass;
     if (!futureRevert && hasRevertEvidence(row)) acc.reverted = true;
     if (outcome !== undefined) {
