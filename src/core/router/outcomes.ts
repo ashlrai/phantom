@@ -1989,6 +1989,7 @@ function foldRouterOutcomesWithCiCoverage(
   const outcomes = new Map<string, RouterOutcome>();
   const unlaunchedLanes = new Map<string, string>();
   const mergedAt = new Map<string, number>();
+  const revertVerdicts: { job: string; pr: string | null; reverted: boolean }[] = [];
   const ciVerdicts: { job: string; pr: string | null; passed: boolean }[] = [];
   const reviewFindings: { job: string; pr: string | null; findings: NonNullable<RouterOutcome['review_findings']> }[] = [];
   let unattached = 0;
@@ -2078,16 +2079,13 @@ function foldRouterOutcomesWithCiCoverage(
         o.ttm_s = merged === true ? num(r['ttm_s']) ?? num(r['ttmS']) : null;
       }
     }
-    // Sticky-true, matching metrics-ingest: any recorded revert evidence wins
-    // and a later reverted:false cannot undo it; explicit false only stands
-    // when no positive evidence exists anywhere in the job's rows.
     const revertEvidence = r['reverted'] === true || hasRevertStamp(r) || hasRevertName(r, EVENT_NAME_KEYS) || hasRevertName(r, PHASE_KEYS);
-    if (o.reverted !== true && (revertEvidence || r['reverted'] === false)) {
+    if ((revertEvidence || r['reverted'] === false) && (u === null || rowPrKey !== null)) {
       const revertAt = parseLedgerTs(r['reverted_at']) ?? parseLedgerTs(r['revertedAt']) ?? ledgerEventTs(r, null);
       if ((revertAt ?? -Infinity) <= throughMs
         && (verdictSince === undefined || (revertAt !== null && revertAt >= verdictSince))
         && (opts.verdictAsOfMs === undefined || (revertAt !== null && revertAt <= opts.verdictAsOfMs))) {
-        o.reverted = revertEvidence;
+        revertVerdicts.push({ job: j, pr: rowPrKey, reverted: revertEvidence });
       }
     }
     const ciFirstPass = r['ci_first_pass'];
@@ -2327,6 +2325,12 @@ function foldRouterOutcomesWithCiCoverage(
     return pr !== null ? pr === standingPr
       : standingPr !== null && (soleClaim === undefined || soleClaim === `pr:${standingPr}`);
   };
+  // A positive verdict stays sticky among receipts for the standing PR.
+  for (const { job, pr, reverted } of revertVerdicts) {
+    if (!matchesStandingPr(job, pr)) continue;
+    const outcome = outcomes.get(job)!;
+    if (outcome.reverted !== true) outcome.reverted = reverted;
+  }
   for (const { job, pr, findings } of reviewFindings) {
     if (matchesStandingPr(job, pr)) outcomes.get(job)!.review_findings = findings;
   }
