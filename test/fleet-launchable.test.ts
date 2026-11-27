@@ -179,6 +179,24 @@ describe('fleet launchable', () => {
     expect(await cmdFleetLaunchable(['--json'])).toBe(1);
     expect(report().lanes[0].free).toBe(2);
   });
+  it.each([
+    { evidence: { paused: 'operator pause', admission: { cap: 5, running: 2 } }, free: 0, code: 0 },
+    { evidence: { admission: { admit: false } }, free: 0, code: 0 },
+    { evidence: { admission: { cap: 5, running: 5 } }, free: 0, code: 0 },
+    { evidence: { admission: { cap: 5, running: 4, ts: '2026-11-26T12:00:00Z' } }, free: 1, code: 0 },
+    { evidence: { admission: { cap: 5, running: 5, ts: '2026-11-26T11:59:30Z' } }, free: 3, code: 1 },
+  ])('bounds free slots by admission from the dispatcher tick (%j)', async ({ evidence, free, code }) => {
+    const prompt = join(root, 'prompt.md');
+    writeFileSync(prompt, 'task');
+    writeFileSync(join(queue, 'ready.tsv'), row('RQ-READY', 'alpha', prompt));
+    writeFileSync(join(queue, 'status.json'), JSON.stringify({
+      last_tick: '2026-11-26T12:00:00Z',
+      lanes: { alpha: { target: 5, running: 1, effective_target: 4 } },
+      ...evidence,
+    }));
+    expect(await cmdFleetLaunchable(['--json'])).toBe(code);
+    expect(report().lanes).toEqual([{ lane: 'alpha', running: 1, target: 4, free, launchable: 1 }]);
+  });
   it('handles absent optional files and clamps negative free slots', async () => {
     status({ idle: { target: 2, running: 0 }, full: { target: 1, running: 2 } });
     expect(await cmdFleetLaunchable([])).toBe(1);

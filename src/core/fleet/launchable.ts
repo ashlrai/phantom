@@ -15,10 +15,10 @@
  * queue/FILLER_HOLD exists, and a row whose prompt file is absent cannot
  * start. Each job contributes supply once, using its first surviving row.
  * `free` counts against the launch target — the configured target
- * tightened by the controller's effective_target shed — so a shed lane has
- * no phantom room.
+ * tightened by the controller's effective_target shed — and is bounded by
+ * the shared fleet admission headroom when the snapshot provides it.
  */
-import { laneLaunchTarget } from './lane-launch-target.js';
+import { dispatcherAdmissionHeadroom, laneLaunchTarget } from './lane-launch-target.js';
 import { FILLER_ID } from './lane-starve.js';
 import { parseReadyMarketRows } from './unfed-market.js';
 
@@ -27,7 +27,7 @@ export interface LaunchableLane {
   running: number;
   /** The launch target: configured target tightened by the controller's effective_target shed. */
   target: number;
-  /** Additional slots usable under the published lane hold and launch target. */
+  /** Additional slots under the published lane hold, launch target and fleet admission. */
   free: number;
   launchable: number;
 }
@@ -89,11 +89,14 @@ export async function planLaunchable(
 ): Promise<LaunchablePlan> {
   const data: unknown = JSON.parse(inputs.statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
+  const paused = data.paused === true || (typeof data.paused === 'string' && data.paused.trim().length > 0);
+  const fleetHeadroom = paused ? 0 : dispatcherAdmissionHeadroom(data.admission, data.last_tick);
   const lanes = new Map<string, LaunchableLane>();
   for (const [lane, value] of Object.entries(data.lanes)) {
     if (!isRecord(value) || !count(value.running) || !count(value.target)) throw new Error('invalid lane');
     const target = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
-    const free = value.held === true ? 0 : Math.max(0, target - value.running);
+    const laneHeadroom = value.held === true ? 0 : Math.max(0, target - value.running);
+    const free = Math.min(laneHeadroom, fleetHeadroom ?? laneHeadroom);
     lanes.set(lane, { lane, running: value.running, target, free, launchable: 0 });
   }
   const excluded = dropDeferIds(inputs.skippedEmpty);
