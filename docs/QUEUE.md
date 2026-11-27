@@ -396,8 +396,9 @@ now. Lane headroom uses the configured target, tightened by any valid lower
 target makes the snapshot unusable for this calculation.
 When the dispatcher omits its unfed block, a valid lower target in
 `queue/slots.json` also bounds the derived headroom. A target increase
-requires dispatcher confirmation. Published unfed blocks use their own tick's
-targets.
+requires dispatcher confirmation. A valid lower lane target in the published
+unfed block also bounds headroom. A hold recorded in either lane record
+excludes that lane from unfed capacity.
 The fleet-wide `unfedSlots` upper bound sums each unfed lane's smaller
 count of headroom and rows waiting elsewhere, capped by total waiting rows
 because lanes can see the same work. If `ready.tsv` is unavailable, queue-derived
