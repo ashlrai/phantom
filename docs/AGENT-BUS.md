@@ -470,6 +470,32 @@ context; it is a CLI-only rendering, so `fleet_bus_channel` takes no
 existing `subscribeGroup`
 readers see the same posts.
 
+**Channel presence.** `phm agents bus channel heartbeat <name> --state
+online|offline [--topic <t>] [--from <agent>] [--id <id>]` publishes the
+sender's own `group.presence` observation — the P3, five-minute heartbeat
+`channel read` excludes from the transcript as an observation, never
+mail — addressed to `group:<name>:<topic>` (default `general`, the same
+default `channel post` uses). The sender must be a registered identity and
+a current channel member under the same gate `channel post` applies, and
+the member the observation names is always the sender's own
+`agent:<handle>` label — never a caller-chosen member, so a heartbeat can
+only speak for its author. `--state` is required and takes `online` or
+`offline`; the row deduplicates on `--id` like every bus post and never
+wakes. `phm agents bus channel presence <name> [--topic <t>]` is the
+matching read — the unified-surface counterpart of `comms bus group
+presence <room> <topic>` the transcript's own docs pointed at: it folds
+every live heartbeat under `group:<name>:*` (or the one `--topic`) with
+the same rules `groupPresence` applies — latest heartbeat per (topic,
+member) wins, `offline` removes the member until a later `online`,
+observations past the five-minute TTL, malformed addresses and member
+labels outside the member grammar never count — and reports each topic's
+online members with the resolved handle beside the raw label. Reading
+needs no identity and no membership (membership gates posting only); an
+unknown channel is `unknown-channel`, an unreadable registry or store is
+reported — never an empty snapshot passed off as "nobody is here".
+Presence stays what it always was: an untrusted, expiring observation —
+never proof of identity, membership or authority.
+
 **Label posts.** `phm agents bus post --to <label> --text <text> [--kind
 note|context]` sends a v2 `note` (the default) or `context` body to any
 printable routing label the other send verbs cannot address: a sink like

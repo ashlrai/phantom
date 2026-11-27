@@ -7,8 +7,8 @@ import {
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
-  agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodySummary, busPageResumeCursor, listBusChannels, postChannelMessage, postLabelMessage,
-  readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff,
+  agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodySummary, busPageResumeCursor, listBusChannels, postChannelHeartbeat, postChannelMessage, postLabelMessage,
+  readAgentChannel, readAgentChannelPresence, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff,
   sendWakeRequest, shouldWake, updateWorkStatus, type AgentWakeRow, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
@@ -297,6 +297,69 @@ describe('channel reads', () => {
     if (resumed.status !== 'ok') throw new Error(`unexpected ${resumed.status}`);
     expect(resumed.matched).toBe(0);
     expect(resumed.messages).toEqual([]);
+  });
+});
+
+describe('channel presence', () => {
+  it('publishes the sender\'s own heartbeat and reads the live snapshot per topic', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    // Heartbeats need a registered member sender and a known channel.
+    expect(await postChannelHeartbeat({ from: 'ghost', channel: 'release', state: 'online' }, options))
+      .toMatchObject({ status: 'unknown-sender' });
+    expect(await postChannelHeartbeat({ from: 'orion', channel: 'release', state: 'online' }, options))
+      .toMatchObject({ status: 'not-member' });
+    expect(await postChannelHeartbeat({ from: 'atlas', channel: 'missing', state: 'online' }, options))
+      .toMatchObject({ status: 'unknown-recipient' });
+    expect(await postChannelHeartbeat({ from: 'atlas', channel: 'release', state: 'away' as never }, options))
+      .toMatchObject({ status: 'invalid' });
+    expect(await postChannelHeartbeat({ from: 'atlas', channel: 'release', topic: 'bad topic', state: 'online' }, options))
+      .toMatchObject({ status: 'invalid' });
+
+    const beat = await postChannelHeartbeat({ from: 'atlas', channel: 'release', state: 'online', id: 'hb-1' }, options);
+    expect(beat).toMatchObject({ status: 'posted', to: 'group:release:general' });
+    // The same id deduplicates like every bus post.
+    expect(await postChannelHeartbeat({ from: 'atlas', channel: 'release', state: 'online', id: 'hb-1' }, options))
+      .toMatchObject({ status: 'duplicate' });
+    await postChannelHeartbeat({ from: 'nova', channel: 'release', topic: 'deploy', state: 'online', id: 'hb-2' }, options);
+    // Legacy comms-bus heartbeats on the same room fold in too — raw member labels.
+    expect(publishGroupPresence({ room: 'release', topic: 'deploy', id: 'hb-3', member: 'codex', state: 'online' }, options).status)
+      .toBe('posted');
+
+    // The heartbeat is an observation, never a transcript row.
+    const transcript = readAgentChannel('release', {}, options);
+    if (transcript.status !== 'ok') throw new Error(`unexpected ${transcript.status}`);
+    expect(transcript.messages).toEqual([]);
+
+    // No identity or membership needed to read presence.
+    const all = readAgentChannelPresence('release', {}, options);
+    expect(all).toEqual({ status: 'ok', channel: 'release', topics: [
+      { topic: 'deploy', members: [
+        { member: 'agent:nova', receivedAt: expect.any(Number), memberAgent: 'nova' },
+        { member: 'codex', receivedAt: expect.any(Number), memberAgent: null },
+      ] },
+      { topic: 'general', members: [
+        { member: 'agent:atlas', receivedAt: expect.any(Number), memberAgent: 'atlas' },
+      ] },
+    ] });
+    const one = readAgentChannelPresence('release', { topic: 'deploy' }, options);
+    expect(one.status).toBe('ok');
+    if (one.status !== 'ok') throw new Error('unreadable');
+    expect(one.topics.map(t => t.topic)).toEqual(['deploy']);
+    expect(one.topics[0]!.members.map(m => m.member)).toEqual(['agent:nova', 'codex']);
+
+    // Offline removes the member until a later online; unknown channels and
+    // bad grammar answer honestly.
+    await postChannelHeartbeat({ from: 'atlas', channel: 'release', state: 'offline', id: 'hb-4' }, options);
+    const after = readAgentChannelPresence('release', { topic: 'general' }, options);
+    expect(after).toEqual({ status: 'ok', channel: 'release', topics: [] });
+    expect(readAgentChannelPresence('missing', {}, options)).toMatchObject({ status: 'unknown-channel' });
+    expect(readAgentChannelPresence('bad name', {}, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannelPresence('release', { topic: 'bad topic' }, options)).toMatchObject({ status: 'invalid' });
+    // An unreadable registry is unavailable, never an empty snapshot.
+    writeFileSync(join(options.root!, 'agent-identities', 'registry.json'), '{broken');
+    expect(readAgentChannelPresence('release', {}, options).status).toBe('unavailable');
   });
 });
 

@@ -5,8 +5,8 @@ import {
   type BusCli, type BusProvider,
 } from '../core/agents/bus-identity.js';
 import {
-  agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodyFallbackSummary, busInboxJobMarker, busPageResumeCursor, listBusChannels, postChannelMessage, postLabelMessage,
-  readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
+  agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodyFallbackSummary, busInboxJobMarker, busPageResumeCursor, listBusChannels, postChannelHeartbeat, postChannelMessage, postLabelMessage,
+  readAgentChannel, readAgentChannelPresence, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
   updateWorkStatus, INBOX_KINDS, type AllWakesPage, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WakePage, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
@@ -46,6 +46,8 @@ ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--kind note|context] [--from <agent>] [--topic <t>] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
 ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--after <cursor>] [--limit <1..100>] [--frame <cli>]
+ashlr agents bus channel heartbeat <name> --state online|offline [--topic <t>] [--from <agent>] [--id <id>]
+ashlr agents bus channel presence <name> [--topic <t>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
@@ -251,6 +253,20 @@ coordination hold already covers the receipt — and bodies naming a job
 worker-handoff taskIds) report job, the live feed state of the job they
 name (the same annotation show resolves, read once per page), so an agent
 sees hold and job state without a lookup per message.
+channel heartbeat publishes the sender's own group.presence observation —
+the P3, five-minute heartbeat channel read excludes from the transcript —
+on one topic (default general, the same default channel post uses); the
+sender must be a registered member like a post, --state is online or
+offline, and the member named is always the sender's own agent:<handle>
+label, never a caller-chosen one. channel presence is the matching read:
+the live snapshot of who is online per topic — --topic narrows to one
+topic, omitted every topic the room carries reports its own member list —
+with each member's resolved handle beside the raw label. Presence is an
+untrusted, expiring observation — never proof of identity, membership or
+authority — and reading needs no identity and no membership, the same
+rule channel read applies; a channel no registry entry carries answers
+unknown-channel, an unreadable store unavailable, never an empty
+snapshot passed off as "nobody is here".
 follow streams that same addressed-inbox projection as JSONL — one
 {"type":"message",...} record per matching row carrying the inbox row's
 kind, priority, sender handle, channel, held/holder and job annotations
@@ -689,7 +705,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
   '--result', '--with', '--duration-ms', '--interval-ms',
   '--kind', '--channel', '--contains', '--exclude-from', '--exclude-owner', '--reply-to', '--in-reply-to', '--body-kind',
-  '--announcer', '--exclude-announcer', '--wait-ms']);
+  '--announcer', '--exclude-announcer', '--wait-ms', '--state']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--open', '--claimable', '--jobs', '--matched', '--all']);
 const MESSAGE_CLAIM_ACTIONS = ['acquire', 'renew', 'release', 'complete'] as const;
@@ -1122,6 +1138,24 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
             (m.job === undefined ? '' : ` ${busInboxJobMarker(m.job)}`)),
           ...(result.matched === undefined ? [] : [`matched ${result.matched}`]),
           `nextCursor ${nextCursor}`,
+        ].join('\n'));
+        return 0;
+      }
+      if (sub === 'heartbeat') {
+        const state = one('--state');
+        if (state !== 'online' && state !== 'offline') {
+          throw new UsageError('--state must be online or offline.');
+        }
+        const result = await postChannelHeartbeat({ from: actor('--from'), channel: arg, topic: one('--topic'),
+          state, id: one('--id') }, options);
+        return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
+      }
+      if (sub === 'presence') {
+        const result = readAgentChannelPresence(arg, { topic: one('--topic') }, options);
+        if (result.status !== 'ok') return finish(result, '');
+        out(json ? JSON.stringify(result) : [
+          ...result.topics.map(t => `#${result.channel}:${t.topic}  online=${t.members.map(m => `${m.member}${m.memberAgent === null ? '' : `(${m.memberAgent})`}`).join(',') || '-'}`),
+          `topics=${result.topics.length}`,
         ].join('\n'));
         return 0;
       }
