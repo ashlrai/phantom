@@ -220,6 +220,22 @@ describe('router calibration', () => {
       { arm: 'unknown', jobs: 1, observedMergeRate: null },
     ]);
   });
+  it('validates all execution timestamp aliases before pairing wall time', () => {
+    const launch = { event: 'launch', job: 'RQ-TIME', ts: '2026-01-01T00:00:00Z', predicted_wall_time_ms: 2500 };
+    const finish = { event: 'finish', job: launch.job, ts: '2026-01-01T00:00:03Z' };
+    const ledger = row(launch) + row({ ...finish, at: '2025-12-31T19:00:03-05:00' });
+    expect(calibrateRouting(ledger).arms[0]?.wallTimeMs).toEqual({ predicted: 2500, actual: 3000, paired: 1 });
+    expect(() => calibrateRouting(row({ ...launch, at: finish.ts }) + row(finish)))
+      .toThrow('Conflicting event timestamps');
+    expect(() => calibrateRouting(row(launch) + row({ ...finish, at: 'unknown' })))
+      .toThrow('Invalid event timestamp');
+
+    const claim = row({ event: 'batch_claim', job: launch.job, at: '2025-12-31T23:59:59Z', ts: finish.ts });
+    expect(calibrateRouting(claim + ledger).arms[0]?.wallTimeMs)
+      .toEqual({ predicted: null, actual: null, paired: 0 });
+    expect(calibrateRouting(claim + row(launch) + row({ ...finish, wall_time_ms: 3000 })).arms[0]?.wallTimeMs)
+      .toEqual({ predicted: 2500, actual: 3000, paired: 1 });
+  });
   it('rejects reverse time and escapes markdown arm names', () => {
     expect(() => calibrateRouting(row({ event: 'launch', id: 'TEST-a', arm: 'a', timestamp: '2026-01-02T00:00:00Z' }) +
       row({ event: 'finish', id: 'TEST-a', timestamp: '2026-01-01T00:00:00Z' }))).toThrow('Finish precedes');
