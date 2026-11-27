@@ -16,7 +16,8 @@ import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/co
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type JobsStuckSourceRead, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import type { StuckJob as RunningStuckJob } from '../src/core/fleet/running-stuck.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
@@ -5005,6 +5006,154 @@ describe('readUnifiedInbox router queue', () => {
     // The READY id is the item's own citation — --job names it directly.
     const byJob = await readQueue(pending, { filter: { job: 'RQ-ALPHA' } });
     expect(byJob.items.filter(i => i.source === 'router-queue').map(i => i.id)).toEqual(['router-queue:RQ-ALPHA']);
+  });
+});
+
+describe('readUnifiedInbox jobs stuck', () => {
+  const stuckRead = (over: Partial<JobsStuckSourceRead> = {}): JobsStuckSourceRead => ({
+    state: 'healthy', jobs: [], ...over,
+  });
+  const readStuck = (s: JobsStuckSourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readJobsStuck: async () => s, ...extra });
+  const stuckJob = (over: Partial<RunningStuckJob> = {}): RunningStuckJob => ({
+    job: 'J-STUCK', lane: 'codex-local', kind: 'stuck', pid: 4242,
+    age_min: 125, last_log_at: '2026-11-07T09:00:00.000Z',
+    why: 'log silent for 45m', ...over,
+  });
+
+  it('lists each ghost and stuck marker as a warn naming its id, age, last log and acts', async () => {
+    const inbox = await readStuck(stuckRead({ jobs: [
+      stuckJob({ job: 'J-GHOST', kind: 'ghost', age_min: 200, last_log_at: null,
+        why: 'its process (pid 4242) is gone but the run marker is still open' }),
+      stuckJob(),
+      stuckJob({ job: 'J-UNDATED', age_min: null, last_log_at: null, why: 'no log after 3h' }),
+    ] }));
+    expect(inbox.sources['jobs-stuck']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'jobs-stuck');
+    expect(items).toHaveLength(3);
+
+    const ghost = items.find(i => i.id === 'jobs-stuck:J-GHOST')!;
+    expect(ghost).toMatchObject({
+      kind: 'stuck-ghost', severity: 'warn', blocking: false,
+      title: 'Job J-GHOST counted running but its process is gone',
+      since: new Date(now - 200 * 60_000).toISOString(), expiresAt: null,
+      jobIds: ['J-GHOST'],
+    });
+    expect(ghost.detail).toContain('lane codex-local');
+    expect(ghost.detail).toContain('age 3h20m');
+    expect(ghost.detail).toContain('last log none');
+    expect(ghost.act).toEqual(['phm jobs stuck', 'phm fleet stray-stop --stuck --apply']);
+
+    const stuck = items.find(i => i.id === 'jobs-stuck:J-STUCK')!;
+    expect(stuck).toMatchObject({
+      kind: 'stuck-job', severity: 'warn', blocking: false,
+      title: 'Job J-STUCK running with a silent log',
+      since: new Date(now - 125 * 60_000).toISOString(), expiresAt: null,
+      jobIds: ['J-STUCK'],
+    });
+    expect(stuck.detail).toContain('age 2h5m');
+    expect(stuck.detail).toContain('last log 2026-11-07T09:00:00.000Z');
+    expect(stuck.detail).toContain('log silent for 45m');
+
+    // age_min null — the marker kept no start — stays honestly undated.
+    const undated = items.find(i => i.id === 'jobs-stuck:J-UNDATED')!;
+    expect(undated.since).toBeNull();
+    expect(undated.detail).toContain('age unknown');
+    expect(undated.detail).toContain('last log none');
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readStuck(stuckRead({ state: 'missing', jobs: [stuckJob()] }));
+    expect(missing.sources['jobs-stuck']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'jobs-stuck')).toHaveLength(0);
+
+    const unavailable = await readStuck(stuckRead({ state: 'unavailable', jobs: [stuckJob()] }));
+    expect(unavailable.sources['jobs-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'jobs-stuck')).toHaveLength(0);
+
+    const throwing = await read({ readJobsStuck: async () => { throw new Error('markers boom'); } });
+    expect(throwing.sources['jobs-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'jobs-stuck')).toHaveLength(0);
+
+    // A degraded read still lists what it found, pending counted.
+    const degraded = await readStuck(stuckRead({ state: 'degraded', jobs: [stuckJob()] }));
+    expect(degraded.sources['jobs-stuck']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'jobs-stuck')).toHaveLength(1);
+  });
+
+  it('reads the real run markers under runsDir: a dead-pid marker is a ghost, a silent old log is stuck', async () => {
+    const runDir = join(runsDir, 'queue', 'run');
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
+    const dispatchedSecs = (msAgo: number) => String(Math.floor((now - msAgo) / 1000));
+    // Marker layout: queue/run/<job>.{line,dispatched,fin}; <job>.{launch,log,base} at the runs root.
+    // Ghost: a pid no OS can hand out, marker still open, started 3h ago.
+    writeFileSync(join(runDir, 'J-GHOST.line'), 'J-GHOST\tashlrai/phantom\tcodex-local\n', { mode: 0o600 });
+    writeFileSync(join(runDir, 'J-GHOST.dispatched'), dispatchedSecs(3 * 3_600_000), { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-GHOST.launch'), 'pid 16777216\n', { mode: 0o600 });
+    // Stuck: the test process's own pid is alive; started 100m ago, log quiet 40m.
+    writeFileSync(join(runDir, 'J-STUCK.line'), 'J-STUCK\tashlrai/phantom\tcodex-local\n', { mode: 0o600 });
+    writeFileSync(join(runDir, 'J-STUCK.dispatched'), dispatchedSecs(100 * 60_000), { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-STUCK.launch'), `pid ${process.pid}\n`, { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-STUCK.log'), 'fake log\n', { mode: 0o600 });
+    utimesSync(join(runsDir, 'J-STUCK.log'), new Date(now - 40 * 60_000), new Date(now - 40 * 60_000));
+    // Healthy: started 10m ago with a fresh log and a live pid — running, not stuck.
+    writeFileSync(join(runDir, 'J-OK.line'), 'J-OK\tashlrai/phantom\tcodex-local\n', { mode: 0o600 });
+    writeFileSync(join(runDir, 'J-OK.dispatched'), dispatchedSecs(10 * 60_000), { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-OK.launch'), `pid ${process.pid}\n`, { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-OK.log'), 'fake log\n', { mode: 0o600 });
+    // Finished: an unmatched .fin with no .base closes the marker — never lists.
+    writeFileSync(join(runDir, 'J-DONE.line'), 'J-DONE\tashlrai/phantom\tcodex-local\n', { mode: 0o600 });
+    writeFileSync(join(runDir, 'J-DONE.dispatched'), dispatchedSecs(3 * 3_600_000), { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-DONE.launch'), 'pid 16777216\n', { mode: 0o600 });
+    writeFileSync(join(runDir, 'J-DONE.fin'), '0\n', { mode: 0o600 });
+
+    const inbox = await read();
+    expect(inbox.sources['jobs-stuck']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'jobs-stuck');
+    expect(items.map(i => i.id).sort()).toEqual(['jobs-stuck:J-GHOST', 'jobs-stuck:J-STUCK']);
+    const ghost = items.find(i => i.id === 'jobs-stuck:J-GHOST')!;
+    expect(ghost).toMatchObject({
+      kind: 'stuck-ghost', severity: 'warn',
+      since: new Date(now - 3 * 3_600_000).toISOString(),
+      jobIds: ['J-GHOST'],
+    });
+    expect(ghost.detail).toContain('lane codex-local');
+    expect(ghost.detail).toContain('its process (pid 16777216) is gone');
+    const stuck = items.find(i => i.id === 'jobs-stuck:J-STUCK')!;
+    expect(stuck).toMatchObject({
+      kind: 'stuck-job', severity: 'warn',
+      since: new Date(now - 100 * 60_000).toISOString(),
+      jobIds: ['J-STUCK'],
+    });
+    expect(stuck.detail).toContain('log silent for');
+  });
+
+  it('reports a missing marker dir as missing and an unlistable one as unavailable', async () => {
+    // No queue/run at all — verified-absent, so nothing can be running.
+    const missing = await read();
+    expect(missing.sources['jobs-stuck']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'jobs-stuck')).toHaveLength(0);
+
+    // queue/run exists but is a file — readdir cannot list it, so the
+    // stuck set is unknown rather than a fabricated empty read.
+    mkdirSync(join(runsDir, 'queue'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(runsDir, 'queue', 'run'), 'not a dir\n', { mode: 0o600 });
+    const unavailable = await read();
+    expect(unavailable.sources['jobs-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'jobs-stuck')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = stuckRead({ jobs: [stuckJob({ job: 'J-GHOST', kind: 'ghost' }), stuckJob({ job: 'J-STUCK' })] });
+    const bySource = await readStuck(pending, { filter: { source: 'jobs-stuck' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'jobs-stuck')).toBe(true);
+    const byKind = await readStuck(pending, { filter: { kind: 'stuck-ghost' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['jobs-stuck:J-GHOST']);
+    expect(byKind.sources['jobs-stuck']).toEqual({ state: 'healthy', pending: 2 });
+    // The marker's job id is the item's own citation — --job names it directly.
+    const byJob = await readStuck(pending, { filter: { job: 'J-STUCK' } });
+    expect(byJob.items.filter(i => i.source === 'jobs-stuck').map(i => i.id)).toEqual(['jobs-stuck:J-STUCK']);
   });
 });
 
