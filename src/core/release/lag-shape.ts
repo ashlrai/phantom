@@ -5,9 +5,9 @@
  * `/api/verse/fleet/release-lag` route and the Fleet header line. A field that
  * could not be read is the string "unknown"; nothing is inferred or guessed.
  */
+import { UNKNOWN, asReleaseRecord, isNonNegativeInt, type Unknown } from './cadence.js';
+
 export const RELEASE_LAG_SCHEMA = 'phantom.release-lag/v1';
-export const UNKNOWN = 'unknown';
-export type Unknown = typeof UNKNOWN;
 
 export interface ReleaseLagV1 {
   schema: typeof RELEASE_LAG_SCHEMA;
@@ -32,11 +32,11 @@ export function releaseLagLine(lag: ReleaseLagV1): string {
 
 /** Narrow an untrusted response (web client) to the typed shape, or null. */
 export function narrowReleaseLag(raw: unknown): ReleaseLagV1 | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const row = raw as Record<string, unknown>;
+  const row = asReleaseRecord(raw);
+  if (!row) return null;
   const text = (v: unknown) => typeof v === 'string';
-  const count = (v: unknown) => v === UNKNOWN || (Number.isSafeInteger(v) && (v as number) >= 0);
+  const count = (v: unknown) => v === UNKNOWN || isNonNegativeInt(v);
   return row.schema === RELEASE_LAG_SCHEMA && text(row.checkedAt) && text(row.latestTag) && text(row.installedVersion)
     && count(row.assetCount) && count(row.mergedSince) && (row.feedOk === UNKNOWN || typeof row.feedOk === 'boolean')
-    ? raw as ReleaseLagV1 : null;
+    ? row as unknown as ReleaseLagV1 : null;
 }

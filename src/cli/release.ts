@@ -6,7 +6,7 @@ import { buildPrNotes, formatPrNotesMarkdown, ghPrSource, resolveRepo, type PrSo
 import { cadenceText, readReleaseCadence, CADENCE_REPOS, type CadenceV1 } from '../core/release/cadence.js';
 import { execFileSync } from 'node:child_process';
 
-export const RELEASE_USAGE = 'phm release status [--json | --text] [--file <release-state.json>]\nphm release cadence [--repos <a,b>] [--json]\nphm release notes [--since <tag-or-date>] [--repo <name>] [--json] [--markdown] [--write]';
+const RELEASE_USAGE = 'phm release status [--json | --text] [--file <release-state.json>]\nphm release cadence [--repos <a,b>] [--json]\nphm release notes [--since <tag-or-date>] [--repo <name>] [--json] [--markdown] [--write]';
 
 async function notesCommand(args: string[], prs: PrSource): Promise<number> {
   const json = args.includes('--json');
@@ -54,7 +54,7 @@ function emit(payload: unknown, json: boolean): void {
   process.stdout.write(`${JSON.stringify(payload, null, json ? undefined : 2)}\n`);
 }
 
-export const RELEASES_USAGE = 'phm releases [--json]';
+const RELEASES_USAGE = 'phm releases [--json]';
 
 /** `phm releases`: which Ashlr repo is due a release. Read-only; it never tags or publishes. */
 export function cmdReleases(args: string[]): number {
@@ -79,7 +79,7 @@ has_assets is false for a release with 0 assets. A value that could not be read 
 --json prints phantom.release-cadence/v1 {schema,as_of,repos:[{repo,latest_tag,published_at,has_assets,hours_since,merged_since,status}]}.`;
 
 /** `phm release cadence`: one read, one table. Exit 0 whatever the verdicts; exit 2 for bad arguments. */
-async function cadenceCommand(args: string[], read: () => Promise<CadenceV1> | CadenceV1): Promise<number> {
+async function cadenceCommand(args: string[], read: (repos?: string[]) => Promise<CadenceV1> | CadenceV1): Promise<number> {
   const json = args.includes('--json');
   const rest = args.filter(arg => arg !== '--json');
   const flag = rest.indexOf('--repos');
@@ -88,7 +88,7 @@ async function cadenceCommand(args: string[], read: () => Promise<CadenceV1> | C
     process.stderr.write(`${CADENCE_HELP.split('\n')[0]}\n`);
     return 2;
   }
-  const report = await read();
+  const report = await read(list);
   if (json) emit(report, true);
   else process.stdout.write(`${cadenceText(report).join('\n')}\n`);
   return 0;
@@ -104,9 +104,7 @@ export async function cmdRelease(args: string[], deps: { prs?: PrSource; cadence
     return 0;
   }
   if (args[0] === 'cadence') {
-    const rest = args.slice(1), flag = rest.indexOf('--repos');
-    const repos = flag >= 0 ? rest[flag + 1]?.split(',').map(r => r.trim()).filter(Boolean) : undefined;
-    return cadenceCommand(rest, () => (deps.cadence ?? (r => readReleaseCadence({ repos: r })))(repos));
+    return cadenceCommand(args.slice(1), deps.cadence ?? (repos => readReleaseCadence({ repos })));
   }
   if (args[0] === 'notes') return notesCommand(args.slice(1), deps.prs ?? ghPrSource);
   const json = !args.includes('--text');

@@ -2,12 +2,12 @@ import { execFileSync } from 'node:child_process';
 import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const NOTE_GROUPS = ['New', 'Improved', 'Fixed', 'Internal'] as const;
+const NOTE_GROUPS = ['New', 'Improved', 'Fixed', 'Internal'] as const;
 type NoteGroup = typeof NOTE_GROUPS[number];
 export interface ReleaseChange { text: string; prs: number[]; commits: string[] }
 /** The plain headings a reader sees, in reading order. At most six, so the notes stay short. */
-export const NOTE_HEADINGS = ['New in the app', 'Phone', 'Fleet and speed', 'Fixes', 'Docs', 'Under the hood'] as const;
-export type NoteHeading = typeof NOTE_HEADINGS[number];
+export type NoteHeading = 'New in the app' | 'Phone' | 'Fleet and speed' | 'Fixes' | 'Docs' | 'Under the hood';
+const NOTE_HEADINGS: readonly NoteHeading[] = ['New in the app', 'Phone', 'Fleet and speed', 'Fixes', 'Docs', 'Under the hood'];
 /** One reader-facing sentence. `count` is how many near-identical changes it stands for; PR numbers live here, never in `text`. */
 export interface NoteLine { text: string; count: number; prs: number[] }
 export interface NoteSection { heading: NoteHeading; lines: NoteLine[] }
@@ -21,14 +21,15 @@ export interface ReleaseNotes {
   groups: Record<NoteGroup, ReleaseChange[]>;
 }
 /** What a rule sees about one change. `raw` is the untouched subject, `kind` the conventional-commit type. */
-export interface NoteFacts { text: string; raw: string; kind?: string; files: string[] }
-export interface NoteRule { heading: NoteHeading; matches: (facts: NoteFacts) => boolean }
+interface NoteFacts { text: string; raw: string; kind?: string; files: string[] }
+interface NoteRule { heading: NoteHeading; matches: (facts: NoteFacts) => boolean }
 export interface NoteCommit { sha: string; author: string; subject: string; files: string[] }
 const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
 /** Tests, scripts, CI and lockfiles: work a user never sees. `phm shipped` counts it as maintenance. */
 export const internal = (file: string): boolean => /^(test\/|scripts\/|\.github\/)|(?:^|\/)(?:[^/]*\.test\.[^/]+|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|BRIDGE_NOTES\.md)$/.test(file);
 const safeText = (text: string): string => text.replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim();
-const markdown = (text: string): string => text.replace(/[\\`*_[\]<>]/g, '\\$&');
+/** Escape Markdown inline punctuation in release note lines. */
+export const escapeReleaseMarkdown = (text: string): string => text.replace(/[\\`*_[\]<>]/g, '\\$&');
 
 /** Recovery, re-publish and hand-off work repeats earlier changes; a reader needs only its count. */
 const REPEAT_WORK = /\b(?:recut|recover(?:y|ed)?|re-?publish(?:ed)?|supersedes|hand-?off|fixup)\b/i;
@@ -36,7 +37,7 @@ const REPEAT_WORK = /\b(?:recut|recover(?:y|ed)?|re-?publish(?:ed)?|supersedes|h
  * The rule table: the first rule that matches decides the heading, so the order is the priority.
  * A change that matches nothing falls through to "Under the hood"; it is counted, never dropped.
  */
-export const NOTE_RULES: readonly NoteRule[] = [
+const NOTE_RULES: readonly NoteRule[] = [
   { heading: 'Under the hood', matches: ({ raw, files }) => (files.length > 0 && files.every(internal)) || REPEAT_WORK.test(raw) },
   { heading: 'Docs', matches: ({ files }) => files.length > 0 && files.every(file => /^docs\/|\.md$/.test(file)) },
   { heading: 'Phone', matches: ({ text, files }) => files.some(file => /phone|mobile/i.test(file)) || /\b(?:phone|mobile)\b/i.test(text) },
@@ -55,11 +56,11 @@ const sentence = (text: string): string => {
 /** Titles that differ only in numbers, case or punctuation count as the same change. */
 const nearKey = (text: string): string => text.toLowerCase().replace(/[^a-z]+/g, ' ').trim();
 const SHOWN_LINES = 5;
-export const BEHIND_THE_SCENES = 'Tests, recoveries and other internal work.';
+const BEHIND_THE_SCENES = 'Tests, recoveries and other internal work.';
 
 interface SectionEntry extends NoteFacts { prs: number[] }
 /** Group changes under the plain headings, merging near-identical lines and capping each heading's length. */
-export function buildSections(entries: SectionEntry[]): NoteSection[] {
+function buildSections(entries: SectionEntry[]): NoteSection[] {
   const byHeading = new Map<NoteHeading, Map<string, NoteLine>>();
   for (const entry of entries) {
     const heading = headingOf(entry);
@@ -83,7 +84,7 @@ export function buildSections(entries: SectionEntry[]): NoteSection[] {
 }
 
 /** The three largest user-facing lines (most merged changes first), each already a sentence. */
-export function buildHeadline(since: string, sections: NoteSection[]): string[] {
+function buildHeadline(since: string, sections: NoteSection[]): string[] {
   const userFacing = sections.filter(section => section.heading !== 'Under the hood' && section.heading !== 'Docs')
     .flatMap(section => section.lines.filter(line => !/^And \d+ more changes\.$/.test(line.text)).map(line => ({ ...line, order: NOTE_HEADINGS.indexOf(section.heading) })));
   if (userFacing.length) return userFacing.sort((a, b) => b.count - a.count || a.order - b.order || compare(a.text, b.text)).slice(0, 3).map(line => line.text);
@@ -92,10 +93,10 @@ export function buildHeadline(since: string, sections: NoteSection[]): string[] 
 
 /** Plain Markdown for a reader: the summary first, then one short list per heading. No ids; `--json` carries the PR numbers. */
 export function formatReleaseNotesMarkdown(notes: ReleaseNotes): string {
-  const out = [`# What's new since ${markdown(notes.since)}`, '', notes.headline.map(markdown).join(' ')];
+  const out = [`# What's new since ${escapeReleaseMarkdown(notes.since)}`, '', notes.headline.map(escapeReleaseMarkdown).join(' ')];
   for (const section of notes.sections) {
     out.push('', `## ${section.heading}`, '');
-    for (const line of section.lines) out.push(`- ${markdown(line.text)}${line.count > 1 ? ` (${line.count} changes)` : ''}`);
+    for (const line of section.lines) out.push(`- ${escapeReleaseMarkdown(line.text)}${line.count > 1 ? ` (${line.count} changes)` : ''}`);
   }
   return `${out.join('\n')}\n`;
 }
@@ -200,8 +201,8 @@ export function collectReleaseNotes(directory = process.cwd(), since?: string, r
 
 export function formatReleaseNotes(notes: ReleaseNotes, changelog = false): string {
   const headings = { New: 'Added', Improved: 'Changed', Fixed: 'Fixed', Internal: 'Internal' };
-  return notes.summary.map(markdown).join('\n') + '\n' + NOTE_GROUPS.map(group => notes.groups[group].length
-    ? `\n### ${changelog ? headings[group] : group}\n\n${notes.groups[group].map(change => `- ${markdown(change.text)} (${change.prs.length ? change.prs.map(pr => `#${pr}`).join(', ') : change.commits[0]!.slice(0, 8)}).`).join('\n')}\n` : '').join('');
+  return notes.summary.map(escapeReleaseMarkdown).join('\n') + '\n' + NOTE_GROUPS.map(group => notes.groups[group].length
+    ? `\n### ${changelog ? headings[group] : group}\n\n${notes.groups[group].map(change => `- ${escapeReleaseMarkdown(change.text)} (${change.prs.length ? change.prs.map(pr => `#${pr}`).join(', ') : change.commits[0]!.slice(0, 8)}).`).join('\n')}\n` : '').join('');
 }
 
 /** Replace only our generated block; historical and hand-written entries stay intact. */
