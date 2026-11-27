@@ -1155,7 +1155,7 @@ guessed claim no matter how long the wait runs. Exit 0 on
 otherwise. Claims still coordinate scope only — holding one never permits
 a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -1366,7 +1366,10 @@ honestly empty (a request envelope carries no provable job citation and,
 by the board's own request rule, no in-reply-to citation); `contains`
 matches the item's scrubbed state/channel/missing-evidence/dependency
 text, `since`/`before` bound `receivedAt`, `channel` keeps requests
-whose `to` carries `group:<name>:`, `from`/`excludeFrom` match the
+whose `to` carries `group:<name>:`, `topic` keeps requests whose `to`
+parses to `group:<room>:<topic>` under the same `groupAddressTopicOf`
+verdict every other section applies — a request naming no provable
+`to` never listing — `from`/`excludeFrom` match the
 request's `from` label (an item naming no provable `from` never lists
 under either), `id` keeps the request whose envelope id equals the
 value, and `priority`/`bodyKind`/`result`/`thread` leave the section
@@ -1663,7 +1666,42 @@ room in
 their projections and stay unfiltered, like they do under
 `--priority`; every count stays the filtered total, the result
 echoes `channel` in JSON and the human header prints it, and a row
-whose room cannot be proven never matches. `--from <agent>` narrows
+whose room cannot be proven never matches. `--topic <name>` narrows
+the whole digest the same way — "what is pending for me on this
+topic" — under the same `groupAddressTopicOf` verdict every other
+bus `--topic` read applies: the topic segment of a well-formed
+`group:<room>:<topic>` routing label, validated by the strict
+channel-name grammar and matched on each section's own address
+evidence, room-agnostic like every other `--topic` read (an ops
+room's `alerts` traffic matches `--topic alerts` unless `--channel`
+also narrows the room, the two composing into one room AND topic):
+feed jobs and announced jobs keep announcements whose `to` parses
+to that exact topic, `next`/`handoffs`/`mailbox` keep envelopes
+whose `to` parses to it, dead letters keep reports whose ORIGINAL
+`to` parses to it — matched on the kept routing label rather than
+the letter's own `bus.dead-letter` address — claims keep only
+message claims whose resolved leased envelope sits on the topic —
+a claim naming no resolved message, a scope-key claim or an
+unresolvable/unreadable lease names no provable topic and never
+lists, the same "unknown stays out" rule `--channel` applies, the
+three thread sections keep threads whose latest message — the
+wait's own recipient for waiting threads, the block report's
+recipient for blocked ones — is addressed to the topic, and
+work-board requests keep those whose `to` parses to it — a request
+naming no provable `to` never listing. `wakes` and `inbox` delegate
+to reads carrying no topic filter of their own, so the digest
+applies the same verdict to the rows they return: `wakes` filters
+the resolved page's own `to` labels — `matched` exact when the
+bounded queue tail read is complete, a proven lower bound under
+`truncated`, the same convention the section's own `truncated`
+flag documents — while `inbox` pages the delegated read to the
+store's end and reports the true topic-filtered total across the
+retained store. `board`, `channels`, `sessions`, `coordination`
+and `seats` carry no per-item topic in their projections and stay
+unfiltered, like they do under `--channel`; every count stays the
+filtered total, the result echoes `topic` in JSON and the human
+header prints it, and a row whose topic cannot be proven never
+matches. `--from <agent>` narrows
 the whole digest the same way — "what is pending for me from X" —
 under the same sender rule every bus `--from` read applies, validated
 by the printable-label bound and matched through the
