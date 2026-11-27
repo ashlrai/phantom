@@ -1010,6 +1010,64 @@ describe('channel-filtered inbox reads', () => {
   });
 });
 
+describe('topic-filtered inbox reads', () => {
+  it('keeps only mail addressed to one group topic across member channels and composes with the channel filter', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    createAgentChannel({ name: 'ops', createdBy: 'atlas', members: ['nova'] }, options);
+    // Channel mail under two topics in two rooms — the topic filter spans rooms.
+    await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'deploy', text: 'release deploy', id: 'tp-rel-dep' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'release general', id: 'tp-rel-gen' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'ops', topic: 'deploy', text: 'ops deploy', priority: 'P1', id: 'tp-ops-dep' }, options);
+    // A worker-handoff on a member room's deploy topic is deploy mail too —
+    // the filter matches the delivery address, not the reported kind.
+    expect(appendBusInbox({ id: 'tp-ho-dep', from: 'agent:atlas', to: 'group:ops:deploy', priority: 'P2', ttl: 60_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-TP-1', prompt: 'room assignment' } }, options).status).toBe('posted');
+    // Mail that can never carry a group topic stays out.
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm', id: 'tp-dm' }, options);
+    expect(appendBusInbox({ id: 'tp-leg', from: 'agent:atlas', to: 'nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: 'legacy' } }, options).status).toBe('posted');
+    // A deeper group label is not a well-formed two-component topic address.
+    expect(appendBusInbox({ id: 'tp-deep', from: 'agent:atlas', to: 'group:release:deploy:extra', priority: 'P2', ttl: 60_000,
+      body: { kind: 'note', text: 'deeper' } }, options).status).toBe('posted');
+
+    const deploy = readAgentInbox('nova', { topic: 'deploy' }, options);
+    if (deploy.status !== 'ok') throw new Error(`unexpected ${deploy.status}`);
+    expect(deploy.messages.map(m => `${m.kind}:${m.envelope.id}`).sort())
+      .toEqual(['channel:tp-ops-dep', 'channel:tp-rel-dep', 'handoff:tp-ho-dep'].sort());
+    // --channel narrows the same topic to one room.
+    expect(readAgentInbox('nova', { channel: 'release', topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'tp-rel-dep' } }] });
+    // --kind still separates room assignments from posts inside one topic.
+    expect(readAgentInbox('nova', { topic: 'deploy', kind: 'handoff' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'handoff', envelope: { id: 'tp-ho-dep' } }] });
+    // --matched counts only the accepted rows across the whole store.
+    const counted = readAgentInbox('nova', { topic: 'deploy', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(3);
+    // The unfiltered page still sees everything the filter skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages).toHaveLength(7);
+  });
+
+  it('refuses an invalid topic and reads an unused topic as an honest empty page', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'deploy', text: 'deploy', id: 'ti-dep' }, options);
+
+    expect(readAgentInbox('nova', { topic: 'Bad Topic' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { topic: 'deploy:extra' }, options)).toMatchObject({ status: 'invalid' });
+    const none = readAgentInbox('nova', { topic: 'rollback' }, options);
+    expect(none).toMatchObject({ status: 'ok', messages: [] });
+    if (none.status !== 'ok') throw new Error(`unexpected ${none.status}`);
+    expect(none.nextCursor).toBeGreaterThan(0);
+    expect(readAgentInbox('nova', { topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'ti-dep' } }] });
+  });
+});
+
 describe('contains-filtered reads', () => {
   it('narrows inbox and channel pages to rows whose summary carries the needle', async () => {
     const options = setup();
