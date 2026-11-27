@@ -293,9 +293,19 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       const laneArgs = [...kept.map((l) => ` --lane ${l.lane}=${l.share}`), ` --lane ${h.lane}`].join('');
       return `  held ${h.member}/${h.lane}: ${h.reason} — on that member's machine run: phm org join --member ${h.member} --machine ${machineArg}${laneArgs}`;
     });
+    // An empty queue makes the headline counts read like a broken org: with no
+    // jobs to assign, "0 assigned, 0 unassigned" is the honest answer, not a
+    // failure — but only if the output says there was nothing to plan. Name
+    // the missing input and the snapshot shape so a first run knows to pass
+    // --queue. Text only: --json consumers already see the empty
+    // assignments/unassigned arrays and chose whether to pass --queue.
+    const queueNote = queue.length === 0
+      ? [`Queue empty (${queueFile === undefined ? 'no --queue file given' : `${queueFile} held no jobs`}): pass --queue <jobs.json> ([{"id","priority?","costPct?","lane"?}]) to plan real assignments — the counts above mean there was nothing to plan.`]
+      : [];
     // The plan covers only the join records this machine holds; a member's
     // machine sees a partial org, so say which records counted.
     return print({ ...plan, joinsDir: joinsDir() }, [`Plan for ${plan.leader}: ${plan.assignments.length} assigned, ${plan.unassigned.length} unassigned, ${plan.held.length} lanes held`,
+      ...queueNote,
       ...plan.assignments.map((a) => `  ${a.job} -> ${a.agent} (${a.member}/${a.lane}, ~${a.costPct}%)`),
       ...plan.unassigned.map((u) => `  ! ${u.job}: ${u.reason}`),
       ...heldLines,

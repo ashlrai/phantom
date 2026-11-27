@@ -370,6 +370,36 @@ describe('cmdOrg', () => {
     vi.unstubAllEnvs();
   });
 
+  it('plan names the empty queue behind zero assignments in text mode', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = 'docs/examples/org.toml';
+    // No --queue: the plan assigns nothing, and the text must say why instead of
+    // letting "0 assigned, 0 unassigned" read as a broken org.
+    expect(await cmdOrg(['plan', '--file', file])).toBe(0);
+    const noQueue = logs.pop()!;
+    expect(noQueue).toContain('Plan for mason-wyatt:');
+    expect(noQueue).toContain('Queue empty (no --queue file given)');
+    expect(noQueue).toContain('--queue <jobs.json>');
+    // An empty queue file gets the same note, naming the file it read.
+    const empty = join(home, 'empty-queue.json'); writeFileSync(empty, '[]\n');
+    expect(await cmdOrg(['plan', '--file', file, '--queue', empty])).toBe(0);
+    expect(logs.pop()!).toContain(`Queue empty (${empty} held no jobs)`);
+    // A queue with jobs drops the note — the per-job unassigned reasons carry
+    // the explanation instead (nothing is opted in on this machine).
+    const jobs = join(home, 'jobs.json');
+    writeFileSync(jobs, '[{"id":"RQ-1","priority":3,"costPct":2,"lane":"claude"}]\n');
+    expect(await cmdOrg(['plan', '--file', file, '--queue', jobs])).toBe(0);
+    const planned = logs.pop()!;
+    expect(planned).not.toContain('Queue empty');
+    expect(planned).toContain('RQ-1');
+    // --json stays the bare projection: no note line, no new fields.
+    expect(await cmdOrg(['plan', '--file', file, '--json'])).toBe(0);
+    expect(JSON.parse(logs.pop()!).schema).toBe('org.plan.v1');
+    vi.unstubAllEnvs();
+  });
+
   it('join reports the lanes a re-join dropped, in JSON and text', async () => {
     const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
     const logs: string[] = [];
