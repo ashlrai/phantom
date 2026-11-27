@@ -146,6 +146,29 @@ describe('CI baseline evidence', () => {
     const fail = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
     expect(fail.groups[0]?.action).toBe('unknown');
   });
+  it('keeps a newer same-SHA run on another branch out of master evidence', async () => {
+    const { gh } = github({ count: 1, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const endpoint = args[1] ?? '';
+      if (!endpoint.includes('/actions/runs?')) return gh(args);
+      const params = new URLSearchParams(endpoint.split('?')[1]);
+      if (params.get('head_sha') !== master || params.get('branch') === 'master') return gh(args);
+      const run = { workflow_id: 1, head_sha: master };
+      return {
+        ok: true,
+        stderr: '',
+        stdout: JSON.stringify({
+          total_count: 2,
+          workflow_runs: [
+            { ...run, id: 99, head_branch: 'feature', status: 'in_progress' },
+            { ...run, id: 1, head_branch: 'master', status: 'completed' },
+          ],
+        }),
+      };
+    });
+    expect(report.master).toEqual({ head: master, known: true });
+    expect(report.groups[0]).toMatchObject({ action: 'rerun-failed', master: 'pass' });
+  });
   it('reads default-reporter file-pass lines as master pass evidence', async () => {
     // The default reporter prints `✓ file (N tests)` for a green module and
     // no per-test pass lines; a green module means every test in it passed.

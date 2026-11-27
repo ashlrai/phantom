@@ -2178,8 +2178,8 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       return r.ok ? JSON.parse(r.stdout) as T : null;
     } catch { return null; }
   }
-  async function runs(ref: string): Promise<Run[] | null> {
-    const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?head_sha=${encodeURIComponent(ref)}&per_page=100`);
+  async function masterRunsAt(ref: string): Promise<Run[] | null> {
+    const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?head_sha=${encodeURIComponent(ref)}&branch=master&per_page=100`);
     if (!data || !completeActionsPage(data.workflow_runs, data.total_count)) return null;
     const seen = new Set<number>();
     return data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
@@ -2246,7 +2246,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     return { entries: result, incomplete };
   }
   const branch = await json<{ commit: { sha: string } }>(`repos/${repo}/branches/master`);
-  const masterRuns = branch?.commit?.sha ? await runs(branch.commit.sha) : null;
+  const masterRuns = branch?.commit?.sha ? await masterRunsAt(branch.commit.sha) : null;
   const masterLogs: { conclusion: string; text: string }[] = [];
   let masterKnown = !!branch?.commit?.sha && !!masterRuns?.length;
   for (const run of masterRuns ?? []) {

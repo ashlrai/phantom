@@ -7,6 +7,8 @@ read-only: it does not rerun jobs, change tests, merge PRs, or update branches.
 The version 1 JSON report contains failure groups, per-PR freshness, master
 evidence, unknown reasons, and proposed update-branch commands. Latest workflow
 runs are checked against the current head and full checkout SHA in job logs.
+Master evidence queries GitHub Actions by both branch and current commit SHA,
+so a newer run on another branch at the same commit cannot replace a master run.
 A job proves its checkout one of three ways: echoing `git log -1
 --format=%H` followed by the head SHA; printing the `Bound candidate <sha>
 to event tree|merge ...` receipt `.github/scripts/ci-source-binding.mjs`
