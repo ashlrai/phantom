@@ -124,6 +124,32 @@ it('preserves the rollout when one reading has an out-of-range reset', async () 
   expect((await readLaneTruth(readers, now)).lanes[0]!.verdict).toBe('unknown');
 });
 
+it('falls back past rollouts without a quota observation available at report time', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'lane-truth-observed-')); dirs.push(home);
+  const sessions = join(home, '.codex-2/sessions/2026/10/31');
+  await mkdir(sessions, { recursive: true });
+  const event = (timestamp: string, usedPercent: number) => JSON.stringify({
+    timestamp, type: 'event_msg', payload: {
+      type: 'token_count', rate_limits: {
+        secondary: { used_percent: usedPercent, window_minutes: 10080, resets_at: Date.parse(sample.resetAt!) / 1000 },
+      },
+    },
+  });
+  const older = join(sessions, 'rollout-older.jsonl');
+  const newest = join(sessions, 'rollout-newest.jsonl');
+  await writeFile(older, event(sample.sampledAt, 60));
+  await utimes(older, new Date(now - 1000), new Date(now - 1000));
+  await writeFile(newest, [event('unreadable', 100), event(new Date(now + 1000).toISOString(), 100)].join('\n'));
+  await utimes(newest, new Date(now), new Date(now));
+  const readers = { ...defaultLaneTruthReaders(home, now), lanes: async () => [{ ...lane, running: 0 }] };
+
+  expect(await readLaneTruthReport(readers, now)).toMatchObject([
+    { verdict: 'idle_with_work', meter: { sampledAt: new Date(sample.sampledAt).toISOString(), usedPercent: 60 } },
+  ]);
+  await rm(older);
+  expect(await readLaneTruthReport(readers, now)).toMatchObject([{ verdict: 'unknown', meter: null }]);
+});
+
 it('validates CLI options before reading and emits JSON', async () => {
   const lanes = vi.fn(async () => [lane]);
   const readers = { lanes, meters: async () => [sample] };

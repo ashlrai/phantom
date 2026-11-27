@@ -65,6 +65,11 @@ provider window. Ordering and reset detection use readable observation times
 at or before report time. If a window has no such reading, the lane verdict
 is unknown. The Runs History API's meter field shows the newest reading at
 or before report time, or null when there is none.
+The default reader scans personal Codex rollouts in descending file
+modification order and uses the first rollout with a quota observation dated
+at or before report time. Rollouts with only future or unreadable observation
+times are skipped. A dated reading with invalid quota fields still counts
+as evidence that the window is unknown.
 An out-of-range Codex reset timestamp is recorded as an unknown reset without
 discarding the other readings in the rollout. If it is the latest reading for
 its window, the lane verdict stays unknown.
