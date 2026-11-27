@@ -72,7 +72,7 @@ import { join } from 'node:path';
 
 import { ashlrHome, CLOUD_REPO_PATTERN } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
-import { observedAttempts, readCiReruns } from '../fleet/ci-rerun.js';
+import { observedAttempts, observedCallResults, readCiReruns } from '../fleet/ci-rerun.js';
 import { JOURNAL_TEST_MAX, RECURRING_FLAKE_WINDOW_MS } from '../fleet/ci-flakes.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -221,17 +221,8 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
     const verdicts = new Map<string, VerdictGroup>();
     const runVerdicts = new Map<number, RerunEntry | null>();
     const attempts = new Map<string, number>();
-    const callResults = new Map<string, RerunEntry | null>();
     for (const entry of repoEntries) {
       if (Date.parse(entry.at) > nowMs) continue;
-      if (entry.outcome === 'ok' || entry.outcome === 'failed') {
-        const key = `${entry.runId}:${entry.head}`;
-        const prior = callResults.get(key);
-        if (prior === null) continue;
-        if (prior && prior.outcome !== entry.outcome) callResults.set(key, null);
-        else if (!prior || Date.parse(entry.at) < Date.parse(prior.at)) callResults.set(key, entry);
-        continue;
-      }
       if (entry.outcome !== 'verdict') continue;
       const prior = runVerdicts.get(entry.runId);
       if (prior === null) continue;
@@ -263,8 +254,8 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
 
     let callFailed = 0;
     let callOk = 0;
-    for (const entry of callResults.values()) {
-      if (!entry || !inWindow(entry, nowMs, windowMs)) continue;
+    for (const entry of observedCallResults(repoEntries, nowMs)) {
+      if (!inWindow(entry, nowMs, windowMs)) continue;
       if (entry.outcome === 'failed') callFailed += 1;
       else callOk += 1;
     }

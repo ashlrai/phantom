@@ -504,6 +504,10 @@ test IDs in the same workflow run. Each ID contributes to recurrence.
 A multi-test rerun verdict contributes only to the workflow totals.
 The CLI `ci reruns [--json]` reads recent journal entries, counts,
 recurringFlakes and verdicts without mutation.
+`observedCallResults(entries, nowMs)` folds visible call receipts by
+case-insensitive repository and workflow run ID. It preserves the earliest
+receipt, excludes conflicting heads or call outcomes, and removes test
+attribution when the receipts disagree on the test.
 
 `src/core/fleet/ci-baseline.ts` exports `analyzeCiBaseline(repo, gh?)`, a
 read-only version 1 evidence report, and `parseBaselineFailures(log, repo?,

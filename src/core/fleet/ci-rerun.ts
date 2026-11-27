@@ -95,17 +95,17 @@ function summarizeFlakes(attempts: readonly Entry[], nowMs: number, verdicts: re
 }
 
 /** Reconcile call receipts without treating replays as new calls. */
-function observedCallResults(entries: readonly Entry[], nowMs: number): Entry[] {
+export function observedCallResults(entries: readonly Entry[], nowMs: number): Entry[] {
   const calls = new Map<string, { first: Entry; outcomeConflict: boolean; testConflict: boolean }>();
   for (const e of entries) {
     if ((e.outcome !== 'ok' && e.outcome !== 'failed') || Date.parse(e.at) > nowMs) continue;
-    const key = rerunKey(e);
+    const key = workflowRunKey(e);
     const call = calls.get(key);
     if (!call) {
       calls.set(key, { first: e, outcomeConflict: false, testConflict: false });
       continue;
     }
-    call.outcomeConflict ||= call.first.outcome !== e.outcome;
+    call.outcomeConflict ||= call.first.head !== e.head || call.first.outcome !== e.outcome;
     call.testConflict ||= call.first.test !== e.test;
     if (Date.parse(e.at) < Date.parse(call.first.at)) call.first = e;
   }
@@ -115,9 +115,9 @@ function observedCallResults(entries: readonly Entry[], nowMs: number): Entry[] 
 
 /** Fired reruns still awaiting a run verdict, oldest first. */
 function pendingVerdicts(entries: readonly Entry[], calls: readonly Entry[], nowMs: number): Entry[] {
-  const verdicted = new Set(entries.filter(e => e.outcome === 'verdict' && Date.parse(e.at) <= nowMs).map(rerunKey));
+  const verdicted = new Set(entries.filter(e => e.outcome === 'verdict' && Date.parse(e.at) <= nowMs).map(workflowRunKey));
   return calls
-    .filter(e => e.outcome === 'ok' && !verdicted.has(rerunKey(e)) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
+    .filter(e => e.outcome === 'ok' && !verdicted.has(workflowRunKey(e)) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
     .sort(compareVerdictPosition);
 }
 
@@ -324,9 +324,9 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
         const attemptsByRun = new Map(observedAttempts(repoEntries, pendingAt).map(entry => [workflowRunKey(entry), entry]));
         s.verdictsPending = pending.length;
         // A future-dated verdict is invisible to the tally but still deduplicates writes.
-        const recordedVerdicts = new Set(journal.filter(e => e.outcome === 'verdict').map(rerunKey));
+        const recordedVerdicts = new Set(journal.filter(e => e.outcome === 'verdict').map(workflowRunKey));
         const eligible = pending.filter(e =>
-          !recordedVerdicts.has(rerunKey(e)) && Date.parse(e.at) <= now() - VERDICT_MIN_AGE_MS);
+          !recordedVerdicts.has(workflowRunKey(e)) && Date.parse(e.at) <= now() - VERDICT_MIN_AGE_MS);
         const cursor = s.verdictCursor;
         const next = cursor ? eligible.findIndex(e => compareVerdictPosition(e, cursor) > 0) : 0;
         const start = Math.max(0, next);

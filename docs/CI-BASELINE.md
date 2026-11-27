@@ -657,10 +657,9 @@ If visible attempt receipts disagree on the head SHA or the set of triggering te
 attempt still consumes its hourly slot but supplies no per-test attempt
 evidence to stabilization or discovery. Test order and duplicate test IDs
 within a receipt do not affect the comparison.
-Successful and failed call totals likewise count one result per repository,
-head SHA and run ID. When visible receipts disagree on whether the call
-succeeded, the result is unknown and excluded from both call totals and
-verdict polling. Recent entries retain the conflicting receipts.
+Successful and failed call totals count one result per repository and run ID.
+When visible receipts disagree on the head SHA or whether the call succeeded,
+the result is unknown and excluded from both call totals and verdict polling. Recent entries retain the conflicting receipts.
 
 ## Rerun verdicts
 
@@ -684,9 +683,10 @@ deadline. Each repository resumes after its last checked rerun, wrapping
 to the oldest eligible rerun when it reaches the end. The polling position
 persists across restarts, so transient read failures leave reruns pending
 for retry while later reruns still get checked.
-For each repository, head SHA and run ID, polling and the pending count
+For each repository and run ID, polling and the pending count
 use the earliest visible successful-call receipt in the retained journal
-for runs with a consistent call result.
+for runs with a consistent call result. A recorded verdict reserves that run ID
+against a second verdict, including when its head differs from the call receipt.
 Later receipts cannot reset the settle or expiry clock. When these receipts
 disagree on the triggering test, the workflow verdict still counts in the
 overall tally and its per-test attribution is withheld.
@@ -722,9 +722,9 @@ window, so a replay cannot bring expired evidence back into the window.
 If observed verdict receipts for a run disagree on its head, test
 attribution, or verdict, that run provides no per-test verdict evidence.
 For recurring call failures, discovery counts one call result per
-repository, head SHA and workflow run ID. The earliest observed receipt
-sets its time in the recurrence window. If observed receipts disagree on
-whether the call succeeded, that call contributes to neither tally.
+repository and workflow run ID. The earliest observed receipt sets its time in
+the recurrence window. Discovery uses the same conflict rules as the CLI
+call totals.
 `ci-reruns/status.json` contains the last
 maintenance time, per-repository counts (including `recurringFlakes` detected,
 `flakeFixesQueued` appended, `verdictsPending` and `verdictsResolved`), errors
