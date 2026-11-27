@@ -4634,6 +4634,17 @@ the addressee scope (a per-agent read narrows to one room's hints for
 that agent) and with every other filter, `matched` counting it inside
 the queue-tail match, a name no hint addresses matching nothing rather
 than erroring, and a malformed channel name answering `invalid`;
+`filter.topic` keeps only hints whose own `to` label parses to that
+exact topic component through the shared `groupAddressTopicOf` — the
+same match the inbox/channel/thread/dead-letters/work-feed `topic`
+filters apply — grammar-validated by the same channel-name rule and
+decided on the hint's address alone like `channel`, so it needs no
+referent resolution, composes with `channel` into one room AND one
+topic and with every other filter, `matched` counting it inside the
+queue-tail match, a `to` that is not a well-formed
+`group:<room>:<topic>` label never matching, a topic no hint addresses
+matching nothing rather than erroring, and a malformed topic answering
+`invalid`;
 `filter.priority` keeps only
 hints in one exact P0..P3 band — the same match every other bus read's
 `--priority` applies — decided on the resolved referent's own band (the
@@ -4701,10 +4712,13 @@ claim-holder fan-out writes appear beside registered identities' hints,
 each row's own `to` naming its addressee; the ok page carries
 `scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
 queue-tail semantics `readAgentWakes` documents, and the same
-`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
+`job`/`from`/`excludeFrom`/`channel`/`topic`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
 and resolves referents identically — sender matchers resolve through
 the registry with exact-label fallback, `channel` keeps only hints whose
-own `to` label sits under `group:<name>:*` inside the queue-tail match,
+own `to` label sits under `group:<name>:*` inside the queue-tail match
+and `topic` keeps only hints whose own `to` parses to that exact topic
+component through the same `groupAddressTopicOf` match, composing with
+`channel` into one room AND one topic,
 filtered verdicts fail closed
 `unavailable` on an unreadable bus store, and malformed filter values
 answer `invalid`; an unreadable registry or wake queue answers

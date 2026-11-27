@@ -3596,6 +3596,61 @@ describe('fleet-wide wakes read', () => {
     expect(orionOnly.wakes.map(row => row.id)).toEqual(['w-rel-orion']);
   });
 
+  it('filters hints by the topic component of the to label', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    expect(createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options).status).toBe('created');
+    expect(createAgentChannel({ name: 'ops', createdBy: 'atlas' }, options).status).toBe('created');
+    // P0 posts wake the room's group:<name>:<topic> address.
+    expect(await postChannelMessage({ from: 'atlas', channel: 'release', topic: 'deploy', text: 'ship it',
+      id: 'w-rel-deploy', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await postChannelMessage({ from: 'atlas', channel: 'release', text: 'general post',
+      id: 'w-rel-gen', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await postChannelMessage({ from: 'atlas', channel: 'ops', topic: 'deploy', text: 'page ops',
+      id: 'w-ops-deploy', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm',
+      id: 'w-dm', priority: 'P0', wake: true }, options)).toMatchObject({ status: 'posted' });
+
+    // The topic component matches across rooms — the same groupAddressTopicOf
+    // parse every other bus read's topic filter applies; the DM's agent:
+    // address is not a group label and never matches.
+    const deploy = readAllWakes(undefined, options, { topic: 'deploy' });
+    expect(deploy).toMatchObject({ status: 'ok', scope: 'fleet', matched: 2 });
+    if (deploy.status !== 'ok') throw new Error('unreachable');
+    expect(deploy.wakes.map(row => row.id)).toEqual(['w-rel-deploy', 'w-ops-deploy']);
+    // It composes with channel into one room AND one topic.
+    const opsDeploy = readAllWakes(undefined, options, { channel: 'ops', topic: 'deploy' });
+    expect(opsDeploy).toMatchObject({ status: 'ok', matched: 1 });
+    if (opsDeploy.status !== 'ok') throw new Error('unreachable');
+    expect(opsDeploy.wakes.map(row => row.id)).toEqual(['w-ops-deploy']);
+    expect(readAllWakes(undefined, options, { channel: 'release', topic: 'deploy' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+    // A topic no hint addresses matches nothing, not an error.
+    expect(readAllWakes(undefined, options, { topic: 'absent' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    expect(readAllWakes(undefined, options, { topic: 'general' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+
+    // The per-agent read narrows inside the same addressee scope: nova
+    // belongs to release, so the room's deploy hint shows while the ops
+    // room's same-topic hint stays outside her scope.
+    const novaDeploy = readAgentWakes('nova', undefined, options, { topic: 'deploy' });
+    expect(novaDeploy).toMatchObject({ status: 'ok', matched: 1 });
+    if (novaDeploy.status !== 'ok') throw new Error('unreachable');
+    expect(novaDeploy.wakes.map(row => row.id)).toEqual(['w-rel-deploy']);
+    expect(readAgentWakes('nova', undefined, options, { topic: 'general' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+    // The filter composes with the queue-tail sender match like every other.
+    const atlasDeploy = readAllWakes(undefined, options, { topic: 'deploy', from: 'atlas' });
+    expect(atlasDeploy).toMatchObject({ status: 'ok', matched: 2 });
+
+    // The same channel-name grammar the channel filter validates.
+    expect(readAgentWakes('nova', undefined, options, { topic: 'Bad Name' }))
+      .toMatchObject({ status: 'invalid' });
+    expect(readAllWakes(undefined, options, { topic: 'has space' }))
+      .toMatchObject({ status: 'invalid' });
+  });
+
   it('resolves claim-holder hints and fails closed on an unreadable bus store', async () => {
     const options = setup();
     register(options, 'atlas', 'nova');
