@@ -250,6 +250,15 @@ The items keep the association-not-causation framing since
 shadow selections never steered those runs. Withdrawing or rewriting a card
 itself remains an owner-only act on the host-signed ledger.
 
+Discovery also surfaces the learned-skills pipeline's deliberate dormancy
+as work rather than silence: on a healthy card corpus that records rows
+while the retrieval fold's eligible count stays zero — the post-merge
+credit release hold means no verified-proposal card is ever minted and the
+`creditReleased` parse gate keeps every attested card unselectable — a
+priority-3 item names the release flag, the parse gate and the empty
+use-event stream, so skills distilled from merged outcomes stop being
+invisible to routing and dispatch.
+
 Skill-evidence ledger and trajectory evidence-gap repair briefs from
 `phm improve discover` also target `ashlrai/phantom` or the bare `phantom`
 shorthand, matching case-insensitively.

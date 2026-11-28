@@ -137,9 +137,11 @@ describe('skillEvidenceBacklogItems', () => {
       corpus: corpus({ sourceState: 'missing', sourcePresent: false, filesScanned: 0 }),
       useEvents: useEvents({ sourceState: 'missing', sourcePresent: false }),
     })).toEqual([]);
+    // A healthy corpus with no recorded card rows holds no learned-skill
+    // evidence at all, so the dormancy cell stays quiet too.
     expect(await skillEvidenceBacklogItems({
       repo: REPO,
-      corpus: corpus({ cards: [card()] }),
+      corpus: corpus(),
       useEvents: useEvents({ eventState: 'present' }),
     })).toEqual([]);
   });
@@ -157,10 +159,14 @@ describe('skillEvidenceBacklogItems', () => {
       }),
       useEvents: useEvents(),
     });
-    expect(items).toHaveLength(1);
-    expect(items[0]!.title).toContain('conflicting');
-    expect(items[0]!.prompt).toContain('quarantines');
-    expect(items[0]!.prompt).toContain('inspectCurrentCards');
+    // The recorded rows also sit at eligible=0, so the dormancy cell
+    // emits beside the conflict verdict.
+    expect(items).toHaveLength(2);
+    const conflict = items.find((item) => item.title.includes('conflicting'));
+    expect(conflict).toBeDefined();
+    expect(conflict!.prompt).toContain('quarantines');
+    expect(conflict!.prompt).toContain('inspectCurrentCards');
+    expect(items.some((item) => item.title.includes('dormant'))).toBe(true);
   });
 
   it('does not emit a conflict cell on a degraded corpus read', async () => {
@@ -180,6 +186,86 @@ describe('skillEvidenceBacklogItems', () => {
     });
     expect(items).toHaveLength(1);
     expect(items[0]!.title).toContain('corpus read degraded');
+  });
+
+  it('emits the unselectable cell on a healthy corpus with recorded rows at eligible=0', async () => {
+    const items = await skillEvidenceBacklogItems({
+      repo: REPO,
+      corpus: corpus({ cards: [card()] }),
+      useEvents: useEvents(),
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.id).toMatch(/^skill-evidence-[0-9a-f]{16}$/);
+    expect(items[0]!.title).toContain('dormant');
+    expect(items[0]!.title).toContain('1 recorded card(s)');
+    expect(items[0]!.title).toContain('0 retrieval-eligible');
+    expect(items[0]!.area).toBe('skill-evidence');
+    expect(items[0]!.priority).toBe(3);
+    expect(items[0]!.repo).toBe(REPO);
+    expect(items[0]!.prompt).toContain('verified/verified-proposal 1');
+    expect(items[0]!.prompt).toContain('considered=1');
+    expect(items[0]!.prompt).toContain('eligible=0');
+    expect(items[0]!.prompt).toContain('POST_MERGE_CREDIT_OPERATIONAL_RELEASE');
+    expect(items[0]!.prompt).toContain('report-only-operational-release-disabled');
+    expect(items[0]!.prompt).toContain('creditReleased');
+    expect(items[0]!.prompt).toContain('learnFromApplied');
+    expect(items[0]!.prompt).toContain('observeShadowSkills');
+    expect(items[0]!.prompt).toContain('owner-only');
+  });
+
+  it('emits the unselectable cell for unattested candidate drafts the retrieval fold never sees', async () => {
+    // The realistic corpus while the release hold stands: skill-nudge
+    // appends unattested candidate/imported drafts, so the retrieval
+    // fold's considered/current counts are zero even though card rows
+    // exist — the dormancy verdict must still fire.
+    const draft = (skillId: string): SkillCard => ({
+      schemaVersion: 1,
+      skillId,
+      revision: 1,
+      ts: '2026-07-10T12:00:00.000Z',
+      name: 'Draft recovery workflow',
+      summary: 'lane: recover from failure-class',
+      status: 'candidate',
+      source: 'imported',
+      tags: ['skill-nudge', 'shadow'],
+      verification: { passed: false },
+    });
+    const items = await skillEvidenceBacklogItems({
+      repo: REPO,
+      corpus: corpus({ cards: [draft('skill.nudge.a'), draft('skill.nudge.b')] }),
+      useEvents: useEvents(),
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.title).toContain('dormant');
+    expect(items[0]!.title).toContain('2 recorded card(s)');
+    expect(items[0]!.prompt).toContain('candidate/imported 2');
+    expect(items[0]!.prompt).toContain('considered=0');
+    expect(items[0]!.prompt).toContain('current=0');
+    expect(items[0]!.prompt).toContain("eventState 'none'");
+  });
+
+  it('keeps the unselectable id stable across shifted counts and stays fleet-repo only', async () => {
+    const first = await skillEvidenceBacklogItems({
+      repo: REPO,
+      corpus: corpus({ cards: [card()] }),
+      useEvents: useEvents(),
+    });
+    const shifted = await skillEvidenceBacklogItems({
+      repo: REPO,
+      corpus: corpus({
+        cards: [card(), card({ skillId: 'skill.verify-shell', name: 'Verify shell changes' })],
+      }),
+      useEvents: useEvents({ eventState: 'present', events: [{ eventId: 'e1' } as SkillUseEvent] }),
+    });
+    expect(first).toHaveLength(1);
+    expect(shifted).toHaveLength(1);
+    expect(first[0]!.id).toBe(shifted[0]!.id);
+    expect(first[0]!.title).not.toBe(shifted[0]!.title);
+    expect(await skillEvidenceBacklogItems({
+      repo: 'someone/else',
+      corpus: corpus({ cards: [card()] }),
+      useEvents: useEvents(),
+    })).toEqual([]);
   });
 
   it('emits the uses cell on a degraded use-event read', async () => {
@@ -211,8 +297,10 @@ describe('skillEvidenceBacklogItems', () => {
       corpus: conflictedCorpus(),
       useEvents: degradedUses(),
     });
-    expect(conflicted).toHaveLength(2);
-    expect(new Set(conflicted.map((i) => i.id)).size).toBe(2);
+    // conflict + dormancy + degraded uses: the conflicted corpus still
+    // holds recorded rows at eligible=0.
+    expect(conflicted).toHaveLength(3);
+    expect(new Set(conflicted.map((i) => i.id)).size).toBe(3);
 
     const capped = await skillEvidenceBacklogItems({
       repo: REPO,
