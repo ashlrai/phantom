@@ -14,7 +14,7 @@ import {
 import { applyOrgOutbox, previewOrgOutbox, type OutboxDeps, type OutboxEvent } from '../core/org/agent-plane-outbox.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const ORG_SYNC_USAGE = `Usage: phm fleet org-sync [--runs-dir DIR] [--json] [--apply]
+export const ORG_SYNC_USAGE = `Usage: phm fleet org-sync [--runs-dir DIR] [--json] [--apply]
 
 Delivers pending org.membership bus events recorded in an EXISTING org/agents.json (--runs-dir,
 else $ASHLR_RUNS_DIR, else ~/.ashlr-runs). Default previews and never writes or posts.
