@@ -3489,6 +3489,95 @@ describe('wake hint result-outcome filter', () => {
   });
 });
 
+describe('wake hint referent-resolution filter', () => {
+  it('keeps only hints whose own resolution verdict equals the state', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    const post = (id: string, body: unknown) =>
+      expect(appendBusInbox({ id, from: 'atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000, body }, options).status).toBe('posted');
+    const hint = (id: string) =>
+      enqueueBusWake({ kind: 'bus.send', id, from: 'agent:atlas', to: 'agent:nova' }, { root: options.runsRoot });
+    // A live envelope plus its hint resolves; a hand-enqueued hint with no
+    // live envelope resolves unresolved.
+    post('ref-wk-live', { kind: 'note', text: 'still here' }); hint('ref-wk-live');
+    hint('ref-wk-ghost');
+    // A resolved claim-holder wh-… hint re-deriving its citing receipt.
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-REF-HO', title: 'ho', repo: 'ashlrai/phantom',
+      claimKeys: ['queue:RQ-REF-HO'] }, options)).toMatchObject({ status: 'posted' });
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:RQ-REF-HO',
+      owner: 'agent:nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'ho-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-REF-HO', status: 'done', id: 'w-ho-ref' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    // A wh-… shaped hint no live receipt reproduces resolves unresolved.
+    enqueueBusWake({ kind: 'bus.send', id: `wh-${'a'.repeat(32)}`, from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+
+    const ids = (referent: 'resolved' | 'unresolved') => {
+      const page = readAgentWakes('nova', undefined, options, { referent });
+      if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+      return page.wakes.map(row => row.id);
+    };
+    const resolvedIds = ids('resolved');
+    expect(resolvedIds).toContain('ref-wk-live');
+    expect(resolvedIds.some(id => id.startsWith('wh-'))).toBe(true);
+    expect(resolvedIds).not.toContain('ref-wk-ghost');
+    expect(resolvedIds).not.toContain(`wh-${'a'.repeat(32)}`);
+    expect(ids('unresolved')).toEqual(['ref-wk-ghost', `wh-${'a'.repeat(32)}`]);
+    // matched counts the proven matches on the resolved page.
+    expect(readAgentWakes('nova', undefined, options, { referent: 'resolved' }))
+      .toMatchObject({ status: 'ok', matched: resolvedIds.length });
+    // The verdict composes with the queue-tail filters like every other
+    // referent-resolution filter.
+    expect(readAgentWakes('nova', undefined, options, { referent: 'resolved', from: 'ghost' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    expect(readAgentWakes('nova', undefined, options, { referent: 'unresolved', id: 'ref-wk-ghost' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+    // The unfiltered read still sees every hint the filter skipped.
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', matched: 4 });
+    // The same verdict scopes the fleet-wide read identically.
+    const fleet = readAllWakes(undefined, options, { referent: 'unresolved' });
+    expect(fleet).toMatchObject({ status: 'ok', scope: 'fleet', matched: 2 });
+    if (fleet.status !== 'ok') throw new Error('unreachable');
+    expect(fleet.wakes.map(row => row.id)).toEqual(['ref-wk-ghost', `wh-${'a'.repeat(32)}`]);
+    // 'unknown' is never a value — an unreadable store makes the read
+    // unavailable first — and anything outside the enum refuses closed.
+    for (const bad of ['unknown', 'bogus', '', 'RESOLVED'] as const) {
+      expect(readAgentWakes('nova', undefined, options, { referent: bad as never }))
+        .toMatchObject({ status: 'invalid' });
+      expect(readAllWakes(undefined, options, { referent: bad as never }))
+        .toMatchObject({ status: 'invalid' });
+    }
+  });
+
+  it('fails closed on an unreadable store and never matches unknown verdicts', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    expect(appendBusInbox({ id: 'ref2-wk-live', from: 'atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: 'still here' } }, options).status).toBe('posted');
+    enqueueBusWake({ kind: 'bus.send', id: 'ref2-wk-live', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+    enqueueBusWake({ kind: 'bus.send', id: 'ref2-wk-ghost', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+    expect(readAgentWakes('nova', undefined, options, { referent: 'resolved' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+    // An unreadable bus store makes every referent's verdict unknown, so
+    // the filtered reads are unavailable — never an empty page passed off
+    // as "no resolved wakes".
+    mkdirSync(join(options.root!, 'bus-inbox'), { recursive: true });
+    writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), 'not json', { mode: 0o600 });
+    expect(readAgentWakes('nova', undefined, options, { referent: 'resolved' }))
+      .toMatchObject({ status: 'unavailable' });
+    expect(readAgentWakes('nova', undefined, options, { referent: 'unresolved' }))
+      .toMatchObject({ status: 'unavailable' });
+    expect(readAllWakes(undefined, options, { referent: 'resolved' }))
+      .toMatchObject({ status: 'unavailable' });
+    // The unfiltered read still answers with per-row unknown referents.
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok' });
+  });
+});
+
 describe('fleet-wide wakes read', () => {
   it('lists every hint across identities and bare labels with the shared filters', async () => {
     const options = setup();

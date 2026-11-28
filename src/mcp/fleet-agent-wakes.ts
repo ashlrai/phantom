@@ -24,7 +24,8 @@
  * `phm agents bus wakes --all` read — so a leader or comms pass sees who
  * has pending hints in one call instead of one per identity.
  * `since`, `job`, `from`, `excludeFrom`, `channel`, `priority`,
- * `contains`, `thread`, `inReplyTo`, `bodyKind`, `result` and `id` apply
+ * `contains`, `thread`, `inReplyTo`, `bodyKind`, `result`, `referent` and
+ * `id` apply
  * the same rules the `phm agents bus wakes` flags share and are validated
  * before any store read; the page always reports `matched` (every hint
  * the bounded queue tail accepted before its row cap) and `truncated`
@@ -40,7 +41,8 @@
  * or proven-free work passed off as fact.
  */
 import {
-  busReadContains, readAgentWakes, readAllWakes, type AllWakesPage, type WakePage,
+  busReadContains, readAgentWakes, readAllWakes, WAKE_REFERENT_STATES,
+  type AllWakesPage, type WakePage, type WakeReferentState,
 } from '../core/agents/bus-unified.js';
 import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 import { WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
@@ -50,7 +52,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent`, `job`, `from`, `excludeFrom` and `id` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'channel', 'priority', 'contains', 'id', 'thread', 'inReplyTo', 'bodyKind', 'result']);
+const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'channel', 'priority', 'contains', 'id', 'thread', 'inReplyTo', 'bodyKind', 'result', 'referent']);
 const LABEL_KEYS = ['job', 'from', 'excludeFrom', 'id', 'thread', 'inReplyTo', 'bodyKind'] as const;
 
 export interface FleetAgentWakesArgs {
@@ -82,6 +84,8 @@ export interface FleetAgentWakesArgs {
   bodyKind?: string;
   /** Keep only hints whose resolved referent is a `work.result` body reporting this outcome — the same `WORK_RESULT_OUTCOMES` codes and kind-scoped `busBodyResultOutcome` match `phm agents bus wakes --result` applies; a claim-holder hint's citing work.status receipt and unresolved/unknown referents never match. */
   result?: WorkResultOutcome;
+  /** Keep only hints whose own resolution verdict equals this state — `resolved` when the referent is live evidence, `unresolved` when the store holds none — the same match `phm agents bus wakes --referent` applies; `unknown` is not a value because an unreadable store makes the read unavailable first. */
+  referent?: WakeReferentState;
 }
 
 /**
@@ -128,6 +132,11 @@ export function parseFleetAgentWakesArgs(args: Record<string, unknown>): FleetAg
   if (result !== undefined) {
     if (typeof result !== 'string' || !(WORK_RESULT_OUTCOMES as readonly string[]).includes(result)) return null;
     parsed.result = result as WorkResultOutcome;
+  }
+  const referent = args.referent;
+  if (referent !== undefined) {
+    if (typeof referent !== 'string' || !(WAKE_REFERENT_STATES as readonly string[]).includes(referent)) return null;
+    parsed.referent = referent as WakeReferentState;
   }
   const since = args.since;
   if (since !== undefined) {
@@ -195,6 +204,7 @@ export async function readFleetAgentWakes(
     ...(args.inReplyTo === undefined ? {} : { inReplyTo: args.inReplyTo }),
     ...(args.bodyKind === undefined ? {} : { bodyKind: args.bodyKind }),
     ...(args.result === undefined ? {} : { result: args.result }),
+    ...(args.referent === undefined ? {} : { referent: args.referent }),
   };
   const page: WakePage | AllWakesPage = args.agent === undefined
     ? (deps.readAll ?? readAllWakes)(args.since, {}, filter)

@@ -4726,6 +4726,18 @@ carrying no outcome or one outside the vocabulary never matching,
 `matched` counting the proven matches on the resolved page, an
 unreadable bus store answering `unavailable`, and an outcome outside
 `WORK_RESULT_OUTCOMES` answering `invalid`;
+`filter.referent` keeps only hints whose own resolution verdict equals
+the given state — the same verdict the row's `message` and `claimHolder`
+annotations report — a `bus.send` hint's verdict its `message` status
+(`resolved` while the triggering envelope is retained, `unresolved`
+once the store was read and holds none), a claim-holder `wh-…` hint's
+verdict its citation resolution (`resolved` when a live `work.status`
+receipt reproduces it, `unresolved` when none does); `unknown` — the
+verdict only an unreadable bus store produces — is never a filter value
+because that store makes the read `unavailable` first under the same
+fail-closed rule every resolved-referent filter applies, `matched`
+counting the proven matches on the resolved page, and a value outside
+`resolved|unresolved` answering `invalid`;
 `filter.before` keeps only hints recorded strictly before that
 epoch-ms cutoff — the exclusive upper bound every bus read's `--before`
 applies on the hint's own queue time, composing with `sinceAt`'s
@@ -4746,7 +4758,7 @@ claim-holder fan-out writes appear beside registered identities' hints,
 each row's own `to` naming its addressee; the ok page carries
 `scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
 queue-tail semantics `readAgentWakes` documents, and the same
-`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
+`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`referent`/`id` filter set validates
 and resolves referents identically — sender matchers resolve through
 the registry with exact-label fallback, `channel` keeps only hints whose
 own `to` label sits under `group:<name>:*` inside the queue-tail match,

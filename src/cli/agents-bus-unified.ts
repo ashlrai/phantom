@@ -7,7 +7,7 @@ import {
 import {
   agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodyFallbackSummary, busInboxJobMarker, busPageResumeCursor, listBusChannels, postChannelMessage, postLabelMessage,
   readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
-  updateWorkStatus, INBOX_KINDS, type AllWakesPage, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WakePage, type WorkStatusInput,
+  updateWorkStatus, INBOX_KINDS, WAKE_REFERENT_STATES, type AllWakesPage, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WakePage, type WakeReferentState, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, busWorkJobDispatch, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
@@ -52,7 +52,7 @@ ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <a
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
 ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> [--interval-ms <100..60000>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] --json
-ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--frame <cli>]
+ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--referent <resolved|unresolved>] [--frame <cli>]
 ashlr agents bus dead-letters [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--priority P0..P3] [--id <id>] [--reason <${BUS_DEAD_LETTER_REASONS.join('|')}>] [--from <agent>] [--exclude-from <agent>] [--to <agent>] [--channel <name>] [--topic <topic>] [--body-kind <kind>] [--limit <1-100>] [--frame <cli>]
 ashlr agents bus show <id>
 ashlr agents bus thread <id> [--to <ref>] [--from <ref>] [--exclude-from <ref>] [--channel <name>] [--topic <topic>] [--job <id>] [--priority P0..P3] [--thread <t>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--frame <cli>]
@@ -242,6 +242,18 @@ receipt is a work.status body, which provably reports no result
 outcome, so those hints never match, and an unresolved or unknown
 referent names no provable outcome and never matches either. It
 composes with every other filter and counts in matched like the rest.
+--referent on wakes keeps only hints whose own resolution verdict equals
+the value — resolved when the hint's referent is live evidence (the
+triggering envelope a bus.send hint points at, or the citing
+work.status receipt a claim-holder wh-… hint re-derives) and unresolved
+when the store was read and holds no such evidence (expired, reclaimed
+or never posted) — so "which hints still point at live mail" and "which
+hints are dead noise" are each one filtered read; unknown, the verdict
+only an unreadable store produces, is not a value because that store
+makes the read unavailable first. The verdict needs the resolved
+referent like every other resolved-referent filter: an unreadable bus
+store answers unavailable, matched counts the proven matches on the
+resolved page, and a value outside resolved|unresolved is a usage error.
 --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
@@ -785,7 +797,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--before', '--root', '--key', '--owner', '--origin', '--lease-ms', '--token', '--outcome', '--reason',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
-  '--result', '--with', '--duration-ms', '--interval-ms',
+  '--result', '--with', '--duration-ms', '--interval-ms', '--referent',
   '--kind', '--channel', '--contains', '--exclude-from', '--exclude-owner', '--reply-to', '--in-reply-to', '--body-kind',
   '--announcer', '--exclude-announcer', '--wait-ms']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
@@ -1028,6 +1040,16 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         throw new UsageError(`--reason must be one of ${BUS_DEAD_LETTER_REASONS.join(', ')}.`);
       }
       return value as BusDeadLetterReason | undefined;
+    };
+    // Read-side --referent on wakes is the referent-resolution enum the core
+    // read validates: a bad value is a usage error here and an 'invalid'
+    // result inside the core read.
+    const referentArg = (): WakeReferentState | undefined => {
+      const value = one('--referent');
+      if (value !== undefined && !(WAKE_REFERENT_STATES as readonly string[]).includes(value)) {
+        throw new UsageError(`--referent must be one of ${WAKE_REFERENT_STATES.join(', ')}.`);
+      }
+      return value as WakeReferentState | undefined;
     };
     // Read-side --since takes the phm messages grammar — 15m, 2h, 1d, epoch
     // ms or an ISO time — resolved to epoch ms; anything else is a usage
@@ -1361,7 +1383,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       noExtra(2);
       const filter = { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'),
         channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id'),
-        thread: one('--thread'), inReplyTo: one('--in-reply-to'), bodyKind: one('--body-kind'), result: resultArg() };
+        thread: one('--thread'), inReplyTo: one('--in-reply-to'), bodyKind: one('--body-kind'), result: resultArg(),
+        referent: referentArg() };
       const since = sinceArg();
       let page: WakePage | AllWakesPage;
       if (p.bools.has('--all')) {
