@@ -82,9 +82,14 @@ support, probed exactly the way a pool worker probes them — `codex` and
 when `gh auth status` passes — reported as `autoCaps` in `--json` and named in
 text mode; an empty probe reports `autoCaps: []` and says so, since the node
 then advertises no sign-in lanes. An explicit `--caps` list is the complete
-manual advertisement and skips that probe (the local-model and `phm-<version>`
-caps still merge in); a `--caps` that names no capability is refused
-(`bad-caps`) — omit the flag to auto-detect or name at least one capability.
+manual advertisement and skips that lane probe (the local-model and
+`phm-<version>` caps still merge in); a `--caps` that names no capability is
+refused (`bad-caps`) — omit the flag to auto-detect or name at least one
+capability. Whenever the advertised caps include `gh` — detected or
+explicit — the reply also reports this machine's gh login state as `ghAuth`
+in `--json` (the same exit-code-only check `beat --probe-auth` runs, paid
+once at join), and text mode warns when it is not `ok`: gh jobs cannot route
+until `gh auth login` runs here and a `--probe-auth` beat reports ok.
 A job with no live node prints a `phm node join --owner` fix that names the
 caps it needs.
 
