@@ -609,6 +609,14 @@ harness on its eligible learned footprint, or leaves its footprint and runnable
 count unknown if no usable measurement exists and no host-wide stop applies.
 Other harnesses keep their own measurements, and a capacity file carrying an
 implausibly small footprint is not a valid document.
+A sample also needs sign of work before it can set a session cost: when every
+live session of a harness is a lone process with no children and no measured
+CPU, the CLIs were parked at prompts rather than running jobs, so their RSS is
+the idle baseline — far below what a working session costs once it spawns
+tools and servers. Publishing it would report thousands of runnable sessions,
+so the footprint is not refreshed and the harness keeps its learned footprint
+or stays unknown, with the reason in `basis.notes`. A session whose CPU reading
+is unavailable cannot prove idleness and still publishes its measured cost.
 
 `phm node route` scores each job's feasible placements by learned lane merge
 rate per token and per minute, using one or more capacity documents, a
