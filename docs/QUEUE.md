@@ -629,6 +629,11 @@ The Leader records these targets and the projected unused quota per deadline
 on the Fleet Board. On a live tick it may also re-hint eligible READY rows
 toward under-target included lanes, earliest verified deadline first. A
 supported reset proposal may affect that order, but does not spend a reset.
+Both the planning read of eligible READY rows and the locked re-hint pass
+require an admitting dispatcher snapshot. If the embedded admission record
+includes `ts`, it must match the snapshot's `last_tick`. On a mismatch the
+advisory plan falls back to dispatcher queue counts and the Leader leaves the
+ready file untouched. Older snapshots may omit `admission.ts`.
 The Leader only edits the existing `queue/ready.tsv` under the dispatcher
 and ready-file locks; it leaves held, parked, retired, exclusive and legacy
 rows without an explicit requirements cell alone. A re-hinted row cannot
