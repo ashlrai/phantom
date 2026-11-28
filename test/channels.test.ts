@@ -9,6 +9,7 @@ import {
   channelKindForSource,
 } from '../src/core/fleet/channels.js';
 import { appendInboxEntry } from '../src/core/fleet/mason-inbox.js';
+import { writeEmailDropConfig } from '../src/core/comms/email-drop-config.js';
 import { loadConfig } from '../src/core/config.js';
 import { cmdChannels } from '../src/cli/channels.js';
 
@@ -303,6 +304,22 @@ describe('channels add', () => {
     writeFileSync(join(outbox, 'note.txt'), 'x');
     const status = await buildChannelsStatus({ homeDir: root, runsDir });
     expect(status.channels.find((c) => c.kind === 'email')!.pendingOutbound).toBe(2);
+  });
+
+  it('reports a paused email-drop config as configured but not ready', async () => {
+    const root = useHome();
+    const runsDir = join(root, '.ashlr-runs');
+    // enabled:false pauses the whole drop pass — the same flag `phm comms
+    // cycle` and `phm comms email-cycle` honor — so the channel is set up but
+    // carries nothing; reporting ready would claim a connected channel.
+    await writeEmailDropConfig(runsDir, { v: 1, enabled: false, inboxDir: join(root, 'mail-in'), from: ['a@b.c'] });
+    const status = await buildChannelsStatus({ homeDir: root, runsDir });
+    const email = status.channels.find((c) => c.kind === 'email')!;
+    expect(email.configured).toBe(true);
+    expect(email.paused).toBe(true);
+    expect(email.ready).toBe(false);
+    expect(email.next).toContain('enabled');
+    expect(email.next).toContain('paused');
   });
 
   it('leaves built-in channels as a no-op with guidance', async () => {

@@ -144,7 +144,11 @@ source cannot be read. Pairing stores follow the same rule: a missing
 unpaired/zero, while an unreadable or malformed record reports `"unknown"` —
 never a guessed "not paired". `cli`, `desktop`, and `page` need no setup and
 always report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway
-file ([REMOTE-PHONE.md](REMOTE-PHONE.md)). The `imessage` row reads
+file ([REMOTE-PHONE.md](REMOTE-PHONE.md)). An email drop config saved with
+`enabled:false` keeps the row `configured` but reports `ready:false` (and
+`paused` in `--json`) — the same pause `phm comms cycle` honors — so the
+overview reads `failing` with the resume step, never `connected`. The
+`imessage` row reads
 `comms.enabled`/`comms.imessageHandle` for `configured`, the
 `imessageAllow`/`imessageHandle` allowlist for `paired`, a chat.db probe for
 `ready`, and the `imessage.teammate-tasks.v1` ledger (queued + sending only)

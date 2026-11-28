@@ -139,6 +139,17 @@ describe('buildChannelsOverview', () => {
     expect(row.next).not.toContain('/Users/someone');
   });
 
+  it('a paused email-drop config is failing with the pause as the reason, never connected', () => {
+    const facts = connectedFacts();
+    facts.status.channels[0] = statusRow('email', {
+      credential: 'file', paired: true, ready: false, paused: true,
+      next: 'the saved email-drop config sets "enabled": false — polling is paused; set "enabled": true to resume',
+    });
+    const row = byChannel(buildChannelsOverview(facts).channels)['email']!;
+    expect(row).toMatchObject({ state: 'failing', reason: 'email-drop polling is paused (enabled:false)' });
+    expect(row.next).toContain('enabled');
+  });
+
   it('none set up: every remote channel says how to start; built-ins stay connected', () => {
     const facts = connectedFacts();
     facts.status.channels = [

@@ -45,6 +45,8 @@ export interface ChannelStatusRow {
   pendingOutbound: CountOrUnknown;
   /** True when nothing stands between the channel and its next message. */
   ready: boolean;
+  /** Present only when the channel's own saved config pauses it — email-drop `enabled:false` stops the whole drop pass, so the row stays `configured` but never `ready`. */
+  paused?: boolean;
   /** Plain-language next step when the channel is not ready. */
   next?: string;
 }
@@ -239,6 +241,12 @@ export async function buildChannelsStatus(opts: ChannelsStatusOptions = {}): Pro
 
   const emailConfig = await readEmailDropConfig(runsDir);
   const emailConfigured = emailConfig.state === 'ok';
+  // `enabled:false` pauses the whole drop pass — inbound and outbound — the
+  // same flag `phm comms cycle` and `phm comms email-cycle` honor, so a
+  // paused channel is configured but carries nothing; reporting it ready
+  // would claim a connected channel (the unified inbox annotates the same
+  // pause on its pending files rather than calling the read degraded).
+  const emailPaused = emailConfigured && emailConfig.config?.enabled === false;
   const emailCred = emailCredential(homeDir, env);
   const emailPairs = emailPairedCount(runsDir);
 
@@ -278,11 +286,14 @@ export async function buildChannelsStatus(opts: ChannelsStatusOptions = {}): Pro
       received: receivedOf('email'),
       lastSeenAt: lastSeenOf('email'),
       pendingOutbound: emailPendingOutbound(emailConfig.config),
-      ready: emailConfigured,
-      ...(emailConfigured ? {} : {
-        next: emailConfig.state === 'invalid'
-          ? `email-drop config is invalid at ${emailConfig.path}`
-          : 'phm channels add email <inboxDir> --from <address>',
+      ready: emailConfigured && !emailPaused,
+      ...(emailPaused ? { paused: true } : {}),
+      ...(emailConfigured && !emailPaused ? {} : {
+        next: emailPaused
+          ? `the saved email-drop config sets "enabled": false — polling is paused; set "enabled": true in ${emailConfig.path} to resume`
+          : emailConfig.state === 'invalid'
+            ? `email-drop config is invalid at ${emailConfig.path}`
+            : 'phm channels add email <inboxDir> --from <address>',
       }),
     },
     {
