@@ -30,4 +30,16 @@ export function rosterFleet(): LiveSessionsV1 {
   return buildLiveSessions(sessions, ROSTER_NOW, { subagents: [helper] });
 }
 
+/** One running worker, and four that ended: a failure, a pull request, an empty run, and a helper whose record holds no end time or outcome. */
+export function rosterEndedFleet(over: { live?: boolean } = {}): LiveSessionsV1 {
+  const sessions = map({
+    sessions: [local('RQ-A', 'claude')],
+    mapSessions: [placed('RQ-A', 'claude', 'node-here', { activity: 'Running the tests' })],
+    recent: [local('RQ-MERGED', 'codex-local', { finishedAt: ago(12), outcome: 'pr' }), local('RQ-FAILED', 'claude', { finishedAt: ago(5), outcome: 'failed' }),
+      local('RQ-EMPTY', 'claude', { finishedAt: ago(3), outcome: 'empty' })],
+  } as Partial<FleetSessionMap>);
+  const helper = { id: 'helper-done', parent_id: 'RQ-A', depth: 1, lane: 'claude', model: 'small-model', state: 'completed', created_at: ago(20) } as SubagentRecord;
+  return buildLiveSessions(sessions, ROSTER_NOW, { subagents: [helper], live: over.live });
+}
+
 export const rosterEmpty = (): LiveSessionsV1 => buildLiveSessions(map({}), ROSTER_NOW);

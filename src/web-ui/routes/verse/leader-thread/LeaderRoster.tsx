@@ -9,6 +9,10 @@
  * Keys, with a line focused: ↑/↓ or J/K move, Enter aims, T opens the
  * conversation, L opens the log.
  * The strip folds to its one-line count and remembers that.
+ *
+ * Under the list, "Ended in the last hour" (LeaderEnded.tsx) keeps the
+ * sessions that stopped running, with how each ended; a folded strip still
+ * says how many failed.
  */
 import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
@@ -16,6 +20,9 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { liveSessionsQuery, SESSIONS_POLL_MS } from '../fleet-sessions/sessions-model.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { setLeaderDraft } from './leader-draft-store.js';
+import { LeaderEnded } from './LeaderEnded.js';
+import { endedRows, foldedFailureWords } from './leader-ended-model.js';
+import endedStyles from './leader-ended.module.css';
 import { aimText, rosterHeadline, rosterRows, stepRow, type RosterRow } from './leader-roster-model.js';
 import styles from './leader-roster.module.css';
 
@@ -68,6 +75,9 @@ export function LeaderRoster({ visible, onOpenLog, onOpenSessions, onOpenThread,
   const [aimed, setAimed] = useState<string | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const rows = useMemo(() => (read.data ? rosterRows(read.data) : []), [read.data]);
+  const ended = useMemo(() => (read.data ? endedRows(read.data) : []), [read.data]);
+  // Folding the strip must not fold a failure away.
+  const failedWords = open ? null : foldedFailureWords(ended);
 
   function aim(id: string) {
     setLeaderDraft(aimText(id));
@@ -102,12 +112,14 @@ export function LeaderRoster({ visible, onOpenLog, onOpenSessions, onOpenThread,
         Working now
       </button>
       <span className={styles.headline} role="status" aria-busy={reading || undefined} data-tone={!reading && list === null ? 'unknown' : undefined}>{headline}</span>
+      {failedWords !== null ? <span className={endedStyles.folded} data-ended-folded>{failedWords}</span> : null}
       <button type="button" className={styles.side} onClick={onOpenSessions}>All sessions</button>
     </header>
     {open && list !== null && rows.length > 0
       ? <ul ref={listRef} className={styles.list} aria-label="Running agent sessions" onKeyDown={onKeyDown}>
         {rows.map(row => <Row key={row.id} row={row} aimed={aimed === row.id} reading={openSession === row.session} onAim={aim} onOpenLog={onOpenLog} onOpenThread={onOpenThread} />)}
       </ul> : null}
+    {open && list !== null ? <LeaderEnded rows={ended} openSession={openSession} onOpenLog={onOpenLog} onOpenThread={onOpenThread} /> : null}
     {open && list !== null && read.error ? <p className={styles.note} role="status" data-tone="unknown">Refresh failed; this list may be stale.</p> : null}
     {open && list !== null && list.gaps.length > 0
       ? <p className={styles.note} data-tone="unknown">Unknown: {list.gaps[0]}{list.gaps.length > 1 ? ` (and ${list.gaps.length - 1} more in All sessions)` : ''}</p> : null}
