@@ -35,6 +35,13 @@ a small, read-only catalog and the same data already used by the fleet panes.
 | What happens when quota resets? | Binding quota and next reset with eligible jobs and alternate lanes, or an explicit unknown | Provider-scoped window and fresh scheduler eligibility, never an inferred paid fallback |
 | Can this session move? | Current worker, proposed target, last acknowledged cursor and outstanding work | Current lease and handoff receipts; not-ready if continuity is unproven |
 
+The Leader thread's **Fleet context** panel is a first operator surface for
+this pattern. Switch between routing, lane coverage, and recent delivery
+readings without leaving the conversation or losing the composer draft. The
+panel uses the same read results as the thread, keeps unavailable evidence
+unknown, and links to the existing dedicated panes for more detail. Selection
+is local. It makes no new network request and cannot dispatch work.
+
 Use a bounded, versioned description of native Phantom components and opaque
 evidence references. The host validates scope, schema, size, freshness and
 identity, resolves references itself, and paints from its component catalog.

@@ -38,6 +38,7 @@ import { appendLaneLog, laneEventItems, laneTransitions, loadLaneLog, type LaneE
 import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread } from './thread-merge-model.js';
 import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
 import { stepMatch, threadMatches, type ThreadFindItem } from './thread-find-model.js';
+import { LeaderFleetContext } from './LeaderFleetContext.js';
 import { LeaderCatchUp } from './LeaderCatchUp.js';
 import { mentionedRefs } from './thread-refs.js';
 import { MentionedSessions } from './MentionedSessions.js';
@@ -465,7 +466,6 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   let note: string | null = null;
   if (!empty && threadMissing) note = read!.reason ?? 'The Leader conversation is not available on this server.';
   else if (!empty && !inbox.length && runs.error !== undefined) note = 'The fleet inbox could not be reached.';
-  else if (!empty && !inbox.length && runs.data !== undefined) note = 'Nothing in the owner’s inbox yet — posts from any channel join this conversation.';
 
   let body: ReactNode;
   if (loading) {
@@ -530,6 +530,11 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
         {busUnavailable ? <span role="status" data-tone="unknown">Durable bus unavailable</span> : null}
       </span>
     </header>
+    <LeaderFleetContext evidence={{
+      routing: trace === null ? null : routedInFlight,
+      lanes: !fleet.error && health ? health.lanes.length : null,
+      delivery: !runs.error && merges.sourceState === 'healthy' ? merges.count : null,
+    }} onOpen={openDockPane} />
     {findOpen ? <div className={styles.findBar} onKeyDown={event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeFind(); }
     }}>
