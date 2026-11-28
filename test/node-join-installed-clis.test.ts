@@ -103,6 +103,25 @@ describe('standalone join installed-CLI candidates', () => {
     } finally { vi.restoreAllMocks(); }
   });
 
+  it('does not claim sign-in lanes to keep when the sign-in probe found none', async () => {
+    const lines = capture();
+    try {
+      const store = new MemoryStore();
+      // The first-run community case: no codex/claude/gh sign-ins, but aider
+      // and gemini binaries installed. The suggested --caps is then just the
+      // installed set — there are no sign-in lanes to keep, and the sentence
+      // must not imply the join advertised some.
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme'],
+        { store, phmVersion: () => null, providerLanes: () => [], installedClis: () => ['aider', 'gemini'] });
+      expect(code).toBe(0);
+      const text = lines.at(-1)!;
+      expect(text).toContain('No codex, claude or gh sign-ins detected');
+      expect(text).toContain('Agent CLIs installed on this machine that --caps can advertise: aider, gemini.');
+      expect(text).toContain('--caps aider,gemini');
+      expect(text).not.toContain('keep the sign-in lanes');
+    } finally { vi.restoreAllMocks(); }
+  });
+
   it('stays silent about installed CLIs when the probe finds none or --caps was explicit', async () => {
     const lines = capture();
     try {
