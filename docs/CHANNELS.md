@@ -987,7 +987,15 @@ comms inbox` and `fleet_comms_inbox` apply — and echoes the applied
 `filter` on the response exactly like
 `fleet_comms_inbox` does; an unknown, repeated or malformed parameter is a
 400, never a silently ignored filter. `phm comms inbox read` and
-`post` keep their original meaning for Mason's local inbox file.
+`post` keep their original meaning for Mason's local inbox file; `read`
+also takes `--frame <cli>` (`claude`, `codex`, `devin`, `cursor` or
+`grok`), printing the selected entries as one bounded block under
+`BEGIN`/`END UNTRUSTED MASON INBOX` markers — the same untrusted-data
+discipline under the read's own markers — with `--json` carrying it as
+`framed`, the cut stated when the 32 KiB bound clips the page, a missing
+or degraded store naming its `sourceState` inside the block rather than
+an invented empty page, `--watch` staying a stream that takes no frame,
+and `post` taking none either.
 
 ## Gmail triage building block
 

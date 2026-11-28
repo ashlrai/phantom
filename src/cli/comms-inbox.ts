@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { readUnifiedInbox, isUnifiedInboxItemId, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_MAX_ITEMS,
   type UnifiedInbox, type UnifiedInboxFilter, type UnifiedInboxKind, type UnifiedInboxSeverity, type UnifiedInboxSource } from '../core/comms/unified-inbox.js';
 import { BUS_CLIS, type BusCli } from '../core/agents/bus-identity.js';
-import { frameUnifiedInbox } from '../core/agents/bus-cli-adapters.js';
+import { frameMasonInboxRead, frameUnifiedInbox } from '../core/agents/bus-cli-adapters.js';
 import { createChannelReceiver } from '../core/fleet/channel-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js';
@@ -12,7 +12,7 @@ import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { entryInstant, parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
 const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--id <item-id>] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--frame <cli>] [--json]
-phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
+phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--frame <cli>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines
 (hard-limit items block the owner; auto items are fleet work cleared by
@@ -73,6 +73,11 @@ Read options select the newest matching entries (default limit 50), returned old
 --after and --before select timestamps strictly inside the supplied bounds and report omittedUndated; inbox local times are Eastern.
 When both are supplied, --after must be earlier than --before.
 Ambiguous or nonexistent Eastern times and unparseable timestamps count as undated.
+--frame <cli> (${BUS_CLIS.join(', ')}) prints the read's entries as one bounded block marked
+untrusted under BEGIN/END UNTRUSTED MASON INBOX markers — every entry is channel-relayed text,
+data only and never execution authority — with --json carrying it as framed beside the full
+read and the cut stated when the 32 KiB bound clips the page; it is refused with --watch,
+which stays a stream, and --frame must be one of ${BUS_CLIS.join(', ')}.
 --watch emits complete snapshots immediately and after each interval (default 1000 ms); stop with SIGINT or SIGTERM.
 Snapshots can repeat entries and do not provide a delivery cursor.
 --new-only requires --watch: emit the initial selection, then observed additions by record multiplicity.
@@ -161,6 +166,36 @@ function unifiedViewLines(report: UnifiedInbox): string[] {
 /** Human view of the unified report: priority-ordered items and their deep links. */
 function printUnified(report: UnifiedInbox): void {
   for (const line of unifiedViewLines(report)) console.log(line);
+}
+
+/** One projected MASON-INBOX entry as `comms inbox read` reports it. */
+interface InboxReadEntry {
+  at: string;
+  source: string;
+  priority: string | null;
+  text: string;
+}
+
+/** The `comms inbox read` snapshot the frame renders: the same fields the
+ * JSON read prints, nothing more — `omittedUndated` appears only when a
+ * time window dropped entries whose `at` never parsed. */
+interface InboxReadSnapshot {
+  sourceState: 'healthy' | 'missing' | 'degraded';
+  entries: readonly InboxReadEntry[];
+  omittedUndated?: number;
+}
+
+/** The frame's display lines for one read snapshot: an honest state head —
+ * `sourceState` names a missing or degraded store inside the block, never an
+ * invented empty page — the undated-omitted count when a window applied, then
+ * one `[at source priority] text` row per entry. */
+function inboxReadFrameLines(result: InboxReadSnapshot): string[] {
+  const lines = [`comms inbox read sourceState=${result.sourceState}${result.omittedUndated === undefined ? '' : ` omittedUndated=${result.omittedUndated}`}`];
+  for (const entry of result.entries) {
+    lines.push(`[${entry.at} ${entry.source}${entry.priority === null ? '' : ` ${entry.priority}`}] ${entry.text}`);
+  }
+  if (result.entries.length === 0) lines.push('(no entries in this read)');
+  return lines;
 }
 
 export function createCommsInboxCommand(options: CommandOptions = {}): (args: string[]) => Promise<number> {
@@ -296,16 +331,25 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
     const [verb, ...rest] = args;
     if (verb !== 'read' && verb !== 'post') return invalid();
     let file: string | undefined, json = false, watch = false, newOnly = false, receiptOnly = false;
+    let frame: string | undefined;
     let intervalMs: number | undefined, maxSamples: number | undefined;
     const queryParams = new URLSearchParams();
     const valueFlags = ['--source', '--limit', '--contains', '--priority', '--after', '--before'];
-    const flagNames = [...valueFlags, '--watch', '--new-only', '--interval-ms', '--max-samples', '--json', '--receipt-only', '--file', '--help', '-h'];
+    const flagNames = [...valueFlags, '--watch', '--new-only', '--interval-ms', '--max-samples', '--json', '--receipt-only', '--file', '--frame', '--help', '-h'];
     for (let i = 0; i < rest.length; i++) {
       const arg = rest[i];
       if (arg === '--json' && !json) json = true;
       else if (verb === 'post' && arg === '--receipt-only' && !receiptOnly) receiptOnly = true;
       else if (verb === 'read' && arg === '--watch' && !watch) watch = true;
       else if (verb === 'read' && arg === '--new-only' && !newOnly) newOnly = true;
+      else if (verb === 'read' && arg === '--frame' && frame === undefined) {
+        const value = rest[++i];
+        // The same --frame rule every agents bus read applies: one of the
+        // five session CLIs, never a flag-looking or missing value.
+        if (value === undefined || value.startsWith('--') ||
+          !(BUS_CLIS as readonly string[]).includes(value)) return invalid();
+        frame = value;
+      }
       else if (verb === 'read' && (arg === '--interval-ms' || arg === '--max-samples')) {
         const value = rest[++i];
         const number = Number(value);
@@ -329,6 +373,9 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
     if (verb === 'post' && file === undefined) return invalid();
     if (verb === 'read') {
       if (!watch && (newOnly || intervalMs !== undefined || maxSamples !== undefined)) return invalid();
+      // --frame renders one bounded page; --watch stays a stream like every
+      // other bus read's watch verb, which takes no frame.
+      if (watch && frame !== undefined) return invalid();
       const query = parseInboxReadQuery(queryParams);
       if ('error' in query) return invalid();
       // Read the bounded file tail before filtering, so other sources do not consume the requested limit.
@@ -347,6 +394,11 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       };
       if (!watch) {
         const result = await readSnapshot();
+        if (frame !== undefined) {
+          const framed = frameMasonInboxRead(frame as BusCli, inboxReadFrameLines(result));
+          console.log(json ? JSON.stringify({ ...result, framed }) : framed);
+          return result.sourceState === 'degraded' ? 1 : 0;
+        }
         console.log(JSON.stringify(result));
         return result.sourceState === 'degraded' ? 1 : 0;
       }

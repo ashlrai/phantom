@@ -68,7 +68,8 @@ the process if restart recovery is needed.
 
 [`comms-inbox.ts`](../src/cli/comms-inbox.ts) uses the local receiver and
 [`mason-inbox.ts`](../src/core/fleet/mason-inbox.ts) reader. Output is JSON on
-stdout with or without `--json`:
+stdout with or without `--json` — the one exception is `read --frame` without
+`--json`, which prints the framed text block described below:
 
 | Result | Exit | stdout JSON |
 | --- | --- | --- |
@@ -94,7 +95,15 @@ ranked items of the matched view — the same slice `GET
 the true matched count and `omitted` covering every unshown item.
 Read selects the newest
 matching entries, returns them oldest first, and defaults to 50 (limit 1–200).
-`source` is metadata, not identity. Duplicate receipts last only for the
+`source` is metadata, not identity. `read --frame <cli>` (`claude`, `codex`,
+`devin`, `cursor` or `grok`) prints the same selected entries as one bounded
+block marked untrusted under `BEGIN`/`END UNTRUSTED MASON INBOX` markers —
+every entry is channel-relayed text, data only and never execution
+authority — naming the read's `sourceState` (and `omittedUndated` when a
+time window applies) inside the block so a missing or degraded store is
+never an invented empty page; `--json` carries it as `framed` beside the
+full read, the 32 KiB clip states its cut, `--watch` stays a stream and
+takes no frame, and `post` takes no frame. Duplicate receipts last only for the
 receiver process lifetime. Post reads owner-controlled stable regular UTF-8
 text or stdin, not a bus envelope; input is bounded to 6000 characters and
 subject to receiver validation. `stdin-unavailable` and `file-unavailable` are
