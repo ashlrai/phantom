@@ -37,6 +37,13 @@ const observations = vi.hoisted(() => ({
   })),
 }));
 vi.mock('../src/core/improve/observe-sync.js', () => ({ syncCloudOutcomeObservations: observations.syncCloudOutcomeObservations }));
+const measurements = vi.hoisted(() => ({
+  syncImproveMeasurements: vi.fn(async () => ({
+    intact: true, reasons: [] as string[], measured: 0, appended: 0, looked: 0,
+    skipped: { noCheckout: 0, closed: 0, current: 0, failed: 0 },
+  })),
+}));
+vi.mock('../src/core/improve/measure-sync.js', () => ({ syncImproveMeasurements: measurements.syncImproveMeasurements }));
 const outsideOutcomes = vi.hoisted(() => ({
   syncOutsidePrOutcomes: vi.fn(async () => ({
     state: 'missing' as const, journalPath: '/x', sourceState: 'missing' as const,
@@ -51,6 +58,7 @@ vi.mock('../src/core/comms/pause.js', () => ({ isPaused: () => stop.paused }));
 const {
   CLOUD_IMPROVE_EVERY_MS,
   CLOUD_IMPROVE_FIRST_DELAY_MS,
+  CLOUD_MEASURE_EVERY_MS,
   CLOUD_REFRESH_EVERY_MS,
   cloudSchedulerRefusal,
   cloudSchedulerRunning,
@@ -73,6 +81,7 @@ beforeEach(() => {
   observations.syncCloudOutcomeObservations.mockReturnValue({
     intact: true, reasons: [], proposals: 0, matched: 0, appended: 0, merged: 0, reverted: 0, revertLedger: 'missing',
   });
+  measurements.syncImproveMeasurements.mockClear();
   outsideOutcomes.syncOutsidePrOutcomes.mockClear();
   vi.useFakeTimers();
 });
@@ -145,8 +154,26 @@ describe('cadence', () => {
     await vi.advanceTimersByTimeAsync(CLOUD_IMPROVE_FIRST_DELAY_MS);
     expect(discover.autoDiscover).toHaveBeenCalledTimes(1);
     expect(core.runSelfImprove).toHaveBeenCalledWith({ count: 1, auto: true });
+    expect(measurements.syncImproveMeasurements).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(CLOUD_REFRESH_EVERY_MS);
     expect(core.refreshCloudTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it('measures registered proposals on its own hourly job', async () => {
+    const measure = vi.fn(async () => ({ measured: 1 }));
+    startCloudScheduler({}, { refresh: async () => undefined, improve: async () => undefined, measure, log: () => undefined });
+    await vi.advanceTimersByTimeAsync(CLOUD_IMPROVE_FIRST_DELAY_MS);
+    expect(measure).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(CLOUD_MEASURE_EVERY_MS);
+    expect(measure).toHaveBeenCalledTimes(2);
+  });
+
+  it('Stop holds the measurement job before any ledger read, like the launch', async () => {
+    Object.assign(stop, { kill: true, paused: false });
+    startCloudScheduler({}, { refresh: async () => undefined, improve: async () => undefined, log: () => undefined });
+    await vi.advanceTimersByTimeAsync(CLOUD_IMPROVE_FIRST_DELAY_MS);
+    expect(measurements.syncImproveMeasurements).not.toHaveBeenCalled();
+    Object.assign(stop, { kill: false, paused: false });
   });
 
   it('syncs backlog PRs into the outcome ledger before the launch pick', async () => {
