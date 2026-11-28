@@ -5309,7 +5309,14 @@ OWNER THREAD markers, so channel-relayed message text reaches a
 CLI's next turn as marked-untrusted data in a single block; `--json`
 carries it as `framed` beside the full view the same way, an empty
 thread frames its own `(empty)` line and an unreadable one its
-unavailable state — never an invented conversation. Identities
+unavailable state — never an invented conversation.
+`frameBusMailbox(cli, messages)` renders one `phm bus inbox` page of
+the durable mailbox (`--frame <cli>`) — the pending `BusEnvelope`
+list — through the same markers, scrub and bound under BEGIN/END
+UNTRUSTED AGENT BUS MESSAGES, each line the raw `from`/`to` routing
+labels with the envelope id, priority and scrubbed one-line summary;
+`--json` carries it as `framed` beside the page and an empty page
+frames its own marker pair. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one

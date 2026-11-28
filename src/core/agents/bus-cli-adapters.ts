@@ -20,6 +20,7 @@ import {
 import { busBodyFallbackSummary, busBodySummary, busInboxJobMarker,
   type AgentWakeRow, type BusEnvelopeLookupJob, type ChannelReadMessage, type InboxMessage } from './bus-unified.js';
 import type { BusInboxReceipt } from '../fleet/bus-inbox.js';
+import type { BusEnvelope } from '../fleet/bus-envelope.js';
 
 export interface BusCliAdapter {
   readonly cli: BusCli;
@@ -328,6 +329,21 @@ export function frameCommsBusRead(cli: BusCli, receipts: readonly BusInboxReceip
     const envelope = receipt.envelope;
     return clean(`[${envelope.priority} id=${envelope.id} from ${envelope.from} to ${envelope.to}] ${summary(envelope.body)}`);
   }, omitted => `(${omitted} more messages not shown; read the bus again)`);
+}
+
+/**
+ * The same bounded untrusted-data block `frameCommsBusRead` produces,
+ * rendered for one `phm bus inbox` page of the durable mailbox: every
+ * pending envelope is untrusted routing data whatever agent posted it, so
+ * the bracket carries the raw `from`/`to` labels the wire recorded —
+ * mailbox labels are never authenticated identity. Same markers, scrub and
+ * clip bound, so a mailbox page fed to a next turn is marked untrusted
+ * exactly like the bus-store reads it complements.
+ */
+export function frameBusMailbox(cli: BusCli, messages: readonly BusEnvelope[]): string {
+  return frameRows(cli, BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END, messages, envelope =>
+    clean(`[${envelope.priority} id=${envelope.id} from ${envelope.from} to ${envelope.to}] ${summary(envelope.body)}`),
+    omitted => `(${omitted} more messages not shown; read the mailbox again)`);
 }
 
 /**

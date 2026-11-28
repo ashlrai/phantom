@@ -4,7 +4,9 @@ import { MAX_BUS_ENVELOPE_BYTES, BUS_PRIORITIES, validateBusEnvelope, type BusPr
 import { BusMailboxError, createBusMailbox, validateBusAddress, type BusMailbox, type BusMailboxPendingMessage } from '../core/fleet/bus-mailbox.js';
 import { groupAddressTopicOf } from '../core/fleet/bus-group.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
-import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry, type AgentRegistry } from '../core/agents/bus-identity.js';
+import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry, BUS_CLIS,
+  type AgentRegistry, type BusCli } from '../core/agents/bus-identity.js';
+import { frameBusMailbox } from '../core/agents/bus-cli-adapters.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch, BUS_READ_CONTAINS_MAX } from '../core/agents/bus-unified.js';
 import { busBodyKind, busBodyResultOutcome, busBodyThread, WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 
@@ -14,7 +16,7 @@ export const BUS_USAGE = `Usage: phm bus <send|inbox|ack> [--json]
         [--priority P0|P1|P2|P3] [--job <id>] [--channel <name>] [--topic <t>]
         [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
         [--in-reply-to <id>] [--thread <t>] [--id <id>] [--body-kind <kind>]
-        [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
+        [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--frame <cli>]
   ack <id> --to <label>
 
 Local durable mailboxes under $ASHLR_HOME/bus-mailbox (default ~/.ashlr/bus-mailbox).
@@ -50,7 +52,11 @@ only mail whose body is a work.result receipt reporting that one outcome —
 the same WORK_RESULT_OUTCOMES vocabulary the work feed's --result filter
 validates, read through the same busBodyResultOutcome own-field match every
 other bus read's --result applies, so every other body kind and a result
-carrying no outcome never matches.
+carrying no outcome never matches. --frame <cli> (claude, codex, devin,
+cursor or grok) prints the same pending page as one bounded block under the
+BEGIN/END UNTRUSTED AGENT BUS MESSAGES markers every other bus read's
+--frame uses — sender and recipient labels stay unauthenticated routing
+data — and --json adds the block as a framed field beside the page.
 Use --name=value for flag-shaped values, and ack --to <label> [--json] -- <id>
 for a flag-shaped message ID.
 No remote dispatch or agent execution. Use Phantom Secrets phm_<name> references.
@@ -63,7 +69,8 @@ class UsageError extends Error {}
 const OPTIONS: Record<string, readonly string[]> = {
   send: ['--from', '--to', '--body', '--id', '--priority', '--ttl'],
   inbox: ['--to', '--limit', '--from', '--exclude-from', '--priority', '--job', '--channel', '--topic',
-    '--since', '--before', '--contains', '--in-reply-to', '--thread', '--id', '--body-kind', '--result'],
+    '--since', '--before', '--contains', '--in-reply-to', '--thread', '--id', '--body-kind', '--result',
+    '--frame'],
   ack: ['--to'],
 };
 
@@ -238,12 +245,22 @@ export async function cmdBus(argv: string[], load: () => BusMailbox = createBusM
       output({ ok: true, ...result }, `Message ${result.replayed ? 'already accepted' : 'accepted'}: ${result.id}`);
     } else if (sub === 'inbox') {
       const limit = integer(values.get('--limit') ?? '100', '--limit', 1000);
+      const frameRaw = values.get('--frame');
+      if (frameRaw !== undefined && !(BUS_CLIS as readonly string[]).includes(frameRaw)) {
+        throw new UsageError('--frame takes one of claude, codex, devin, cursor or grok.');
+      }
+      const frame = frameRaw as BusCli | undefined;
       const match = inboxMatch(values);
       const result = load().inbox(to, limit, match);
-      output({ ok: true, ...result }, result.messages.length
-        ? result.messages.map(m => `${m.id} ${m.priority} ${m.from} -> ${m.to}\n${JSON.stringify(m.body)}`).join('\n') +
-          (result.hasMore ? '\nMore pending messages; increase --limit or acknowledge processed messages.' : '')
-        : 'No pending messages.');
+      if (frame !== undefined) {
+        const framed = frameBusMailbox(frame, result.messages);
+        output({ ok: true, ...result, framed }, framed);
+      } else {
+        output({ ok: true, ...result }, result.messages.length
+          ? result.messages.map(m => `${m.id} ${m.priority} ${m.from} -> ${m.to}\n${JSON.stringify(m.body)}`).join('\n') +
+            (result.hasMore ? '\nMore pending messages; increase --limit or acknowledge processed messages.' : '')
+          : 'No pending messages.');
+      }
     } else {
       const id = operands[0]!;
       validateBusAddress(id);
