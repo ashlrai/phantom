@@ -180,6 +180,41 @@ describe('fleet edges', () => {
     expect(await runAgentsCli(['edges', '--json'], line => out.push(line))).toBe(0);
     expect(JSON.parse(out[0]!)).toMatchObject({ schema: 'fleet.edges.v1' });
   });
+  it('filters agents edges through the same flags phm fleet edges takes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-edges-agents-'));
+    const now = Date.now();
+    const post = (id: string, from: string, to: string, at: number) => appendBusInbox(
+      { id, from, to, priority: 'P2', ttl: 9_000_000, body: { text: 'private body' },
+        channel: 'bus', channel_ref: id, sender: { agent_id: from, vendor: 'openai', human: false, team: true }, external: false },
+      { root, now: () => at });
+    const run = async (args: string[]) => {
+      const out: string[] = [];
+      const code = await runAgentsCli(['edges', '--root', root, '--json', ...args],
+        line => out.push(line), () => {});
+      return { code, json: out[0] === undefined ? null : JSON.parse(out[0]) };
+    };
+    try {
+      expect(post('fresh', 'a', 'b', now).status).toBe('posted');
+      expect(post('stale', 'c', 'd', now - 7_200_000).status).toBe('posted');
+      // --root now reaches the same store phm fleet edges --root reads.
+      expect((await run([])).json.edges).toHaveLength(2);
+      // --from narrows to one sender's links; the = form parses identically.
+      const fromA = await run(['--from', 'a']);
+      expect(fromA.code).toBe(0);
+      expect(fromA.json.edges).toEqual([
+        { from: { address: 'a', provider: 'openai' }, to: { address: 'b', provider: null },
+          messages: 1, messagesLastHour: 1, lastAt: now },
+      ]);
+      expect((await run(['--from=a'])).json.edges).toEqual(fromA.json.edges);
+      // --window-minutes drops the stale edge; an unknown flag or a malformed
+      // value is a usage error, never a silently empty read.
+      expect((await run(['--window-minutes', '60'])).json.edges).toHaveLength(1);
+      expect((await run(['--bogus'])).code).toBe(2);
+      expect((await run(['--window-minutes', '0'])).code).toBe(2);
+      expect((await run(['--from'])).code).toBe(2);
+      expect(JSON.stringify(fromA.json)).not.toContain('private body');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   it('projects live receipts, preserves unknown providers, and omits bodies', () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-edges-'));
     const options = { root, now: () => 1000 };
