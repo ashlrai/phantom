@@ -166,5 +166,11 @@ from `auth_failed`. A named model is marked in `<runs>/metrics/model-caps.json` 
 `{model, capped_at, source:"worker-log", lane, reset_at}` (`src/core/fleet/model-caps.ts`) and ends at the reset time
 or the first later success on that model. `pickModel` falls a capped model to the next one in its lane (claude
 frontier: fable, opus, sonnet). `phm pools` and `GET /api/app/pools` list the capped models as `cappedModels`.
-Not wired yet: the dispatcher calling `recordCapFromLog` and `pickModel` at launch and finish (the dispatcher lives
-outside this repo), and a lane-wide hold for limits that name no model; those stay unknown.
+`detectModelCap(text)` returns model-specific cap evidence and a valid reset time when present; plan-wide
+limits do not create a model mark. The router accepts `RoutingContext.cappedModels`: a capped Fable
+is excluded from Claude candidates, and the quality frontier route uses Opus with the reason
+"Fable skipped: observed model cap". `phm pools --text` shows the model cap timestamp and the independent
+plan percentage, leaving an unmeasured plan reading unknown.
+Not wired yet: the dispatcher calling `recordCapFromLog` and `recordModelSuccess` at finish and passing
+active model names to the router at launch (the dispatcher lives outside this repo), and a lane-wide hold
+for limits that name no model; those stay unknown.
