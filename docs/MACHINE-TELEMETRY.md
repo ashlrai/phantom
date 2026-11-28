@@ -125,8 +125,12 @@ it is labelled as an independent local host, without guessing a primary/Muse ali
 Worker beats now include optional `--host-stats <JSON>`: a closed numeric schema
 of sample time, uptime, CPU counters, load averages, RAM and free disk. Older nodes
 stay visible with unknown host metrics. These observations never influence admission.
-The local host uses Node OS counters and statfs, with no shell or network probes.
-RAM used here means physical total minus OS free, rather than working-set attribution.
+The local host uses Node OS counters, statfs and one bounded memory probe
+(`memory_pressure -Q` on macOS, `/proc/meminfo` on Linux); there are no network
+probes. RAM used here means physical total minus memory the OS reports as available
+to new work — the macOS reclaimable-inclusive free percentage or Linux MemAvailable,
+falling back to OS free pages when the probe is unreadable — rather than
+working-set attribution.
 Pressure and memguard state are available only from a fresh existing machine sample.
 
 Quota verdicts, admission fields and the 24-hour publish count require a readable
