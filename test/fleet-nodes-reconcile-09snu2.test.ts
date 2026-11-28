@@ -1,6 +1,6 @@
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cmdFleetNodes } from '../src/cli/fleet-nodes.js';
 
@@ -22,6 +22,12 @@ function run(args: string[]) {
 }
 it('reads deterministic inventory and reports heartbeat evidence in JSON and text', () => {
   const file = setup();
+  writeFileSync(join(dirname(dirname(file)), 'fleet-profile.json'), JSON.stringify({
+    schema: 'fleet.profile.v1',
+    nodes: [{ id: 'mbp8', label: 'Test node', hostname: 'fixture.invalid', tailnetIp: '192.0.2.8',
+      owners: ['team'], ramBytes: 16 * 1024 ** 3, maxCliAgents: 1, localModels: false,
+      memoryFloorPercent: 30, maxSwapGb: 2 }],
+  }), { mode: 0o600 });
   const nodes = [
     { nodeId: 'fresh', session: 1, heartbeatAt: now - 30_000, expiresAt: now + 100_000, caps: ['codex'], owners: ['team'] },
     { nodeId: 'stale', session: 2, heartbeatAt: now - 120_000, expiresAt: now + 100_000 },

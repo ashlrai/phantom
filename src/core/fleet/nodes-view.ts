@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { sampleHostStats } from '../drive/nodes/capacity.js';
 import { joinHintCommand } from '../drive/nodes/commands.js';
+import { actionableClaim } from '../drive/nodes/router.js';
 import { readPoolConfig } from '../drive/nodes/pool-host.js';
 import { NODE_OFFLINE_MS, nodeCanAcceptWork } from '../drive/nodes/router.js';
 import { isHostStats, isNodeCapacity, parseState, type HostStats, type NodeRecord, type NodesState } from '../drive/nodes/state.js';
@@ -228,11 +229,9 @@ export function buildNodesView(
     const covered = registry?.source !== 'local' || machine.isSelf;
     const silenceKnown = covered && (state !== null ? !mirrorStale : machine.isSelf && registry?.source === 'none');
     const phantom = live.length ? 'running' : silenceKnown ? 'not-running' : UNKNOWN;
-    // A claim counts only while the session that took it can still act on it:
-    // unexpired claim, unexpired record on this machine, same node and session.
     const jobs = state === null || mirrorStale ? UNKNOWN : state.jobs.filter(job => {
       const claim = job.claim;
-      return job.state === 'running' && claim !== undefined && claim.expiresAt > nowMs &&
+      return claim !== undefined && actionableClaim(state, job, nowMs) &&
         live.some(record => record.nodeId === claim.nodeId && record.session === claim.session);
     }).map(job => job.id).sort();
     // Per-session running claims under the same liveness rule `jobs` applies.

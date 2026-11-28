@@ -24,7 +24,8 @@ const node = (nodeId: string, extra: Partial<NodeRecord> = {}): NodeRecord => ({
 const POOL = { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' };
 const JOIN = 'phm node join --owner acme --primary primary-mac --backup backup-mac';
 const registry = (nodes: NodeRecord[], jobs: NodesState['jobs'] = [], extra: Partial<NodesRegistry> = {}): NodesRegistry => ({
-  source: 'pool-witness', selfNode: 'node-a', pool: POOL, state: { version: 'drive.nodes.v1', sequence: 9, observedAt: NOW - 1_000, nodes, leader: null, jobs }, ...extra,
+  source: 'pool-witness', selfNode: 'node-a', pool: POOL, state: { version: 'drive.nodes.v1', sequence: 9, observedAt: NOW - 1_000, nodes,
+    leader: { nodeId: 'node-a', session: 1, token: 1, expiresAt: NOW + 10_000 }, jobs }, ...extra,
 });
 const tailnet = (peers: Record<string, unknown>[], backend = 'Running') => JSON.stringify({
   BackendState: backend, Self: { HostName: 'node-a' }, Peer: Object.fromEntries(peers.map((peer, i) => [`key-${i}`, peer])),
@@ -83,6 +84,7 @@ describe('readNodesView', () => {
         { id: 'held', state: 'running', claim: { jobId: 'held', nodeId: 'node-a', session: 1, token: 2, leaderToken: 1, expiresAt: NOW + 5_000 } },
         { id: 'lapsed', state: 'running', claim: { jobId: 'lapsed', nodeId: 'node-b', session: 2, token: 3, leaderToken: 1, expiresAt: NOW - 1 } },
         { id: 'fenced', state: 'running', claim: { jobId: 'fenced', nodeId: 'node-b', session: 1, token: 4, leaderToken: 1, expiresAt: NOW + 5_000 } },
+        { id: 'old-epoch', state: 'running', claim: { jobId: 'old-epoch', nodeId: 'node-b', session: 2, token: 6, leaderToken: 5, expiresAt: NOW + 5_000 } },
         { id: 'queued', state: 'pending' },
       ],
     )));
