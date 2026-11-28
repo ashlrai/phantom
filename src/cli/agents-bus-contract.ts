@@ -41,6 +41,9 @@ export async function runAgentsCli(
   if (args[0] === 'bus' && AGENTS_BUS_UNIFIED_VERBS.has(args.find((arg, i) => i > 0 && arg !== '--json') ?? '')) {
     return runAgentsBusUnified(args.slice(1), out, err);
   }
+  // Subcommand-position help (`agents mesh status --help`, `agents edges -h`)
+  // prints the same contract help the bare `agents --help` does.
+  if (args.includes('--help') || args.includes('-h')) { out(HELP); return 0; }
   const json = args.includes('--json');
   if (args.filter(arg => arg === '--json').length > 1) {
     err(json ? JSON.stringify({ error: 'invalid-argument' }) : HELP);

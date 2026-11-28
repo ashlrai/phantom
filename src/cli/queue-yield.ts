@@ -1,6 +1,7 @@
 import { readGeneratorYield } from '../core/queue/generator-yield.js';
 
 export async function cmdQueueYield(args: string[]): Promise<number> {
+  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log('Usage: phm queue yield [--since 24h] [--json]'); return 0; }
   let hours = 24; let json = false; let seenSince = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json' && !json) json = true;

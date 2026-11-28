@@ -45,6 +45,15 @@ function fixture(remainingPaths = source.remainingPaths) {
   return { run, state, inspected, liveSource, liveReplacement, calls, onSearch(fn: () => void) { afterSearch = fn; }, get writes() { return writes; }, get body() { return body; }, get report() { return JSON.parse(output); } };
 }
 describe('fleet merge-recover', () => {
+  it('prints usage and exits 0 for --help and -h without touching gh or the queue', async () => {
+    const lines: string[] = [];
+    const gh: CloudGh = async () => { throw new Error('help must not call gh'); };
+    for (const flag of ['--help', '-h']) {
+      expect(await cmdFleetMergeRecover([flag], { gh, output: text => lines.push(text) })).toBe(0);
+    }
+    expect(lines.join('\n')).toContain('Usage: phm fleet merge-recover');
+    expect(await readdir(runsDir)).toEqual([]);
+  });
   it.each([
     { mergeable: 'CONFLICTING', mergeStateStatus: 'UNKNOWN' },
     { mergeable: 'CONFLICTING', mergeStateStatus: 'CLEAN' },
