@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.88 |
-| Latest dated changelog release (2026-11-28) | 3.30.88 |
+| Source package | 3.30.89 |
+| Latest dated changelog release (2026-11-28) | 3.30.89 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -15,19 +15,6 @@ Versions map to milestone series: **2.1.0** = v2.1 "Harden & Prove" (H1–H8),
 hub (M1–M20). Entries below detail each milestone; dates are merge dates into `master`.
 
 ---
-
-## [3.30.89](https://github.com/ashlrai/phantom/compare/v3.30.88...v3.30.89) (2026-11-28)
-
-
-### Changes
-
-* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795855333-N17:** ([#10794](https://github.com/ashlrai/phantom/issues/10794)) ([8072276](https://github.com/ashlrai/phantom/commit/807227603f49527c4b3c5379ffcc7d1c44dab139))
-* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795856106-N17:** ([#10795](https://github.com/ashlrai/phantom/issues/10795)) ([4df7805](https://github.com/ashlrai/phantom/commit/4df7805a184df1d183dd578025217951fdf93128))
-* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795856538-N17:** ([#10796](https://github.com/ashlrai/phantom/issues/10796)) ([d06c42d](https://github.com/ashlrai/phantom/commit/d06c42d9cdbe36627ec2454454eaa0b7fe9ca6b9))
-* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795856071-N17:** ([#10797](https://github.com/ashlrai/phantom/issues/10797)) ([baf7b0b](https://github.com/ashlrai/phantom/commit/baf7b0b21991fb4aad5afc754cb2eb4167c60f17))
-* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795856256-N17:** ([#10800](https://github.com/ashlrai/phantom/issues/10800)) ([b0a2099](https://github.com/ashlrai/phantom/commit/b0a2099d350c98095699b55c70662dae77fc6679))
-* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795853441-N17:** ([#10793](https://github.com/ashlrai/phantom/issues/10793)) ([2213edf](https://github.com/ashlrai/phantom/commit/2213edfebb8ea4ca5eb9811ee7c47184e0ac3b3e))
-* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795855849-N17:** ([#10798](https://github.com/ashlrai/phantom/issues/10798)) ([0f355e7](https://github.com/ashlrai/phantom/commit/0f355e720ebf41c4dfda1f8ff1b86ec720549dc4))
 
 ## [Unreleased]
 
@@ -181,6 +168,19 @@ Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.89] - 2026-11-28
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795855333-N17:** ([#10794](https://github.com/ashlrai/phantom/issues/10794)) ([8072276](https://github.com/ashlrai/phantom/commit/807227603f49527c4b3c5379ffcc7d1c44dab139))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795856106-N17:** ([#10795](https://github.com/ashlrai/phantom/issues/10795)) ([4df7805](https://github.com/ashlrai/phantom/commit/4df7805a184df1d183dd578025217951fdf93128))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795856538-N17:** ([#10796](https://github.com/ashlrai/phantom/issues/10796)) ([d06c42d](https://github.com/ashlrai/phantom/commit/d06c42d9cdbe36627ec2454454eaa0b7fe9ca6b9))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795856071-N17:** ([#10797](https://github.com/ashlrai/phantom/issues/10797)) ([baf7b0b](https://github.com/ashlrai/phantom/commit/baf7b0b21991fb4aad5afc754cb2eb4167c60f17))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795856256-N17:** ([#10800](https://github.com/ashlrai/phantom/issues/10800)) ([b0a2099](https://github.com/ashlrai/phantom/commit/b0a2099d350c98095699b55c70662dae77fc6679))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795853441-N17:** ([#10793](https://github.com/ashlrai/phantom/issues/10793)) ([2213edf](https://github.com/ashlrai/phantom/commit/2213edfebb8ea4ca5eb9811ee7c47184e0ac3b3e))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795855849-N17:** ([#10798](https://github.com/ashlrai/phantom/issues/10798)) ([0f355e7](https://github.com/ashlrai/phantom/commit/0f355e720ebf41c4dfda1f8ff1b86ec720549dc4))
 
 ## [3.30.88] - 2026-11-28
 
