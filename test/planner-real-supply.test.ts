@@ -180,6 +180,30 @@ describe('collectRealSupply', () => {
       { repo: 'ashlrai/phantom-secrets', status: 'unknown', reason: 'gh api actions/runs for ashlrai/phantom-secrets returned an invalid listing' },
     ]);
   });
+
+  it('counts every red scheduled-run conclusion, not only failure', async () => {
+    const { gh } = fakeGh(cleanRepos({
+      'repos/ashlrai/phantom/actions/runs': { workflow_runs: [run(1, 'Timed Out Suite', 'timed_out')] },
+      'repos/ashlrai/locus/actions/runs': { workflow_runs: [run(2, 'Startup Failure Suite', 'startup_failure')] },
+      'repos/ashlrai/lexicon/actions/runs': { workflow_runs: [run(3, 'Approval Suite', 'action_required')] },
+      'repos/ashlrai/ashlr-md/actions/runs': {
+        workflow_runs: [
+          run(4, 'Cancelled Suite', 'cancelled'), run(5, 'Stale Suite', 'stale'),
+          run(6, 'Skipped Suite', 'skipped'), run(7, 'Neutral Suite', 'neutral'),
+        ],
+      },
+      'repos/ashlrai/ashlr-plugin/actions/runs': {
+        // Latest scheduled run is green; an older failure does not make the suite red.
+        workflow_runs: [run(9, 'Recovered Suite', 'success'), run(9, 'Recovered Suite', 'failure')],
+      },
+    }));
+    const supply = await collectRealSupply({ gh, now: clock, local: false });
+    expect(supply.candidates.filter(c => c.kind === 'scheduled-red').map(c => `${c.repo}:${c.target}`)).toEqual([
+      'ashlrai/lexicon:Approval Suite',
+      'ashlrai/locus:Startup Failure Suite',
+      'ashlrai/phantom:Timed Out Suite',
+    ]);
+  });
 });
 
 const candidates = (n: number, repo = 'ashlrai/phantom') => Array.from({ length: n }, (_, i) => ({

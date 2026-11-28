@@ -160,6 +160,14 @@ const KIND_ORDER: Record<RealSupplyKind, number> = {
   'dependabot-critical': 0, 'scheduled-red': 1, 'dependabot-high': 2, 'issue': 3,
   'undocumented-verb': 4, 'readme-missing-command': 5,
 };
+/**
+ * Workflow-run conclusions that mean a scheduled suite went red — the same
+ * set merge-gates.ts (G7) and post-merge-watch.ts classify as red:
+ * failure, timed_out, action_required, startup_failure. success / neutral /
+ * skipped are green-ish, cancelled and stale are superseded evidence, never
+ * red, and a still-running or unreadable conclusion proves nothing.
+ */
+const RED_RUN_CONCLUSIONS = new Set(['action_required', 'failure', 'startup_failure', 'timed_out']);
 
 const record = (x: unknown): x is Record<string, unknown> =>
   typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -193,7 +201,8 @@ function parseAlerts(value: unknown): RealSupplyAlert[] | null {
 /**
  * The most recently failing scheduled workflow. `runs` arrives newest-first;
  * the first row per workflow_id is that workflow's latest scheduled run, and
- * only a `completed`/`failure` latest run marks the suite red.
+ * only a `completed` run whose conclusion is red (RED_RUN_CONCLUSIONS)
+ * marks the suite red.
  */
 function parseRedSuite(value: unknown, branch: string): { workflow: string; branch: string } | null | 'invalid' {
   if (!record(value) || !Array.isArray(value['workflow_runs'])) return 'invalid';
@@ -203,7 +212,7 @@ function parseRedSuite(value: unknown, branch: string): { workflow: string; bran
     if (!latest.has(run['workflow_id'])) latest.set(run['workflow_id'], run);
   }
   for (const run of latest.values()) {
-    if (run['status'] !== 'completed' || run['conclusion'] !== 'failure') continue;
+    if (run['status'] !== 'completed' || typeof run['conclusion'] !== 'string' || !RED_RUN_CONCLUSIONS.has(run['conclusion'])) continue;
     const workflow = clean(run['name'], 120);
     return { workflow: workflow === '' ? `workflow #${run['workflow_id']}` : workflow, branch };
   }
