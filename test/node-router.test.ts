@@ -99,6 +99,64 @@ describe('node router', () => {
     expect(plan.find(r => r.jobId === 'j-plain')).toMatchObject({ nodeId: null,
       fix: "No live node belongs to owner 'o'. Run: phm node join --owner o" });
   });
+
+  it('names the gh-auth fix when a node advertises the cap but is unauthed', () => {
+    const f = fixture();
+    const a = f.box.join('node-a', { owners: ['acme'], caps: ['gh', 'build'] })!;
+    f.box.heartbeat(a, { auth: 'missing' });
+    f.mac.join('node-b', { owners: ['acme'], caps: ['build'] });
+    f.box.enqueue('job-1', { owner: 'acme', requires: ['gh'] });
+    const route = f.box.plan().find(r => r.jobId === 'job-1')!;
+    expect(route.nodeId).toBeNull();
+    // node-a does advertise gh: the fix is its missing auth, not a caps gap.
+    expect(route.fix).toContain('gh auth login');
+    expect(route.fix).toContain(`phm node beat --node node-a --session ${a.session} --probe-auth`);
+    expect(route.fix).not.toContain('advertises gh');
+  });
+
+  it('names the all-declined fix when the cap-ready node released the job unrun', () => {
+    const f = fixture();
+    const a = f.box.join('node-a', { owners: ['acme'], caps: ['gh'] })!;
+    const leader = f.box.heartbeat(a, { auth: 'ok' })!.leader!;
+    f.mac.join('node-b', { owners: ['acme'], caps: ['build'] });
+    f.box.enqueue('job-1', { owner: 'acme', requires: ['gh'] });
+    const claim = f.box.claim(leader, a, 'job-1')!;
+    expect(f.box.release(claim, true)).toBe(true);
+    const route = f.box.plan().find(r => r.jobId === 'job-1')!;
+    expect(route.nodeId).toBeNull();
+    // node-a advertises gh and declined: every eligible node released it unrun.
+    expect(route.fix).toContain('unrun');
+    expect(route.fix).not.toContain('advertises gh');
+  });
+
+  it('keeps the caps fix when the declined node never advertised the required cap', () => {
+    const f = fixture();
+    const a = f.box.join('node-a', { owners: ['acme'], caps: ['build'] })!;
+    f.box.heartbeat(a);
+    f.box.enqueue('job-1', { owner: 'acme', requires: ['gh'] });
+    // A decline recorded against a session that also lacks the cap: no node is
+    // eligible, so the honest fix names the missing advertisement, not a release.
+    f.store.state.jobs[0]!.declined = [a.session];
+    const route = f.box.plan().find(r => r.jobId === 'job-1')!;
+    expect(route.nodeId).toBeNull();
+    expect(route.fix).toContain("advertises gh");
+  });
+
+  it('prefers the auth fix over all-declined when another node merely lacks gh auth', () => {
+    const f = fixture();
+    const a = f.box.join('node-a', { owners: ['acme'], caps: ['gh'] })!;
+    f.box.heartbeat(a, { auth: 'missing' });
+    const b = f.mac.join('node-b', { owners: ['acme'], caps: ['gh'] })!;
+    const leader = f.box.heartbeat(b, { auth: 'ok' })!.leader!;
+    f.box.enqueue('job-1', { owner: 'acme', requires: ['gh'] });
+    const claim = f.box.claim(leader, b, 'job-1')!;
+    expect(f.box.release(claim, true)).toBe(true);
+    const route = f.box.plan().find(r => r.jobId === 'job-1')!;
+    expect(route.nodeId).toBeNull();
+    // node-b declined but node-a never declined — it only lacks gh auth.
+    expect(route.fix).toContain('gh auth login');
+    expect(route.fix).not.toContain('unrun');
+  });
 });
 
 describe('job leases: no job runs twice', () => {
