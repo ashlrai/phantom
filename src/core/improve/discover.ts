@@ -2299,6 +2299,29 @@
  *     seam's own validation — writes the atomic writer cannot
  *     produce. Items emit only for the fleet's own repository
  *     since the ledger is this install's machinery;
+ *   - the prompt-variant promotion registry's stranded winners:
+ *     `phm eval prompts --promote` merges gate verdicts into
+ *     <ashlr home>/eval/prompts/promotions.json — `promoted[]` the
+ *     job classes whose challenger cleared the promotion gate —
+ *     and assignPromptVariant (src/core/eval/prompt-variants.ts),
+ *     the dispatch-time seam docs/router/prompt-ab.md describes,
+ *     has no call site: the registry's only readers are the eval
+ *     CLI that writes it and `phm pulse`'s dashboard, so a
+ *     gate-passed merge-rate lift never reaches a dispatched job
+ *     (promptVariantBacklogItems below). The registry is a
+ *     current-winners snapshot, not a journal, so there is no
+ *     window or recurrence bar: while promoted[] is non-empty the
+ *     stranding is present-tense and one item — the shared seam,
+ *     not one per class — asks for the wire or the recorded
+ *     blocker; an empty promoted[] emits nothing because the gate
+ *     working as designed is not a defect. Records count only
+ *     under the writer's contract (bounded classId/variant/control,
+ *     null-or-finite metric values with integer n, finite
+ *     liftPoints, parseable non-future decidedAt), malformed or
+ *     duplicate-classId rows are skipped and counted, quoted fields
+ *     are scrubbed and capped, and items emit only for the fleet's
+ *     own repository since the eval registry and dispatch seam are
+ *     this install's machinery;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2489,6 +2512,7 @@ import { ideaVerdictBacklogItems } from './idea-verdict-backlog.js';
 import { loopHintsBacklogItems } from './loop-hints-backlog.js';
 import { frictionItemBacklogItems } from './friction-item-backlog.js';
 import { routerWeightBacklogItems } from './router-weights-backlog.js';
+import { promptVariantBacklogItems } from './prompt-variant-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -5213,6 +5237,20 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // bounds; items emit only for the fleet's own repository since the
   // ledgers describe this install's routing machinery.
   await feed('routerWeightBacklogItems', () => routerWeightBacklogItems({ repo }));
+
+  // Prompt-variant promotion registry (~/.ashlr/eval/prompts/
+  // promotions.json): gate-passed prompt-variant winners that
+  // dispatch never applies because assignPromptVariant — the
+  // documented dispatch-time seam — has no call site; until now the
+  // registry's only readers were the eval CLI and `phm pulse`
+  // (promptVariantBacklogItems below). The registry is a
+  // current-winners snapshot: while promoted[] is non-empty one item
+  // — the shared seam, not one per class — asks for the wire or the
+  // recorded blocker; held-only or absent registries emit nothing.
+  // Records count only under the writer's contract, malformed rows
+  // are skipped and counted, quoted fields are scrubbed and capped,
+  // and items emit only for the fleet's own repository.
+  await feed('promptVariantBacklogItems', () => promptVariantBacklogItems({ repo }));
   return { items, errors };
 }
 
