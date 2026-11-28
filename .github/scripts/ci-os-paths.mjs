@@ -22,6 +22,7 @@ export const WINDOWS_FAST_TESTS = Object.freeze([
   'test/fleet-unfed.test.ts',
   'test/m22.backlog.test.ts',
   'test/m250.resource-control.test.ts',
+  'test/pool-pace-stops.test.ts',
 ]);
 
 export function pathIsOsSensitive(file) {
@@ -33,6 +34,7 @@ export function pathIsOsSensitive(file) {
     || BIN.test(name)
     || PATH_CODE.test(name)
     || OS_TREE.test(name)
+    || name === 'src/core/fleet/pace-stops.ts'
     || WINDOWS_FAST_TESTS.includes(name);
 }
 

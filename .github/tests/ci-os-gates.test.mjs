@@ -45,6 +45,8 @@ test('docs and unrelated source skip the OS legs; scripts, manifests, workflows,
   assert.equal(diffNeedsOsLegs(['docs/README.md', 'README.md']), false);
   assert.equal(diffNeedsOsLegs(['src/core/fleet/lanes.ts']), false);
   assert.equal(pathIsOsSensitive('scripts/install-custody.sh'), true);
+  assert.equal(pathIsOsSensitive('src/core/fleet/pace-stops.ts'), true);
+  assert.equal(pathIsOsSensitive('test/pool-pace-stops.test.ts'), true);
   assert.equal(pathIsOsSensitive('package-lock.json'), true);
   assert.equal(pathIsOsSensitive('.github/workflows/ci.yml'), true);
   assert.equal(pathIsOsSensitive('bin/ashlr'), true);
