@@ -1313,6 +1313,23 @@ describe('beat --capacity sample honesty', () => {
     expect(node.capacity).toEqual(sample);
     expect(node.slots).toBe(4);
   });
+
+  it.each([
+    { advertisedSlots: 0, capacity: sample, admitted: 0 },
+    { advertisedSlots: 1, capacity: sample, admitted: 1 },
+    { advertisedSlots: 6, capacity: sample, admitted: 4 },
+    { advertisedSlots: 6, capacity: { ...sample, slots: 0, held: 'memory-pressure' }, admitted: 0 },
+  ])('admits $admitted claims with $advertisedSlots advertised slots and $capacity.slots measured slots',
+    ({ advertisedSlots, capacity, admitted }) => {
+      const f = fixture();
+      const worker = f.a.join('laptop', { owners: ['acme'] })!;
+      executeNodeFleet('beat', beatArgs(worker.session, JSON.stringify(capacity)).concat('--slots', String(advertisedSlots)), f.a);
+      expect(f.a.snapshot().nodes.find(n => n.nodeId === 'laptop')).toMatchObject({ capacity, slots: admitted });
+      for (let i = 0; i <= admitted; i++) f.a.enqueue(`job-${i}`, { owner: 'acme' });
+      expect(f.a.plan('acme').map(route => route.nodeId)).toEqual([...Array(admitted).fill('laptop'), null]);
+      for (let i = 0; i < admitted; i++) expect(f.a.pull(worker)?.job.id).toBe(`job-${i}`);
+      expect(f.a.pull(worker)).toBeNull();
+    });
 });
 
 describe('fleet flag value validation', () => {
