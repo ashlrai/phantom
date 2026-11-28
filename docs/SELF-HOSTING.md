@@ -71,7 +71,7 @@ For a pinned source install, see [versioned self-swap](https://github.com/ashlra
 ## First run
 
 ```sh
-phm init        # writes ~/.ashlr/config.json, creates ~/.ashlr/genome, links ~/.local/bin/ashlr
+phm init        # writes ~/.ashlr/config.json, creates ~/.ashlr/genome, links ~/.local/bin/phm and ashlr
 phm doctor      # checks Node, git, config, providers and MCP registration; --fix auto-fixes
 phm verse       # opens the workbench — keep the printed tokens private
 ```

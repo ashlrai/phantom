@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -54,8 +54,8 @@ const mockExecFile = vi.fn((...args: unknown[]) => {
   return { stdin: null };
 });
 const mockExecFileSync = vi.fn();
-const mockSpawnSync = vi.fn(() => ({ status: 1, stdout: '', stderr: '' }));
-const mockSpawn = vi.fn(() => {
+const mockSpawnSync = vi.fn((..._args: unknown[]) => ({ status: 1, stdout: '', stderr: '' }));
+const mockSpawn = vi.fn((..._args: unknown[]) => {
   const child = Object.assign(new EventEmitter(), {
     stdout: new PassThrough(), stderr: new PassThrough(),
     stdin: null, pid: undefined, unref: vi.fn(),
@@ -80,7 +80,7 @@ vi.mock('node:child_process', () => ({
 // Mock readline — if readline createInterface is called, that's a TTY hazard
 // ---------------------------------------------------------------------------
 
-const mockCreateInterface = vi.fn(() => ({
+const mockCreateInterface = vi.fn((..._args: unknown[]) => ({
   question: vi.fn(),
   close: vi.fn(),
 }));
@@ -158,6 +158,23 @@ describe('onboard — basic shape', () => {
     expect(combined).toMatch(/ashlr run/);
     expect(combined).toMatch(/ashlr swarm/);
     expect(combined).toMatch(/ashlr tui/);
+  });
+
+  it('symlink step links both phm and ashlr into ~/.local/bin', async () => {
+    mockFetch.mockRejectedValue(new Error('offline'));
+    const result = await onboard(makeConfig(), { wire: false, yes: false });
+
+    const symlinkStep = result.steps.find((s) => s.name === 'symlink');
+    expect(symlinkStep).toBeDefined();
+    expect(symlinkStep!.status).toBe('ok');
+
+    const localBin = join(tmpHome, '.local', 'bin');
+    for (const name of ['phm', 'ashlr']) {
+      const dest = join(localBin, name);
+      expect(existsSync(dest)).toBe(true);
+      expect(lstatSync(dest).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(dest).endsWith(join('bin', 'ashlr'))).toBe(true);
+    }
   });
 
   it('step names include config, models, editors, symlink, genome', async () => {
