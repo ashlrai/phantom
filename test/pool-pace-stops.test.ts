@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises';
+import { link, lstat, mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -63,13 +63,29 @@ it('plans by default, applies and clears owned stops, preserving foreign files a
   await paceStops(report(20, 10, 1), root, config, true); await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' });
   await writeFile(file, 'manual hold\n'); await paceStops(report(), root, config, true); await paceStops(report(20, 10, 1), root, config, true);
   expect(await readFile(file, 'utf8')).toBe('manual hold\n'); await rm(file);
-  await writeFile(join(root, 'manual'), 'written-by: phm pools pace\nmanual hold\n'); await symlink(join(root, 'manual'), file);
-  await paceStops(report(20, 10, 1), root, config, true); expect(await readFile(file, 'utf8')).toContain('manual hold');
+  const target = join(root, 'manual'), content = 'written-by: phm pools pace\nmanual hold\n';
+  await writeFile(target, content); await symlink(target, file, 'file');
+  expect(await paceStops(report(20, 10, 1), root, config, true)).toMatchObject({ plans: [{ action: 'keep' }] });
+  expect((await lstat(file)).isSymbolicLink()).toBe(true);
+  expect(await readFile(target, 'utf8')).toBe(content);
   await expect(paceStops(report(), root, { claude: ['../docs'] }, true)).rejects.toThrow();
   vi.spyOn(console, 'log').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {});
   await writeFile(join(root, 'loops.json'), JSON.stringify(config));
   expect(await cmdFleetPace(['--write-stops', root, '--loops', join(root, 'loops.json'), '--json'], { read: async () => report() })).toBe(0);
   expect(await cmdFleetPace(['--apply'], { read: async () => report() })).toBe(2);
+});
+
+it('leaves marker-like hard links and directories alone', async () => {
+  root = await mkdtemp(join(tmpdir(), 'pace-foreign-'));
+  const file = join(root, 'STOP-docs'), target = join(root, 'manual'), config = { claude: ['docs'] };
+  const content = 'written-by: phm pools pace\nmanual hold\n';
+  await writeFile(target, content); await link(target, file);
+  expect(await paceStops(report(20, 10, 1), root, config, true)).toMatchObject({ plans: [{ action: 'keep' }] });
+  expect(await readFile(file, 'utf8')).toBe(content);
+  expect(await readFile(target, 'utf8')).toBe(content);
+  await rm(file); await mkdir(file);
+  expect(await paceStops(report(20, 10, 1), root, config, true)).toMatchObject({ plans: [{ action: 'keep' }] });
+  expect((await lstat(file)).isDirectory()).toBe(true);
 });
 
 it('explains free slots, stale provider records, history and exhausted pools without negative burn', async () => {
