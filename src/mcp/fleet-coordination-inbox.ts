@@ -3,10 +3,14 @@
  * inbox — `projectCoordinationInbox`, the same projection
  * `phm fleet coordination inbox --agent <name>` serves. The ledger's agent
  * labels are coordination names, not bus routing labels: `agent` is required
- * and matched exactly (plus the `all` broadcast), and `from` matches the
- * recorded sender exactly — nothing resolves through the agent registry.
- * `from`, `since`, `before` and `contains` take the same names and rules the
- * CLI flags share — validation delegates to the one
+ * and matched exactly (plus the `all` broadcast), `from` matches the
+ * recorded sender exactly — nothing resolves through the agent registry —
+ * `excludeFrom` drops only posts that sender label provably wrote (a
+ * proposal carries no sender an exclusion could match, so it stays), `id`
+ * keeps the one record carrying that exact message or proposal id and `kind`
+ * keeps only one record class (`message` or `proposal`). `from`,
+ * `excludeFrom`, `id`, `kind`, `since`, `before` and `contains` take the same
+ * names and rules the CLI flags share — validation delegates to the one
  * `parseCoordinationInboxFilters` parser, so an MCP client can never
  * disagree with the CLI about what a filter means; `since` is the inclusive
  * lower bound and `before` the exclusive upper bound composing one
@@ -27,7 +31,7 @@ import {
 
 /** The ledger's own agent-label grammar — the same bound `from` validates under. */
 const AGENT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const FILTER_KEYS = ['from', 'since', 'before', 'contains'] as const;
+const FILTER_KEYS = ['from', 'excludeFrom', 'id', 'kind', 'since', 'before', 'contains'] as const;
 const INBOX_KEYS: ReadonlySet<string> = new Set(['agent', ...FILTER_KEYS]);
 
 /** Resolved inbox read — the addressed agent plus the shared filter set the CLI read applies. */
@@ -44,8 +48,9 @@ export interface FleetCoordinationInboxArgs {
  * already satisfies, so a value outside it could never match a row and is a
  * usage error, not an empty inbox. Every filter value must be a string — the
  * shared `parseCoordinationInboxFilters` then applies the CLI grammar
- * (`from` the same label rule, `since`/`before` the 15m/2h/1d/epoch-ms/ISO
- * time grammar, `contains` a non-empty needle of at most 512 chars).
+ * (`from`/`excludeFrom`/`id` the same label rule, `kind` the message|proposal
+ * record-class enum, `since`/`before` the 15m/2h/1d/epoch-ms/ISO time
+ * grammar, `contains` a non-empty needle of at most 512 chars).
  * Unknown keys, wrong types and malformed values are all refused before the
  * ledger is touched.
  */

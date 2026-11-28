@@ -56,7 +56,7 @@ describe('fleet coordination inbox real MCP handler', () => {
     const tool = tools.find(t => t.name === name);
     expect(tool?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false, required: ['agent'] });
     expect(Object.keys((tool?.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}).sort())
-      .toEqual(['agent', 'before', 'contains', 'from', 'since']);
+      .toEqual(['agent', 'before', 'contains', 'excludeFrom', 'from', 'id', 'kind', 'since']);
     expect(tool?.annotations?.readOnlyHint).toBe(true);
     expect(tool?.annotations).toEqual(tools.find(t => t.name === 'fleet_coordination_returns')?.annotations);
   });
@@ -89,6 +89,24 @@ describe('fleet coordination inbox real MCP handler', () => {
     expect(before.value.proposals).toEqual([]);
   });
 
+  it('excludes a sender while proposals stay, and narrows by id and kind', async () => {
+    const noAlice = await read({ agent: 'bob', excludeFrom: 'alice' });
+    expect(noAlice.value.messages.map((m: { id: string }) => m.id)).toEqual(['m-lunch']);
+    expect(noAlice.value.proposals).toHaveLength(2);
+
+    const oneMessage = await read({ agent: 'bob', id: 'm-all' });
+    expect(oneMessage.value.messages.map((m: { id: string }) => m.id)).toEqual(['m-all']);
+    expect(oneMessage.value.proposals).toEqual([]);
+
+    const proposalsOnly = await read({ agent: 'bob', kind: 'proposal' });
+    expect(proposalsOnly.value.messages).toEqual([]);
+    expect(proposalsOnly.value.proposals.map((p: { id: string }) => p.id).sort()).toEqual(['p-1', 'p-2']);
+
+    const messagesOnly = await read({ agent: 'bob', kind: 'message' });
+    expect(messagesOnly.value.messages).toHaveLength(3);
+    expect(messagesOnly.value.proposals).toEqual([]);
+  });
+
   it('reports an unreadable ledger as unknown without exposing thrown text', async () => {
     vi.mocked(coordination.readFleetBoard).mockImplementation(() => { throw new Error('private-reader-detail'); });
     const { result, text, value } = await read();
@@ -117,6 +135,12 @@ describe('fleet coordination inbox real MCP handler', () => {
     { agent: 42 },
     { agent: 'bob', from: 'bad from' },
     { agent: 'bob', from: 7 },
+    { agent: 'bob', excludeFrom: 'bad from' },
+    { agent: 'bob', excludeFrom: 7 },
+    { agent: 'bob', id: 'bad id' },
+    { agent: 'bob', id: 7 },
+    { agent: 'bob', kind: 'bogus' },
+    { agent: 'bob', kind: 7 },
     { agent: 'bob', since: 'not-a-time' },
     { agent: 'bob', before: 'whenever' },
     { agent: 'bob', contains: '' },

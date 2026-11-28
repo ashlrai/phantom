@@ -141,10 +141,59 @@ describe('fleet coordination inbox read filters', () => {
     expect(iso.json.messages.map((m: any) => m.id).sort()).toEqual(['m-all', 'm-late']);
   });
 
+  it('excludes one sender\'s posts while proposals stay, and narrows by id and kind', async () => {
+    await seed();
+
+    // --exclude-from drops only posts the named sender provably wrote;
+    // proposals carry no sender an exclusion could match, so they stay.
+    const noAlice = await inbox('bob', ['--exclude-from', 'alice']);
+    expect(noAlice.json.messages.map((m: any) => m.id)).toEqual(['m-lunch']);
+    expect(noAlice.json.proposals).toHaveLength(2);
+
+    // Exclusion composes with the addressed set and the window.
+    const composed = await inbox('bob', ['--exclude-from', 'alice', '--since', String(T0 + 1_500)]);
+    expect(composed.json.messages).toEqual([]);
+    expect(composed.json.proposals).toHaveLength(2);
+
+    // A sender both included and excluded matches nothing; the sender read
+    // still drops every proposal.
+    const both = await inbox('bob', ['--from', 'alice', '--exclude-from', 'alice']);
+    expect(both.json.messages).toEqual([]);
+    expect(both.json.proposals).toEqual([]);
+
+    // --id keeps the one record carrying that exact id, message or proposal.
+    const oneMessage = await inbox('bob', ['--id', 'm-lunch']);
+    expect(oneMessage.json.messages.map((m: any) => m.id)).toEqual(['m-lunch']);
+    expect(oneMessage.json.proposals).toEqual([]);
+
+    const allRows = await inbox('bob');
+    const proposalId = allRows.json.proposals[0].id as string;
+    const oneProposal = await inbox('bob', ['--id', proposalId]);
+    expect(oneProposal.json.messages).toEqual([]);
+    expect(oneProposal.json.proposals.map((p: any) => p.id)).toEqual([proposalId]);
+
+    // --kind keeps only one record class: the assignments read is one call.
+    const proposalsOnly = await inbox('bob', ['--kind', 'proposal']);
+    expect(proposalsOnly.json.messages).toEqual([]);
+    expect(proposalsOnly.json.proposals).toHaveLength(2);
+
+    const messagesOnly = await inbox('bob', ['--kind', 'message']);
+    expect(messagesOnly.json.messages.map((m: any) => m.id).sort()).toEqual(['m-all', 'm-deploy', 'm-lunch']);
+    expect(messagesOnly.json.proposals).toEqual([]);
+
+    // --kind composes with the sender read: proposals stay sender-less.
+    const kindFrom = await inbox('bob', ['--kind', 'proposal', '--from', 'alice']);
+    expect(kindFrom.json.messages).toEqual([]);
+    expect(kindFrom.json.proposals).toEqual([]);
+  });
+
   it('refuses malformed filters and keeps board free of them', async () => {
     await seed();
     for (const args of [
       ['--from', 'bad label'],
+      ['--exclude-from', 'bad label'],
+      ['--id', 'bad id'],
+      ['--kind', 'bogus'],
       ['--since', 'bogus'],
       ['--before', '15x'],
       ['--contains', '   '],
@@ -162,6 +211,11 @@ describe('fleet coordination inbox read filters', () => {
     expect(code).toBe(0);
     expect(json.messages.map((m: any) => m.id).sort()).toEqual(['m-all', 'm-deploy']);
     expect(json.proposals).toEqual([]);
+
+    const { code: kindCode, json: kindJson } = await cli(['--agent', 'bob', '--kind', 'proposal', '--json'], cmdFleetInbox);
+    expect(kindCode).toBe(0);
+    expect(kindJson.messages).toEqual([]);
+    expect(kindJson.proposals).toHaveLength(2);
   });
 
   it('keeps an unreadable ledger unknown instead of fabricating rows', async () => {
