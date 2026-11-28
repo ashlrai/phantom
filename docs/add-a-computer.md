@@ -53,7 +53,13 @@ measured harnesses — found by file presence at the usual install locations
 only. No CLI is executed, no sign-in is checked and no credential is read,
 so the list is `--caps` candidates, not advertised lanes: pass the names to
 keep (plus the sign-in lanes, since `--caps` replaces the whole set) to
-advertise them.
+advertise them. An explicit `--caps` that names an agent CLI — `codex`,
+`claude` or a community harness such as `aider` or `gemini` — is checked for
+the CLI's binary at the usual install locations (file presence only; nothing
+is executed and no sign-in is checked). The reply names any cap it cannot
+find under `unverifiedCaps` in `--json` and in a plain-words line in text
+mode: jobs requiring those caps will route here and cannot run until the CLI
+is installed, so install it or rejoin without the cap.
 Capability names are open, not a fixed list: a job's `--requires` is matched
 against the caps a node advertises, so name the agent CLIs this computer can
 run — `codex`, `claude`, `aider`, `gemini`, `copilot`, `goose`, `droid` and the

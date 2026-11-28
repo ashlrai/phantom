@@ -26,7 +26,11 @@ the \`codex\`, \`claude\` and \`gh\` logins, checked by exit code only, no
 credential read — and names installed agent CLIs as further \`--caps\`
 candidates; an explicit \`--caps\` replaces that detection, while the
 \`phm-<version>\` build cap and \`local-lanes.json\` model caps always merge
-in. A job
+in. An explicit \`--caps\` that names an agent CLI (\`codex\`, \`claude\` or a
+community harness such as \`aider\` or \`gemini\`) is checked for the CLI's
+binary at the usual install locations — file presence only — and the reply
+names any it cannot find under \`unverifiedCaps\`, since jobs requiring them
+would route here and could not run. A job
 carries an owner scope and only nodes in that scope
 see or pull it. The router picks the least-loaded live node that advertises the job's caps
 (\`gh\` also needs a local gh-auth heartbeat). A per-job lease with a fencing token means no

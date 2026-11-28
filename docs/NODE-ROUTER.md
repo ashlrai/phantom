@@ -99,8 +99,12 @@ binaries present on this computer (`aider`, `gemini`, `copilot`, `goose`,
 `droid` and the other measured harnesses), found by file presence at
 allowlisted install paths only: no CLI is executed, no sign-in is checked
 and no credential is read. The names are `--caps` candidates, not advertised
-lanes.
-A job with no live node prints a `phm node join --owner` fix that names the
+lanes. The mirror check runs on an explicit `--caps`: every advertised cap
+that names a known agent CLI (`codex`, `claude` or a community harness) is
+looked up at the same allowlisted install paths — file presence only — and
+the reply names the ones it cannot find under `unverifiedCaps`, since jobs
+requiring them would route here and could not run; a miss warns, it never
+refuses the join. A job with no live node prints a `phm node join --owner` fix that names the
 caps it needs.
 
 To send real work instead of an empty claim, embed the task text in the job:
