@@ -692,6 +692,9 @@ describe('standalone join sign-in lanes', () => {
       expect(text).toContain('caps: none');
       expect(text).toContain('No codex, claude or gh sign-ins detected on this machine');
       expect(text).toContain('pass --caps');
+      // The empty probe must still point at --caps for CLIs auto-detect never
+      // probes (aider, gemini, ...): --caps takes any capability name.
+      expect(text).toContain('accepts any capability name');
     } finally { vi.restoreAllMocks(); }
   });
 });

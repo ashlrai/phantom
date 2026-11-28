@@ -174,7 +174,7 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
     if (auto !== undefined) {
       lines.push(auto.length
         ? `Caps auto-detected from this machine's sign-ins: ${auto.join(', ')}. Pass --caps to advertise a different set.`
-        : 'No codex, claude or gh sign-ins detected on this machine — the join advertises no sign-in lanes. Sign in to one and join again, or pass --caps to advertise lanes yourself.');
+        : 'No codex, claude or gh sign-ins detected on this machine — the join advertises no sign-in lanes. Sign in to one and join again, or pass --caps to advertise lanes yourself — it accepts any capability name, and auto-detect probes only the codex, claude and gh sign-ins.');
     }
     // gh is advertised but this machine's login is not verified ok: name the
     // state and the fix at join — where `gh auth login` is still cheap —
