@@ -28,7 +28,7 @@
  * implementations again and the scratch-script problem has simply moved.
  */
 
-import { originFor, resolveLlamaRuntimeConfig } from './config.js';
+import { originFor, resolveLlamaRuntimeSettings } from './config.js';
 import { startAnthropicProxy } from './anthropic-proxy.js';
 import type { AnthropicProxyHandle, AnthropicRequestAttribution } from './anthropic-proxy.js';
 import { loadConfigReadOnly } from '../../config.js';
@@ -96,7 +96,7 @@ export async function startAnthropicProxyHost(): Promise<AnthropicProxyHandle> {
     // that starts on the documented defaults.
     cfg = undefined;
   }
-  const runtime = resolveLlamaRuntimeConfig(cfg);
+  const runtime = resolveLlamaRuntimeSettings(cfg);
 
   return startAnthropicProxy({
     cfg,

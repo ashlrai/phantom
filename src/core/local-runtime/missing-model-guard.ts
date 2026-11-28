@@ -43,6 +43,7 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+import { isPlainRecord } from './llama/config.js';
 import { localRuntimeDir } from './llama/paths.js';
 
 /**
@@ -54,7 +55,7 @@ import { localRuntimeDir } from './llama/paths.js';
 export const MISSING_MODEL_BACKOFF_MS = 30 * 60 * 1000;
 
 /** How often a holding attempt re-stats the model path for early recovery. */
-export const MISSING_MODEL_POLL_MS = 30 * 1000;
+const MISSING_MODEL_POLL_MS = 30 * 1000;
 
 /** What a start attempt should do about a model that may be absent. */
 export type MissingModelDecision = 'run' | 'blocked' | 'retry-after';
@@ -115,8 +116,8 @@ export function readMissingModelLastFailedAt(statePath: string): number | null {
     const stat = statSync(statePath);
     if (!stat.isFile() || stat.size > STATE_FILE_MAX_BYTES) return null;
     const parsed: unknown = JSON.parse(readFileSync(statePath, 'utf8'));
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-    const at = (parsed as Record<string, unknown>)['lastFailedAt'];
+    if (!isPlainRecord(parsed)) return null;
+    const at = parsed['lastFailedAt'];
     return typeof at === 'number' && Number.isFinite(at) && at >= 0 ? at : null;
   } catch {
     return null;
