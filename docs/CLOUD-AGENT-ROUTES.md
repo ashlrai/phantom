@@ -15,10 +15,17 @@ HTTP GETs use the server's existing read-session boundary.
 | GET `/api/verse/fleet/work-board/orders` | Inbox order states with sanitized owner job/lane, PR, missing evidence, `asOf`, and trace/live/lane availability; no order bodies. |
 
 The board accepts optional `limit` (integer clamped to 1–100, default 20),
-`thread` (exact channel reference, at most 200 characters) and `state`
-(one of RECEIVED, ASSIGNED, RUNNING, BLOCKED, VERIFIED — the response then
-also reports `state` and `matched`, the true filtered total across the whole
-settled scan before the display cap) query parameters.
+`thread` (exact channel reference, at most 200 characters), `state`
+(one of RECEIVED, ASSIGNED, RUNNING, BLOCKED, VERIFIED), `since`/`before`
+(the shared 15m, 2h, 1d, epoch-ms or ISO grammar reading one
+`[since, before)` window on the request's recorded receivedAt),
+`channel`/`topic`/`id` (the shared bus address filters on each request's
+own `to`/`id`), `to`/`from`/`excludeFrom` (the shared sender/recipient
+identity-label filters resolved through the bus registry), `priority`
+(one P0–P3 band), `job`, `bodyKind`, `result` and `contains` (the shared
+bus body filters) query parameters; malformed values answer 400. Under
+`state` or any narrowing filter the response also reports `matched`, the
+true filtered total across the whole settled scan before the display cap.
 It reports `inbox`, `claims` and `truncated`; unavailable evidence is not an
 empty healthy board. The orders GET accepts `since` (integer hours, 1–720),
 returns at most 20 orders, and bounds each evidence read to eight seconds.
@@ -48,7 +55,7 @@ not automatically the host's state.
 | `fleet_bus_claims` | The live coordination claims — the same listBusClaims projection as `phm agents bus claim list`: `key`/`owner`/`origin`/`jobs` apply the CLI's shared filters and `source` keeps missing verified-empty versus unavailable honest; read-only, no caller roots, never acquires or releases. |
 | `fleet_bus_board` | The shared task board's fleet-wide pending digest — the same readBusBoardPending/BusBoard.pendingAll read `phm comms inbox`'s board source projects: every unacknowledged delivery and every task whose observed hold is not `held`, with `job`/`id`/`contains`/`since`/`before`/`from`/`excludeFrom` the shared board-digest filters; `source` keeps missing verified-empty versus unavailable honest; read-only, no caller roots, never acknowledges or claims. |
 | `fleet_seat_handoffs` | The fleet-wide bot-seat handoff plan — the same planSeatHandoffs projection as `phm bots handoffs`: every roster seat's projected lifecycle state, handoff eligibility and pending (unjournaled) handoff records; takes no arguments, `apply` stays false, and an unreadable plan reports `unavailable`, never an invented empty roster. |
-| `fleet_work_board` | The same bus work board; optional `limit` and exact `thread` filter. |
+| `fleet_work_board` | The same bus work board; `limit`, `thread`, `state`, `since`/`before`, `channel`/`topic`/`id`, `to`/`from`/`excludeFrom`, `priority`, `job`, `bodyKind`, `result` and `contains` apply the shared bus-read filters. |
 | `fleet_coordination_claims` | Read-only fresh host advisory coordination claims, newest first. Reading a claim never creates one. |
 | `fleet_claim_execution` | Read-only sanitized evidence of which live advisory claims have started executing. Grants no claim authority. |
 | `fleet_claim_notices` | Read-only Slack claim-notice evidence: bound threads, sent bus notes and a dry-run plan of pending notices. Authority none: it never sends, ledgers or writes. |
