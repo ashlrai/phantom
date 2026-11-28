@@ -1630,7 +1630,11 @@ slots, dispatcher lane caps and ready counts, and recent finishes in
 `metrics/jobs.jsonl`. It models **additional** work: already-running jobs
 occupy slots but are not credited with future quota spend. Headroom must be
 observed and positive for a machine to offer extra slots; a shared slot can
-only be allocated once. Unhinted work and future arrivals are not counted.
+only be allocated once. A dispatcher pause or admission stop leaves no
+additional slots. When the dispatcher reports fleet cap and running counts,
+the plan shares the remaining fleet slots across lanes in deadline order.
+Admission evidence explicitly dated to another tick is ignored. Unhinted work
+and future arrivals are not counted.
 
 Waste is in the allowance's own units. Where there is a quota change and
 matching finishes inside the observation interval, the estimate uses the
