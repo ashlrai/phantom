@@ -191,6 +191,6 @@ export async function readDispatchStatus(path: string): Promise<unknown> {
   } catch { return null; }
 }
 
-export async function readUsageSpend(path = join(homedir(), '.ashlr-runs', 'queue', 'status.json'), now = Date.now()): Promise<SpendSnapshot> {
+export async function readUsageSpend(path = join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'status.json'), now = Date.now()): Promise<SpendSnapshot> {
   return projectUsageSpend(await readDispatchStatus(path), now);
 }
