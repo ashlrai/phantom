@@ -415,6 +415,15 @@ describe('pull open-work count', () => {
     expect(executeNodeFleet('pull', pullArgs('worker', worker.session), f.a))
       .toEqual({ pulled: false, slots: 1 });
   });
+  it('does not count gh work behind an auth fence the node advertised past', () => {
+    const f = fixture();
+    // The cap is advertised but this machine's gh login is not ok: routing
+    // refuses the job, so an empty pull must not read it as open work here.
+    const worker = f.a.join('worker', { owners: ['o'], caps: ['gh'], auth: 'missing', slots: 1 })!;
+    f.a.enqueue('needs-gh', { owner: 'o', requires: ['gh'] });
+    expect(executeNodeFleet('pull', pullArgs('worker', worker.session), f.a))
+      .toEqual({ pulled: false, slots: 1 });
+  });
   it('does not count a job this session declined', () => {
     const f = fixture();
     const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
