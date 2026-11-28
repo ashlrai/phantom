@@ -102,7 +102,8 @@ describe('multi-Mac worker lifecycle', () => {
 
   it('runs a claimed pack and returns only its bounded artifact reference', async () => {
     const { result } = await start();
-    expect(ports.spawn).toHaveBeenCalledWith('/reviewed/runner', ['run'], expect.objectContaining({ detached: true, shell: false }));
+    expect(ports.spawn).toHaveBeenCalledWith('/reviewed/runner', ['run'], expect.objectContaining({ detached: true, shell: false,
+      env: expect.objectContaining({ HOME: homedir() }) }));
     child.stdout.write('{"resultRef":"branch:job-j"}');
     child.emit('close', 0);
     expect(await result).toEqual({ jobId: 'j', completed: true });

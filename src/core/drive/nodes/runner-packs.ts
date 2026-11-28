@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { homedir } from 'node:os';
+import { providerSessionEnv } from './provider-binary.js';
 
 const PACK_NAME = /^[a-z][a-z0-9-]{0,39}$/;
 const MAX_PACKS = 16;
@@ -13,7 +13,7 @@ export function probeRunnerPacks(runner: string, run: typeof spawnSync = spawnSy
   let result: ReturnType<typeof spawnSync>;
   try {
     result = run(runner, ['packs'], { shell: false, timeout: 5000, encoding: 'utf8', maxBuffer: 4096,
-      stdio: ['ignore', 'pipe', 'ignore'], env: { PATH: process.env['PATH'], HOME: homedir() } });
+      stdio: ['ignore', 'pipe', 'ignore'], env: providerSessionEnv() });
   } catch { return []; }
   if (!result || result.error || result.status !== 0 || typeof result.stdout !== 'string') return [];
   try {

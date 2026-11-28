@@ -14,7 +14,7 @@ import { hostSlots, type HostSlotLease } from './host-slots.js';
 import { localPhmVersion, versionCap } from './phm-version.js';
 import { lightRecipe, restockLight } from './light.js';
 import { probeLocalAuth } from './auth-probe.js';
-import { NODE_PROVIDERS, isNodeProvider, resolveProviderBinary, type NodeProvider, type ProviderBinaries, type ProviderBinaryDeps } from './provider-binary.js';
+import { NODE_PROVIDERS, isNodeProvider, providerSessionEnv, resolveProviderBinary, type NodeProvider, type ProviderBinaries, type ProviderBinaryDeps } from './provider-binary.js';
 import { probeRunnerPacks } from './runner-packs.js';
 import type { JobView } from './index.js';
 import { sampleHostStats } from './capacity.js';
@@ -27,7 +27,7 @@ export function probeProviderBinaries(run: typeof spawnSync = spawnSync, binaryD
     const binary = resolveProviderBinary(provider, binaryDeps);
     if (!binary) continue;
     const result = run(binary, statusArgs[provider], { timeout: 5000, stdio: 'ignore', shell: false,
-      env: { PATH: process.env['PATH'], HOME: homedir() } });
+      env: providerSessionEnv() });
     if (!result.error && result.status === 0) found[provider] = binary;
   }
   return found;
@@ -165,7 +165,7 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       .flatMap(provider => binaries[provider] ? [[provider, binaries[provider]]] : []));
     const reply = await new Promise<ReturnType<typeof classifyRunnerReply>>(resolve => {
       const child = spawn(runner, ['run'], { shell: false, detached: true,
-        env: { PATH: process.env['PATH'], HOME: homedir() }, stdio: ['pipe', 'pipe', 'ignore'] });
+        env: providerSessionEnv(), stdio: ['pipe', 'pipe', 'ignore'] });
       active++;
       const lane = job.requires.find(cap => lanes.includes(cap));
       if (lane) activeClaims.set(claim.jobId, lane);

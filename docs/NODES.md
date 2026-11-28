@@ -41,7 +41,11 @@ then the version-manager shims (`~/.volta/bin`, `~/.bun/bin`,
 later directories only resolve when nothing earlier exists, so an existing
 installation keeps its precedence. A lane is
 advertised only when that exact path exits 0 for `login status` (Codex) or
-`auth status --json` (Claude); output and auth files are never read. They check the host-local PAUSE and KILL
+`auth status --json` (Claude); output and auth files are never read. The probe
+runs under `providerSessionEnv` — the allowlisted session env (identity,
+locale, temp and CLI config dirs; inherited tokens never forwarded) — so a CLI
+whose sign-in lookup needs the account identity, like Claude's `USER`-dependent
+auth check, is probed the way it will actually run. They check the host-local PAUSE and KILL
 sentinels in the runs directory (`ASHLR_RUNS_DIR`, else `~/.ashlr-runs`) and stop the runner process group
 when a lease cannot be renewed. Auth stays device-bound: never copy `~/.codex`,
 `~/.claude` or any auth directory. Publication remains exclusively on the primary
