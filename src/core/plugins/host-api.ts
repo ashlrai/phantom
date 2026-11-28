@@ -19,7 +19,41 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { audit } from '../sandbox/audit.js';
 import { PLUGIN_API_VERSION, type PluginHost } from './types.js';
-import type { AshlrConfig } from '../types.js';
+import type { AshlrConfig, AuditEntry } from '../types.js';
+
+// ---------------------------------------------------------------------------
+// Shared plugin paths & audit helper (re-resolve homedir() per call)
+// ---------------------------------------------------------------------------
+
+/** Root directory for operator-installed plugins (`~/.ashlr/plugins`). */
+export function pluginsRootDir(): string {
+  return join(homedir(), '.ashlr', 'plugins');
+}
+
+/** Directory for a named plugin (`~/.ashlr/plugins/<name>`). */
+export function pluginDir(name: string): string {
+  return join(pluginsRootDir(), name);
+}
+
+/** Per-plugin writable data directory (`~/.ashlr/plugin-data/<name>`). */
+export function pluginDataDir(name: string): string {
+  return join(homedir(), '.ashlr', 'plugin-data', name);
+}
+
+/** Emit a plugin-scoped audit record (not repo- or sandbox-bound). */
+export function auditPlugin(
+  action: string,
+  summary: string,
+  result: AuditEntry['result'] = 'ok',
+): void {
+  audit({
+    action,
+    repo: null,
+    sandboxId: null,
+    summary,
+    result,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Deep-freeze helper
@@ -66,7 +100,7 @@ export function buildHostApi(
 
   // --- dataDir: created eagerly ---
   // Re-resolve homedir() at call time (house convention: tests relocate HOME).
-  const dataDir = join(homedir(), '.ashlr', 'plugin-data', name);
+  const dataDir = pluginDataDir(name);
   try {
     mkdirSync(dataDir, { recursive: true });
   } catch {
@@ -102,13 +136,7 @@ export function buildHostApi(
     audit(action: string, summary: string): void {
       // Delegate to core audit(), prefixing action with "plugin:<name>:".
       // audit() never throws (house invariant).
-      audit({
-        action: `plugin:${name}:${action}`,
-        repo: null,
-        sandboxId: null,
-        summary,
-        result: 'ok',
-      });
+      auditPlugin(`plugin:${name}:${action}`, summary, 'ok');
     },
 
     get settings(): Readonly<Record<string, unknown>> {

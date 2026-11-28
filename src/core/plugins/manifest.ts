@@ -16,7 +16,14 @@
 
 import { readFileSync, statSync } from 'node:fs';
 import { join, basename, sep, resolve } from 'node:path';
-import { PLUGIN_API_VERSION, type PluginManifest, type PluginCapability } from './types.js';
+import {
+  PLUGIN_API_VERSION,
+  isPluginCapability,
+  isPluginRecord,
+  isValidPluginName,
+  type PluginManifest,
+  type PluginCapability,
+} from './types.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -24,17 +31,6 @@ import { PLUGIN_API_VERSION, type PluginManifest, type PluginCapability } from '
 
 /** Maximum allowed manifest.json size in bytes (64 KB). */
 const MAX_MANIFEST_BYTES = 64 * 1024;
-
-/** Valid plugin name pattern: ^[a-z][a-z0-9-]{0,39}$ */
-const NAME_RE = /^[a-z][a-z0-9-]{0,39}$/;
-
-/** Valid PluginCapability values. */
-const VALID_CAPABILITIES: ReadonlySet<string> = new Set<PluginCapability>([
-  'scanner',
-  'template',
-  'provider',
-  'command',
-]);
 
 // ---------------------------------------------------------------------------
 // Proto-pollution guard
@@ -47,22 +43,18 @@ const VALID_CAPABILITIES: ReadonlySet<string> = new Set<PluginCapability>([
  * in practice, but we cap depth at 8 to be defensive.
  */
 function hasPoisonKey(value: unknown, depth = 0): boolean {
-  if (depth > 8) return false;
-  if (value === null || typeof value !== 'object') return false;
+  if (depth > 8 || value === null || typeof value !== 'object') return false;
+  if (Array.isArray(value)) {
+    return value.some((item) => hasPoisonKey(item, depth + 1));
+  }
 
-  const keys = Object.keys(value as object);
-  for (const key of keys) {
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
     if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
       return true;
     }
-    if (hasPoisonKey((value as Record<string, unknown>)[key], depth + 1)) {
+    if (hasPoisonKey(record[key], depth + 1)) {
       return true;
-    }
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value as unknown[]) {
-      if (hasPoisonKey(item, depth + 1)) return true;
     }
   }
 
@@ -73,6 +65,12 @@ function hasPoisonKey(value: unknown, depth = 0): boolean {
 // Hand-rolled semver range matcher
 // ---------------------------------------------------------------------------
 
+function parseNonNegInt(raw: string | undefined): number | null {
+  if (raw === undefined || raw.trim() === '') return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
 /**
  * Parse a semver string "MAJOR.MINOR.PATCH" into a numeric triple.
  * Returns null if the string is not parseable as a 3-part semver.
@@ -80,9 +78,10 @@ function hasPoisonKey(value: unknown, depth = 0): boolean {
 function parseSemver(s: string): [number, number, number] | null {
   const parts = s.trim().split('.');
   if (parts.length !== 3) return null;
-  const nums = parts.map(Number);
-  if (nums.some((n) => !Number.isInteger(n) || n < 0)) return null;
-  return nums as [number, number, number];
+  const maj = parseNonNegInt(parts[0]);
+  const min = parseNonNegInt(parts[1]);
+  const patch = parseNonNegInt(parts[2]);
+  return maj !== null && min !== null && patch !== null ? [maj, min, patch] : null;
 }
 
 /**
@@ -106,49 +105,27 @@ function semverSatisfies(range: string, host: string): boolean {
 
   const r = range.trim();
 
-  // Caret: ^MAJOR.MINOR.PATCH
-  if (r.startsWith('^')) {
+  // Caret (^MAJOR.MINOR.PATCH) or tilde (~MAJOR.MINOR.PATCH)
+  if (r.startsWith('^') || r.startsWith('~')) {
     const parsed = parseSemver(r.slice(1));
     if (!parsed) return false;
     const [rMaj, rMin, rPatch] = parsed;
     if (hMaj !== rMaj) return false;
-    if (hMin < rMin) return false;
-    if (hMin === rMin && hPatch < rPatch) return false;
-    return true;
-  }
-
-  // Tilde: ~MAJOR.MINOR.PATCH
-  if (r.startsWith('~')) {
-    const parsed = parseSemver(r.slice(1));
-    if (!parsed) return false;
-    const [rMaj, rMin, rPatch] = parsed;
-    if (hMaj !== rMaj || hMin !== rMin) return false;
-    if (hPatch < rPatch) return false;
-    return true;
+    if (r.startsWith('~')) return hMin === rMin && hPatch >= rPatch;
+    return hMin > rMin || (hMin === rMin && hPatch >= rPatch);
   }
 
   // Wildcard: "1.x" or "1.0.x"
   if (r.includes('x') || r.includes('X') || r.includes('*')) {
     const parts = r.split('.');
-    // "1.x" (2 parts with x)
-    if (parts.length === 2) {
-      const maj = Number(parts[0]);
-      if (!Number.isInteger(maj) || maj < 0) return false;
-      const minPart = (parts[1] ?? '').trim().toLowerCase();
-      if (minPart !== 'x' && minPart !== '*') return false;
-      return hMaj === maj;
-    }
-    // "1.0.x" (3 parts with x in last position)
-    if (parts.length === 3) {
-      const maj = Number(parts[0]);
-      const min = Number(parts[1]);
-      const patchPart = (parts[2] ?? '').trim().toLowerCase();
-      if (!Number.isInteger(maj) || maj < 0) return false;
-      if (!Number.isInteger(min) || min < 0) return false;
-      if (patchPart !== 'x' && patchPart !== '*') return false;
-      return hMaj === maj && hMin === min;
-    }
-    return false;
+    if (parts.length !== 2 && parts.length !== 3) return false;
+    const last = (parts[parts.length - 1] ?? '').trim().toLowerCase();
+    if (last !== 'x' && last !== '*') return false;
+    const maj = parseNonNegInt(parts[0]);
+    if (maj === null || hMaj !== maj) return false;
+    if (parts.length === 2) return true;
+    const min = parseNonNegInt(parts[1]);
+    return min !== null && hMin === min;
   }
 
   // Exact: "MAJOR.MINOR.PATCH"
@@ -156,6 +133,18 @@ function semverSatisfies(range: string, host: string): boolean {
   if (!parsed) return false;
   const [rMaj, rMin, rPatch] = parsed;
   return hMaj === rMaj && hMin === rMin && hPatch === rPatch;
+}
+
+function readRequiredString(
+  obj: Record<string, unknown>,
+  field: 'name' | 'version' | 'apiVersion' | 'entry',
+  dir: string,
+): { ok: true; value: string } | { ok: false; reason: string } {
+  const raw = obj[field];
+  if (typeof raw !== 'string' || raw.length === 0) {
+    return { ok: false, reason: `manifest.json: "${field}" must be a non-empty string in ${dir}` };
+  }
+  return { ok: true, value: raw };
 }
 
 // ---------------------------------------------------------------------------
@@ -216,39 +205,27 @@ export function readManifest(
     }
 
     // --- Top-level must be a plain object ---
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (!isPluginRecord(parsed)) {
       return { ok: false, reason: `manifest.json must be a plain object in ${dir}` };
     }
 
-    const obj = parsed as Record<string, unknown>;
-
     // --- Required string fields ---
-    if (typeof obj['name'] !== 'string' || obj['name'].length === 0) {
-      return { ok: false, reason: `manifest.json: "name" must be a non-empty string in ${dir}` };
-    }
-    if (typeof obj['version'] !== 'string' || obj['version'].length === 0) {
-      return {
-        ok: false,
-        reason: `manifest.json: "version" must be a non-empty string in ${dir}`,
-      };
-    }
-    if (typeof obj['apiVersion'] !== 'string' || obj['apiVersion'].length === 0) {
-      return {
-        ok: false,
-        reason: `manifest.json: "apiVersion" must be a non-empty string in ${dir}`,
-      };
-    }
-    if (typeof obj['entry'] !== 'string' || obj['entry'].length === 0) {
-      return { ok: false, reason: `manifest.json: "entry" must be a non-empty string in ${dir}` };
-    }
+    const nameField = readRequiredString(parsed, 'name', dir);
+    if (!nameField.ok) return nameField;
+    const versionField = readRequiredString(parsed, 'version', dir);
+    if (!versionField.ok) return versionField;
+    const apiVersionField = readRequiredString(parsed, 'apiVersion', dir);
+    if (!apiVersionField.ok) return apiVersionField;
+    const entryField = readRequiredString(parsed, 'entry', dir);
+    if (!entryField.ok) return entryField;
 
-    const name = obj['name'] as string;
-    const version = obj['version'] as string;
-    const apiVersion = obj['apiVersion'] as string;
-    const entry = obj['entry'] as string;
+    const name = nameField.value;
+    const version = versionField.value;
+    const apiVersion = apiVersionField.value;
+    const entry = entryField.value;
 
     // --- name pattern ---
-    if (!NAME_RE.test(name)) {
+    if (!isValidPluginName(name)) {
       return {
         ok: false,
         reason: `manifest.json: name "${name}" does not match ^[a-z][a-z0-9-]{0,39}$ in ${dir}`,
@@ -273,20 +250,22 @@ export function readManifest(
     }
 
     // --- capabilities: non-empty array of valid strings ---
-    if (!Array.isArray(obj['capabilities']) || (obj['capabilities'] as unknown[]).length === 0) {
+    if (!Array.isArray(parsed['capabilities']) || (parsed['capabilities'] as unknown[]).length === 0) {
       return {
         ok: false,
         reason: `manifest.json: "capabilities" must be a non-empty array in ${dir}`,
       };
     }
-    const capabilities = obj['capabilities'] as unknown[];
-    for (const cap of capabilities) {
-      if (typeof cap !== 'string' || !VALID_CAPABILITIES.has(cap)) {
+    const rawCapabilities = parsed['capabilities'] as unknown[];
+    const capabilities: PluginCapability[] = [];
+    for (const cap of rawCapabilities) {
+      if (!isPluginCapability(cap)) {
         return {
           ok: false,
           reason: `manifest.json: invalid capability "${String(cap)}" in ${dir}`,
         };
       }
+      capabilities.push(cap);
     }
 
     // --- entry: relative, no absolute, no ".." traversal ---
@@ -313,16 +292,16 @@ export function readManifest(
 
     // --- Optional fields ---
     const description =
-      typeof obj['description'] === 'string' ? obj['description'] : undefined;
+      typeof parsed['description'] === 'string' ? parsed['description'] : undefined;
     const homepage =
-      typeof obj['homepage'] === 'string' ? obj['homepage'] : undefined;
+      typeof parsed['homepage'] === 'string' ? parsed['homepage'] : undefined;
 
     const manifest: PluginManifest = {
       name,
       version,
       apiVersion,
       entry,
-      capabilities: capabilities as PluginCapability[],
+      capabilities,
       ...(description !== undefined ? { description } : {}),
       ...(homepage !== undefined ? { homepage } : {}),
     };
