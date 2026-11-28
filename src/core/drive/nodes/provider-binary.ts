@@ -18,6 +18,14 @@ export function isNodeProvider(value: unknown): value is NodeProvider {
   return typeof value === 'string' && (NODE_PROVIDERS as readonly string[]).includes(value);
 }
 
+/** The login command each sign-in-probed provider's own CLI documents — the
+ * fix a join reply or doctor line names when the binary is installed but the
+ * sign-in check does not pass. */
+export const PROVIDER_LOGIN_COMMANDS: Readonly<Record<NodeProvider, string>> = Object.freeze({
+  codex: 'codex login',
+  claude: 'claude auth login',
+});
+
 /** Ordered allowlist of absolute install locations. PATH is never consulted. */
 export function providerBinaryCandidates(provider: NodeProvider, deps: ProviderBinaryDeps = {}): string[] {
   return isNodeProvider(provider) ? binaryCandidates(provider, deps) : [];

@@ -19,16 +19,42 @@ import { probeRunnerPacks } from './runner-packs.js';
 import type { JobView } from './index.js';
 import { sampleHostStats } from './capacity.js';
 
-/** Exit-code-only sign-in check of each provider's one resolved absolute binary. No PATH lookup or auth-file reads. */
-export function probeProviderBinaries(run: typeof spawnSync = spawnSync, binaryDeps: ProviderBinaryDeps = {}): ProviderBinaries {
+/** The per-provider verdict the bare join's reply names: `ok` the CLI's own
+ * status command exited 0; `failed` it ran to a nonzero exit — a real signed-out
+ * verdict; `unknown` it could not be spawned, was killed or timed out — never a
+ * verdict; `absent` no allowlisted binary exists, so the check never ran. */
+export type ProviderSignIn = 'ok' | 'failed' | 'unknown' | 'absent';
+export interface ProviderProbe {
+  provider: NodeProvider;
+  /** The resolved absolute binary the check ran against; null when absent. */
+  binary: string | null;
+  signIn: ProviderSignIn;
+}
+
+/** Exit-code-only sign-in state of each provider's one resolved absolute binary —
+ * the detailed form of probeProviderBinaries: same allowlist, same status
+ * commands, same timeout and env, but keeps every provider's verdict instead of
+ * dropping each non-ok lane. The join reply uses it to name a CLI that is
+ * installed but not signed in (the most common first-run gap) instead of letting
+ * "no sign-ins detected" read as "nothing installed". */
+export function probeProviderStates(run: typeof spawnSync = spawnSync, binaryDeps: ProviderBinaryDeps = {}): ProviderProbe[] {
   const statusArgs: Record<NodeProvider, string[]> = { codex: ['login', 'status'], claude: ['auth', 'status', '--json'] };
-  const found: ProviderBinaries = {};
-  for (const provider of NODE_PROVIDERS) {
+  return NODE_PROVIDERS.map(provider => {
     const binary = resolveProviderBinary(provider, binaryDeps);
-    if (!binary) continue;
+    if (binary === null) return { provider, binary: null, signIn: 'absent' as const };
     const result = run(binary, statusArgs[provider], { timeout: 5000, stdio: 'ignore', shell: false,
       env: { PATH: process.env['PATH'], HOME: homedir() } });
-    if (!result.error && result.status === 0) found[provider] = binary;
+    const signIn: ProviderSignIn = result.error || result.status === null ? 'unknown'
+      : result.status === 0 ? 'ok' : 'failed';
+    return { provider, binary, signIn };
+  });
+}
+
+/** Exit-code-only sign-in check of each provider's one resolved absolute binary. No PATH lookup or auth-file reads. */
+export function probeProviderBinaries(run: typeof spawnSync = spawnSync, binaryDeps: ProviderBinaryDeps = {}): ProviderBinaries {
+  const found: ProviderBinaries = {};
+  for (const probe of probeProviderStates(run, binaryDeps)) {
+    if (probe.signIn === 'ok' && probe.binary !== null) found[probe.provider] = probe.binary;
   }
   return found;
 }
