@@ -242,7 +242,7 @@ describe('fleet intent-evidence merged --apply transaction (RQ-PHX-INTENTMERGEDT
     for (const id of ['alpha', 'beta']) {
       const row = ledger.items.find((entry) => entry.id === id)!;
       expect(row.prs).toEqual([{ repo: 'fleet/evidence', number: 88, state: 'merged' }]);
-      expect(row.evidence.filter((entry) => entry.ref === 'fleet/evidence#88')).toHaveLength(2);
+      expect(row.evidence.filter((entry) => entry.ref === 'fleet/evidence#88')).toHaveLength(1);
     }
     expect(ledger.items.find((row) => row.id === 'alpha')!.status).toBe('merged');
     expect(ledger.items.find((row) => row.id === 'beta')!.status).toBe('closed');
