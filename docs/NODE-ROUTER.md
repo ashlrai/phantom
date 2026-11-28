@@ -109,6 +109,10 @@ advertised. A manual runner can also read the printed task, do the work and
 `complete --result` with its own result text — the pack is what an automated
 runner executes, not a requirement on the result.
 
+`phm node plan --owner <scope>` shows that owner's rows from the same routing
+plan used by `pull`. Earlier jobs from other owners can reserve capacity on
+shared nodes during planning, while their rows stay outside the scoped output.
+
 `phm node result --job <id> --owner <scope>` is the read-only way back to a
 job's outcome: `pending`, `running` (naming the node whose live claim can act,
 or `no live claim` once the claim lapsed or was fenced — the same words
