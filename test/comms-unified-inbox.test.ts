@@ -16,7 +16,7 @@ import { appendDraft as appendCommsDraft, writeInbox as writeCommsInbox, type Co
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type DispatchStuckSourceRead, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type StuckFixesSourceRead, type StrandedWorkSourceRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type AppsRecoverySourceRead, type DispatchStuckSourceRead, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type StuckFixesSourceRead, type StrandedWorkSourceRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
 import type { ParkedGroup, ParkedMetDep, ParkedUnmetDep } from '../src/core/fleet/runs-parked-queue.js';
 import type { StuckFixRow } from '../src/core/fleet/stuck-fixes.js';
 import type { StrandedItem } from '../src/core/fleet/stranded-work.js';
@@ -5955,6 +5955,169 @@ describe('readUnifiedInbox dispatch stuck', () => {
     const byJob = await readStuck(pending, { filter: { job: 'RQ-STUCK-2' } });
     expect(byJob.items.filter(i => i.source === 'dispatch-stuck').map(i => i.id))
       .toEqual(['dispatch-stuck:RQ-STUCK-2']);
+  });
+});
+
+describe('readUnifiedInbox apps recovery', () => {
+  const INV_A = '123e4567-e89b-42d3-a456-426614174000';
+  const INV_B = '223e4567-e89b-42d3-a456-426614174001';
+  const INV_C = '323e4567-e89b-42d3-a456-426614174002';
+  const recoveryRow = (over: Partial<AppsRecoverySourceRead['invocations'][number]> = {}): AppsRecoverySourceRead['invocations'][number] => ({
+    invocationId: INV_A, latestCursor: 1, latestTime: now - 5 * 60_000,
+    observedApps: ['Phantom', 'Codex'],
+    retainedObservedState: [{ app: 'Phantom', observedRunning: false }, { app: 'Codex', observedRunning: true }],
+    retainedDiagnostics: [{ app: 'Phantom', outcome: 'launch-failed' }, { app: 'Codex', outcome: 'running' }],
+    retainedHealthy: false, recoveries: 1, consecutiveFailures: 3, totalFailedCycles: 5,
+    terminalOutcome: null, ...over,
+  });
+  const recoveryRead = (invocations: AppsRecoverySourceRead['invocations'], over: Partial<AppsRecoverySourceRead> = {}): AppsRecoverySourceRead => ({
+    v: 1, availability: 'available', truncated: false, scanCursor: 0, scannedEvents: 0, invocations, ...over,
+  });
+  const readRecovery = (projection: AppsRecoverySourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readAppsRecovery: () => projection, ...extra });
+
+  it('reports a verified-empty history as healthy with a real zero', async () => {
+    const inbox = await read();
+    expect(inbox.sources['apps-recovery']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'apps-recovery')).toHaveLength(0);
+  });
+
+  it('lists a live failing invocation as warn retrying, a silent one as warn silent and a fresh failed run as high failed', async () => {
+    const inbox = await readRecovery(recoveryRead([
+      recoveryRow(),
+      recoveryRow({ invocationId: INV_B, latestTime: now - 45 * 60_000, retainedHealthy: null,
+        retainedObservedState: null, observedApps: null, consecutiveFailures: 0 }),
+      recoveryRow({ invocationId: INV_C, terminalOutcome: 'failed', latestTime: now - 10 * 60_000,
+        retainedHealthy: null, totalFailedCycles: 6 }),
+      // Finished and healthy runs never list.
+      recoveryRow({ invocationId: '423e4567-e89b-42d3-a456-426614174003', terminalOutcome: 'completed',
+        latestTime: now - 20 * 60_000, retainedHealthy: null }),
+      recoveryRow({ invocationId: '523e4567-e89b-42d3-a456-426614174004', retainedHealthy: true,
+        retainedObservedState: [{ app: 'Phantom', observedRunning: true }],
+        retainedDiagnostics: [{ app: 'Phantom', outcome: 'running' }], consecutiveFailures: 0, totalFailedCycles: 0 }),
+    ]));
+    expect(inbox.sources['apps-recovery']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'apps-recovery');
+    expect(items).toHaveLength(3);
+
+    const retrying = items.find(i => i.id === `apps-recovery:${INV_A}`)!;
+    expect(retrying).toMatchObject({
+      kind: 'apps-recovery-retrying', severity: 'warn', blocking: false,
+      title: 'App recovery retrying: Phantom',
+      since: new Date(now - 5 * 60_000).toISOString(), expiresAt: null,
+    });
+    expect(retrying.detail).toContain('3 consecutive failed cycles');
+    expect(retrying.act).toEqual([
+      `phm fleet apps-recovery-check --invocation ${INV_A} --max-age-ms 1800000 --json`,
+      'phm fleet apps-recovery-state --json',
+    ]);
+
+    const silent = items.find(i => i.id === `apps-recovery:${INV_B}`)!;
+    expect(silent).toMatchObject({
+      kind: 'apps-recovery-silent', severity: 'warn', blocking: false,
+      title: 'App recovery silent for 45 min', expiresAt: null,
+    });
+
+    const failed = items.find(i => i.id === `apps-recovery:${INV_C}`)!;
+    expect(failed).toMatchObject({
+      kind: 'apps-recovery-failed', severity: 'high', blocking: false,
+      title: 'App recovery failed: Phantom',
+      since: new Date(now - 10 * 60_000).toISOString(),
+      expiresAt: new Date(now - 10 * 60_000 + 24 * 3_600_000).toISOString(),
+    });
+    expect(failed.detail).toContain('terminal outcome failed');
+  });
+
+  it('ages a failed verdict out of the view once its announcement window closes', async () => {
+    const inbox = await readRecovery(recoveryRead([
+      recoveryRow({ invocationId: INV_C, terminalOutcome: 'failed', latestTime: now - 25 * 3_600_000 }),
+    ]));
+    expect(inbox.sources['apps-recovery']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'apps-recovery')).toHaveLength(0);
+  });
+
+  it('reports an unreadable or invalid-cursor history as unavailable — unknown, never an empty list', async () => {
+    for (const availability of ['unavailable', 'invalid-cursor'] as const) {
+      const inbox = await readRecovery(recoveryRead([recoveryRow()], { availability }));
+      expect(inbox.sources['apps-recovery']).toEqual({ state: 'unavailable', pending: null });
+      expect(inbox.items.filter(i => i.source === 'apps-recovery')).toHaveLength(0);
+    }
+    const throwing = await read({ readAppsRecovery: () => { throw new Error('history boom'); } });
+    expect(throwing.sources['apps-recovery']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'apps-recovery')).toHaveLength(0);
+  });
+
+  it('marks a truncated scan degraded and still lists only the proven verdicts', async () => {
+    const inbox = await readRecovery(recoveryRead([
+      // A truncated projection answers 'unknown' for every live row — the
+      // silent invocation cannot be proven and never lists.
+      recoveryRow({ invocationId: INV_B, latestTime: now - 45 * 60_000, retainedHealthy: null,
+        retainedObservedState: null, observedApps: null }),
+      recoveryRow({ invocationId: INV_C, terminalOutcome: 'failed', latestTime: now - 10 * 60_000,
+        retainedHealthy: null }),
+    ], { truncated: true }));
+    expect(inbox.sources['apps-recovery']).toEqual({ state: 'degraded', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'apps-recovery');
+    expect(items.map(i => i.id)).toEqual([`apps-recovery:${INV_C}`]);
+    expect(items[0]!.kind).toBe('apps-recovery-failed');
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    const pending = recoveryRead([recoveryRow(), recoveryRow({ invocationId: INV_C, terminalOutcome: 'failed' })]);
+    const bySource = await readRecovery(pending, { filter: { source: 'apps-recovery' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'apps-recovery')).toBe(true);
+    const byKind = await readRecovery(pending, { filter: { kind: 'apps-recovery-failed' } });
+    expect(byKind.items.map(i => i.id)).toEqual([`apps-recovery:${INV_C}`]);
+    expect(byKind.sources['apps-recovery']).toEqual({ state: 'healthy', pending: 2 });
+  });
+
+  it('reads the real runs bus-inbox apps-watch events under runsDir', async () => {
+    const post = (id: string, body: Record<string, unknown>, at = now) => {
+      const receipt = appendBusInbox({
+        id, from: 'apps-watch', to: 'leaders', priority: 'P2', ttl: 24 * 3_600_000, body,
+      }, { root: runsDir, now: () => at });
+      expect(receipt.status).toBe('posted');
+    };
+    const base = { recoveries: 1, consecutiveFailures: 2, totalFailedCycles: 4 };
+    // A live invocation still failing its last observation.
+    post(`apps-watch-${INV_A}-cycle-3`, {
+      kind: 'apps-watch.observation.v1', invocationId: INV_A, cycle: 3, healthy: false,
+      observedState: [{ app: 'Phantom', observedRunning: false }, { app: 'Codex', observedRunning: true }],
+      diagnostics: [{ app: 'Phantom', outcome: 'launch-failed' }, { app: 'Codex', outcome: 'running' }],
+      ...base,
+    });
+    // A live invocation gone quiet for 45 minutes.
+    post(`apps-watch-${INV_B}-cycle-1`, {
+      kind: 'apps-watch.observation.v1', invocationId: INV_B, cycle: 1, healthy: true,
+      observedState: [{ app: 'Phantom', observedRunning: true }],
+      diagnostics: [{ app: 'Phantom', outcome: 'running' }],
+      recoveries: 0, consecutiveFailures: 0, totalFailedCycles: 0,
+    }, now - 45 * 60_000);
+    // A finished run that failed — its summary is the latest word.
+    post(`apps-watch-${INV_C}-summary`, {
+      kind: 'apps-watch.summary.v1', invocationId: INV_C, apps: ['Phantom'], outcome: 'failed',
+      cycles: 5, lastObservedState: [{ app: 'Phantom', observedRunning: false }],
+      lastDiagnostics: [{ app: 'Phantom', outcome: 'launch-failed' }],
+      ...base,
+    });
+    // A completed run — finished history, never pending.
+    post(`apps-watch-623e4567-e89b-42d3-a456-426614174005-summary`, {
+      kind: 'apps-watch.summary.v1', invocationId: '623e4567-e89b-42d3-a456-426614174005',
+      apps: ['Codex'], outcome: 'completed', cycles: 2,
+      lastObservedState: [{ app: 'Codex', observedRunning: true }],
+      recoveries: 0, consecutiveFailures: 0, totalFailedCycles: 0,
+    });
+
+    const inbox = await read();
+    expect(inbox.sources['apps-recovery']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'apps-recovery');
+    expect(items.map(i => i.id).sort()).toEqual([
+      `apps-recovery:${INV_A}`, `apps-recovery:${INV_B}`, `apps-recovery:${INV_C}`,
+    ].sort());
+    expect(items.find(i => i.id === `apps-recovery:${INV_A}`)!.kind).toBe('apps-recovery-retrying');
+    expect(items.find(i => i.id === `apps-recovery:${INV_B}`)!.kind).toBe('apps-recovery-silent');
+    expect(items.find(i => i.id === `apps-recovery:${INV_C}`)!.kind).toBe('apps-recovery-failed');
   });
 });
 

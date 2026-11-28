@@ -854,7 +854,35 @@ read still lists every event-proven job but marks the source
 `degraded` — lane attribution is a floor, never a complete set; no
 item is Mason-blocking; deep links `phm fleet stuck`, `phm queue
 lane`, `phm queue`, `phm fleet worktrees`, `phm fleet
-dispatch-events`) — and each
+dispatch-events`) — and apps-watch supervision runs whose retained
+verdict is still an open incident (the same
+`readAppsRecoveryInvocations`/`appsRecoveryVerdict` fold `phm fleet
+apps-recovery-state`, `apps-recovery-check`, `apps-recovery-wait`,
+`apps-recovery-batch` and `phm fleet glance` serve, over the runs
+bus-inbox's retained `apps-watch.*` events, so the surfaces can never
+disagree: until now a failing or silent supervision run had no
+item-level inbox surface — the bus source lists only pending
+envelopes, and the glance is a status line an agent had to already
+know to run — while a watch cycling against dead apps or one that
+stopped reporting sat invisible in the one view an agent checks for
+work; a live invocation whose last observation failed lists as warn
+`apps-recovery-retrying` naming the apps still down, a live one
+silent past the 30-minute freshness bound as warn
+`apps-recovery-silent`, and a terminal `failed` outcome inside the
+same 24-hour window its bus announcement TTL carries as high
+`apps-recovery-failed` — `since` the invocation's latest retained
+event time and `expiresAt` null for live rows (an unhealthy or
+silent run waits for repair, never a guessed deadline) or the
+announcement window's end for a failed one; completed and cancelled
+runs, healthy and unknown verdicts never list — a finished run is
+history its summary already announced, and an unproven verdict is
+unknown, never a fabricated incident; a history read that is not
+`available` — an unreadable or invalid-cursor store — is
+`unavailable` (pending null), a truncated scan `degraded` with the
+proven verdicts still listed as a floor; no item names a job and
+none is Mason-blocking; deep links `phm fleet
+apps-recovery-check --invocation <id> --max-age-ms 1800000 --json`,
+`phm fleet apps-recovery-state --json`) — and each
 item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
@@ -881,7 +909,8 @@ comms health --json`, `phm comms cycle`, `phm fleet queue-parked`, `phm
 fleet parked`, `phm fleet autopilot --once`, `phm fleet stuck-fixes`,
 `phm fleet main-health`, `phm fleet stranded`, `phm fleet republish`,
 `phm fleet kept-worktrees`, `phm fleet stuck`, `phm queue lane`, `phm
-fleet worktrees`, `phm fleet dispatch-events`). It never claims, replies, or mutates; a source
+fleet worktrees`, `phm fleet dispatch-events`, `phm fleet
+apps-recovery-check`, `phm fleet apps-recovery-state`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
