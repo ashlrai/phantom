@@ -1,5 +1,29 @@
 # Incidents
 
+## 2026-11-24 — RQ-GUARDIANCHECKQ8: host inspection blocked; crash reporting fixed
+
+Guardian operation remains unverified. Explicit filesystem checks of
+`~/.ashlr-runs/supervisor/status-main-guardian.md`, `guardian/guardian.log`
+and `bin/main-guardian.py` returned `EPERM`, as did `launchctl list`. These
+are access failures, not evidence of missing files or an unloaded service.
+The readable `ai.ashlr.main-guardian.plist` names the existing Python guardian,
+with `StartInterval=300` and `RunAtLoad=false`; registration alone does not prove
+it is loaded. The `queue/MAIN_GUARDIAN_OFF` check returned `ENOENT`.
+Locus reported an expired session; its next-action tool also returned `EPERM`.
+No runtime files, service state or repair queues were changed.
+
+Regression fixtures reproduced a separate health-reporting defect: Python
+traceback headers and exception labels could yield a clean log verdict.
+The existing diagnostic now counts them without exposing log text or enqueueing
+fixups. Undated crash evidence stays unknown. This is a reporting repair,
+not a diagnosis of the inaccessible host log or proof of runtime recovery.
+
+Recovery handoff: from an authorized host session with an operator-established
+Locus pin, run `phm fleet health-age --diagnose --json`. Inspect the existing
+service and bounded log before restoring operation; keep protected runtime
+changes behind Security review and re-pinning. Verify a fresh status and a
+successful guardian cycle before closing this incident.
+
 ## 2026-11-08 — RQ-GUARDHEALTHQ10Q8: guardian inspection still blocked
 
 Guardian health and recovery remain unverified. The three requested files are

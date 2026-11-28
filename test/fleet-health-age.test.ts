@@ -112,6 +112,33 @@ describe('fleet health-age', () => {
     expect((await readGuardianServiceHealth({ platform: 'linux' })).state).toBe('unknown');
     expect((await readGuardianServiceHealth({ platform: 'darwin', uid: 1, probe: async () => { throw new Error('private'); } })).state).toBe('unknown');
   });
+  it.each([
+    ['Traceback (most recent call last):', 0, 1],
+    ['ModuleNotFoundError: private-detail', 0, 1],
+    ['  subprocess.TimeoutExpired: private-detail', 0, 1],
+    ['2026-11-03 11:59:00 PermissionError: private-detail', 1, 0],
+    ['[2026-11-03 11:59:00] RuntimeError: private-detail', 1, 0],
+    ['2026-11-01 11:59:00 ImportError: private-detail', 0, 0],
+    ['2026-11-03 12:01:00 ValueError: private-detail', 0, 1],
+    ['2026-11-03 11:59:00 ModuleNotFoundError handler installed', 0, 0],
+    ['2026-11-03 11:59:00 Traceback reporting enabled', 0, 0],
+  ])('diagnoses Python crash evidence without leaking it (#%#)', async (line, recentErrors, unparseableErrors) => {
+    mkdirSync(join(runsDir, 'guardian'));
+    mkdirSync(join(runsDir, 'queue'));
+    const queue = join(runsDir, 'queue/ready.tsv');
+    writeFileSync(queue, 'existing guardian repair\n');
+    writeFileSync(join(runsDir, 'supervisor/status-main-guardian.md'), '# Main guardian status (2026-11-03 11:59:00)\n');
+    const log = join(runsDir, 'guardian/guardian.log');
+    writeFileSync(log, `${line}\n`);
+    const service = vi.fn().mockResolvedValue({ state: 'loaded', lastExitCode: 0, diagnostic: 'OK' });
+    const healthy = recentErrors + unparseableErrors === 0;
+    expect(await cmdFleetHealthAge(['--diagnose', '--json'], { runsDir, now, service })).toBe(healthy ? 0 : 1);
+    const output = vi.mocked(console.log).mock.lastCall![0] as string;
+    expect(JSON.parse(output)).toMatchObject({ log: { recentErrors, unparseableErrors }, diagnosis: { healthy } });
+    expect(output).not.toContain('private-detail');
+    expect(readFileSync(log, 'utf8')).toBe(`${line}\n`);
+    expect(readFileSync(queue, 'utf8')).toBe('existing guardian repair\n');
+  });
   it('reports a signal exit as unhealthy without creating repair jobs', async () => {
     writeFileSync(join(runsDir, 'supervisor/status-main-guardian.md'), '# Main guardian status (2026-11-03 11:59:00)\n');
     const service = () => readGuardianServiceHealth({ platform: 'darwin', uid: 123,
