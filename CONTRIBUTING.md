@@ -23,6 +23,12 @@ Discord is where the community gathers.
 
 ---
 
+## Community
+
+- Chat with other contributors in the [Phantom Discord](https://discord.gg/jBQrSU6XeD).
+- Please follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+- Starter work is labeled [good first issue](https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) and [help wanted](https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
+
 ## Contribute with an agent
 
 The shortest path from a fresh clone to a mergeable pull request. It works the
