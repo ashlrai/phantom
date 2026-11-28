@@ -82,7 +82,7 @@ describe('team peer mesh', () => {
       [{ tier: 'fast' }, ['RQ-FEED-B']],
       [{ status: 'queued' }, ['RQ-FEED-C', 'RQ-FEED-B', 'RQ-FEED-A']],
       [{ status: 'done' }, []],
-      [{ owner: 'agent0' }, ['RQ-FEED-C', 'RQ-FEED-B', 'RQ-FEED-A']],
+      [{ ownerMatch: busWorkFeedOwnerMatcher('agent0', { root }) }, ['RQ-FEED-C', 'RQ-FEED-B', 'RQ-FEED-A']],
       // The --to filter is the pending-to predicate the parser builds — the
       // group-addressed job is not addressed to 'leaders' and stays out.
       [{ toMatch: busWorkFeedPendingToMatcher('leaders', { root }) }, ['RQ-FEED-B', 'RQ-FEED-A']],
@@ -116,6 +116,14 @@ describe('team peer mesh', () => {
     expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ matched: 1, omitted: 0, jobs: [{ id: 'RQ-FEED-B' }] });
     expect(await cmdAgentnet(['peers', 'work-feed', '--claims', '--open', '--json'], options(), session())).toBe(0);
     expect(JSON.parse(log.mock.calls.at(-1)![0] as string).claims.source).toBe('missing');
+    // --frame attaches the same bounded untrusted block phm fleet work-feed
+    // frames — the feed's own WORK FEED markers around the formatted lines.
+    expect(await cmdAgentnet(['peers', 'work-feed', '--frame', 'claude', '--json'], options(), session())).toBe(0);
+    const framedFeed = JSON.parse(log.mock.calls.at(-1)![0] as string) as { status: string; framed?: string };
+    expect(framedFeed.status).toBe('ok');
+    expect(framedFeed.framed).toContain('BEGIN UNTRUSTED AGENT BUS WORK FEED');
+    expect(framedFeed.framed).toContain('END UNTRUSTED AGENT BUS WORK FEED');
+    expect(framedFeed.framed).toContain('RQ-FEED-A');
     // --exclude-owner maps to the same excludeOwner query key the other feed surfaces take.
     expect(await cmdAgentnet(['peers', 'work-feed', '--exclude-owner', 'agent0', '--json'], options(), session())).toBe(0);
     expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ status: 'ok', jobs: [] });
@@ -126,6 +134,8 @@ describe('team peer mesh', () => {
     expect(await cmdAgentnet(['peers', 'work-feed', '--thread', 't1', '--json'], options(), session())).toBe(2);
     expect(await cmdAgentnet(['peers', 'work-feed', '--after', '0', '--json'], options(), session())).toBe(2);
     expect(await cmdAgentnet(['peers', 'mesh', '--status', 'queued', '--json'], options(), session())).toBe(2);
+    expect(await cmdAgentnet(['peers', 'mesh', '--frame', 'claude', '--json'], options(), session())).toBe(2);
+    expect(await cmdAgentnet(['peers', 'work-feed', '--frame', 'bogus', '--json'], options(), session())).toBe(2);
     expect(await cmdAgentnet(['peers', 'read', '--status', 'queued', '--json'], options(1), session(1))).toBe(2);
     expect(await cmdAgentnet(['peers', 'list', '--claims', '--json'], options(), session())).toBe(2);
     expect(await cmdAgentnet(['peers', 'send', 'agent1', 'query', 'hi', '--open', '--json'], options(), session())).toBe(2);

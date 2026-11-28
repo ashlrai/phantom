@@ -4,9 +4,9 @@ import {
   BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END,
   BUS_INBOX_FRAME_MAX, COMMS_DRAFTS_FRAME_BEGIN, COMMS_DRAFTS_FRAME_END,
   MASON_INBOX_FRAME_BEGIN, MASON_INBOX_FRAME_END,
-  OWNER_THREAD_FRAME_BEGIN, OWNER_THREAD_FRAME_END,
+  OWNER_THREAD_FRAME_BEGIN, OWNER_THREAD_FRAME_END, PEER_MAIL_FRAME_BEGIN, PEER_MAIL_FRAME_END,
   frameAgentChat, frameBusChannelRead, frameBusInbox, frameBusWakes, frameBusWorkFeed,
-  frameCommsBusRead, frameCommsDrafts, frameMasonInboxRead, frameOwnerThread,
+  frameCommsBusRead, frameCommsDrafts, frameMasonInboxRead, frameOwnerThread, framePeerMail,
 } from '../src/core/agents/bus-cli-adapters.js';
 import type { AgentWakeRow, ChannelReadMessage, InboxMessage } from '../src/core/agents/bus-unified.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
@@ -49,6 +49,8 @@ describe('bus frame UTF-8 byte budget', () => {
         messageId: `m-${index}`, createdAt: '2026-01-01T00:00:00.000Z',
       })),
     })],
+    ['peer-mail', PEER_MAIL_FRAME_BEGIN, PEER_MAIL_FRAME_END,
+      (text: string) => framePeerMail('codex', Array(200).fill(envelope(text)))],
   ] as const;
 
   function envelope(text: string): BusEnvelope {

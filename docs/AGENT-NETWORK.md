@@ -529,7 +529,16 @@ the shared work-feed query instead —
 `--since`, `--before`, `--contains` and `--limit` — the same
 `parseBusWorkFeedQuery` validation `phm fleet work-feed` and the feed
 HTTP/MCP surfaces apply, projected through `readPeerFleet`'s authenticated
-read. `peers mesh` takes no filters.
+read. `peers mesh` takes no filters. `peers read --frame <cli>` and
+`peers work-feed --frame <cli>` attach the same bounded untrusted-data
+block every bus read's `--frame` produces as `framed` on the JSON page —
+peer mail under BEGIN/END UNTRUSTED AGENTNET PEER MAIL markers, one
+`[priority id=… from … to …]` bracket and scrubbed summary per admitted
+envelope (the wire callsign/topic labels are routing labels the admission
+ledger proved were sent, never authenticated identity), the feed under the
+shared WORK FEED markers — so a host hands a CLI's next turn remote-authored
+peer content as marked-untrusted data in a single block. `peers mesh` and
+every other verb refuse `--frame`.
 
 Channel proposals preview by default; `--apply` and identity registration record
 local drafts. Actual bot/channel provisioning needs a reviewed provisioner and

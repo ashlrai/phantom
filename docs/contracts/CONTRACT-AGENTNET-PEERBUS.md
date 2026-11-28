@@ -59,8 +59,15 @@ payload's `threadId` or a note/context body's `thread`, `job` the shared
 `busBodyJobMatch` citation and `result` the `work.result` outcome. Filters are
 a read convenience applied after admission: they never admit an envelope the
 ledger or journal refused, and `nextCursor` still advances over every scanned
-row, so a filtered read is a view of the page, not a subscription. Every
-other `agentnet` verb refuses the read-only flags.
+row, so a filtered read is a view of the page, not a subscription.
+`peers read --frame <cli>` adds `framed` to an ok page's JSON — the shared
+bounded untrusted block under BEGIN/END UNTRUSTED AGENTNET PEER MAIL markers,
+one `[priority id=… from … to …]` bracket and scrubbed summary per admitted
+envelope — because every admitted row was written on another machine by
+another agent; the wire `from`/`to` labels stay unauthenticated routing
+labels, a non-ok page carries no frame, and `--frame` outside the bus CLI
+vocabulary is a usage error. Every other `agentnet` verb refuses the
+read-only flags and `--frame`.
 
 `agentnet/mesh-read.ts` owns `PeerWorkFeedQuery` and
 `readPeerFleet(view: 'mesh' | 'work-feed', session: PeerSession, options?: PeerBusOptions, feed?: PeerWorkFeedQuery)`.
@@ -82,6 +89,10 @@ other verb refuse the feed-only flags, and the read-only peer-inbox filters
 (`--from`, `--exclude-from`, `--kind`, `--body-kind`, `--priority`,
 `--peer-kind`) stay refused on
 `work-feed`: the feed query has no sender, kind or thread dimension.
+`peers work-feed --frame <cli>` attaches the same `formatBusWorkFeed` block
+`phm fleet work-feed` frames under the shared WORK FEED markers as `framed`
+on the JSON page — a refused or unreadable feed frames its own state line —
+while `peers mesh` takes no frame.
 
 Host-owned `~/.ashlr/agentnet/bindings.json` is a private 0600 strict JSON object
 `{version:1, peers:[]}` (max 128). Each binding has `callsign`, `lane`, `sessionId`,
