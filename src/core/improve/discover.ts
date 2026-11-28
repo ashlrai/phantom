@@ -2165,6 +2165,26 @@
  *     and items emit only for the fleet's own repository since the
  *     radar, registry and inbox are this install's machinery and the
  *     notes carry no repo column;
+ *   - the model-racing distillation journal: M166's raceTask
+ *     (src/core/fleet/model-racing.ts) persists one secret-scrubbed
+ *     RaceRecord per local-vs-frontier race to
+ *     ~/.ashlr/racing/<date>.jsonl, and racingStats() already feeds the
+ *     `ashlr_racing` MCP tool and the autonomy outcome-records report
+ *     that resource-strategy folds toward routing — but until now no
+ *     feed read the journal, so a dataset that kept tying, kept going
+ *     to one engine, or never accumulated while
+ *     foundry.modelRacing.enabled was set produced no work
+ *     (racingOutcomeBacklogItems below). A cell emits only on a
+ *     complete bounded read: the enabled-but-empty signal needs the
+ *     flag on and zero parseable records, while the outcome patterns
+ *     (all-tie degenerate, frontier-dominant, local-dominant) need
+ *     RACING_OUTCOME_MIN_RACES in-window records before a win rate
+ *     means anything; malformed lines are skipped, oversized or
+ *     capped reads mark the fold incomplete so 'never accumulated'
+ *     is never claimed on partial evidence, quoted titles are
+ *     scrubbed, diffs are never quoted, and items emit only for the
+ *     fleet's own repository since racing is this install's
+ *     machinery;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2347,6 +2367,7 @@ import { busDeadLetterBacklogItems } from './bus-dead-letter-backlog.js';
 import { jobNotesBacklogItems } from './job-notes-backlog.js';
 import { poolDetectBacklogItems } from './pool-detect-backlog.js';
 import { modelRadarBacklogItems } from './model-radar-backlog.js';
+import { racingOutcomeBacklogItems } from './racing-outcome-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4950,6 +4971,19 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet's own repository since the radar and registry are this
   // install's machinery and the notes carry no repo column.
   await feed('modelRadarBacklogItems', () => modelRadarBacklogItems({ repo }));
+  // Model-racing distillation outcomes (racingOutcomeBacklogItems below):
+  // raceTask persists one secret-scrubbed RaceRecord per local-vs-frontier
+  // race to ~/.ashlr/racing/<date>.jsonl and racingStats() already feeds the
+  // ashlr_racing MCP tool plus the outcome-records report resource-strategy
+  // folds toward routing — but until now no feed read the journal, so a
+  // dataset that kept tying, kept going to one engine, or never
+  // accumulated while foundry.modelRacing.enabled was set produced no
+  // work. A cell emits only on a complete bounded read: enabled-but-empty
+  // needs the flag on and zero parseable records; the outcome patterns
+  // need RACING_OUTCOME_MIN_RACES in-window records; malformed lines are
+  // skipped and incomplete reads never claim 'never accumulated'; diffs
+  // are never quoted; items emit only for the fleet's own repository.
+  await feed('racingOutcomeBacklogItems', () => racingOutcomeBacklogItems({ repo }));
   return { items, errors };
 }
 
