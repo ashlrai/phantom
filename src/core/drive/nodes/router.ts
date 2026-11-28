@@ -88,7 +88,10 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
     const running = state === null ? 0 : state.jobs.filter(j => actionableClaim(state, j, now) && onHost(j)).length;
     // A producer withdrawal completes without executing: its startedAt→completedAt
     // span is claim-hold plus detection lag, not runner time, so it is no latency evidence.
-    const durations = (state?.jobs ?? []).filter(j => j.state === 'completed' && j.claim && j.producerWithdrawn !== true && onHost(j) &&
+    // Pool workers can move or rejoin under the same node ID. A legacy
+    // completion without a recorded execution host cannot identify the machine.
+    const durations = (state?.jobs ?? []).filter(j => j.state === 'completed' && j.claim && j.producerWithdrawn !== true &&
+      (state?.pool ? j.executionHostId === hostId : onHost(j)) &&
       j.startedAt !== undefined && j.completedAt !== undefined && j.startedAt <= j.completedAt &&
       j.completedAt <= now && now - j.completedAt <= 86_400_000).map(j => j.completedAt! - j.startedAt!).sort((a, b) => a - b);
     const median = durations.length ? (durations[Math.floor((durations.length - 1) / 2)]! + durations[Math.floor(durations.length / 2)]!) / 2 : null;
