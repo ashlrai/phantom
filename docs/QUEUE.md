@@ -1075,6 +1075,15 @@ so it can differ from `ready`. When `ready.tsv` is missing, the split reads
 `unknown` in text, all three counts (`ready`, `filler`, `real`) are `null`
 in JSON, and `open_rows` is `null`. An empty file yields zero counts. Lane
 selection and the exit code still use the status snapshot.
+When the market inputs are readable — `queue/slots.json`, `models.json`,
+`queue/budget-overrides.json`, `queue/adaptive.json` and `HOLD` under the
+runs root — each starved lane also reports `blocked`, a tally of the
+work-market reason codes its own market-hinted ready rows are rejected
+for (the same `derivedRowCodes` rules `phm fleet unfed` replays), and
+`scored`, how many ready rows the tally covers. Lane-open rows and rows in
+other ready.tsv dialects are never scored. `blocked` and `scored` stay
+`null` when `slots.json` is absent or unreadable, and the text output says
+`blocked unknown`; an unreadable optional input never fails the report.
 Lanes with `held: true` in the dispatcher snapshot are excluded.
 A dispatcher pause, an explicit admission stop, or a full shared fleet cap
 suppresses all lane verdicts and yields exit 0. The lane-open row count is
