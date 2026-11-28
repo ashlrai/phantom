@@ -60,33 +60,27 @@ export function pullRequest(url: string | null): { url: string; pr: number } | n
  * the caller's live snapshot names the job id; merged jobs additionally
  * verify the order when the trace recorded a github pull URL.
  *
- * With several dispatched jobs on one order the evidence must come from the
- * job that actually proves the state: a valid merged artifact (github pull
- * url) keeps precedence and verifies; otherwise any launched/published job
- * the live snapshot names proves RUNNING, and its own lane + id supply the
- * owner and claim receipt — a sibling's owner is never borrowed for another
- * job's running evidence. Without live proof the most advanced job keeps
- * naming the claim, exactly as before.
- *
- * An unverified order also carries a held-lane `blocker` when the caller's
- * `lanes` show every one of its jobs queued on a held lane. */
+ * Verification requires every child to have a merged pull artifact. Otherwise
+ * only unfinished children supply blocker, live-worker and claim evidence.
+ */
 export function orderEvidence(order: TraceOrder, traceGeneratedAt: string, live?: LiveJobIds, lanes?: LaneTargetsV1): WorkItemEvidence {
   const evidence: WorkItemEvidence = { id: order.key };
   const received = parseOrderAt(order.at);
   if (received !== null) evidence.receivedAt = new Date(received).toISOString();
-  for (const job of order.jobs) {
-    if (job.state !== 'merged') continue;
-    const pull = pullRequest(job.url);
-    if (pull === null) continue;
+  const remaining = order.jobs.filter((job) => job.state !== 'merged' || pullRequest(job.url) === null);
+  if (order.jobs.length > 0 && remaining.length === 0) {
+    const job = order.jobs[0]!;
+    const pull = pullRequest(job.url)!;
     if (job.lane !== null) evidence.owner = job.lane;
     evidence.claimReceipt = job.id;
     evidence.verified = { pr: pull.pr, artifact: pull.url, source: 'order-trace', at: traceGeneratedAt };
     return evidence;
   }
-  const blocker = heldLaneBlocker(order, lanes) ?? endedEmptyBlocker(order, traceGeneratedAt);
+  const unfinished = { ...order, jobs: remaining };
+  const blocker = heldLaneBlocker(unfinished, lanes) ?? endedEmptyBlocker(unfinished, traceGeneratedAt);
   if (blocker !== undefined) evidence.blocker = blocker;
   let running: OrderTraceJob | undefined;
-  for (const job of order.jobs) {
+  for (const job of remaining) {
     if (job.state !== 'launched' && job.state !== 'published') continue;
     if (job.lane === null || live === undefined || !live.jobIds.has(job.id)) continue;
     if (running === undefined || RANK[job.state] > RANK[running.state]) running = job;
@@ -97,7 +91,7 @@ export function orderEvidence(order: TraceOrder, traceGeneratedAt: string, live?
     evidence.runningEvidence = { source: `live-worker ${running.id}`, at: live!.at };
     return evidence;
   }
-  const job = mostAdvancedJob(order);
+  const job = mostAdvancedJob(unfinished);
   if (job === undefined) return evidence;
   if (job.lane !== null) evidence.owner = job.lane;
   if (job.state === 'queued') return evidence;
