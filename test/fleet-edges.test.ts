@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
-import { projectFleetEdges, readFleetEdges } from '../src/core/fleet/fleet-edges.js';
+import { projectFleetEdges, parseFleetEdgesQuery, readFleetEdges } from '../src/core/fleet/fleet-edges.js';
 import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { runAgentsCli } from '../src/cli/agents-bus-contract.js';
 import { cmdFleetEdges } from '../src/cli/fleet-edges.js';
@@ -159,6 +159,31 @@ describe('fleet edges', () => {
       expect(readFleetEdges({ root, now: () => 7000 }).edges).toEqual([]);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
+  describe('parseFleetEdgesQuery', () => {
+    it('passes the unfiltered read through as empty options', () => {
+      expect(parseFleetEdgesQuery({})).toEqual({ ok: true, options: {} });
+    });
+    it('parses every filter with the same rules the flags and MCP arguments apply', () => {
+      expect(parseFleetEdgesQuery({ windowMinutes: '60', from: 'atlas', to: 'agent:bob',
+        channel: 'ops', topic: 'general' })).toEqual({ ok: true, options: {
+        windowMinutes: 60, from: 'atlas', to: 'agent:bob', channel: 'ops', topic: 'general' } });
+      expect(parseFleetEdgesQuery({ windowMinutes: '1' })).toEqual({ ok: true, options: { windowMinutes: 1 } });
+      expect(parseFleetEdgesQuery({ windowMinutes: '1440' })).toEqual({ ok: true, options: { windowMinutes: 1440 } });
+    });
+    it('rejects malformed values before the store is touched', () => {
+      for (const input of [
+        { windowMinutes: '' }, { windowMinutes: '0' }, { windowMinutes: '1441' },
+        { windowMinutes: '1.5' }, { windowMinutes: 'abc' }, { windowMinutes: '-5' },
+        { windowMinutes: 'x'.repeat(40) }, { windowMinutes: '9'.repeat(40) },
+        { from: '' }, { from: 'has space' }, { from: 'x'.repeat(129) },
+        { to: 'bad label' }, { to: 'x'.repeat(129) },
+        { channel: '' }, { channel: 'Bad Room' }, { channel: 'UPPER' }, { channel: 'x'.repeat(33) },
+        { topic: 'has space' }, { topic: 'UPPER' }, { topic: 'x'.repeat(33) },
+      ]) {
+        expect(parseFleetEdgesQuery(input).ok, JSON.stringify(input)).toBe(false);
+      }
+    });
+  });
   describe('phm fleet edges flags', () => {
     let root: string, log: ReturnType<typeof vi.spyOn>;
     const post = (id: string, from: string, to: string, at: number) => appendBusInbox(
@@ -168,7 +193,7 @@ describe('fleet edges', () => {
     const run = async (args: string[]) => {
       const index = log.mock.calls.length;
       const code = await cmdFleetEdges(args);
-      return { code, out: log.mock.calls.slice(index).map(call => String(call[0])) };
+      return { code, out: log.mock.calls.slice(index).map((call: unknown[]) => String(call[0])) };
     };
     beforeEach(() => {
       root = mkdtempSync(join(tmpdir(), 'fleet-edges-cli-'));

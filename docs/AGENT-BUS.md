@@ -3048,7 +3048,11 @@ fleet store like the other fleet bus reads. `fleet_agent_edges` (the isolated
 fleet MCP tool) serves the same `readFleetEdges` projection with the same
 `windowMinutes`/`from`/`to`/`channel`/`topic` arguments — every other key
 refused and no caller root, path or working directory accepted, the bus store
-and registry roots staying server-owned. Provider labels come from sender metadata observed on
+and registry roots staying server-owned — and `GET
+/api/verse/agent-bus/edges` serves it over HTTP (read session required) with
+the same five parameters, each validated by the shared
+`parseFleetEdgesQuery` rules so the three reads can never disagree about what
+a filter keeps. Provider labels come from sender metadata observed on
 the filtered receipts — a provider proven only by traffic the filters exclude
 stays `null` (unknown), the same bound the window applies. A missing or conflicting provider is `null` (unknown). Labels
 are not authenticated identities. Broadcasts to `leaders`, human/external

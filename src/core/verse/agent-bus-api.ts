@@ -42,6 +42,16 @@
  * `result` keeps only `work.result` bodies whose own `outcome` strictly
  * equals one `WORK_RESULT_OUTCOMES` code — the same outcome vocabulary the
  * work feed's `--result` filter validates.
+ * GET /api/verse/agent-bus/edges[?windowMinutes=60&from=claude&to=devin&channel=eng&topic=deploy]
+ * is the same `fleet.edges.v1` link projection `phm fleet edges` and the
+ * `fleet_agent_edges` MCP tool serve: `windowMinutes` keeps only links whose
+ * receipts fall inside the trailing 1..1440-minute window, `from`/`to` keep
+ * only links the named agent's identity sent or was addressed to under the
+ * shared identity-label rule, and `channel`/`topic` keep only links whose
+ * receipts are addressed to `group:<channel>:*` or parse to that topic
+ * component — every value validated by the shared `parseFleetEdgesQuery`
+ * rules, so an HTTP read, a CLI read and an MCP read can never disagree
+ * about what a filter keeps; any other parameter or malformed value is a 400.
  * GETs require a current read session. Responses wrap store outcomes with v: 1;
  * missing storage reads as an empty page, while status reports source: missing.
  * Unavailable storage returns 503. Expired rows advance nextCursor but are omitted.
@@ -56,7 +66,7 @@
  * Passing the mutation gate is the verified-Mason check here, exactly as for asks.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { readFleetEdges } from '../fleet/fleet-edges.js';
+import { FLEET_EDGES_QUERY_PARAMS, parseFleetEdgesQuery, readFleetEdges, type FleetEdgesQueryInput } from '../fleet/fleet-edges.js';
 import { parseBusEnvelope } from '../fleet/bus-envelope.js';
 import { appendBusInbox, inspectBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
 import { busPageAddressMatchers, BUS_PAGE_QUERY_PARAMS, filterBusInboxPage, parseBusPageQuery, type BusPageQueryInput } from '../fleet/bus-page-filters.js';
@@ -97,6 +107,7 @@ export interface AgentBusApiDeps {
   inspect?: typeof inspectBusInbox;
   messages?: typeof readAgentMessages;
   workFeed?: typeof readBusWorkFeed;
+  edges?: typeof readFleetEdges;
   mirrorToInbox?: typeof mirrorLeaderPostToInbox;
   startMirror?: () => void;
   needsMason?: {
@@ -153,13 +164,21 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     catch { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
     const allowed = method === 'GET' && path === PATH ? [...BUS_PAGE_QUERY_PARAMS]
       : method === 'GET' && path === MESSAGES ? ['since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'topic', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to', 'result', 'limit']
-      : method === 'GET' && path === WORK_FEED ? [...WORK_FEED_PARAMS] : [];
+      : method === 'GET' && path === WORK_FEED ? [...WORK_FEED_PARAMS]
+      : method === 'GET' && path === `${PATH}/edges` ? [...FLEET_EDGES_QUERY_PARAMS] : [];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
     }
     try {
       if (path === `${PATH}/edges`) {
-        const result = readFleetEdges();
+        const query: FleetEdgesQueryInput = {};
+        for (const key of FLEET_EDGES_QUERY_PARAMS) {
+          const value = params.get(key);
+          if (value !== null) query[key] = value;
+        }
+        const parsed = parseFleetEdgesQuery(query);
+        if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
+        const result = (deps.edges ?? readFleetEdges)(parsed.options);
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } else if (path === WORK_FEED) {
         const query: BusWorkFeedQueryInput = {};
