@@ -77,6 +77,33 @@ describe('router catalog refresh', () => {
     expect(diffCatalog(empty, [], [], now).report.additions).toEqual([]);
     expect(diffCatalog(empty, [], [{ pattern: '[', sources: ['codex'] }], now).report.rejectedRules).toHaveLength(1);
   });
+  it('requires current absence evidence to recommend deprecation or removal', () => {
+    const unseenSince = '2026-01-01T00:00:00Z';
+    const current: CatalogData = {
+      tiers: { 'gpt-old': 'lite', alias: 'lite' },
+      unassigned: [],
+      unseen: { 'gpt-old': unseenSince, alias: unseenSince },
+    };
+    const rules: CatalogPattern[] = [{ pattern: '^gpt-', sources: ['codex', 'devin'] }];
+    const incomplete = diffCatalog(current, [
+      { id: 'codex', status: 'ok', models: ['gpt-new'] },
+      { id: 'devin', status: 'unknown', models: [] },
+    ], rules, now);
+    expect(incomplete.data.unseen).toEqual(current.unseen);
+    expect(incomplete.report.unknown).toEqual([
+      { model: 'alias', reason: 'No owning source pattern' },
+      { model: 'gpt-old', reason: 'Owning source unavailable' },
+    ]);
+    expect(incomplete.report.deprecations).toEqual([]);
+    expect(incomplete.report.proposedRemovals).toEqual([]);
+
+    const recovered = diffCatalog(incomplete.data, [
+      { id: 'codex', status: 'ok', models: ['gpt-new'] },
+      { id: 'devin', status: 'ok', models: ['gpt-new'] },
+    ], rules, now);
+    expect(recovered.report.deprecations).toEqual([{ model: 'gpt-old', unseenSince }]);
+    expect(recovered.report.proposedRemovals).toEqual([{ model: 'gpt-old', unseenSince }]);
+  });
   it('uses stubbed discovery and treats errors, empty output and nonloopback as unknown', async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify({ models: [{ name: 'qwen:7b' }] })));
     const sources = await collectCatalogSources(true, { resolve: b => b, run: async () => 'claude-sonnet-99', fetch, seats: async () => ['seat-model'] });

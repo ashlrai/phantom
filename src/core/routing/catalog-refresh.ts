@@ -30,6 +30,7 @@ export function diffCatalog(current: CatalogData, sources: CatalogSource[], patt
   const additions: { model: string; tier: 'lite' | 'normal' | 'unassigned'; rule: string | null; sources: string[] }[] = [];
   const reappeared: string[] = []; const unknown: { model: string; reason: string }[] = [];
   const catalog = new Set([...Object.keys(tiers), ...unassigned]);
+  const confirmedMissing = new Set<string>();
   for (const model of [...seen.keys()].sort()) {
     if (unseen[model]) { reappeared.push(model); delete unseen[model]; }
     if (catalog.has(model)) continue;
@@ -46,9 +47,11 @@ export function diffCatalog(current: CatalogData, sources: CatalogSource[], patt
       continue;
     }
     unseen[model] ??= now;
+    confirmedMissing.add(model);
   }
   const missing = Object.entries(sorted(unseen)).map(([model, unseenSince]) => ({ model, unseenSince }));
-  const older = (days: number) => missing.filter(m => Date.parse(now) - Date.parse(m.unseenSince) > days * 86400_000);
+  const older = (days: number) => missing.filter(({ model, unseenSince }) =>
+    confirmedMissing.has(model) && Date.parse(now) - Date.parse(unseenSince) > days * 86400_000);
   return {
     report: { schema: 'router.catalog-refresh.v1' as const, generatedAt: now, dryRun, sources, additions, reappeared, unseen: missing, deprecations: older(30), proposedRemovals: older(90), unknown, rejectedRules },
     data: { tiers, unassigned: [...unassigned].sort(), unseen },
