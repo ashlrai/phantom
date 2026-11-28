@@ -53,6 +53,21 @@ it('ignores merge events with missing or invalid timestamps', async () => {
   expect(devin).toMatchObject({ lane: 'devin', merges: 1 });
 });
 
+it('includes lane-open jobs in the ready total using the first valid row per job', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    'open-1\tphantom\t\twork\tFixture',
+    row('READY', 'open-1', 'codex'),
+    row('READY', 'hinted-1', 'devin'),
+    'hinted-1\tphantom\t\twork\tFixture',
+    'open-2\tphantom\t\tfast\tFixture',
+  ].join('\n'));
+
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.sources.ready).toBe('healthy');
+  expect(report.lanes).toMatchObject([{ lane: 'devin', ready: 1 }]);
+  expect(report.totals.ready).toBe(3);
+});
+
 it('reports zero merges only when the merge ledger is healthy', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), [
     'id\tstatus\tpool\tat',
@@ -338,8 +353,16 @@ it('marks a malformed queue as degraded and keeps counts null-safe', async () =>
   await writeFile(join(queueDir, 'jobs.jsonl'), 'not json');
   const report = await getLaneQueueCounts({ runsDir: root, now });
   expect(report.sources.ready).toBe('degraded');
+  expect(report.totals.ready).toBe(1);
   expect(report.sources.ledger).toBe('degraded');
   expect(report.notes.some(n => n.includes('unreadable or has malformed rows'))).toBe(true);
+});
+
+it('keeps the ready total unknown when a degraded queue yields no ready jobs', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), 'this is not a row');
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.sources.ready).toBe('degraded');
+  expect(report.totals.ready).toBeNull();
 });
 
 it('prints blocked reasons and notes in text output', async () => {
