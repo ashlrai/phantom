@@ -1606,6 +1606,10 @@ measurements, the last valid finish in ledger order supplies usage.
 The report uses the first merge or close verdict in `state`, `outcome`,
 `status`, `phase`, `result` or `conclusion`. If none of those fields
 records a terminal verdict, a `merged` or `closed` event name can supply it.
+A closed attempt needs a publish event, a published phase, or a recorded
+PR reference to receive the published reward of zero. Without publication
+evidence it stays unscored with reason `publication-unobserved`, and any
+measured tokens still count toward spend.
 The report uses receipts through its generation time, inclusive. Future-dated
 receipts and terminal merge or close timestamps are excluded before PR URL
 ownership is resolved. Receipts without a parseable timestamp remain eligible.

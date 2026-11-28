@@ -200,7 +200,26 @@ describe('fleet lane-reward', () => {
       tokensPerVerifiedResult: null });
   });
 
-  it('joins url-keyed outcome rows, folds closed as published and lets the latest outcome win', () => {
+  it('scores a closed attempt as published only with recorded publication evidence', async () => {
+    const report = await readLaneReward({
+      deps: deps({ jobsText: read(rows(
+        { event: 'finish', job: 'RQ-FAKE-C5', lane: 'lane-a', tokens_total: 200 },
+        { event: 'closed', job: 'RQ-FAKE-C5' },
+        { event: 'finish', job: 'RQ-FAKE-C6', lane: 'lane-b', tokens_total: 300 },
+        { event: 'publish', job: 'RQ-FAKE-C6', url: URL(6) },
+        { event: 'closed', job: 'RQ-FAKE-C6' },
+      )) }),
+    });
+    expect(report.lanes.find(lane => lane.lane === 'lane-a')).toMatchObject({
+      scored: 0, unscored: 1, tokensMeasured: 200, meanReward: null,
+      outcomes: { published: 0 }, reasons: { 'publication-unobserved': 1 },
+    });
+    expect(report.lanes.find(lane => lane.lane === 'lane-b')).toMatchObject({
+      scored: 1, unscored: 0, tokensMeasured: 300, meanReward: 0, outcomes: { published: 1 },
+    });
+  });
+
+  it('joins url-keyed outcome rows and lets the latest outcome win', () => {
     const fold = foldLaneRewardAttempts(rows(
       { event: 'finish', job: 'RQ-FAKE-U1', lane: 'lane-a', tokens_total: 100 },
       { event: 'publish', job: 'RQ-FAKE-U1', lane: 'lane-a', url: URL(5) },
@@ -369,12 +388,13 @@ describe('fleet lane-reward', () => {
     ));
     const human = await run(['--jobs', file]);
     expect(human).toMatchObject({ code: 0, err: '' });
-    expect(human.out).toContain('fleet lane-reward: 2 attempts, 2 scored, 0 unscored, mean reward 0.000000');
+    expect(human.out).toContain('fleet lane-reward: 2 attempts, 1 scored, 1 unscored, mean reward 0.000000');
     expect(human.out).toContain('lane-a: 1 attempts, 1 scored, 0 unscored, mean reward 0.000000');
+    expect(human.out).toContain('lane-b: 1 attempts, 0 scored, 1 unscored, mean reward n/a');
     const json = await run(['--jobs', file, '--json']);
     expect(json.code).toBe(0);
     expect(JSON.parse(json.out)).toMatchObject({ schema: 'fleet.lane-reward.v1',
-      lanes: [{ lane: 'lane-a' }, { lane: 'lane-b' }] });
+      lanes: [{ lane: 'lane-a' }, { lane: 'lane-b', reasons: { 'publication-unobserved': 1 } }] });
   });
 
   it('reads the newest bounded tail of an oversized ledger, never the stale head', async () => {
