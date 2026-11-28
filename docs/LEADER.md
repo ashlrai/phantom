@@ -244,6 +244,20 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   absence; it reads unknown when the fleet read has not answered. The first
   visit shows no card. The last-looked time is kept in this browser profile
   only.
+
+  The card also lists the sessions that finished or failed while you were
+  away, under **Ended while you were away**: failed ones first, each with
+  when it ended and how ("Opened a pull request", "Ended with no change",
+  or "Outcome unknown" when the session list records none). A session's
+  name opens it as a conversation, beside the chat when the pane is wide
+  enough. A failed session gives the card its warning edge, and ended
+  sessions raise the card even when the Leader said nothing. Finished
+  sessions past the first four fold behind **Show all**; failed ones are
+  never folded. The rows come from the session list (`phm sessions --json`),
+  which keeps an ended session for one hour, so after a longer absence the
+  card says its counts cover the last hour only. A session with no recorded
+  end time is left out, and when the list cannot be read the card says the
+  endings are unknown instead of showing none.
 - **App actions:** the desktop Leader pane shows what Phantom did to this
   Mac's apps where it happened in the conversation. Each open, focus, quit
   and restart from the app action log (`phm apps log --json`) is a line with
