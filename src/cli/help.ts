@@ -896,6 +896,10 @@ export function agentDocsText(): string {
   lines.push('phantom_leader_status, phantom_leader_org, phantom_leader_inbox, phantom_leader_ask,');
   lines.push('phantom_leader_assign, ashlr_comms_agent_status, ashlr_comms_agent_drafts,');
   lines.push('ashlr_comms_agent_run. Unknown evidence stays unknown and grants no send or spend.');
+  lines.push('Wiki tools (commit-pinned repo knowledge, read-only): phm_wiki_map reads a');
+  lines.push('source map for one enrolled repo, phm_wiki_ecosystem reads relationships across');
+  lines.push('the signed repository scope, and phm_wiki_brain reads system-map evidence and');
+  lines.push('staleness for one enrolled repo.');
   lines.push('Desktop operator tools: desktop_list_apps, desktop_windows, desktop_read,');
   lines.push('desktop_screenshot, desktop_doctor, desktop_focus, desktop_scroll, desktop_type,');
   lines.push('desktop_click. Reads do not post to the bus. Focus, scroll, type and click post');
