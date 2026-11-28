@@ -3,7 +3,8 @@
  * branch was pushed but whose publish aborted on the default-branch fetch race. Only that race is requeued;
  * any other abort reason is listed with its reason and left for a person. Dry run by default.
  *
- * Row layout is the dispatcher's, tab-separated: id, repo, lane, tier, absolute prompt path.
+ * Row layout is the dispatcher's, tab-separated: id, repo, lane, tier, absolute prompt path,
+ * plus a requirements cell on gh rows so the work market cannot fall back to a gh-less lane.
  */
 import { open, readFile, readdir } from 'node:fs/promises';
 import { constants } from 'node:fs';
@@ -237,7 +238,11 @@ export async function planStrandedRequeue(runsDir: string, opts: RequeueOptions 
       const result = await rewriteReadyRows(queueDir, rows => {
         const have = new Set(rows.map(row => row.id));
         const add = written.filter(r => !have.has(r.id)).map(r => {
-          const raw = [r.id, r.repo, r.lane, 'work', r.promptPath].join('\t');
+          // gh work keeps codex-personal as its lane hint and declares needs:["gh"]
+          // in the requirements cell: a hint is only a preference, so without the
+          // capability the market could hand the row to a lane that cannot run it.
+          const spec = r.lane === GH_LANE ? '\t{"needs":["gh"]}' : '';
+          const raw = `${[r.id, r.repo, r.lane, 'work', r.promptPath].join('\t')}${spec}`;
           return { id: r.id, repo: r.repo, lane: r.lane, tier: 'work', promptPath: r.promptPath, raw };
         });
         return add.length ? [...rows, ...add] : null;
