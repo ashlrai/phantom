@@ -29,7 +29,7 @@ const originalFacts: Partial<StatusDigestSources> = {
   mergeFacts: async (sinceMs, nowMs) => ({
     mergeCountUnavailable: false,
     shipped: [
-      ...Array.from({ length: nowMs - sinceMs <= HOUR ? 3 : 41 }, (_, i) => ({ text: `ashlrai/phantom#${i + 1}: fake merge` })),
+      ...Array.from({ length: nowMs - sinceMs <= HOUR ? 3 : 41 }, (_, i) => ({ at: new Date(nowMs).toISOString(), text: `ashlrai/phantom#${i + 1}: fake merge` })),
       { text: 'ashlrai/ashlr-hub#7: a different repo' },
     ],
   }),

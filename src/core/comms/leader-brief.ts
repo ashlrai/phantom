@@ -29,6 +29,8 @@ export type BriefKind = 'morning' | 'evening' | 'instant';
 export interface BriefItem {
   text: string;
   url?: string;
+  /** Explicit event time; shipped items retain the merge event's ISO timestamp. */
+  at?: string;
 }
 
 export interface BriefFacts {
@@ -184,7 +186,7 @@ export async function gatherBriefFacts(sinceMs: number, nowMs: number, overrides
   const events = digest?.events ?? [];
   const shipped: BriefItem[] = events
     .filter((e) => e.kind === 'merge')
-    .map((e) => ({ text: e.text, ...(e.url ? { url: e.url } : {}) }));
+    .map((e) => ({ text: e.text, at: e.at, ...(e.url ? { url: e.url } : {}) }));
   const mergeCountUnavailable = digest?.mergeCountUnavailable ?? true;
   const prsOpened = events.filter((e) => e.kind === 'pr-opened').length;
 

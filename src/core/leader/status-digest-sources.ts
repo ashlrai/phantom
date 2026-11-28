@@ -23,6 +23,7 @@ export interface StatusDigestSources {
   installedVersion: () => string | null;
   /** Newest published release with its desktop asset; throws when unreadable. */
   publishedVersion: (nowMs: number) => Promise<string>;
+  /** Complete merged outcomes; each shipped item needs its explicit event time. */
   mergeFacts: (sinceMs: number, nowMs: number) => Promise<Pick<BriefFacts, 'shipped' | 'mergeCountUnavailable'>>;
   /** True open-to-merge time over the last 24h from the job metrics file under the runs dir. Override with undefined to drop the line. */
   mergeLatency?: (runsDir: string, nowMs: number) => Promise<MergeLatencyReport>;
@@ -181,8 +182,16 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
   const readClaims = src.workClaims;
   const merged = (hours: number): Promise<Fact<number>> => fact(async () => {
     const facts = await src.mergeFacts(nowMs - hours * HOUR, nowMs);
-    if (facts.mergeCountUnavailable) throw new Error('unavailable');
-    return facts.shipped.filter(item => /^ashlrai\/phantom#\d+/.test(item.text)).length;
+    if (facts.mergeCountUnavailable !== false) throw new Error('unavailable');
+    const prs = new Set<string>();
+    for (const item of facts.shipped) {
+      const pr = /^ashlrai\/phantom#([1-9]\d*)(?=$|[\s:—-])/i.exec(item.text)?.[1];
+      if (!pr) continue;
+      const at = typeof item.at === 'string' ? Date.parse(item.at) : NaN;
+      if (!Number.isFinite(at)) throw new Error('missing merge time');
+      if (at >= nowMs - hours * HOUR && at <= nowMs) prs.add(pr);
+    }
+    return prs.size;
   }, 'GitHub merge count unavailable or incomplete');
 
   const readMergeTime = src.mergeLatency;

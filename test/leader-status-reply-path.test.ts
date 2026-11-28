@@ -61,7 +61,7 @@ async function receive(call: SlackCall, brief: (runsDir: string, now: Date) => P
 
 const fakeSources = {
   installedVersion: () => '3.29.15', publishedVersion: async () => '3.30.32',
-  mergeFacts: async () => ({ shipped: [{ text: 'ashlrai/phantom#1: a' }], mergeCountUnavailable: false }),
+  mergeFacts: async (_sinceMs: number, nowMs: number) => ({ shipped: [{ at: new Date(nowMs).toISOString(), text: 'ashlrai/phantom#1: a' }], mergeCountUnavailable: false }),
   runsState: async () => ({ runsDirPresent: true, sources: { status: 'healthy' } as never, lanes: [{ lane: 'claude', running: 4, target: 8, held: false, heldReason: null, queued: 0, floor: null, ceiling: null, tokensLastHour: null, merged24h: null, mergeRate24h: null }] }),
   needs: () => ({ status: 'available', items: [{ text: 'need the Stripe API key' }] }),
   inbox: async () => ({ sourceState: 'healthy', entries: [{ at: '2026-11-05 21:00', source: 'Slack', priority: 'P0', text: 'Phantom status' }] }),

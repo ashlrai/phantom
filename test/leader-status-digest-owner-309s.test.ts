@@ -88,7 +88,7 @@ describe('status digest owner reply over the real Slack path (RQ-PHX-STATUSDIGES
     const state: StatusDigestSources = {
       installedVersion: () => '3.29.15',
       publishedVersion: async () => '3.30.32',
-      mergeFacts: async () => ({ shipped: [{ text: 'ashlrai/phantom#1: a' }], mergeCountUnavailable: false }),
+      mergeFacts: async (_sinceMs: number, nowMs: number) => ({ shipped: [{ at: new Date(nowMs).toISOString(), text: 'ashlrai/phantom#1: a' }], mergeCountUnavailable: false }),
       runsState: healthyRuns([lane('claude', 4, 8)]),
       needs: () => ({ status: 'available', items: [{ text: 'need the Stripe API key' }] }),
       inbox: async () => ({ sourceState: 'healthy', entries: [{ at: '2026-11-05 21:00', source: 'Slack', priority: 'P0', text: 'first status ask' }] }),
@@ -115,7 +115,7 @@ describe('status digest owner reply over the real Slack path (RQ-PHX-STATUSDIGES
 
     // Facts move between the two asks; nothing may be served from the first read.
     state.publishedVersion = async () => '3.31.0';
-    state.mergeFacts = async () => ({ shipped: [{ text: 'ashlrai/phantom#1: a' }, { text: 'ashlrai/phantom#2: b' }], mergeCountUnavailable: false });
+    state.mergeFacts = async (_sinceMs: number, nowMs: number) => ({ shipped: [{ at: new Date(nowMs).toISOString(), text: 'ashlrai/phantom#1: a' }, { at: new Date(nowMs).toISOString(), text: 'ashlrai/phantom#2: b' }], mergeCountUnavailable: false });
     state.runsState = healthyRuns([lane('devin', 2, 6)]);
     state.needs = () => ({ status: 'available', items: [] });
     state.inbox = async () => ({ sourceState: 'healthy', entries: [{ at: '2026-11-05 21:30', source: 'Slack', priority: 'P0', text: 'second status ask' }] });

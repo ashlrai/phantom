@@ -81,9 +81,9 @@ const externalSeam: Partial<StatusDigestSources> = {
   publishedVersion: async () => '3.30.32',
   mergeFacts: async (sinceMs, nowMs) => ({
     shipped: nowMs - sinceMs <= 3_600_000
-      ? [{ text: 'ashlrai/phantom#6100: synthetic hourly merge' }]
-      : [{ text: 'ashlrai/phantom#6100: a' }, { text: 'ashlrai/phantom#6101: b' },
-         { text: 'ashlrai/phantom#6102: c' }, { text: 'ashlrai/other#9: not phantom' }],
+      ? [{ at: new Date(nowMs).toISOString(), text: 'ashlrai/phantom#6100: synthetic hourly merge' }]
+      : [{ at: new Date(nowMs).toISOString(), text: 'ashlrai/phantom#6100: a' }, { at: new Date(nowMs).toISOString(), text: 'ashlrai/phantom#6101: b' },
+         { at: new Date(nowMs).toISOString(), text: 'ashlrai/phantom#6102: c' }, { text: 'ashlrai/other#9: not phantom' }],
     mergeCountUnavailable: false,
   }),
   workClaims: undefined,
