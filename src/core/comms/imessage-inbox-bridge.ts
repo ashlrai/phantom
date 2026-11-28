@@ -6,6 +6,7 @@ import { receiptOwnerChat } from '../agents/chat-owner-ingress.js';
  * chat.db read-only and hands back allowlisted messages past a persisted
  * message.ROWID cursor; only the verified Mason handle is receipted as operator
  * input through the shared channel receiver (fleet/channel-envelope.ts):
+ * Known Phantom outbound echoes from that handle advance the cursor without receipt or ack.
  *
  *   imessageChannelMessage(msg)   - pure mapping to channel `imessage`.
  *   ingestIMessages(cfg, deps)    - poll, receipt, advance the cursor.
@@ -59,6 +60,7 @@ import { receiptOwnerChat } from '../agents/chat-owner-ingress.js';
  */
 
 import { sendIMessageOutbox } from './imessage-outbox.js';
+import { isPhantomOutboundEcho } from './phantom-outbound-echo.js';
 import { recordTeammateText, senderIdFor } from './imessage-teammate-inbox.js';
 import { bridgeTeammateFindings, type FindingsBridgeOptions, type FindingsBridgeReport } from './imessage-findings-bridge.js';
 import { recordPatchFrame, sweepPatchTransfers, type PatchFrameOutcome, type PatchSweepReport } from './imessage-patch-transfer.js';
@@ -136,6 +138,8 @@ export interface IMessageIngestResult {
   teammate: number;
   duplicate: number;
   refused: number;
+  /** Known Phantom outbound payloads skipped in the verified-owner self-chat. */
+  echo?: number;
   /** Stopped early on a transient failure; the rest is retried next poll. */
   deferred: boolean;
   cursor: number | null;
@@ -327,6 +331,8 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
           result.deferred = true;
           break;
         }
+      } else if (isPhantomOutboundEcho(msg.text)) {
+        result.echo = (result.echo ?? 0) + 1;
       } else if (message) {
         current = msg.rowid;
         currentHandle = msg.handle;
