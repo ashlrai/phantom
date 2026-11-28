@@ -4856,9 +4856,10 @@ a claim-holder hint's `jobId` or a resolved referent's feed citation —
 teammate tasks by `jobId`, seat
 handoffs by `node-job` refs, peer-dispatch receipts by their peer-announced
 `jobId`, session-handoff items by their journal's job id, router-queue rows
-by their own READY id, jobs-stuck markers by their own job id, stuck-fix
+by their own READY id, jobs-stuck markers by their own job id, queue-parked
+rows by their own job id plus the gate ids they name, stuck-fix
 rows by their own FIXUP-MAIN job id, stranded-work rows by their own job
-id) for `comms
+id and dispatch-stuck rows by their own job id) for `comms
 inbox --job` to match against,
 absent when no job relation is provable; `busReadContains(value)` and
 `busReadContainsMatch(body, needle)` — bounded by `BUS_READ_CONTAINS_MAX` —

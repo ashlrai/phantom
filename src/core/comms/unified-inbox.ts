@@ -790,6 +790,44 @@
  *               and sizes unknown, so the listed rows are a floor) is
  *               'degraded'. Act: `phm fleet stranded`, `phm fleet
  *               republish`, `phm fleet kept-worktrees`.
+ *   dispatch-stuck  queued jobs dispatch keeps refusing or failing —
+ *               the same `findStuckJobs`/`readDispatchStuckJobs` fold
+ *               `phm fleet stuck` and the `fleet.stuck.v1` row of `phm
+ *               fleet vitals` serve, over the tail of
+ *               `dispatch-events.log` (`*_REFUSED`/`*_FAILED` lines naming
+ *               a job, two or more since its last LAUNCH, still active
+ *               inside the one-hour quiet window) plus the ready list's
+ *               lane attribution, so this source and those surfaces can
+ *               never disagree. Until now a job the dispatcher could
+ *               never place — a lane refusing its size or repo every
+ *               tick, a worktree cleanup that keeps failing — had no
+ *               item-level surface here: the router-queue source lists
+ *               only READY rows in `queue/router-queue.md`, the
+ *               queue-parked source lists only PARKED rows, the
+ *               jobs-stuck source reads run markers for jobs already
+ *               launched, and every bus/feed/board read looks at work
+ *               not yet claimed — while the refused job sat in the queue
+ *               generating refusal events an agent had to already know to
+ *               look for. Each stuck row lists once as a warn
+ *               `dispatch-stuck` naming the job id — the same label
+ *               `phm fleet stuck` prints — `since` the first recorded
+ *               refusal or failure (the moment the stuck condition
+ *               began) and `expiresAt` null: a refused job waits for a
+ *               lane move or a queue edit, never a guessed deadline; the
+ *               job id is the item's own citation, so `--job` matches.
+ *               Lane-refusal causes deep-link `phm queue lane <id>
+ *               <lane>` — the steer that moves the row — a worktree
+ *               cleanup failure deep-links `phm fleet worktrees`, and an
+ *               unrecognised cause deep-links `phm fleet
+ *               dispatch-events` to read the raw lines, every item
+ *               leading with `phm fleet stuck`. The event log is the
+ *               only witness a job is being refused, so `phm fleet
+ *               stuck`'s own rule applies — a missing or unreadable log
+ *               leaves the stuck set unknown, 'unavailable' (pending
+ *               null), never an empty list passed off as fact; a
+ *               degraded ready read still lists every event-proven job
+ *               but marks the source 'degraded' — lane attribution is a
+ *               floor, never a complete set.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -870,6 +908,8 @@ import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
 import { readStuckJobs, type StuckJob as RunningStuckJob, type StuckJobsReport } from '../fleet/running-stuck.js';
 import { readStuckFixes, type StuckFixRow } from '../fleet/stuck-fixes.js';
 import { readStrandedWork, type StrandedItem } from '../fleet/stranded-work.js';
+import { readDispatchStuckJobs, type DispatchStuckRead } from '../fleet/dispatch-stuck.js';
+import type { StuckJob as DispatchStuckJob } from '../fleet/stuck-jobs.js';
 import { isDependencyParkedReason, readFleetQueue, type FleetQueueV1, type ParkedGroup, type ParkedMetDep, type ParkedUnmetDep } from '../fleet/runs-parked-queue.js';
 import { readChannelHealth } from '../fleet/channel-health.js';
 import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
@@ -888,7 +928,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'peer-dispatch', 'peer-inbox', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
   'send-gate', 'router-queue', 'jobs-stuck', 'channel-health', 'queue-parked',
-  'stuck-fixes', 'stranded-work',
+  'stuck-fixes', 'stranded-work', 'dispatch-stuck',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -922,7 +962,7 @@ export const UNIFIED_INBOX_KINDS = [
   'stuck-ghost', 'stuck-job',
   'channel-blocked', 'channel-degraded', 'channel-unknown',
   'parked-dep-waiting', 'parked-dep-stale', 'parked-group', 'stuck-fix',
-  'stranded-worktree',
+  'stranded-worktree', 'dispatch-stuck',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -951,7 +991,9 @@ export interface UnifiedInboxItem extends AttentionItem {
    * conversation thread's `jobs`, a teammate task's `jobId`, a seat handoff's
    * node-job refs, a peer-dispatch receipt's peer-announced `jobId`, a
    * session-handoff journal's job id, a router-queue row's own READY id, a
-   * jobs-stuck marker's own job id, or a stuck-fix row's own job id.
+   * jobs-stuck marker's own job id, a queue-parked row's own job id plus
+   * the gate ids it names, a stuck-fix row's own job id, a
+   * stranded-work row's own job id, or a dispatch-stuck row's own job id.
    * Absent when the item names no job — unknown stays out of a
    * `--job` match rather than being guessed in.
    */
@@ -1134,6 +1176,19 @@ export interface StrandedWorkSourceRead {
   items: readonly StrandedItem[];
 }
 
+/** The resolved dispatch-stuck read: `readDispatchStuckJobs`'s
+ * `fleet.stuck.v1` rows mapped onto the unified source states —
+ * 'unavailable' an event log that is missing or cannot be read (the
+ * stuck set is unknown — `phm fleet stuck`'s own `count:null` rule —
+ * never an empty list), 'degraded' a healthy log whose ready read is
+ * partial (every event-proven job still lists; lane attribution is a
+ * floor), 'healthy' the full read. `jobs` stays empty whenever the
+ * state is 'unavailable'. */
+export interface DispatchStuckSourceRead {
+  state: UnifiedInboxSourceState;
+  jobs: readonly DispatchStuckJob[];
+}
+
 /** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
  * when the store could be read — 'missing' is a verified-empty board (no
  * `state.json` ever written), 'unavailable' an unreadable one, never an
@@ -1301,6 +1356,11 @@ export interface UnifiedInboxOptions {
    * `<runsDir>/queue/status.json`, `metrics/jobs.jsonl`, the `.publish`
    * sidecars and the queue run markers. */
   readStrandedWork?: (options: { runsDir?: string; now?: () => number }) => Promise<StrandedWorkSourceRead>;
+  /** Dispatch-stuck seam; default reads the `dispatch-events.log` tail,
+   * `queue/ready.tsv` and `queue/router-queue.md` through
+   * `readDispatchStuckJobs` — the same bounded read `phm fleet stuck`
+   * and the `fleet.stuck.v1` row of `phm fleet vitals` serve. */
+  readDispatchStuck?: (options: { runsDir?: string; now?: () => number }) => Promise<DispatchStuckSourceRead>;
   /** Channel-health seam; default reads `readChannelHealth` — the same
    * slack/imessage bridge projection `phm fleet channel-health` and
    * `phm channels` serve. */
@@ -4521,6 +4581,90 @@ async function readStrandedWorkSource(options: { runsDir?: string; now?: () => n
   }
 }
 
+/** Deep links per dispatch-stuck cause: a lane refusal is fixed by moving
+ * the row (`phm queue lane`), a worktree cleanup failure by inspecting the
+ * worktrees, and an unrecognised cause by reading the raw event lines —
+ * every item still leads with the `phm fleet stuck` diagnostic. */
+const dispatchStuckActs = (job: DispatchStuckJob): readonly string[] => {
+  if (job.cause === 'lane_refused_size' || job.cause === 'lane_refused_repo') {
+    return ['phm fleet stuck', `phm queue lane ${job.job} <lane>`, 'phm queue'];
+  }
+  if (job.cause === 'worktree_cleanup_failed') return ['phm fleet stuck', 'phm fleet worktrees', 'phm queue'];
+  return ['phm fleet stuck', 'phm fleet dispatch-events', 'phm queue'];
+};
+
+/**
+ * Queued jobs dispatch keeps refusing or failing — the same
+ * `findStuckJobs`/`readDispatchStuckJobs` fold `phm fleet stuck` and the
+ * `fleet.stuck.v1` row of `phm fleet vitals` serve, over the tail of
+ * `dispatch-events.log` plus the ready list's lane attribution, so this
+ * source and those surfaces can never disagree. Until now a job the
+ * dispatcher could never place — a lane refusing its size or repo every
+ * tick, a worktree cleanup that keeps failing — had no item-level surface
+ * here: the router-queue source lists only READY rows in
+ * `queue/router-queue.md`, the queue-parked source lists only PARKED
+ * rows, the jobs-stuck source reads run markers for jobs already
+ * launched, and every bus/feed/board read looks at work not yet claimed —
+ * while the refused job sat in the queue generating refusal events an
+ * agent had to already know to look for. Each stuck row lists once as a
+ * warn `dispatch-stuck` naming the job id — the same label `phm fleet
+ * stuck` prints — `since` the first recorded refusal or failure (the
+ * moment the stuck condition began) and `expiresAt` null: a refused job
+ * waits for a lane move or a queue edit, never a guessed deadline; the
+ * job id is the item's own citation, so `--job` matches. A degraded
+ * ready read still lists every event-proven job — the events log, not
+ * the ready list, proves the stuck set — but marks the source 'degraded'
+ * and says so in the detail: lane attribution is a floor, never a
+ * complete set.
+ */
+async function dispatchStuckItems(read: NonNullable<UnifiedInboxOptions['readDispatchStuck']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: DispatchStuckSourceRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const degraded = result.state === 'degraded'
+    ? ' · ready.tsv read degraded — lane may be misattributed' : '';
+  const items = result.jobs.map((job): Omit<UnifiedInboxItem, 'priority'> => {
+    const refused = job.kind.endsWith('_REFUSED');
+    return {
+      id: `dispatch-stuck:${job.job}`,
+      source: 'dispatch-stuck',
+      kind: 'dispatch-stuck',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Job ${job.job} cannot launch — dispatch keeps ${refused ? 'refusing' : 'failing'} it`, TITLE_MAX),
+      detail: oneLine(`lane ${job.lane ?? 'unknown'} · waiting ${queueWaitLabel(job.ageSeconds)} · ${job.events} events · ${job.kind}${job.reason ? ` ${job.reason}` : ''} · ${job.action}${degraded}`, DETAIL_MAX) || null,
+      since: job.firstSeen,
+      expiresAt: null,
+      jobIds: [job.job],
+      act: dispatchStuckActs(job),
+    };
+  });
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real dispatch-stuck read: `readDispatchStuckJobs` on the shared
+ * runs dir — the same bounded read `phm fleet stuck` and the
+ * `fleet.stuck.v1` row of `phm fleet vitals` serve. `phm fleet stuck`'s
+ * own health rule applies — the event log is the only witness a job is
+ * being refused, so a missing or unreadable log leaves the stuck set
+ * unknown ('unavailable', pending null), never an empty list passed off
+ * as fact; a degraded ready read keeps every event-proven job but marks
+ * the source 'degraded' — lane attribution is a floor. */
+async function readDispatchStuckSource(options: { runsDir?: string; now?: () => number }): Promise<DispatchStuckSourceRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  try {
+    const report: DispatchStuckRead = await readDispatchStuckJobs({ runsDir: dir }, options.now?.() ?? Date.now());
+    if (report.sources.events !== 'healthy') return { state: 'unavailable', jobs: [] };
+    return { state: report.sources.ready === 'degraded' ? 'degraded' : 'healthy', jobs: report.jobs };
+  } catch {
+    return { state: 'unavailable', jobs: [] };
+  }
+}
+
 /** Display label and deep links per channel-health leg; telegram's acts differ because its diagnostic is `phm comms health`, not `phm fleet channel-health`. */
 const channelHealthPresentation = (channel: string): { label: string; acts: readonly string[] } =>
   channel === 'slack'
@@ -4849,6 +4993,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const queueParked = await queueParkedItems(options.readQueueParked ?? readQueueParkedSource, options);
   const stuckFixes = await stuckFixItems(options.readStuckFixes ?? readStuckFixesSource, options);
   const strandedWork = await strandedWorkItems(options.readStrandedWork ?? readStrandedWorkSource, options);
+  const dispatchStuck = await dispatchStuckItems(options.readDispatchStuck ?? readDispatchStuckSource, options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -4892,8 +5037,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'queue-parked': queueParked.report,
     'stuck-fixes': stuckFixes.report,
     'stranded-work': strandedWork.report,
+    'dispatch-stuck': dispatchStuck.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...commsMail.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items, ...stuckFixes.items, ...strandedWork.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...commsMail.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items, ...stuckFixes.items, ...strandedWork.items, ...dispatchStuck.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
