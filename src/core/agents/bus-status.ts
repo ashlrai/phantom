@@ -669,7 +669,14 @@ function deadLetterReason(body: unknown): 'exhausted' | 'expired' | 'no-route' |
   const letter = (payload as Record<string, unknown>).deadLetter;
   if (letter === null || typeof letter !== 'object' || Array.isArray(letter)) return 'other';
   const reason = (letter as Record<string, unknown>).reason;
-  return reason === 'exhausted' || reason === 'expired' || reason === 'no-route' ? reason : 'other';
+  // The same classification `busDeadLetterReason` applies through
+  // `busDeadLetterReport`: the recorded reason is trimmed before the
+  // closed-set check, so a letter whose stored reason carries surrounding
+  // whitespace tallies under the real bucket here exactly as
+  // `agents bus dead-letters --reason` and the unified inbox classify it —
+  // this probe and the dedicated reads can never disagree about one letter.
+  const trimmed = typeof reason === 'string' ? reason.trim() : '';
+  return trimmed === 'exhausted' || trimmed === 'expired' || trimmed === 'no-route' ? trimmed : 'other';
 }
 
 /** Count the live envelopes addressed to the dead-letter sink — the same
