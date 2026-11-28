@@ -46,6 +46,14 @@ or `gh` and join again, or pass `--caps` to choose the advertisement
 yourself — an explicit list replaces the sign-in detection entirely
 (local-model and version caps still merge in), and a `--caps` that names no
 capability is refused: omit the flag to auto-detect or name at least one.
+The bare join also reports `installedClis` in `--json` (and names them in
+text mode): the community agent CLIs whose binaries are installed on this
+computer — `aider`, `gemini`, `copilot`, `goose`, `droid` and the other
+measured harnesses — found by file presence at the usual install locations
+only. No CLI is executed, no sign-in is checked and no credential is read,
+so the list is `--caps` candidates, not advertised lanes: pass the names to
+keep (plus the sign-in lanes, since `--caps` replaces the whole set) to
+advertise them.
 Capability names are open, not a fixed list: a job's `--requires` is matched
 against the caps a node advertises, so name the agent CLIs this computer can
 run — `codex`, `claude`, `aider`, `gemini`, `copilot`, `goose`, `droid` and the

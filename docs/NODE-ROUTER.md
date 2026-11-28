@@ -89,7 +89,13 @@ capability. Whenever the advertised caps include `gh` — detected or
 explicit — the reply also reports this machine's gh login state as `ghAuth`
 in `--json` (the same exit-code-only check `beat --probe-auth` runs, paid
 once at join), and text mode warns when it is not `ok`: gh jobs cannot route
-until `gh auth login` runs here and a `--probe-auth` beat reports ok.
+until `gh auth login` runs here and a `--probe-auth` beat reports ok. The
+same bare join reports `installedClis` in `--json` — the community agent CLI
+binaries present on this computer (`aider`, `gemini`, `copilot`, `goose`,
+`droid` and the other measured harnesses), found by file presence at
+allowlisted install paths only: no CLI is executed, no sign-in is checked
+and no credential is read. The names are `--caps` candidates, not advertised
+lanes.
 A job with no live node prints a `phm node join --owner` fix that names the
 caps it needs.
 
