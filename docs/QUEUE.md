@@ -537,6 +537,17 @@ A missing or unreadable jobs ledger leaves `claims.claimed` and
 matching events supplies zero counts.
 `claims.truncated` is true when the ledger
 exceeded the retained tail, so those counts are a lower bound.
+The same window's `queue_reroute` rows fold into `reroutes`: the Leader's
+own lane moves, which the route_decision stream never records — each
+receipt is one applied re-hint of a READY row toward an under-target
+included lane ahead of an expiring quota deadline, so every valid receipt
+counts once while `jobs` reports the distinct jobs touched. `byReason`
+tallies receipts by expiring-quota reason (`expiring_included_quota`,
+`expiring_reset_bank`) and `lanes` tallies hinted-to-target lane pairs —
+null `from` for open work — with per-pair receipt and distinct-job
+counts. Rows that fail the writer's contract (missing
+`resource_plan_under_target` marker, no `expiring_*` code, malformed lane,
+deadline, count or timestamp fields) are skipped rather than guessed.
 The jobs and work-market journal readers retain the first line at a byte
 cutoff when it starts on a line boundary. When the cutoff lands inside a
 line, they discard its fragment, including when no newline follows it.
@@ -625,7 +636,8 @@ fall back to metered execution. Dispatch still decides whether and where to
 launch. The move is recorded in `metrics/work-market.jsonl` as
 `work-market.v1` / `queue_reroute` with `resource_plan_under_target` and
 `expiring_included_quota` or `expiring_reset_bank`; these are not claim or
-route-decision events.
+route-decision events, so `phm fleet unfed` accounts for them in its own
+`reroutes` fold rather than in `overrides` or `claims`.
 
 ## Dispatch-neutral queue snapshot
 

@@ -1775,7 +1775,8 @@ nowMs, windowHours)`, `foldMarketOverrides(jsonl, nowMs, windowHours)`,
 `foldClaimOverrides(jsonl, nowMs, windowHours, truncated?)`,
 `foldDecisionOutcomes(marketJsonl, jobsJsonl, nowMs, windowHours,
 jobsTruncated?)`,
-`foldRouteRejections(marketJsonl, nowMs, windowHours)` and
+`foldRouteRejections(marketJsonl, nowMs, windowHours)`,
+`foldReroutes(marketJsonl, nowMs, windowHours)` and
 `renderUnfed(report)` in
 `src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
 `phm fleet unfed` (`fleet.unfed.v1`). `currentUnfed` accepts `null` for an
@@ -1824,7 +1825,19 @@ refused each job, with its recorded reason codes — into the report's
 `rejections` field (`available`, `decided`, `unrouted`, `lanes`,
 `byReason`): `lanes` tallies rejected lanes per job with per-lane reason
 counts, `byReason` counts each job once per reason across all its rejected
-lanes, and malformed entries or codes are skipped rather than guessed. The optional `market` carries the
+lanes, and malformed entries or codes are skipped rather than guessed.
+`foldReroutes` reads the journal's `queue_reroute` rows — the Leader's own
+re-hints of READY rows toward under-target included lanes ahead of an
+expiring quota deadline, recorded outside the route_decision stream — into
+the report's `reroutes` field (`available`, `receipts`, `jobs`, `byReason`,
+`lanes`): every valid receipt counts once since each is one applied lane
+move rather than a re-stated decision, `jobs` collapses to distinct job
+ids, `byReason` tallies receipts by expiring-quota reason code, and
+`lanes` tallies hinted-to-target lane pairs (null `from` for open work)
+with per-pair receipt and distinct-job counts; rows failing the writer's
+contract — missing marker, no `expiring_*` code, malformed lane, deadline,
+count or timestamp fields — are skipped rather than guessed. The optional
+`market` carries the
 dispatcher's own input files (slots.json, models.json, budget-overrides.json,
 adaptive.json, HOLD, router-queue.md); when slots.json parses, a derived
 report recomputes per-lane `blocked` reason codes with the same eligibility

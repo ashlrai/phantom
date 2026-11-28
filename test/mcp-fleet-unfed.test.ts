@@ -63,6 +63,7 @@ const report = (over: Partial<UnfedReport> = {}): UnfedReport => ({
     byReason: {}, byClass: {},
   },
   rejections: { available: false, decided: 0, unrouted: 0, lanes: [], byReason: {} },
+  reroutes: { available: false, receipts: 0, jobs: 0, byReason: {}, lanes: [] },
   ...over,
 });
 

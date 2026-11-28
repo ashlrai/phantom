@@ -187,6 +187,45 @@ export interface UnfedRejections {
   byReason: Record<string, number>;
 }
 
+/** One hinted->target lane pair Leader re-hints took in the window, with its reason. */
+export interface UnfedRerouteLane {
+  /** Hint the row carried before the re-hint; null for open (undeclared) work. */
+  from: string | null;
+  /** Lane the Leader re-hinted the row toward. */
+  to: string;
+  /** Expiring-quota reason that drove the move (expiring_included_quota or expiring_reset_bank). */
+  reason: string;
+  /** queue_reroute receipts that took this route. */
+  receipts: number;
+  /** Distinct jobs among those receipts. */
+  jobs: number;
+}
+
+/**
+ * queue_reroute accounting over the window's work-market.jsonl rows: the
+ * Leader's own lane moves. routeExpiringCapacity re-hints READY rows toward
+ * under-target included lanes ahead of an expiring quota deadline and
+ * appends one receipt per moved row — an event the market's route_decision
+ * stream never records, so `overrides`, `claims` and `decisionOutcomes`
+ * cannot see it, and the rewritten hint then reads as an ordinary
+ * preferred_lane the market honored. Each receipt is one applied re-hint
+ * (a route_decision re-states every waiting job each tick; a re-hint
+ * happens once per move), so every valid row counts while `jobs` reports
+ * the distinct jobs touched.
+ */
+export interface UnfedReroutes {
+  /** False when metrics/work-market.jsonl is absent or unreadable. */
+  available: boolean;
+  /** Valid queue_reroute receipts in the window. */
+  receipts: number;
+  /** Distinct jobs the receipts re-hinted. */
+  jobs: number;
+  /** Receipts by expiring-quota reason code. */
+  byReason: Record<string, number>;
+  /** Receipts by hinted->target lane and reason, largest first. */
+  lanes: UnfedRerouteLane[];
+}
+
 export interface UnfedReport {
   schema: typeof FLEET_UNFED_SCHEMA;
   readOnly: true;
@@ -248,6 +287,8 @@ export interface UnfedReport {
   decisionOutcomes: UnfedDecisionOutcomes;
   /** Per-lane rejection accounting over the same window's route_decision rows. */
   rejections: UnfedRejections;
+  /** Leader re-hint accounting over the same window's queue_reroute rows. */
+  reroutes: UnfedReroutes;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -330,7 +371,7 @@ function publishedFleetStop(resources: readonly UnfedResource[]): FleetStopCode 
  * dispatcher's own input files; when present and slots.json parses, a derived
  * report recomputes per-lane reason codes instead of leaving them unknown.
  */
-export function currentUnfed(statusJson: string, readyTsv: string | null, market?: UnfedMarketInputs): Omit<UnfedReport, 'marketTruncated' | 'history' | 'overrides' | 'claims' | 'decisionOutcomes' | 'rejections'> {
+export function currentUnfed(statusJson: string, readyTsv: string | null, market?: UnfedMarketInputs): Omit<UnfedReport, 'marketTruncated' | 'history' | 'overrides' | 'claims' | 'decisionOutcomes' | 'rejections' | 'reroutes'> {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
   const tickMs = typeof data.last_tick === 'string' ? Date.parse(data.last_tick) : NaN;
@@ -835,6 +876,88 @@ export function foldRouteRejections(
   return report;
 }
 
+/** The fixed first reason code on every queue_reroute receipt (docs/QUEUE.md). */
+const REROUTE_MARKER = 'resource_plan_under_target';
+/** Expiring-quota reason codes the writer records begin with this prefix. */
+const REROUTE_EXPIRING_PREFIX = 'expiring_';
+
+/**
+ * Fold `queue_reroute` rows from metrics/work-market.jsonl over a window:
+ * the Leader's re-hints of READY rows toward under-target included lanes
+ * (resource-queue-route.ts), recorded outside the market's route_decision
+ * stream, so the overrides, claims and decision-outcome folds never see
+ * them — and the rewritten preferred_lane then reads as an ordinary hint
+ * the market honored. Each valid receipt counts once: unlike a
+ * route_decision it is not re-stated every tick, it is one applied lane
+ * move. Validation follows the writer's contract exactly — schema
+ * 'work-market.v1', event 'queue_reroute', an epoch-seconds `ts` inside
+ * the window, a bounded job id, `preferred_lane` present and null-or-lane
+ * (open-hint rows reroute too), a lane-id `target_lane`, a parseable
+ * `deadline_at`, non-negative integer `running`/`target` counts, and
+ * `reason_codes` carrying the writer's marker plus at least one
+ * 'expiring_*' code. Malformed rows are skipped, never guessed. Counts,
+ * lane and reason codes only; no job ids, task text or credentials. Null
+ * text means the file was absent or unreadable.
+ */
+export function foldReroutes(jsonl: string | null, nowMs: number, windowHours: number): UnfedReroutes {
+  const tally: UnfedReroutes = { available: jsonl !== null, receipts: 0, jobs: 0, byReason: {}, lanes: [] };
+  if (jsonl === null) return tally;
+  const until = nowMs / 1000;
+  const since = until - windowHours * 3600;
+  const jobs = new Set<string>();
+  const pairs = new Map<string, { from: string | null; to: string; reason: string; receipts: number; jobSet: Set<string> }>();
+  for (const line of jsonl.split('\n')) {
+    // Cheap prefilter: re-hints are rare next to route decisions.
+    if (!line.includes('"queue_reroute"')) continue;
+    let row: unknown;
+    try { row = JSON.parse(line); } catch { continue; }
+    if (!isRecord(row) || row.schema !== 'work-market.v1' || row.event !== 'queue_reroute') continue;
+    const ts = row.ts;
+    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > until) continue;
+    const job = row.job;
+    if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
+    if (!('preferred_lane' in row)) continue;
+    const preferred = row.preferred_lane;
+    const from = preferred === null ? null : laneField(preferred);
+    if (preferred !== null && from === null) continue;
+    const to = laneField(row.target_lane);
+    if (to === null) continue;
+    const deadline = row.deadline_at;
+    if (typeof deadline !== 'string' || deadline === '' || !Number.isFinite(Date.parse(deadline))) continue;
+    if (!count(row.running) || !count(row.target)) continue;
+    const rawCodes = row.reason_codes;
+    if (!Array.isArray(rawCodes)) continue;
+    let marker = false;
+    const expiring = new Set<string>();
+    for (const code of rawCodes.slice(0, MAX_CODES)) {
+      if (typeof code !== 'string' || !CODE.test(code)) continue;
+      if (code === REROUTE_MARKER) marker = true;
+      else if (code.startsWith(REROUTE_EXPIRING_PREFIX)) expiring.add(code);
+    }
+    if (!marker || expiring.size === 0) continue;
+    tally.receipts++;
+    jobs.add(job);
+    for (const reason of expiring) {
+      if (tally.byReason[reason] !== undefined || Object.keys(tally.byReason).length < MAX_CODES) {
+        tally.byReason[reason] = (tally.byReason[reason] ?? 0) + 1;
+      }
+      const key = `${from ?? ''}\t${to}\t${reason}`;
+      const entry = pairs.get(key) ?? { from, to, reason, receipts: 0, jobSet: new Set<string>() };
+      entry.receipts++;
+      entry.jobSet.add(job);
+      pairs.set(key, entry);
+    }
+  }
+  tally.jobs = jobs.size;
+  tally.lanes = [...pairs.values()]
+    .map(({ jobSet, ...entry }) => ({ ...entry, jobs: jobSet.size }))
+    .sort((a, b) => b.receipts - a.receipts || b.jobs - a.jobs
+      || (a.from ?? '').localeCompare(b.from ?? '')
+      || a.to.localeCompare(b.to) || a.reason.localeCompare(b.reason))
+    .slice(0, MAX_OVERRIDE_LANES);
+  return tally;
+}
+
 const MAX_OVERRIDE_LANES = 16;
 
 const topCodes = (blocked: Record<string, number>): string =>
@@ -882,7 +1005,7 @@ export function renderUnfed(report: UnfedReport): string[] {
   }
   const h = report.history;
   if (report.marketTruncated) {
-    lines.push(`Last ${h.windowHours}h: work-market journal tail only. History, route decisions, rejections and linked outcomes may be incomplete.`);
+    lines.push(`Last ${h.windowHours}h: work-market journal tail only. History, route decisions, re-hints, rejections and linked outcomes may be incomplete.`);
   }
   if (!h.available) lines.push(`Last ${h.windowHours}h: no metrics/work-market.jsonl history.`);
   else if (h.lanes.length === 0) lines.push(`Last ${h.windowHours}h: no unfed ticks recorded.`);
@@ -902,6 +1025,17 @@ export function renderUnfed(report: UnfedReport): string[] {
         for (const l of o.lanes.slice(0, 3)) {
           lines.push(`  ${l.from ?? 'open'} -> ${l.to} (${l.reason}): ${l.jobs} job(s)`);
         }
+      }
+    }
+  }
+  const rr = report.reroutes;
+  if (rr.available) {
+    if (rr.receipts === 0) lines.push(`Last ${h.windowHours}h: no queue re-hints recorded.`);
+    else {
+      lines.push(`Last ${h.windowHours}h: ${rr.receipts} queue re-hint(s) moved ${rr.jobs} job(s) toward expiring-quota lanes.`);
+      lines.push(`  re-hint reasons: ${topCodes(rr.byReason)}`);
+      for (const l of rr.lanes.slice(0, 3)) {
+        lines.push(`  ${l.from ?? 'open'} -> ${l.to} (${l.reason}): ${l.receipts} re-hint(s)`);
       }
     }
   }
