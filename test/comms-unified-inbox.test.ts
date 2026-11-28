@@ -16,11 +16,12 @@ import { appendDraft as appendCommsDraft, writeInbox as writeCommsInbox, type Co
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type StuckFixesSourceRead, type StrandedWorkSourceRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type DispatchStuckSourceRead, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type StuckFixesSourceRead, type StrandedWorkSourceRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
 import type { ParkedGroup, ParkedMetDep, ParkedUnmetDep } from '../src/core/fleet/runs-parked-queue.js';
 import type { StuckFixRow } from '../src/core/fleet/stuck-fixes.js';
 import type { StrandedItem } from '../src/core/fleet/stranded-work.js';
 import type { StuckJob as RunningStuckJob } from '../src/core/fleet/running-stuck.js';
+import type { StuckJob as DispatchStuckJob } from '../src/core/fleet/stuck-jobs.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
@@ -5735,6 +5736,170 @@ describe('readUnifiedInbox stranded work', () => {
     const byJob = await readStranded(pending, { filter: { job: 'RQ-STRAND-2' } });
     expect(byJob.items.filter(i => i.source === 'stranded-work').map(i => i.id))
       .toEqual(['stranded-work:RQ-STRAND-2']);
+  });
+});
+
+describe('readUnifiedInbox dispatch stuck', () => {
+  const stuckRead = (over: Partial<DispatchStuckSourceRead> = {}): DispatchStuckSourceRead => ({
+    state: 'healthy', jobs: [], ...over,
+  });
+  const readStuck = (s: DispatchStuckSourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readDispatchStuck: async () => s, ...extra });
+  const stuckJob = (over: Partial<DispatchStuckJob> = {}): DispatchStuckJob => ({
+    job: 'RQ-STUCK-1', lane: 'devin', cause: 'lane_refused_size', events: 3,
+    firstSeen: new Date(now - 2 * 3_600_000).toISOString(),
+    lastSeen: new Date(now - 10 * 60_000).toISOString(),
+    ageSeconds: 7_200,
+    action: 'move to a lane that accepts this size',
+    kind: 'DEVIN_FLASH_REFUSED', reason: 'size-not-sm', ...over,
+  });
+  // Log lines carry the local wall clock, so stamps are built the same way.
+  const localStamp = (ms: number): string => {
+    const d = new Date(ms);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  };
+  const eventLine = (ms: number, rest: string) => `${localStamp(ms)} ${rest}`;
+
+  it('lists each stuck job as a warn naming job, lane, cause, events and acts', async () => {
+    const inbox = await readStuck(stuckRead({ jobs: [
+      stuckJob(),
+      stuckJob({ job: 'RQ-STUCK-2', lane: null, cause: 'lane_refused_repo',
+        action: 'move to a lane that accepts this repo',
+        kind: 'DEVIN_FLASH_REFUSED', reason: 'repo-not-eligible' }),
+      stuckJob({ job: 'RQ-STUCK-3', lane: 'claude', cause: 'worktree_cleanup_failed',
+        action: 'worktree cleanup keeps failing; needs a manual look',
+        kind: 'WT_ORPHAN_REMOVE_FAILED', reason: '(RuntimeError)' }),
+      stuckJob({ job: 'RQ-STUCK-4', lane: null, cause: 'unknown',
+        action: 'cause not recognised; read the event log lines for this job',
+        kind: 'PUBLISH_FAILED', reason: 'exit 3' }),
+    ] }));
+    expect(inbox.sources['dispatch-stuck']).toEqual({ state: 'healthy', pending: 4 });
+    const items = inbox.items.filter(i => i.source === 'dispatch-stuck');
+    expect(items).toHaveLength(4);
+
+    const refused = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-1')!;
+    expect(refused).toMatchObject({
+      kind: 'dispatch-stuck', severity: 'warn', blocking: false,
+      title: 'Job RQ-STUCK-1 cannot launch — dispatch keeps refusing it',
+      since: new Date(now - 2 * 3_600_000).toISOString(), expiresAt: null,
+      jobIds: ['RQ-STUCK-1'],
+      act: ['phm fleet stuck', 'phm queue lane RQ-STUCK-1 <lane>', 'phm queue'],
+    });
+    expect(refused.detail).toContain('lane devin');
+    expect(refused.detail).toContain('waiting 2h');
+    expect(refused.detail).toContain('3 events');
+    expect(refused.detail).toContain('DEVIN_FLASH_REFUSED size-not-sm');
+    expect(refused.detail).toContain('move to a lane that accepts this size');
+
+    // A lane refusal with no ready-list lane falls back to the refusing
+    // lane or unknown — here the read handed null, so the detail says so.
+    const noLane = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-2')!;
+    expect(noLane.detail).toContain('lane unknown');
+    expect(noLane.act).toEqual(['phm fleet stuck', 'phm queue lane RQ-STUCK-2 <lane>', 'phm queue']);
+
+    // A *_FAILED kind is a failure, not a refusal — the title and acts
+    // follow the cause, never a guessed verdict.
+    const cleanup = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-3')!;
+    expect(cleanup.title).toBe('Job RQ-STUCK-3 cannot launch — dispatch keeps failing it');
+    expect(cleanup.act).toEqual(['phm fleet stuck', 'phm fleet worktrees', 'phm queue']);
+    expect(cleanup.detail).toContain('WT_ORPHAN_REMOVE_FAILED (RuntimeError)');
+
+    const unknown = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-4')!;
+    expect(unknown.act).toEqual(['phm fleet stuck', 'phm fleet dispatch-events', 'phm queue']);
+    expect(unknown.detail).toContain('cause not recognised');
+  });
+
+  it('reports unavailable honestly and never lists seam rows under it', async () => {
+    // `phm fleet stuck`'s own rule: a missing or unreadable event log
+    // leaves the stuck set unknown — never an empty list passed off as
+    // fact — so 'missing' cannot appear here at all.
+    const unavailable = await readStuck(stuckRead({ state: 'unavailable', jobs: [stuckJob()] }));
+    expect(unavailable.sources['dispatch-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'dispatch-stuck')).toHaveLength(0);
+
+    const throwing = await read({ readDispatchStuck: async () => { throw new Error('events boom'); } });
+    expect(throwing.sources['dispatch-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'dispatch-stuck')).toHaveLength(0);
+
+    // A degraded ready read still lists every event-proven job — the
+    // events log, not the ready list, proves the stuck set — with the
+    // lane-attribution caveat in the detail.
+    const degraded = await readStuck(stuckRead({ state: 'degraded', jobs: [stuckJob()] }));
+    expect(degraded.sources['dispatch-stuck']).toEqual({ state: 'degraded', pending: 1 });
+    const item = degraded.items.find(i => i.source === 'dispatch-stuck')!;
+    expect(item.detail).toContain('ready.tsv read degraded');
+  });
+
+  it('reads the real dispatch-events.log and ready.tsv under runsDir', async () => {
+    mkdirSync(join(runsDir, 'queue'), { recursive: true });
+    const t = (msAgo: number) => now - msAgo;
+    writeFileSync(join(runsDir, 'queue', 'dispatch-events.log'), [
+      // Stuck: two refusals since the last launch, still active.
+      eventLine(t(2 * 3_600_000), 'DEVIN_FLASH_REFUSED RQ-STUCK-A size-not-sm'),
+      eventLine(t(2 * 3_600_000 - 5 * 60_000), 'DEVIN_FLASH_REFUSED RQ-STUCK-A size-not-sm'),
+      eventLine(t(2 * 3_600_000 - 10 * 60_000), 'DEVIN_FLASH_REFUSED RQ-STUCK-A size-not-sm'),
+      // Stuck: a worktree cleanup failure — lane falls back to unknown.
+      eventLine(t(2 * 3_600_000), 'WT_ORPHAN_REMOVE_FAILED RQ-STUCK-B (RuntimeError)'),
+      eventLine(t(2 * 3_600_000 - 5 * 60_000), 'WT_ORPHAN_REMOVE_FAILED RQ-STUCK-B (RuntimeError)'),
+      // Refused once, then launched — the LAUNCH clears it, never lists.
+      eventLine(t(4 * 3_600_000), 'DEVIN_FLASH_REFUSED RQ-LAUNCHED-1 size-not-sm'),
+      eventLine(t(4 * 3_600_000 - 2 * 60_000), 'LAUNCH RQ-LAUNCHED-1 phantom claude frontier'),
+      // Refused but gone quiet for over an hour — fixed or removed.
+      eventLine(t(5 * 3_600_000), 'DEVIN_FLASH_REFUSED RQ-QUIET-1 size-not-sm'),
+      eventLine(t(5 * 3_600_000 - 5 * 60_000), 'DEVIN_FLASH_REFUSED RQ-QUIET-1 size-not-sm'),
+      eventLine(t(90 * 60_000), 'TICK ok'),
+      'not a log line',
+    ].join('\n') + '\n', { mode: 0o600 });
+    // The ready list names RQ-STUCK-A's lane — it wins over the refusing
+    // lane the event kind would imply.
+    writeFileSync(join(runsDir, 'queue', 'ready.tsv'),
+      'RQ-STUCK-A\tcodex-local\n', { mode: 0o600 });
+
+    const inbox = await read();
+    expect(inbox.sources['dispatch-stuck']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'dispatch-stuck');
+    expect(items.map(i => i.id).sort()).toEqual(['dispatch-stuck:RQ-STUCK-A', 'dispatch-stuck:RQ-STUCK-B']);
+    const lane = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-A')!;
+    expect(lane).toMatchObject({
+      kind: 'dispatch-stuck', severity: 'warn', jobIds: ['RQ-STUCK-A'],
+      act: ['phm fleet stuck', 'phm queue lane RQ-STUCK-A <lane>', 'phm queue'],
+    });
+    expect(lane.detail).toContain('lane codex-local');
+    expect(lane.detail).toContain('DEVIN_FLASH_REFUSED size-not-sm');
+    const cleanup = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-B')!;
+    expect(cleanup.act).toEqual(['phm fleet stuck', 'phm fleet worktrees', 'phm queue']);
+    expect(cleanup.detail).toContain('lane unknown');
+  });
+
+  it('reports a missing or unreadable event log as unavailable — unknown, never an empty list', async () => {
+    // No dispatch-events.log anywhere under runsDir — `phm fleet stuck`
+    // itself reports unknown (exit 1), so the source can never claim a
+    // verified-empty stuck set.
+    const missing = await read();
+    expect(missing.sources['dispatch-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(missing.items.filter(i => i.source === 'dispatch-stuck')).toHaveLength(0);
+
+    // A directory where the log belongs is a degraded read — still
+    // unknown, never verified-empty.
+    mkdirSync(join(runsDir, 'queue', 'dispatch-events.log'), { recursive: true });
+    const degraded = await read();
+    expect(degraded.sources['dispatch-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(degraded.items.filter(i => i.source === 'dispatch-stuck')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = stuckRead({ jobs: [stuckJob(), stuckJob({ job: 'RQ-STUCK-2' })] });
+    const bySource = await readStuck(pending, { filter: { source: 'dispatch-stuck' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'dispatch-stuck')).toBe(true);
+    const byKind = await readStuck(pending, { filter: { kind: 'dispatch-stuck' } });
+    expect(byKind.items).toHaveLength(2);
+    expect(byKind.sources['dispatch-stuck']).toEqual({ state: 'healthy', pending: 2 });
+    // The job id is the item's own citation — --job names it directly.
+    const byJob = await readStuck(pending, { filter: { job: 'RQ-STUCK-2' } });
+    expect(byJob.items.filter(i => i.source === 'dispatch-stuck').map(i => i.id))
+      .toEqual(['dispatch-stuck:RQ-STUCK-2']);
   });
 });
 

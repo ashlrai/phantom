@@ -805,7 +805,37 @@ passed off as fact — and a known read with gaps (an unreadable metrics
 ledger leaves finish times and sizes unknown, so the listed rows are a
 floor) `degraded`; no item is Mason-blocking; deep links `phm fleet
 stranded`, `phm fleet republish` (the pushed-branch recovery
-`abort after push` rows name), `phm fleet kept-worktrees`) — and each
+`abort after push` rows name), `phm fleet kept-worktrees`) — and queued
+jobs dispatch keeps refusing or failing (the same
+`findStuckJobs`/`readDispatchStuckJobs` fold of the `dispatch-events.log`
+tail and the ready list's lane attribution `phm fleet stuck` and the
+`fleet.stuck.v1` row of `phm fleet vitals` serve, so the surfaces can
+never disagree: until now a job the dispatcher could never place — a
+lane refusing its size or repo every tick, a worktree cleanup that
+keeps failing — had no item-level inbox surface, since the
+router-queue source lists only READY rows in `queue/router-queue.md`,
+the queue-parked source lists only PARKED rows, the jobs-stuck source
+reads run markers for jobs already launched, and every bus/feed/board
+read looks at work not yet claimed, while the refused job sat in the
+queue generating refusal events an agent had to already know to look
+for; each stuck row lists once as warn `dispatch-stuck` naming the job
+id `phm fleet stuck` prints — `since` the first recorded refusal or
+failure, the moment the stuck condition began, and `expiresAt` null,
+since a refused job waits for a lane move or a queue edit, never a
+guessed deadline; `jobIds` carries the job's own id so `--job` finds
+it; lane-refusal causes deep-link `phm queue lane <id> <lane>` — the
+steer that moves the row — a worktree cleanup failure deep-links `phm
+fleet worktrees`, and an unrecognised cause deep-links `phm fleet
+dispatch-events` to read the raw lines, every item leading with `phm
+fleet stuck`; the event log is the only witness a job is being
+refused, so `phm fleet stuck`'s own rule applies — a missing or
+unreadable log leaves the stuck set unknown, `unavailable` (pending
+null), never an empty list passed off as fact, while a degraded ready
+read still lists every event-proven job but marks the source
+`degraded` — lane attribution is a floor, never a complete set; no
+item is Mason-blocking; deep links `phm fleet stuck`, `phm queue
+lane`, `phm queue`, `phm fleet worktrees`, `phm fleet
+dispatch-events`) — and each
 item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
@@ -831,7 +861,8 @@ channel-health`, `phm channels slack status`, `phm imessage doctor`, `phm
 comms health --json`, `phm comms cycle`, `phm fleet queue-parked`, `phm
 fleet parked`, `phm fleet autopilot --once`, `phm fleet stuck-fixes`,
 `phm fleet main-health`, `phm fleet stranded`, `phm fleet republish`,
-`phm fleet kept-worktrees`). It never claims, replies, or mutates; a source
+`phm fleet kept-worktrees`, `phm fleet stuck`, `phm queue lane`, `phm
+fleet worktrees`, `phm fleet dispatch-events`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
@@ -849,8 +880,9 @@ seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
 peer-dispatch receipt's job, a session-handoff journal's job id, a
 router-queue row's own READY id, a jobs-stuck marker's own job id, a
 queue-parked row's own job id, one of the gate ids its detail names, or
-one of a parked group's listed job ids, or a stuck-fix row's own
-FIXUP-MAIN job id —
+one of a parked group's listed job ids, a stuck-fix row's own
+FIXUP-MAIN job id, a stranded-work row's own job id, or a
+dispatch-stuck row's own job id —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound
