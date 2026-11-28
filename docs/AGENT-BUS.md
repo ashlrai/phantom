@@ -2830,7 +2830,29 @@ opaque to it. The value is bounded free text, up to 512 characters. On
 `bus-follow` filtered rows still advance checkpoints exactly like every
 other filter, and a `comms bus --checkpoint` consumer binds the raw
 `--contains` spelling into its filter identity, so a changed needle fails
-closed.
+closed. `--body-kind <kind>` narrows `comms bus read|watch` to envelopes
+whose body carries that exact kind discriminator — the same `busBodyKind`
+own-field match `agents bus inbox --body-kind`, `channel read
+--body-kind`, `wakes --body-kind`, `agents conversations --body-kind`,
+`phm messages --body-kind` and `fleet bus-follow --body-kind` apply: the
+v2 `kind` field, else a bus-transport v1 `protocol.kind`, else the
+`type`/`schema` a kindless notice keys on, exact and case-sensitive, a
+body carrying no discriminator never matching and an unrecognized but
+printable value an honest empty page; a `comms bus --checkpoint` consumer
+binds the `--body-kind` value into its filter identity, so a changed
+discriminator fails closed. `--result
+<reserved|admitted|complete|failed>` narrows `comms bus read|watch` to
+`work.result` bodies whose own `outcome` strictly equals the code — the
+same `busBodyResultOutcome` own-field match and `WORK_RESULT_OUTCOMES`
+vocabulary `phm messages --result`, `agents messages --result`, `fleet
+messages`, `bus recent`, `fleet_bus_inbox`'s `result`,
+`fleet_agent_messages`'s `result` and the work feed's `--result` share —
+so every other body kind, including a `work.release` body's own
+`released`/`completed` outcome, and a `work.result` carrying no outcome
+never match, the envelope-level audit trail the feed's per-job
+newest-result `--result` cannot show; a value outside the vocabulary is
+invalid and a `comms bus --checkpoint` consumer binds the `--result`
+value into its filter identity the same way.
 
 ### 4. Work feed
 
