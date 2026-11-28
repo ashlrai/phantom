@@ -185,6 +185,48 @@ describe('emptyTagBacklogItems', () => {
     expect(items[0]?.prompt).toContain('counts cover only the retained receipts');
   });
 
+  it('reads the newest window of a clipped empty-tags ledger and still withholds untagged', async () => {
+    // The tags ledger is append-only and never rotated: once it outgrows the
+    // bounded read the fold must keep the retained tag rows instead of going
+    // silent, disclose the clip, and refuse the untagged majority a clipped
+    // join cannot prove.
+    const blockedIds = ['RQ-K1', 'RQ-K2', 'RQ-K3'];
+    const untaggedIds = ['RQ-K4', 'RQ-K5', 'RQ-K6', 'RQ-K7'];
+    const jobs = [
+      ...blockedIds.map(id => finishRow(id, 5)),
+      ...untaggedIds.map(id => finishRow(id, 4)),
+    ].join('\n');
+    const tags = [
+      // Aged-out history above the retained window.
+      ...Array.from({ length: 8 }, (_, i) => tagRow(`RQ-OLD-${i}`, 'already_done')),
+      ' '.repeat(ROUTER_OUTCOME_LEDGER_LIMIT),
+      blockedIds.map(id => tagRow(id, 'blocked')).join('\n'),
+    ].join('\n');
+    const items = await emptyTagBacklogItems({
+      repo: 'ashlrai/phantom', runsDir: writeRuns('runs-k', jobs, tags), now: NOW,
+    });
+    expect(items.map(item => item.id)).toEqual(['fleet-empty-tag-blocked']);
+    expect(items[0]?.prompt).toContain('blocked=3');
+    expect(items[0]?.prompt).toContain('empty-tags ledger was clipped');
+    expect(items[0]?.prompt).not.toContain('jobs ledger was clipped');
+  });
+
+  it('counts finishes whose tag rows aged out of a clipped tags ledger as untagged, never as recorded', async () => {
+    const ids = ['RQ-L1', 'RQ-L2', 'RQ-L3'];
+    const jobs = ids.map(id => finishRow(id, 5)).join('\n');
+    // Every tag row sits above the retained window: the fold sees no tag for
+    // these finishes, so they are untagged — and untagged is withheld while
+    // the join is clipped rather than reported as missing-tag evidence.
+    const tags = [
+      ids.map(id => tagRow(id, 'blocked')).join('\n'),
+      ' '.repeat(ROUTER_OUTCOME_LEDGER_LIMIT),
+    ].join('\n');
+    const items = await emptyTagBacklogItems({
+      repo: 'ashlrai/phantom', runsDir: writeRuns('runs-l', jobs, tags), now: NOW,
+    });
+    expect(items).toEqual([]);
+  });
+
   it('emits nothing below the recurring bar or when only explained tags recur', async () => {
     const belowJobs = Array.from({ length: EMPTY_TAG_RECURRING - 1 }, (_, i) => finishRow(`RQ-D${i + 1}`, 6 - i)).join('\n');
     const belowTags = Array.from({ length: EMPTY_TAG_RECURRING - 1 }, (_, i) => tagRow(`RQ-D${i + 1}`, 'blocked')).join('\n');
