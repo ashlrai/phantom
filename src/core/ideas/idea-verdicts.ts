@@ -37,7 +37,7 @@ export const IDEA_ID_MAX = 512;
 /** Reads keep only the newest this many lines — "latest wins" stays cheap. */
 export const READ_TAIL_LINES = 2000;
 /** Generous byte cap for the tail read; ~2000 worst-case lines fit inside it. */
-const READ_TAIL_BYTES = 2 * 1024 * 1024;
+export const READ_TAIL_BYTES = 2 * 1024 * 1024;
 /** A "not now" verdict hides the idea for seven days, then it returns. */
 export const NOT_NOW_HIDE_MS = 7 * 24 * 60 * 60 * 1000;
 

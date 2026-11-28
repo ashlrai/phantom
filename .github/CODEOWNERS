@@ -665,6 +665,7 @@
 /test/improve-guardian-repair-backlog.test.ts @masonwyatt23
 /test/improve-harness-backlog.test.ts @masonwyatt23
 /test/improve-hot-patch.test.ts @masonwyatt23
+/test/improve-idea-verdict-backlog.test.ts @masonwyatt23
 /test/improve-ideation-outcome-backlog.test.ts @masonwyatt23
 /test/improve-incident-gate-backlog.test.ts @masonwyatt23
 /test/improve-incident-ledger-backlog.test.ts @masonwyatt23
