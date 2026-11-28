@@ -20,7 +20,13 @@ Computers join Phantom as nodes; \`join\` defaults \`--node\` to this computer's
 sanitized hostname (the pool join's default), so \`phm node join --owner <scope>\`
 is the shortest first join — pass \`--node\` to choose another id. A re-join
 replaces the whole advertised profile; the reply names any owner scopes, caps
-or \`--slots\` bound it drops and prints the re-join that keeps them. A job
+or \`--slots\` bound it drops and prints the re-join that keeps them.
+Omit \`--caps\` and the join auto-detects this machine's sign-in lanes —
+the \`codex\`, \`claude\` and \`gh\` logins, checked by exit code only, no
+credential read — and names installed agent CLIs as further \`--caps\`
+candidates; an explicit \`--caps\` replaces that detection, while the
+\`phm-<version>\` build cap and \`local-lanes.json\` model caps always merge
+in. A job
 carries an owner scope and only nodes in that scope
 see or pull it. The router picks the least-loaded live node that advertises the job's caps
 (\`gh\` also needs a local gh-auth heartbeat). A per-job lease with a fencing token means no
