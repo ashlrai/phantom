@@ -65,7 +65,6 @@ import {
   installAnthropicProxyAgent,
   installLaunchAgent,
   isLoopbackHost,
-  launchAgentInstalled,
   launchAgentLoaded,
   launchAgentLogPaths,
   launchAgentPlistPath,
@@ -146,6 +145,14 @@ function parseFlags(args: string[]): ParsedFlags {
     return value;
   };
 
+  const requiredValue = (raw: string | undefined, name: string): string | undefined => {
+    if (!raw || raw.startsWith('--')) {
+      out.error = `${name} expects a value`;
+      return undefined;
+    }
+    return raw;
+  };
+
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i] as string;
     switch (arg) {
@@ -156,22 +163,12 @@ function parseFlags(args: string[]): ParsedFlags {
       case '--ctx': out.ctx = num(args[++i], '--ctx', 512, 4_194_304); break;
       case '--wait-ms': out.waitMs = num(args[++i], '--wait-ms', 1_000, 3_600_000); break;
       case '--lines': out.lines = num(args[++i], '--lines', 1, 5_000); break;
-      case '--model': {
-        const value = args[++i];
-        if (!value || value.startsWith('--')) { out.error = '--model expects a value'; break; }
-        out.model = value;
-        break;
-      }
-      case '--model-path': {
-        const value = args[++i];
-        if (!value || value.startsWith('--')) { out.error = '--model-path expects a value'; break; }
-        out.modelPath = value;
-        break;
-      }
+      case '--model': out.model = requiredValue(args[++i], '--model'); break;
+      case '--model-path': out.modelPath = requiredValue(args[++i], '--model-path'); break;
       default:
         // A bare word is a positional, not a bad flag. `reshape <plan|execute>`
         // takes one; rejecting it here made the subcommand unreachable.
-        if (typeof arg === 'string' && !arg.startsWith('-')) {
+        if (!arg.startsWith('-')) {
           out.positionals.push(arg);
           break;
         }
@@ -338,30 +335,33 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
   const c = makeColors(isTty());
   const plistPath = launchAgentPlistPath();
 
+  const refuse = (detail: string, extra?: Record<string, unknown>): number => {
+    if (flags.json) {
+      console.log(JSON.stringify({ ok: false, action: 'refused', detail, ...extra }, null, 2));
+    } else {
+      console.error(`${c.red('refused')}  ${detail}`);
+    }
+    return 1;
+  };
+
   const kill = readKillSwitch();
   if (kill.state !== 'inactive') {
-    const message =
+    return refuse(
       'refused: the ashlr kill switch is engaged (~/.ashlr/KILL). Installing a launch agent ' +
       'grants standing authority to bring the serving runtime up at every login, unattended — ' +
       'which is what that switch withholds. Clear it yourself with `ashlr enroll kill off` ' +
       'when you want 24/7 operation; this command will never touch the sentinel.\n' +
-      `Meanwhile \`ashlr local-runtime start\` runs it for this session.\n` +
-      `Would have written: ${plistPath}`;
-    if (flags.json) {
-      console.log(JSON.stringify({ ok: false, action: 'refused', detail: message, plistPath }, null, 2));
-    } else {
-      console.error(c.red('refused') + '  ' + message);
-    }
-    return 1;
+      'Meanwhile `ashlr local-runtime start` runs it for this session.\n' +
+      `Would have written: ${plistPath}`,
+      { plistPath },
+    );
   }
 
   if (runtime.binPath === null) {
-    const message =
+    return refuse(
       'llama-server is not on PATH. Install llama.cpp (`brew install llama.cpp`) or set ' +
-      'LLAMA_SERVER_BIN to its absolute path.';
-    if (flags.json) console.log(JSON.stringify({ ok: false, action: 'refused', detail: message }, null, 2));
-    else console.error(c.red('refused') + '  ' + message);
-    return 1;
+      'LLAMA_SERVER_BIN to its absolute path.',
+    );
   }
 
   // A permanently-installed, LAN-exposed, UNAUTHENTICATED inference server is
@@ -371,15 +371,13 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
   // this verb still refuses, because `install` is the one that makes it
   // permanent and unattended. `start` remains available for an attended run.
   if (!isLoopbackHost(runtime.host)) {
-    const message =
+    return refuse(
       `refused: this would install a launch agent binding llama-server to ${runtime.host}, ` +
       'which is not loopback. llama-server has no authentication of any kind — anyone who ' +
       'can reach the port can run inference and read every slot\'s prompt via /slots — and ' +
       'a launch agent brings it back at every login, unattended. Bind it to 127.0.0.1, or run ' +
-      '`ashlr local-runtime start` for an attended session you can see and stop.';
-    if (flags.json) console.log(JSON.stringify({ ok: false, action: 'refused', detail: message }, null, 2));
-    else console.error(c.red('refused') + '  ' + message);
-    return 1;
+      '`ashlr local-runtime start` for an attended session you can see and stop.',
+    );
   }
 
   // Resolve the GGUF now so a broken reference is refused at install time
@@ -393,11 +391,7 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
   let modelPath = runtime.modelPath;
   if (modelPath === null) {
     const resolved = resolveOllamaModelBlob(runtime.modelRef);
-    if (!resolved.ok) {
-      if (flags.json) console.log(JSON.stringify({ ok: false, action: 'refused', detail: resolved.reason }, null, 2));
-      else console.error(c.red('refused') + '  ' + resolved.reason);
-      return 1;
-    }
+    if (!resolved.ok) return refuse(resolved.reason);
     modelPath = resolved.blobPath;
   }
 
@@ -640,9 +634,4 @@ export async function cmdLocalRuntime(args: string[]): Promise<number> {
     console.error(`local-runtime failed unexpectedly: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
-}
-
-/** True when the launch agent is present — exported for the doctor surface. */
-export function localRuntimeLaunchAgentInstalled(): boolean {
-  return launchAgentInstalled();
 }

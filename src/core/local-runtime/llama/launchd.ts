@@ -196,6 +196,55 @@ exec ${shQuote(spec.binPath)} -m "$MODEL"${rest.length > 0 ? ` ${rest.map(shQuot
 `;
 }
 
+/** Inputs shared by every launchd plist this module family renders. */
+export interface LaunchAgentPlistFields {
+  label: string;
+  shimPath: string;
+  workingDirectory: string;
+  stdoutLog: string;
+  stderrLog: string;
+}
+
+/**
+ * Render a KeepAlive background launchd plist targeting a `/bin/sh` shim.
+ *
+ * PURE — string in, string out — shared by the llama-server and Anthropic
+ * proxy agents so both jobs carry identical launchd supervision settings.
+ */
+export function renderLaunchAgentPlist(fields: LaunchAgentPlistFields): string {
+  const programArguments = ['/bin/sh', fields.shimPath]
+    .map((arg) => `      <string>${escapeXml(arg)}</string>`)
+    .join('\n');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>${escapeXml(fields.label)}</string>
+    <key>ProgramArguments</key>
+    <array>
+${programArguments}
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>WorkingDirectory</key>
+    <string>${escapeXml(fields.workingDirectory)}</string>
+    <key>StandardOutPath</key>
+    <string>${escapeXml(fields.stdoutLog)}</string>
+    <key>StandardErrorPath</key>
+    <string>${escapeXml(fields.stderrLog)}</string>
+  </dict>
+</plist>
+`;
+}
+
 /**
  * Render the launch agent plist.
  *
@@ -215,37 +264,13 @@ export function buildLaunchAgentPlist(
   // but a re-pulled model no longer leaves a job respawning against a path
   // that was garbage collected, and an unresolvable miss backs off inside the
   // missing-model guard instead of spinning. See `buildLaunchAgentShim`.
-  const programArguments = ['/bin/sh', shimPath]
-    .map((arg) => `      <string>${escapeXml(arg)}</string>`)
-    .join('\n');
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-  <dict>
-    <key>Label</key>
-    <string>${escapeXml(LAUNCH_AGENT_LABEL)}</string>
-    <key>ProgramArguments</key>
-    <array>
-${programArguments}
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>ThrottleInterval</key>
-    <integer>10</integer>
-    <key>ProcessType</key>
-    <string>Background</string>
-    <key>WorkingDirectory</key>
-    <string>${escapeXml(spec.workingDirectory)}</string>
-    <key>StandardOutPath</key>
-    <string>${escapeXml(spec.stdoutLog)}</string>
-    <key>StandardErrorPath</key>
-    <string>${escapeXml(spec.stderrLog)}</string>
-  </dict>
-</plist>
-`;
+  return renderLaunchAgentPlist({
+    label: LAUNCH_AGENT_LABEL,
+    shimPath,
+    workingDirectory: spec.workingDirectory,
+    stdoutLog: spec.stdoutLog,
+    stderrLog: spec.stderrLog,
+  });
 }
 
 /** Is our plist present in ~/Library/LaunchAgents? Never throws. */
@@ -277,10 +302,15 @@ function launchctl(args: string[]): string | null {
   }
 }
 
+/** Is `label` currently bootstrapped into launchd? */
+function launchdJobLoaded(label: string): boolean {
+  if (process.platform !== 'darwin') return false;
+  return launchctl(['print', `${guiDomain()}/${label}`]) !== null;
+}
+
 /** Is the job currently bootstrapped into launchd? */
 export function launchAgentLoaded(): boolean {
-  if (process.platform !== 'darwin') return false;
-  return launchctl(['print', `${guiDomain()}/${LAUNCH_AGENT_LABEL}`]) !== null;
+  return launchdJobLoaded(LAUNCH_AGENT_LABEL);
 }
 
 /** Result of an install/uninstall attempt. Never a thrown error. */
@@ -293,16 +323,33 @@ export interface LaunchAgentMutation {
   detail: string;
 }
 
-/**
- * Write the plist and bootstrap the job.
- *
- * The write happens first and is reported even when `launchctl` refuses, so a
- * partially-applied install is visible rather than silent. Re-installing over
- * an existing job boots it out first — `bootstrap` on an already-loaded label
- * fails, and the operator asked for the NEW argv, not the old one.
- */
-export function installLaunchAgent(spec: LaunchAgentSpec): LaunchAgentMutation {
-  const plistPath = launchAgentPlistPath();
+/** Parameters shared by installLaunchAgent and installAnthropicProxyAgent. */
+export interface ManagedLaunchAgentInstall {
+  label: string;
+  plistPath: string;
+  shimPath: string;
+  shimContent: string;
+  plistContent: string;
+  subject: string;
+  serviceSubject: string;
+  clearPathsOnWrite?: readonly string[];
+}
+
+/** Parameters shared by uninstallLaunchAgent and uninstallAnthropicProxyAgent. */
+export interface ManagedLaunchAgentUninstall {
+  label: string;
+  plistPath: string;
+  shimPath: string;
+  subject: string;
+  plistDescription: string;
+  extraCleanupPaths?: readonly string[];
+}
+
+/** Write a shim + plist and bootstrap the job into launchd. Never throws. */
+export function installManagedLaunchAgent(
+  options: ManagedLaunchAgentInstall,
+): LaunchAgentMutation {
+  const { label, plistPath, shimPath, shimContent, plistContent, subject, serviceSubject } = options;
 
   if (process.platform !== 'darwin') {
     return {
@@ -313,7 +360,6 @@ export function installLaunchAgent(spec: LaunchAgentSpec): LaunchAgentMutation {
     };
   }
 
-  const shimPath = launchAgentShimPath();
   try {
     mkdirSync(dirname(plistPath), { recursive: true });
     mkdirSync(logsDir(), { recursive: true, mode: 0o700 });
@@ -321,54 +367,57 @@ export function installLaunchAgent(spec: LaunchAgentSpec): LaunchAgentMutation {
     // The shim is only executable by its owner: it names an absolute binary
     // and `exec`s it at every login, so a world-writable copy would be a
     // standing privilege-escalation path into a KeepAlive job.
-    writeFileSync(shimPath, buildLaunchAgentShim(spec), { mode: 0o700 });
-    writeFileSync(plistPath, buildLaunchAgentPlist(spec, shimPath), { mode: 0o644 });
-    // A reinstall is a fresh start: drop the missing-model guard's stamp so a
-    // still-absent blob is reported as a new `blocked` rather than silently
-    // retrying inside a window the operator has already intervened on.
-    rmSync(missingModelStatePath(), { force: true });
+    writeFileSync(shimPath, shimContent, { mode: 0o700 });
+    writeFileSync(plistPath, plistContent, { mode: 0o644 });
+    for (const cleanupPath of options.clearPathsOnWrite ?? []) {
+      rmSync(cleanupPath, { force: true });
+    }
   } catch (err: unknown) {
     return {
       ok: false,
       plistPath,
       loaded: false,
-      detail: `could not write the launch agent: ${err instanceof Error ? err.message : String(err)}`,
+      detail: `could not write the ${subject}: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
   // Idempotent: an existing job must go before the new definition is loaded.
-  launchctl(['bootout', `${guiDomain()}/${LAUNCH_AGENT_LABEL}`]);
+  launchctl(['bootout', `${guiDomain()}/${label}`]);
   const bootstrapped = launchctl(['bootstrap', guiDomain(), plistPath]) !== null;
-  if (bootstrapped) launchctl(['enable', `${guiDomain()}/${LAUNCH_AGENT_LABEL}`]);
+  if (bootstrapped) launchctl(['enable', `${guiDomain()}/${label}`]);
 
-  const loaded = bootstrapped && launchAgentLoaded();
+  const loaded = bootstrapped && launchdJobLoaded(label);
   return {
     ok: true,
     plistPath,
     loaded,
     detail: loaded
-      ? 'launch agent written and bootstrapped; the runtime now starts at login and restarts on crash'
-      : 'launch agent written, but launchctl did not bootstrap it — it will still load at next login',
+      ? `${subject} written and bootstrapped; ${serviceSubject} now starts at login and restarts on crash`
+      : `${subject} written, but launchctl did not bootstrap it — it will still load at next login`,
   };
 }
 
-/** Boot the job out and delete the plist. Idempotent; never throws. */
-export function uninstallLaunchAgent(): LaunchAgentMutation {
-  const plistPath = launchAgentPlistPath();
+/** Boot a managed launchd job out and delete its plist and shim. Never throws. */
+export function uninstallManagedLaunchAgent(
+  options: ManagedLaunchAgentUninstall,
+): LaunchAgentMutation {
+  const { label, plistPath, shimPath, subject, plistDescription } = options;
   const wasInstalled = launchAgentInstalled(plistPath);
 
-  launchctl(['bootout', `${guiDomain()}/${LAUNCH_AGENT_LABEL}`]);
+  launchctl(['bootout', `${guiDomain()}/${label}`]);
 
   try {
     rmSync(plistPath, { force: true });
-    rmSync(launchAgentShimPath(), { force: true });
-    rmSync(missingModelStatePath(), { force: true });
+    rmSync(shimPath, { force: true });
+    for (const cleanupPath of options.extraCleanupPaths ?? []) {
+      rmSync(cleanupPath, { force: true });
+    }
   } catch (err: unknown) {
     return {
       ok: false,
       plistPath,
-      loaded: launchAgentLoaded(),
-      detail: `could not remove the plist: ${err instanceof Error ? err.message : String(err)}`,
+      loaded: launchdJobLoaded(label),
+      detail: `could not remove the ${plistDescription}: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
@@ -377,9 +426,46 @@ export function uninstallLaunchAgent(): LaunchAgentMutation {
     plistPath,
     loaded: false,
     detail: wasInstalled
-      ? 'launch agent booted out and removed'
-      : 'no launch agent was installed; nothing to remove',
+      ? `${subject} booted out and removed`
+      : `no ${subject} was installed; nothing to remove`,
   };
+}
+
+/**
+ * Write the plist and bootstrap the job.
+ *
+ * The write happens first and is reported even when `launchctl` refuses, so a
+ * partially-applied install is visible rather than silent. Re-installing over
+ * an existing job boots it out first — `bootstrap` on an already-loaded label
+ * fails, and the operator asked for the NEW argv, not the old one.
+ */
+export function installLaunchAgent(spec: LaunchAgentSpec): LaunchAgentMutation {
+  const shimPath = launchAgentShimPath();
+  return installManagedLaunchAgent({
+    label: LAUNCH_AGENT_LABEL,
+    plistPath: launchAgentPlistPath(),
+    shimPath,
+    shimContent: buildLaunchAgentShim(spec),
+    plistContent: buildLaunchAgentPlist(spec, shimPath),
+    subject: 'launch agent',
+    serviceSubject: 'the runtime',
+    // A reinstall is a fresh start: drop the missing-model guard's stamp so a
+    // still-absent blob is reported as a new `blocked` rather than silently
+    // retrying inside a window the operator has already intervened on.
+    clearPathsOnWrite: [missingModelStatePath()],
+  });
+}
+
+/** Boot the job out and delete the plist. Idempotent; never throws. */
+export function uninstallLaunchAgent(): LaunchAgentMutation {
+  return uninstallManagedLaunchAgent({
+    label: LAUNCH_AGENT_LABEL,
+    plistPath: launchAgentPlistPath(),
+    shimPath: launchAgentShimPath(),
+    subject: 'launch agent',
+    plistDescription: 'plist',
+    extraCleanupPaths: [missingModelStatePath()],
+  });
 }
 
 /** Stop a loaded job without removing its plist, so `stop` can free the port. */

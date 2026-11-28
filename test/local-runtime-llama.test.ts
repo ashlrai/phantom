@@ -43,6 +43,7 @@ import {
   buildLlamaServerArgs,
   isLoopbackHost,
   NO_LOCAL_AGENT_DEFAULTS,
+  originFromBaseUrl,
   resolveLocalAgentDefaults,
   originFor,
   resolveLlamaRuntimeConfig,
@@ -64,6 +65,7 @@ import {
   buildLaunchAgentPlist,
   buildLaunchAgentShim,
   escapeXml,
+  renderLaunchAgentPlist,
   shQuote,
 } from '../src/core/local-runtime/llama/launchd.js';
 import type { LlamaOwnershipRecord } from '../src/core/local-runtime/llama/types.js';
@@ -1016,6 +1018,35 @@ describe('launch agent plist', () => {
     const plist = buildLaunchAgentPlist(spec, '/Users/a&b/launch.sh');
     expect(plist).toContain('/Users/a&amp;b/launch.sh');
     expect(plist).not.toContain('/Users/a&b/launch.sh');
+  });
+
+  it('delegates to renderLaunchAgentPlist identically and escapes labels too', () => {
+    const shimPath = '/Users/x/.ashlr/local-runtime/llama-server-launch.sh';
+    expect(buildLaunchAgentPlist(spec, shimPath)).toBe(
+      renderLaunchAgentPlist({
+        label: 'ai.ashlr.local-runtime',
+        shimPath,
+        workingDirectory: spec.workingDirectory,
+        stdoutLog: spec.stdoutLog,
+        stderrLog: spec.stderrLog,
+      }),
+    );
+    const custom = renderLaunchAgentPlist({
+      label: 'ai.ashlr.<custom>&1',
+      shimPath,
+      workingDirectory: spec.workingDirectory,
+      stdoutLog: spec.stdoutLog,
+      stderrLog: spec.stderrLog,
+    });
+    expect(custom).toContain('<string>ai.ashlr.&lt;custom&gt;&amp;1</string>');
+  });
+});
+
+describe('originFromBaseUrl', () => {
+  it('extracts origin from valid URLs and strips /v1 on non-URL fallbacks', () => {
+    expect(originFromBaseUrl('http://127.0.0.1:8080/v1')).toBe('http://127.0.0.1:8080');
+    expect(originFromBaseUrl('http://[::1]:9090/v1/')).toBe('http://[::1]:9090');
+    expect(originFromBaseUrl('not-a-url/v1/')).toBe('not-a-url');
   });
 });
 

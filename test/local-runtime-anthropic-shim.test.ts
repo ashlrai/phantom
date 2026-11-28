@@ -205,3 +205,22 @@ describe('applyLocalAgentDefaults', () => {
     expect(out).toMatchObject({ temperature: 0.2, top_p: 0.9, top_k: 20 });
   });
 });
+
+describe('extractTextParts consistency across content and system blocks', () => {
+  it('filters empty and non-text blocks consistently for both system and message content', () => {
+    const mixed = ['', 'first', { text: '' }, { text: 'second' }, { type: 'image' }, null, 42];
+    expect(anthropicContentText(mixed)).toBe('first\nsecond');
+    const out = normaliseAnthropicRequest({
+      system: mixed,
+      messages: [
+        { role: 'user', content: 'hi' },
+        { role: 'system', content: mixed },
+      ],
+    });
+    expect(out.system).toEqual([
+      { type: 'text', text: 'first' },
+      { type: 'text', text: 'second' },
+      { type: 'text', text: 'first\nsecond' },
+    ]);
+  });
+});
