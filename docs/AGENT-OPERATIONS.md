@@ -1261,6 +1261,11 @@ agent product whose outside merges recurently revert across repos — too
 spread out for any single repo cell to reach the bar — becomes a
 fleet-repo backlog item; see
 [core/improve/outside-pr-agent-backlog.ts](../src/core/improve/outside-pr-agent-backlog.ts).
+Each row's `ci` field — the bounded per-PR check-rollup verdict — is
+folded per repository too, so outside merges that keep landing without a
+completed green check verdict (failed checks, checks still incomplete, or
+an empty rollup) become self-targeted backlog items; see
+[core/improve/outside-pr-ci-backlog.ts](../src/core/improve/outside-pr-ci-backlog.ts).
 
 `phm fleet pr-hygiene [--repo <owner/name>] [--stale-days <n>] [--limit <n>] [--json]`
 audits one repo's open PRs and emits the `fleet.pr-hygiene.v1` triage report
