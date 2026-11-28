@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, SkeletonLine, StatusBadge } from '../../../components/primitives/index.js';
+import { Button, SkeletonLine } from '../../../components/primitives/index.js';
 import { getQuerySnapshot } from '../../../data/cache.js';
 import { DispatchDisabledError, readFailureReason } from '../../../data/client.js';
 import { useMutationHold, useQuery, useRefetch } from '../../../data/hooks.js';
@@ -16,10 +16,12 @@ import { updateStatusQuery } from '../sections/update-status-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { releaseCadence } from './release-cadence-model.js';
 import { dailyCiLine } from './daily-ci-line.js';
-import { orderRepos, releaseLabel, releasePrMergeBlocker, runTone, safeRepoHref } from './fleet-releases-model.js';
+import { orderRepos, releasePrMergeBlocker, safeRepoHref } from './fleet-releases-model.js';
 import { ciRunsQuery, opsReleasesQuery, postReleasePrMerge } from './fleet-releases-queries.js';
 import { pollingDue, postMergeLine, readyVersion, type MergeNotice } from './post-merge-update-model.js';
 import { blockerLine, releasePrRows, releaseTellPrefill } from './release-pr-view-model.js';
+import { ReleasePath } from './ReleasePath.js';
+import { releasePath, waitingHeadline } from './release-path-model.js';
 import { releaseVersionGuard, treeVersionFor } from './release-version-guard.js';
 import styles from './fleet-releases.module.css';
 
@@ -81,6 +83,7 @@ export function FleetReleasesPane({ visible }: PaneProps) {
   const prRows = releasePrRows(prRead.status === 'error' ? undefined : prRead.data, Date.now());
   const ciLine = dailyCiLine(ciRead.status === 'error' ? undefined : ciRead.data, Date.now());
   return <section className={styles.root} aria-label="Release train">
+    <p className={styles.lead}>{waitingHeadline(data.repos)}</p>
     <p className={styles.header}>{data.repos.length} repos · read {formatRelative(data.generatedAt)}</p>
     <p role="status">{pipelineLabel(desktopUpdate?.phase ?? null)}</p>
     {data.sourceState !== 'healthy' && <p className={styles.notice} role="status">Release data may be incomplete.</p>}
@@ -89,8 +92,6 @@ export function FleetReleasesPane({ visible }: PaneProps) {
     {read.status === 'error' && <p className={styles.notice} role="status">Releases could not refresh. Showing the last reading.</p>}
     <ul className={styles.list} aria-label="Releases">{orderRepos(data.repos).map((repo, index) => {
       const href = safeRepoHref(repo.repo);
-      const release = repo.gh?.latestRelease ? releaseLabel(repo.gh.latestRelease) : null;
-      const run = repo.gh?.latestRun;
       const name = repo.repo.toLowerCase();
       const phantom = name === 'phantom' || name.endsWith('/phantom');
       const pr = prRows.get(name);
@@ -103,7 +104,8 @@ export function FleetReleasesPane({ visible }: PaneProps) {
       const line = guard?.line ?? (pr && 'checks' in pr ? blockerLine(pr) : null);
       const prNumber = releasePr?.number;
       const prNotes = pr && 'notes' in pr ? pr.notes : prRepoRow?.notes ?? [];
-      const tone = run ? runTone(run) : 'neutral';
+      // The PR station is known only when this read answered for this repo; a failed read is unknown, not "none open".
+      const stations = releasePath(repo, prRead.status !== 'error' && prRepoRow ? { pr: releasePr, blockMerge: guard?.blockMerge ?? false } : undefined, now);
       const mergeNotice = mergeNotices[name];
       const cadence = releaseCadence({ installedVersion: installed, newestVersion: repo.gh?.latestRelease?.tag ?? repo.latestTag, newestPublishedAt: repo.gh?.latestRelease?.publishedAt, now });
       const updateLine = phantom ? postMergeLine(mergeNotice, updateStatus, now) : null;
@@ -111,6 +113,7 @@ export function FleetReleasesPane({ visible }: PaneProps) {
       return <li key={`${repo.repo}:${index}`} className={styles.row}>
         <div>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{repo.repo}</a> : <span>{repo.repo}</span>}</div>
         <div>Version: {repo.version ?? '—'} · Tag: {repo.latestTag ?? '—'}</div>
+        <ReleasePath repo={repo.repo} stations={stations} />
         {phantom && <div>{installedReleaseLine(installed, repo.gh?.latestRelease?.tag ?? repo.latestTag)}</div>}
         {phantom && <div role="status" aria-label="Release cadence" className={styles.headline} data-tone={cadence.tone === 'neutral' ? undefined : cadence.tone}>{cadence.line}</div>}
         {pr && <div className={styles.prBlock}>
@@ -136,11 +139,7 @@ export function FleetReleasesPane({ visible }: PaneProps) {
         </div>}
         {updateLine && <div role="status">{updateLine}{candidate && updateLine.startsWith(`${candidate} is ready`)
           && <UpdateNowButton status={updateStatus} onDone={refetchUpdate} />}</div>}
-        <div>{repo.commitsSinceTag == null ? 'Commits since tag: unknown' : `${repo.commitsSinceTag} commits since ${repo.latestTag ?? 'unknown tag'}`}</div>
-        {repo.gh === null ? <div className={styles.muted}>GitHub status unknown (gh offline)</div> : <>
-          <div>Release: {release ? <>{release.label}{release.badge && <> <StatusBadge status={release.badge} tone="warning" /></>} · {formatRelative(repo.gh.latestRelease?.publishedAt)}</> : '—'}</div>
-          <div>Run: {run ? <>{run.workflow} · <StatusBadge status={run.status} tone={tone === 'ok' ? 'success' : tone === 'warn' ? 'warning' : tone}>{run.status}{run.conclusion ? `/${run.conclusion}` : ''}</StatusBadge> · {formatRelative(run.at)}</> : '—'}</div>
-        </>}
+        {repo.gh === null ? <div className={styles.muted}>GitHub status unknown (gh offline)</div> : null}
         {repo.notes.map((note, noteIndex) => <div key={noteIndex} className={styles.muted}>{note}</div>)}
       </li>;
     })}</ul>
