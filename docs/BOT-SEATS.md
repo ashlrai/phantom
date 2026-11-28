@@ -206,7 +206,11 @@ the bus identity registry and appends under the same fleet root
 (`<home>/.ashlr/fleet`) and clock the seat's claims and handoff notices use;
 `runsRoot` places only the wake hint queue. Owner notices use the same
 settings/runs construction as handoff notices and mirror onto that fleet root.
-Unknown seats and secret-shaped text are refused. Provider adapter messaging
+Unknown seats and secret-shaped text are refused. A send the bus or owner
+thread refuses — unknown sender or recipient, halt, pause or an unwritable
+thread store — still prints its status JSON but exits nonzero, the same
+refusal contract `agents bus dm` keeps; only `posted`, `duplicate`,
+`accepted` or `sent` results exit 0. Provider adapter messaging
 is separate.
 
 The console's `/bots` Seats section reads `GET /api/bots/seats`: display name,

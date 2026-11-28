@@ -403,6 +403,27 @@ it('CLI message routes seat DMs by seat id and owner notices through the configu
   expect(await runBotsCli(['message', '--from', 'helper', '--to', 'nobody', '--text', 'hi', '--json'], emit, o.home)).toBe(1);
   expect(JSON.parse(out.pop()!)).toMatchObject({ ok: false, error: 'Unknown seat.' });
 });
+it('exits nonzero when a seat message send is refused or unavailable', async () => {
+  const reviewer = { id: 'reviewer', kind: 'local', displayName: 'Reviewer', participantId: 'seat-reviewer', capabilities: ['review'], quota: { source: 'none' } };
+  const o = await fixture([seat(), reviewer]);
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  const out: string[] = [], emit = (text: string) => out.push(text);
+  // Neither participantId is a registered bus identity: the DM refuses before
+  // any envelope posts, and the verb must not report that refusal as success.
+  expect(await runBotsCli(['message', '--from', 'helper', '--to', 'reviewer', '--text', 'hello', '--json'], emit, o.home)).toBe(1);
+  expect(JSON.parse(out.pop()!)).toMatchObject({ status: 'unknown-sender' });
+  expect(registerAgentIdentity({ handle: 'helper' }, { root: fleetRoot, now: o.now }).status).toBe('created');
+  expect(await runBotsCli(['message', '--from', 'helper', '--to', 'reviewer', '--text', 'hello', '--json'], emit, o.home)).toBe(1);
+  expect(JSON.parse(out.pop()!)).toMatchObject({ status: 'unknown-recipient' });
+  const page = listBusInboxAfter(0, 100, { root: fleetRoot, now: o.now });
+  expect(page.status === 'ok' ? page.messages : []).toHaveLength(0);
+  // An owner notice whose thread store cannot be written reports unavailable;
+  // that is a failed send too, not a silent success. The CLI builds owner
+  // options from --home alone, so the thread runs dir is <home>/.ashlr-runs.
+  await writeFile(join(o.home, '.ashlr-runs'), 'not a directory');
+  expect(await runBotsCli(['message', '--from', 'helper', '--to', 'owner', '--text', 'seat check-in', '--json'], emit, o.home)).toBe(1);
+  expect(JSON.parse(out.pop()!)).toMatchObject({ status: 'unavailable' });
+});
 it('counts claims held under any label of the seat identity as open work', async () => {
   const o = await fixture();
   const fleetRoot = join(o.home, '.ashlr', 'fleet');
