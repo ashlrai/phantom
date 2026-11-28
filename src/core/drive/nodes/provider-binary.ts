@@ -99,3 +99,33 @@ export function installedAgentClis(deps: ProviderBinaryDeps = {}): string[] {
   }
   return found;
 }
+
+/**
+ * Advertised caps that name a known agent CLI with no executable binary at
+ * the allowlisted install locations — the explicit `--caps` honesty check.
+ * A bare join's lanes come from sign-in probes that already required the
+ * binary, so only a manual advertisement can claim a CLI this machine does
+ * not have; codex and claude resolve through providerBinaryCandidates, the
+ * community harness caps through their candidate bin names. Caps naming no
+ * agent CLI (build, gh, pack:*, omlx*, phm-*, custom names) are not checked —
+ * file presence says nothing about them. A miss means "not at an allowlisted
+ * path", never proof the operator cannot serve the lane another way, and a
+ * hit still says nothing about sign-in. Sorted, deduped; file presence only.
+ */
+export function unverifiedCliCaps(caps: readonly string[], deps: ProviderBinaryDeps = {}): string[] {
+  const executable = deps.executable ?? executableFile;
+  const missing = new Set<string>();
+  for (const cap of caps) {
+    if (missing.has(cap)) continue;
+    if (isNodeProvider(cap)) {
+      if (!providerBinaryCandidates(cap, deps).some(path => executable(path))) missing.add(cap);
+      continue;
+    }
+    const candidate = COMMUNITY_CLI_CANDIDATES.find(c => c.cap === cap);
+    if (candidate !== undefined &&
+        !candidate.bins.some(bin => binaryCandidates(bin, deps).some(path => executable(path)))) {
+      missing.add(cap);
+    }
+  }
+  return [...missing].sort();
+}

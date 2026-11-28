@@ -1,6 +1,7 @@
 /** `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave`: thin handlers over DriveNodes. */
 import { hostname } from 'node:os';
 import type { DriveNodes, NodesStore } from '../core/drive/nodes/index.js';
+import type { ProviderBinaryDeps } from '../core/drive/nodes/provider-binary.js';
 import { UsageError, joinHintCommand, knownOwnerScopes, nodeFleetListItems, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
 import { validId, type NodeAuth } from '../core/drive/nodes/state.js';
 import type { SelfUpdatePlan } from '../core/drive/nodes/phm-version.js';
@@ -40,6 +41,12 @@ export interface NodeFleetDeps {
    * injected the machine probe is stubbed, so this defaults to an empty list
    * unless injected too. */
   installedClis?: () => string[];
+  /** Test seam for the explicit-join advertised-cap CLI check (the same
+   * file-presence deps installedAgentClis/unverifiedCliCaps take: home,
+   * execPath, executable); defaults to this machine's real check. Only an
+   * explicit --caps pays it — a bare join's lanes came from sign-in probes
+   * that already required each binary. */
+  cliBinaryDeps?: ProviderBinaryDeps;
 }
 
 
@@ -206,6 +213,15 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
       lines.push('gh is advertised but gh reports no login on this machine — gh jobs will not route here until `gh auth login` runs and a --probe-auth beat reports ok.');
     } else if (ghAuth === 'unknown') {
       lines.push('gh is advertised but this machine could not check its gh login — gh jobs route only while a --probe-auth beat reports ok; install gh and run `gh auth login` if it is missing.');
+    }
+    // An explicit --caps names agent CLIs this machine may not have: the
+    // reply checked file presence at the allowlisted install paths and names
+    // the caps it could not back, because jobs requiring them will route here
+    // and cannot run. Presence only — a miss is "not where Phantom looks",
+    // never proof the lane is unservable, so the join still stands.
+    const unverified = out['unverifiedCaps'] as string[] | undefined;
+    if (unverified !== undefined && unverified.length > 0) {
+      lines.push(`Advertised caps with no agent CLI found on this machine: ${unverified.join(', ')} — jobs that require them will route here and cannot run until the CLI is installed (or rejoin without the cap).`);
     }
     return lines.join('\n');
   }
@@ -428,7 +444,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
     const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome, ashlrHomePath }, { canonicalPath, privateDirectory }, { join },
-      { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }, { probeLocalLanePlan }, { installedAgentClis }] = await Promise.all([
+      { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }, { probeLocalLanePlan }, { installedAgentClis, unverifiedCliCaps }] = await Promise.all([
       import('../core/drive/nodes/index.js'), import('../core/drive/nodes/auth-probe.js'),
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path'),
       import('../core/drive/nodes/phm-version.js'), import('../core/drive/nodes/local-model-caps.js'),
@@ -596,6 +612,17 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // already stamped on the record above; reporting it here costs no
       // second probe.
       if (joinAuth !== undefined) out['ghAuth'] = joinAuth;
+      // An explicit --caps is the operator's unverified claim: the sign-in
+      // probe a bare join pays already required each lane's binary, so only
+      // a manual advertisement can name an agent CLI this machine does not
+      // have. Name those caps — jobs requiring them will route here and
+      // cannot run until the CLI is installed — instead of letting the reply
+      // read as a verified advertisement. File presence at allowlisted
+      // paths only; a miss warns, it never refuses the join.
+      if (autoCaps === undefined && Array.isArray(caps)) {
+        const unverified = unverifiedCliCaps(caps as string[], deps.cliBinaryDeps ?? {});
+        if (unverified.length > 0) out['unverifiedCaps'] = unverified;
+      }
     }
     // status/list name each expired node's rejoin command. Text only: the
     // --json view stays the scope-filtered projection, and a machine caller
