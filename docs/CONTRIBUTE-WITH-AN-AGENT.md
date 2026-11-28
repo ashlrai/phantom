@@ -90,7 +90,7 @@ protected path, it waits for the owner's review; see
 Run these in the foreground and wait for each to finish:
 
 ```sh
-node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed, quarantine check when tests/ledger changed, syntax check of changed files by type (table below)
+node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed, generated-file freshness when index/launcher inputs changed, quarantine check when tests/ledger changed, syntax check of changed files by type (table below)
 npm run test:ci -- test/<file>.test.ts    # affected backend suites, isolated HOME
 npm run test:web                          # only if src/web-ui/ or desktop/ changed
 npm run check:docs                        # if docs changed (verify-changed already ran it when the diff touched markdown or deleted files)
@@ -144,6 +144,7 @@ exit code is non-zero if any of them failed.
 | Fleet registry | A `src/cli/fleet-*.ts` file changed | Run `node scripts/gen-fleet-registry.mjs` and commit the result. |
 | Authority drift | The diff touches `src/`, `test/`, `scripts/` or `.github/CODEOWNERS` | Review the drift, run `npm run authority:regen` and list each new Tier-1 root in the pull request body. When `origin/master` changed drift-relevant paths since you branched, the step reruns as `authority drift on current master` on your changed files laid over `origin/master`; if that fails, rebase onto `origin/master`, then regenerate. |
 | Docs check | A markdown file changed or a path was deleted | Fix the link or anchor it reports. |
+| Generated-file freshness | A `docs/` page, `docs/llms-source.txt`, `docs/llms.txt` or the llms generator/page-model changed, or `bin/ashlr`, `scripts/canonical-launcher-digests.json` or `scripts/canonical-launcher-digests.mjs` changed | The same read-only checks Merge Gate's "Check generated files" job runs. A stale `docs/llms.txt`: run `node scripts/generate-docs-llms.mjs` and commit the result. A launcher digest missing from the manifest: run `npm run canonical-launcher-digests:regen` and commit the result. |
 | ESLint | A JavaScript or TypeScript file changed | Fix the reported lines. |
 | Python syntax check | A `.py` file or an extensionless script with a python shebang changed | Fix the reported `SyntaxError`. The files are compiled with `python3` without writing bytecode; with no working `python3` the step prints `SKIP`. |
 | Shell syntax check | A `.sh` file or an extensionless script with a `sh`/`bash`/`dash` shebang changed | Fix the parse error `bash -n` reports. With no working `bash` the step prints `SKIP`. |

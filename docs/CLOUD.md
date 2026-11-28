@@ -227,8 +227,9 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
 - **Discovered items** are added by `phm improve discover` and the
   scheduler's refresh: a red default branch, issues someone with triage
   rights labelled `phantom`, evidence-backed proposals, the fleet's own
-  outcome learning — recurring breakage, revert, dirty, fixup and low-merge
-  patterns the jobs ledger and dispatch log already prove become items
+  outcome learning — recurring breakage, revert, dirty, fixup,
+  empty-failure, launch-death and low-merge patterns the jobs ledger and
+  dispatch log already prove become items
   whose ids embed the stable `improve-<hash>` job id, so refreshes add only new
   patterns — the nightly local retro's proposals, the recurring
   verification, scope, safety, review and execution findings it mines from
@@ -593,8 +594,11 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   loop's own measured verdicts never became work). A signal becomes
   an item at the recurring bar of three distinct proposals: registered
   proposals with a recorded PR but no `measured` event past the
-  24-hour grace — registration is automated but the later verbs are
-  manual and unscheduled, so the scorecard starves — is a
+  24-hour grace — registration, checkout-free observation and bounded
+  measurement (`syncImproveMeasurements`, its own scheduler job driving
+  `measureAt` on the fleet mirror) are all automated, so a stall now
+  means the pass cannot reach the proposal — no mirror, a closed PR, a
+  metric that never measures — is a
   current-state stall tally; in-window `measured` events that keep
   returning no value become an item at three recorded events across
   two distinct proposals, quoting the recorded reasons; measured

@@ -21,7 +21,7 @@ beforeEach(() => {
   runsDir = join(home, 'runs');
   busRoot = join(home, 'bus');
   mkdirSync(join(runsDir, 'queue'), { recursive: true });
-  mkdirSync(busRoot, { recursive: true });
+  mkdirSync(busRoot, { mode: 0o700 });
   vi.stubEnv('ASHLR_RUNS_DIR', join(home, 'notify-runs'));
 });
 afterEach(() => { vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true }); });

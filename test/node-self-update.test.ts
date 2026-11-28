@@ -28,6 +28,24 @@ describe('node phm version reporting and drift plan', () => {
     expect(planNodeSelfUpdate([], '3.30.34').drifted).toEqual([]);
     expect(planNodeSelfUpdate([node('a', ['phm-3.30.34'])], '3.30.34').steps).toEqual(['No drift: every reporting node matches the target.']);
   });
+  it('reads reported versions unknown, never current, when no target can be judged', () => {
+    const plan = planNodeSelfUpdate([
+      node('w1', ['codex', 'phm-3.30.1'], 4), node('w2', ['codex']), node('w3', ['phm-3.30.34']),
+    ], null);
+    expect(plan.nodes.map(n => n.status)).toEqual(['unknown', 'unreported', 'unknown']);
+    expect(plan.drifted).toEqual(['w2']);
+    const steps = plan.steps.join(' ');
+    expect(steps).toContain('--target');
+    expect(steps).not.toContain('matches the target');
+    expect(planNodeSelfUpdate([node('a', ['phm-3.30.34'])], null).steps.join(' ')).not.toContain('No drift');
+  });
+  it('treats a target compareVersions cannot order as unjudgeable, not equal', () => {
+    for (const target of ['not-a-version', '3.30.34-RC1']) {
+      const plan = planNodeSelfUpdate([node('w1', ['phm-3.30.34'])], target);
+      expect(plan.nodes[0]!.status).toBe('unknown');
+      expect(plan.steps.join(' ')).toContain('not a comparable release version');
+    }
+  });
 });
 
 describe('phm node self-update', () => {
@@ -52,6 +70,18 @@ describe('phm node self-update', () => {
       expect(code).toBe(2);
       expect(nodesFn).not.toHaveBeenCalled();
     }
+  });
+  it('reports unknown drift, not current, when the local version is undeterminable', async () => {
+    const out: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s: string) => { out.push(s); });
+    const nodesFn = vi.fn(async () => [node('w1', ['phm-3.30.1'], 1), node('w2', ['codex'])]);
+    const code = await cmdNodeSelfUpdate(['--owner', 'ashlr', '--json'], { nodes: nodesFn, localVersion: () => null });
+    expect(code).toBe(0);
+    const plan = JSON.parse(out.join('\n'));
+    expect(plan.target).toBeNull();
+    expect(plan.nodes.map((n: { status: string }) => n.status)).toEqual(['unknown', 'unreported']);
+    expect(plan.drifted).toEqual(['w2']);
+    expect(plan.steps.join(' ')).not.toContain('matches the target');
   });
   it('returns a fixed error when the registry cannot be read', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});

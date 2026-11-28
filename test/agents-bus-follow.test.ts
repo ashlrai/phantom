@@ -80,6 +80,33 @@ it('applies the inbox filters to the stream', async () => {
   expect(messages(records).map(row => row.envelope.id)).toEqual(['dm-p0']);
 });
 
+it('applies the group-topic filter to the stream', async () => {
+  const options = setup();
+  register(options, 'atlas', 'nova');
+  createAgentChannel({ name: 'eng', createdBy: 'atlas', members: ['nova'] }, options);
+  createAgentChannel({ name: 'ops', createdBy: 'atlas', members: ['nova'] }, options);
+  await postChannelMessage({ from: 'atlas', channel: 'eng', topic: 'deploy', text: 'eng deploy', id: 'tp-eng' }, options);
+  await postChannelMessage({ from: 'atlas', channel: 'ops', topic: 'deploy', text: 'ops deploy', id: 'tp-ops' }, options);
+  await postChannelMessage({ from: 'atlas', channel: 'eng', text: 'eng general', id: 'tp-gen' }, options);
+  await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm', id: 'tp-dm' }, options);
+  // The topic match is room-agnostic across the two rooms' deploy traffic.
+  const { records, pending, expire } = follow({ agent: 'nova', topic: 'deploy' }, {}, options);
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id).sort()).toEqual(['tp-eng', 'tp-ops']);
+  // --channel composes into one room AND one topic through the same read.
+  const scoped = follow({ agent: 'nova', channel: 'eng', topic: 'deploy' }, {}, options);
+  scoped.expire();
+  const scopedResult = await scoped.pending;
+  expect(scopedResult.status).toBe('expired');
+  expect(messages(scoped.records).map(row => row.envelope.id)).toEqual(['tp-eng']);
+  // A malformed topic ends the stream invalid like every other bad filter.
+  const bad = follow({ agent: 'nova', topic: 'Bad Topic' }, {}, options);
+  bad.expire();
+  expect((await bad.pending).status).toBe('invalid');
+});
+
 it('resumes after a persisted cursor without replaying shown rows', async () => {
   const options = setup();
   register(options, 'atlas', 'nova');

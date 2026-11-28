@@ -37,6 +37,21 @@ it('detects open-vs-open superseded duplicates from every evidence grammar', () 
   expect(byNumber.get(100)!.reason).toContain('#104');
 });
 
+it('reads queuegen retry-suffixed rebase titles as rework of their base PR', () => {
+  const mk = (number: number, over: Partial<MergePlanPr> = {}): MergePlanPr => ({
+    ...ghRow({ number, title: `bridge: X-${number}` }),
+    state: 'OPEN', mergedAt: null, closedAt: null, body: '', hasBody: false,
+    checks: [], autoMerge: null, headSha: null, files: [], url: null,
+    ...over,
+  } as unknown as MergePlanPr);
+  const { edges } = reworkEdges([
+    mk(100),
+    mk(102, { title: 'bridge: RQ-REBASE-PHANTOM-100-abc1234-retry2' }),
+    mk(103, { title: 'bridge: RQ-REBASE-PHANTOM-100-abc1234-retry' }),
+  ], 'ashlrai/phantom');
+  expect(edges).toEqual([{ reworker: 102, origin: 100, evidence: 'title-rebase' }]);
+});
+
 it('keeps closed-origin references out of proposals', () => {
   const mk = (number: number, over: Partial<MergePlanPr> = {}): MergePlanPr => ({
     ...ghRow({ number }), state: 'OPEN', mergedAt: null, closedAt: null, body: '', hasBody: false,

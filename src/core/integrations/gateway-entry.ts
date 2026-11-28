@@ -13,6 +13,7 @@
 
 import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
+import { isIntegrationRecord } from './dep-parser.js';
 
 /** Canonical MCP server key for the Phantom CLI gateway. */
 export const GATEWAY_MCP_SERVER = 'ashlr-hub';
@@ -25,10 +26,6 @@ const OWN_BIN_NAMES = new Set(['ashlr', 'phm']);
 
 /** Package names this product has shipped under. */
 const OWN_PACKAGE_NAMES = new Set(['@ashlr/phantom', '@ashlr/hub']);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 
 function commandBasename(command: string): string {
   const base = command.split(/[\\/]/).pop() ?? command;
@@ -44,7 +41,7 @@ function packageOwnsBinary(command: string): boolean {
     const manifest = JSON.parse(
       readFileSync(join(dirname(dirname(command)), 'package.json'), 'utf8'),
     ) as unknown;
-    return isRecord(manifest)
+    return isIntegrationRecord(manifest)
       && typeof manifest['name'] === 'string'
       && OWN_PACKAGE_NAMES.has(manifest['name']);
   } catch {
@@ -59,12 +56,12 @@ function packageOwnsBinary(command: string): boolean {
  * or `bin/phm` inside a checkout/install of this package.
  */
 export function isOwnGatewayEntry(entry: unknown): boolean {
-  if (!isRecord(entry)) return false;
+  if (!isIntegrationRecord(entry)) return false;
   const { command, args, env, type } = entry;
   if (typeof command !== 'string' || command.length === 0) return false;
   if (!Array.isArray(args) || args.length !== 1 || args[0] !== 'mcp') return false;
   if (type !== undefined && type !== 'stdio') return false;
-  if (env !== undefined && (!isRecord(env) || Object.keys(env).length > 0)) return false;
+  if (env !== undefined && (!isIntegrationRecord(env) || Object.keys(env).length > 0)) return false;
   if (!OWN_BIN_NAMES.has(commandBasename(command))) return false;
   if (!hasPathSeparator(command)) return true;
   return isAbsolute(command) && packageOwnsBinary(command);

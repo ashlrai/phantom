@@ -26,6 +26,10 @@ export const CAPACITY_POLICY = Object.freeze({
   maxDeltaMs: 15 * 60_000,
   /** A footprint learned from an earlier sample stays usable this long when no session is live. */
   learnedFootprintTtlMs: 7 * 24 * 60 * 60_000,
+  /** A session tree (vendor CLI plus children) never fits under 1 MiB of
+   * resident memory; a smaller reading is a process caught mid-exec, not a
+   * session cost, so it is ignored like a zero or unreadable one. */
+  minSessionFootprintBytes: 1024 * 1024,
 });
 
 export type ProcessSource = 'ps' | 'pgrep+footprint' | 'unavailable';
@@ -118,21 +122,28 @@ function footprints(s: NodeSnapshot, prev: NodeCapacityDoc | null, notes: string
     const sessions = live.filter(x => x.harness === adapter.id);
     // A zero RSS total supplies no usable session cost.
     const mems = sessions.map(x => x.memBytes).filter((bytes): bytes is number => finite(bytes) && bytes > 0);
-    if (sessions.length && mems.length === sessions.length) {
+    // The largest tree total is the per-session cost. When every session
+    // measured but the largest still sits under the plausibility floor, the
+    // sample caught CLIs mid-exec rather than running sessions: keep the
+    // learned footprint (or stay unmeasured) instead of publishing a cost
+    // that would admit unbounded sessions of this harness.
+    const maxMem = sessions.length > 0 && mems.length === sessions.length ? Math.max(...mems) : null;
+    if (maxMem !== null && maxMem >= CAPACITY_POLICY.minSessionFootprintBytes) {
       const cpus = sessions.map(x => x.cpuPercent).filter(finite);
       let cpu: number | null = cpus.length === sessions.length ? cpus.reduce((a, b) => a + b, 0) / cpus.length / 100 : null;
       // Without complete per-process CPU, the harness could account for all
       // busy cores. Bound its mean using only that harness's session count.
       if (cpu === null && busyCores !== null) { cpu = busyCores / sessions.length; cpuFromHost = true; }
-      out[adapter.id] = { sessions: sessions.length, mem_bytes_max: Math.max(...mems), mem_bytes_median: median(mems),
+      out[adapter.id] = { sessions: sessions.length, mem_bytes_max: maxMem, mem_bytes_median: median(mems),
         cpu_cores_per_session: cpu, source: 'measured', learned_at: null };
       continue;
     }
+    if (maxMem !== null) notes.push(`${adapter.id}: measured session footprint ${maxMem} bytes is below the ${CAPACITY_POLICY.minSessionFootprintBytes}-byte session minimum; footprint not refreshed`);
     const old = previousFootprints?.[adapter.id];
     const learnedAt = old?.source === 'learned'
       ? Date.parse(old.learned_at ?? '')
       : previousAt;
-    if (old && finite(old.mem_bytes_max) && old.mem_bytes_max > 0 && finite(learnedAt) && learnedAt <= previousAt &&
+    if (old && finite(old.mem_bytes_max) && old.mem_bytes_max >= CAPACITY_POLICY.minSessionFootprintBytes && finite(learnedAt) && learnedAt <= previousAt &&
         s.measuredAtMs - learnedAt >= 0 && s.measuredAtMs - learnedAt <= CAPACITY_POLICY.learnedFootprintTtlMs) {
       out[adapter.id] = { ...old, sessions: 0, source: 'learned', learned_at: new Date(learnedAt).toISOString() };
     }
@@ -217,7 +228,7 @@ export function parseNodeCapacityDoc(value: unknown): NodeCapacityDoc | null {
       ![null, 1, 2, 4].includes(d.mem_free.pressure_level) ||
       !(d.swap.growing === null || typeof d.swap.growing === 'boolean')) return null;
   for (const fp of Object.values(d.per_harness_footprint)) {
-    if (!fp || typeof fp !== 'object' || !finite(fp.mem_bytes_max) || fp.mem_bytes_max <= 0 ||
+    if (!fp || typeof fp !== 'object' || !finite(fp.mem_bytes_max) || fp.mem_bytes_max < CAPACITY_POLICY.minSessionFootprintBytes ||
         !(fp.cpu_cores_per_session === null || (finite(fp.cpu_cores_per_session) && fp.cpu_cores_per_session >= 0))) return null;
   }
   for (const n of Object.values(d.agents_runnable_now)) {

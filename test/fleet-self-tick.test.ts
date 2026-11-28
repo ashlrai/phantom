@@ -292,6 +292,22 @@ describe('fleet self-tick', () => {
     expect((quiet.report!.steps.find(step => step.step === 'planner-tick')!.report as { autofill: { reason: string } }).autofill.reason).toBe('No lane is starved.');
   });
 
+  it('preserves lane-open supply in the planner-tick autofill verdict', async () => {
+    const { report } = await run(['--json', '--runs-dir', runsDir], {
+      ...quietSweep,
+      autofill: {
+        readLanes: async () => ({
+          lanes: [{ lane: 'claude', running: 0, target: 6, queued: 0, held: false, remainingPct: 68 }],
+          openRows: 2,
+        }),
+        readOff: async () => true,
+      },
+    });
+    expect(report!.steps.find(step => step.step === 'planner-tick')?.report).toMatchObject({
+      autofill: { runs: [], lanes: [{ lane: 'claude', starved: false, fed: 0, why: '2 lane-open rows are waiting for any lane' }] },
+    });
+  });
+
   it('planner-tick runs one asks sync per tick, as a dry run without --apply', async () => {
     const out = (dryRun: boolean) => ({ schema: 'asks.sync.v1' as const, asOf: 'now', dryRun, status: 'ok' as const, reason: null, raised: [], kept: [], resolved: [], unknown: [] });
     const asksSync = vi.fn(async (o: { dryRun?: boolean }) => out(o.dryRun === true));

@@ -28,9 +28,11 @@ export type DoctorLane = typeof DOCTOR_LANES[number];
 type Unknown = typeof UNKNOWN;
 export type LaneStatus = 'ready' | 'not-installed' | 'signed-out' | 'unknown';
 
-/** What a probe saw. `signedIn: 'unknown'` means the CLI has no status command Phantom can run. */
+/** What a probe saw. `signedIn: 'unknown'` means the CLI has no status command Phantom can run
+ * or the check itself could not complete; `reason` then says which, overriding the default
+ * "no sign-in check" wording. */
 export interface NodeProbeReply {
-  lanes: Partial<Record<DoctorLane, { installed: boolean; signedIn: boolean | Unknown }>>;
+  lanes: Partial<Record<DoctorLane, { installed: boolean; signedIn: boolean | Unknown; reason?: string }>>;
   repos: string[];
   diskFreeBytes: number | null;
 }
@@ -67,15 +69,39 @@ const REPO_ROOT = ['Projects', 'ashlrai'];
 
 /** Real probe for this computer: exit codes only, absolute binaries, no shell, no output kept. */
 export function localProbe(run: typeof spawnSync = spawnSync, home: string = homedir()): NodeProbeReply {
-  const exits = (binary: string, args: string[]) => {
+  // 'ok' the CLI answered 0; 'failed' it ran to a nonzero exit — a real verdict;
+  // 'unknown' it could not be spawned, was killed or timed out — never a verdict.
+  const probe = (binary: string, args: string[]): 'ok' | 'failed' | 'unknown' => {
     const r = run(binary, args, { timeout: 5000, stdio: 'ignore', shell: false, env: { PATH: process.env['PATH'], HOME: home } });
-    return !r.error && r.status === 0;
+    return r.error || r.status === null ? 'unknown' : r.status === 0 ? 'ok' : 'failed';
   };
   const lanes: NodeProbeReply['lanes'] = {};
   for (const lane of DOCTOR_LANES) {
-    const binary = BINARY[lane].flatMap(name => binaryCandidates(name, { home })).find(path => existsSync(path) && exits(path, ['--version']));
+    // `installed` is file presence at an allowlisted path. A binary that exists
+    // but cannot answer `--version` is installed yet unverifiable — an honest
+    // unknown, never "not installed" (that fix would reinstall working software)
+    // and never "signed out" (the sign-in check never ran).
+    const present = BINARY[lane].flatMap(name => binaryCandidates(name, { home })).filter(path => existsSync(path));
+    const binary = present.find(path => probe(path, ['--version']) === 'ok');
     const status = STATUS_ARGS[lane];
-    lanes[lane] = { installed: Boolean(binary), signedIn: !binary ? false : status ? exits(binary, status) : lane === 'local-model' ? true : UNKNOWN };
+    let signedIn: boolean | Unknown = false;
+    let reason: string | undefined;
+    if (present.length > 0 && binary === undefined) {
+      signedIn = UNKNOWN;
+      reason = `${lane} is installed but did not answer \`--version\``;
+    } else if (binary !== undefined) {
+      if (status === undefined) signedIn = lane === 'local-model' ? true : UNKNOWN;
+      else {
+        const verdict = probe(binary, status);
+        if (verdict === 'ok') signedIn = true;
+        else if (verdict === 'failed') signedIn = false;
+        else {
+          signedIn = UNKNOWN;
+          reason = `${lane} is installed but did not answer the sign-in check`;
+        }
+      }
+    }
+    lanes[lane] = { installed: present.length > 0, signedIn, ...(reason === undefined ? {} : { reason }) };
   }
   const root = join(home, ...REPO_ROOT);
   let repos: string[] = [];
@@ -96,7 +122,7 @@ function laneStatus(lane: DoctorLane, probe: NodeProbeReply | null, caps: string
     if (!seen.installed) return { lane, status: 'not-installed' };
     if (seen.signedIn === true) return { lane, status: 'ready' };
     if (seen.signedIn === false) return { lane, status: 'signed-out' };
-    return { lane, status: 'unknown', reason: `${lane} is installed but has no sign-in check Phantom can run` };
+    return { lane, status: 'unknown', reason: seen.reason ?? `${lane} is installed but has no sign-in check Phantom can run` };
   }
   // No probe: a lane the node advertised in its heartbeat is installed and signed in.
   // `local-model` is the report name; the advertisement is the oMLX cap family.

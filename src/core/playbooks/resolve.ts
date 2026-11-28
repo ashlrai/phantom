@@ -31,6 +31,7 @@ import {
   formatPlaybookRef,
   parsePlaybookRefText,
   playbookKindOf,
+  utf8ByteLength,
   type PlaybookMatch,
   type PlaybookRef,
   type PlaybookSectionName,
@@ -96,7 +97,7 @@ export function isAgentPlaybook(pb: Pick<PlaybookV1, 'meta'>): boolean {
 }
 
 /** Does an auto playbook apply to this task? Pure. */
-export function autoMatches(pb: PlaybookV1, target: PlaybookTarget): boolean {
+function autoMatches(pb: PlaybookV1, target: PlaybookTarget): boolean {
   const m = pb.meta;
   if (!isAgentPlaybook(pb)) return false;
   if (!m.auto || (m.taskKinds.length === 0 && m.appliesTo.repos.length === 0)) return false;
@@ -187,9 +188,7 @@ export function choosePlaybook(
 // Rendering
 // ---------------------------------------------------------------------------
 
-const utf8 = (s: string): number => Buffer.byteLength(s, 'utf8');
-
-export const PLAYBOOK_BLOCK_PREAMBLE =
+const PLAYBOOK_BLOCK_PREAMBLE =
   'Follow this playbook for the task above. The task decides WHAT to change; the playbook says HOW. '
   + 'If they conflict, the task wins — say so in your report.';
 
@@ -228,11 +227,11 @@ export function renderPlaybookBlock(pb: PlaybookV1, capBytes: number = PLAYBOOK_
   const skip = new Set<PlaybookSectionName>();
   let text = build(skip);
   for (const name of DROP_ORDER) {
-    if (utf8(text) <= capBytes) break;
+    if (utf8ByteLength(text) <= capBytes) break;
     skip.add(name);
     text = build(skip);
   }
-  return utf8(text) <= capBytes ? text : '';
+  return utf8ByteLength(text) <= capBytes ? text : '';
 }
 
 export function refOf(pb: PlaybookV1): PlaybookRef {

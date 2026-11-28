@@ -23,14 +23,17 @@ describe('changed verification selection', () => {
       quarantineCheck: false,
       contribTypecheck: false,
       scriptsTypecheck: true,
+      testTypecheckFiles: [],
       realioLaneCheck: false,
       verseSyncIoCheck: false,
+      llmsIndexCheck: false,
+      launcherDigestCheck: false,
     });
   });
 
   it('excludes deleted files from lint while retaining deleted web paths for typecheck', () => {
     expect(selectChangedFiles(['src/gone.ts', 'src/web-ui/old screen.tsx'], [])).toEqual({
-      lintFiles: [], pythonFiles: [], shellFiles: [], perlFiles: [], powershellFiles: [], jsonFiles: [], jsonlFiles: [], xmlFiles: [], rustFiles: [], swiftFiles: [], yamlFiles: [], tomlFiles: [], cssFiles: [], snapFiles: [], patchFiles: [], htmlFiles: [], seatbeltFiles: [], mdcFiles: [], detachedScriptFiles: [], webTypecheck: true, authorityDrift: true, fleetRegistry: false, docsCheck: true, quarantineCheck: false, contribTypecheck: false, scriptsTypecheck: true, realioLaneCheck: false, verseSyncIoCheck: false,
+      lintFiles: [], pythonFiles: [], shellFiles: [], perlFiles: [], powershellFiles: [], jsonFiles: [], jsonlFiles: [], xmlFiles: [], rustFiles: [], swiftFiles: [], yamlFiles: [], tomlFiles: [], cssFiles: [], snapFiles: [], patchFiles: [], htmlFiles: [], seatbeltFiles: [], mdcFiles: [], detachedScriptFiles: [], webTypecheck: true, authorityDrift: true, fleetRegistry: false, docsCheck: true, quarantineCheck: false, contribTypecheck: false, scriptsTypecheck: true, testTypecheckFiles: [], realioLaneCheck: false, verseSyncIoCheck: false, llmsIndexCheck: false, launcherDigestCheck: false,
     });
   });
 
@@ -62,7 +65,7 @@ describe('changed verification selection', () => {
     expect(selectChangedFiles(['notes.md'], ['notes.md']).lintFiles).toEqual([]);
     const paths = ['a.js', 'b.cjs', 'c.mjs', 'd.ts', 'e.cts', 'f.mts', 'g.tsx', 'h.jsx'];
     expect(selectChangedFiles(paths, paths).lintFiles).toEqual(paths);
-    expect(selectChangedFiles([], [])).toEqual({ lintFiles: [], pythonFiles: [], shellFiles: [], perlFiles: [], powershellFiles: [], jsonFiles: [], jsonlFiles: [], xmlFiles: [], rustFiles: [], swiftFiles: [], yamlFiles: [], tomlFiles: [], cssFiles: [], snapFiles: [], patchFiles: [], htmlFiles: [], seatbeltFiles: [], mdcFiles: [], detachedScriptFiles: [], webTypecheck: false, authorityDrift: false, fleetRegistry: false, docsCheck: false, quarantineCheck: false, contribTypecheck: false, scriptsTypecheck: false, realioLaneCheck: false, verseSyncIoCheck: false });
+    expect(selectChangedFiles([], [])).toEqual({ lintFiles: [], pythonFiles: [], shellFiles: [], perlFiles: [], powershellFiles: [], jsonFiles: [], jsonlFiles: [], xmlFiles: [], rustFiles: [], swiftFiles: [], yamlFiles: [], tomlFiles: [], cssFiles: [], snapFiles: [], patchFiles: [], htmlFiles: [], seatbeltFiles: [], mdcFiles: [], detachedScriptFiles: [], webTypecheck: false, authorityDrift: false, fleetRegistry: false, docsCheck: false, quarantineCheck: false, contribTypecheck: false, scriptsTypecheck: false, testTypecheckFiles: [], realioLaneCheck: false, verseSyncIoCheck: false, llmsIndexCheck: false, launcherDigestCheck: false });
   });
 
   it('selects the docs check for markdown changes and deletions, not modified code', () => {

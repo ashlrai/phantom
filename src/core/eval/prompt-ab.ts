@@ -17,6 +17,11 @@
 
 import {
   evaluateRouterPolicy,
+  formatEvalMetric,
+  formatEvalMinutes,
+  formatEvalPct,
+  formatEvalUsd,
+  policyJobView,
   type MetricReport,
   type PolicyJobView,
   type RouterEvalDataset,
@@ -160,7 +165,7 @@ export function evaluatePromptExperiment(
   const promotions: PromptPromotionRecord[] = [];
 
   for (const cls of spec.classes) {
-    const cohort = dataset.jobs.filter((j) => classifyPromptJob(viewForClassify(j), spec) === cls.id);
+    const cohort = dataset.jobs.filter((j) => classifyPromptJob(policyJobView(j), spec) === cls.id);
     const control = armEval(dataset, cohort, cls.control);
     const challengers: PromptChallengerResult[] = cls.challengers.map((arm) => {
       const evaluation = armEval(dataset, cohort, arm);
@@ -208,11 +213,6 @@ export function evaluatePromptExperiment(
   };
 }
 
-function viewForClassify(job: RouterEvalDataset['jobs'][number]): PolicyJobView {
-  const { id, at, repo, pool, tier, priority, task, candidates } = job;
-  return { id, at, repo, pool, tier, priority, task, candidates };
-}
-
 /** Fold a report into the registry shape the store and dashboard consume. */
 export function promotionsRegistry(report: PromptAbReport): PromptPromotionsRegistry {
   const held: PromptPromotionsRegistry['held'] = [];
@@ -237,15 +237,7 @@ export function promotionsRegistry(report: PromptAbReport): PromptPromotionsRegi
 // Dashboard rendering
 // ---------------------------------------------------------------------------
 
-const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
-const usd = (n: number) => `$${n.toFixed(2)}`;
-const minutes = (ms: number) => `${Math.round(ms / 60_000)}m`;
 const pts = (n: number) => `${n >= 0 ? '+' : ''}${(n * 100).toFixed(1)} pts`;
-
-function metric(m: MetricReport, fmt: (n: number) => string): string {
-  if (m.value === null) return 'unknown';
-  return m.ci95 ? `${fmt(m.value)} [${fmt(m.ci95[0])} – ${fmt(m.ci95[1])}]` : `${fmt(m.value)} [no CI]`;
-}
 
 const VERDICT_LABEL: Record<PromotionVerdict, string> = {
   promoted: 'PROMOTED',
@@ -263,7 +255,7 @@ export function formatPromptAbMarkdown(report: PromptAbReport): string {
     '# Prompt A/B report',
     '',
     `- Experiment: ${report.experimentId} — dataset ${report.dataset.id ?? 'unnamed'} (${report.dataset.jobs} frozen lines, sha256 \`${report.dataset.sha256.slice(0, 12)}\`)`,
-    `- Gate: ≥${g.minResolvedPerArm} resolved per arm, ≤${pct(g.maxUnobservedShare)} unobserved, disjoint Wilson 95% intervals, cost-per-merge regression ≤${pct(g.costRegressionTolerance)}`,
+    `- Gate: ≥${g.minResolvedPerArm} resolved per arm, ≤${formatEvalPct(g.maxUnobservedShare)} unobserved, disjoint Wilson 95% intervals, cost-per-merge regression ≤${formatEvalPct(g.costRegressionTolerance)}`,
     '',
   ];
   for (const cls of report.classes) {
@@ -274,7 +266,7 @@ export function formatPromptAbMarkdown(report: PromptAbReport): string {
     );
     for (const arm of [cls.control, ...cls.challengers.map((c) => c.eval)]) {
       const tag = arm.arm === cls.control.arm ? ' (control)' : '';
-      lines.push(`| ${arm.arm}${tag} | ${arm.resolved} | ${arm.merged} | ${metric(arm.mergeRate, pct)} | ${metric(arm.costPerMergedPrUsd, usd)} | ${metric(arm.wallTimeMsMean, minutes)} |`);
+      lines.push(`| ${arm.arm}${tag} | ${arm.resolved} | ${arm.merged} | ${formatEvalMetric(arm.mergeRate, formatEvalPct)} | ${formatEvalMetric(arm.costPerMergedPrUsd, formatEvalUsd)} | ${formatEvalMetric(arm.wallTimeMsMean, formatEvalMinutes)} |`);
     }
     lines.push('');
     for (const c of cls.challengers) {
@@ -286,8 +278,8 @@ export function formatPromptAbMarkdown(report: PromptAbReport): string {
   if (report.promotions.length > 0) {
     lines.push('## Promotions', '', '| Job class | Variant | Before | After | Lift |', '| --- | --- | --- | --- | --- |');
     for (const p of report.promotions) {
-      const before = p.before.value === null ? 'unknown' : `${pct(p.before.value)} (n=${p.before.n})`;
-      const after = p.after.value === null ? 'unknown' : `${pct(p.after.value)} (n=${p.after.n})`;
+      const before = p.before.value === null ? 'unknown' : `${formatEvalPct(p.before.value)} (n=${p.before.n})`;
+      const after = p.after.value === null ? 'unknown' : `${formatEvalPct(p.after.value)} (n=${p.after.n})`;
       lines.push(`| ${p.classId} | ${p.variant} | ${before} | ${after} | ${pts(p.liftPoints)} |`);
     }
     lines.push('');

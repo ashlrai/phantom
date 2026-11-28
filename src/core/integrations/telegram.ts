@@ -42,6 +42,7 @@ import { join } from 'node:path';
 import { readPrivateFileCapped } from '../verse/preferences.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig } from '../types.js';
+import { asIntegrationRecord as brandObject } from './dep-parser.js';
 import { splitTelegramText, telegramHtmlToPlain } from './telegram-format.js';
 
 export { escapeTelegramHtml, splitTelegramText, TELEGRAM_MAX_MESSAGE } from './telegram-format.js';
@@ -166,7 +167,7 @@ function pollHealth(cfg: AshlrConfig, error: string | null, apiSuccess = error =
   if (error) console.error(`Telegram poll: ${error}`);
 }
 function pollError(response: unknown): string {
-  const code = response && typeof response === 'object' ? (response as Record<string, unknown>)['error_code'] : undefined;
+  const code = brandObject(response)?.['error_code'];
   return typeof code === 'number' && Number.isSafeInteger(code) && code >= 100 && code <= 599
     ? `API error ${code}${code === 409 ? ' (conflicting poller or webhook)' : ''}` : 'network or invalid API response';
 }
@@ -271,13 +272,15 @@ export function telegramQuestionNamespace(cfg: AshlrConfig, receivedChatId?: str
 
 /** True when Telegram transport is usably configured. */
 export function telegramEnabled(cfg: AshlrConfig): boolean {
+  const token = resolveToken(cfg);
+  const chatId = resolveChatId(cfg);
   return (
     cfg.comms?.channel === 'telegram' &&
     cfg.comms?.enabled === true &&
-    typeof resolveToken(cfg) === 'string' &&
-    (resolveToken(cfg)?.trim().length ?? 0) > 0 &&
-    typeof resolveChatId(cfg) === 'string' &&
-    (resolveChatId(cfg)?.length ?? 0) > 0
+    typeof token === 'string' &&
+    token.trim().length > 0 &&
+    typeof chatId === 'string' &&
+    chatId.length > 0
   );
 }
 
@@ -306,7 +309,7 @@ async function callApi(cfg: AshlrConfig, method: string, body: Record<string, un
       return null;
     }
   }
-  return postJson(apiUrl(cfg, method), body, resolveToken(cfg));
+  return postJson(apiUrl(cfg, method), body);
 }
 
 /** Explicit operator action only; ordinary sends/startup never update this profile. */
@@ -339,11 +342,6 @@ const BRAND_FIELDS = [
   { key: 'description', getter: 'getMyDescription', setter: 'setMyDescription', parameter: 'description', limit: 512 },
   { key: 'shortDescription', getter: 'getMyShortDescription', setter: 'setMyShortDescription', parameter: 'short_description', limit: 120 },
 ] as const;
-
-function brandObject(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown> : null;
-}
 
 /** Provider descriptions/URLs/profile prose never enter the public result. */
 function brandFailure(value: unknown, stage: BrandError['stage']): BrandError {
@@ -442,11 +440,7 @@ export async function syncTelegramDisplayBrand(
 }
 
 /** Make an HTTPS POST with JSON body. Returns parsed response body or null on error. */
-async function postJson(
-  url: string,
-  body: unknown,
-  _token: string | undefined,
-): Promise<unknown> {
+async function postJson(url: string, body: unknown): Promise<unknown> {
   const payload = JSON.stringify(body);
   return new Promise<unknown>((resolve) => {
     // Dynamic import to allow test mocks to intercept

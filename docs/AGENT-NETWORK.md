@@ -46,7 +46,9 @@ the worker or wait about 30 seconds for the session to expire, then retry.
 Usage refusals during enrollment name the flag at fault — a missing `--owner`
 or `--node`, one alias reused for `--primary` and `--backup`, or a repeat join
 that changes a saved identity flag — as exit-2 errors instead of one generic
-identity refusal.
+identity refusal. Enrollment flags cannot be combined with the explicit
+join's `--caps`/`--slots`: that mix is refused by name, since enrollment probes
+this machine's lanes and capacity itself.
 When the pool cannot be reached at all, join prints per-host approval steps
 instead: the host-check and `ssh-copy-id` commands to run on this computer, and
 a reminder that each pool Mac needs Phantom installed with `phm` on its SSH PATH.
@@ -63,7 +65,10 @@ is running there, free memory, CPU headroom, lanes, running jobs and a
 plain-words state such as `ready for work` or `offline since 10:42`.
 `--can-take <lane>` lists only the computers that can take a job for that lane
 now and recommends one: ready remote computers first, most free slots first,
-then name to break ties. If none qualifies, it falls back to this computer only
+then name to break ties. A queue lane name such as `codex-personal` resolves
+to the provider caps its jobs need, the same mapping `phm nodes plan` and the
+claim bridge use; lanes that only run on this host or on an API key keep the
+direct advertised-cap match. If none qualifies, it falls back to this computer only
 when ready. JSON adds `placement` with `lane`, `node` (null when none is ready),
 `target` (`remote`, `local`, `none`), `reason` (`remote-ready`, `local-only`,
 `local-fallback`, `no-ready-node`) and a plain explanation. Unknown reachability
@@ -428,9 +433,12 @@ failure is `phm org: <message>` on stderr.
 
 The leader reads `phm org plan --json` each planning pass and applies it within each
 member's contributed limits. With no `org.toml`, the command succeeds with
-`org.plan.v1` and `state: "not-configured"`; the leader skips team planning and
-does not interpret null plan fields as zero capacity or empty work. An invalid
-or unreadable org file is still rejected. Solo fleet planning is independent.
+`org.plan.v1` and `state: "not-configured"` — `file` names the org.toml path
+probed, and text mode adds the same guidance `org join` and `org show` give for
+a missing file (where a copy comes from, or `phm org init` to start one); the
+leader skips team planning and does not interpret null plan fields as zero
+capacity or empty work. An invalid or unreadable org file is still rejected.
+Solo fleet planning is independent.
 Known spare slots from `phm resources plan` cap
 new proposals across all members on the same lane. An unknown target does
 not grant extra capacity or change an existing contributed budget. Private

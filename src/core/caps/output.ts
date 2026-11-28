@@ -20,12 +20,12 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { CapsBundle } from './generate.js';
 
 /** Segments that are, or contain, live agent configuration. */
-export const LIVE_CONFIG_SEGMENTS: ReadonlySet<string> = new Set([
+const LIVE_CONFIG_SEGMENTS: ReadonlySet<string> = new Set([
   '.codex', '.claude', '.claude.json', '.cursor', '.gemini', '.devin', '.grok', '.copilot', '.qwen',
   '.vscode', '.mcp.json', '.config', '.ashlr', '.phantom', 'Library',
 ]);
 
-export class CapsOutputError extends Error {}
+class CapsOutputError extends Error {}
 
 function realish(path: string): string {
   // Resolve symlinks on the deepest existing ancestor, then re-append the rest.
@@ -69,7 +69,8 @@ export function assertSafeOutputDir(outDir: string, roots: OutputRoots): string 
   if (hit) throw new CapsOutputError(`Output path contains "${hit}", a live agent config location. Write to a staging directory instead.`);
   // Absolute defense: never under a live dir in home, whatever the roots say.
   for (const seg of LIVE_CONFIG_SEGMENTS) {
-    if (inside(join(home, seg), target) !== null || target === join(home, seg)) {
+    const liveDir = join(home, seg);
+    if (inside(liveDir, target) !== null || target === liveDir) {
       throw new CapsOutputError(`Output resolves inside ~/${seg}, a live agent config location.`);
     }
   }

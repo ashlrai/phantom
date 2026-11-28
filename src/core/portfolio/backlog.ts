@@ -13,12 +13,24 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { Backlog, Proposal, ScannerDescriptor, ScannerObservation, WorkItem } from '../types.js';
+import type { AshlrConfig, Backlog, Proposal, ScannerDescriptor, ScannerObservation, WorkItem } from '../types.js';
 import { activeEnrollmentLenses, canonicalEnrollmentPath, listEnrolled } from '../sandbox/policy.js';
 import { isMirrorPath } from '../fleet/mirrors.js';
 import { audit } from '../sandbox/audit.js';
 import { isTrivialItem } from './value-filter.js';
 import { backlogScanContext, type BacklogScanSnapshot } from './scan-snapshot.js';
+import { isPlainRecord, isSha256Hex, isWorkSource, scoreItem, sourceTierMultiplier } from './scoring.js';
+import { computeOutcomePriors, scoreAdjustment } from '../fleet/feedback.js';
+import { strategicRepoMultiplier } from '../ecosystem/focus.js';
+import {
+  blockingPendingProposalsForBacklog,
+  pendingProposalItemKeysForBacklog,
+  workItemCoverageKey,
+} from '../fleet/proposal-matching.js';
+import { withSelfHealQueueLock } from '../fleet/self-heal.js';
+import { sanitizeSourceBaseDigest } from '../fleet/source-base-digest.js';
+import { isStrictWorkItem } from './queued-autonomy.js';
+import { ideaVerdictLive, readIdeaVerdicts, type IdeaVerdictEntry } from '../ideas/idea-verdicts.js';
 
 /**
  * 3.10: drop the fleet's own mirror clones from a DEFAULT scan set. A standing
@@ -45,18 +57,6 @@ function withoutFleetMirrors(enrolled: string[]): string[] {
     return enrolled;
   }
 }
-import { scoreItem, sourceTierMultiplier } from './scoring.js';
-import { computeOutcomePriors, scoreAdjustment } from '../fleet/feedback.js';
-import { strategicRepoMultiplier } from '../ecosystem/focus.js';
-import {
-  blockingPendingProposalsForBacklog,
-  pendingProposalItemKeysForBacklog,
-  workItemCoverageKey,
-} from '../fleet/proposal-matching.js';
-import { withSelfHealQueueLock } from '../fleet/self-heal.js';
-import { sanitizeSourceBaseDigest } from '../fleet/source-base-digest.js';
-import { isStrictWorkItem } from './queued-autonomy.js';
-import { ideaVerdictLive, readIdeaVerdicts, type IdeaVerdictEntry } from '../ideas/idea-verdicts.js';
 
 // ---------------------------------------------------------------------------
 // M133: normalized title for dedup matching
@@ -145,27 +145,25 @@ export function loadBacklog(): Backlog | null {
     const raw = readFileSync(p, 'utf8');
     const parsed: unknown = JSON.parse(raw);
     if (
-      parsed !== null &&
-      typeof parsed === 'object' &&
-      !Array.isArray(parsed) &&
-      typeof (parsed as Record<string, unknown>)['generatedAt'] === 'string' &&
-      Array.isArray((parsed as Record<string, unknown>)['repos']) &&
-      Array.isArray((parsed as Record<string, unknown>)['items'])
+      isPlainRecord(parsed) &&
+      typeof parsed['generatedAt'] === 'string' &&
+      Array.isArray(parsed['repos']) &&
+      Array.isArray(parsed['items'])
     ) {
-      const backlog = parsed as Backlog;
+      const backlog = parsed as unknown as Backlog;
       const snapshotId = typeof backlog.snapshotId === 'string' && /^[a-f0-9]{32}$/.test(backlog.snapshotId)
         ? backlog.snapshotId
         : undefined;
-      const rawObservations = (parsed as Record<string, unknown>)['observations'];
+      const {
+        observations: _observations,
+        observationSourceState: _sourceState,
+        observationsTruncated: _truncated,
+        snapshotId: _snapshotId,
+        ...base
+      } = backlog;
+      const rawObservations = parsed['observations'];
       if (!Array.isArray(rawObservations)) {
-        const {
-          observations: _observations,
-          observationSourceState: _sourceState,
-          observationsTruncated: _truncated,
-          snapshotId: _snapshotId,
-          ...legacy
-        } = backlog;
-        return { ...legacy, ...(snapshotId ? { snapshotId } : {}) };
+        return { ...base, ...(snapshotId ? { snapshotId } : {}) };
       }
       const boundedRaw = rawObservations.slice(0, MAX_PERSISTED_SCANNER_OBSERVATIONS * 2);
       const sanitized = boundedRaw
@@ -175,13 +173,6 @@ export function loadBacklog(): Backlog | null {
       const rowsDropped = sanitized.length !== rawObservations.length;
       const truncated = backlog.observationsTruncated === true || rawObservations.length > MAX_PERSISTED_SCANNER_OBSERVATIONS;
       const degraded = rowsDropped || truncated || backlog.observationSourceState === 'degraded';
-      const {
-        observations: _observations,
-        observationSourceState: _sourceState,
-        observationsTruncated: _truncated,
-        snapshotId: _snapshotId,
-        ...base
-      } = backlog;
       return {
         ...base,
         ...(snapshotId ? { snapshotId } : {}),
@@ -229,7 +220,7 @@ function persistBacklog(backlog: Backlog, opts: { fullSnapshot: boolean }): void
           ...(observationsTruncated ? { observationsTruncated: true } : {}),
         }
       : {};
-    if (current && Number.isFinite(currentMs) && Number.isFinite(snapshotMs) && currentMs > snapshotMs) {
+    if (current && currentIsNewer) {
       const currentIds = new Set(current.items.map((item) => item.id));
       const nonConflictingIncoming = backlog.items.filter((item) => !currentIds.has(item.id));
       persistBacklogUnlocked({
@@ -335,7 +326,7 @@ function mergeConcurrentObservations(
 }
 
 function sanitizeScannerObservation(value: unknown): ScannerObservation | null {
-  if (!value || typeof value !== 'object') return null;
+  if (!isPlainRecord(value)) return null;
   const observation = value as Partial<ScannerObservation>;
   if (
     observation.schemaVersion !== 1 ||
@@ -347,7 +338,7 @@ function sanitizeScannerObservation(value: unknown): ScannerObservation | null {
   if (typeof observation.repo !== 'string' || observation.repo.length === 0 || observation.repo.length > 4096) return null;
   if (typeof observation.scannerId !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(observation.scannerId)) return null;
   if (typeof observation.domain !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(observation.domain)) return null;
-  if (!['issue', 'todo', 'test', 'dep', 'doc', 'security', 'plugin', 'self', 'lint', 'goal', 'hygiene', 'invent'].includes(observation.source ?? '')) return null;
+  if (!isWorkSource(observation.source)) return null;
   if (!['present', 'absent', 'unavailable'].includes(observation.status ?? '')) return null;
   const common = {
     schemaVersion: 1 as const,
@@ -355,14 +346,14 @@ function sanitizeScannerObservation(value: unknown): ScannerObservation | null {
     repo: resolve(observation.repo),
     scannerId: observation.scannerId,
     domain: observation.domain,
-    source: observation.source as ScannerObservation['source'],
+    source: observation.source,
   };
   const sourceBase = observation.sourceBase === undefined
     ? undefined
     : sanitizeSourceBaseDigest(observation.sourceBase);
   const observationDigest = observation.observationDigest === undefined
     ? undefined
-    : typeof observation.observationDigest === 'string' && /^[a-f0-9]{64}$/.test(observation.observationDigest)
+    : isSha256Hex(observation.observationDigest)
       ? observation.observationDigest
       : null;
   if (observationDigest === null) return null;
@@ -372,7 +363,7 @@ function sanitizeScannerObservation(value: unknown): ScannerObservation | null {
   if (observation.status === 'present') {
     if (observation.reason !== 'item-observed' ||
       typeof observation.itemId !== 'string' || observation.itemId.length === 0 || observation.itemId.length > 180 ||
-      typeof observation.objectiveHash !== 'string' || !/^[a-f0-9]{64}$/.test(observation.objectiveHash)) return null;
+      !isSha256Hex(observation.objectiveHash)) return null;
     return {
       ...common,
       status: 'present',
@@ -474,7 +465,6 @@ function exactCanonicalRepos(repos: readonly string[]): CanonicalRepoSelection {
 // Deferred import of SCANNERS to avoid a circular-dependency risk and to keep
 // this module importable even before scanners.ts exists (e.g. in tests that
 // only exercise backlogPath/scoreItem/loadBacklog).
-import type { AshlrConfig } from '../types.js';
 type Scanner = (repo: string, cfg?: Pick<AshlrConfig, 'foundry'>) => Promise<WorkItem[]>;
 
 interface ScannerEntry {
@@ -519,7 +509,7 @@ async function getScanners(): Promise<ReadonlyArray<ScannerEntry>> {
 export { createBacklogScanSnapshot } from './scan-snapshot.js';
 
 export const BACKLOG_REPO_CONCURRENCY = 4;
-export const BACKLOG_SCANNER_DEADLINE_MS = 45_000;
+const BACKLOG_SCANNER_DEADLINE_MS = 45_000;
 
 export interface BacklogScanInvalidation {
   repos?: string[];
@@ -584,12 +574,12 @@ export async function buildBacklog(opts?: {
   let edvVerify = false;
   if (minValue === undefined) {
     minValue = cfg?.foundry?.minItemValue ?? 2;
+    const rawFoundry: unknown = cfg?.foundry;
+    const foundryCfg = isPlainRecord(rawFoundry) ? rawFoundry : undefined;
     // cfg.foundry.feedbackEnabled: absent → true (opt-out by setting false).
-    const rawFeedback = (cfg?.foundry as Record<string, unknown> | undefined)?.['feedbackEnabled'];
-    if (rawFeedback === false) feedbackEnabled = false;
+    if (foundryCfg?.['feedbackEnabled'] === false) feedbackEnabled = false;
     // M151: cfg.foundry.edvVerify: absent → false (opt-in).
-    const rawEdv = (cfg?.foundry as Record<string, unknown> | undefined)?.['edvVerify'];
-    if (rawEdv === true) edvVerify = true;
+    if (foundryCfg?.['edvVerify'] === true) edvVerify = true;
   }
 
   const allItems: WorkItem[] = [];

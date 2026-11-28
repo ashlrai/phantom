@@ -188,6 +188,19 @@ describe('getFleetTruth', () => {
     expect(truth.queued).toBe(2);
   });
 
+  it('counts each queued job once when ready.tsv repeats a READY row', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
+    mkdirSync(join(root, 'queue'));
+    writeFileSync(join(root, 'queue', 'ready.tsv'),
+      'READY\tRQ-DUP-1\tclaude\twork\tphantom\tone\n' +
+      'READY\tRQ-DUP-1\tclaude\twork\tphantom\tone again\n' +
+      'READY\tRQ-DUP-2\tcodex-cmp\twork\tphantom\ttwo\n' +
+      'RQ-PARK-1\tphantom\tPARKED-DEP.claude\twork\tprompt.md\n');
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root });
+    expect(truth.queued).toBe(2);
+    expect(truth.blocked).toBe(1);
+  });
+
   it('falls back to live job pids when admission.json is stale', async () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
     mkdirSync(join(root, 'queue'));

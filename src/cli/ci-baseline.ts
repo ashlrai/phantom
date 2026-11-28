@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { analyzeCiBaseline, applyBaselineUpdates, enqueueBaselineFixes } from '../core/fleet/ci-baseline.js';
+import { projectCiRepairShadow } from '../core/fleet/ci-repair-shadow.js';
 import { readCiReruns } from '../core/fleet/ci-rerun.js';
 
 const USAGE = 'usage: phm ci baseline [--repo owner/repo] [--json] [--queue] [--queue-file /absolute/path] [--apply] | phm ci reruns [--json]';
@@ -29,9 +30,10 @@ export async function cmdCiBaseline(args: string[]): Promise<number> {
   if (!isAbsolute(queueFile) || !/^[\w-][\w.-]*\/[\w-][\w.-]*$/.test(repo)) { console.error(USAGE); return 2; }
   try {
     const report = await analyzeCiBaseline(repo);
+    const repairShadow = projectCiRepairShadow(report);
     const queued = queue ? enqueueBaselineFixes(report, queueFile) : [];
     const applied = apply ? await applyBaselineUpdates(report) : [];
-    console.log(JSON.stringify({ ...report, queued, applied, dryRun: !apply }, null, 2));
+    console.log(JSON.stringify({ ...report, repairShadow, queued, applied, dryRun: !apply }, null, 2));
     return 0;
   } catch { console.error('ci baseline: unable to complete'); return 1; }
 }

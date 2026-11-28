@@ -9,6 +9,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, dirname, join, resolve } from 'node:path';
+import { DAY_MS, isPlainRecord } from './focus.js';
 
 export type EcosystemDoctorStatus = 'pass' | 'warn' | 'fail';
 
@@ -75,14 +76,7 @@ interface GitResult {
   status: number | null;
 }
 
-interface PackageInfo {
-  name: string | null;
-  version: string | null;
-  packageManager: string | null;
-  scripts: string[];
-  dependencies: number;
-  devDependencies: number;
-}
+type PackageInfo = NonNullable<EcosystemDoctorRepo['package']>;
 
 function makeCheck(
   id: string,
@@ -118,7 +112,7 @@ export function nearestRepoRoot(startDir: string): string | null {
   let dir = resolve(startDir);
   const root = resolve('/');
   while (true) {
-    if (existsSync(join(dir, '.git')) || existsSync(join(dir, 'package.json'))) return dir;
+    if (looksLikeRepo(dir)) return dir;
     if (dir === root) return null;
     const parent = dirname(dir);
     if (parent === dir) return null;
@@ -242,12 +236,12 @@ function checkGit(repoPath: string, repoName: string, deep: boolean, nowMs: numb
     const log = runGit(repoPath, ['log', '-1', '--format=%cI']);
     if (log.ok && log.stdout) {
       lastCommitAt = log.stdout;
-      const ageDays = Math.floor((nowMs - Date.parse(log.stdout)) / 86_400_000);
+      const ageDays = Math.floor((nowMs - Date.parse(log.stdout)) / DAY_MS);
       checks.push(makeCheck(
         'git-recent',
         'Git recency',
         ageDays > 90 ? 'warn' : 'pass',
-        ageDays > 90 ? `last commit ${ageDays}d ago` : `last commit ${ageDays}d ago`,
+        `last commit ${ageDays}d ago`,
         repoName,
         repoPath,
       ));
@@ -276,9 +270,7 @@ function checkGit(repoPath: string, repoName: string, deep: boolean, nowMs: numb
 }
 
 function countObjectKeys(value: unknown): number {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? Object.keys(value as Record<string, unknown>).length
-    : 0;
+  return isPlainRecord(value) ? Object.keys(value).length : 0;
 }
 
 function readPackage(repoPath: string): { check: EcosystemDoctorCheck; info: PackageInfo | null } {
@@ -294,9 +286,7 @@ function readPackage(repoPath: string): { check: EcosystemDoctorCheck; info: Pac
   try {
     const parsed = JSON.parse(readFileSync(packagePath, 'utf8')) as Record<string, unknown>;
     const scriptsValue = parsed.scripts;
-    const scripts = scriptsValue && typeof scriptsValue === 'object' && !Array.isArray(scriptsValue)
-      ? Object.keys(scriptsValue as Record<string, unknown>).sort()
-      : [];
+    const scripts = isPlainRecord(scriptsValue) ? Object.keys(scriptsValue).sort() : [];
     const info: PackageInfo = {
       name: typeof parsed.name === 'string' ? parsed.name : null,
       version: typeof parsed.version === 'string' ? parsed.version : null,
@@ -353,11 +343,12 @@ function checkPackageLock(repoPath: string, info: PackageInfo | null): Ecosystem
   if (depCount === 0) {
     return makeCheck('package-lock', 'Package lock', 'pass', 'no dependencies declared', basename(repoPath), repoPath);
   }
+  const locked = hasLockfile(repoPath);
   return makeCheck(
     'package-lock',
     'Package lock',
-    hasLockfile(repoPath) ? 'pass' : 'warn',
-    hasLockfile(repoPath) ? `lockfile present for ${depCount} dependency entries` : `no lockfile for ${depCount} dependency entries`,
+    locked ? 'pass' : 'warn',
+    locked ? `lockfile present for ${depCount} dependency entries` : `no lockfile for ${depCount} dependency entries`,
     basename(repoPath),
     repoPath,
   );

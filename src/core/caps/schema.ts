@@ -36,10 +36,10 @@ import { z } from 'zod';
 import type { HardLimit } from '../fleet/needs-mason-triage.js';
 
 export const CAPS_SCHEMA_ID = 'caps.registry.v1';
-export const CAPS_SCHEMA_VERSION = 1;
+const CAPS_SCHEMA_VERSION = 1;
 
 /** Lower-kebab ids, the same alphabet `phm` uses for job and lane names. */
-export const capsId = z.string().regex(/^[a-z][a-z0-9]*(?:[-.][a-z0-9]+)*$/).max(80);
+const capsId = z.string().regex(/^[a-z][a-z0-9]*(?:[-.][a-z0-9]+)*$/).max(80);
 const text = z.string().min(1).max(500);
 const ids = z.array(capsId).max(128);
 
@@ -86,7 +86,7 @@ export type SensitivityFlag = (typeof SENSITIVITY_FLAGS)[number];
  * fleet/needs-mason-triage.ts `HardLimit`). A flagged capability is callable
  * only through the gate that already guards that limit.
  */
-export const HARD_LIMIT_GATES = ['outside-send', 'money', 'destroy-data', 'secrets'] as const satisfies readonly HardLimit[];
+const HARD_LIMIT_GATES = ['outside-send', 'money', 'destroy-data', 'secrets'] as const satisfies readonly HardLimit[];
 export type HardLimitGate = (typeof HARD_LIMIT_GATES)[number];
 export const HARD_LIMIT_GATE_FOR: Readonly<Record<SensitivityFlag, HardLimitGate>> = Object.freeze({
   external_send: 'outside-send',
@@ -95,7 +95,7 @@ export const HARD_LIMIT_GATE_FOR: Readonly<Record<SensitivityFlag, HardLimitGate
 });
 
 /** What a capability does. Some effects imply a sensitivity flag. */
-export const EFFECTS = [
+const EFFECTS = [
   'read', 'write-local', 'write-remote',
   'send-mail', 'send-message', 'post-slack', 'post-public',
   'spend', 'plan-change',
@@ -127,7 +127,7 @@ const sensitivity = z.object({
  * The only fields an auto-filed record may carry. Closed on purpose: there is
  * no member that can hold screen contents, clipboard, window text or a secret.
  */
-export const AUTO_FILE_FIELDS = [
+const AUTO_FILE_FIELDS = [
   'capability-id', 'surface-id', 'model-id', 'job-id', 'repo', 'timestamp', 'outcome', 'duration-ms', 'error-code',
 ] as const;
 
@@ -135,10 +135,10 @@ export const AUTO_FILE_FIELDS = [
 // Surfaces, models, hosting edges, sessions
 // ---------------------------------------------------------------------------
 
-export const SURFACE_KINDS = ['desktop', 'cli', 'cloud', 'bot', 'local-runtime'] as const;
+const SURFACE_KINDS = ['desktop', 'cli', 'cloud', 'bot', 'local-runtime'] as const;
 
 /** Each value selects one adapter emitter in caps/generate.ts. */
-export const ADAPTER_FORMATS = [
+const ADAPTER_FORMATS = [
   'claude-code', 'codex', 'devin', 'cursor', 'grok-build', 'gemini', 'copilot', 'local-model', 'none',
 ] as const;
 export type AdapterFormat = (typeof ADAPTER_FORMATS)[number];
@@ -203,7 +203,7 @@ const session = z.object({
 // ---------------------------------------------------------------------------
 
 /** Vault NAME only (phantom-secrets / keychain item name). Never a value. */
-export const credentialName = z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/);
+const credentialName = z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/);
 
 const account = z.object({
   id: capsId,
@@ -214,8 +214,7 @@ const account = z.object({
   scopes: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,79}$/)).max(64),
 }).strict();
 
-export const CAPABILITY_KINDS = ['mcp', 'skill', 'plugin', 'cli', 'connector'] as const;
-export type CapabilityKind = (typeof CAPABILITY_KINDS)[number];
+const CAPABILITY_KINDS = ['mcp', 'skill', 'plugin', 'cli', 'connector'] as const;
 
 const launch = z.object({
   command: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).max(80),
@@ -259,9 +258,7 @@ export const capsRegistrySchema = z.object({
 export type CapsRegistry = z.infer<typeof capsRegistrySchema>;
 export type CapsSurface = CapsRegistry['surfaces'][number];
 export type CapsModel = CapsRegistry['models'][number];
-export type CapsHostingEdge = CapsRegistry['hosting'][number];
 export type CapsSession = CapsRegistry['sessions'][number];
-export type CapsAccount = CapsRegistry['accounts'][number];
 export type Capability = CapsRegistry['capabilities'][number];
 
 export { browserBackends as BROWSER_CONTROL_BACKENDS };

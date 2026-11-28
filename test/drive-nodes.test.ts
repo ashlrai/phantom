@@ -610,7 +610,7 @@ describe('standalone join version reporting', () => {
       expect(code).toBe(0);
       const node = store.state.nodes.find(n => n.nodeId === 'laptop')!;
       expect(node.caps).toEqual(['build', 'phm-9.9.9']);
-      expect(versionFromCaps(node.caps)).toBe('9.9.9');
+      expect(versionFromCaps(node.caps!)).toBe('9.9.9');
     } finally { vi.restoreAllMocks(); }
   });
   it('leaves --caps untouched when this build version cannot be determined', async () => {
@@ -638,7 +638,7 @@ describe('standalone join sign-in lanes', () => {
     try {
       const store = new MemoryStore();
       const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--json'],
-        { store, phmVersion: () => '9.9.9', providerLanes: () => ['gh', 'claude', 'codex'] });
+        { store, phmVersion: () => '9.9.9', providerLanes: () => ['gh', 'claude', 'codex'], probeAuth: () => 'ok' as const });
       expect(code).toBe(0);
       const node = store.state.nodes.find(n => n.nodeId === 'laptop')!;
       expect(node.caps).toEqual(['claude', 'codex', 'gh', 'phm-9.9.9']);
@@ -692,6 +692,99 @@ describe('standalone join sign-in lanes', () => {
       expect(text).toContain('caps: none');
       expect(text).toContain('No codex, claude or gh sign-ins detected on this machine');
       expect(text).toContain('pass --caps');
+      // The empty probe must still point at --caps for CLIs auto-detect never
+      // probes (aider, gemini, ...): --caps takes any capability name.
+      expect(text).toContain('accepts any capability name');
+    } finally { vi.restoreAllMocks(); }
+  });
+});
+
+describe('standalone join gh auth report', () => {
+  it('names this machine\'s gh login state when the advertised caps include gh', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      // An explicit --caps skips the sign-in lane probe but still pays the
+      // one gh login check the reply reports: routing refuses gh jobs until a
+      // --probe-auth beat reports ok, so the join names the mismatch here.
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build,gh', '--json'],
+        { store, phmVersion: () => '9.9.9', probeAuth: () => 'missing' });
+      expect(code).toBe(0);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out).toMatchObject({ command: 'join', ghAuth: 'missing', caps: ['build', 'gh', 'phm-9.9.9'] });
+      expect(out['next']).toContain('--probe-auth');
+      expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.caps).toEqual(['build', 'gh', 'phm-9.9.9']);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('warns in text mode when the advertised gh cap has no working login', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const deps = { store, phmVersion: () => null };
+      // 'missing' means gh ran and reported no login: the fix is gh auth login.
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build,gh'],
+        { ...deps, probeAuth: () => 'missing' })).toBe(0);
+      const missing = lines.at(-1)!;
+      expect(missing).toContain('gh is advertised but gh reports no login on this machine');
+      expect(missing).toContain('gh auth login');
+      // 'unknown' means gh could not be run at all: the fix names install too.
+      expect(await cmdNodeFleet('join', ['--node', 'desktop', '--owner', 'acme', '--caps', 'gh'],
+        { ...deps, probeAuth: () => 'unknown' })).toBe(0);
+      expect(lines.at(-1)!).toContain('could not check its gh login');
+      expect(lines.at(-1)!).toContain('install gh');
+      // A verified login stays quiet — the caps line already carries the fact.
+      expect(await cmdNodeFleet('join', ['--node', 'tablet', '--owner', 'acme', '--caps', 'gh'],
+        { ...deps, probeAuth: () => 'ok' })).toBe(0);
+      expect(lines.at(-1)!).not.toContain('gh auth login');
+      expect(lines.at(-1)!).not.toContain('could not check its gh login');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('reports ghAuth ok and never probes when gh is not advertised', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const probeAuth = vi.fn((): 'ok' | 'missing' | 'unknown' => 'ok');
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build,gh', '--json'],
+        { store, phmVersion: () => null, probeAuth })).toBe(0);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ ghAuth: 'ok' });
+      // No gh cap: the auth probe must not run at all and no ghAuth rides out.
+      probeAuth.mockClear();
+      expect(await cmdNodeFleet('join', ['--node', 'desktop', '--owner', 'acme', '--caps', 'build', '--json'],
+        { store, phmVersion: () => null, probeAuth })).toBe(0);
+      expect(JSON.parse(lines.at(-1)!)).not.toHaveProperty('ghAuth');
+      expect(probeAuth).not.toHaveBeenCalled();
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('a bare join whose lanes name gh probes the login once for the reply', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const probeAuth = vi.fn((): 'ok' | 'missing' | 'unknown' => 'missing');
+      // providerLanes stands in for the sign-in lane probe; with it injected
+      // the gh verdict is not already known, so the reply pays the one check.
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--json'],
+        { store, phmVersion: () => '9.9.9', providerLanes: () => ['gh'], probeAuth });
+      expect(code).toBe(0);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out).toMatchObject({ ghAuth: 'missing', autoCaps: ['gh'] });
+      expect(out['caps']).toEqual(['gh', 'phm-9.9.9']);
+      expect(probeAuth).toHaveBeenCalledTimes(1);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('a probe seam that throws reports ghAuth unknown instead of failing the join', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'gh', '--json'],
+        { store, phmVersion: () => null, probeAuth: () => { throw new Error('probe seam failed'); } });
+      expect(code).toBe(0);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ ghAuth: 'unknown' });
+      expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.caps).toContain('gh');
     } finally { vi.restoreAllMocks(); }
   });
 });
@@ -752,7 +845,7 @@ describe('join dropped-profile report', () => {
     try {
       const store = new MemoryStore();
       let now = 1_000_000;
-      const deps = { store, now: () => now, phmVersion: () => '9.9.9' };
+      const deps = { store, now: () => now, phmVersion: () => '9.9.9', probeAuth: () => 'ok' as const };
       // First join: nothing to drop, so the reply carries no `dropped` key.
       expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme,beta',
         '--caps', 'build,gh', '--slots', '2', '--json'], deps)).toBe(0);
@@ -773,6 +866,27 @@ describe('join dropped-profile report', () => {
       // The stored profile really is the narrower one — the report is honest.
       expect(store.state.nodes.find(n => n.nodeId === 'laptop')).toMatchObject({ owners: ['acme'], caps: ['build', 'phm-9.9.9'] });
       expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.slots).toBeUndefined();
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('prints restore caps in the same sorted order the join reply and stored profile use', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      let now = 1_000_000;
+      const deps = { store, now: () => now, phmVersion: () => '9.9.9' };
+      // The stored profile sorts caps, so a narrower re-join's new caps would
+      // concatenate in front of the dropped ones unsorted (mango,apple,zebra)
+      // if the restore did not sort like the owners list and the join reply do.
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme',
+        '--caps', 'zebra,apple', '--json'], deps)).toBe(0);
+      now += 31_000;
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme',
+        '--caps', 'mango', '--json'], deps)).toBe(0);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out['dropped']).toMatchObject({ caps: ['apple', 'zebra'] });
+      expect(out['dropped']['restore']).toBe(
+        'phm node join --node laptop --owner acme --caps apple,mango,zebra --watch');
     } finally { vi.restoreAllMocks(); }
   });
   it('stays silent when nothing was dropped: first join, leave, and identical re-join', async () => {
@@ -820,7 +934,7 @@ describe('join dropped-profile report', () => {
     try {
       const store = new MemoryStore();
       let now = 1_000_000;
-      const deps = { store, now: () => now, phmVersion: () => '9.9.9' };
+      const deps = { store, now: () => now, phmVersion: () => '9.9.9', probeAuth: () => 'ok' as const };
       await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme,beta', '--caps', 'build,gh', '--json'], deps);
       now += 31_000;
       expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build'], deps)).toBe(0);
@@ -1336,7 +1450,7 @@ describe('fleet flag value validation', () => {
       ['withdraw', ['--job', 'j1', '--owner', 'acme,ops']],
       ['result', ['--job', 'j1', '--owner', 'acme,ops']],
     ] as const) {
-      expect(run(verb, args, f), verb).toMatchObject({ code: 'bad-owner', exit: 2 });
+      expect(run(verb, [...args], f), verb).toMatchObject({ code: 'bad-owner', exit: 2 });
     }
     // An empty or all-invalid list is refused on the list verbs too.
     for (const args of [['--owner', ''], ['--owner', ' , '], ['--owner', 'acme,,bad id']]) {
@@ -1354,7 +1468,7 @@ describe('fleet flag value validation', () => {
       ['enqueue', ['--job', 'j1', '--owner', 'acme', '--secrets', 'deploy_key'], 'bad-secrets'],
       ['enqueue', ['--job', 'j1', '--owner', 'acme', '--secrets', 'DEPLOY_KEY,sk-live-value'], 'bad-secrets'],
     ] as const) {
-      expect(run(verb, args, f), `${verb} ${args.join(' ')}`).toMatchObject({ code, exit: 2 });
+      expect(run(verb, [...args], f), `${verb} ${args.join(' ')}`).toMatchObject({ code, exit: 2 });
     }
     // Nothing was recorded by the refused calls.
     expect(f.a.snapshot().nodes.map(n => n.nodeId)).not.toContain('n1');
@@ -1371,7 +1485,7 @@ describe('fleet flag value validation', () => {
       ['join', ['--node', 'n1', '--owner', 'acme', '--caps', 'Build']],
       ['enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'GH']],
     ] as const) {
-      const err = run(verb, args, f);
+      const err = run(verb, [...args], f);
       expect(err.fix, `${verb} ${args.join(' ')}`).toMatch(/Run: phm node --help$/);
       expect(err.fix!.match(/Run: phm node --help/g), `${verb} ${args.join(' ')}`).toHaveLength(1);
     }

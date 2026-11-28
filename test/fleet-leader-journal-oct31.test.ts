@@ -87,4 +87,18 @@ describe('leader journal reader', () => {
     const result = await readLeaderJournal({ runsDir: dir });
     expect(result.passes).toEqual([{ at: 'new', sections: [{ title: 'new', bullets: ['visible'] }] }]);
   });
+  it('honors ASHLR_RUNS_DIR when no runsDir is passed', async () => {
+    const dir = await temp(); const leader = join(dir, 'leader');
+    await mkdir(leader);
+    await writeFile(join(leader, 'PLAN-LOG.md'), '## env tick\n**env**\n- saw the override\n');
+    const previous = process.env.ASHLR_RUNS_DIR;
+    try {
+      process.env.ASHLR_RUNS_DIR = dir;
+      const result = await readLeaderJournal({ now: () => Date.parse('2026-10-31T12:00:00Z') });
+      expect(result.sources.planLog).toBe('healthy');
+      expect(result.passes).toEqual([{ at: 'env tick', sections: [{ title: 'env', bullets: ['saw the override'] }] }]);
+    } finally {
+      if (previous === undefined) delete process.env.ASHLR_RUNS_DIR; else process.env.ASHLR_RUNS_DIR = previous;
+    }
+  });
 });
