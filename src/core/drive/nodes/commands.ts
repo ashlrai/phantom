@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DriveNodes, JobClaim, NodeProfile } from './index.js';
 import { isVersionCap } from './phm-version.js';
 import type { NodeAuth, NodeCapacitySample } from './state.js';
-import { isNodeCapacity, isHostStats, validCap, validId, validSecretName } from './state.js';
+import { isNodeCapacity, isHostStats, NODE_JOB_RESULT_BYTES, validCap, validId, validSecretName } from './state.js';
 import { jobBlockers, nodeCapacityView, routable, type RouteAssignment } from './router.js';
 import { NODE_TASK_LIMIT, validNodeTask } from './task.js';
 
@@ -48,6 +48,12 @@ export function parseNodeFleetFlags(verb: string, args: string[]): Map<string, s
             'Split the task into smaller --task-part values or shorten it. Run: phm node --help');
         }
         flags.set(name, text);
+      } else if (name === '--result' && Buffer.byteLength(value) > NODE_JOB_RESULT_BYTES) {
+        // DriveNodes.complete enforces the same bound; refusing here names the
+        // flag and limit as usage instead of the store's masked 'Invalid drive
+        // job result', whose fix would wrongly point at the state directory.
+        throw new UsageError('bad-result', `--result is limited to ${NODE_JOB_RESULT_BYTES / 1024} KiB.`,
+          'Return a summary or a reference to the full output instead of the whole result text. Run: phm node --help');
       } else flags.set(name, value);
     } else throw new UsageError('unknown-flag', `That flag is not supported by 'phm node ${verb}'.`, 'Run: phm node --help for the flags each verb takes.');
   }

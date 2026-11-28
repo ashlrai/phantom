@@ -7,6 +7,10 @@ import type { LeaderLease, NodeSession, QueueJobV1 } from './queue-v1.js';
 export type NodeAuth = 'ok' | 'missing' | 'unknown';
 
 export const NODE_HEARTBEAT_MS = 3_000;
+/** Accepted completion text bound, in UTF-8 bytes; `DriveNodes.complete` and the
+ * `--result` flag parser share it so an oversize result is refused as usage, not
+ * the store's masked error. */
+export const NODE_JOB_RESULT_BYTES = 64 * 1024;
 export interface NodeCapacitySample extends NodeCapacity { hostId: string; sampledAtMs: number }
 
 export function isNodeCapacity(v: unknown): v is NodeCapacitySample {
