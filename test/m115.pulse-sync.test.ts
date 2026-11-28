@@ -35,7 +35,8 @@ import { createSemanticPrivateStorageHarness, trustedWindowsSystemRootForTest } 
 // Declared BEFORE importing the SUT so vitest hoists them into place.
 // ---------------------------------------------------------------------------
 
-vi.mock('../src/core/integrations/pulse-exporter.js', () => ({
+vi.mock('../src/core/integrations/pulse-exporter.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/core/integrations/pulse-exporter.js')>()),
   exportFleetEvents: vi.fn(async () => ({ ok: true, skipped: false, status: 200, spanCount: 1, detail: 'ok' })),
   shipDepEdges: vi.fn(async () => ({ ok: true, skipped: false, status: 200, spanCount: 1, detail: 'ok' })),
   pollFleetCommands: vi.fn(async () => ({ ok: true, skipped: false, commands: [], status: 200, detail: 'ok' })),
@@ -67,7 +68,8 @@ vi.mock('../src/core/sandbox/audit.js', () => ({
   audit: vi.fn(),
 }));
 
-vi.mock('../src/core/integrations/dep-parser.js', () => ({
+vi.mock('../src/core/integrations/dep-parser.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/core/integrations/dep-parser.js')>()),
   parseRepoDeps: vi.fn(() => ({ repoRef: 'x/y', edges: [] })),
 }));
 

@@ -29,7 +29,7 @@ async function readRepo(repo: string, signal?: AbortSignal): Promise<RepoBacklog
       .map(item => item.updatedAt).filter((at): at is string => at !== null && Number.isFinite(Date.parse(at)))
       .sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? null;
     const { mergeState } = read.counts;
-    return { repo, state: 'ok', open: read.items.length, dirty: mergeState.DIRTY ?? 0, behind: mergeState.BEHIND ?? 0, clean: mergeState.CLEAN ?? 0, oldestDirtyAt: oldest };
+    return { repo, state: 'ok', complete: read.coverage?.complete === true, open: read.items.length, dirty: mergeState.DIRTY ?? 0, behind: mergeState.BEHIND ?? 0, clean: mergeState.CLEAN ?? 0, oldestDirtyAt: oldest };
   } catch (error) {
     if (signal?.aborted) throw error;
     return unread(repo, error instanceof ApiError && error.status === 404 ? 'not-enrolled' : 'unavailable');

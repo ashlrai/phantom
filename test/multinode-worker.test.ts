@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,7 +14,7 @@ vi.mock('../src/core/drive/nodes/capacity.js', () => ({ readNodeCapacity: ports.
 vi.mock('../src/core/drive/nodes/host-slots.js', () => ({ hostSlots: () => ({ acquire: ports.acquire }) }));
 vi.mock('../src/core/drive/nodes/provider-binary.js', async original => ({ ...await original<typeof import('../src/core/drive/nodes/provider-binary.js')>(),
   resolveProviderBinary: (provider: string) => `/usr/local/bin/${provider}` }));
-import { runNodeWorker } from '../src/core/drive/nodes/worker.js';
+import { runNodeWorker, nodeStopped } from '../src/core/drive/nodes/worker.js';
 
 const config = { role: 'worker' as const, primary: 'main', backup: 'backup', owner: 'mason', node: 'worker' };
 class Child extends EventEmitter {
@@ -296,6 +298,35 @@ describe('multi-Mac worker lifecycle', () => {
     await vi.advanceTimersByTimeAsync(3000);
     expect(await result).toMatchObject({ completed: false });
     expect(ports.call.mock.calls.some(c => c[1] === 'complete')).toBe(false);
+  });
+  it('reads PAUSE and KILL under ASHLR_RUNS_DIR when it is set', () => {
+    const previous = process.env['ASHLR_RUNS_DIR'];
+    const dir = '/fleet-runs-override';
+    process.env['ASHLR_RUNS_DIR'] = dir;
+    try {
+      ports.stat.mockImplementation((path: unknown) => {
+        if (path === join(dir, 'KILL')) return {};
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      });
+      expect(nodeStopped()).toBe(true);
+      const probed = ports.stat.mock.calls.map(call => String(call[0]));
+      expect(probed).toEqual([join(dir, 'PAUSE'), join(dir, 'KILL')]);
+    } finally {
+      if (previous === undefined) delete process.env['ASHLR_RUNS_DIR'];
+      else process.env['ASHLR_RUNS_DIR'] = previous;
+    }
+  });
+  it('ignores a relative ASHLR_RUNS_DIR and keeps the default runs root', () => {
+    const previous = process.env['ASHLR_RUNS_DIR'];
+    process.env['ASHLR_RUNS_DIR'] = 'relative/runs';
+    try {
+      expect(nodeStopped()).toBe(false);
+      const probed = ports.stat.mock.calls.map(call => String(call[0]));
+      expect(probed).toEqual([join(homedir(), '.ashlr-runs', 'PAUSE'), join(homedir(), '.ashlr-runs', 'KILL')]);
+    } finally {
+      if (previous === undefined) delete process.env['ASHLR_RUNS_DIR'];
+      else process.env['ASHLR_RUNS_DIR'] = previous;
+    }
   });
   it('rejects a successful process without a valid result reference', async () => {
     const { result } = await start();

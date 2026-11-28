@@ -2,6 +2,7 @@
  * Diffing for NEEDS-MASON items so a newly written line triggers the same
  * `needs-you` push as the activity feed. The first read is a baseline.
  */
+import { isRemoteRecord } from './remote-access.js';
 import { sanitizePushDetail } from './remote-push-fleet.js';
 
 export interface PushNeedsMasonItem { id: string; text: string }
@@ -11,11 +12,8 @@ const MAX_ITEMS = 500;
 const ID_PATTERN = /^nm-[0-9a-f]{12}$/;
 
 export function validNeedsMasonItems(value: unknown): value is PushNeedsMasonItem[] {
-  return Array.isArray(value) && value.length <= MAX_ITEMS && value.every((item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
-    const entry = item as Record<string, unknown>;
-    return typeof entry.id === 'string' && ID_PATTERN.test(entry.id) && typeof entry.text === 'string';
-  });
+  return Array.isArray(value) && value.length <= MAX_ITEMS && value.every((item) =>
+    isRemoteRecord(item) && typeof item.id === 'string' && ID_PATTERN.test(item.id) && typeof item.text === 'string');
 }
 
 /** Items that left the set (resolved) never produce an intent. */

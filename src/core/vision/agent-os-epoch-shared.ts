@@ -1,12 +1,14 @@
 /**
- * Pure structural, canonical-JSON, digest, timestamp, and private-stat helpers
- * shared across the Agent OS epoch and rollover modules (M550–M564).
+ * Pure structural, canonical-JSON, plain-data snapshot, digest, timestamp, and
+ * private-stat helpers shared across the Agent OS epoch, rollover, isolation,
+ * and local-container modules (M550–M567).
  *
- * Zero I/O: imports only `node:crypto` and performs no filesystem, environment,
- * network, key, or authority operations.
+ * Zero I/O: imports only `node:crypto` and `node:util/types` and performs no
+ * filesystem, environment, network, key, or authority operations.
  */
 
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { isProxy } from 'node:util/types';
 
 export const AGENT_OS_EPOCH_MAX_V1 = 999_999_999_999;
 export const AGENT_OS_EPOCH_MAX_POLICY_GENERATION_V1 = 1_000_000;
@@ -80,11 +82,108 @@ export function epochPlainRecord(value: unknown): Record<string, unknown> | null
 
 export function exactEpochKeys(
   value: Record<string, unknown>,
-  expected: readonly string[],
+  expected: Iterable<string>,
 ): boolean {
   const actual = Object.keys(value).sort();
   const wanted = [...expected].sort();
   return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+}
+
+/** Accept a non-Proxy plain object without inspecting property descriptors yet. */
+export function nonProxyPlainRecord(value: unknown): Record<string, unknown> | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) || isProxy(value)) return null;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null
+      ? value as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Verify exact own string keys with data descriptors (no symbols or accessors). */
+export function exactOwnDataKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
+  try {
+    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string')) return false;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const actual = Object.keys(descriptors).sort();
+    const wanted = [...expected].sort();
+    return actual.length === wanted.length &&
+      actual.every((key, index) => key === wanted[index]) &&
+      Object.values(descriptors).every((descriptor) => Object.hasOwn(descriptor, 'value'));
+  } catch {
+    return false;
+  }
+}
+
+/** Read an own data property value without invoking getters or touching proxies. */
+export function ownDataPropertyValue(value: unknown, key: string): unknown {
+  if (value === null || typeof value !== 'object' || isProxy(value)) return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export interface PlainDataGraphOptions {
+  maxDepth?: number;
+  maxNodes?: number;
+  allowArrays?: boolean;
+  maxArrayLength?: number;
+  rejectProxy?: boolean;
+}
+
+/** Verify a bounded, acyclic, plain JSON-integer data graph with data descriptors only. */
+export function isPlainDataGraph(
+  value: unknown,
+  options: PlainDataGraphOptions = {},
+  seen = new Set<object>(),
+  depth = 0,
+): boolean {
+  const maxDepth = options.maxDepth ?? 16;
+  const maxNodes = options.maxNodes ?? 256;
+  const allowArrays = options.allowArrays ?? true;
+  const maxArrayLength = options.maxArrayLength ?? 128;
+  const rejectProxy = options.rejectProxy ?? true;
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return true;
+  if (typeof value === 'number') return Number.isSafeInteger(value);
+  if (typeof value !== 'object' || (rejectProxy && isProxy(value)) || depth > maxDepth ||
+    seen.size >= maxNodes || seen.has(value)) return false;
+  seen.add(value);
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    if (Array.isArray(value)) {
+      if (!allowArrays || prototype !== Array.prototype || value.length > maxArrayLength) return false;
+    } else if (prototype !== Object.prototype && prototype !== null) return false;
+    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string')) return false;
+    for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
+      if (!Object.hasOwn(descriptor, 'value') ||
+        !isPlainDataGraph(descriptor.value, options, seen, depth + 1)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Clone and deep-freeze a verified plain data graph so caller mutations cannot race validation. */
+export function immutablePlainDataSnapshot<T>(
+  value: T,
+  options: PlainDataGraphOptions = {},
+): T | null {
+  try {
+    if (!isPlainDataGraph(value, options)) return null;
+    const snapshot = structuredClone(value);
+    return isPlainDataGraph(snapshot, options) ? deepFreezeEpochValue(snapshot) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Validate and snapshot a bounded dense array with no extra properties, symbols, or accessors. */
@@ -201,6 +300,22 @@ export function exactEpochBytes(left: Uint8Array, right: Uint8Array): boolean {
 
 export function sameEpochDigest(left: string, right: string): boolean {
   return exactEpochBytes(Buffer.from(left), Buffer.from(right));
+}
+
+export function canonicalEpochJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalEpochJson).join(',')}]`;
+  const row = value as Record<string, unknown>;
+  return `{${Object.keys(row).sort().map((key) =>
+    `${JSON.stringify(key)}:${canonicalEpochJson(row[key])}`).join(',')}}`;
+}
+
+export function canonicalEpochDomainBytes(domain: string, value: unknown): Buffer {
+  return Buffer.concat([Buffer.from(domain, 'utf8'), Buffer.from(canonicalEpochJson(value), 'utf8')]);
+}
+
+export function canonicalEpochJsonDigest(domain: string, value: unknown): string {
+  return rawEpochDigest(domain, Buffer.from(canonicalEpochJson(value), 'utf8'));
 }
 
 export function rawEpochDigest(domain: string, bytes: Uint8Array): string {

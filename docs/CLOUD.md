@@ -227,8 +227,9 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
 - **Discovered items** are added by `phm improve discover` and the
   scheduler's refresh: a red default branch, issues someone with triage
   rights labelled `phantom`, evidence-backed proposals, the fleet's own
-  outcome learning — recurring breakage, revert, dirty, fixup and low-merge
-  patterns the jobs ledger and dispatch log already prove become items
+  outcome learning — recurring breakage, revert, dirty, fixup,
+  empty-failure, launch-death and low-merge patterns the jobs ledger and
+  dispatch log already prove become items
   whose ids embed the stable `improve-<hash>` job id, so refreshes add only new
   patterns — the nightly local retro's proposals, the recurring
   verification, scope, safety, review and execution findings it mines from
@@ -441,7 +442,15 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   inside the 7-day window, the CONTRACT-M334 stage-3 bar being zero; a
   divergence item emits while the window holds at least 50 shadowed
   decisions and the measured divergence rate reaches the stage-2
-  tolerance of 2%, naming the largest recorded backend disagreements. A
+  tolerance of 2%, naming the largest recorded backend disagreements.
+  The same journal also feeds the stage-2 exit-criteria verdict itself,
+  evaluated over the full journal rather than the window: once the
+  journal holds the contract's own 200-decision bar, a soak that clears
+  the criteria (under 2% divergence, zero safety-relevant) becomes an
+  item queueing the stage-3 `gateway` default flip, and a cumulative
+  record that fails them becomes an item naming the blocker the window
+  cannot see — an old safety-relevant row or an all-time rate over
+  tolerance bars the flip for the life of the append-only journal. A
   missing or unreadable fabric directory emits nothing, and rows emit
   only for the fleet's own repository since the shadow covers this
   install's dispatches —
@@ -585,8 +594,11 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   loop's own measured verdicts never became work). A signal becomes
   an item at the recurring bar of three distinct proposals: registered
   proposals with a recorded PR but no `measured` event past the
-  24-hour grace — registration is automated but the later verbs are
-  manual and unscheduled, so the scorecard starves — is a
+  24-hour grace — registration, checkout-free observation and bounded
+  measurement (`syncImproveMeasurements`, its own scheduler job driving
+  `measureAt` on the fleet mirror) are all automated, so a stall now
+  means the pass cannot reach the proposal — no mirror, a closed PR, a
+  metric that never measures — is a
   current-state stall tally; in-window `measured` events that keep
   returning no value become an item at three recorded events across
   two distinct proposals, quoting the recorded reasons; measured
@@ -1478,9 +1490,10 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   adverse rows across two distinct UTC days inside the 7-day window —
   identical receipt lines (ignoring surrounding whitespace) count once
   toward both recurrence and recorded retry totals. Distinct lines can
-  contribute even when they share a timestamp. The job latency report also
-  counts identical timestamped Git-operation receipts once in its timing,
-  failure, retry, and cross-lane overlap tallies. Undated observations
+  contribute even when they share a timestamp. The job latency report
+  counts timestamped Git-operation receipts with identical JSON content
+  once in its timing, failure, retry, and cross-lane overlap tallies,
+  even if the key order or whitespace changes. Undated observations
   retain their per-row counts and supply no overlap evidence. For recurrence,
   index.lock cells count rows recorded `failed`, fetch/push cells
   count rows whose `retries` is a recorded positive integer, timed
@@ -1501,10 +1514,12 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   wall time into one stage never became work). For phases bounded by PR
   events, fleet job latency and pulse merge latency withhold a sample when
   publish, CI, merge or close receipts identify conflicting PRs within the
-  span. Undated PR receipts can also make the span ambiguous. A claim inside
-  a measured span marks another attempt and withholds the sample — a
-  batch_claim in any span, a solo claim in any post-queue span; queue wait
-  keeps solo claims because failed attempts are part of the admission delay.
+  span. Undated PR receipts can also make the span ambiguous. A batch claim
+  at either endpoint or inside the span withholds the sample. A solo claim
+  follows the same rule after queue wait, with an exception for a claim
+  sharing the phase's starting launch timestamp. Undated claims also withhold
+  affected samples. Queue wait includes solo claims because failed attempts
+  are part of the admission delay.
   A phase emits only
   when measured on at least ten job attempts and carrying at least
   six hours of recorded wait across the bounded tail — enough

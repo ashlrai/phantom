@@ -76,12 +76,14 @@ describe('readStarved', () => {
       input({ lane: 'blind', ready: null }), input({ lane: 'notarget', target: null }),
     ], {}, NOW);
     expect(Object.values(read.lanes).some(row => row.starved)).toBe(false);
+    expect(read.lanes.dry).toMatchObject({ free_slots: 0, ready_rows: 0 });
     expect(read.lanes.blind!.ready_rows).toBeNull();
     expect(read.lanes.notarget!.free_slots).toBeNull();
   });
 
   it('counts rows waiting on a drained pool only while some lane is starved', () => {
-    const drained = input({ lane: 'dry', drained: true, ready: 4 });
+    const drained = input({ lane: 'dry', drained: true, ready: 4, target: null, running: null });
+    expect(readStarved([drained], {}, NOW).lanes.dry).toMatchObject({ free_slots: 0, ready_rows: 4 });
     expect(readStarved([input(), drained], {}, NOW).waiting_elsewhere).toBe(4);
     expect(readStarved([input({ ready: 1 }), drained], {}, NOW).waiting_elsewhere).toBe(0);
   });
@@ -94,6 +96,16 @@ describe('readStarved', () => {
     expect(read.lanes.claude).toMatchObject({ free_slots: 8, ready_rows: 0, starved: false, starved_since: null, line: null });
     expect(read.waiting_elsewhere).toBe(0);
     expect(read.open_rows).toBe(2);
+  });
+
+  it.each(['codex-local', 'omlx'])('requires hinted supply for %s to clear starvation', lane => {
+    const since = { [lane]: minutesAgo(42) };
+    const read = readStarved([input({ lane }), input()], since, NOW, 2);
+    expect(read.open_rows).toBe(2);
+    expect(read.lanes.claude).toMatchObject({ starved: false });
+    expect(read.lanes[lane]).toMatchObject({ starved: true, starved_since: since[lane] });
+    expect(readStarved([input({ lane, ready: 1 })], since, NOW, 2).lanes[lane])
+      .toMatchObject({ starved: false, starved_since: null });
   });
 
   it('still calls a lane starved when the open-row count is zero or unknown', () => {

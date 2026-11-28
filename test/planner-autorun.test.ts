@@ -183,6 +183,27 @@ describe('readPlannerAutorunInput', () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  it.each([
+    { effectiveTarget: 0, target: 0, freeSlots: 0, reason: 'no-free-slots' },
+    { effectiveTarget: 2, target: 2, freeSlots: 1, reason: 'low-supply' },
+    { effectiveTarget: 5, target: 3, freeSlots: 2, reason: 'low-supply' },
+  ])('uses effective target $effectiveTarget for planner headroom', async ({ effectiveTarget, target, freeSlots, reason }) => {
+    const dir = await fixture();
+    try {
+      const status = JSON.parse(statusJson());
+      status.lanes['codex-personal'].effective_target = effectiveTarget;
+      await writeFile(join(dir, 'queue', 'status.json'), JSON.stringify(status));
+      await writeFile(join(dir, 'queue', 'ready.tsv'), 'RQ-PHX-A\tphantom\tcodex-personal\twork\t/q/p/a.md\n');
+
+      const read = await readPlannerAutorunInput(dir, NOW);
+      expect(read.lanes[0]).toMatchObject({ lane: 'codex-personal', target });
+      expect(decidePlannerAutorun({ ...read, supplyFloor: 1 })).toMatchObject({ freeSlots, reason });
+      if (freeSlots === 0) {
+        expect(decidePlannerAutorun(read)).toMatchObject({ run: true, freeSlots: 0, reason: 'supply-floor' });
+      }
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('counts every real parked-row form as no supply and in-flight Phantom work as supply', async () => {
     const dir = await fixture();
     try {

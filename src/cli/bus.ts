@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { MAX_BUS_ENVELOPE_BYTES, BUS_PRIORITIES, validateBusEnvelope, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { BusMailboxError, createBusMailbox, validateBusAddress, type BusMailbox, type BusMailboxPendingMessage } from '../core/fleet/bus-mailbox.js';
+import { groupAddressTopicOf } from '../core/fleet/bus-group.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry, type AgentRegistry } from '../core/agents/bus-identity.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch, BUS_READ_CONTAINS_MAX } from '../core/agents/bus-unified.js';
@@ -10,7 +11,7 @@ import { busBodyKind, busBodyResultOutcome, busBodyThread, WORK_RESULT_OUTCOMES,
 export const BUS_USAGE = `Usage: phm bus <send|inbox|ack> [--json]
   send --from <label> --to <label> --body <json> [--id <id>] [--priority P0|P1|P2|P3] [--ttl <ms>]
   inbox --to <label> [--limit <1..1000>] [--from <label>] [--exclude-from <label>]
-        [--priority P0|P1|P2|P3] [--job <id>] [--channel <name>]
+        [--priority P0|P1|P2|P3] [--job <id>] [--channel <name>] [--topic <t>]
         [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
         [--in-reply-to <id>] [--thread <t>] [--id <id>] [--body-kind <kind>]
         [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
@@ -31,13 +32,16 @@ an unresolvable ref or unreadable registry keeps exact-label matching);
 --priority keeps one P0..P3 band; --job keeps only envelopes whose body cites
 that job — the same busBodyJobMatch rule agents bus inbox --job applies;
 --channel keeps only mail addressed to group:<name>:* — the room's whole
-traffic under every topic; --since keeps mail accepted at or after the cutoff
-and --before only mail accepted strictly before its own cutoff, composing one
-[since, before) window on the store acceptance time; --contains keeps only
-envelopes whose scrubbed one-line summary carries the needle as a
-case-insensitive substring — the same text agents bus inbox --contains
-matches, never the raw body; --in-reply-to keeps only bodies whose own
-inReplyTo field cites that envelope id; --thread keeps only note/context
+traffic under every topic; --topic keeps only mail whose to is a well-formed
+group:<room>:<topic> address carrying that exact topic component — the same
+groupAddressTopicOf match every other bus read's --topic applies, composing
+with --channel into one room AND one topic; --since keeps mail accepted at or
+after the cutoff and --before only mail accepted strictly before its own
+cutoff, composing one [since, before) window on the store acceptance time;
+--contains keeps only envelopes whose scrubbed one-line summary carries the
+needle as a case-insensitive substring — the same text agents bus inbox
+--contains matches, never the raw body; --in-reply-to keeps only bodies whose
+own inReplyTo field cites that envelope id; --thread keeps only note/context
 bodies carrying that conversation label; --id keeps only the envelope whose
 own id is strictly equal; --body-kind keeps only mail whose retained body
 carries that kind discriminator — the same busBodyKind read agents bus
@@ -58,7 +62,7 @@ class UsageError extends Error {}
 
 const OPTIONS: Record<string, readonly string[]> = {
   send: ['--from', '--to', '--body', '--id', '--priority', '--ttl'],
-  inbox: ['--to', '--limit', '--from', '--exclude-from', '--priority', '--job', '--channel',
+  inbox: ['--to', '--limit', '--from', '--exclude-from', '--priority', '--job', '--channel', '--topic',
     '--since', '--before', '--contains', '--in-reply-to', '--thread', '--id', '--body-kind', '--result'],
   ack: ['--to'],
 };
@@ -87,7 +91,10 @@ function filterLabel(values: Map<string, string>, flag: string): string | undefi
  * exact prior behavior. Every rule is the one the other bus reads share:
  * `busBodyJobMatch`/`busBodyInReplyToMatch`/`busReadContainsMatch`/`busBodyThread`/`busBodyKind`
  * body citations plus the strict `envelope.id` equality `--id` applies, the
- * `group:<channel>:` `to` prefix, the P0..P3 band, the
+ * `group:<channel>:` `to` prefix, the exact topic component of a well-formed
+ * `group:<room>:<topic>` address through the shared `groupAddressTopicOf`
+ * parse — composing with `--channel` into one room AND one topic, the same
+ * `--topic` rule every other bus read applies — the P0..P3 band, the
  * `[since, before)` acceptance-time window, `agentRefAddressMatcher`
  * sender matching that resolves each ref through the agent identity registry
  * (exact-label fallback on an unresolvable ref or unreadable registry, so
@@ -119,6 +126,10 @@ function inboxMatch(values: Map<string, string>): ((message: BusMailboxPendingMe
     throw new UsageError('--channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).');
   }
   const channelPrefix = channelRaw === undefined ? undefined : `group:${channelRaw}:`;
+  const topic = values.get('--topic');
+  if (topic !== undefined && !agentChannelNameSchema.safeParse(topic).success) {
+    throw new UsageError('--topic takes a bus channel topic (a-z, 0-9, _ -; 1-32 chars).');
+  }
   const bound = (flag: '--since' | '--before'): number | undefined => {
     const raw = values.get(flag);
     if (raw === undefined) return undefined;
@@ -134,7 +145,7 @@ function inboxMatch(values: Map<string, string>): ((message: BusMailboxPendingMe
   }
   if (from === undefined && excludeFrom === undefined && job === undefined && thread === undefined &&
     inReplyTo === undefined && id === undefined && bodyKind === undefined && result === undefined &&
-    priority === undefined &&
+    priority === undefined && topic === undefined &&
     channelPrefix === undefined && sinceMs === undefined && beforeMs === undefined && containsNeedle === undefined) return undefined;
   // The registry read runs only when a sender filter needs it; an unreadable
   // or missing registry resolves nothing, so both matchers keep exact-label
@@ -153,6 +164,7 @@ function inboxMatch(values: Map<string, string>): ((message: BusMailboxPendingMe
       (priority === undefined || envelope.priority === priority) &&
       (job === undefined || busBodyJobMatch(envelope.body, job)) &&
       (channelPrefix === undefined || envelope.to.startsWith(channelPrefix)) &&
+      (topic === undefined || groupAddressTopicOf(envelope.to) === topic) &&
       (sinceMs === undefined || acceptedAt >= sinceMs) &&
       (beforeMs === undefined || acceptedAt < beforeMs) &&
       (containsNeedle === undefined || busReadContainsMatch(envelope.body, containsNeedle)) &&

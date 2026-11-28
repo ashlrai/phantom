@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { canonicalJson } from '../authority/canonical-json.js';
 import { ashlrHome } from '../cloud/store.js';
 import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
+import { parseEmptyTagReceipt } from '../fleet/empty-tag-receipt.js';
 import { ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 
@@ -1654,13 +1655,6 @@ const hasRevertStamp = (r: Row): boolean =>
   });
 
 /**
- * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
- * recordedAt|updatedAt, with mergedAt/closedAt preferred on terminal rows —
- * the same field set dispatchd `_vc_pick` and metrics/loop accept.
- */
-const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
-
-/**
  * Event names that carry a terminal merge verdict when no phase field
  * resolves — the job-outcomes convention ('merged'/'closed'). A resolved
  * phase always stays authoritative over the event name, and every other
@@ -1702,6 +1696,7 @@ const LANDING_PR = /^([^#@\s]+)#([1-9]\d*)@/;
  */
 export interface RouterOutcomeEvidenceRow {
   kind: string;
+  at?: string;
   landingId: string | null;
   revertsLandingId?: string | null;
 }
@@ -1827,7 +1822,8 @@ function foldRouterOutcomesWithCiCoverage(
   const jobId = (r: Row) => r['schema'] === SESSION_POOL_SCHEMA || r['schema'] === NODE_RUNNER_SCHEMA
     ? str(r, 'jobId')
     : str(r, 'job', 'job_id', 'jobId', 'id');
-  const prUrl = (r: Row) => str(r, 'url', 'pr_url', 'prUrl', 'pr');
+  const prUrlKeys = ['url', 'pr_url', 'prUrl', 'pr'] as const;
+  const prUrl = (r: Row) => str(r, ...prUrlKeys);
   const claimKey = (url: string) => {
     const prKey = pullRequestKey(url);
     return prKey === null ? `url:${url}` : `pr:${prKey}`;
@@ -1838,23 +1834,32 @@ function foldRouterOutcomesWithCiCoverage(
   // session rows are infrastructure: they never claim URLs themselves.
   const claims = new Map<string, Set<string>>();
   const soleClaimByJob = new Map<string, string | null>();
+  const conflictingUrls = new Set<Row>();
   for (const r of rows) {
-    const j = jobId(r), u = prUrl(r);
-    if (!j || !u || j.startsWith(BATCH_SESSION_PREFIX)) continue;
-    const key = claimKey(u);
-    const jobs = claims.get(key) ?? new Set<string>();
-    jobs.add(j);
-    claims.set(key, jobs);
-    const prior = soleClaimByJob.get(j);
-    if (prior === undefined) soleClaimByJob.set(j, key);
-    else if (prior !== key) soleClaimByJob.set(j, null);
+    const keys = new Set<string>();
+    for (const field of prUrlKeys) {
+      const url = str(r, field);
+      if (url !== null) keys.add(claimKey(url));
+    }
+    if (keys.size > 1) conflictingUrls.add(r);
+    const j = jobId(r);
+    if (!j || j.startsWith(BATCH_SESSION_PREFIX)) continue;
+    for (const key of keys) {
+      const jobs = claims.get(key) ?? new Set<string>();
+      jobs.add(j);
+      claims.set(key, jobs);
+      const prior = soleClaimByJob.get(j);
+      if (prior === undefined) soleClaimByJob.set(j, key);
+      else if (prior !== key) soleClaimByJob.set(j, null);
+    }
   }
   const ambiguous = new Set([...claims].filter(([, jobs]) => jobs.size > 1).map(([u]) => u));
   const claimToJob = new Map([...claims].filter(([key]) => !ambiguous.has(key))
     .map(([key, jobs]) => [key, [...jobs][0]!] as const));
 
-  const claimantFor = (url: string | null) => url === null ? undefined : claimToJob.get(claimKey(url));
-  const attributedJobId = (r: Row) => jobId(r) ?? claimantFor(prUrl(r));
+  const claimantFor = (r: Row, url = prUrl(r)) =>
+    url === null || conflictingUrls.has(r) ? undefined : claimToJob.get(claimKey(url));
+  const attributedJobId = (r: Row) => jobId(r) ?? claimantFor(r);
 
   // Queue-admission evidence, derived once per job from the same boundary
   // stamps job-latency's queue_wait phase pairs: arrival rows (enqueue/
@@ -1899,6 +1904,14 @@ function foldRouterOutcomesWithCiCoverage(
   const crossesAttemptBoundary = (job: string, start: number, end: number) =>
     attemptBoundaries.get(job)?.some(at => at === null || (start <= at && at <= end)) === true;
 
+  // Receipt and update stamps can date legacy rows, but the event-time
+  // aliases must agree when more than one records the boundary.
+  const hasConflictingEventTime = (row: Row, at: number): boolean =>
+    ['ts', 'timestamp', 'at', 'time'].some((key) => {
+      const stamp = parseLedgerTs(row[key]);
+      return stamp !== null && stamp !== at;
+    });
+
   // CI-boundary evidence, derived once per job from the same ci_start/
   // ci_complete event pair the reward feed's ciWallMs and job-latency's
   // ci phase read: exactly one of each boundary yields the recorded CI
@@ -1914,7 +1927,7 @@ function foldRouterOutcomesWithCiCoverage(
     const name = event.toLowerCase();
     if (name !== 'ci_start' && name !== 'ci_complete') continue;
     const at = ledgerEventTs(r, null);
-    if (at === null) {
+    if (at === null || hasConflictingEventTime(r, at)) {
       ambiguousCiJobs.add(j);
       continue;
     }
@@ -1942,7 +1955,7 @@ function foldRouterOutcomesWithCiCoverage(
   // and one publish stamp across the retained rows yields the recorded
   // publish wait — identical repeated stamps dedupe so a replayed
   // append cannot fake ambiguity, and a retried attempt's second
-  // finish, a republish's second publish or an undated boundary
+  // finish, a republish's second publish or an ambiguous boundary
   // leaves the job absent so its outcome keeps null. Terminal lifecycle
   // phases stay authoritative over the event name: the outcomes reconciler copies
   // the publish row and only swaps the outcome, so its
@@ -1950,7 +1963,7 @@ function foldRouterOutcomesWithCiCoverage(
   // at verdict time, never a second publish — while a PUBLISHED phase
   // on any row is the publish claim itself, event name or not.
   const publishMarks = new Map<string, { finishes: Set<number>; publishes: Set<number>; prKeys: Set<string> }>();
-  const undatedPublishJobs = new Set<string>();
+  const ambiguousPublishJobs = new Set<string>();
   for (const r of rows) {
     const j = attributedJobId(r);
     if (!j || j.startsWith(BATCH_SESSION_PREFIX)) continue;
@@ -1961,8 +1974,8 @@ function foldRouterOutcomesWithCiCoverage(
     const publish = phase === 'PUBLISHED' || ((event === 'publish' || event === 'published') && !terminal);
     if (!finish && !publish) continue;
     const at = ledgerEventTs(r, null);
-    if (at === null) {
-      undatedPublishJobs.add(j);
+    if (at === null || hasConflictingEventTime(r, at)) {
+      ambiguousPublishJobs.add(j);
       continue;
     }
     const marks = publishMarks.get(j) ?? { finishes: new Set<number>(), publishes: new Set<number>(), prKeys: new Set<string>() };
@@ -1972,7 +1985,7 @@ function foldRouterOutcomesWithCiCoverage(
   }
   const publishWaitS = new Map<string, number>();
   for (const [j, marks] of publishMarks) {
-    if (undatedPublishJobs.has(j) || marks.finishes.size !== 1 || marks.publishes.size !== 1 || marks.prKeys.size > 1) continue;
+    if (ambiguousPublishJobs.has(j) || marks.finishes.size !== 1 || marks.publishes.size !== 1 || marks.prKeys.size > 1) continue;
     const finish = [...marks.finishes][0]!;
     const publish = [...marks.publishes][0]!;
     if (publish >= finish && !crossesAttemptBoundary(j, finish, publish)) {
@@ -1990,12 +2003,17 @@ function foldRouterOutcomesWithCiCoverage(
   const unlaunchedLanes = new Map<string, string>();
   const mergedAt = new Map<string, number>();
   const ciVerdicts: { job: string; pr: string | null; passed: boolean }[] = [];
-  const reviewFindings: { job: string; pr: string | null; findings: NonNullable<RouterOutcome['review_findings']> }[] = [];
+  const reviewFindings: {
+    job: string;
+    pr: string | null;
+    at: number | null;
+    findings: NonNullable<RouterOutcome['review_findings']>;
+  }[] = [];
   let unattached = 0;
   let sessionRows = 0;
   for (const r of rows) {
     const u = prUrl(r);
-    const claimant = claimantFor(u);
+    const claimant = claimantFor(r, u);
     const j = jobId(r) ?? claimant;
     if (!j) { unattached++; continue; }
     if (j.startsWith(BATCH_SESSION_PREFIX)) { sessionRows++; continue; }
@@ -2115,7 +2133,7 @@ function foldRouterOutcomesWithCiCoverage(
     if (f !== null && typeof f === 'object' && !Array.isArray(f)) {
       const fixed = count((f as Row)['fixed']), rejected = count((f as Row)['rejected']), ignored = count((f as Row)['ignored']);
       if (fixed !== null && rejected !== null && ignored !== null && (u === null || rowPrKey !== null)) {
-        reviewFindings.push({ job: j, pr: rowPrKey, findings: { fixed, rejected, ignored } });
+        reviewFindings.push({ job: j, pr: rowPrKey, at: ledgerEventTs(r, null), findings: { fixed, rejected, ignored } });
       }
     }
     // The same claim rows carry the hinted lane's recorded blocking
@@ -2327,8 +2345,23 @@ function foldRouterOutcomesWithCiCoverage(
     return pr !== null ? pr === standingPr
       : standingPr !== null && (soleClaim === undefined || soleClaim === `pr:${standingPr}`);
   };
-  for (const { job, pr, findings } of reviewFindings) {
-    if (matchesStandingPr(job, pr)) outcomes.get(job)!.review_findings = findings;
+  const latestReviewAt = new Map<string, number>();
+  for (const { job, pr, at, findings } of reviewFindings) {
+    if (!matchesStandingPr(job, pr)) continue;
+    const resolvedAt = mergedAt.get(job);
+    if (resolvedAt !== undefined && Number.isFinite(resolvedAt) && (at === null || at > resolvedAt)) continue;
+    const latest = latestReviewAt.get(job);
+    const outcome = outcomes.get(job)!;
+    if (latest === undefined || (at !== null && at > latest)) {
+      outcome.review_findings = findings;
+      if (at !== null) latestReviewAt.set(job, at);
+    } else if (at === latest) {
+      const current = outcome.review_findings;
+      if (current && (current.fixed !== findings.fixed ||
+        current.rejected !== findings.rejected || current.ignored !== findings.ignored)) {
+        outcome.review_findings = null;
+      }
+    }
   }
   const disputedCiFirstPass = new Set<string>();
   for (const { job, pr, passed } of ciVerdicts) {
@@ -2434,9 +2467,12 @@ function foldRouterOutcomesWithCiCoverage(
  * An undecodable nonblank receipt leaves every job total unknown because
  * it cannot be attributed or dated. Decoded rows that name no job are
  * skipped. A job with any attributed call that lacks a usable price stays
- * absent from the map.
+ * absent from the map. An attributed call with timestamp fields but no
+ * parseable timestamp also leaves that job's total unknown. Legacy calls
+ * without any timestamp field remain eligible.
  * Estimated costs (cost_estimated) report a USD figure and count toward the sum.
- * Dated receipts after asOfMs are excluded before checking price coverage.
+ * Receipts dated only after asOfMs are excluded before checking price
+ * coverage. Conflicting dates across the cutoff leave the total unknown.
  */
 export function foldSpendCosts(text: string, asOfMs = Infinity): Map<string, number> {
   const costs = new Map<string, number>();
@@ -2445,12 +2481,15 @@ export function foldSpendCosts(text: string, asOfMs = Infinity): Map<string, num
     if (!line.trim()) continue;
     const r = parseJsonObjectLine(line);
     if (r === null) return new Map();
-    const at = parseLedgerTs(r['ts']) ?? parseLedgerTs(r['at']) ?? parseLedgerTs(r['timestamp']);
-    if (at !== null && at > asOfMs) continue;
+    const timestampKeys = ['ts', 'at', 'timestamp'] as const;
+    const dates = timestampKeys.map((key) => parseLedgerTs(r[key])).filter((at) => at !== null);
+    const hasFutureDate = dates.some((at) => at > asOfMs);
+    if (hasFutureDate && dates.every((at) => at > asOfMs)) continue;
     const j = str(r, 'job', 'job_id', 'id');
     if (!j || incomplete.has(j)) continue;
+    const invalidTimestamp = hasFutureDate || (dates.length === 0 && timestampKeys.some((key) => key in r));
     const cost = num(r['cost_usd']) ?? num(r['usd']) ?? num(r['cost']);
-    const total = cost === null ? null : (costs.get(j) ?? 0) + cost;
+    const total = cost === null || invalidTimestamp ? null : (costs.get(j) ?? 0) + cost;
     if (total === null || !Number.isFinite(total)) {
       incomplete.add(j);
       costs.delete(j);
@@ -2704,7 +2743,7 @@ export function foldMarketHandoffAdvisories(text: string, throughEpochSeconds = 
  * The parseable timestamp of each job's standing jobs-ledger
  * session-handoff advisory — the last recognized advisory row in
  * append order, the same row the fold's wholesale-replace rule keeps,
- * with its `ts` read through the shared ledger timestamp keys. The
+ * with its timestamp parsed by the same ledger reader as the report cutoff. The
  * market-side advisory join orders against this: a market advisory
  * supersedes the jobs-ledger triple only when its recorded ts is
  * strictly newer. A job whose standing advisory carries no parseable
@@ -2719,27 +2758,14 @@ function latestJobsHandoffAdvisoryMs(text: string, throughMs: number): Map<strin
     const row = parseJsonObjectLine(line);
     if (row === null) continue;
     if (handoffAdvisory(row) === null) continue;
-    if ((ledgerEventTs(row, null) ?? -Infinity) > throughMs) continue;
+    const at = ledgerEventTs(row, null);
+    if (at !== null && at > throughMs) continue;
     const job = str(row, 'job', 'job_id', 'jobId', 'id');
     if (job === null) continue;
-    const at = Date.parse(str(row, ...LEDGER_TS_KEYS) ?? '');
-    latest.set(job, Number.isFinite(at) ? at : null);
+    latest.set(job, at);
   }
   return latest;
 }
-
-/**
- * The empty-tags ledger's row schema and closed tag vocabulary, mirrored
- * from the producer (src/core/fleet/empty-tags.ts): `phm jobs empty
- * --record` appends `job.empty-tag.v1` rows — { schema, job, lane, tag, ts? } —
- * where tag is one of EMPTY_TAGS. The router keeps its own copy of the
- * vocabulary so a fleet-side rename can never leak an unbounded label
- * into router.outcome.v1.
- */
-const EMPTY_TAG_SCHEMA = 'job.empty-tag.v1';
-const EMPTY_TAGS: ReadonlySet<string> = new Set([
-  'already_done', 'pool_cap', 'blocked', 'no_change_needed', 'unknown',
-]);
 
 /**
  * Folds empty-tags.jsonl text into each job's recorded empty tag. The
@@ -2755,21 +2781,8 @@ const EMPTY_TAGS: ReadonlySet<string> = new Set([
 export function foldEmptyTags(text: string, throughMs = Infinity): Map<string, string> {
   const tags = new Map<string, string>();
   for (const line of text.split('\n')) {
-    // Cheap prefilter: the schema marker is on every real row.
-    if (!line.includes(EMPTY_TAG_SCHEMA)) continue;
-    const row = parseJsonObjectLine(line);
-    if (row === null) continue;
-    if (row['schema'] !== EMPTY_TAG_SCHEMA) continue;
-    const ts = row['ts'];
-    if (ts !== undefined) {
-      const at = typeof ts === 'string' ? Date.parse(ts) : NaN;
-      if (!Number.isFinite(at) || at > throughMs) continue;
-    }
-    const job = row['job'];
-    if (typeof job !== 'string' || job.length === 0 || job.length > 200 || tags.has(job)) continue;
-    const tag = row['tag'];
-    if (typeof tag !== 'string' || !EMPTY_TAGS.has(tag)) continue;
-    tags.set(job, tag);
+    const receipt = parseEmptyTagReceipt(line, throughMs);
+    if (receipt && !tags.has(receipt.job)) tags.set(receipt.job, receipt.tag);
   }
   return tags;
 }
@@ -3692,7 +3705,9 @@ export async function readRouterOutcomes(opts: {
     passkFor: laneScoreLookup(laneScores),
     workClassFor: (jobId) => workClasses.get(jobId) ?? null,
     revertedPrKeys: unionRevertKeys(
-      authorityEvidence === null ? undefined : authorityRevertedPrKeys(authorityEvidence),
+      authorityEvidence === null ? undefined : authorityRevertedPrKeys(
+        authorityEvidence.filter(row => row.at === undefined || Date.parse(row.at) <= reportStartedAt),
+      ),
       revertLedger.keys),
     mergeEvents: mergeEvents?.evidence,
     mergeEventsTruncated,
@@ -3707,11 +3722,11 @@ export async function readRouterOutcomes(opts: {
     }
   }
   if (launchCostRead.state === 'read') {
-    const byJob = new Map<string, LaunchCostEvidence>();
+    const byJob = new Map<string, { lane: string; evidence: LaunchCostEvidence }>();
     const latestStartByJob = new Map<string, number>();
     const seen = new Set<string>();
     for (const receipt of launchCostReceipts(launchCostRead.text)) {
-      const { launchId, startedAtMs, sampledSeconds, evidence } = receipt;
+      const { launchId, startedAtMs, sampledSeconds, lane, evidence } = receipt;
       // Resolve before folding so a bare job ID and a claim ID can coexist.
       const job = startedAtMs !== null ? launchId.replace(LAUNCH_ATTEMPT_SUFFIX, '') : launchId;
       if (startedAtMs !== null) {
@@ -3726,11 +3741,12 @@ export async function readRouterOutcomes(opts: {
         seen.add(key);
         latestStartByJob.set(job, startedAtMs);
       }
-      byJob.set(job, evidence);
+      byJob.set(job, { lane, evidence });
     }
     for (const o of folded.outcomes) {
-      const ev = byJob.get(o.job_id);
-      if (ev === undefined) continue;
+      const probe = byJob.get(o.job_id);
+      if (probe === undefined || (o.lane !== null && o.lane !== probe.lane)) continue;
+      const ev = probe.evidence;
       o.launch_cost_status = ev.status;
       o.launch_peak_processes = ev.peakProcesses;
       o.launch_mean_cpu_pct = ev.meanCpuPct;

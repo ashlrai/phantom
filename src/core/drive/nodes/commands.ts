@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
-import type { DriveNodes, JobClaim, NodeProfile } from './index.js';
+import type { DriveNodes, JobClaim, JobSpec, NodeProfile } from './index.js';
+import type { QueueJobV1 } from './queue-v1.js';
 import { isVersionCap } from './phm-version.js';
 import type { NodeAuth, NodeCapacitySample } from './state.js';
 import { isNodeCapacity, isHostStats, validCap, validId, validSecretName } from './state.js';
 import { jobBlockers, nodeCapacityView, routable, type RouteAssignment } from './router.js';
-import { NODE_TASK_LIMIT, validNodeTask } from './task.js';
+import { NODE_TASK_LIMIT, validNodeTask, type EmbeddedNodeTask } from './task.js';
 
 export class UsageError extends Error {
   constructor(readonly code: string, message: string, readonly fix: string, readonly exit = 2) { super(message); }
@@ -257,6 +258,45 @@ function requireOwnerFlag(flags: Map<string, string>, nodes: DriveNodes, verb: s
   }
 }
 
+/** One spec field an enqueue retry conflicts on, both sides rendered for display. */
+interface EnqueueDiff { field: 'owner' | 'requires' | 'pack' | 'secrets' | 'task'; queued: string; requested: string }
+
+/** Canonical list form: deduped and sorted, so flag order and repeats — which
+ * carry no meaning, the store's names() normalizes the same way — never read
+ * as a difference. */
+const specCanon = (value: string[] | undefined): string[] => [...new Set(value ?? [])].sort();
+const sameSpec = (a: string[] | undefined, b: string[] | undefined): boolean =>
+  JSON.stringify(specCanon(a)) === JSON.stringify(specCanon(b));
+
+/** Display form for one spec side: names, ids and digest prefixes only —
+ * never task text. `(none)` cannot collide with a real value: ids, caps and
+ * secret names admit no parentheses. */
+const specLabel = (value: string[] | undefined): string => {
+  const sorted = specCanon(value);
+  return sorted.length ? sorted.join(',') : '(none)';
+};
+const specScalar = (value: string | undefined): string => value ?? '(none)';
+const specTaskLabel = (task: EmbeddedNodeTask | undefined): string =>
+  task === undefined ? '(none)' : `embedded ${task.sha256.slice(0, 12)}`;
+
+/** The fields where the stored job's spec differs from this enqueue request.
+ * Job ids are single-use — the record is never removed, so even a completed or
+ * withdrawn job keeps its id reserved — which makes a silent spec mismatch the
+ * difference between "already queued as asked" and "queued differently than
+ * asked". */
+function enqueueDiffs(stored: QueueJobV1, requested: JobSpec): EnqueueDiff[] {
+  const diffs: EnqueueDiff[] = [];
+  const diff = (field: EnqueueDiff['field'], differs: boolean, queued: string, asked: string) => {
+    if (differs) diffs.push({ field, queued, requested: asked });
+  };
+  diff('owner', stored.owner !== requested.owner, specScalar(stored.owner), specScalar(requested.owner));
+  diff('requires', !sameSpec(stored.requires, requested.requires), specLabel(stored.requires), specLabel(requested.requires));
+  diff('pack', stored.pack !== requested.pack, specScalar(stored.pack), specScalar(requested.pack));
+  diff('secrets', !sameSpec(stored.secrets, requested.secrets), specLabel(stored.secrets), specLabel(requested.secrets));
+  diff('task', stored.task?.sha256 !== requested.task?.sha256, specTaskLabel(stored.task), specTaskLabel(requested.task));
+  return diffs;
+}
+
 export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: DriveNodes, probeAuth: () => NodeAuth,
   opts: { rejoinWatch?: boolean } = {}): Record<string, unknown> {
   const session = (): { nodeId: string; session: number } => ({ nodeId: needId(flags, '--node'), session: num(flags, '--session') });
@@ -318,7 +358,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         const bound = slots ?? dropped.slots;
         restore = joinHintCommand(nodeId, {
           owners: [...new Set([...owners, ...(dropped.owners ?? [])])].sort(),
-          caps: [...new Set([...caps, ...(dropped.caps ?? [])])],
+          caps: [...new Set([...caps, ...(dropped.caps ?? [])])].sort(),
           ...(bound === undefined ? {} : { slots: bound }),
         }, { watch: opts.rejoinWatch === true });
       }
@@ -397,9 +437,23 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         throw new UsageError('bad-pack', 'Invalid embedded node task: --pack codex-file requires --task-part and --task-sha256.',
           'Add --task-part <text> and --task-sha256 sha256:<hex> to embed the task the pack runs, or drop --pack. Run: phm node --help');
       }
-      const added = nodes.enqueue(jobId, { owner, requires,
-        ...(pack === undefined ? {} : { pack }), secrets, ...(task ? { task } : {}) });
-      return { jobId, enqueued: added };
+      const spec: JobSpec = { owner, requires,
+        ...(pack === undefined ? {} : { pack }), secrets, ...(task ? { task } : {}) };
+      const added = nodes.enqueue(jobId, spec);
+      if (added) return { jobId, enqueued: true };
+      // The id is taken for good — job records are never removed, so a
+      // withdrawn or completed job keeps its id reserved too. Name the stored
+      // job's state and which spec fields differ, so a retry with corrected
+      // flags is not silently swallowed by the first enqueue's spec. A job
+      // absent from the snapshot cannot happen (the id was just refused), but
+      // the bare answer stays the honest fallback if the store raced.
+      const stored = nodes.snapshot().jobs.find(j => j.id === jobId);
+      if (stored === undefined) return { jobId, enqueued: false };
+      return { jobId, enqueued: false, existing: {
+        state: stored.state, owner: stored.owner ?? null,
+        ...(stored.producerWithdrawn === true ? { producerWithdrawn: true as const } : {}),
+        differs: enqueueDiffs(stored, spec),
+      } };
     }
     case 'plan': return { routes: routesWithJoinWatch(nodes.plan(optId(flags, '--owner')), opts.rejoinWatch === true) };
     case 'pull': {

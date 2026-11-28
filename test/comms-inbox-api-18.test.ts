@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { UnifiedInbox, UnifiedInboxItem } from '../src/core/comms/unified-inbox.js';
+import { UNIFIED_INBOX_SOURCES, type UnifiedInbox, type UnifiedInboxItem } from '../src/core/comms/unified-inbox.js';
 import { createCommsInboxApi, VERSE_COMMS_INBOX_PATH as PATH, type CommsInboxApiDeps } from '../src/core/verse/comms-inbox-api.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 
@@ -17,7 +17,7 @@ const item = (n: number): UnifiedInboxItem => ({
 const source = { state: 'healthy' as const, pending: 0 };
 const inbox = (count: number): UnifiedInbox => ({
   v: 1, generatedAt: new Date(NOW).toISOString(), total: count, omitted: 0,
-  sources: { 'needs-you': source, imessage: { state: 'healthy', pending: count }, drafts: source, bus: source },
+  sources: Object.fromEntries(UNIFIED_INBOX_SOURCES.map(name => [name, name === 'imessage' ? { state: 'healthy' as const, pending: count } : source])) as UnifiedInbox['sources'],
   items: Array.from({ length: count }, (_, i) => item(i + 1)),
 });
 
@@ -35,7 +35,7 @@ afterEach(() => {
 async function call(deps: CommsInboxApiDeps, method = 'GET', query = '', allowDispatch = true) {
   const url = PATH + query;
   let status = 0, text = '';
-  const req = Object.assign(new PassThrough(), { url, method }) as IncomingMessage;
+  const req = Object.assign(new PassThrough(), { url, method }) as unknown as IncomingMessage;
   const res = { writeHead(code: number) { status = code; return this; }, end(body: string) { text = body; } } as unknown as ServerResponse;
   const api = createCommsInboxApi({ runsDir, busRoot, now: () => NOW, ...deps });
   const handled = await api({ cfg: {}, allowDispatch } as VerseApiContext, req, res, PATH, method);
@@ -92,7 +92,7 @@ describe('GET /api/verse/comms/inbox', () => {
     const r = await call({});
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ schema: 'comms.unified-inbox.v1', total: 0, omitted: 0, items: [] });
-    expect(Object.keys(r.body.sources).sort()).toEqual(['board', 'bus', 'channel-health', 'claim-drift', 'conversations', 'coordination', 'drafts', 'email-inbox', 'email-outbox', 'gmail', 'imessage', 'leader-delivery', 'leader-network', 'leader-replies', 'linkedin', 'mailbox', 'needs-you', 'needs-you-delivery', 'org-outbox', 'owner-delivery', 'owner-pair', 'owner-thread', 'peer-dispatch', 'peer-inbox', 'proposals', 'requests', 'router-queue', 'seats', 'send-gate', 'session-handoff', 'slack', 'slack-sends', 'team-approvals', 'teammate-tasks', 'wakes', 'work-board']);
+    expect(Object.keys(r.body.sources).sort()).toEqual(['board', 'bus', 'channel-health', 'claim-drift', 'comms-mail', 'conversations', 'coordination', 'dispatch-stuck', 'drafts', 'email-inbox', 'email-outbox', 'gmail', 'imessage', 'inbox-acks', 'jobs-stuck', 'leader-delivery', 'leader-network', 'leader-replies', 'linkedin', 'mailbox', 'needs-you', 'needs-you-delivery', 'org-outbox', 'owner-delivery', 'owner-pair', 'owner-thread', 'peer-dispatch', 'peer-inbox', 'proposals', 'queue-parked', 'requests', 'router-queue', 'seats', 'send-gate', 'session-handoff', 'slack', 'slack-sends', 'stranded-work', 'stuck-fixes', 'team-approvals', 'teammate-tasks', 'wakes', 'work-board']);
   });
 
   it('forwards the view filter to the reader and echoes the applied filter', async () => {
@@ -103,11 +103,11 @@ describe('GET /api/verse/comms/inbox', () => {
         // The real readUnifiedInbox echoes the normalized filter on its report.
         return { ...inbox(2), ...(options.filter === undefined ? {} : { filter: options.filter }) };
       },
-    }, 'GET', '?source=bus&kind=bus-work&severity=warn&blocking=true&job=RQ-1&since=1h&before=30m&contains=parser');
+    }, 'GET', '?source=bus&kind=bus-work&severity=warn&blocking=true&id=drafts:d-0123&job=RQ-1&since=1h&before=30m&contains=parser');
     expect(r.status).toBe(200);
     expect(seen?.filter).toEqual({
       source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true,
-      job: 'RQ-1', since: NOW - 3_600_000, before: NOW - 1_800_000, contains: 'parser',
+      id: 'drafts:d-0123', job: 'RQ-1', since: NOW - 3_600_000, before: NOW - 1_800_000, contains: 'parser',
     });
     expect(r.body.filter).toEqual(seen?.filter);
   });
@@ -157,6 +157,7 @@ describe('GET /api/verse/comms/inbox', () => {
 
   it.each([
     '?source=bogus', '?kind=bogus', '?severity=critical', '?blocking=yes', '?blocking=',
+    '?id=a%20b', '?id=', `?id=${'x'.repeat(257)}`,
     '?job=a%20b', '?since=not-a-time', '?before=not-a-time', '?before=',
     '?contains=', '?contains=%20%20',
     `?contains=${'x'.repeat(513)}`, '?unknown=1', '?source=bus&source=imessage',

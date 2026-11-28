@@ -118,7 +118,7 @@ export async function readLeaderJournal(opts: { runsDir?: string; now?: () => nu
   const state: LeaderJournalV1 = { v: 1, generatedAt: new Date(now).toISOString(),
     sources: { orchestration: 'missing', planLog: 'missing', ingestLog: 'missing', ingested: 'missing' },
     notes: [], passes: [], ingest: [], ingested: [], rejectedLastHour: null };
-  const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
+  const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const leader = join(root, 'leader');
   const drop = join(leader, 'drop');
   async function source(key: keyof LeaderJournalV1['sources'], path: string, dirs: string[], consume: (text: string, truncated: boolean) => void): Promise<void> {

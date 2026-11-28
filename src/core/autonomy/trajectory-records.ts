@@ -1701,6 +1701,17 @@ function listTrajectoryRecordsAt(
       skillObservation.unjoined++;
       continue;
     }
+    // An unmatched alias is compatible only if the trajectory has no
+    // recorded identity in that namespace.
+    const contradictsRecord = aliases.some((candidate) => {
+      if (record.aliases.has(candidate)) return false;
+      const namespace = candidate.slice(0, candidate.indexOf(':') + 1);
+      return [...record.aliases].some((known) => known.startsWith(namespace));
+    });
+    if (contradictsRecord) {
+      skillObservation.conflicting++;
+      continue;
+    }
     const selectionIdentity = skillSelectionIdentity(event);
     const selectionKeys = selectionKeysByRecord.get(record.id) ?? new Set<string>();
     if (selectionKeys.has(selectionIdentity)) continue;

@@ -383,11 +383,13 @@ corrected by what actually happened on `main`.
 Runs the M247 InferenceGateway OBSERVE-ONLY beside the live legacy routing
 path and records decision divergences to
 `~/.ashlr/fabric/gateway-shadow-*.jsonl`. **The legacy result always wins.**
-`divergenceStats()` evaluates the staged-activation exit criteria live
+`divergenceStats()` encodes the staged-activation exit criteria
 (≥200 decisions, <2% divergence, ZERO safety-relevant divergences — see
 [`docs/contracts/CONTRACT-M334.md`](./contracts/CONTRACT-M334.md) for the
 full three-stage program before flipping `fabric.gateway` /
-`fabric.concurrentDispatch` defaults). DEFAULT off; ignored when
+`fabric.concurrentDispatch` defaults); `phm improve discover` evaluates
+the same criteria over the full journal and queues the stage-3 flip work
+or the cumulative blocker as backlog items. DEFAULT off; ignored when
 `fabric.gateway` is already live.
 
 ---

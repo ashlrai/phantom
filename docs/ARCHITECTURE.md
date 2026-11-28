@@ -272,7 +272,7 @@ and evaluator isolation profile. Do not infer one path's confinement from anothe
 
 | File | Responsibility |
 |------|---------------|
-| `store.ts` | `loadGenome`, `appendHubEntry`: aggregate the hub store (`~/.ashlr/genome/hub.jsonl`) with every project's `<repo>/.ashlrcode/genome/`. Append-only; never modifies existing entries. |
+| `store.ts` | `loadGenome`, `appendHubEntry`: aggregate the hub store (`~/.ashlr/genome/hub.jsonl`) with every project's `<repo>/.ashlrcode/genome/`. Append-only; never modifies existing entries. The hub read is a bounded window of the NEWEST entries so recall, playbook synthesis, export and capture dedupe follow the tail of the log as it grows. |
 | `recall.ts` | `recall`: keyword/TF-IDF ranked retrieval, with optional Ollama embedding rerank. Fully offline. |
 | `consolidate.ts` | Periodic consolidation: cluster related entries, synthesize playbooks. |
 | `playbook.ts` | Build structured playbooks from genome entries. |

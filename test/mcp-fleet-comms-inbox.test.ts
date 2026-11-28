@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { UnifiedInbox } from '../src/core/comms/unified-inbox.js';
+import { UNIFIED_INBOX_SOURCES, type UnifiedInbox } from '../src/core/comms/unified-inbox.js';
 import { parseFleetCommsInboxArgs, readFleetCommsInbox } from '../src/mcp/fleet-comms-inbox.js';
 import { createFleetServer } from '../src/mcp/fleet-server.js';
 
@@ -12,8 +12,9 @@ const item: UnifiedInbox['items'][number] = {
 };
 const inbox: UnifiedInbox = {
   v: 1, generatedAt: '2026-01-01T00:00:00.000Z', total: 3, omitted: 1,
-  sources: { 'needs-you': { state: 'healthy', pending: 3 }, imessage: { state: 'missing', pending: 0 },
-    drafts: { state: 'missing', pending: 0 }, bus: { state: 'missing', pending: 0 } },
+  sources: Object.fromEntries(UNIFIED_INBOX_SOURCES.map(name => [name,
+    name === 'needs-you' ? { state: 'healthy' as const, pending: 3 }
+      : { state: 'missing' as const, pending: 0 }])) as UnifiedInbox['sources'],
   items: [item, { ...item, id: 'needs-you:fake2' }],
 };
 
@@ -34,6 +35,8 @@ describe('fleet comms inbox', () => {
       .toEqual({ limit: 50, filter: { severity: 'high', blocking: true } });
     expect(parseFleetCommsInboxArgs({ blocking: false }))
       .toEqual({ limit: 50, filter: { blocking: false } });
+    expect(parseFleetCommsInboxArgs({ id: 'drafts:d-0123' }))
+      .toEqual({ limit: 50, filter: { id: 'drafts:d-0123' } });
     expect(parseFleetCommsInboxArgs({ job: 'RQ-ABC-1' }))
       .toEqual({ limit: 50, filter: { job: 'RQ-ABC-1' } });
     expect(parseFleetCommsInboxArgs({ since: '1735689600000' }))
@@ -42,15 +45,17 @@ describe('fleet comms inbox', () => {
       .toEqual({ limit: 50, filter: { before: 1735689600000 } });
     expect(parseFleetCommsInboxArgs({ contains: 'fake' }))
       .toEqual({ limit: 50, filter: { contains: 'fake' } });
-    expect(parseFleetCommsInboxArgs({ source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: '2h', before: '1h', contains: 'x', limit: 10 }))
-      .toEqual({ limit: 10, filter: { source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: expect.any(Number), before: expect.any(Number), contains: 'x' } });
+    expect(parseFleetCommsInboxArgs({ source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, id: 'bus:env-1', job: 'J1', since: '2h', before: '1h', contains: 'x', limit: 10 }))
+      .toEqual({ limit: 10, filter: { source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, id: 'bus:env-1', job: 'J1', since: expect.any(Number), before: expect.any(Number), contains: 'x' } });
   });
 
   it('rejects malformed filter values', () => {
     for (const bad of [
       { source: 'not-a-source' }, { source: 5 }, { kind: 'not-a-kind' }, { kind: 'BUS-WORK' }, { kind: 5 },
       { severity: 'critical' }, { severity: true },
-      { blocking: 'yes' }, { blocking: 1 }, { job: '' }, { job: 'has space' }, { job: 'x'.repeat(129) },
+      { blocking: 'yes' }, { blocking: 1 },
+      { id: '' }, { id: 'has space' }, { id: 'x'.repeat(257) }, { id: 42 },
+      { job: '' }, { job: 'has space' }, { job: 'x'.repeat(129) },
       { since: 'not-a-time' }, { since: '' }, { since: 1735689600000 },
       { before: 'not-a-time' }, { before: '' }, { before: 1735689600000 }, { before: true },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
@@ -94,7 +99,7 @@ it('lists and routes the tool through the fleet server', async () => {
   const tool = (await client.listTools()).tools.find(tool => tool.name === 'fleet_comms_inbox');
   expect(tool).toBeDefined();
   expect(Object.keys((tool!.inputSchema as { properties: Record<string, unknown> }).properties))
-    .toEqual(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains']);
+    .toEqual(['limit', 'source', 'kind', 'severity', 'blocking', 'id', 'job', 'since', 'before', 'contains']);
   const result = await client.callTool({ name: 'fleet_comms_inbox', arguments: { limit: 1 } });
   expect(JSON.parse((result.content as Array<{ text: string }>)[0].text)).toMatchObject({ items: [item], omitted: 2 });
   const filtered = await client.callTool({ name: 'fleet_comms_inbox',

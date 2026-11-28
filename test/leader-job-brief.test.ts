@@ -163,6 +163,18 @@ describe('leader job brief', () => {
     expect((await read()).admission).toMatchObject({ state: 'closed', why: 'closed at the global cap (8 of 8 running)' });
   });
 
+  it('reads the pools section from the same runs dir as the rest of the brief', async () => {
+    const pool = 'codex-briefprobe';
+    await writeFile(join(runs, 'queue', 'status.json'), JSON.stringify({
+      ...status, last_tick: ago(0.1),
+      lanes: { ...status.lanes, [pool]: { running: 0, target: 1, queued: 0, held: false } },
+      budget: { [pool]: { weekly_used_pct: 40, observed_at: ago(0.1), reset_at: new Date(NOW + 40 * 3_600_000).toISOString(), source: 'test' } },
+    }));
+    const brief = await readJobBrief({ runsDir: runs, wtDir: wt, now: NOW, hours: 24, gaps: async () => gaps });
+    expect(brief.pools.known).toBe(true);
+    expect(brief.pools.rows.find(r => r.id === pool)).toMatchObject({ used_pct: 40 });
+  });
+
   it('an unreadable status file is unknown with a reason, and the other sections still answer', async () => {
     await writeFile(join(runs, 'queue', 'status.json'), '{not json');
     const brief = await read();

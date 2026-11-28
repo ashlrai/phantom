@@ -97,6 +97,65 @@ describe('queueVisitsFromJobs', () => {
     expect(at(noRetry, 'RQ-E', 'claimed', 2)).toBeDefined();
   });
 
+  it('bounds a deferred requeue attempt READY arrival by its launch_terminal', () => {
+    const { visits } = queueVisitsFromJobs(ledger(
+      { event: 'enqueue', job: 'RQ-T', lane: 'codex', ts: T('14:00:00') },
+      { event: 'launch', job: 'RQ-T', lane: 'codex', ts: T('14:00:30') },
+      // PAUSED/HELD deferral: requeued with only a launch_terminal receipt.
+      { event: 'launch_terminal', job: 'RQ-T', reason: 'launcher-exited', ts: T('14:01:00') },
+      { event: 'launch', job: 'RQ-T', lane: 'devin', ts: T('14:05:00') },
+      { event: 'finish', job: 'RQ-T', lane: 'devin', ts: T('14:07:00') },
+    ), NOW);
+    expect(at(visits, 'RQ-T', 'READY', 2)).toEqual({ id: 'RQ-T:a2', station: 'READY', pool: 'devin', arrivedAt: ms('14:01:00'), startedAt: ms('14:05:00'), completedAt: ms('14:05:00') });
+    // The deferred attempt's claimed slot ends at its terminal receipt.
+    expect(at(visits, 'RQ-T', 'claimed', 1)?.completedAt).toBe(ms('14:01:00'));
+    expect(at(visits, 'RQ-T', 'claimed', 2)?.completedAt).toBe(ms('14:07:00'));
+  });
+
+  it('suppresses the launch_terminal that follows a give_up receipt', () => {
+    const { visits } = queueVisitsFromJobs(ledger(
+      { event: 'enqueue', job: 'RQ-GV', lane: 'codex', ts: T('14:00:00') },
+      { event: 'launch', job: 'RQ-GV', lane: 'codex', ts: T('14:00:30') },
+      { event: 'launch_failed', job: 'RQ-GV', lane: 'codex', reason: 'launch_timeout', action: 'give_up', attempt: 3, ts: T('14:01:00') },
+      { event: 'launch_terminal', job: 'RQ-GV', reason: 'launcher-exited', ts: T('14:01:01') },
+      // A later launch is a row-less re-add: no recorded re-arrival bounds it.
+      { event: 'launch', job: 'RQ-GV', lane: 'devin', ts: T('14:05:00') },
+      { event: 'finish', job: 'RQ-GV', lane: 'devin', ts: T('14:07:00') },
+    ), NOW);
+    expect(at(visits, 'RQ-GV', 'READY', 2)).toBeUndefined();
+    expect(at(visits, 'RQ-GV', 'claimed', 1)?.completedAt).toBe(ms('14:01:01'));
+    expect(at(visits, 'RQ-GV', 'claimed', 2)).toBeDefined();
+  });
+
+  it('keeps a spawn-failed terminal out of the claimed exit but in re-arrival', () => {
+    const { visits } = queueVisitsFromJobs(ledger(
+      { event: 'enqueue', job: 'RQ-S', lane: 'codex', ts: T('14:00:00') },
+      { event: 'launch', job: 'RQ-S', lane: 'codex', ts: T('14:00:30') },
+      // Attempt 1 deferred: launcher-exited terminal requeues the line.
+      { event: 'launch_terminal', job: 'RQ-S', reason: 'launcher-exited', ts: T('14:01:00') },
+      // The next claim's spawn failure requeues again without a launch.
+      { event: 'launch_terminal', job: 'RQ-S', reason: 'spawn-failed', ts: T('14:02:00') },
+      { event: 'launch', job: 'RQ-S', lane: 'devin', ts: T('14:05:00') },
+      { event: 'finish', job: 'RQ-S', lane: 'devin', ts: T('14:07:00') },
+    ), NOW);
+    expect(at(visits, 'RQ-S', 'READY', 1)?.arrivedAt).toBe(ms('14:00:00'));
+    // Only the launcher-exited terminal can close attempt 1's claimed slot;
+    // the spawn failure belongs to the next attempt's failed claim.
+    expect(at(visits, 'RQ-S', 'claimed', 1)?.completedAt).toBe(ms('14:01:00'));
+    // Both terminals are re-arrival evidence; the first bounds the dwell.
+    expect(at(visits, 'RQ-S', 'READY', 2)).toEqual({ id: 'RQ-S:a2', station: 'READY', pool: 'devin', arrivedAt: ms('14:01:00'), startedAt: ms('14:05:00'), completedAt: ms('14:05:00') });
+    expect(at(visits, 'RQ-S', 'claimed', 2)?.completedAt).toBe(ms('14:07:00'));
+  });
+
+  it('closes the last failed attempt claimed visit at its terminal', () => {
+    const { visits } = queueVisitsFromJobs(ledger(
+      { event: 'enqueue', job: 'RQ-L', lane: 'codex', ts: T('14:00:00') },
+      { event: 'launch', job: 'RQ-L', lane: 'codex', ts: T('14:00:30') },
+      { event: 'launch_terminal', job: 'RQ-L', reason: 'launcher-exited', ts: T('14:01:00') },
+    ), NOW);
+    expect(at(visits, 'RQ-L', 'claimed')?.completedAt).toBe(ms('14:01:00'));
+  });
+
   it('bounds a re-enqueued attempt READY arrival by the re-enqueue stamp', () => {
     const { visits } = queueVisitsFromJobs(ledger(
       { event: 'enqueue', job: 'RQ-R', lane: 'codex', ts: T('14:00:00') },

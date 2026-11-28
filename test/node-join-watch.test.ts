@@ -123,7 +123,7 @@ describe('phm node join --watch', () => {
     const { seen, run } = recorder(1, ac);
     capture();
     await cmdNodeFleet('join', [...joinArgs('build,gh', ['--watch', '--json'])],
-      { store: new MemoryStore(), now: () => 1_000, phmVersion: () => null, watch: watchDeps(ac, { run }) });
+      { store: new MemoryStore(), now: () => 1_000, phmVersion: () => null, probeAuth: () => 'ok', watch: watchDeps(ac, { run }) });
     expect(seen[0]).toContain('--probe-auth');
   });
 

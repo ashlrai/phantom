@@ -101,6 +101,22 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
   return hosts;
 }
 
+/** The gh-auth fix must be runnable: `phm node beat --probe-auth` alone is a
+ * missing-flag error without --node/--session. On the standalone registry —
+ * a single host — the first node whose only blocker is auth supplies the full
+ * command, and one --probe-auth beat sticks (later beats only overwrite auth
+ * when they carry it). A pool worker's auth is self-reported on its own beats,
+ * and --probe-auth run from any other machine would read that machine's gh
+ * login, not the node's, so the pool fix stays guidance without a command. */
+function authFix(job: QueueJobV1, nodes: NodeRecord[], state: NodesState): string {
+  const blocked = state.pool === undefined ? nodes.find(n =>
+    n.owners?.includes(job.owner!) === true &&
+    jobBlockers(n, job).length === 1 && jobBlockers(n, job)[0] === 'auth') : undefined;
+  return blocked === undefined
+    ? `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on a machine running a node in that scope; its own beats report the login.`
+    : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on this computer, then: phm node beat --node ${blocked.nodeId} --session ${blocked.session} --probe-auth`;
+}
+
 /** Deterministic plan: pools rank measured free host slots per observed execution millisecond;
  * workers on the same host prefer fewer active and planned claims. Standalone
  * legacy queues retain their load policy. Remaining ties break by node ID.
@@ -153,7 +169,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
         ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
       : reasons.has('caps')
         ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
-        : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
+        : authFix(job, nodes, state);
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
   return plan;

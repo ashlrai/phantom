@@ -27,6 +27,23 @@ describe('router calibration', () => {
     expect(report.arms[0]!.tokens).toEqual({ predicted: 300, actual: 240, paired: 1 });
     expect(report.unmatchedPosthogRuns).toBe(0);
   });
+  it('counts conflicting PostHog job IDs as unmatched and keeps unambiguous rows', () => {
+    const ledger = row({ event: 'launch', job: 'RQ-A', lane: 'codex', predicted_tokens: 120 }) +
+      row({ event: 'launch', job: 'RQ-B', lane: 'claude', predicted_tokens: 220 }) +
+      row({ event: 'launch', job: 'RQ-C', lane: 'codex', predicted_tokens: 140 });
+    const report = calibrateRouting(ledger, JSON.stringify({ results: [
+      { jobId: 'RQ-A', job_id: 'RQ-B', total_tokens: 999 },
+      { properties: { jobId: 'RQ-B', job_id: 'RQ-MISSING', total_tokens: 888 } },
+      { properties: { jobId: 'RQ-A', job_id: 'RQ-A', total_tokens: 100 } },
+      { jobId: '', job_id: 'RQ-C', total_tokens: 130 },
+    ] }));
+
+    expect(report.unmatchedPosthogRuns).toBe(2);
+    expect(report.arms).toMatchObject([
+      { arm: 'claude', tokens: { predicted: null, actual: null, paired: 0 } },
+      { arm: 'codex', tokens: { predicted: 130, actual: 115, paired: 2 } },
+    ]);
+  });
   it('calibrates dispatcher measurements against a reconciled merge in the jobs ledger', () => {
     const report = calibrateRouting(
       row({ event: 'launch', job: 'RQ-A', lane: 'codex', ts: '2026-01-01T00:00:00+0000' }) +
@@ -197,6 +214,30 @@ describe('router calibration', () => {
       row({ event: 'batch_claim', job: 'RQ-MEMBER', ts: claimTime }),
     );
     expect(report.arms).toMatchObject([{ arm: 'codex', resolved: 1,
+      wallTimeMs: { actual, paired: actual === null ? 0 : 1 } }]);
+  });
+  it.each([
+    [{ ts: '2026-01-01T00:00:00Z' }, undefined, 2000],
+    [{ ts: '2026-01-01T00:00:01Z' }, undefined, 2000],
+    [{ ts: '2026-01-01T00:00:02Z' }, undefined, null],
+    [{ ts: '2026-01-01T00:00:03Z' }, undefined, null],
+    [{ ts: '2026-01-01T00:00:04Z' }, undefined, 2000],
+    [{}, undefined, null],
+    [{ ts: 'invalid' }, undefined, null],
+    [{ ts: '2026-01-01T00:00:00Z', at: '2026-01-01T00:00:02Z' }, undefined, null],
+    [{ launched: false }, undefined, 2000],
+    [{ launch_dedupe: false }, undefined, 2000],
+    [{ ts: '2026-01-01T00:00:02Z' }, 1500, 1500],
+  ])('uses launch reservation evidence %j with explicit duration %s', (reservation, duration, actual) => {
+    const report = calibrateRouting(
+      row({ event: 'launch', job: 'RQ-SOLO', lane: 'codex',
+        ts: '2026-01-01T00:00:01Z', predicted_wall_time_ms: 2000 }) +
+      row({ event: 'finish', job: 'RQ-SOLO', ts: '2026-01-01T00:00:03Z', wall_time_ms: duration }) +
+      row({ job: 'RQ-SOLO', outcome: 'MERGED' }) +
+      row({ event: 'claim', job: 'RQ-SOLO', launch_dedupe: true, ...reservation }) +
+      row({ event: 'claim', job: 'RQ-RESERVED-ONLY', launch_dedupe: true }),
+    );
+    expect(report.arms).toMatchObject([{ arm: 'codex', jobs: 1, resolved: 1,
       wallTimeMs: { actual, paired: actual === null ? 0 : 1 } }]);
   });
   it.each([false, true])('keeps an unlabeled standalone launch out of the batch arm (claim last: %s)', (claimLast) => {

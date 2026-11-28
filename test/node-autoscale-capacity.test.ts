@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { childrenFromRows, harnessFor, harnessSessions, type ProcessRow } from '../src/core/drive/nodes/harness-adapters.js';
 import { BUILTIN_ENGINE_REGISTRY } from '../src/core/run/engine-registry.js';
+import { APPS_CATALOG } from '../src/core/verse/apps-catalog.js';
 import { CAPACITY_POLICY, computeNodeCapacity, parseNodeCapacityDoc, type NodeSnapshot } from '../src/core/drive/nodes/capacity-model.js';
 import {
   cpuBusyPercent, measureNode, parseFootprint, parsePgrepList, parsePsRows, parseSwapTotal, parseSwapouts, type MeasureHost,
@@ -58,7 +59,23 @@ describe('harness adapters', () => {
     expect(harnessFor('ac')?.id).toBe('ashlrcode');
     expect(harnessFor('ashlrcode')?.id).toBe('ashlrcode');
     expect(harnessFor('llama-server')?.kind).toBe('local-model');
+    // Community agent CLIs a contributor node can run: measured like every
+    // other harness so `phm node capacity` and `phm node route` see them.
+    for (const id of ['aider', 'goose', 'droid', 'pi', 'cline', 'copilot']) {
+      expect(harnessFor(id)?.id, id).toBe(id);
+      expect(harnessFor(id)?.kind, id).toBe('cloud-cli');
+    }
     for (const app of ['Claude', 'Codex', 'Grok', 'Devin', 'Hermes', 'Opencode', 'Ac', 'Aw', 'node', 'Python', '2.1']) expect(harnessFor(app)).toBeNull();
+  });
+
+  it('maps every terminal-agent catalog binary so a community node measures its sessions', () => {
+    // The apps catalog is the fleet's own list of agent CLIs; a new entry
+    // without a harness row would be invisible to node capacity/route exactly
+    // like an engine bin without one.
+    for (const entry of APPS_CATALOG.filter(e => e.group === 'terminal-agents')) {
+      expect(entry.binaries.length, entry.id).toBeGreaterThan(0);
+      for (const bin of entry.binaries) expect(harnessFor(bin), `${entry.id} bin ${bin}`).not.toBeNull();
+    }
   });
 
   it('maps every builtin cli-agent binary so node capacity can measure its sessions', () => {
@@ -98,6 +115,38 @@ describe('harness adapters', () => {
     const sessions = harnessSessions(rows, new Map([[1, [2]], [5, [6]]]));   // pid 6 exited
     expect(sessions.find(s => s.harness === 'devin')?.memBytes).toBeNull();
     expect(sessions.find(s => s.harness === 'grok')?.memBytes).toBe(10);
+  });
+
+  it('does not count a harness process spawned beneath a web browser as a session', () => {
+    // `claude --chrome-native-host` is the Claude for Chrome native messaging
+    // host: the same versioned binary and kernel name as a real session, but a
+    // ~12 MiB helper Chrome spawns — not an agent session. argv is never read,
+    // so a browser ancestor is the only signal that excludes it; without the
+    // check its tiny footprint publishes an absurd agents_runnable_now.
+    const rows: ProcessRow[] = [
+      { pid: 1, ppid: 0, name: 'launchd', memBytes: MIB, cpuPercent: 0 },
+      { pid: 722, ppid: 1, name: 'Google Chrome', memBytes: 900 * MIB, cpuPercent: 0 },
+      { pid: 1256, ppid: 722, name: '2.1.126', memBytes: 12 * MIB, cpuPercent: 0 },
+      { pid: 1300, ppid: 1, name: 'zsh', memBytes: 5 * MIB, cpuPercent: 0 },
+      { pid: 1400, ppid: 1300, name: '2.1.321', memBytes: 320 * MIB, cpuPercent: 3 },
+    ];
+    expect(harnessSessions(rows, childrenFromRows(rows))).toEqual([
+      { harness: 'claude', rootPid: 1400, processes: 1, memBytes: 320 * MIB, cpuPercent: 3 },
+    ]);
+  });
+
+  it('excludes a browser-spawned harness at any depth and keeps sessions whose ancestry is unreadable', () => {
+    const rows: ProcessRow[] = [
+      { pid: 1, ppid: 0, name: 'launchd', memBytes: MIB, cpuPercent: 0 },
+      { pid: 50, ppid: 1, name: 'firefox', memBytes: 400 * MIB, cpuPercent: 0 },
+      { pid: 51, ppid: 50, name: 'node', memBytes: 30 * MIB, cpuPercent: 0 },
+      { pid: 52, ppid: 51, name: 'codex', memBytes: 200 * MIB, cpuPercent: 2 },
+      // pgrep+footprint rows carry no ppid: ancestry unprovable, session kept.
+      { pid: 60, ppid: null, name: 'grok', memBytes: 100, cpuPercent: null },
+    ];
+    expect(harnessSessions(rows, childrenFromRows(rows))).toEqual([
+      { harness: 'grok', rootPid: 60, processes: 1, memBytes: 100, cpuPercent: null },
+    ]);
   });
 });
 
@@ -155,6 +204,40 @@ describe('measurement parsers (recorded host output)', () => {
     expect(s.mem).toEqual({ totalBytes: MBP_RECORDED.totalBytes, freeBytes: (265797 + 221999) * 16384, freePercent: 43, pressureLevel: 1 });
     expect(s.swap.usedBytes).toBe(Math.round(7113.31 / 1024 * GIB));
     expect(s.cpu.busyPercent).toBe(95);
+  });
+
+  it('measures through ps and a browser-spawned harness helper is not a session', async () => {
+    // Recorded shape of the real table: `claude --chrome-native-host` (pid
+    // 1256, ~12 MiB, parent Google Chrome) shares the versioned binary's
+    // kernel name with a real session. Counted as a session its footprint
+    // would publish claude runnable counts in the hundreds.
+    const ps = [
+      '    1     0    512   0.0 launchd',
+      '  722     1 921600   0.0 Google Chrome',
+      ' 1256   722  12288   0.0 2.1.126',
+      ' 1300     1   5120   0.0 zsh',
+      ' 1400  1300 204800   8.0 codex',
+    ].join('\n') + '\n';
+    const run = async (file: string, args: string[]): Promise<string | null> => {
+      if (file === '/bin/ps') return ps;
+      if (file === '/usr/bin/vm_stat') return MBP_RECORDED.vmStat;
+      if (file === '/usr/bin/memory_pressure') return MBP_RECORDED.pressure;
+      if (file === '/usr/sbin/sysctl') return args[0] === '-n' ? '1\n' : MBP_RECORDED.swap;
+      return null;
+    };
+    const host: MeasureHost = {
+      platform: 'darwin', now: () => T0, hostname: () => 'MacBook-Pro-2.local', loadavg: () => MBP_RECORDED.load,
+      totalmem: () => MBP_RECORDED.totalBytes, freemem: () => 0, sleep: async () => {}, run,
+      cpus: () => Array.from({ length: 18 }, () => ({ model: '', speed: 0, times: { user: 0, nice: 0, sys: 0, irq: 0, idle: 0 } })),
+    };
+    const s = await measureNode({ host });
+    expect(s.processSource).toBe('ps');
+    expect(s.sessions).toEqual([
+      { harness: 'codex', rootPid: 1400, processes: 1, memBytes: 200 * MIB, cpuPercent: 8 },
+    ]);
+    const doc = computeNodeCapacity(s);
+    expect(doc.per_harness_footprint.claude).toBeUndefined();
+    expect(doc.agents_runnable_now.claude).toBeNull();
   });
 });
 
@@ -215,6 +298,37 @@ SwapFree:        1048576 kB
     expect(blind.mem.pressureLevel).toBeNull();
     expect(blind.swap).toEqual({ usedBytes: null, totalBytes: null, swapoutsTotal: null });
     expect(computeNodeCapacity(blind).agents_runnable_now.codex).toBeNull();
+  });
+});
+
+describe('Windows measurement', () => {
+  it('reports no load average on win32, where os.loadavg() is a [0,0,0] stub', async () => {
+    let cpuCalls = 0;
+    const host: MeasureHost = {
+      platform: 'win32', now: () => T0, hostname: () => 'win-box', loadavg: () => [0, 0, 0],
+      totalmem: () => 16 * GIB, freemem: () => 8 * GIB, sleep: async () => {},
+      run: async () => null,
+      cpus: () => {
+        const later = cpuCalls++ > 0;
+        return Array.from({ length: 8 }, () => ({ model: '', speed: 0, times: { user: later ? 50 : 0, nice: 0, sys: 0, irq: 0, idle: later ? 50 : 0 } }));
+      },
+    };
+    const s = await measureNode({ host });
+    expect(s.platform).toBe('win32');
+    expect(s.cpu.load).toBeNull();
+    // CPU counter deltas still measure real busy percent on Windows.
+    expect(s.cpu.busyPercent).toBe(50);
+    expect(s.mem).toEqual({ totalBytes: 16 * GIB, freeBytes: 8 * GIB, freePercent: null, pressureLevel: null });
+    expect(s.swap).toEqual({ usedBytes: null, totalBytes: null, swapoutsTotal: null });
+    expect(s.processSource).toBe('unavailable');
+    expect(s.sessions).toBeNull();
+    const doc = computeNodeCapacity(s);
+    expect(doc.cpu.load_1m).toBeNull();
+    expect(doc.cpu.load_5m).toBeNull();
+    expect(doc.cpu.load_15m).toBeNull();
+    expect(doc.cpu.run_queue_per_core).toBeNull();
+    expect(doc.cpu.headroom_cores).toBeCloseTo(2.8);
+    expect(doc.agents_runnable_now.codex).toBeNull();
   });
 });
 
@@ -332,6 +446,98 @@ describe('capacity model', () => {
     }
   });
 
+  it('ignores a session footprint too small to be a real session tree', () => {
+    // A CLI caught mid-exec measures a few dozen KiB; publishing it as the
+    // per-session cost reports thousands of runnable sessions and lets the
+    // router place them. Below the floor the harness stays unmeasured, exactly
+    // like a zero or unreadable reading.
+    const doc = computeNodeCapacity(snap({ sessions: [
+      { harness: 'codex', rootPid: 10, processes: 1, memBytes: 32 * 1024, cpuPercent: 0.1 },
+    ] }));
+    expect(doc.per_harness_footprint.codex).toBeUndefined();
+    expect(doc.agents_runnable_now.codex).toBeNull();
+    expect(doc.basis.limiting.codex).toBe('unmeasured');
+    expect(doc.basis.notes.some(n => n.includes('session minimum'))).toBe(true);
+    expect(parseNodeCapacityDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
+  });
+
+  it('does not publish a footprint from sessions that only ever sat idle', () => {
+    // A lone CLI at a prompt has no children and burns no CPU: its RSS is the
+    // idle baseline, not the cost of a working session that spawns tools and
+    // servers. Publishing it reports thousands of runnable sessions, so the
+    // harness stays unmeasured exactly like a sub-floor reading.
+    const doc = computeNodeCapacity(snap({ sessions: [
+      { harness: 'codex', rootPid: 10, processes: 1, memBytes: 400 * MIB, cpuPercent: 0 },
+      { harness: 'grok', rootPid: 20, processes: 1, memBytes: 150 * MIB, cpuPercent: null },
+    ] }));
+    expect(doc.per_harness_footprint.codex).toBeUndefined();
+    expect(doc.agents_runnable_now.codex).toBeNull();
+    expect(doc.basis.limiting.codex).toBe('unmeasured');
+    expect(doc.basis.notes.some(n => n.includes('idle'))).toBe(true);
+    // cpuPercent null cannot prove idleness (the pgrep+footprint source has
+    // no CPU column), so that harness still publishes its measured cost.
+    expect(doc.per_harness_footprint.grok).toMatchObject({ source: 'measured', mem_bytes_max: 150 * MIB });
+    expect(parseNodeCapacityDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
+  });
+
+  it('keeps a usable learned footprint when every live session is idle', () => {
+    const prev = computeNodeCapacity(snap());
+    const doc = computeNodeCapacity(snap({
+      measuredAtMs: T0 + 60_000,
+      sessions: [{ harness: 'codex', rootPid: 10, processes: 1, memBytes: 400 * MIB, cpuPercent: 0 }],
+    }), prev);
+    expect(doc.per_harness_footprint.codex).toMatchObject({ source: 'learned', mem_bytes_max: 600 * MIB, learned_at: prev.measured_at });
+    expect(doc.agents_runnable_now.codex).toBe(15);
+  });
+
+  it('publishes the working session cost when an idle CLI shares the sample', () => {
+    const doc = computeNodeCapacity(snap({ sessions: [
+      { harness: 'codex', rootPid: 10, processes: 1, memBytes: 32 * 1024, cpuPercent: 0 },
+      { harness: 'codex', rootPid: 11, processes: 4, memBytes: 400 * MIB, cpuPercent: 40 },
+    ] }));
+    expect(doc.per_harness_footprint.codex).toMatchObject({ sessions: 2, mem_bytes_max: 400 * MIB, source: 'measured' });
+  });
+
+  it('keeps the real session cost when a stub shares the sample', () => {
+    const doc = computeNodeCapacity(snap({ sessions: [
+      { harness: 'codex', rootPid: 10, processes: 1, memBytes: 32 * 1024, cpuPercent: 0.1 },
+      { harness: 'codex', rootPid: 11, processes: 4, memBytes: 400 * MIB, cpuPercent: 40 },
+    ] }));
+    expect(doc.per_harness_footprint.codex).toMatchObject({ sessions: 2, mem_bytes_max: 400 * MIB, source: 'measured' });
+  });
+
+  it('keeps a usable learned footprint when the live sample is all stubs', () => {
+    const prev = computeNodeCapacity(snap());
+    const doc = computeNodeCapacity(snap({
+      measuredAtMs: T0 + 60_000,
+      sessions: [{ harness: 'codex', rootPid: 10, processes: 1, memBytes: 32 * 1024, cpuPercent: 0.1 }],
+    }), prev);
+    expect(doc.per_harness_footprint.codex).toMatchObject({ source: 'learned', mem_bytes_max: 600 * MIB, learned_at: prev.measured_at });
+    expect(doc.agents_runnable_now.codex).toBe(15);
+    expect(doc.basis.notes.some(n => n.includes('session minimum'))).toBe(true);
+  });
+
+  it('does not carry a learned footprint below the session floor', () => {
+    // A document written before the floor existed can hold one; it must not
+    // be carried forward as learned evidence.
+    const prev = computeNodeCapacity(snap());
+    prev.per_harness_footprint.codex!.mem_bytes_max = 512 * 1024;
+    const doc = computeNodeCapacity(snap({
+      measuredAtMs: T0 + 60_000,
+      sessions: [{ harness: 'codex', rootPid: 10, processes: 1, memBytes: 32 * 1024, cpuPercent: 0.1 }],
+    }), prev);
+    expect(doc.per_harness_footprint.codex).toBeUndefined();
+    expect(doc.agents_runnable_now.codex).toBeNull();
+  });
+
+  it('rejects a capacity document whose footprint is below the session floor', () => {
+    const doc = JSON.parse(JSON.stringify(computeNodeCapacity(snap())));
+    doc.per_harness_footprint.codex.mem_bytes_max = CAPACITY_POLICY.minSessionFootprintBytes - 1;
+    expect(parseNodeCapacityDoc(doc)).toBeNull();
+    doc.per_harness_footprint.codex.mem_bytes_max = CAPACITY_POLICY.minSessionFootprintBytes;
+    expect(parseNodeCapacityDoc(doc)).not.toBeNull();
+  });
+
   it('charges host busy cores per session when the process source has no CPU column', () => {
     const doc = computeNodeCapacity(snap({ processSource: 'pgrep+footprint', cpu: { cores: 18, load: [214.56, 115.14, 89.08], busyPercent: 95 },
       sessions: [{ harness: 'codex', rootPid: 1, processes: 3, memBytes: 500 * MIB, cpuPercent: null }] }));
@@ -432,5 +638,64 @@ describe('phm node capacity / route CLI', () => {
     expect(JSON.parse(lines[0]!)).toMatchObject({ schema: 'phantom.node-route.v1', plan: [{ jobId: 'j1', nodeId: 'mbp', provider: 'grok' }] });
     expect(JSON.parse(lines[1]!).error.message).toMatch(/node-capacity\.v1/);
     expect(JSON.parse(lines[2]!).error.message).toMatch(/node-capacity\.v1/);
+  });
+
+  it('reports fleet-wide runnable sessions per harness next to the plan', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { cmdNodeRoute } = await import('../src/cli/node-capacity.js');
+    const dir = mkdtempSync(join(tmpdir(), 'node-route-fleet-'));
+    const file = (name: string, value: unknown) => { writeFileSync(join(dir, name), JSON.stringify(value)); return join(dir, name); };
+    const doc = computeNodeCapacity(snap({ measuredAtMs: Date.now() }));
+    const cap = file('cap.json', doc);
+    const costs = file('costs.json', [{ provider: 'grok', model: 'grok-5', harness: 'grok', tokensPerJob: 1e6, minutesPerJob: 20 }]);
+    const jobs = file('jobs.json', [{ id: 'j1' }]);
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (line: string) => { lines.push(line); };
+    try {
+      expect(await cmdNodeRoute(['--capacity', cap, '--costs', costs, '--jobs', jobs, '--json'])).toBe(0);
+      expect(await cmdNodeRoute(['--capacity', cap, '--costs', costs, '--jobs', jobs])).toBe(0);
+    } finally { console.log = log; }
+    const out = JSON.parse(lines[0]!);
+    // The fleet rollup counts this node's measured runnable sessions and keeps
+    // harnesses no fresh node can answer for at null, never a fabricated zero.
+    expect(out.fleet_runnable.codex).toBe(doc.agents_runnable_now.codex);
+    expect(out.fleet_runnable.grok).toBe(doc.agents_runnable_now.grok);
+    expect(out.fleet_runnable.devin).toBeNull();
+    expect(lines[1]).toContain('fleet runnable now:');
+    expect(lines[1]).toContain(`codex=${doc.agents_runnable_now.codex}`);
+    expect(lines[1]).toContain('devin=unknown');
+    expect(lines[2]).toContain('j1 -> mbp');
+  });
+
+  it('refuses a repeated single-value flag but allows the repeatable ones', async () => {
+    const { cmdNodeCapacity, cmdNodeRoute } = await import('../src/cli/node-capacity.js');
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (line: string) => { lines.push(line); };
+    try {
+      // A second --costs/--jobs/--nodes/--outcomes/--runs-dir file is user error:
+      // the route takes exactly one of each, so the repeat is refused before any
+      // file is read rather than silently planning from the first.
+      for (const dup of ['--costs', '--jobs', '--outcomes', '--runs-dir', '--nodes']) {
+        lines.length = 0;
+        expect(await cmdNodeRoute(['--capacity', 'a', dup, 'x', dup, 'y', '--json'])).toBe(2);
+        expect(JSON.parse(lines[0]!).error.message).toContain(`${dup} was given more than once`);
+      }
+      // --capacity documents and --exhausted lists are repeatable by design, so
+      // a repeat passes argv validation and fails later on the missing file.
+      lines.length = 0;
+      expect(await cmdNodeRoute(['--capacity', 'a', '--capacity', 'b', '--costs', 'c', '--jobs', 'd', '--json'])).toBe(2);
+      expect(JSON.parse(lines[0]!).error.message).not.toContain('more than once');
+      // capacity's valued flags are all single-value.
+      lines.length = 0;
+      expect(await cmdNodeCapacity(['--out', 'a', '--out', 'b', '--json'])).toBe(2);
+      expect(JSON.parse(lines[0]!).error.message).toContain('--out was given more than once');
+      lines.length = 0;
+      expect(await cmdNodeCapacity(['--node', 'a', '--node', 'b', '--json'])).toBe(2);
+      expect(JSON.parse(lines[0]!).error.message).toContain('--node was given more than once');
+    } finally { console.log = log; }
   });
 });

@@ -9,7 +9,7 @@ vi.mock('../src/core/daemon/capacity-publisher.js', () => ({
 import { cmdCapacity } from '../src/cli/capacity.js';
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
 describe('capacity publish', () => {
-  it.each(['published', 'published-shared', 'dormant', 'fresh', 'failed', 'sample-timeout', 'lease-held-elsewhere'])('reports %s with an actionable exit code and stops', async state => {
+  it.each(['published', 'published-shared', 'dormant', 'fresh', 'failed', 'sample-timeout', 'unconfigured', 'lease-held-elsewhere'])('reports %s with an actionable exit code and stops', async state => {
     const out = vi.spyOn(console, 'log').mockImplementation(() => {});
     const status = { state, reason: 'safe metadata', lastPublishedAt: null };
     h.cycle.mockResolvedValue(status);

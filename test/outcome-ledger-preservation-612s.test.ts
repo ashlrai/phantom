@@ -680,6 +680,83 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(outcome?.review_findings).toEqual({ fixed: 1, rejected: 0, ignored: 0 });
   });
 
+  it.each([
+    ['MERGED', 'mergedAt'],
+    ['CLOSED', 'closedAt'],
+  ] as const)('bounds review findings by the standing %s time', (phase, stamp) => {
+    const at = '2026-11-21T02:00:00Z';
+    const prUrl = (pr: number) => `https://github.com/o/r/pull/${pr}`;
+    const review = (job: string, pr: number, fixed: number, ts?: string) => ({
+      job, pr_url: prUrl(pr), ts, review_findings: { fixed, rejected: 0, ignored: 0 },
+    });
+    const rows = [
+      { job: 'R1', pr_url: prUrl(1), phase, [stamp]: at },
+      review('R1', 1, 1, '2026-11-21T01:00:00Z'),
+      review('R1', 1, 2, at),
+      review('R1', 1, 3, '2026-11-21T03:00:00Z'),
+      review('R1', 1, 4),
+      { job: 'R2', pr_url: prUrl(2), phase, [stamp]: at },
+      review('R2', 2, 3, '2026-11-21T03:00:00Z'),
+      review('R2', 2, 4),
+      review('R3', 3, 2, at),
+      review('R3', 3, 3, '2026-11-21T03:00:00Z'),
+    ];
+    const { outcomes } = foldRouterOutcomes(rows.map(row => JSON.stringify(row)).join('\n'));
+    expect(outcomes).toMatchObject([
+      { job_id: 'R1', review_findings: { fixed: 2, rejected: 0, ignored: 0 } },
+      { job_id: 'R2', review_findings: null },
+      { job_id: 'R3', review_findings: { fixed: 3, rejected: 0, ignored: 0 } },
+    ]);
+  });
+
+  it('withholds PR evidence from contradictory URL aliases and counts both claims', () => {
+    const first = 'https://github.com/o/r/pull/1';
+    const second = 'https://github.com/o/r/pull/2';
+    const rows = [
+      { job: 'R1', url: first, pr_url: second, phase: 'MERGED', ci_first_pass: true },
+      { job: 'R2', url: second, phase: 'MERGED', ci_first_pass: true },
+    ];
+    const result = foldRouterOutcomes(rows.map(row => JSON.stringify(row)).join('\n'), {
+      mergeEvents: foldMergeEvents(JSON.stringify({ repo: 'o/r', pr: 1, type: 'checks_passed', at: '2026-11-01T00:00:00Z' })),
+    });
+    expect(result.ambiguous_urls).toBe(1);
+    expect(result.outcomes).toMatchObject([
+      { job_id: 'R1', merged: true, ci_first_pass: null, merge_queue: null },
+      { job_id: 'R2', merged: true, ci_first_pass: null, merge_queue: null },
+    ]);
+  });
+
+  it('joins equivalent URL aliases but leaves contradictory URL-only receipts unattached', () => {
+    const rows = [
+      { job: 'R1', url: 'https://github.com/o/r/pull/1' },
+      { url: 'https://github.com/o/r/pull/1', pr_url: 'https://github.com/O/R/pull/1/', ci_first_pass: true },
+      { url: 'https://github.com/o/r/pull/1', pr_url: 'https://github.com/o/r/pull/2', ci_first_pass: false },
+    ];
+    const result = foldRouterOutcomes(rows.map(row => JSON.stringify(row)).join('\n'));
+    expect(result.unattached_rows).toBe(1);
+    expect(result.outcomes).toMatchObject([{ job_id: 'R1', ci_first_pass: true }]);
+  });
+
+  it.each([
+    ['older and undated receipts', [[2, 2], [1, 1], [null, 3]], 2],
+    ['identical receipts', [[2, 2], [2, 2]], 2],
+    ['conflicts followed by a replay', [[2, 2], [2, 3], [2, 2]], null],
+    ['a newer receipt after a conflict', [[2, 2], [2, 3], [3, 4]], 4],
+    ['only undated receipts', [[null, 1], [null, 2]], 2],
+  ] as const)('orders standing-PR review counts with %s', (_label, receipts, expected) => {
+    const pr_url = 'https://github.com/o/r/pull/1';
+    const rows = receipts.map(([day, fixed]) => ({
+      job: 'R1',
+      pr_url,
+      ...(day === null ? {} : { ts: `2026-11-0${day}T00:00:00Z` }),
+      review_findings: { fixed, rejected: 0, ignored: 0 },
+    }));
+    const [outcome] = foldRouterOutcomes(rows.map(row => JSON.stringify(row)).join('\n')).outcomes;
+    expect(outcome?.review_findings).toEqual(
+      expected === null ? null : { fixed: expected, rejected: 0, ignored: 0 },
+    );
+  });
+
   it('folds finish-row productivity verdicts, newest explicit value wins', () => {
     const fold = foldRouterOutcomes([
       '{"job":"F1","event":"finish","empty":true,"exit_code":1,"failure_class":"quota","wall_s":10,"tokens_total":1000}',
@@ -1547,6 +1624,21 @@ describe('router outcome spend join', () => {
     expect(costs.size).toBe(4);
   });
 
+  it('withholds only the spend totals whose call timestamps straddle the cutoff', () => {
+    const cutoff = '2026-11-02T09:00:00Z';
+    const before = '2026-11-02T08:00:00Z';
+    const after = '2026-11-02T10:00:00Z';
+    const spend = [
+      { job: 'J1', ts: cutoff, cost_usd: 1 },
+      { job: 'J1', ts: cutoff, timestamp: after, cost_usd: 2 },
+      { job: 'J2', ts: after, at: before, cost_usd: 4 },
+      { job: 'J2', at: before, cost_usd: 8 },
+      { job: 'J3', ts: cutoff, at: before, cost_usd: 16 },
+      { job: 'J3', ts: after, at: after },
+    ].map((row) => JSON.stringify(row)).join('\n');
+    expect(foldSpendCosts(spend, Date.parse(cutoff))).toEqual(new Map([['J3', 16]]));
+  });
+
   it.each(['{"job":"J1"', '[1,2]'])('withholds spend totals when a receipt is not an object: %s', async (receipt) => {
     const root = runsDir('{"job":"J1","phase":"MERGED"}\n{"job":"J2","phase":"CLOSED","cost_usd":2}\n');
     const spend = ['{"job":"J1","cost_usd":1}', receipt, '{"job":"J2","cost_usd":9}'].join('\n');
@@ -1599,7 +1691,7 @@ describe('router outcome spend join', () => {
     const asOfMs = Date.parse('2026-11-25T12:00:00.000Z');
     const boundary = new Date(asOfMs).toISOString();
     const future = new Date(asOfMs + 1).toISOString();
-    const root = runsDir(['J1', 'J2', 'J3'].map(job => JSON.stringify({ job, phase: 'MERGED' })).join('\n'));
+    const root = runsDir(['J1', 'J2', 'J3', 'J4', 'J5'].map(job => JSON.stringify({ job, phase: 'MERGED' })).join('\n'));
     writeSpend(root, [
       { job: 'J1', ts: boundary, cost_usd: 0.5 },
       { job: 'J1', cost_usd: 0.25 },
@@ -1607,13 +1699,17 @@ describe('router outcome spend join', () => {
       { job: 'J2', timestamp: boundary, cost_usd: 1 },
       { job: 'J2', ts: 'invalid', timestamp: future },
       { job: 'J3', ts: future, cost_usd: 2 },
+      { job: 'J4', ts: boundary, cost_usd: 1 },
+      { job: 'J4', timestamp: 'invalid', cost_usd: 2 },
+      { job: 'J5', at: null, cost_usd: 2 },
+      { job: 'J5', ts: boundary, cost_usd: 1 },
     ].map(row => JSON.stringify(row)).join('\n'));
 
     const clock = vi.spyOn(Date, 'now').mockReturnValue(asOfMs);
     try {
       const result = await readRouterOutcomes({ runsDir: root, ashlarDir: root, authorityEvidence: null });
       expect(Object.fromEntries(result.outcomes.map(o => [o.job_id, o.cost_usd])))
-        .toEqual({ J1: 0.75, J2: 1, J3: null });
+        .toEqual({ J1: 0.75, J2: 1, J3: null, J4: null, J5: null });
     } finally {
       clock.mockRestore();
     }
@@ -2125,6 +2221,7 @@ describe('router outcome market handoff advisory join', () => {
       // the market row's epoch ts (1000s ≈ 1970).
       JSON.stringify({ schema: 'session-failover.v1', event: 'session_handoff_advisory', job: 'J5', lane: 'jobs-lane', trigger: 'rate-limit', target: 'jobs-target', ts: '2026-11-03T00:00:00Z' }),
       '{"job":"J5","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      JSON.stringify({ schema: 'session-failover.v1', event: 'session_handoff_advisory', job: 'J6', lane: 'jobs-lane', trigger: 'rate-limit', ts: 'invalid', timestamp: '2026-11-02 00:00:00+0000' }),
     ].join('\n'));
     writeMarket(root, [
       // J1 recorded no jobs advisory: the market verdict fills the triple.
@@ -2138,6 +2235,7 @@ describe('router outcome market handoff advisory join', () => {
       marketAdvisory('J4', 'quota-exhausted', Date.parse('2026-11-04T00:00:00Z') / 1000, { lane: 'market-lane', target: 'market-target' }),
       // J5's market advisory (epoch ~1970) predates the jobs advisory.
       marketAdvisory('J5', 'quota-exhausted', 1000, { lane: 'market-lane', target: 'market-target' }),
+      marketAdvisory('J6', 'quota-exhausted', Date.parse('2026-11-04T00:00:00Z') / 1000, { lane: 'market-lane', target: 'market-target' }),
       // A market advisory naming a job with no jobs outcome joins nothing.
       marketAdvisory('J-UNADVISED', 'quota-exhausted', Date.parse('2026-11-04T00:00:00Z') / 1000, { lane: 'alpha', target: 'devin' }),
     ]);
@@ -2149,6 +2247,7 @@ describe('router outcome market handoff advisory join', () => {
     expect(byId.get('J3')).toMatchObject({ handoff_trigger: 'quota-exhausted', handoff_lane: 'market-lane', handoff_target: 'market-target' });
     expect(byId.get('J4')).toMatchObject({ handoff_trigger: 'rate-limit', handoff_lane: 'jobs-lane', handoff_target: null });
     expect(byId.get('J5')).toMatchObject({ handoff_trigger: 'rate-limit', handoff_lane: 'jobs-lane', handoff_target: 'jobs-target' });
+    expect(byId.get('J6')).toMatchObject({ handoff_trigger: 'quota-exhausted', handoff_lane: 'market-lane', handoff_target: 'market-target' });
     expect(byId.has('J-UNADVISED')).toBe(false);
   });
 
@@ -3148,6 +3247,24 @@ describe('router outcome reward-signals join', () => {
   });
 
   it.each([
+    ['ci_start', '2026-11-01T00:01:00Z', null],
+    ['ci_complete', '2026-11-01T00:06:00Z', null],
+    ['ci_start', '2026-10-31T20:00:00-04:00', 300],
+  ] as const)('checks timestamp agreement on %s with alias %s', async (event, at, seconds) => {
+    const rows = [
+      { job: 'J1', event: 'ci_start', ts: '2026-11-01T00:00:00Z' },
+      { job: 'J1', event: 'ci_complete', ts: '2026-11-01T00:05:00Z' },
+    ].map(row => JSON.stringify(row.event === event ? { ...row, at } : row)).join('\n');
+    expect(foldRouterOutcomes(rows).outcomes[0]?.ci_wall_s).toBe(seconds);
+    const result = await readRouterOutcomes({
+      runsDir: runsDir(rows),
+      ashlarDir: rewardLedger([rewardRow('J1', true, { ciWallMs: 60_000 })]),
+      authorityEvidence: null,
+    });
+    expect(result.outcomes[0]).toMatchObject({ merged: true, ci_wall_s: seconds });
+  });
+
+  it.each([
     ['distinct starts', ['00:01:00', '00:02:00'], ['00:05:00'], null, null],
     ['distinct completions', ['00:01:00'], ['00:04:00', '00:05:00'], null, null],
     ['reversed boundaries', ['00:05:00'], ['00:01:00'], null, null],
@@ -3333,7 +3450,7 @@ describe('router outcome launch-cost join', () => {
       launchCostRow('J1-aaaabbbbcccc', 'measured'),
       launchCostRow('J2-ddddeeeeffff', 'partial', { peakProcesses: 7, meanCpuPercentOneCore: 20, peakCpuPercentOneCore: 55 }),
       // Unknown probes key the bare job id.
-      launchCostRow('J3', 'unknown'),
+      launchCostRow('J3', 'unknown', { lane: 'beta' }),
       launchCostRow('JX-999988887777', 'measured'),
       // Malformed rows never join.
       launchCostRow('J1-ffffeeee1111', 'measured', { samples: 'lots' }),
@@ -3356,6 +3473,21 @@ describe('router outcome launch-cost join', () => {
     });
     expect(byId.has('JX')).toBe(false);
     expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
+  });
+
+  it('withholds launch-cost evidence when the selected probe belongs to a different lane', async () => {
+    const root = runsDir([
+      '{"job":"J1","event":"launch","lane":"alpha","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J1","event":"launch","lane":"beta","ts":"2026-11-01T00:02:00Z"}',
+      '{"job":"J1","phase":"MERGED","lane":"beta","ts":"2026-11-01T00:05:00Z"}',
+    ].join('\n'));
+    writeLaunchCosts(root, [launchCostRow('J1-aaaabbbbcccc', 'measured')]);
+
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result.outcomes[0]).toMatchObject({
+      lane: 'beta', launch_cost_status: null, launch_peak_processes: null,
+      launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
+    });
   });
 
   it('keeps a job id ending in a 12-hex segment from being stripped into a different job', async () => {
@@ -3550,6 +3682,32 @@ describe('router outcome authority revert join', () => {
       authorityEvidence: [ev('merge:landed', MERGE), ev('revert:landed', REVERT, MERGE)],
     });
     expect(result.outcomes.find(o => o.job_id === 'J1')).toMatchObject({ merged, reverted });
+  });
+
+  it('joins authority reverts only once both landings are visible at report start', async () => {
+    const mergeAt = '2026-11-01T10:00:00.000Z';
+    const revertAt = '2026-11-01T10:00:00.001Z';
+    const runs = runsDir(JSON.stringify({
+      job: 'J1', state: 'MERGED', pr: 'https://github.com/ashlrai/phantom/pull/42',
+    }));
+    const home = ashlarDir();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(mergeAt));
+    const merge = { ...ev('merge:landed', MERGE), at: mergeAt };
+    const revert = { ...ev('revert:landed', REVERT, MERGE), at: revertAt };
+    const read = (authorityEvidence: readonly RouterOutcomeEvidenceRow[]) =>
+      readRouterOutcomes({ runsDir: runs, ashlarDir: home, authorityEvidence });
+    try {
+      expect((await read([merge, revert])).outcomes[0]).toMatchObject({ merged: true, reverted: null });
+      expect((await read([{ ...merge, at: revertAt }, { ...revert, at: mergeAt }])).outcomes[0])
+        .toMatchObject({ merged: true, reverted: null });
+      expect((await read([merge, { ...revert, at: 'malformed' }])).outcomes[0])
+        .toMatchObject({ merged: true, reverted: null });
+
+      clock.mockReturnValue(Date.parse(revertAt));
+      expect((await read([merge, revert])).outcomes[0]).toMatchObject({ merged: true, reverted: true });
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it('resolves a revert:landed row to its merge landing\'s PR key', () => {

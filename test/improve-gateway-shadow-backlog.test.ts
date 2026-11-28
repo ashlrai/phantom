@@ -311,3 +311,152 @@ describe('gatewayShadowBacklogItems', () => {
     }
   });
 });
+
+describe('gatewayShadowBacklogItems — CONTRACT-M334 stage-2 flip verdict', () => {
+  /**
+   * `total` clean decisions spread over 20 days (about 40% land inside the
+   * 7-day window), then `diverged`/`safety` replacements pinned to days
+   * 10-14 — outside the window, inside the journal — so the cumulative
+   * verdict and the windowed items can be asserted independently.
+   */
+  const verdictJournal = (total: number, diverged = 0, safety = 0): Row[] => {
+    const rows: Row[] = Array.from({ length: total }, (_, i) => shadow(i % 20));
+    for (let i = 0; i < diverged; i += 1) {
+      rows[i % rows.length] = shadow(10 + (i % 5), { diverged: true, legacy: 'codex', gateway: 'devin' });
+    }
+    for (let i = 0; i < safety; i += 1) {
+      rows[(diverged + i) % rows.length] = shadow(10 + ((diverged + i) % 5), { safety: true, legacyDispatched: false });
+    }
+    return rows;
+  };
+
+  const oldSoak = (total: number): Row[] => Array.from({ length: total }, (_, i) => shadow(10 + (i % 20)));
+
+  it('emits the flip-ready item once the full journal clears the stage-2 bar', async () => {
+    const items = await gatewayShadowBacklogItems({ repo: REPO, fabricDir: writeFabric(verdictJournal(250, 3)), now: NOW_MS });
+    // 3/250 = 1.20% cumulative — under the bar; the diverged rows are all
+    // outside the window so no windowed item joins.
+    expect(items).toHaveLength(1);
+    const item = items[0]!;
+    expect(item.id).toMatch(/^gateway-shadow-flip-ready-[0-9a-f]{16}$/);
+    expect(validBacklogItem(item)).not.toBeNull();
+    expect(item).toMatchObject({ priority: 3, repo: REPO, area: 'gateway-shadow' });
+    expect(item.prompt).toContain('250 shadowed decisions');
+    expect(item.prompt).toContain('3 divergence(s) (1.20%)');
+    expect(item.prompt).toContain('CONTRACT-M334');
+    expect(item.prompt).toContain('stage-3');
+    expect(item.prompt).toContain('gateway-shadow-<UTC-day>.jsonl');
+    expect(item.prompt).toContain('no-change');
+  });
+
+  it('stays quiet below the contract\'s own 200-decision bar', async () => {
+    expect(await gatewayShadowBacklogItems({ repo: REPO, fabricDir: writeFabric(verdictJournal(199)), now: NOW_MS })).toEqual([]);
+    expect(await gatewayShadowBacklogItems({ repo: REPO, fabricDir: writeFabric(verdictJournal(50)), now: NOW_MS })).toEqual([]);
+  });
+
+  it('emits flip-blocked when the cumulative rate reaches the tolerance', async () => {
+    // Exactly 2.00% (4/200) is NOT under the bar — the criteria need <2%.
+    const items = await gatewayShadowBacklogItems({ repo: REPO, fabricDir: writeFabric(verdictJournal(200, 4)), now: NOW_MS });
+    expect(items).toHaveLength(1);
+    const item = items[0]!;
+    expect(item.id).toMatch(/^gateway-shadow-flip-blocked-[0-9a-f]{16}$/);
+    expect(validBacklogItem(item)).not.toBeNull();
+    expect(item.prompt).toContain('200 shadowed decisions');
+    expect(item.prompt).toContain('4 divergence(s) (2.00% against the <2.00% bar)');
+    expect(item.prompt).toContain('cannot pass');
+    expect(item.prompt).toContain('cumulative');
+    expect(item.prompt).toContain('no-change');
+  });
+
+  it('emits flip-ready just under the tolerance', async () => {
+    // 3/200 = 1.50% — under the bar, zero safety rows.
+    const items = await gatewayShadowBacklogItems({ repo: REPO, fabricDir: writeFabric(verdictJournal(200, 3)), now: NOW_MS });
+    expect(items.map((i) => i.id.replace(/-[0-9a-f]{16}$/, ''))).toEqual(['gateway-shadow-flip-ready']);
+  });
+
+  it('a single old safety-relevant row bars the flip the window cannot see', async () => {
+    // One safety row at day 10-14, 249 clean decisions: cumulative safety>0
+    // fails the ZERO bar forever, while the windowed fold sees nothing —
+    // the safety item needs three in-window rows and the rate stays low.
+    const items = await gatewayShadowBacklogItems({ repo: REPO, fabricDir: writeFabric(verdictJournal(250, 0, 1)), now: NOW_MS });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.id).toMatch(/^gateway-shadow-flip-blocked-/);
+    expect(items[0]!.prompt).toContain('1 safety-relevant row');
+    expect(items[0]!.prompt).toContain('ZERO bar');
+  });
+
+  it('reports the verdict for a soak that ended before the window', async () => {
+    // Every row is 10-29 days old: the windowed read finds nothing, but the
+    // cumulative journal still holds a passing soak.
+    const items = await gatewayShadowBacklogItems({ repo: REPO, fabricDir: writeFabric(oldSoak(250)), now: NOW_MS });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.id).toMatch(/^gateway-shadow-flip-ready-/);
+    expect(items[0]!.prompt).toContain('250 shadowed decisions');
+  });
+
+  it('suppresses the verdict when any journal file cannot be read completely', async () => {
+    const dir = fabricDir();
+    writeDay(dir, verdictJournal(250));
+    // A directory squatting on a journal name: the instrument skips it, but
+    // the fold cannot prove the journal complete, so no verdict emits.
+    fs.mkdirSync(path.join(dir, 'gateway-shadow-2020-01-01.jsonl'));
+    expect(await gatewayShadowBacklogItems({ repo: REPO, fabricDir: dir, now: NOW_MS })).toEqual([]);
+  });
+
+  it('never emits verdict items for a non-fleet repository', async () => {
+    const dir = writeFabric(verdictJournal(250));
+    expect(await gatewayShadowBacklogItems({ repo: 'ashlrai/lexicon', fabricDir: dir, now: NOW_MS })).toEqual([]);
+  });
+
+  it('derives stable verdict ids so a refresh re-adds nothing', async () => {
+    const dir = writeFabric(verdictJournal(250));
+    const first = await gatewayShadowBacklogItems({ repo: REPO, fabricDir: dir, now: NOW_MS });
+    const second = await gatewayShadowBacklogItems({ repo: REPO, fabricDir: dir, now: NOW_MS });
+    expect(first).toHaveLength(1);
+    expect(second.map((i) => i.id)).toEqual(first.map((i) => i.id));
+  });
+
+  it('matches divergenceStats() on the same journal', async () => {
+    const { divergenceStats } = await import('../src/core/fabric/gateway-shadow.js');
+    // Default fabric dir under HOME/.ashlr/fabric — the same path the
+    // instrument reads, so no fabricDir override is passed.
+    writeFabric(verdictJournal(250, 3));
+    const stats = divergenceStats();
+    expect(stats.decisions).toBe(250);
+    expect(stats.divergences).toBe(3);
+    expect(stats.safetyRelevant).toBe(0);
+    expect(stats.readyToFlip).toBe(true);
+    const items = await gatewayShadowBacklogItems({ repo: REPO, now: NOW_MS });
+    expect(items.map((i) => i.id.replace(/-[0-9a-f]{16}$/, ''))).toEqual(['gateway-shadow-flip-ready']);
+    expect(items[0]!.prompt).toContain('250 shadowed decisions');
+    expect(items[0]!.prompt).toContain('3 divergence(s) (1.20%)');
+
+    // A failing soak reports the same numbers the instrument does.
+    fs.rmSync(path.join(home, '.ashlr', 'fabric'), { recursive: true, force: true });
+    writeFabric(verdictJournal(250, 0, 1));
+    const blocked = divergenceStats();
+    expect(blocked.decisions).toBe(250);
+    expect(blocked.safetyRelevant).toBe(1);
+    expect(blocked.readyToFlip).toBe(false);
+    const blockedItems = await gatewayShadowBacklogItems({ repo: REPO, now: NOW_MS });
+    expect(blockedItems.map((i) => i.id.replace(/-[0-9a-f]{16}$/, ''))).toEqual(['gateway-shadow-flip-blocked']);
+    expect(blockedItems[0]!.prompt).toContain('250 shadowed decisions');
+    expect(blockedItems[0]!.prompt).toContain('1 safety-relevant row');
+  });
+
+  it('orders windowed items before the verdict and honours the limit', async () => {
+    // 3 recent safety rows fire the windowed safety item (and the rate item
+    // at 3% in-window); the same rows also fail the cumulative ZERO bar, so
+    // flip-blocked joins last.
+    const rows = [...verdictJournal(250), ...safetyRows(3, 1)];
+    const items = await gatewayShadowBacklogItems({ repo: REPO, fabricDir: writeFabric(rows), now: NOW_MS });
+    expect(items.map((i) => i.id.replace(/-[0-9a-f]{16}$/, ''))).toEqual([
+      'gateway-shadow-safety',
+      'gateway-shadow-divergence',
+      'gateway-shadow-flip-blocked',
+    ]);
+    const one = await gatewayShadowBacklogItems({ repo: REPO, fabricDir: writeFabric(rows), now: NOW_MS, limit: 1 });
+    expect(one).toHaveLength(1);
+    expect(one[0]!.id).toMatch(/^gateway-shadow-safety-/);
+  });
+});

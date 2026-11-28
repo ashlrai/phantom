@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostname } from 'node:os';
-import { validId } from '../core/drive/nodes/state.js';
+import { validCap, validId } from '../core/drive/nodes/state.js';
 import { readNodeCapacity } from '../core/drive/nodes/capacity.js';
 import { ashlrHome } from '../core/cloud/store.js';
 import { callPool, configurePool, readPoolConfig, serveNodeRpc, type NodeRpcRequest, type PoolConfig } from '../core/drive/nodes/pool-host.js';
@@ -74,6 +74,19 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
   const json = args.includes('--json');
   const emit = (value: unknown) => console.log(json ? JSON.stringify(value) : JSON.stringify(value, null, 2));
   try {
+    // Join has two forms that must not mix: enrollment flags --primary/
+    // --backup (probe this machine's lanes and capacity, first join only)
+    // and explicit router-client flags --caps/--slots (an existing pool
+    // member re-pinning its registration). --caps/--slots flip the call to
+    // the explicit path below, where leftover --primary/--backup would cross
+    // SSH as a masked pool refusal — or, with no pool config yet, read as
+    // "no node pool configuration". Refuse the mix by name before either.
+    if (verb === 'join') {
+      const has = (name: string) => args.some(a => a === name || a.startsWith(`${name}=`));
+      if ((has('--primary') || has('--backup')) && (has('--caps') || has('--slots'))) {
+        throw new PoolUsageError('Pool join cannot combine --primary/--backup enrollment flags with --caps/--slots explicit flags. Enrollment probes this machine\'s lanes and capacity itself: drop --caps/--slots to enroll, or drop --primary/--backup for an explicit join.');
+      }
+    }
     if (verb === 'pool' || (verb === 'join' && !args.some(a => /^--(?:caps|slots)(?:=|$)/.test(a)))) {
       const f = flags(args, [...(verb === 'pool' ? ['--role'] : []), '--node', '--owner', '--primary', '--backup']);
       const role = verb === 'join' ? 'worker' : f.get('--role') as PoolConfig['role'];
@@ -202,6 +215,50 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
       if (!runner) throw new PoolUsageError('Worker requires --runner /absolute/host-owned-runner');
       emit({ schemaVersion: 1, ...await runNodeWorker(config, runner, f.has('--light')) });
       return 0;
+    }
+    // An explicit join (--caps/--slots bypassed enrollment above) is the
+    // router-client form: the pool-side parser still requires --node, pins
+    // --owner to this pool's configured scope and bounds --caps/--slots, but
+    // every one of those refusals crosses SSH masked as a witness demotion
+    // ('held: inactive-runner'). Check the same contract here so the operator
+    // gets the flag named at exit 2 before any dial — the rule the
+    // enrollment branch's identity refusals already follow. Only the join
+    // flags are read; every other parser refusal stays pool-masked like it is
+    // for every verb on this path.
+    if (verb === 'join') {
+      const take = (name: string): string | undefined => {
+        for (let i = 0; i < args.length; i++) {
+          const a = args[i]!;
+          if (a === name) return args[i + 1];
+          if (a.startsWith(`${name}=`)) return a.slice(name.length + 1);
+        }
+        return undefined;
+      };
+      for (const name of ['--node', '--owner', '--caps', '--slots']) {
+        if (args.filter(a => a === name || a.startsWith(`${name}=`)).length > 1) {
+          throw new PoolUsageError(`${name} was given more than once.`);
+        }
+      }
+      const nodeId = take('--node');
+      if (nodeId === undefined || nodeId.startsWith('--')) {
+        throw new PoolUsageError('Explicit pool join needs --node <id>: it names the node this join enrolls under. Bare `phm node join --json` re-enrolls this computer with its probed lanes instead.');
+      }
+      if (!validId(nodeId)) throw new PoolUsageError('--node is not a valid node id.');
+      const owner = take('--owner');
+      if (owner !== undefined && !owner.startsWith('--') && owner !== config.owner) {
+        throw new PoolUsageError(`--owner must be this pool's configured scope '${config.owner}'.`);
+      }
+      const caps = take('--caps');
+      if (caps !== undefined && !caps.startsWith('--')) {
+        const items = caps.split(',').map(c => c.trim()).filter(Boolean);
+        if (items.length > 64 || !items.every(validCap)) {
+          throw new PoolUsageError('--caps must be a comma-separated list of up to 64 capabilities.');
+        }
+      }
+      const slots = take('--slots');
+      if (slots !== undefined && !slots.startsWith('--') && (!/^\d{1,15}$/.test(slots) || Number(slots) > 64)) {
+        throw new PoolUsageError('--slots must be an integer from 0 to 64.');
+      }
     }
     const result = callPool(config, verb, args);
     emit({ schemaVersion: 1, command: verb, active: result.active, epoch: result.epoch, demoted: result.demoted, ...result.result,

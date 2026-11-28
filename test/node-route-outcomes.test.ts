@@ -180,7 +180,7 @@ describe('phm node route --outcomes-ledger', () => {
     });
     const plain = await capture(() => cmdNodeRoute(args));
     expect(plain.code).toBe(0);
-    expect(plain.lines[1]).toContain('(merge unknown, unknown/Mtok, unknown/h)');
+    expect(plain.lines[2]).toContain('(merge unknown, unknown/Mtok, unknown/h)');
   });
 
   it('lets an explicit --outcomes file win per provider over the ledger', async () => {
@@ -196,6 +196,25 @@ describe('phm node route --outcomes-ledger', () => {
       ['--capacity', cap, '--costs', costs, '--jobs', jobs, '--outcomes', outcomesFile, '--outcomes-ledger', '--runs-dir', runsDir, '--json']));
     expect(code).toBe(0);
     expect(JSON.parse(lines[0]!).plan[0]).toMatchObject({ provider: 'bad' });
+  });
+
+  it.each([
+    { attempts: 0, merged: 0 },
+    { attempts: 1, merged: 2 },
+    { attempts: 3 },
+    null,
+  ])('keeps ledger routing evidence when a provider override is unusable (%j)', async override => {
+    const { cmdNodeRoute } = await import('../src/cli/node-capacity.js');
+    const { dir, cap, costs, jobs, runsDir } = setup([
+      { job: 'g1', lane: 'good', state: 'MERGED' },
+      { job: 'g2', lane: 'good', state: 'MERGED' },
+    ]);
+    const outcomesFile = join(dir, 'outcomes.json');
+    writeFileSync(outcomesFile, JSON.stringify({ good: override }));
+    const { code, lines } = await capture(() => cmdNodeRoute(
+      ['--capacity', cap, '--costs', costs, '--jobs', jobs, '--outcomes', outcomesFile, '--outcomes-ledger', '--runs-dir', runsDir, '--json']));
+    expect(code).toBe(0);
+    expect(JSON.parse(lines[0]!).plan[0]).toMatchObject({ provider: 'good', mergeRate: 0.75 });
   });
 
   it('refuses an unreadable ledger and rejects --runs-dir without --outcomes-ledger', async () => {

@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { runSimulation } from './engine.js';
-import { buildReport, formatReport, type SimReport } from './metrics.js';
+import { buildReport, compareDrivePolicies, formatReport, type SimReport } from './metrics.js';
 import { parseFixture, parseJobsJsonl, parseStatusJson, type SimInput } from './model.js';
 import { balancedPolicy, fifoPoolPolicy, paceFloorPolicy } from './policies.js';
 import type { DrivePolicy } from './policy.js';
@@ -346,6 +346,50 @@ describe('drive-sim engine physics', () => {
     expect(rep.outcomes.find((o) => o.id === 'A')?.state).toBe('done');
     expect(rep.outcomes.find((o) => o.id === 'B')?.state).toBe('cancelled');
     expect(trace.ignoredCancels.map((c) => c.id).sort()).toEqual(['A', 'GHOST']);
+  });
+});
+
+describe('paired drive-sim policy comparison', () => {
+  const baseline = fifoPoolPolicy;
+  const never = (): DrivePolicy => ({ name: 'never', decide: () => [] });
+
+  it('keeps unseen waits null and reports completely unserved cohort', () => {
+    const report = compareDrivePolicies(fixtureInput(), baseline(), never());
+    const started = report.baseline.waits.count;
+    expect(report.evidence).toBe('synthetic');
+    expect(report.waitDeltaMs).toBeNull();
+    expect(report.coverage).toEqual({
+      cohort: 52, pairedStarted: 0, baselineOnlyStarted: started, candidateOnlyStarted: 0,
+      baselineOnlyCompleted: report.baseline.jobs.completed, candidateOnlyCompleted: 0,
+    });
+  });
+
+  it('does not report a latency speedup for skipping the slow job', () => {
+    const input = fixtureInput();
+    input.status.lanes = input.status.lanes.map((spec) => spec.id === 'devin' ? { ...spec, ceiling: 2 } : spec);
+
+    input.jobs = [
+      { v: 1, at: input.status.startAt, id: 'first', pool: 'devin', serviceMin: 60 },
+      { v: 1, at: input.status.startAt, id: 'second', pool: 'devin', serviceMin: 60 },
+      { v: 1, at: input.status.startAt, id: 'third', pool: 'devin', serviceMin: 60 },
+    ];
+    const pick = (snap: Parameters<DrivePolicy['decide']>[0]) =>
+      baseline().decide({ ...snap, queue: snap.queue.filter((job) => job.id !== 'third') });
+    const report = compareDrivePolicies(input, baseline(), { name: 'skip-third', decide: pick });
+    expect(report.candidate.waits.meanMs).toBeLessThan(report.baseline.waits.meanMs);
+    expect(report.coverage).toMatchObject({ pairedStarted: 2, baselineOnlyStarted: 1, baselineOnlyCompleted: 1 });
+    expect(report.waitDeltaMs).toEqual({ mean: 0, p90: 0 });
+  });
+
+  it('has symmetric cohort counts and deterministic signed matched deltas', () => {
+    const input = fixtureInput();
+    const pair = compareDrivePolicies(input, baseline(), paceFloorPolicy());
+    expect(pair).toEqual(compareDrivePolicies(input, baseline(), paceFloorPolicy()));
+    const reversed = compareDrivePolicies(input, paceFloorPolicy(), baseline());
+    expect(pair.coverage.pairedStarted).toBe(reversed.coverage.pairedStarted);
+    expect(pair.coverage.baselineOnlyCompleted).toBe(reversed.coverage.candidateOnlyCompleted);
+    expect(pair.waitDeltaMs?.mean).toBeLessThan(0);
+    expect(pair.waitDeltaMs?.mean).toBe(-(reversed.waitDeltaMs?.mean ?? 0));
   });
 });
 

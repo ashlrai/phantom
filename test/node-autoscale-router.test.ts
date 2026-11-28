@@ -426,6 +426,22 @@ describe('autoscale router scoring', () => {
     expect(a).toEqual(b);
   });
 
+  it('spreads equally ranked placements across nodes for the selected provider and model', () => {
+    const first = node(mbp({ node: 'a' }));
+    const second = node(mbp({ node: 'b' }));
+    const cost = COSTS[0]!;
+    const input = {
+      costs: [{ ...cost, model: 'later-model' }, cost],
+      outcomes: {}, nowMs: T0,
+      jobs: ['1', '2', '3', '4'].map(id => ({ id })),
+    };
+    const plan = planAutoscaleRoutes({ ...input, nodes: [second, first] });
+    expect(plan.map(p => [p.nodeId, p.model])).toEqual([
+      ['a', cost.model], ['b', cost.model], ['a', cost.model], ['b', cost.model],
+    ]);
+    expect(planAutoscaleRoutes({ ...input, nodes: [first, second] })).toEqual(plan);
+  });
+
   it('names job-filter and empty-input rejections instead of an empty map', () => {
     const plan = planAutoscaleRoutes({ nodes: [node(mbp())], costs: COSTS, outcomes: {}, nowMs: T0,
       jobs: [{ id: 'p', providers: ['claude'] }, { id: 'm', models: ['no-such-model'] }, { id: 'ok' }] });

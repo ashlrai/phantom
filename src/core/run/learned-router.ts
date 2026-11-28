@@ -30,6 +30,7 @@
 
 import type {
   AshlrConfig,
+  CostForecast,
   DecisionEntry,
   EngineId,
   EngineTier,
@@ -40,7 +41,6 @@ import type {
   WorkItem,
 } from '../types.js';
 import { routeBackend, type RouteDecision } from '../fleet/router.js';
-import type { CostForecast } from '../types.js';
 import {
   readDecisions,
   readDecisionsDetailed,
@@ -98,7 +98,7 @@ export {
 // ---------------------------------------------------------------------------
 
 export const TERRA_EXPERIMENT_ID = 'TERRA-AB-1';
-export const TERRA_PROMOTION_MIN_JOBS = 10;
+const TERRA_PROMOTION_MIN_JOBS = 10;
 
 /** Observations for a complete work-tier comparison, never execution authority. */
 export interface TerraExperimentJob {
@@ -259,7 +259,7 @@ export function modelTierForTask(item: WorkItem): ModelRoutingTier {
       /^(?:\[?FIXUP\b|verify\b|run (?:the )?(?:tests?|verification)\b|triage\b|(?:write|draft|update) (?:the )?(?:PR|pull request) (?:body|description)\b)/i.test(item.title)) {
     return 'fast';
   }
-  if ((item.source as string) === 'escalation' || isHardItem(item)) return 'work';
+  if (isHardItem(item)) return 'work';
   if (isTrivialItem(item)) return 'fast';
   // Ordinary implementation remains Sol; mid is an explicit queue choice.
   return 'work';

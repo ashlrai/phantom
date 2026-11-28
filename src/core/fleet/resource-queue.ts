@@ -42,7 +42,8 @@ export async function readResourceQueue(runsDir: string, now: number, status: un
   const lanes = new Map(Object.entries(object(snapshot.lanes)).flatMap(([lane, raw]) => {
     const row = object(raw), running = count(row.running), target = count(row.effective_target ?? row.target);
     if (running === null || target === null || typeof row.held !== 'boolean' || !Object.hasOwn(ctx.slots, lane)) return [];
-    return [[lane, marketLaneView(lane, running, target, row.held, ctx)] as const];
+    return [[lane, marketLaneView(lane, running, target, row.held, ctx,
+      typeof row.healthy === 'boolean' ? row.healthy : null)] as const];
   }));
   const rows = lines.flatMap((line, index) => {
     const cells = line.replace(/\r$/, '').split('\t');

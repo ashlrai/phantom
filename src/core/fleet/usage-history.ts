@@ -153,19 +153,20 @@ function prune(rows: UsageReading[], nowMs: number): UsageReading[] {
 /**
  * Append new readings. A reading is skipped when it is not newer than its
  * pool's last row, or when value and reset time are both unchanged.
+ * The retention cap keeps the newest observations across pools.
  */
 export function appendUsageReadings(rows: readonly UsageReading[], readings: readonly UsageReading[], nowMs: number): { rows: UsageReading[]; changed: boolean } {
-  const next = prune([...rows], nowMs);
-  let changed = next.length !== rows.length;
+  const previous = prune([...rows], nowMs);
+  const next = [...previous];
   for (const reading of readings) {
     if (!validRow(reading) || !inHistoryWindow(reading, nowMs)) continue;
     const last = lastFor(next, reading.pool);
     if (last && (ms(reading.observed_at) <= ms(last.observed_at)
       || (last.used_pct === reading.used_pct && last.reset_at === reading.reset_at))) continue;
     next.push(row(reading));
-    changed = true;
   }
-  return { rows: next.slice(-USAGE_HISTORY_MAX_ROWS), changed };
+  const retained = next.length === previous.length ? previous : prune(next, nowMs);
+  return { rows: retained, changed: retained.length !== rows.length || retained.some((reading, i) => reading !== previous[i]) };
 }
 
 /** The ledger's current per-pool readings. A pool without a measured share or a reading time is skipped. */
@@ -279,7 +280,9 @@ export function poolUsageSeries(pool: string, rows: readonly UsageReading[], now
     }
     previous = reading;
   }
-  const resetAt = mine.at(-1)?.reset_at ?? null;
+  // Use the last eligible reading for window selection too. With no eligible
+  // points, retain the reported reset for the empty-window explanation.
+  const resetAt = (previous ?? mine.at(-1))?.reset_at ?? null;
   const resetMs = ms(resetAt);
   const startMs = resetMs - windowMs;
   const known = Number.isFinite(resetMs);
@@ -343,13 +346,13 @@ export function recordLedgerUsage(runsDir: string, ledger: ResourceLedgerV1, now
 
 /** Stored readings for the burn rate (`phm pools`): read-only, empty when the file is absent or damaged. */
 export async function readUsageSamples(opts: { runsDir?: string; nowMs?: number } = {}): Promise<UsageReading[]> {
-  const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
+  const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   return parseUsageHistory(await readHistoryFile(usageHistoryPath(runsDir)), opts.nowMs ?? Date.now());
 }
 
 /** Take a fresh ledger reading (recording it), then project every pool's current window. */
 export async function readUsageHistory(opts: { runsDir?: string; now?: () => number; pool?: string } = {}): Promise<UsageHistoryV1> {
-  const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
+  const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const nowMs = (opts.now ?? Date.now)();
   const result: UsageHistoryV1 = { schema: USAGE_HISTORY_SCHEMA, v: 1, generated_at: new Date(nowMs).toISOString(), source_state: 'missing', pools: [] };
   try {

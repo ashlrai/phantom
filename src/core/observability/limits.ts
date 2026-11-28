@@ -21,6 +21,7 @@ import { collectUsageEvents } from './usage-source.js';
 import { modelToProviderKey } from './rollup.js';
 import { estCostUsd } from '../run/budget.js';
 import { readCodexRateLimits } from './codex-source.js';
+import { fetchWithTimeout } from './hop-events.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -117,20 +118,6 @@ function buildWindows(): UsageWindow[] {
 // ---------------------------------------------------------------------------
 // Provider-key API calls (best-effort, degrade on any error/timeout)
 // ---------------------------------------------------------------------------
-
-/**
- * Wrap a fetch call with an AbortController timeout.
- * Returns the Response, or throws on timeout/network error.
- */
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: ac.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 /**
  * Attempt to read Anthropic usage via the usage API.

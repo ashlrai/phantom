@@ -1,34 +1,41 @@
 import { execFileSync } from 'node:child_process';
 import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { DISK_MAX_JOBS_BYTES } from '../core/disk-maint/plan.js';
+import { isInsideRoot } from '../core/disk-maint/protect.js';
+import { parseJobLedger } from '../core/disk-maint/worktrees.js';
 import { readSource } from '../core/fleet/runs-parked-queue.js';
 import { isKeptWorktree, measureWorktreeBytes, readKeptWorktrees } from '../core/worktree-retention.js';
-import { parseJobLedger } from './disk.js';
 import { readWtAudit } from '../core/fleet/wt-audit.js';
 
 export interface PruneDeps { root?: string; runsRoot?: string; now?: number; ps?: () => string | null }
 export interface PruneEntry { name: string; path: string; reason: 'merged' | 'closed' | 'empty'; ageHours: number; sizeBytes: number; sizeComplete: boolean; status: 'eligible' | 'removed' | 'refused' }
 
+function auditSourcesHealthy(sources: Awaited<ReturnType<typeof readWtAudit>>['sources']): boolean {
+  return sources.worktrees === 'healthy' && sources.runs === 'healthy' && sources.jobs === 'healthy' &&
+    sources.ps === 'healthy' && sources.pins === 'valid' &&
+    ![sources.queue, sources.keep, sources.run, sources.status].includes('degraded');
+}
+
 /** Fail closed if lifecycle, pin, path or Git evidence cannot be verified. */
 export async function pruneWorktrees(apply: boolean, deps: PruneDeps = {}): Promise<{ dryRun: boolean; worktrees: PruneEntry[]; errors: number }> {
   const root = resolve(deps.root ?? join(homedir(), 'Projects', 'ashlrai', 'wt'));
-  const jobsPath = join(deps.runsRoot ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs'), 'metrics', 'jobs.jsonl');
+  const runsRoot = deps.runsRoot ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const jobsPath = join(runsRoot, 'metrics', 'jobs.jsonl');
   const now = deps.now ?? Date.now();
-  const source = await readSource(jobsPath, 8 * 1024 * 1024, true);
+  const source = await readSource(jobsPath, DISK_MAX_JOBS_BYTES, true);
   if (source.state !== 'healthy') return { dryRun: !apply, worktrees: [], errors: 1 };
   const ledger = parseJobLedger(source.text);
-  const audit = () => readWtAudit({ wtRoot: root, runsRoot: deps.runsRoot ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs'), now, wantSize: false, ps: deps.ps });
+  const audit = () => readWtAudit({ wtRoot: root, runsRoot, now, wantSize: false, ps: deps.ps });
   const safe = (report: Awaited<ReturnType<typeof readWtAudit>>, name: string): boolean => {
-    const sources = report.sources;
-    if (sources.worktrees !== 'healthy' || sources.runs !== 'healthy' || sources.jobs !== 'healthy' || sources.ps !== 'healthy' || sources.pins !== 'valid' || [sources.queue, sources.keep, sources.run, sources.status].includes('degraded')) return false;
+    if (!auditSourcesHealthy(report.sources)) return false;
     const row = report.worktrees.find(item => item.name === name);
     return !!row && !row.blockers.some(blocker => !blocker.startsWith('not-terminal:') && blocker !== 'fresh');
   };
   const initialAudit = await audit();
   const entries: PruneEntry[] = [];
-  const s = initialAudit.sources;
-  let errors = s.worktrees !== 'healthy' || s.runs !== 'healthy' || s.jobs !== 'healthy' || s.ps !== 'healthy' || s.pins !== 'valid' || [s.queue, s.keep, s.run, s.status].includes('degraded') ? 1 : 0;
+  let errors = auditSourcesHealthy(initialAudit.sources) ? 0 : 1;
   const deadline = Date.now() + 20_000;
   for (const dir of readdirSync(root, { withFileTypes: true })) {
     if (!dir.isDirectory() || !/^RQ-[A-Za-z0-9._-]+$/.test(dir.name)) continue;
@@ -40,7 +47,7 @@ export async function pruneWorktrees(apply: boolean, deps: PruneDeps = {}): Prom
     const eligible = (): boolean => {
       try {
         if (!lstatSync(path).isDirectory() || dirname(realpathSync(path)) !== realpathSync(root) ||
-          isKeptWorktree(path, readKeptWorktrees()) || process.cwd() === path || process.cwd().startsWith(path + sep)) return false;
+          isKeptWorktree(path, readKeptWorktrees()) || isInsideRoot(path, process.cwd())) return false;
         // Include ignored files: Git would otherwise discard them on removal.
         return execFileSync('git', ['-C', path, 'status', '--porcelain', '--untracked-files=all', '--ignored'], { timeout: 30_000, maxBuffer: 1024 * 1024 }).length === 0;
       } catch { return false; }
@@ -50,7 +57,7 @@ export async function pruneWorktrees(apply: boolean, deps: PruneDeps = {}): Prom
     const entry: PruneEntry = { name: dir.name, path, reason, ageHours: (now - record.finishMs) / 3_600_000, sizeBytes: size.bytes, sizeComplete: size.complete, status: 'eligible' };
     if (apply) {
       // Re-read the ledger and pin policy just before removal; a new attempt wins.
-      const current = await readSource(jobsPath, 8 * 1024 * 1024, true);
+      const current = await readSource(jobsPath, DISK_MAX_JOBS_BYTES, true);
       const latest = current.state === 'healthy' ? parseJobLedger(current.text).get(dir.name) : undefined;
       if (!latest || latest.state !== record.state || latest.finishMs !== record.finishMs || latest.finishEmpty !== record.finishEmpty || !safe(await audit(), dir.name) || !eligible()) {
         entry.status = 'refused'; errors++;

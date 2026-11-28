@@ -41,7 +41,7 @@ import {
   resolveLlamaServerDefaultModel,
 } from '../local-runtime/llama/config.js';
 import { resolveProviderKey } from '../integrations/secrets.js';
-import { resolveModelProfile, adaptivePromptsEnabled } from './model-profile.js';
+import { adaptivePromptsEnabled, pickBestLocalModel, resolveModelProfile } from './model-profile.js';
 import { GEMINI_API_DEFAULT_MODEL, KNOWN_MODELS } from './model-catalog.js';
 import { normalizeNumericLoopbackOllamaBaseUrl } from './ollama-identity.js';
 import { redactKnownValues, scrubSecrets } from '../util/scrub.js';
@@ -62,8 +62,8 @@ import {
   parseOllamaToolCalls,
   serializeToolCallArgumentsForOpenAI,
   toOpenAIToolSpecs,
+  type ToolCallFragment,
 } from './tool-calls.js';
-import type { ToolCallFragment } from './tool-calls.js';
 
 // ---------------------------------------------------------------------------
 // Known cloud provider identifiers
@@ -249,18 +249,7 @@ function pickModel(models: string[], explicit?: string): string {
   // 2. Local-first & cost-efficient default: prefer the SMALLEST/fastest chat model so runs start
   //    instantly instead of cold-loading a 70B (which times out). Skip embedding-only models;
   //    bias slightly toward coder models among equal sizes.
-  const isEmbed = (m: string) => /embed|bge|e5|nomic/i.test(m);
-  const pool = models.filter((m) => !isEmbed(m));
-  const ranked = (pool.length ? pool : models).slice();
-  const sizeOf = (m: string): number => {
-    const b = m.match(/(\d+(?:\.\d+)?)\s*b\b/i); // "3b" / "7b" / "72b"
-    if (b) return parseFloat(b[1]);
-    if (/mini|small|tiny|nano|phi/i.test(m)) return 3; // unlabeled small models
-    return 999; // unknown size -> deprioritize
-  };
-  const score = (m: string): number => sizeOf(m) - (/coder|code/i.test(m) ? 0.5 : 0);
-  ranked.sort((a, b) => score(a) - score(b));
-  return ranked[0];
+  return pickBestLocalModel(models);
 }
 
 // ---------------------------------------------------------------------------

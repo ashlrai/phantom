@@ -1777,7 +1777,7 @@ describe('Trajectory records', () => {
         listOutcomeRecords: () => [],
         readAgentActions: () => [],
         readSkillUseEvents: () => [
-          skillUse({ eventId: 'skill-use:a', proposalId: undefined, runId: 'run-a', trajectoryId: 'traj-a' }),
+          skillUse({ eventId: 'skill-use:a', proposalId: 'unrecorded-proposal', runId: 'run-a', trajectoryId: 'traj-a' }),
           skillUse({
             eventId: 'skill-use:b',
             skillId: 'skill.b',
@@ -1815,6 +1815,13 @@ describe('Trajectory records', () => {
             runId: 'run-b',
             trajectoryId: 'traj-a',
           }),
+          skillUse({
+            eventId: 'skill-use:unmapped-conflict',
+            skillId: 'skill.unmapped-conflict',
+            proposalId: undefined,
+            runId: 'run-unmapped',
+            trajectoryId: 'traj-a',
+          }),
         ],
       }),
     });
@@ -1826,7 +1833,7 @@ describe('Trajectory records', () => {
     expect(copied).toMatchObject({
       joined: 3,
       unjoined: 1,
-      conflicting: 1,
+      conflicting: 2,
       modeCounts: { shadow: 1, active: 1, disabled: 1 },
       stageCounts: { selected: 1, injected: 1, applied: 0, outcome: 1 },
       sampleState: 'observed',
@@ -2680,9 +2687,12 @@ describe('Trajectory records', () => {
         listOutcomeRecords: () => skillSampleOutcomes(trajectoryIds, TS1),
         readAgentActions: () => [],
         readSkillUseEvents: () => [
-          skillUse({ eventId: 'use-a', runId: 'traj-a', trajectoryId: 'traj-a' }),
-          skillUse({ eventId: 'use-b', runId: 'traj-b', trajectoryId: 'traj-b' }),
-          skillUse({ eventId: 'use-c', runId: 'traj-c', trajectoryId: 'traj-c' }),
+          ...trajectoryIds.map((trajectoryId) => skillUse({
+            eventId: `use-${trajectoryId}`,
+            proposalId: undefined,
+            runId: trajectoryId,
+            trajectoryId,
+          })),
         ],
       }),
     });

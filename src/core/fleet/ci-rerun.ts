@@ -56,9 +56,13 @@ export function observedVerdicts(entries: readonly Entry[], nowMs: number): Entr
 }
 
 function triggeringTests(entry: Entry): string[] {
-  const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
-  return [...new Set(tests.filter((test): test is string =>
-    typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX))].sort();
+  const validTest = (test: unknown): test is string =>
+    typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX;
+  if (entry.tests === undefined) return validTest(entry.test) ? [entry.test] : [];
+  if (!Array.isArray(entry.tests) || !entry.tests.every(validTest)) return [];
+  const tests = [...new Set(entry.tests)].sort();
+  if (entry.test !== undefined && (tests.length !== 1 || tests[0] !== entry.test)) return [];
+  return tests;
 }
 
 /** Keep the earliest attempt time and only attribute consistent test evidence. */
@@ -173,10 +177,12 @@ export function readCiReruns(path = ciRerunPaths().journalPath, now = Date.now()
     const fd = openSync(path, 'r');
     try {
       const size = fstatSync(fd).size, start = Math.max(0, size - 4 * 1024 * 1024);
-      const buffer = Buffer.alloc(size - start);
-      readSync(fd, buffer, 0, buffer.length, start);
-      const lines = buffer.toString('utf8').split('\n');
-      if (start) lines.shift();
+      // Inspect the preceding byte to tell a partial row from a complete one.
+      const offset = Math.max(0, start - 1);
+      const buffer = Buffer.alloc(size - offset);
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, offset);
+      const lines = buffer.toString('utf8', start - offset, bytesRead).split('\n');
+      if (start && buffer[0] !== 0x0a) lines.shift();
       for (const line of lines) {
         try {
           const e = JSON.parse(line) as Entry;

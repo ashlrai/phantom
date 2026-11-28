@@ -186,6 +186,29 @@ describe('fleet launchable', () => {
     expect(await cmdFleetLaunchable(['--json'])).toBe(1);
     expect(report().lanes.find((lane: { lane: string }) => lane.lane === 'full').free).toBe(0);
   });
+  it.each([
+    { reason: 'one shared slot', evidence: { admission: { cap: 4, running: 3 } }, free: 1, code: 0 },
+    { reason: 'full fleet', evidence: { admission: { cap: 3, running: 3 } }, free: 0, code: 0 },
+    { reason: 'admission stopped', evidence: { admission: { admit: false, cap: 4, running: 3 } }, free: 0, code: 0 },
+    { reason: 'dispatcher paused', evidence: { paused: 'operator pause' }, free: 0, code: 0 },
+    { reason: 'older admission record', evidence: { admission: { ts: '2026-11-26T11:59:59Z', admit: false } }, free: 3, code: 1 },
+  ])('uses the dispatcher admission bound for $reason', async ({ evidence, free, code }) => {
+    const tick = '2026-11-26T12:00:00Z';
+    const prompt = join(root, 'prompt.md');
+    writeFileSync(prompt, 'task');
+    writeFileSync(join(queue, 'ready.tsv'), [row('RQ-ALPHA', 'alpha', prompt), row('RQ-BETA', 'beta', prompt)].join('\n'));
+    writeFileSync(join(queue, 'status.json'), JSON.stringify({
+      last_tick: tick,
+      ...evidence,
+      admission: evidence.admission && { ts: tick, ...evidence.admission },
+      lanes: { alpha: { target: 4, running: 1 }, beta: { target: 5, running: 2 } },
+    }));
+    expect(await cmdFleetLaunchable(['--json'])).toBe(code);
+    expect(report().lanes).toEqual([
+      { lane: 'alpha', free, running: 1, target: 4, launchable: 1 },
+      { lane: 'beta', free, running: 2, target: 5, launchable: 1 },
+    ]);
+  });
   it('fails closed on missing or malformed status and rejects invalid arguments', async () => {
     expect(await cmdFleetLaunchable(['--json'])).toBe(2);
     expect(report().error).toMatch(/Cannot read/);

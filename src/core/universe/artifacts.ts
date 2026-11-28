@@ -78,7 +78,7 @@ export function privateDirectory(path: string): string {
     const parent = dirname(absolute);
     if (parent === absolute) throw new Error('Cannot create filesystem root');
     if (!existsSync(parent)) privateDirectory(parent);
-    if (realpathSync(parent) !== parent) throw new Error('Universe storage path contains a symlink');
+    if (realpathSync(parent) !== parent) throw new Error('Private storage path contains a symlink');
     mkdirSync(absolute, { mode: 0o700 });
   }
   return inspectPrivateDirectory(absolute);
@@ -91,7 +91,7 @@ export function inspectPrivateDirectory(path: string): string {
   if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(absolute) !== absolute ||
       (typeof process.getuid === 'function' && stat.uid !== process.getuid()) ||
       (process.platform !== 'win32' && (stat.mode & 0o777) !== 0o700)) {
-    throw new Error('Universe storage must be an owned private directory without symlinks');
+    throw new Error('Private storage must be an owned private directory without symlinks');
   }
   return absolute;
 }

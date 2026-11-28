@@ -18,12 +18,12 @@ const count = () => existsSync(counter) ? readFileSync(counter, 'utf8').trim().s
 const worker = (exit = 0, wait = 0) => [process.execPath, '-e',
   `process.stdin.resume();process.stdin.on('end',()=>{require('node:fs').appendFileSync(${JSON.stringify(counter)},'x\\n');console.log('fake secret output');setTimeout(()=>process.exit(${exit}),${wait})})`];
 const temporary = () => readdirSync(tmpdir()).filter(name => name.startsWith('phantom-bus-work-')).sort();
-function run(options: { max?: number; wait?: number; lease?: number; argv?: string[]; owner?: string } = {}) {
+function run(options: { max?: number; wait?: number; lease?: number; argv?: string[]; owner?: string; to?: string; flags?: string[] } = {}) {
   let output = '';
   const sink = new Writable({ write(chunk, _encoding, callback) { output += String(chunk); callback(); } });
-  const args = ['--to', 'worker', '--owner', options.owner ?? 'one', '--lease-ms', String(options.lease ?? 60000),
+  const args = ['--to', options.to ?? 'worker', '--owner', options.owner ?? 'one', '--lease-ms', String(options.lease ?? 60000),
     '--wait-ms', String(options.wait ?? 500), '--max-jobs', String(options.max ?? 1), '--snapshot', snapshot,
-    '--prompt', prompt, '--root', root, '--', ...(options.argv ?? worker())];
+    '--prompt', prompt, '--root', root, ...(options.flags ?? []), '--', ...(options.argv ?? worker())];
   return cmdFleetBusWorkLoop(args, { stdout: sink, stderr: sink }).then(code => ({ code, output, result: JSON.parse(output) }));
 }
 function replies() {
@@ -98,6 +98,55 @@ it('interrupts an idle wait and refuses malformed arguments before launch', asyn
   const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
   expect(await cmdFleetBusWorkLoop(['--to', 'worker', '--', process.execPath], { stdout: sink, stderr: sink })).toBe(2);
   expect(count()).toBe(0);
+});
+
+it('claims only what the shared read filters admit on every poll and refuses malformed values before launch', async () => {
+  const env = (id: string, over: Partial<BusEnvelope> = {}): BusEnvelope => ({ id, from: 'leader', to: 'worker',
+    priority: 'P1', ttl: 120_000, body: { kind: 'work', text: `job ${id}` }, ...over });
+  const postEnv = (envelope: BusEnvelope) => expect(appendBusInbox(envelope, { root }).status).toBe('posted');
+  postEnv(env('p0-urgent', { priority: 'P0', body: { kind: 'work', text: 'urgent deploy' } }));
+  postEnv(env('p1-chore'));
+  postEnv(env('p1-alpha', { body: { kind: 'work', text: 'ship ALPHA' } }));
+  // --priority narrows the claimable band: only the P0 job runs, the P1s wait.
+  expect((await run({ max: 1, wait: 5000, flags: ['--priority', 'P0'] })).result).toEqual({ status: 'max-jobs', completed: 1 });
+  expect(replies().map(r => (r.body as { inReplyTo: string }).inReplyTo)).toEqual(['p0-urgent']);
+  // --contains keeps only the receipt whose summary carries the text.
+  expect((await run({ max: 1, wait: 5000, flags: ['--contains', 'alpha'] })).result).toEqual({ status: 'max-jobs', completed: 1 });
+  expect(replies().map(r => (r.body as { inReplyTo: string }).inReplyTo)).toEqual(['p0-urgent', 'p1-alpha']);
+  // --id targets exactly one named receipt even when an earlier decoy waits.
+  postEnv(env('id-decoy')); postEnv(env('id-target'));
+  expect((await run({ max: 1, wait: 5000, flags: ['--id', 'id-target'] })).result).toEqual({ status: 'max-jobs', completed: 1 });
+  expect(replies().map(r => (r.body as { inReplyTo: string }).inReplyTo)).toEqual(['p0-urgent', 'p1-alpha', 'id-target']);
+  // --before bounds the window above: a ceiling before every post's arrival
+  // waits honestly to timeout rather than claiming newer work.
+  expect((await run({ wait: 200, flags: ['--before', '1d'] })).result).toEqual({ status: 'timeout', completed: 0 });
+  // --exclude-from drops every sender spelling of one identity; the peer's
+  // job is the only claimable receipt left, and its reply returns to 'peer'.
+  postEnv(env('from-peer', { from: 'peer' }));
+  expect((await run({ max: 1, wait: 5000, flags: ['--exclude-from', 'leader'] })).result).toEqual({ status: 'max-jobs', completed: 1 });
+  expect(replies().map(r => (r.body as { inReplyTo: string }).inReplyTo)).toEqual(['p0-urgent', 'p1-alpha', 'id-target']);
+  const peerPage = listBusInboxAfter(0, 100, { root });
+  if (peerPage.status !== 'ok') throw new Error('inbox unavailable');
+  expect(peerPage.messages.filter(row => row.envelope.to === 'peer').map(row => (row.envelope.body as { inReplyTo: string }).inReplyTo))
+    .toEqual(['from-peer']);
+  // --topic narrows group-addressed work to one room topic; a mismatched
+  // topic waits honestly to timeout.
+  postEnv(env('dep-work', { to: 'group:eng:deploy' }));
+  expect((await run({ to: 'group:eng:deploy', max: 1, wait: 5000, flags: ['--topic', 'general'] })).result)
+    .toEqual({ status: 'timeout', completed: 0 });
+  expect((await run({ to: 'group:eng:deploy', max: 1, wait: 5000, flags: ['--topic', 'deploy', '--channel', 'eng'] })).result)
+    .toEqual({ status: 'max-jobs', completed: 1 });
+  expect(replies().map(r => (r.body as { inReplyTo: string }).inReplyTo)).toEqual(['p0-urgent', 'p1-alpha', 'id-target', 'dep-work']);
+  // Malformed filter values are invalid before the first launch.
+  const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+  for (const flags of [['--priority', 'P9'], ['--since', 'bogus'], ['--before', 'bogus'], ['--contains', '   '],
+    ['--topic', 'Bad Name'], ['--topic', 'deploy:extra'], ['--id', 'has space'], ['--channel', 'Bad Name'],
+    ['--from', 'bad sender'], ['--exclude-from', 'bad sender']]) {
+    expect(await cmdFleetBusWorkLoop(['--to', 'worker', '--owner', 'bad', '--lease-ms', '60000', '--wait-ms', '100',
+      '--max-jobs', '1', '--snapshot', snapshot, '--prompt', prompt, '--root', root, ...flags, '--', ...worker()],
+    { stdout: sink, stderr: sink })).toBe(2);
+  }
+  expect(count()).toBe(5);
 });
 
 it('writes a private request while running and honors the runs stop switch', async () => {

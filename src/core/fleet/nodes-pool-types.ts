@@ -29,7 +29,10 @@ export interface PoolTotal {
   freeSlots: number;
   /** Online Macs whose free slots are not measured, so the total is at least this many. */
   slotsUnknown: number;
+  /** Running jobs on Macs whose count was measured; an unmeasured Mac adds nothing. */
   jobsRunning: number;
+  /** Online Macs whose running-job count is not measured, so jobsRunning is a lower bound. */
+  jobsUnknown: number;
   /** "2 Macs, 11 free slots" */
   line: string;
 }

@@ -128,6 +128,22 @@ describe('lane yield weight', () => {
       .toMatchObject({ launches: 10, known: true });
   });
 
+  it('excludes unlaunched retries and node-pool telemetry from lane yield', () => {
+    const receipts = ledger('zai', 'lg', 9, 1);
+    const extra = [
+      { event: 'launch', job: 'zai-lg-0', lane: 'other', size: 'lg', launched: false },
+      { event: 'launch', job: 'session:1', lane: 'zai', size: 'lg', schema: 'fleet.session-pool.v1' },
+      { event: 'launch', job: 'node:1', lane: 'zai', size: 'lg', schema: 'phm-node-runner.v1' },
+      { event: 'reverted', job: 'zai-lg-0', schema: 'phm-node-runner.v1' },
+    ].map(row => JSON.stringify({ ...row, ts: new Date(NOW.getTime() + 1000).toISOString() }));
+
+    const rows = yields(receipts, extra);
+    expect(rows.map(row => [row.lane, row.size])).toEqual([['zai', 'all'], ['zai', 'lg']]);
+    for (const result of rows) {
+      expect(result).toMatchObject({ launches: 9, merged: 1, reverted: 0, known: false, yield: null, weight: 1 });
+    }
+  });
+
   it('keeps reserialized launches at their original position for yield attribution', () => {
     const receipts = ledger('claude', 'lg', 10, 7);
     const launch = JSON.parse(receipts[0]!.split('\n')[0]!);

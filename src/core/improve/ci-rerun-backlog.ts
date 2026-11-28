@@ -70,6 +70,7 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
+import { HEAD_SHA_PATTERN } from '../cloud/pr-actions.js';
 import { ashlrHome, CLOUD_REPO_PATTERN } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
 import { attributedTestVerdicts, observedAttempts, observedCallResults, observedVerdicts, readCiReruns } from '../fleet/ci-rerun.js';
@@ -224,6 +225,7 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
     const attempts = new Map<string, number>();
     for (const entry of observed) {
       if (!inWindow(entry, nowMs, windowMs)) continue;
+      if (!HEAD_SHA_PATTERN.test(entry.head.toLowerCase())) continue;
       const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
       for (const test of new Set(tests)) {
         if (typeof test !== 'string' || !test || test.length > JOURNAL_TEST_MAX) continue;
@@ -232,10 +234,12 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
     }
     for (const entry of runVerdicts) {
       if (!inWindow(entry, nowMs, windowMs) || typeof entry.test !== 'string' || !entry.test) continue;
+      const head = entry.head.toLowerCase();
+      if (!HEAD_SHA_PATTERN.test(head)) continue;
       const group = verdicts.get(entry.test) ?? { test: entry.test, fails: 0, passes: 0, inconclusive: 0, failHeads: new Set<string>(), attempts: 0 };
       if (entry.verdict === 'fail') {
         group.fails += 1;
-        if (typeof entry.head === 'string' && entry.head !== '') group.failHeads.add(entry.head);
+        group.failHeads.add(head);
       } else if (entry.verdict === 'pass') group.passes += 1;
       else if (entry.verdict === 'inconclusive') group.inconclusive += 1;
       verdicts.set(entry.test, group);

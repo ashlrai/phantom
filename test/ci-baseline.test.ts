@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40), s
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; sameHead?: boolean; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
+function github(options: { count?: number; sameHead?: boolean; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; smoke?: boolean; masterFixture?: string; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; masterRunConclusion?: string; noJobs?: boolean } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -65,7 +65,7 @@ function github(options: { count?: number; sameHead?: boolean; touched?: string;
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/') || endpoint.includes('/jobs/30/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.installSmoke ? 'install-smoke-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.masterFixture !== undefined ? options.masterFixture : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.installSmoke ? 'install-smoke-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.smoke ? 'companion-smoke' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : prHead;
       let prefix: string;
       if (options.checkoutRef !== undefined) {
@@ -111,6 +111,31 @@ function github(options: { count?: number; sameHead?: boolean; touched?: string;
 }
 
 describe('CI baseline evidence', () => {
+  it.each(['  ref: master\n', ''])(
+    'withholds freshness for a sibling checkout without head proof (%j)',
+    async ref => {
+      const { gh } = github({ count: 1, extraPrJob: 'failure' });
+      const report = await analyzeCiBaseline('owner/repo', async args => {
+        if (!args[1]?.endsWith('/jobs/40/logs')) return gh(args);
+        return {
+          ok: true,
+          stdout: `##[group]Run actions/checkout@v4\nwith:\n${ref}##[endgroup]\n##[error]Checkout failed\n`,
+          stderr: '',
+        };
+      });
+      expect(report.freshness).toMatchObject([
+        { state: 'unknown', reason: 'unreadable-log-or-unverified-checkout' },
+      ]);
+      // PR evidence is withheld, but the verified master failure still
+      // groups as master-observed baseline evidence with no PR victims.
+      expect(report.groups).toMatchObject([{
+        testId: 'test/example.test.ts > owner status > reports delivery',
+        classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail',
+        prs: [], runs: [], unaffectedPrs: [],
+      }]);
+    },
+  );
+
   it('groups independent failures and keeps analysis read-only', async () => {
     const { gh, calls } = github();
     const report = await analyzeCiBaseline('owner/repo', gh);
@@ -146,6 +171,17 @@ describe('CI baseline evidence', () => {
     const fail = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
     expect(fail.groups[0]?.action).toBe('unknown');
   });
+  it('uses the final master job verdict when its log includes a failed attempt', async () => {
+    const { gh } = github({ count: 1, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      if (!args[1]?.endsWith('/jobs/10/logs')) return result;
+      return { ...result, stdout: `${fixture('shared')}\n${result.stdout}` };
+    });
+    expect(report.groups).toMatchObject([
+      { master: 'pass', classification: 'probable-flake', action: 'rerun-failed' },
+    ]);
+  });
   it('keeps a newer same-SHA run on another branch out of master evidence', async () => {
     const { gh } = github({ count: 1, pass: true });
     const report = await analyzeCiBaseline('owner/repo', async args => {
@@ -168,6 +204,43 @@ describe('CI baseline evidence', () => {
     });
     expect(report.master).toEqual({ head: master, known: true });
     expect(report.groups[0]).toMatchObject({ action: 'rerun-failed', master: 'pass' });
+  });
+  it('excludes release-automation runs from master check evidence', async () => {
+    // release-please/release-prep land on nearly every master tip and their
+    // jobs check out unpinned refs, so their logs can never prove the head;
+    // counted as evidence they would mark masterKnown false on every tip.
+    const { gh, calls } = github({ count: 1, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const endpoint = args[1] ?? '';
+      if (!endpoint.includes('/actions/runs?')) return gh(args);
+      const params = new URLSearchParams(endpoint.split('?')[1]);
+      if (params.get('head_sha') !== master || params.get('branch') !== 'master') return gh(args);
+      const base = JSON.parse((await gh(args)).stdout) as { total_count: number; workflow_runs: Record<string, unknown>[] };
+      base.total_count += 1;
+      base.workflow_runs.push({ id: 50, workflow_id: 77, status: 'completed', conclusion: 'failure', head_sha: master, path: '.github/workflows/release-please.yml' });
+      return { ok: true, stdout: JSON.stringify(base), stderr: '' };
+    });
+    expect(report.master).toEqual({ head: master, known: true });
+    expect(report.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
+    // The excluded run never entered evidence collection: no jobs or logs call.
+    expect(calls.some(c => (c[1] ?? '').includes('/runs/50/'))).toBe(false);
+  });
+  it('still counts master runs of workflows outside the automation list', async () => {
+    // An unrecognized workflow path fails toward unknown: it is fetched and
+    // its unverifiable log keeps masterKnown false rather than being skipped.
+    const { gh, calls } = github({ count: 1, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const endpoint = args[1] ?? '';
+      if (!endpoint.includes('/actions/runs?')) return gh(args);
+      const params = new URLSearchParams(endpoint.split('?')[1]);
+      if (params.get('head_sha') !== master || params.get('branch') !== 'master') return gh(args);
+      const base = JSON.parse((await gh(args)).stdout) as { total_count: number; workflow_runs: Record<string, unknown>[] };
+      base.total_count += 1;
+      base.workflow_runs.push({ id: 50, workflow_id: 77, status: 'completed', head_sha: master, path: '.github/workflows/mystery-nightly.yml' });
+      return { ok: true, stdout: JSON.stringify(base), stderr: '' };
+    });
+    expect(report.master.known).toBe(false);
+    expect(calls.some(c => (c[1] ?? '').includes('/runs/50/jobs'))).toBe(true);
   });
   it('reads default-reporter file-pass lines as master pass evidence', async () => {
     // The default reporter prints `✓ file (N tests)` for a green module and
@@ -206,7 +279,19 @@ describe('CI baseline evidence', () => {
   it('excludes stale and unreadable or unrecognized logs', async () => {
     for (const options of [{ stale: true }, { unknown: true }, { unreadable: true }]) {
       const report = await analyzeCiBaseline('owner/repo', github(options).gh);
-      expect(report.groups).toEqual([]);
+      if (options.unreadable) {
+        // Every job log is unreadable, master evidence included, so
+        // nothing groups at all.
+        expect(report.groups).toEqual([]);
+      } else {
+        // No PR observation survives, but the verified master failure
+        // still groups as master-observed baseline evidence.
+        expect(report.groups).toMatchObject([{
+          testId: 'test/example.test.ts > owner status > reports delivery',
+          classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail',
+          prs: [], runs: [], unaffectedPrs: [],
+        }]);
+      }
       expect(report.freshness.every(p => p.state === (options.stale ? 'stale' : 'unknown'))).toBe(true);
     }
   });
@@ -243,15 +328,25 @@ describe('CI baseline evidence', () => {
     // are dropped with the rest of the unverifiable evidence.
     for (const conclusion of ['cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']) {
       const report = await analyzeCiBaseline('owner/repo', github({ prJobConclusion: conclusion }).gh);
-      expect(report.groups).toEqual([]);
+      // The PR's parsed failures drop with the unverifiable run, but the
+      // verified master failure still groups with no PR victims.
+      expect(report.groups).toMatchObject([{
+        testId: 'test/example.test.ts > owner status > reports delivery',
+        classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail',
+        prs: [], runs: [], unaffectedPrs: [],
+      }]);
       expect(report.freshness.every(p => p.state === 'unknown' && p.reason === 'incomplete-check')).toBe(true);
       expect(report.master.known).toBe(true);
     }
     // The same holds when the incomplete job sits beside a verifiable
     // failure job: the failure is real but the run still cannot prove the
-    // head, so nothing groups.
+    // head, so nothing groups from the PR side.
     const mixed = await analyzeCiBaseline('owner/repo', github({ extraPrJob: 'cancelled' }).gh);
-    expect(mixed.groups).toEqual([]);
+    expect(mixed.groups).toMatchObject([{
+      testId: 'test/example.test.ts > owner status > reports delivery',
+      classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail',
+      prs: [], runs: [], unaffectedPrs: [],
+    }]);
     expect(mixed.freshness.every(p => p.state === 'unknown' && p.reason === 'incomplete-check')).toBe(true);
     // Skipped and neutral jobs are deliberate non-verdicts, not incomplete
     // checks: they neither poison the run nor hide its failure evidence.
@@ -287,14 +382,22 @@ describe('CI baseline evidence', () => {
       { state: 'unknown', reason: 'incomplete-check' },
       { state: 'unknown', reason: 'incomplete-check' },
     ]);
-    expect(report.groups).toEqual([]);
+    expect(report.groups).toMatchObject([{
+      testId: 'test/example.test.ts > owner status > reports delivery',
+      classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail',
+      prs: [], runs: [], unaffectedPrs: [],
+    }]);
   });
   it.each(['startup_failure', 'cancelled', 'timed_out', 'action_required', 'stale'])(
     'withholds PR freshness when the workflow concluded %s after a job finished',
     async conclusion => {
       const report = await analyzeCiBaseline('owner/repo', github({ count: 1, runConclusion: conclusion }).gh);
       expect(report.freshness).toMatchObject([{ state: 'unknown', reason: 'incomplete-check' }]);
-      expect(report.groups).toEqual([]);
+      expect(report.groups).toMatchObject([{
+        testId: 'test/example.test.ts > owner status > reports delivery',
+        classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail',
+        prs: [], runs: [], unaffectedPrs: [],
+      }]);
       expect(report.master.known).toBe(false);
     },
   );
@@ -329,6 +432,23 @@ describe('CI baseline evidence', () => {
     expect(report.master.known).toBe(false);
     expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
     expect(report.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
+  });
+  it.each([1, 2])('withholds master pass evidence with an unexplained failed master job (%i PRs)', async count => {
+    const { gh } = github({ count, pass: true, extraMasterJob: 'failure' });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      return args[1]?.endsWith('/jobs/30/logs')
+        ? { ...result, stdout: `/usr/bin/git log -1 --format=%H\n${master}\n${fixture('unknown')}` }
+        : result;
+    });
+    expect(report.master.known).toBe(false);
+    expect(report.freshness.every(pr => pr.state === 'fresh')).toBe(true);
+    expect(report.groups).toMatchObject([{
+      classification: count === 1 ? 'unknown' : 'shared-baseline',
+      action: count === 1 ? 'unknown' : 'queue-master-fix',
+      master: 'unknown',
+    }]);
+    expect(report.updates).toMatchObject(count === 1 ? [] : [{ ready: false }, { ready: false }]);
   });
   it('withholds PR freshness when the workflow failed without a failed job', async () => {
     const report = await analyzeCiBaseline('owner/repo', github({
@@ -474,7 +594,8 @@ describe('CI baseline evidence', () => {
       'src/web-ui/design/tokens.tsx > (typecheck)',
     ]);
     expect(failures[0]?.names).toBe('(typecheck)');
-    expect(failures[0]?.excerpt).toContain('TS2322').toContain('TS2304');
+    expect(failures[0]?.excerpt).toContain('TS2322');
+    expect(failures[0]?.excerpt).toContain('TS2304');
     expect(failures[1]?.file).toBe('src/web-ui/design/tokens.tsx');
   });
   it('groups TypeScript diagnostics and queues master fixes for typecheck breaks', async () => {
@@ -2296,6 +2417,95 @@ describe('CI baseline evidence', () => {
     const singleton = await analyzeCiBaseline('owner/repo', github({ runner: true, count: 1, pass: true, filePass: true }).gh);
     for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
+  it('parses companion-smoke FAIL rows as gate failures', () => {
+    // The scheduled companion-smoke workflow prints one
+    // `<mark> <check-id>: <detail>` row per companion seam -- ok, warn,
+    // FAIL or skip -- and closes with `N pass, N warn, N fail, N skip`.
+    // Only FAIL rows are failures; warn and skip never fail the step.
+    const failures = parseBaselineFailures(fixture('companion-smoke'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual([
+      'scripts/companion-workflow-smoke.mjs > (companion-smoke) stack:phantom-vault',
+      'scripts/companion-workflow-smoke.mjs > (companion-smoke) locus:pin-report',
+    ]);
+    expect(failures[0]).toMatchObject({ file: 'scripts/companion-workflow-smoke.mjs', names: '(companion-smoke) stack:phantom-vault' });
+    expect(failures[0]?.excerpt).toContain('stack:phantom-vault');
+    // Timestamped job-log lines keep the rows and the tally.
+    const stamped = fixture('companion-smoke').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+  });
+  it('keeps unrecognized companion-smoke output unparsed', () => {
+    // Rows count only inside a log carrying the smoke's own tally, and
+    // the tally's fail count must equal the FAIL rows: truncation, a
+    // second run or interleaved output is not one verdict.
+    for (const log of [
+      'FAIL stack:phantom-vault: phantom {"installed":false}',
+      'FAIL stack:phantom-vault: phantom {"installed":false}\nFAIL locus:pin-report: pin hook exited 1\n3 pass, 1 warn, 1 fail, 1 skip',
+      'FAIL stack:phantom-vault:\n1 pass, 0 warn, 1 fail, 0 skip',
+      'FAIL stack:phantom-vault: phantom {"installed":false}\nFAIL locus:pin-report: pin hook exited 1\n3 pass, 1 warn, 2 fail, 1 skip\nFAIL extra:row: disagrees',
+      'ok   stack:phantom-vault: installed\nwarn locus:pin-report: drift\nskip md:mdopen: absent\n3 pass, 1 warn, 0 fail, 1 skip',
+      '{"ok":false,"checks":[{"id":"stack:phantom-vault","status":"fail"}]}',
+    ]) {
+      expect(parseBaselineFailures(log, 'owner/repo'), log.slice(0, 60)).toEqual([]);
+    }
+  });
+  it('groups companion-smoke failures and attributes their closed input set', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ smoke: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      'scripts/companion-workflow-smoke.mjs > (companion-smoke) locus:pin-report',
+      'scripts/companion-workflow-smoke.mjs > (companion-smoke) stack:phantom-vault',
+    ]);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    // The smoke script and the workflow step that invokes it are
+    // pr-caused; everything else stays unattributed baseline evidence.
+    for (const [touched, id] of [
+      ['scripts/companion-workflow-smoke.mjs', 'scripts/companion-workflow-smoke.mjs > (companion-smoke) stack:phantom-vault'],
+      ['.github/workflows/companion-smoke.yml', 'scripts/companion-workflow-smoke.mjs > (companion-smoke) locus:pin-report'],
+    ] as const) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ smoke: true, touched }).gh);
+      const byId = new Map(caused.groups.map(g => [g.testId, g.action]));
+      expect(byId.get(id), touched).toBe('pr-caused');
+    }
+    for (const touched of ['docs/README.md', 'src/core/status.ts']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ smoke: true, touched }).gh);
+      expect(shared.groups.every(g => g.action === 'queue-master-fix'), touched).toBe(true);
+    }
+    // Parenthesized smoke identities can never resolve through a vitest
+    // pass line: a singleton unaffected failure stays unknown.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ smoke: true, count: 1, pass: true, filePass: true }).gh);
+    for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('emits master-observed failures no open PR reproduced', async () => {
+    // The scheduled companion smoke never runs on PR heads, so its FAIL
+    // rows are master evidence only: they group with no PR victims and
+    // queue a master fix directly rather than hiding behind PR red.
+    const report = await analyzeCiBaseline('owner/repo', github({ masterFixture: 'companion-smoke' }).gh);
+    expect(report.master.known).toBe(true);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    const smoke = report.groups.filter(g => g.file === 'scripts/companion-workflow-smoke.mjs');
+    expect(smoke.map(g => g.testId)).toEqual([
+      'scripts/companion-workflow-smoke.mjs > (companion-smoke) locus:pin-report',
+      'scripts/companion-workflow-smoke.mjs > (companion-smoke) stack:phantom-vault',
+    ]);
+    for (const group of smoke) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [], runs: [], unaffectedPrs: [] });
+      expect(group.brief).toContain('master run no open pull request reproduced');
+      expect(group.brief).toContain(group.testId);
+    }
+    // The PR-observed vitest failure keeps its richer evidence group.
+    expect(report.groups.find(g => g.file === 'test/example.test.ts')).toMatchObject({ prs: [1, 2] });
+    // Master-only groups queue like any shared-baseline fix.
+    const dir = mkdtempSync(join(tmpdir(), 'ci-baseline-')); dirs.push(dir);
+    const queued = enqueueBaselineFixes(report, join(dir, 'router-queue.md'));
+    for (const group of smoke) expect(queued).toContain(group.jobId);
+    // With no open PRs at all the same master evidence still groups.
+    const empty = await analyzeCiBaseline('owner/repo', github({ count: 0, smoke: true }).gh);
+    expect(empty.groups.map(g => g.testId)).toEqual(smoke.map(g => g.testId));
+    expect(empty.groups.every(g => g.prs.length === 0 && g.action === 'queue-master-fix')).toBe(true);
+  });
   it('keeps TAP indentation on timestamped job-log lines', () => {
     const block = [
       'TAP version 13',
@@ -2420,7 +2630,7 @@ describe('CI baseline evidence', () => {
     expect(globbedReport.groups[0]?.classification).toBe('unknown');
   });
   it('handles empty PR lists, invalid repositories, and empty logs', async () => {
-    expect((await analyzeCiBaseline('owner/repo', github({ count: 0 }).gh)).groups).toEqual([]);
+    expect((await analyzeCiBaseline('owner/repo', github({ count: 0, pass: true }).gh)).groups).toEqual([]);
     await expect(analyzeCiBaseline('../bad', github().gh)).rejects.toThrow('Invalid repository');
     expect(parseBaselineFailures('')).toEqual([]);
   });

@@ -1,6 +1,4 @@
-import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync } from 'node:fs';
-import { isProxy } from 'node:util/types';
 import { basename, dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
 
 import {
@@ -20,6 +18,18 @@ import {
   type ImmutablePrivateRecordStoreConfig,
 } from '../util/immutable-private-record-store.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
+import {
+  canonicalEpochJson as canonicalJson,
+  canonicalEpochJsonDigest,
+  deepFreezeEpochValue as immutable,
+  exactOwnDataKeys as exactKeys,
+  immutablePlainDataSnapshot,
+  isValidEpochTimestamp as timestamp,
+  isValidPrefixedEpochDigest as prefixedDigest,
+  isValidRawEpochDigest as rawDigest,
+  nonProxyPlainRecord as record,
+  rawEpochDigest,
+} from '../vision/agent-os-epoch-shared.js';
 
 export const AGENT_OS_LOCAL_CONTAINER_BROKER_JOURNAL_V1 =
   'ashlr-agent-os-local-container-broker-journal-v1' as const;
@@ -33,10 +43,8 @@ const MAX_RECORD_BYTES = 16 * 1024;
 // old terminal chain is pruned.
 const MAX_TOTAL_BYTES = (MAX_RECORDS + 1) * MAX_RECORD_BYTES;
 const MAX_LOCK_WAIT_MS = 2_000;
-const RAW_DIGEST_RE = /^[a-f0-9]{64}$/u;
-const PREFIXED_DIGEST_RE = /^sha256:[a-f0-9]{64}$/u;
-const CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const CONTAINER_NAME_RE = /^ashlr-agent-os-[a-f0-9]{32}$/u;
+const JOURNAL_GRAPH_OPTIONS = Object.freeze({ maxDepth: 4, allowArrays: false });
 
 export type AgentOsLocalContainerBrokerJournalStageV1 =
   | 'lease-held'
@@ -178,88 +186,28 @@ readonly AgentOsLocalContainerBrokerJournalStageV1[]>> = Object.freeze({
   summary: [],
 });
 
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value) || isProxy(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    return prototype === Object.prototype || prototype === null
-      ? value as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  try {
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string')) return false;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    return Object.keys(descriptors).sort().join('\0') === [...keys].sort().join('\0') &&
-      Object.values(descriptors).every((descriptor) => Object.hasOwn(descriptor, 'value'));
-  } catch {
-    return false;
-  }
-}
-
-function plainDataGraph(value: unknown, seen = new Set<object>(), depth = 0): boolean {
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return true;
-  if (typeof value === 'number') return Number.isSafeInteger(value);
-  if (typeof value !== 'object' || isProxy(value) || Array.isArray(value) || depth > 4 ||
-    seen.has(value)) return false;
-  seen.add(value);
-  const row = record(value);
-  if (!row) return false;
-  try {
-    return Object.values(Object.getOwnPropertyDescriptors(row)).every((descriptor) =>
-      Object.hasOwn(descriptor, 'value') && plainDataGraph(descriptor.value, seen, depth + 1));
-  } catch {
-    return false;
-  }
-}
-
 function ownedSnapshot(value: unknown): Record<string, unknown> | null {
-  try {
-    if (!plainDataGraph(value)) return null;
-    const snapshot = structuredClone(value);
-    return plainDataGraph(snapshot) ? record(snapshot) : null;
-  } catch {
-    return null;
-  }
-}
-
-function timestamp(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length !== 24) return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const row = value as Record<string, unknown>;
-  return `{${Object.keys(row).sort().map((key) =>
-    `${JSON.stringify(key)}:${canonicalJson(row[key])}`).join(',')}}`;
+  return record(immutablePlainDataSnapshot(value, JOURNAL_GRAPH_OPTIONS));
 }
 
 function recordDigest(value: Omit<AgentOsLocalContainerBrokerJournalRecordV1, 'recordDigest'>): string {
-  return createHash('sha256').update('ashlr.agent-os.local-container-broker-journal.record.v1\0', 'utf8')
-    .update(canonicalJson(value), 'utf8').digest('hex');
+  return canonicalEpochJsonDigest('ashlr.agent-os.local-container-broker-journal.record.v1\0', value);
 }
 
 function validState(value: Record<string, unknown>): boolean {
-  return RAW_DIGEST_RE.test(String(value['runId'])) && RAW_DIGEST_RE.test(String(value['requestNonceDigest'])) &&
+  return rawDigest(value['runId']) && rawDigest(value['requestNonceDigest']) &&
     ['requestDigest', 'permitDigest', 'brokerDigest', 'engineDigest', 'imageDigest', 'producerDigest',
-      'seccompDigest', 'createConfigDigest'].every((key) => RAW_DIGEST_RE.test(String(value[key]))) &&
-    PREFIXED_DIGEST_RE.test(String(value['executionIdentityDigest'])) &&
-    PREFIXED_DIGEST_RE.test(String(value['capacityEvidenceDigest'])) &&
-    PREFIXED_DIGEST_RE.test(String(value['allocationDigest'])) &&
+      'seccompDigest', 'createConfigDigest'].every((key) => rawDigest(value[key])) &&
+    prefixedDigest(value['executionIdentityDigest']) &&
+    prefixedDigest(value['capacityEvidenceDigest']) &&
+    prefixedDigest(value['allocationDigest']) &&
     Number.isSafeInteger(value['leaseEpoch']) && Number(value['leaseEpoch']) >= 1 &&
     timestamp(value['leaseExpiresAt']) &&
     CONTAINER_NAME_RE.test(String(value['containerName'])) &&
-    (value['containerId'] === null || CONTAINER_ID_RE.test(String(value['containerId']))) &&
+    (value['containerId'] === null || rawDigest(value['containerId'])) &&
     ['engineCreateRequestDigest', 'prestartInspectionDigest', 'finalInspectionDigest',
       'prepareAttestationDigest', 'finalAttestationDigest',
-      'removalEvidenceDigest'].every((key) => value[key] === null || RAW_DIGEST_RE.test(String(value[key]))) &&
+      'removalEvidenceDigest'].every((key) => value[key] === null || rawDigest(value[key])) &&
     (value['outcome'] === null || OUTCOMES.includes(value['outcome'] as AgentOsLocalContainerBrokerJournalOutcomeV1));
 }
 
@@ -296,8 +244,8 @@ function parseJournalRecord(value: unknown): AgentOsLocalContainerBrokerJournalR
     !Number.isSafeInteger(row['sequence']) || Number(row['sequence']) < 1 ||
     !STAGES.includes(row['stage'] as AgentOsLocalContainerBrokerJournalStageV1) ||
     !timestamp(row['recordedAt']) ||
-    !(row['previousRecordDigest'] === null || RAW_DIGEST_RE.test(String(row['previousRecordDigest']))) ||
-    !RAW_DIGEST_RE.test(String(row['recordDigest'])) || !validState(row)) return null;
+    !(row['previousRecordDigest'] === null || rawDigest(row['previousRecordDigest'])) ||
+    !rawDigest(row['recordDigest']) || !validState(row)) return null;
   const { recordDigest: claimed, ...unsigned } = row;
   if (recordDigest(unsigned as Omit<AgentOsLocalContainerBrokerJournalRecordV1, 'recordDigest'>) !== claimed) {
     return null;
@@ -322,14 +270,6 @@ function codec(): ImmutablePrivateRecordCodec<AgentOsLocalContainerBrokerJournal
     compare: (left, right) => left.runId.localeCompare(right.runId) ||
       (left.stage === 'summary' ? 1 : right.stage === 'summary' ? -1 : left.sequence - right.sequence),
   };
-}
-
-function immutable<T>(value: T): T {
-  if (value !== null && typeof value === 'object') {
-    for (const nested of Object.values(value as Record<string, unknown>)) immutable(nested);
-    Object.freeze(value);
-  }
-  return value;
 }
 
 function sameBinding(left: AgentOsLocalContainerBrokerJournalRecordV1,
@@ -589,7 +529,7 @@ export class AgentOsLocalContainerBrokerJournalV1 {
     'prepareAttestationDigest' | 'finalAttestationDigest' | 'removalEvidenceDigest' | 'outcome'>>,
     lock: LocalStoreLock,
   ): AgentOsLocalContainerBrokerJournalMutationV1 {
-    if (!this.#owns(lock) || !RAW_DIGEST_RE.test(runId) || !RAW_DIGEST_RE.test(expectedPreviousRecordDigest) ||
+    if (!this.#owns(lock) || !rawDigest(runId) || !rawDigest(expectedPreviousRecordDigest) ||
       !STAGES.includes(stage)) {
       return { ok: false, reason: 'invalid-input', record: null };
     }
@@ -700,16 +640,16 @@ export class AgentOsLocalContainerBrokerJournalV1 {
   }
 }
 
-export function agentOsLocalContainerBrokerRunIdV1(requestNonce: string): string | null {
+function requestNonceDomainDigest(domain: string, requestNonce: string): string | null {
   if (typeof requestNonce !== 'string' || requestNonce.length < 22 || requestNonce.length > 128 ||
     !/^[A-Za-z0-9_-]+$/u.test(requestNonce)) return null;
-  return createHash('sha256').update('ashlr.agent-os.local-container-broker.run.v1\0', 'utf8')
-    .update(requestNonce, 'utf8').digest('hex');
+  return rawEpochDigest(domain, Buffer.from(requestNonce, 'utf8'));
+}
+
+export function agentOsLocalContainerBrokerRunIdV1(requestNonce: string): string | null {
+  return requestNonceDomainDigest('ashlr.agent-os.local-container-broker.run.v1\0', requestNonce);
 }
 
 export function agentOsLocalContainerBrokerRequestNonceDigestV1(requestNonce: string): string | null {
-  if (typeof requestNonce !== 'string' || requestNonce.length < 22 || requestNonce.length > 128 ||
-    !/^[A-Za-z0-9_-]+$/u.test(requestNonce)) return null;
-  return createHash('sha256').update('ashlr.agent-os.local-container-broker.request-nonce.v1\0', 'utf8')
-    .update(requestNonce, 'utf8').digest('hex');
+  return requestNonceDomainDigest('ashlr.agent-os.local-container-broker.request-nonce.v1\0', requestNonce);
 }

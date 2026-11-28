@@ -214,10 +214,10 @@ export const CODEX_TERRA_MODEL_ID = 'gpt-6.1-terra';
 export const CODEX_ASTRA_MODEL_ID = 'gpt-6.2-astra';
 export const CODEX_LUNA_MODEL_ID = 'gpt-6-luna';
 export const CLAUDE_SONNET_MODEL_ID = 'claude-sonnet-5-5';
-export const CLAUDE_HAIKU_MODEL_ID = 'claude-haiku-5-5';
+const CLAUDE_HAIKU_MODEL_ID = 'claude-haiku-5-5';
 export const DEFAULT_FABLE_MODEL_ID = 'claude-fable-5-1';
 /** Registered for lookup only until its subscription admission safeguards are wired. */
-export const FABLE_52_MODEL_ID = 'claude-fable-5-2';
+const FABLE_52_MODEL_ID = 'claude-fable-5-2';
 export const MODEL_DEFAULTS_BY_TIER = {
   codex: { frontier: CODEX_ASTRA_MODEL_ID, work: DEFAULT_CODEX_MODEL_ID, mid: DEFAULT_CODEX_MODEL_ID, fast: CODEX_LUNA_MODEL_ID },
   claude: { frontier: DEFAULT_CLAUDE_MODEL_ID, work: DEFAULT_CLAUDE_MODEL_ID, mid: CLAUDE_SONNET_MODEL_ID, fast: CLAUDE_HAIKU_MODEL_ID },

@@ -37,6 +37,7 @@ import { BUILTIN_PLAYBOOK_SOURCES } from './builtins.js';
 import { canonicalizePlaybook, parsePlaybook } from './parse.js';
 import {
   PLAYBOOK_ID_PATTERN,
+  isPlainRecord,
   isPlaybookRef,
   playbookKindOf,
   type PlaybookMatch,
@@ -48,14 +49,16 @@ import {
 } from './types.js';
 
 /** A version history is bounded; past this an edit is refused (archive and start a new id). */
-export const MAX_PLAYBOOK_VERSIONS = 500;
+const MAX_PLAYBOOK_VERSIONS = 500;
 /** Playbooks per machine. */
-export const MAX_PLAYBOOKS = 200;
+const MAX_PLAYBOOKS = 200;
 /** The uses ledger is compacted to its newest lines past this size. */
 const USES_COMPACT_BYTES = 512 * 1024;
 const USES_KEEP_LINES = 2000;
 /** Stable createdAt for the virtual v1 of a built-in (the release that shipped it). */
 const BUILTIN_CREATED_AT = '2026-09-27T00:00:00.000Z';
+const BUILTIN_VERSION_NOTE = 'Shipped with ashlr';
+const BUILTIN_AUTHOR = 'ashlr';
 
 export function playbooksHome(): string {
   return join(homedir(), '.ashlr', 'playbooks');
@@ -69,11 +72,11 @@ function versionPath(id: string, version: number): string {
 function indexPath(): string {
   return join(playbooksHome(), 'index.json');
 }
-export function playbookUsesPath(): string {
+function playbookUsesPath(): string {
   return join(playbooksHome(), 'uses.jsonl');
 }
 
-export function shaOf(source: string): string {
+function shaOf(source: string): string {
   return createHash('sha256').update(source, 'utf8').digest('hex').slice(0, 12);
 }
 
@@ -89,7 +92,7 @@ export function builtinPlaybooks(): Map<string, PlaybookV1> {
   const out = new Map<string, PlaybookV1>();
   for (const raw of BUILTIN_PLAYBOOK_SOURCES) {
     const c = canonicalizePlaybook(raw);
-    if (!c.ok || !c.source) continue;
+    if (!c.ok) continue;
     out.set(c.meta.id, {
       v: 1, meta: c.meta, sections: c.sections, version: 1, sha: shaOf(c.source),
       source: c.source, createdAt: BUILTIN_CREATED_AT, builtin: true,
@@ -120,27 +123,35 @@ function emptyIndex(): IndexFileV1 {
 }
 
 function normalizeIndex(raw: unknown): IndexFileV1 {
-  if (!raw || typeof raw !== 'object' || (raw as { v?: unknown }).v !== 1) return emptyIndex();
-  const src = (raw as { playbooks?: unknown }).playbooks;
-  if (!src || typeof src !== 'object') return emptyIndex();
+  if (!isPlainRecord(raw) || raw['v'] !== 1) return emptyIndex();
+  const src = raw['playbooks'];
+  if (!isPlainRecord(src)) return emptyIndex();
   const out = emptyIndex();
-  for (const [id, entry] of Object.entries(src as Record<string, unknown>)) {
-    if (!PLAYBOOK_ID_PATTERN.test(id) || !entry || typeof entry !== 'object') continue;
-    const versions = (entry as { versions?: unknown }).versions;
+  for (const [id, entry] of Object.entries(src)) {
+    if (!PLAYBOOK_ID_PATTERN.test(id) || !isPlainRecord(entry)) continue;
+    const versions = entry['versions'];
     if (!Array.isArray(versions)) continue;
     out.playbooks[id] = {
       versions: versions.filter((v): v is IndexVersion =>
-        !!v && typeof v === 'object'
-        && Number.isInteger((v as { version?: unknown }).version)
-        && typeof (v as { createdAt?: unknown }).createdAt === 'string'),
+        isPlainRecord(v)
+        && Number.isInteger(v['version'])
+        && typeof v['createdAt'] === 'string'),
     };
   }
   return out;
 }
 
+function parseIndexText(text: string): IndexFileV1 {
+  try {
+    return normalizeIndex(JSON.parse(text));
+  } catch {
+    return emptyIndex();
+  }
+}
+
 async function readIndex(): Promise<IndexFileV1> {
   try {
-    return normalizeIndex(JSON.parse(await readFile(indexPath(), 'utf8')));
+    return parseIndexText(await readFile(indexPath(), 'utf8'));
   } catch {
     return emptyIndex();
   }
@@ -148,7 +159,7 @@ async function readIndex(): Promise<IndexFileV1> {
 
 function readIndexSync(): IndexFileV1 {
   try {
-    return normalizeIndex(JSON.parse(readFileSync(indexPath(), 'utf8')));
+    return parseIndexText(readFileSync(indexPath(), 'utf8'));
   } catch {
     return emptyIndex();
   }
@@ -200,10 +211,30 @@ function createdAtFor(index: IndexFileV1, id: string, version: number, fallback:
   return index.playbooks[id]?.versions.find((v) => v.version === version)?.createdAt ?? fallback;
 }
 
+function playbookIdsFromEntries(entries: readonly { name: string; isDirectory(): boolean }[]): string[] {
+  return entries.filter((d) => d.isDirectory() && PLAYBOOK_ID_PATTERN.test(d.name)).map((d) => d.name).sort();
+}
+
+function sortedPlaybookIds(disk: readonly string[]): string[] {
+  return [...new Set([...builtinPlaybooks().keys(), ...disk])].sort();
+}
+
+function selectPlaybookVersion(
+  id: string,
+  versions: readonly number[],
+  version: number | null,
+): { kind: 'builtin'; playbook: PlaybookV1 } | { kind: 'disk'; version: number } | null {
+  if (versions.length === 0) {
+    const builtin = builtinPlaybooks().get(id) ?? null;
+    return builtin && (version === null || version === 1) ? { kind: 'builtin', playbook: builtin } : null;
+  }
+  const want = version ?? versions[versions.length - 1]!;
+  return versions.includes(want) ? { kind: 'disk', version: want } : null;
+}
+
 async function diskIds(): Promise<string[]> {
   try {
-    return (await readdir(playbooksHome(), { withFileTypes: true }))
-      .filter((d) => d.isDirectory() && PLAYBOOK_ID_PATTERN.test(d.name)).map((d) => d.name).sort();
+    return playbookIdsFromEntries(await readdir(playbooksHome(), { withFileTypes: true }));
   } catch {
     return [];
   }
@@ -211,8 +242,7 @@ async function diskIds(): Promise<string[]> {
 
 function diskIdsSync(): string[] {
   try {
-    return readdirSync(playbooksHome(), { withFileTypes: true })
-      .filter((d) => d.isDirectory() && PLAYBOOK_ID_PATTERN.test(d.name)).map((d) => d.name).sort();
+    return playbookIdsFromEntries(readdirSync(playbooksHome(), { withFileTypes: true }));
   } catch {
     return [];
   }
@@ -260,28 +290,18 @@ function readVersionFileSync(id: string, version: number, index: IndexFileV1): P
  */
 export async function getPlaybook(id: string, version: number | null = null): Promise<PlaybookV1 | null> {
   if (!PLAYBOOK_ID_PATTERN.test(id)) return null;
-  const versions = await diskVersions(id);
-  if (versions.length === 0) {
-    const builtin = builtinPlaybooks().get(id) ?? null;
-    return builtin && (version === null || version === 1) ? builtin : null;
-  }
-  const want = version ?? versions[versions.length - 1]!;
-  if (!versions.includes(want)) return null;
-  return readVersionFile(id, want, await readIndex());
+  const selected = selectPlaybookVersion(id, await diskVersions(id), version);
+  if (!selected) return null;
+  return selected.kind === 'builtin' ? selected.playbook : readVersionFile(id, selected.version, await readIndex());
 }
 
 /** Synchronous twin of getPlaybook, for synchronous prompt builders. Never throws. */
 export function getPlaybookSync(id: string, version: number | null = null): PlaybookV1 | null {
   try {
     if (!PLAYBOOK_ID_PATTERN.test(id)) return null;
-    const versions = diskVersionsSync(id);
-    if (versions.length === 0) {
-      const builtin = builtinPlaybooks().get(id) ?? null;
-      return builtin && (version === null || version === 1) ? builtin : null;
-    }
-    const want = version ?? versions[versions.length - 1]!;
-    if (!versions.includes(want)) return null;
-    return readVersionFileSync(id, want, readIndexSync());
+    const selected = selectPlaybookVersion(id, diskVersionsSync(id), version);
+    if (!selected) return null;
+    return selected.kind === 'builtin' ? selected.playbook : readVersionFileSync(id, selected.version, readIndexSync());
   } catch {
     return null;
   }
@@ -289,9 +309,8 @@ export function getPlaybookSync(id: string, version: number | null = null): Play
 
 /** Latest version of every playbook (built-ins included), by id. */
 export async function listLatestPlaybooks(): Promise<PlaybookV1[]> {
-  const ids = new Set([...builtinPlaybooks().keys(), ...(await diskIds())]);
   const out: PlaybookV1[] = [];
-  for (const id of [...ids].sort()) {
+  for (const id of sortedPlaybookIds(await diskIds())) {
     const pb = await getPlaybook(id);
     if (pb) out.push(pb);
   }
@@ -301,9 +320,8 @@ export async function listLatestPlaybooks(): Promise<PlaybookV1[]> {
 /** Synchronous twin of listLatestPlaybooks. Never throws. */
 export function listLatestPlaybooksSync(): PlaybookV1[] {
   try {
-    const ids = new Set([...builtinPlaybooks().keys(), ...diskIdsSync()]);
     const out: PlaybookV1[] = [];
-    for (const id of [...ids].sort()) {
+    for (const id of sortedPlaybookIds(diskIdsSync())) {
       const pb = getPlaybookSync(id);
       if (pb) out.push(pb);
     }
@@ -339,7 +357,7 @@ export async function listPlaybookVersions(id: string): Promise<PlaybookVersionI
   const versions = await diskVersions(id);
   if (versions.length === 0) {
     const b = builtinPlaybooks().get(id);
-    return b ? [{ version: 1, sha: b.sha, createdAt: b.createdAt, note: 'Shipped with ashlr', author: 'ashlr' }] : [];
+    return b ? [{ version: 1, sha: b.sha, createdAt: b.createdAt, note: BUILTIN_VERSION_NOTE, author: BUILTIN_AUTHOR }] : [];
   }
   const index = await readIndex();
   const out: PlaybookVersionInfo[] = [];
@@ -384,7 +402,7 @@ const fail = (field: string, message: string): SavePlaybookResult => ({ ok: fals
 export function savePlaybook(source: string, opts: SavePlaybookOptions = {}): Promise<SavePlaybookResult> {
   return serialized(async () => {
     const c = canonicalizePlaybook(source);
-    if (!c.ok || !c.source) return { ok: false, errors: c.ok ? [{ field: 'source', message: 'Could not read the playbook.' }] : c.errors };
+    if (!c.ok) return { ok: false, errors: c.errors };
     if (scrubSecrets(source) !== source) {
       return fail('source', 'This looks like it contains a secret (a key, token or password). Playbooks are sent to cloud engines — remove it.');
     }
@@ -417,7 +435,7 @@ export function savePlaybook(source: string, opts: SavePlaybookOptions = {}): Pr
     // First edit of a built-in: its v1 goes to disk verbatim, so history starts at what ran before.
     if (current?.builtin) {
       await writeFile(versionPath(id, 1), current.source, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-      entry.versions.push({ version: 1, createdAt: current.createdAt, note: 'Shipped with ashlr', author: 'ashlr' });
+      entry.versions.push({ version: 1, createdAt: current.createdAt, note: BUILTIN_VERSION_NOTE, author: BUILTIN_AUTHOR });
     }
     const version = current ? current.version + 1 : 1;
     try {

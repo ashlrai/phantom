@@ -33,8 +33,8 @@
  *    shape. Anything less is an invalid row: counted, never partially
  *    trusted. The ledger only ever records RESOLVED jobs — in-flight work
  *    is absent by design and never counts for or against a pool.
- *    Only the first valid retained row per job counts, matching the writer's
- *    refusal to overwrite a recorded job. Deduplication precedes windowing.
+ *    Only the first valid row per job visible at evaluation time counts.
+ *    Deduplication precedes the lower bound of the evidence window.
  *  - Recurring means recorded across days at a rate that cannot be a
  *    transient burst: a pool's cell emits only when its in-window rows
  *    reach REWARD_MIN_ROWS, its not-held rows reach REWARD_MIN_NOT_HELD,
@@ -138,7 +138,7 @@ export interface RewardPoolTally {
 }
 
 export interface RewardJournalFold {
-  /** Distinct jobs whose first valid retained reward row is in the window. */
+  /** Distinct jobs whose first valid reward row visible at evaluation time is in the window. */
   records: number;
   /** Retained-tail lines that failed JSON parse or the producer contract. */
   invalidRows: number;
@@ -162,10 +162,12 @@ export function foldRewardJournal(text: string, nowMs: number, windowMs: number)
     let row: unknown;
     try { row = JSON.parse(trimmed); } catch { fold.invalidRows += 1; continue; }
     if (!isRewardSignalV1(row)) { fold.invalidRows += 1; continue; }
+    const atMs = Date.parse(row.recordedAt);
+    if (atMs > nowMs || Date.parse(row.dispatchedAt) > nowMs ||
+        (row.mergedAt !== null && Date.parse(row.mergedAt) > nowMs)) continue;
     if (seenJobs.has(row.jobId)) continue;
     seenJobs.add(row.jobId);
-    const atMs = Date.parse(row.recordedAt);
-    if (!Number.isFinite(atMs) || atMs < since || atMs > nowMs) continue;
+    if (atMs < since) continue;
     fold.records += 1;
     const key = row.pool ?? UNATTRIBUTED_KEY;
     let tally = fold.pools.get(key);

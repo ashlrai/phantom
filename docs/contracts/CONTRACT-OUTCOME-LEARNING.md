@@ -128,6 +128,26 @@ improvement patterns reach the self-improvement backlog. `phm select` and
 the fleet context pack do not consume the friction fields and pass
 nothing.
 
+Dead-attempt evidence names why an attempt produced nothing, additively
+like the friction flags — the attempt keeps its `closed` state while the
+cell's named-cause counts record the reason. An `empty: true` finish
+counts the cell's `emptyFailures` only when its empty class is
+infrastructure failure: the recorded `empty_class` when it carries the
+closed vocabulary, else re-derived from the row's own `exit_code` and
+`pool_error` exactly like dispatchd's `classify_empty` — a pool error or
+nonzero exit is `error`, a clean zero exit is the healthy `no_diff`
+no-op, and a missing exit status is `unknown`. No-op and capture-gap
+empties never count, matching the lane penalty's rule that only
+infra-failed empties are evidence. A `launch_failed`/`launch_terminal`
+row — `retry` and `give_up` actions alike, on a solo job or a dead batch
+session closing its member attempts — resolves its open assign as
+`closed` and counts the cell's `launchDeaths`; batch-member
+`task_outcome` requeues and reverted closes are not launch deaths, and a
+requeued relaunch is a fresh assign exactly like the attempt count
+already treats it. `emptyFailureRate`/`launchDeathRate` report each
+count over the cell's attempts; both are jobs-ledger evidence only — the
+dispatch log carries no such rows, so dispatch-dialect cells report 0.
+
 ## How it routes
 
 `routeLearnedJob` draws a Thompson sample from a Beta success posterior and a
@@ -146,9 +166,13 @@ for example `Sent to Devin because CMP Codex resets in 40 min with 5% left.`
 
 `learnedSeatPenalty` turns the same posterior means into seat-router penalties
 for one (job type, repo) cell. `learnedFleetSeatPenalty` pools every recorded
-cell per resource instead — attempts, good merges and usage summed across
-models, job types and repos — because a seat-router request carries no fleet
-job type or repo, so the resource's whole dispatch record is the honest prior.
+cell per resource across models, job types and repos because a seat-router
+request carries no fleet job type or repo. It scores the posterior good-merge
+rate and includes an allowance cost factor only when every pooled resource
+has at least one recorded allowance reading. The cost factor uses the sum
+and count of those readings. Jobs-ledger token totals and imputed usage
+contribute no allowance evidence. When any resource's allowance is unknown,
+all resources are scored on the posterior good-merge rate alone.
 Both normalize the same way: the best resource's penalty is 0 and every other
 resource's stays inside [0, 1].
 
@@ -178,7 +202,12 @@ rate is the share of the cell's attempts that resolved `reverted`. The
 `dirty` and `fixup` patterns count both the dispatch log's exclusive
 outcome states and the merge-queue friction flags above, so recurring
 merge conflicts and required-check failures surface as improvement work
-even though every affected attempt still merged. The jobs are data. This
+even though every affected attempt still merged. The `empty-failure` and
+`launch-death` patterns count the dead-attempt evidence above at the
+same three-attempt threshold, so a seat that repeatedly produces
+infrastructure-dead finishes or loses launches before a run starts
+surfaces as named work — with the low-merge pattern still firing
+alongside when good merges stay the minority. The jobs are data. This
 module does not enqueue them, spend, or merge.
 
 ## Surfaces

@@ -24,9 +24,19 @@
  * while `topic` keeps only links whose `to` parses to that exact topic
  * through the shared `groupAddressTopicOf`, composing with `channel`
  * into one room AND one topic exactly as `phm fleet edges --channel
- * --topic` applies. The filters compose with each other and with the
- * window. Unknown keys, wrong types, caller roots, paths and
- * working directories are all refused before the store is touched.
+ * --topic` applies — and the shared row-slice vocabulary every other
+ * bus read applies before its projection: `since`/`before` the
+ * `15m|2h|1d|ISO|epoch` grammar resolved to the `[since, before)`
+ * window on receipt time, `priority` one exact P0–P3 band, `kind` one
+ * classified agent-message kind (ask/reply/handoff/status/blocker,
+ * matched case-insensitively), `job` the printable job label the
+ * shared `busBodyJobMatch` rule resolves and `contains` the bounded
+ * case-insensitive summary needle. The filters compose with each
+ * other and with the window — every one narrows the receipt set
+ * before it aggregates, so counts, `lastAt` and provider inference
+ * describe only the matching traffic. Unknown keys, wrong types,
+ * caller roots, paths and working directories are all refused before
+ * the store is touched.
  *
  * The result is the projection untouched plus the MCP envelope
  * metadata: `source` keeps missing/unavailable honest — an unreadable
@@ -39,31 +49,26 @@
  * accepted — the bus store and registry roots stay server-owned — and
  * the tool never posts, claims, acks, replies or renews TTL.
  */
-import { readFleetEdges, type FleetEdges } from '../core/fleet/fleet-edges.js';
+import { readFleetEdges, type FleetEdges, type FleetEdgesOptions } from '../core/fleet/fleet-edges.js';
 import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
+import { AGENT_MESSAGE_KINDS, parseSince, type AgentMessageKind } from '../core/fleet/agent-messages.js';
+import { busReadContains } from '../core/agents/bus-unified.js';
+import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 
 /** The printable routing-label rule every bus read's `--from`/`--to` filter validates. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const EDGE_KEYS = new Set(['windowMinutes', 'from', 'to', 'channel', 'topic']);
+const EDGE_KEYS = new Set(['windowMinutes', 'from', 'to', 'channel', 'topic',
+  'since', 'before', 'priority', 'kind', 'job', 'contains']);
 
 /**
  * The parsed arguments are the projection's own option subset — the MCP
  * surface adds no filter the CLI flags do not share and accepts no
- * caller root, path, working directory or clock.
+ * caller root, path, working directory or clock. `since`/`before` arrive as
+ * the shared `15m|2h|1d|ISO|epoch` grammar strings and resolve to epoch-ms
+ * bounds here, the same convention `fleet_agent_messages` applies.
  */
-export interface FleetAgentEdgesArgs {
-  /** Trailing window in minutes; the projection's own 1..1440 bound. */
-  windowMinutes?: number;
-  /** Sender-side agent ref under the shared identity-label rule. */
-  from?: string;
-  /** Recipient-side agent ref under the shared identity-label rule. */
-  to?: string;
-  /** Room name whose `group:<channel>:*` traffic is kept; every topic. */
-  channel?: string;
-  /** Exact topic component a well-formed `group:<room>:<topic>` `to` must carry. */
-  topic?: string;
-}
+export type FleetAgentEdgesArgs = FleetEdgesOptions;
 
 /**
  * Runtime argument validation: low-level SDK servers never check the
@@ -72,31 +77,66 @@ export interface FleetAgentEdgesArgs {
  * the same value rule `phm fleet edges` enforces on its flags:
  * `windowMinutes` stays an integer inside 1..1440 (the bound
  * `projectFleetEdges` would throw on is refused here instead), `from`
- * and `to` stay printable routing labels, and `channel`/`topic` take
+ * and `to` stay printable routing labels, `channel`/`topic` take
  * the strict channel-name grammar every other bus read's room filters
- * enforce. Unknown keys, wrong types, caller roots and malformed values
- * are all refused before the store is touched.
+ * enforce, and the row-slice fields take the shared bus-read rules —
+ * `since`/`before` resolve through `parseSince` to a safe non-negative
+ * epoch-ms integer (`before` the exclusive upper bound composing with
+ * `since` into one `[since, before)` window), `priority` stays an exact
+ * P0..P3 member, `kind` lowercases into the classified-kind enum,
+ * `job` takes the printable job label and `contains` the bounded needle
+ * `busReadContains` normalizes. Unknown keys, wrong types, caller roots
+ * and malformed values are all refused before the store is touched.
  */
 export function parseFleetAgentEdgesArgs(args: Record<string, unknown>): FleetAgentEdgesArgs | null {
   if (Object.keys(args).some(key => !EDGE_KEYS.has(key))) return null;
+  const options: FleetEdgesOptions = {};
   const windowMinutes = args.windowMinutes;
-  if (windowMinutes !== undefined &&
-    (typeof windowMinutes !== 'number' || !Number.isInteger(windowMinutes) || windowMinutes < 1 || windowMinutes > 1440)) {
-    return null;
+  if (windowMinutes !== undefined) {
+    if (typeof windowMinutes !== 'number' || !Number.isInteger(windowMinutes) || windowMinutes < 1 || windowMinutes > 1440) {
+      return null;
+    }
+    options.windowMinutes = windowMinutes;
   }
   const from = args.from, to = args.to;
   if ((from !== undefined && (typeof from !== 'string' || !BUS_LABEL.test(from))) ||
     (to !== undefined && (typeof to !== 'string' || !BUS_LABEL.test(to)))) return null;
+  if (from !== undefined) options.from = from as string;
+  if (to !== undefined) options.to = to as string;
   const channel = args.channel, topic = args.topic;
   if ((channel !== undefined && (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success)) ||
     (topic !== undefined && (typeof topic !== 'string' || !agentChannelNameSchema.safeParse(topic).success))) return null;
-  return {
-    ...(windowMinutes === undefined ? {} : { windowMinutes }),
-    ...(from === undefined ? {} : { from: from as string }),
-    ...(to === undefined ? {} : { to: to as string }),
-    ...(channel === undefined ? {} : { channel: channel as string }),
-    ...(topic === undefined ? {} : { topic: topic as string }),
-  };
+  if (channel !== undefined) options.channel = channel as string;
+  if (topic !== undefined) options.topic = topic as string;
+  for (const key of ['since', 'before'] as const) {
+    const value = args[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'string') return null;
+    const resolved = parseSince(value);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    options[key] = resolved;
+  }
+  const priority = args.priority;
+  if (priority !== undefined) {
+    if (typeof priority !== 'string' || !(BUS_PRIORITIES as readonly string[]).includes(priority)) return null;
+    options.priority = priority as BusPriority;
+  }
+  const kind = args.kind;
+  if (kind !== undefined) {
+    if (typeof kind !== 'string') return null;
+    const normalized = kind.toLowerCase();
+    if (!(AGENT_MESSAGE_KINDS as readonly string[]).includes(normalized)) return null;
+    options.kind = normalized as AgentMessageKind;
+  }
+  const job = args.job;
+  if (job !== undefined) {
+    if (typeof job !== 'string' || !BUS_LABEL.test(job)) return null;
+    options.job = job;
+  }
+  const contains = busReadContains(args.contains);
+  if (contains === null) return null;
+  if (contains !== undefined) options.contains = contains;
+  return options;
 }
 
 export interface FleetAgentEdgesDeps {

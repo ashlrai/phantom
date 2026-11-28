@@ -32,6 +32,8 @@ Without `--json` the command prints one line per lane, for example
 
 Error rate and latency use runs with a recorded outcome and a readable end
 timestamp between their start and the end of the report window, inclusive.
+A current phase start inside that interval also sets a lower bound on the
+end timestamp.
 A run with a valid start in the window still counts as a call if its
 completion evidence is missing or invalid.
 
@@ -72,6 +74,10 @@ at or before report time. If a window has no such reading, the lane verdict
 is unknown. The Runs History API's meter field shows the newest reading at
 or before report time, or null when there is none.
 A reading must predate its own reset to support a reset comparison.
+A reset comparison uses the newest fresh, valid prior reading with an earlier
+observation time. Unusable readings between that sample and the current one
+do not prevent the comparison. An unusable current reading leaves the verdict
+unknown.
 A previous window can expire by report time and still establish a rollover
 if its reading was taken before it expired.
 The default reader scans personal Codex rollouts in descending file
@@ -84,7 +90,9 @@ discarding the other readings in the rollout. If it is the latest reading for
 its window, the lane verdict stays unknown.
 
 Lane truth uses the modification time of `queue/slots.json` to qualify its
-running count, queued count and hold state. These fields are null when the
+running count, queued count and hold state. The file is read under the
+resolved runs directory (`ASHLR_RUNS_DIR`, else `~/.ashlr-runs`), the same
+override the other fleet readers honor. These fields are null when the
 file is more than 15 minutes old or dated after report time. The configured
 target remains visible.
 

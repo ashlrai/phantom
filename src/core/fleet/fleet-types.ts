@@ -537,6 +537,16 @@ export interface FleetLiveRun {
   seatDecision: SeatDecision | null;
 }
 
+/**
+ * The `capReason` the live snapshot stamps on every lane when no standing tick
+ * has reported lanes recently. `slots` is then a placeholder, not an observation:
+ * readers must treat capacity as unknown rather than an observed count. The
+ * producer (verse/fleet-live-api.ts) and every consumer (the CLI lane-slots
+ * read, the Fleet UI chips) compare against this one constant so the sentinel
+ * cannot drift into a silently wrong "0 slots".
+ */
+export const STALE_STANDING_TICK_REASON = 'No standing tick has reported lanes in the last 10 minutes.';
+
 export interface FleetLaneState {
   lane: FleetEngine;
   /** Slots this lane may use right now. 0 = off. */

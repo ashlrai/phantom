@@ -44,18 +44,26 @@ complete than the journal's latest snapshot is refused.
 
 Station mapping (visit id `<job>:a<attempt>`, pool = the launch lane):
 
-- **READY** — queue dwell. Arrival is the earliest `enqueue`/`queued` stamp
-  or `launch_failed` receipt with `action=retry` before the attempt's launch;
-  departure is the `launch` stamp, with `startedAt === completedAt` because
+- **READY** — queue dwell. Arrival is the earliest `enqueue`/`queued` stamp,
+  `launch_failed` receipt with `action=retry`, or `launch_terminal` receipt
+  before the attempt's launch — dispatchd requeues the line on every ending
+  but `give_up` and the worktree skip, so a terminal is re-arrival evidence;
+  the terminal right after a `give_up` receipt belongs to the dropped stint
+  and does not count. Departure is the `launch` stamp, with
+  `startedAt === completedAt` because
   dispatch service is instantaneous. Jobs still listed `- READY` in
   router-queue.md produce open visits: first-stint jobs take the ledger
   enqueue stamp or the line's `enq=` epoch-seconds token, while a re-queued
   job (recorded launches) admits only an `enq=` stamp that postdates its
   last launch and numbers as the next attempt. A job resolved `DONE-NOOP`
   before any launch completes its READY visit at the outcome stamp.
-- **claimed** — `launch` to the first of `finish`, `publish` or a matched
+- **claimed** — `launch` to the first of `finish`, `publish`, the attempt's
+  own `launcher-exited` `launch_terminal` or a matched
   terminal outcome; service starts at launch (dedicated worker), so `wait` is
-  zero and `rho` measures mean concurrency.
+  zero and `rho` measures mean concurrency. A deferred or failed attempt
+  leaves no finish row; its terminal receipt is the observed end of the
+  slot, while a `spawn-failed` terminal belongs to the next attempt's
+  failed claim and never closes this one.
 - **publish** — `finish` to `publish` (or an outcome `PUBLISHED` row); a
   finish without publish stays open as publisher-slot WIP.
 - **pr-ci** — `publish` to `ci_complete`, a matched `MERGED`/`CLOSED` outcome,
@@ -67,7 +75,8 @@ Station mapping (visit id `<job>:a<attempt>`, pool = the launch lane):
 
 Known gaps stay unknown: `planned`, `released`, `fix-main`, review and release
 stations have no ledger boundaries; a re-queued attempt whose re-arrival left
-no `enqueue`/`queued`/`launch_failed`-retry stamp and no fresh `enq=` token on
+no `enqueue`/`queued`/`launch_failed`-retry/`launch_terminal` stamp and no
+fresh `enq=` token on
 its READY line still has no recorded re-arrival, so that READY wait is not
 emitted; `checkout`, `model` and check phases inside claimed/pr-ci are
 not split. URL-bearing outcomes match the attempt that published that PR;

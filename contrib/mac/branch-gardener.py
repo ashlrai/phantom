@@ -90,10 +90,24 @@ def pulls(repository, state='all'):
         require(row['state'] in ('open', 'closed') and type(row['number']) is int
                 and row['number'] > 0 and SHA.fullmatch(head['sha'])
                 and isinstance(head['ref'], str), 'invalid-pr')
-        out.append({'number': row['number'], 'state': row['state'], 'sha': head['sha'],
-                    'branch': head['ref'], 'repo': head['repo']['full_name'].lower() if head['repo'] else None,
-                    'base': repository, 'merged': bool(row['merged_at'])})
+        pr = {'number': row['number'], 'state': row['state'], 'sha': head['sha'],
+              'branch': head['ref'], 'repo': head['repo']['full_name'].lower() if head['repo'] else None,
+              'base': repository, 'merged': bool(row['merged_at'])}
+        if pr['state'] == 'open':
+            base = row.get('base')
+            base_repo = base.get('repo') if isinstance(base, dict) else None
+            require(isinstance(base_repo, dict) and isinstance(base_repo.get('full_name'), str)
+                    and base_repo['full_name'].lower() == repository.lower()
+                    and isinstance(base.get('ref'), str) and bool(base['ref']),
+                    'invalid-open-pr-base')
+            pr['base_branch'] = base['ref']
+        out.append(pr)
     return out
+
+
+def open_pr_bases(prs, repository):
+    return {pr['base_branch'] for pr in prs
+            if pr['state'] == 'open' and pr['base'] == repository}
 
 
 def metadata(repository):
@@ -175,7 +189,7 @@ def protected(name, branch, defaults, active, pins):
             or any(fnmatch.fnmatchcase(name, pattern) for pattern in pins))
 
 
-def classify(name, branch, prs, repository, defaults, active, pins, ancestor, stale_empty):
+def classify(name, branch, prs, repository, defaults, active, pins, ancestor, stale_empty, open_bases):
     row = {'branch': name, 'sha': branch['sha'], 'action': 'keep', 'reason': 'protected'}
     if protected(name, branch, defaults, active, pins):
         return row
@@ -184,6 +198,8 @@ def classify(name, branch, prs, repository, defaults, active, pins, ancestor, st
         row['reason'] = 'held-pr'
     elif any(pr['state'] == 'open' for pr in matching):
         row['reason'] = 'open-pr'
+    elif name in open_bases:
+        row['reason'] = 'open-pr-base'
     elif any(pr['sha'] == branch['sha'] for pr in matching):
         pr = next(pr for pr in matching if pr['sha'] == branch['sha'])
         row.update(action='delete', reason='merged-pr' if pr['merged'] else 'closed-pr', pr=pr)
@@ -275,9 +291,10 @@ def garden(repository, cfg, runs, projects, roots, apply):
                     return False
                 return not any(line.startswith('+') for line in git(directory, 'cherry', base, sha).stdout.splitlines())
 
+            open_bases = open_pr_bases(prs, repository)
             for name, branch in sorted(snapshot.items()):
                 row = classify(name, branch, prs, repository, set(defaults.values()), active,
-                               cfg['pins'], ancestor, stale_empty)
+                               cfg['pins'], ancestor, stale_empty, open_bases)
                 row['result'] = 'planned' if row['action'] == 'delete' else 'retained'
                 report['rows'].append(row)
             verify_pr_refs(directory, report['rows'])
@@ -296,12 +313,14 @@ def garden(repository, cfg, runs, projects, roots, apply):
                     retained = git(directory, 'merge-base', '--is-ancestor', base, latest,
                                    allowed=(0, 1)).returncode == 0
                     opened = [pr for source in sources for pr in pulls(source, 'open')]
+                    fresh_open_bases = open_pr_bases(opened, repository)
                     busy = active_branches(projects, runs, roots)
                     batch = []
                     for row in candidates[start:start + 100]:
                         current = fresh.get(row['branch'])
                         if (not retained or fresh_defaults != defaults or not current or current['sha'] != row['sha']
                                 or protected(row['branch'], current, set(fresh_defaults.values()), busy, cfg['pins'])
+                                or row['branch'] in fresh_open_bases
                                 or any(pr['repo'] in (repository, None) and pr['branch'] == row['branch'] for pr in opened)):
                             row['result'] = 'guard-changed'
                         else:

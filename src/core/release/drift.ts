@@ -8,7 +8,8 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { parseBuildIdentity } from '../build-identity.js';
-import { FLEET_CAPABILITIES, SELF_DRIFT_SCHEMA, UNKNOWN, driftLine, type FeatureRow, type FeatureState, type SelfDriftV1, type Unknown } from './drift-shape.js';
+import { UNKNOWN, parseReleaseIso, type Unknown } from './cadence.js';
+import { FLEET_CAPABILITIES, SELF_DRIFT_SCHEMA, driftLine, type FeatureRow, type FeatureState, type SelfDriftV1 } from './drift-shape.js';
 
 export * from './drift-shape.js';
 
@@ -28,7 +29,7 @@ export interface SelfDriftDeps {
   now?: () => Date;
 }
 
-export const defaultPhantomClone = (): string => join(homedir(), 'Projects', 'ashlrai', 'phantom');
+const defaultPhantomClone = (): string => join(homedir(), 'Projects', 'ashlrai', 'phantom');
 
 export function gitReader(repo: string): GitRead {
   return args => {
@@ -61,8 +62,6 @@ function helpProbe(bin: string): HelpProbe {
 }
 
 const STABLE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
-/** Git dates as UTC ISO strings, or null when unparseable. */
-const iso = (text: string | null | undefined): string | null => text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : null;
 const versionParts = (version: string): number[] | null => {
   const match = STABLE_TAG.exec(version.startsWith('v') ? version : `v${version}`);
   return match ? match.slice(1).map(Number) : null;
@@ -70,10 +69,14 @@ const versionParts = (version: string): number[] | null => {
 const newer = (a: number[], b: number[]): boolean => a[0]! !== b[0]! ? a[0]! > b[0]! : a[1]! !== b[1]! ? a[1]! > b[1]! : a[2]! > b[2]!;
 
 /** Stable `vX.Y.Z` tags, newest first, or null when the clone cannot be read. */
-export function releaseTags(git: GitRead): { tag: string; at: string }[] | null {
+function releaseTags(git: GitRead): { tag: string; at: string }[] | null {
   const out = git(['for-each-ref', '--sort=-v:refname', '--format=%(refname:strip=2)%09%(creatordate:iso-strict)', 'refs/tags/v*']);
   if (out === null) return null;
-  return out.split('\n').map(line => line.split('\t')).filter(([tag, at]) => STABLE_TAG.test(tag ?? '') && !!iso(at)).map(([tag, at]) => ({ tag: tag!, at: iso(at)! }));
+  return out.split('\n').flatMap(line => {
+    const [tag, rawAt] = line.split('\t');
+    const at = parseReleaseIso(rawAt);
+    return tag && STABLE_TAG.test(tag) && at ? [{ tag, at }] : [];
+  });
 }
 
 /** Stable releases newer than `version`; unknown when either side is unreadable or the clone has no tags. */
@@ -94,7 +97,7 @@ export async function readSelfDrift(deps: SelfDriftDeps = {}): Promise<SelfDrift
   const installed = (deps.installed ?? readInstalledBuild)();
   const tags = releaseTags(git);
   const master = git(['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/master^{commit}']) || null;
-  const masterAt = master ? iso(git(['log', '-1', '--format=%cI', master])) : null;
+  const masterAt = master ? parseReleaseIso(git(['log', '-1', '--format=%cI', master])) : null;
   // Count only when the clone has the installed commit and the walk never reached a parentless commit: in a
   // shallow clone that is a cut-off point, past which the count would be a guess.
   const counted = master && installed.revision && git(['cat-file', '-e', `${installed.revision}^{commit}`]) !== null
@@ -122,7 +125,7 @@ export async function readSelfDrift(deps: SelfDriftDeps = {}): Promise<SelfDrift
     latestRelease: tags?.[0] ? { tag: tags[0].tag, at: tags[0].at } : { tag: UNKNOWN, at: UNKNOWN },
     master: { revision: master ?? UNKNOWN, at: masterAt ?? UNKNOWN },
     behindCommits: unshipped ? unshipped.length : UNKNOWN,
-    oldestUnshippedMergeAt: unshipped ? iso(unshipped.at(-1)) ?? (unshipped.length ? UNKNOWN : null) : UNKNOWN,
+    oldestUnshippedMergeAt: unshipped ? parseReleaseIso(unshipped.at(-1)) ?? (unshipped.length ? UNKNOWN : null) : UNKNOWN,
     ...drift, features, line: driftLine(drift),
   };
 }

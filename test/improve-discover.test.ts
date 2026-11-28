@@ -139,7 +139,8 @@ describe('scheduled auto-discover', () => {
 });
 
 // Fleet outcome learning → backlog items: the jobs ledger and dispatch log's
-// recurring failure patterns (breakage/revert/dirty/fixup/low-merge) become items.
+// recurring failure patterns (breakage/revert/dirty/fixup/empty-failure/
+// launch-death/low-merge) become items.
 describe('fleet outcome-learning items', () => {
   const FTS = '2026-11-01T00:00:00Z';
   const fleetFile = (rel: string, text: string): string => {

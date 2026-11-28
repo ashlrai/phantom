@@ -42,7 +42,7 @@ const ghOk = (rows: unknown[]): CloudGh => async () => ({ ok: true, stdout: JSON
 const noStates: NonNullable<MergeBacklogReadInput['states']> = () => new Map<number, FleetMergeStateRead>();
 const clock = () => new Date(NOW);
 
-function input(over: MergeBacklogReadInput = {}): MergeBacklogReadInput {
+function input(over: Partial<MergeBacklogReadInput> = {}): MergeBacklogReadInput {
   return { repo: REPO, gh: ghOk([]), states: noStates, now: clock, ...over };
 }
 
@@ -207,4 +207,16 @@ describe('readMergeBacklog', () => {
     expect(calls[0]).toContain(REPO);
     expect(calls[0]).toContain('25');
   });
+  it('proves completeness only below the cap with a clean census', async () => {
+    const capped = await readMergeBacklog(input({ gh: ghOk([ghRow(1), ghRow(2)]), limit: 2 }));
+    expect(capped.coverage).toEqual({ limit: 2, scanned: 2, discarded: 0, complete: false });
+    const invalid = await readMergeBacklog(input({ gh: ghOk([null, { number: 0 }]), limit: 3 }));
+    expect(invalid.items).toEqual([]);
+    expect(invalid.coverage).toEqual({ limit: 3, scanned: 2, discarded: 2, complete: false });
+    const empty = await readMergeBacklog(input({ gh: ghOk([]), limit: 3 }));
+    expect(empty.coverage).toEqual({ limit: 3, scanned: 0, discarded: 0, complete: true });
+    const duplicated = await readMergeBacklog(input({ gh: ghOk([ghRow(1), ghRow(1)]), limit: 3 }));
+    expect(duplicated.coverage?.complete).toBe(false);
+  });
+
 });

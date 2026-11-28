@@ -4,7 +4,7 @@ import {mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, readFileSync
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {parse} from 'yaml';
-import {publisherInput, bindAttestedArtifact, acceptPackageIdentity, verifyHandoff, assertRegistryPackage, assertLatestPromotion, verifyCanonicalProvenance, publicationStatus, reconcileRegistry, reconcileLatest, installPublishedPackage, installPublishedArgs, INSTALL_ETARGET_ATTEMPTS, INSTALL_ETARGET_DELAY_MS} from '../scripts/canonical-npm-publisher.mjs';
+import {assertWorkflowCurrent, publisherInput, bindAttestedArtifact, acceptPackageIdentity, verifyHandoff, assertRegistryPackage, assertLatestPromotion, verifyCanonicalProvenance, publicationStatus, reconcileRegistry, reconcileLatest, installPublishedPackage, installPublishedArgs, INSTALL_ETARGET_ATTEMPTS, INSTALL_ETARGET_DELAY_MS} from '../scripts/canonical-npm-publisher.mjs';
 import {resolveReleaseSourceRef} from '../scripts/hosted-build-artifact.mjs';
 const hash = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 const env = {GITHUB_REPOSITORY: 'ashlrai/phantom', GITHUB_REPOSITORY_ID: '1263526319', GITHUB_REPOSITORY_OWNER_ID: '258113726',
@@ -142,6 +142,24 @@ describe('canonical npm publication admission', () => {
       expect(configure.run).toContain('export NPM_CONFIG_GLOBALCONFIG="$RUNNER_TEMP/phantom-global-npmrc"');
       expect(configure.run).toContain('>> "$GITHUB_ENV"');
     }
+  });
+});
+
+describe('workflow currency', () => {
+  const a = 'a'.repeat(40), b = 'b'.repeat(40);
+  const reader = (compare: unknown) => (endpoint: string) => { expect(endpoint).toBe(`repos/ashlrai/phantom/compare/${a}...${b}`); return compare; };
+  it('accepts the tip and an ancestor with only unrelated changes', () => {
+    expect(() => assertWorkflowCurrent('ashlrai/phantom', a, a, () => { throw new Error('no read'); })).not.toThrow();
+    expect(() => assertWorkflowCurrent('ashlrai/phantom', a, b, reader({status: 'ahead', files: [{filename: 'docs/x.md'}, {filename: 'src/core/y.ts'}]}))).not.toThrow();
+  });
+  it.each([
+    {status: 'diverged', files: []}, {status: 'behind', files: []}, {status: 'ahead'},
+    {status: 'ahead', files: [{filename: 'scripts/canonical-npm-publisher.mjs'}]},
+    {status: 'ahead', files: [{filename: '.github/workflows/publish-canonical-npm.yml'}]},
+    {status: 'ahead', files: [{filename: 'docs/moved.md', previous_filename: 'scripts/old.mjs'}]},
+    {status: 'ahead', files: Array.from({length: 300}, (_, i) => ({filename: `docs/${i}.md`}))},
+  ])('refuses %j', compare => {
+    expect(() => assertWorkflowCurrent('ashlrai/phantom', a, b, reader(compare))).toThrow('npm workflow is not current master');
   });
 });
 

@@ -60,6 +60,8 @@ export interface RouterInput {
   costs: HarnessModelCost[];
   /** Keyed by provider (lane). */
   outcomes: Record<string, LaneOutcomes>;
+  /** Explicit provider tallies. Only usable evidence overrides the base tally. */
+  outcomeOverrides?: Record<string, unknown>;
   jobs: RouteJob[];
   nowMs: number;
   /** Providers out of included usage; never routed (no spend). */
@@ -118,6 +120,14 @@ export function mergeRate(o: LaneOutcomes | undefined): number {
   return (merged + 1) / (attempts + 2);
 }
 
+function observedMergeRate(value: unknown): number | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { attempts, merged } = value as Partial<LaneOutcomes>;
+  return attempts !== undefined && Number.isSafeInteger(attempts) && attempts > 0 &&
+    merged !== undefined && Number.isSafeInteger(merged) && merged >= 0 && merged <= attempts
+    ? mergeRate({ attempts, merged }) : null;
+}
+
 type FootprintCost = Pick<HarnessFootprint, 'mem_bytes_max' | 'cpu_cores_per_session'>;
 
 function footprintExpired(fp: HarnessFootprint | undefined, measuredAt: number, nowMs: number): boolean {
@@ -148,6 +158,7 @@ interface NodeState {
   node: RouteNode;
   /** Provider/model/harness combinations loaded by earlier placements in this plan. */
   loaded: Set<string>;
+  placements: number;
   bytes: number;
   cores: number | null;
   /** Allow for binary roundoff relative to the original CPU budget. */
@@ -179,7 +190,7 @@ function nodeStates(input: RouterInput): NodeState[] {
       const footprints = Object.entries(node.doc.per_harness_footprint)
         .filter(([, fp]) => !footprintExpired(fp, at, input.nowMs));
       const currentNode = { ...node, doc: { ...node.doc, per_harness_footprint: Object.fromEntries(footprints) } };
-      return { node: currentNode, loaded: new Set(), bytes: node.doc.mem_free.headroom_bytes ?? 0,
+      return { node: currentNode, loaded: new Set(), placements: 0, bytes: node.doc.mem_free.headroom_bytes ?? 0,
         cores, cpuRoundoff: (cores ?? 0) * Number.EPSILON, blocked };
     });
 }
@@ -205,10 +216,8 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
       if (job.providers && !job.providers.includes(cost.provider)) { reject('provider-not-in-job'); continue; }
       if (job.models && !job.models.includes(cost.model)) { reject('model-not-in-job'); continue; }
       if (exhausted.has(cost.provider)) { reject('provider-exhausted'); continue; }
-      const outcomes = input.outcomes[cost.provider];
-      const mergeEstimate = outcomes && Number.isSafeInteger(outcomes.attempts) && outcomes.attempts > 0 &&
-        Number.isSafeInteger(outcomes.merged) && outcomes.merged >= 0 && outcomes.merged <= outcomes.attempts
-        ? mergeRate(outcomes) : null;
+      const mergeEstimate = observedMergeRate(input.outcomeOverrides?.[cost.provider]) ??
+        observedMergeRate(input.outcomes[cost.provider]);
       const p = mergeEstimate ?? mergeRate(undefined);
       const localModelKey = cost.local ? JSON.stringify([cost.provider, cost.model, cost.harness]) : null;
       for (const state of states) {
@@ -251,12 +260,19 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
     }));
     const highestScore = scored.reduce((highest, { score }) => score > highest ? score : highest, -1);
     // Compare against the true maximum so successive ties cannot move the cutoff.
-    // Equal loads keep the first candidate in (provider, model, node) order.
+    // Preserve provider/model order for equal loads. Within that choice,
+    // spread placements across nodes before falling back to node ID order.
     const selected = scored.reduce<typeof scored[number] | undefined>((best, entry) => {
       if (!(entry.score >= highestScore - 1e-12)) return best;
-      return !best || entry.candidate.load < best.candidate.load ? entry : best;
+      if (!best || entry.candidate.load < best.candidate.load) return entry;
+      const candidate = entry.candidate;
+      const incumbent = best.candidate;
+      if (candidate.load === incumbent.load && candidate.cost.provider === incumbent.cost.provider &&
+          candidate.cost.model === incumbent.cost.model && candidate.state.placements < incumbent.state.placements) return entry;
+      return best;
     }, undefined);
     const { candidate: best, score: bestScore } = selected ?? scored[0]!;
+    best.state.placements++;
     best.state.bytes -= best.fp.mem_bytes_max + best.load;
     if (best.localModelKey !== null) best.state.loaded.add(best.localModelKey);
     if (best.state.cores !== null && best.fp.cpu_cores_per_session !== null) {

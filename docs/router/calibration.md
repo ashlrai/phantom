@@ -4,7 +4,7 @@
 
 Use numeric `predicted_merge_rate` (probability from 0 to 1), `predicted_tokens`, and `predicted_wall_time_ms` for predictions. Actual usage is `tokens` or `total_tokens` and `wall_time_ms` or `duration_ms`. Camel-case equivalents are accepted. A finish and launch with ISO timestamp fields `timestamp`, `at`, or `time` supply wall time if it is otherwise absent. An outcome of `merged` is positive; `closed`, `rejected`, `failed`, or `not_merged` is negative. A boolean `merged` is also accepted. Publishing, unknown outcomes and missing outcomes are not evidence of a merge or failure.
 
-The optional PostHog export is a JSON array or an object with a `results` array; each row is a run or has a `properties` object. Join by `job_id` or `jobId`, using the same numeric fields. Unmatched rows are counted. PostHog export input must represent one run per job or contain consistent duplicate observations.
+The optional PostHog export is a JSON array or an object with a `results` array; each row is a run or has a `properties` object. Join by `job_id` or `jobId`, using the same numeric fields. When both aliases contain nonblank strings, they must identify the same job. Rows with conflicting IDs count as unmatched and contribute no measurements, even if one ID matches the ledger. Unmatched rows are counted. PostHog export input must represent one run per job or contain consistent duplicate observations.
 
 The fleet's `result`, `resolved`, and `resolution` events use the same
 verdict rules as `outcome`. Verdict strings are case-insensitive.
@@ -41,6 +41,11 @@ launch and reward arms still cause an error. Claim timestamps provide no executi
 Calibration withholds elapsed wall time inferred from launch and finish when
 a batch claim for the same job falls at or between those timestamps or has
 no usable timestamp. Explicit wall-time measurements remain eligible.
+A solo launch reservation (`claim` with `launch_dedupe: true`) also withholds
+the elapsed-time fallback when it occurs after launch and at or before finish,
+or when its timestamp is missing, invalid, or conflicting. A reservation at
+or before launch can belong to that launch. The reservation alone supplies
+neither a calibrated job nor an execution measurement.
 Batch session wrappers and node-pool telemetry are excluded. Lifecycle receipts
 explicitly marked `launched: false`, such as admission-time `DONE-NOOP`
 outcomes, contribute no jobs, verdicts or measurements. A ledger containing
@@ -80,6 +85,10 @@ its verdict and leaves the repository null.
 The feed leaves CI wall time unknown when a batch claim falls at or between
 the paired CI timestamps. A batch claim strictly before CI starts can still
 supply dispatch evidence for a reward with measured CI wall time.
+A solo launch reservation (`claim` with `launch_dedupe: true`) leaves the
+reward verdict and dispatch attribution intact. It leaves CI wall time unknown
+when it falls after CI starts and at or before CI completes, or when it has
+no usable timestamp.
 Conflicting repository labels at the effective resolution time also leave
 CI wall time unknown. When the resolution supplies no repository, the same
 rule applies to conflicting labels on the selected dispatch. Missing

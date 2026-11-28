@@ -1,5 +1,11 @@
 # Phantom front-door captures
 
+## Fleet overview illustration
+
+[Phantom Fleet overview](phantom-fleet-overview.png) is the 1920 × 1422 editorial PNG also used on the [AshlrAI organization profile](https://github.com/ashlrai). It is a product illustration, not a capture from a running build. Provider balances and throughput are synthetic: 362 merges in 24 hours, 28 running sessions, and 336 active subagents. Provider cards show separate subscription quotas and organization credits, not measured balances. The Google card shows a five-hour Antigravity window; Devin Cloud uses a quota percentage and Devin Local a session count. Each worker shows separate CPU and RAM, and the tool shelf illustrates shared discovery without shared credentials. The single owner inbox depicts a cross-channel Leader thread, a microphone for dictation, and illustrative model and context indicators. The source asset is the [approved organization-profile PNG](https://github.com/ashlrai/.github/blob/c4dd5bf8317febe5463158d335083dd134565326/profile/assets/portable/phantom-fleet-overview.png). The three browser captures below remain available for comparison.
+
+## Current-source browser captures
+
 Captured 2026-11-14 ET from source `940409cebe32e19cf48dc89ecbf71171dca08a9d` (package candidate 3.30.33), built with `npm run build:web`, Node 22.22.3 and the repository's locked Vite toolchain.
 
 | File | Surface | Data |

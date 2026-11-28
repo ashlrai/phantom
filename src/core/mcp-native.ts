@@ -1675,23 +1675,58 @@ const TOOLS: NativeToolImpl[] = [
   },
   {
     name: 'ashlr_comms_agent_drafts',
-    description: 'List Comms reply drafts. Defaults to pending owner approvals; status=sent|all and transport narrow the read to delivered replies or one channel. Read-only. Approval is not a send.',
+    description: 'List Comms reply drafts. Defaults to pending owner approvals; status=sent|all and transport narrow the read to delivered replies or one channel. to keeps only drafts addressed to that exact recipient — the same exact transport+recipient pairing standing approvals apply; contains keeps drafts whose scrubbed subject or body carries the needle as a case-insensitive substring; since/before keep drafts whose createdAt stamp falls inside one [since, before) window (15m, 2h, 1d, epoch ms or an ISO time — never resolvedAt, which only a sent record carries, and a record whose createdAt does not parse drops out rather than guessing); id keeps only the draft whose id strictly equals the value; limit caps the page oldest-first while matched still reports the true filtered total. Read-only. Approval is not a send.',
     inputSchema: { type: 'object', properties: {
       status: { type: 'string', enum: ['pending', 'sent', 'all'] },
       transport: { type: 'string' },
+      to: { type: 'string', description: 'Keep only drafts addressed to this exact recipient — never a case-folded or substring match.' },
+      contains: { type: 'string', description: 'Keep drafts whose scrubbed subject or body carries the needle as a case-insensitive substring; whitespace collapses on both sides.' },
+      since: { type: 'string', description: 'Keep drafts created at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `phm comms-agent drafts --since` takes.' },
+      before: { type: 'string', description: 'Keep drafts created strictly before the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with `since` into one [since, before) window on createdAt.' },
+      id: { type: 'string', description: 'Keep only the draft whose id strictly equals this value.' },
+      limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Cap the returned page, oldest first; matched still reports the true filtered total.' },
     }, additionalProperties: false },
     safety: 'read',
     handler: async args => {
-      const { commsDrafts } = await import('./comms-agent/run.js');
+      const { commsDrafts, COMMS_DRAFTS_CONTAINS_MAX, COMMS_DRAFTS_LIMIT_MAX, COMMS_DRAFTS_TO_MAX } = await import('./comms-agent/run.js');
       const { commsRunsRoot } = await import('./comms-agent/store.js');
       const { COMMS_TRANSPORTS, isCommsTransport } = await import('./comms-agent/policy.js');
+      const { parseSince } = await import('./fleet/agent-messages.js');
       const transport = args.transport;
       if (transport !== undefined && (typeof transport !== 'string' || !isCommsTransport(transport))) {
         throw new Error(`transport must be one of: ${COMMS_TRANSPORTS.join(', ')}.`);
       }
+      const to = args.to;
+      if (to !== undefined && (typeof to !== 'string' || to.trim() === '' || to.length > COMMS_DRAFTS_TO_MAX)) {
+        throw new Error(`to must be a non-empty recipient of at most ${COMMS_DRAFTS_TO_MAX} characters.`);
+      }
+      const contains = args.contains;
+      if (contains !== undefined && (typeof contains !== 'string' || contains.trim() === '' || contains.length > COMMS_DRAFTS_CONTAINS_MAX)) {
+        throw new Error(`contains must be a non-empty needle of at most ${COMMS_DRAFTS_CONTAINS_MAX} characters.`);
+      }
+      const id = args.id;
+      if (id !== undefined && (typeof id !== 'string' || id.trim() === '' || id.length > 128)) {
+        throw new Error('id must be a non-empty draft id of at most 128 characters.');
+      }
+      const limit = args.limit;
+      if (limit !== undefined && (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > COMMS_DRAFTS_LIMIT_MAX)) {
+        throw new Error(`limit must be an integer between 1 and ${COMMS_DRAFTS_LIMIT_MAX}.`);
+      }
       const filter: CommsDraftsFilter = {};
       if (args.status !== undefined) filter.status = args.status as CommsDraftStatusFilter;
       if (transport !== undefined) filter.transport = transport;
+      if (to !== undefined) filter.to = to.trim();
+      if (contains !== undefined) filter.contains = contains;
+      if (id !== undefined) filter.id = id.trim();
+      if (limit !== undefined) filter.limit = limit;
+      for (const key of ['since', 'before'] as const) {
+        const raw = args[key];
+        if (raw === undefined) continue;
+        if (typeof raw !== 'string') throw new Error(`${key} must be 15m, 2h, 1d, epoch ms or an ISO time.`);
+        const resolved = parseSince(raw);
+        if (resolved === null) throw new Error(`${key} must be 15m, 2h, 1d, epoch ms or an ISO time.`);
+        filter[key] = resolved;
+      }
       return commsDrafts(commsRunsRoot(), filter);
     },
   },

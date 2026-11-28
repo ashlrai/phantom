@@ -16,16 +16,17 @@
 import { join } from 'node:path';
 import { loadConfig } from '../config.js';
 import type { AshlrConfig } from '../types.js';
-import { readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
+import { writePrivateFileAtomic } from '../verse/preferences.js';
 import { RESOURCE_LIVE_STALE_MS, DEVIN_FLASH_EXPIRES_AT } from '../usage/resource-live/types.js';
 import type { ResourceLiveObservation } from '../usage/resource-live/source-types.js';
 import type { DevinSession, DevinSessionPage } from './client.js';
 import type { DevinModelCatalog } from './models.js';
 import { devinCatalogModels } from './models.js';
 import { connectedClient } from './service.js';
-import { devinHome, ensureDevinDirectory, readDevinBudget } from './store.js';
+import { devinHome, ensureDevinDirectory, readDevinBudget, readDevinJsonFile } from './store.js';
+import { isDevinRecord } from './types.js';
 
-export const DEVIN_WEEK_MS = 7 * 24 * 3_600_000;
+const DEVIN_WEEK_MS = 7 * 24 * 3_600_000;
 export const DEVIN_WEEKLY_SOURCE = 'devin-api-v3-sessions';
 const PAGE_SIZE = 200;
 const MAX_PAGES = 25;
@@ -160,15 +161,16 @@ export async function readDevinWeeklyCapacity(deps: DevinWeeklyDeps = {}): Promi
   }
 }
 
-export const devinWeeklyCapacityPath = (): string => join(devinHome(), 'weekly-capacity.json');
+const devinWeeklyCapacityPath = (): string => join(devinHome(), 'weekly-capacity.json');
 
 /** The last published measurement, with its state re-derived from its age. */
 export function readPublishedDevinWeekly(nowMs: number, file = devinWeeklyCapacityPath()): DevinWeeklyCapacity | null {
   try {
-    const raw = readPrivateFileCapped(file, 16_384);
-    const parsed = raw === null || raw.truncated ? null : JSON.parse(raw.text) as DevinWeeklyCapacity;
-    const observed = parsed?.observed_at ? Date.parse(parsed.observed_at) : Number.NaN;
-    if (!parsed || parsed.source !== DEVIN_WEEKLY_SOURCE || !Number.isFinite(observed) || typeof parsed.used !== 'number') return null;
+    const raw = readDevinJsonFile(file, 16_384);
+    if (!isDevinRecord(raw)) return null;
+    const parsed = raw as unknown as DevinWeeklyCapacity;
+    const observed = typeof parsed.observed_at === 'string' ? Date.parse(parsed.observed_at) : Number.NaN;
+    if (parsed.source !== DEVIN_WEEKLY_SOURCE || !Number.isFinite(observed) || typeof parsed.used !== 'number') return null;
     return { ...parsed, state: nowMs - observed <= RESOURCE_LIVE_STALE_MS ? 'live' : 'stale' };
   } catch {
     return null;
@@ -201,7 +203,7 @@ export function devinWeeklyObservation(capacity: DevinWeeklyCapacity): ResourceL
 }
 
 /** Devin CLI free-preview models: zero cost until the preview ends. */
-export const DEVIN_PREVIEW_MODELS = [
+const DEVIN_PREVIEW_MODELS = [
   { pattern: /^swe-2[\w.-]*lightning/i, label: 'SWE-2 Lightning', expires_at: DEVIN_FLASH_EXPIRES_AT },
   { pattern: /^swe-2[\w.-]*flash/i, label: 'SWE-2 Flash', expires_at: DEVIN_FLASH_EXPIRES_AT },
 ] as const;

@@ -45,9 +45,8 @@ function closed(job: string, pr: number, closedAt: string): string {
 }
 
 /**
- * devin ships cheaply (two merges at 500 tokens each); codex-cmp burns
- * without shipping (two closed jobs at 5000 tokens each). A grok-build job
- * outside the work/phantom cell proves pooling ignores jobType and repo.
+ * Devin has two merges and codex-cmp has two closed jobs. A grok-build job
+ * outside the work/phantom cell proves pooling ignores job type and repo.
  */
 const LEDGER = [
   launch('J-D1', 'devin', 'swe-2-max', '2026-11-01T00:00:00+00:00'),
@@ -94,9 +93,7 @@ describe('learnedFleetSeatPenalty', () => {
   it('pools every recorded cell per resource, ignoring job type and repo', () => {
     const learning = learnFleetOutcomes(null, LEDGER);
     const penalty = learnedFleetSeatPenalty(learning);
-    // devin's pooled record (two cheap merges) beats codex-cmp's (two
-    // expensive closes); grok-build only appears because pooling spans
-    // job types and repos — the (work, phantom) view never saw its cell.
+    // Grok-build only appears because pooling spans job types and repos.
     expect(penalty['devin']).toBe(0);
     expect(penalty['codex-cmp']).toBeGreaterThan(0);
     expect(penalty['codex-cmp']).toBeLessThanOrEqual(1);
@@ -104,6 +101,38 @@ describe('learnedFleetSeatPenalty', () => {
     expect(Object.keys(penalty).sort()).toEqual(['codex-cmp', 'devin', 'grok-build']);
     expect(learnedSeatPenalty(learning, 'work', 'phantom')).not.toHaveProperty('grok-build');
     expect(learnedSeatPenalty(learning, 'work', 'phantom')['devin']).toBe(0);
+  });
+
+  it('scores ledger-only resources by merge outcomes regardless of token totals', () => {
+    const penalty = (devinTokens: number, codexTokens: number) => learnedFleetSeatPenalty(learnFleetOutcomes(null, [
+      launch('J-D1', 'devin', 'swe-2-max', '2026-11-01T00:00:00Z'),
+      finish('J-D1', 'devin', devinTokens),
+      merged('J-D1', 1, '2026-11-01T01:00:00Z'),
+      launch('J-C1', 'codex-cmp', 'gpt-5.4', '2026-11-01T00:00:00Z'),
+      finish('J-C1', 'codex-cmp', codexTokens),
+      closed('J-C1', 2, '2026-11-01T01:00:00Z'),
+    ].join('\n')));
+    expect(penalty(100_000, 100)).toEqual({ devin: 0, 'codex-cmp': 0.5 });
+    expect(penalty(100, 100_000)).toEqual({ devin: 0, 'codex-cmp': 0.5 });
+  });
+
+  it('uses measured allowance when every resource has a sample, excluding token and imputed usage', () => {
+    const dispatch = [
+      '2026-11-01 00:00:00 ASSIGN job=RQ-E1 resource=devin model=swe-2-max type=code repo=phantom priority=normal',
+      '2026-11-01 00:10:00 OUTCOME job=RQ-E1 state=merged usage=0.2 minutes=5 breakage=0',
+      '2026-11-01 00:00:00 ASSIGN job=RQ-E2 resource=claude model=haiku type=code repo=phantom priority=normal',
+      '2026-11-01 00:10:00 OUTCOME job=RQ-E2 state=merged usage=0.8 minutes=5 breakage=0',
+    ].join('\n');
+    const ledger = [
+      launch('J-D1', 'devin', 'swe-2-max', '2026-11-01T00:00:00Z'),
+      finish('J-D1', 'devin', 100_000),
+      merged('J-D1', 1, '2026-11-01T01:00:00Z'),
+      launch('J-C1', 'claude', 'haiku', '2026-11-01T00:00:00Z'),
+      merged('J-C1', 2, '2026-11-01T01:00:00Z'),
+    ].join('\n');
+    const penalty = learnedFleetSeatPenalty(learnFleetOutcomes(dispatch, ledger));
+    expect(penalty['devin']).toBe(0);
+    expect(penalty['claude']).toBeCloseTo(1 - 1.2 / 1.8);
   });
 
   it('stays empty when nothing was measured', () => {
@@ -142,12 +171,10 @@ describe('computeLearnedSeatEvidence', () => {
       censor: null,
       revertedPrKeys: new Set(),
     });
-    // The dispatch-log cell joins the pool beside the ledger's. Its
-    // allowance-unit usage reading makes it the cheapest record, so it is
-    // the zero-penalty seat — the same unit semantics learnedSeatPenalty
-    // already applies per cell.
+    // Claude's allowance reading cannot be compared with ledger-only resources.
     expect(Object.keys(evidence.learnedPenalty).sort()).toEqual(['claude', 'codex-cmp', 'devin', 'grok-build']);
-    expect(evidence.learnedPenalty['claude']).toBe(0);
+    expect(evidence.learnedPenalty['devin']).toBe(0);
+    expect(evidence.learnedPenalty['claude']).toBeCloseTo(1 - (2 / 3) / (3 / 4));
     expect(evidence.learningNote).toBeDefined();
   });
 
