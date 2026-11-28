@@ -174,6 +174,11 @@ function readJobsLedger(opts: LearnedSeatEvidenceOptions): string | null {
 export function computeLearnedSeatEvidence(opts: LearnedSeatEvidenceOptions = {}): LearnedSeatRouteEvidence {
   try {
     const nowMs = opts.nowMs ?? Date.now();
+    // mergeQueue stays unread on this path: it only feeds the cells'
+    // dirty/fixup rates (the improvement-pattern view `phm fleet outcomes`
+    // prints), which learnedFleetSeatPenalty never consumes — the pooled
+    // score reads attempts, good merges and allowance readings alone.
+    // Folding merge-events.jsonl here would be ledger I/O for zero signal.
     const learning = opts.learning ?? learnFleetOutcomes(
       readDispatchEvents(opts),
       readJobsLedger(opts),

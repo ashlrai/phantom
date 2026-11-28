@@ -20,6 +20,7 @@ import {
   learnedFleetSeatPenalty,
   learnedSeatPenalty,
 } from '../src/core/routing/outcome-learning.js';
+import type { MergeQueueEvidence } from '../src/core/router/outcomes.js';
 import { defaultBudgetPolicy } from '../src/core/routing/policy.js';
 import { routeSeat } from '../src/core/routing/router.js';
 
@@ -138,6 +139,31 @@ describe('learnedFleetSeatPenalty', () => {
   it('stays empty when nothing was measured', () => {
     expect(learnedFleetSeatPenalty(learnFleetOutcomes(null, null))).toEqual({});
     expect(learnedFleetSeatPenalty(learnFleetOutcomes('', 'not json\n'))).toEqual({});
+  });
+
+  it('ignores merge-queue friction: dirty/fixup rates never move the pooled score', () => {
+    // mergeQueue only sets the cells' mergeDirty/mergeFixup flags — the
+    // improvement-pattern rates `phm fleet outcomes` prints — while
+    // learnedFleetSeatPenalty pools attempts, good merges and allowance
+    // readings alone. learned-seat-evidence deliberately does not read
+    // merge-events.jsonl for it; pin that boundary so heavy recorded
+    // friction cannot silently re-rank seats on evidence the score was
+    // never meant to see.
+    const frictionEvidence: MergeQueueEvidence = {
+      events: 4, blocked_reasons: ['conflict', 'required_checks'], conflicts: 2,
+      check_failures: 2, required_check_failures: 1, checks_passed: 0,
+      check_observations: 4, retries: 1, retry_failures: 1, recuts: 1, auto_merge: 'enabled',
+    };
+    const friction = new Map<string, MergeQueueEvidence>(
+      ['ashlrai/phantom#1', 'ashlrai/phantom#2', 'ashlrai/phantom#3', 'ashlrai/phantom#4', 'ashlrai/phantom#5']
+        .map((key) => [key, frictionEvidence]),
+    );
+    const plain = learnFleetOutcomes(null, LEDGER);
+    const withFriction = learnFleetOutcomes(null, LEDGER, undefined, undefined, friction);
+    // Non-vacuous: the friction really did land on the cells' rates.
+    expect(plain.cells.some((c) => c.dirtyRate > 0 || c.fixupRate > 0)).toBe(false);
+    expect(withFriction.cells.some((c) => c.dirtyRate > 0 || c.fixupRate > 0)).toBe(true);
+    expect(learnedFleetSeatPenalty(withFriction)).toEqual(learnedFleetSeatPenalty(plain));
   });
 });
 
