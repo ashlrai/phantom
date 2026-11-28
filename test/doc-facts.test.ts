@@ -58,8 +58,8 @@ const DOCS = [
   'docs/AGENTS-MD-AUDIT.md',
   // Pages CONTRIBUTING.md, the contributor guide, AGENT-OPERATIONS.md and
   // AGENT-TOOLCHAIN.md link a contributor to next. Linked pages still missing:
-  // CLI-REFERENCE is generated from src/cli/help.ts and names `fleet verbs`,
-  // whose --help exits 2; RESIDENT-RUNTIME names deleted commands on purpose;
+  // CLI-REFERENCE is generated from src/cli/help.ts, so a branch can carry a
+  // stale copy; RESIDENT-RUNTIME names deleted commands on purpose;
   // desktop/README.md documents its own package.json scripts.
   'docs/ARCHITECTURE.md',
   'docs/BUN-SHARDS.md',
@@ -74,9 +74,9 @@ const DOCS = [
   'docs/RESOURCE-POOLS.md',
   'docs/contracts/CONTRACT-SELECTOR.md',
   'docs/verify-changed.md',
-  // Operating guides AGENTS.md and README.md link to. Linked guides that are
-  // missing here name a verb completions SUBCOMMANDS does not offer: AGENT-BUS
-  // (`agents mesh status`, whose --help exits 2).
+  // Operating guides AGENTS.md and README.md link to. A linked guide stays
+  // out until every verb it documents is one completions SUBCOMMANDS offers;
+  // AGENT-BUS joined once `agents mesh` became completable.
   'docs/AGENT-APPS.md',
   'docs/AGENT-NETWORK-CHANNELS.md',
   'docs/AGENT-PROFILES.md',
@@ -113,6 +113,7 @@ const DOCS = [
   // docs/llms.txt route agents to. Dated audits, specs, roadmaps, versioned
   // contracts and the generated CLI pages (cli.md, CODEMAP.md) stay out: they
   // record a point in time or are rebuilt by docs-sync from src/cli/help.ts.
+  'docs/AGENT-BUS.md',
   'docs/AGENT-NATIVE-QUICKSTART.md',
   'docs/AMPLIFY.md',
   'docs/APP-STEER.md',

@@ -236,4 +236,23 @@ describe('ashlr agents bus contract', () => {
       expect(result.err).toBe('');
     }
   });
+  it.each([
+    ['bus', '--help'],
+    ['bus', '-h'],
+    ['bus', 'contract', '--help'],
+    ['bus', 'channels', 'list', '--help'],
+    ['edges', '--help'],
+    ['edges', '-h'],
+    ['mesh', '--help'],
+    ['mesh', 'status', '--help'],
+    ['mesh', 'status', '-h'],
+    ['chat', 'list', '--help'],
+  ])('answers %j with usage and exit 0', async (...args) => {
+    const result = await run(args);
+    expect(result.code).toBe(0);
+    // The contract/help texts name the agents surface (`ashlr agents …`,
+    // `phm agents chat …`); chat's scoped help is covered in agent-chat.test.ts.
+    expect(result.out).toContain('agents');
+    expect(result.err).toBe('');
+  });
 });

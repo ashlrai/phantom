@@ -27,6 +27,20 @@ describe('fleet verbs', () => {
     expect(await cmdFleetVerbs(['--grep'], deps)).toBe(2);
   });
 
+  it('answers --help and -h with usage on stdout and exit 0, never the flag parser', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const flag of ['--help', '-h']) {
+      log.mockClear();
+      expect(await cmdFleetVerbs([flag], deps), flag).toBe(0);
+      expect(log.mock.calls.flat().join(' '), flag).toContain('Usage: ashlr fleet verbs');
+    }
+    // Help wins over every other flag, including --json and --grep.
+    expect(await cmdFleetVerbs(['--json', '--help'], deps)).toBe(0);
+    expect(await cmdFleetVerbs(['--grep', 'x', '-h'], deps)).toBe(0);
+    expect(err).not.toHaveBeenCalled();
+  });
+
   it('reads real registered source files', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdFleetVerbs(['--json'])).toBe(0);

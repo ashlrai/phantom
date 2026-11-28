@@ -48,13 +48,15 @@ describe('agent chat', () => {
     const next = readAgentChat({ channel: 'engineering', thread: 'run:one', after: first.nextCursor }, options);
     expect(next.status === 'ok' && next.messages.map(m => m.id)).toEqual(['b']);
   });
+  // 102 appends each rewrite the whole inbox snapshot under the writer lock
+  // (O(n^2)); the default 5 s unit-lane bound is marginal on shared hosts.
   it('crosses store page boundaries and does not lose matches after 100 unrelated rows', () => {
     const options = setup();
     for (let i = 0; i < 101; i++) add(options, envelope(`noise-${i}`, { to: 'agent:bob' }));
     add(options, envelope('last'));
     const result = readAgentChat({ channel: 'engineering', thread: 'run:one' }, options);
     expect(result.status === 'ok' && result.messages.map(m => m.id)).toEqual(['last']);
-  });
+  }, 20000);
   it.each([
     { channel: 'imessage' }, { external: true }, { origin_bridge: 'other' },
     { to: 'agent:bob' }, { to: 'group:other:general' }, { channel_ref: 'group:other:general' },
@@ -135,8 +137,8 @@ describe('agent chat', () => {
     add(options, envelope('old'));
     expect(appendBusInbox(envelope('new'), { ...options, now: () => 2000 }).status).toBe('posted');
     const read = { ...options, now: () => 3000 };
-    const ids = (q: Parameters<typeof readAgentChat>[0]) => {
-      const result = readAgentChat({ channel: 'engineering', thread: 'run:one', ...q }, read);
+    const ids = (q: Partial<Parameters<typeof readAgentChat>[0]>) => {
+      const result = readAgentChat({ ...q, channel: 'engineering', thread: 'run:one' }, read);
       return result.status === 'ok' ? result.messages.map(m => m.id) : result.status;
     };
     expect(ids({ since: 1500 })).toEqual(['new']);
@@ -227,5 +229,14 @@ describe('agent chat', () => {
     expect(agentChatResponse('GET', '/api/agents/chat?channel=engineering&priority=P9', read).code).toBe(400);
     expect(agentChatResponse('GET', '/api/agents/chat?channel=engineering&from=a&from=b', read).code).toBe(400);
     expect(agentChatResponse('GET', '/api/agents/chat?channel=engineering&root=/tmp', read).code).toBe(400);
+  });
+  it('answers --help and -h anywhere with usage and exit 0, never reading the bus', () => {
+    const read = () => { throw new Error('help must not read the bus'); };
+    for (const args of [['--help'], ['-h'], ['list', '--help'], ['read', 'run:one', '--channel', 'engineering', '-h']]) {
+      const output: string[] = [], errors: string[] = [];
+      expect(runAgentsChat(args, s => output.push(s), s => errors.push(s), read), args.join(' ')).toBe(0);
+      expect(output.join('\n')).toContain('phm agents chat');
+      expect(errors).toEqual([]);
+    }
   });
 });

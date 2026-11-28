@@ -123,7 +123,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'release-articles': ['status', 'metadata', 'enable', 'disable', 'import', 'sync', '--help'],
   release: ['status', 'notes', 'autonomy', '--since', '--write', '--json', '--file', '--help'],
   releases: ['--json', '--help'],
-  agents: ['apps', 'bus', 'conversations', 'help', 'list', 'messages', 'roster', 'show', 'validate', 'versions'],
+  agents: ['apps', 'bus', 'chat', 'conversations', 'edges', 'help', 'list', 'mesh', 'messages', 'roster', 'show', 'validate', 'versions'],
   // Mirror the verb switch in src/cli/wb.ts (cmdWb).
   wb: ['secrets', 'steer', 'reprioritize', 'stop', '--text', '--priority', '--apply', '--json', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
@@ -192,7 +192,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'stuck-fixes', 'stuck-prs', 'superseded', 'superseded-close', 'surface-owner', 'sync',
     'tailnet-peers', 'teammate-latency', 'teammates', 'trim', 'usage-history', 'waste',
     'work-board', 'work-feed', 'work-result', 'workers', 'worklog', 'worktree-stale', 'wt-audit',
-    'yield', 'graph', 'release-backlog',
+    'yield', 'graph', 'release-backlog', 'verbs',
   ],
   bus: ['thread', 'task', 'board', 'send', 'inbox', 'ack', 'recent', '--since', '--before', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],

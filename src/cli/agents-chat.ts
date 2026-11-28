@@ -5,7 +5,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 const HELP = 'phm agents chat list|read <outcome:id|run:id> --channel <channel> [--topic <topic>] [--after <cursor>] [--limit <1-100>] [--from <agent>] [--exclude-from <agent>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--id <id>] [--in-reply-to <id>] [--priority <P0|P1|P2|P3>] --json';
 export function runAgentsChat(args: string[], out = console.log, err = console.error,
   read: (query: ChatQuery) => ChatResult = readAgentChat): number {
-  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { out(HELP); return 0; }
+  if (args.some(arg => arg === '--help' || arg === '-h')) { out(HELP); return 0; }
   const [verb, ...rest] = args;
   const query: ChatQuery = { channel: '' };
   if (verb === 'read') query.thread = rest.shift();
