@@ -1,0 +1,8 @@
+c836aebf828e8eb51eb92235219074ca82be6391
+100644 580c58a42253a767f69888088a5b1b53710039dc 1	CONTRACT.md
+100644 8ad70b1651d26a7a38ad8f03b50e447095f91f6e 2	CONTRACT.md
+100644 517434749ef70abd2a46dcb5f1b0c67c71a0f69d 3	CONTRACT.md
+
+Auto-merging CONTRACT.md
+CONFLICT (content): Merge conflict in CONTRACT.md
+Auto-merging src/cli/fleet-subcommand-registry.ts

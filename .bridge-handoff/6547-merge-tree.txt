@@ -1,0 +1,13 @@
+880306582f5e19993e5bb688e2f4a69815c2a24a
+100644 045ac6a1bdf8bc5199c7b81d06998debca659ae0 1	src/core/web/remote-gateway-policy.ts
+100644 660190b901f59dbe4516babf25ca22196d4aa6d9 2	src/core/web/remote-gateway-policy.ts
+100644 864f0fda5d8bb5b213b44e6563912f11ed659f19 3	src/core/web/remote-gateway-policy.ts
+
+Auto-merging src/core/verse/leader-api.ts
+Auto-merging src/core/web/remote-gateway-policy.ts
+CONFLICT (content): Merge conflict in src/core/web/remote-gateway-policy.ts
+Auto-merging src/web-ui/routes/verse/library/LibraryPane.tsx
+Auto-merging src/web-ui/routes/verse/library/LibraryPins.tsx
+Auto-merging src/web-ui/routes/verse/mobile/MobileShell.test.tsx
+Auto-merging src/web-ui/routes/verse/mobile/MobileShell.tsx
+Auto-merging test/remote-gateway-fleet-routes-oct31.test.ts

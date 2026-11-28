@@ -1,0 +1,23 @@
+[
+  {
+    "pr": 6560,
+    "patch_applies_to_master": true,
+    "candidate_bytes_match": true,
+    "tree": "cd2fd1eea1f115a99ee1a147c20f19bdb2f77ce0",
+    "stat": "10 files changed, 160 insertions(+), 3 deletions(-)"
+  },
+  {
+    "pr": 6547,
+    "patch_applies_to_master": true,
+    "candidate_bytes_match": true,
+    "tree": "ed435bed19a5babd751f03c7414043d493ecff29",
+    "stat": "26 files changed, 501 insertions(+), 115 deletions(-)"
+  },
+  {
+    "pr": 6538,
+    "patch_applies_to_master": true,
+    "candidate_bytes_match": true,
+    "tree": "079fd9646ab10216da483bab8ec394d2ce53f4b4",
+    "stat": "1 file changed, 7 insertions(+)"
+  }
+]

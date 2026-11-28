@@ -1,0 +1,15 @@
+diff --git a/CONTRACT.md b/CONTRACT.md
+index 8ad70b1651d..80a6c40126c 100644
+--- a/CONTRACT.md
++++ b/CONTRACT.md
+@@ -4076,3 +4076,10 @@ device human after that signature check and does not read agent env markers.
+ `POST /api/approvals/team/:id/decision` accepts `decision`, optional `team` and
+ optional `assertion`. An `actor` field is refused. A bare token on a
+ human-required decision is HTTP 403 `human-presence-required`.
++
++`MASON_ASKS` in `src/core/fleet/mason-asks.ts` lists Mason's nine app asks
++(A1-A9) as pieces (`need`, optional `path` and `exportName`). Pure
++`checkMasonAsks(asks, index)` and `exportNames(source)`, plus
++`readSourceIndex(root, asks)` (null outside a source checkout) and the text and
++Markdown renderers in `src/core/fleet/mason-asks-check.ts`, back
++`phm fleet asks status [--json | --markdown]` (`fleet.asks.v1`).
