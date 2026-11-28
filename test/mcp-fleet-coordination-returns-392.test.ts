@@ -40,7 +40,7 @@ describe('fleet coordination returns real MCP handler (392)', () => {
     const tool = tools.find(t => t.name === name);
     expect(tool?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
     expect(Object.keys((tool?.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}).sort())
-      .toEqual(['before', 'claim', 'contains', 'from', 'repo', 'result', 'since']);
+      .toEqual(['before', 'claim', 'contains', 'excludeFrom', 'from', 'repo', 'result', 'since']);
     expect(tool?.annotations?.readOnlyHint).toBe(true);
     expect(tool?.annotations).toEqual(tools.find(t => t.name === 'fleet_coordination_claims')?.annotations);
   });
@@ -80,6 +80,9 @@ describe('fleet coordination returns real MCP handler (392)', () => {
     [{ result: 'BLOCKED' }, 0],
     [{ from: 'dot-example' }, 1],
     [{ from: 'other-agent' }, 0],
+    [{ excludeFrom: 'dot-example' }, 0],
+    [{ excludeFrom: 'other-agent' }, 1],
+    [{ from: 'dot-example', excludeFrom: 'dot-example' }, 0],
     [{ contains: 'abc1234' }, 1],
     [{ contains: 'no-such-evidence' }, 0],
     [{ since: '1h' }, 1],
@@ -100,6 +103,8 @@ describe('fleet coordination returns real MCP handler (392)', () => {
     { repo: 'not-a-repo' },
     { result: 'MAYBE' },
     { from: 'bad from' },
+    { excludeFrom: 'bad from' },
+    { excludeFrom: 42 },
     { since: 'not-a-time' },
     { before: 'whenever' },
     { contains: '' },
