@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { computeNodeCapacity, NODE_CAPACITY_SCHEMA, parseNodeCapacityDoc, type NodeCapacityDoc } from '../core/drive/nodes/capacity-model.js';
 import { measureNode } from '../core/drive/nodes/node-measure.js';
 import { fleetRunnable, planAutoscaleRoutes, type HarnessModelCost, type RouteJob, type RouteNode } from '../core/drive/nodes/autoscale-router.js';
+import { nodeFleetListItems } from '../core/drive/nodes/commands.js';
 import { readRouteLaneOutcomes, type RouteLaneOutcomes } from '../core/drive/nodes/route-outcomes.js';
 
 export const NODE_CAPACITY_USAGE = `Usage: phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json]
@@ -158,7 +159,10 @@ export async function cmdNodeRoute(args: string[]): Promise<number> {
       return { doc, ...(strings(m.providers) ? { providers: m.providers } : {}), ...(strings(m.localModels) ? { localModels: m.localModels } : {}),
         ...(typeof m.overheadMinutes === 'number' ? { overheadMinutes: m.overheadMinutes } : {}) };
     });
-    const exhausted = flagValues(args, '--exhausted').flatMap(v => v.split(',')).filter(Boolean);
+    // The shared list parser trims items and refuses a real entry beside an
+    // empty one, so '--exhausted a, b' names b and 'a,' cannot silently mark
+    // only a exhausted.
+    const exhausted = flagValues(args, '--exhausted').flatMap(v => nodeFleetListItems(v, '--exhausted'));
     const nowMs = Date.now();
     const plan = planAutoscaleRoutes({ nodes, costs: costs as HarnessModelCost[], jobs: jobs as RouteJob[],
       outcomes: ledger?.outcomes ?? {}, outcomeOverrides: outcomesRaw, exhausted, nowMs });

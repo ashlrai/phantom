@@ -61,7 +61,6 @@ const need = (flags: Map<string, string>, name: string): string => {
   return value;
 };
 
-const csv = (value: string | undefined): string[] => (value ? value.split(',').map(v => v.trim()).filter(Boolean) : []);
 /** The default fix names where lease numbers come from; self-reported flags
  * (--slots, --usage) pass their own, since join and pull never print them. */
 const num = (flags: Map<string, string>, name: string, fix = 'Pass the number printed by phm node join or pull.'): number => {
@@ -102,6 +101,25 @@ const joinFix = (...parts: string[]): string => {
 const badFlag = (name: string, message: string, fix: string): UsageError =>
   new UsageError(`bad-${name.slice(2)}`, message, fix);
 
+/** Items of a comma-list flag value (`--owner`, `--caps`, `--requires`,
+ * `--secrets`). An absent flag or an all-separator value (`''`, `','`, `' , '`) is
+ * an empty list — the same contract callers already handle for a missing flag.
+ * A real entry beside an empty one is a stray, leading, trailing or doubled
+ * comma: refused rather than silently dropped, which would narrow the owner
+ * scopes, caps, requirements or secret names the operator asked for. The flag
+ * name rides along so the refusal is the same bad-<flag> usage error the item
+ * validators raise. */
+export function nodeFleetListItems(value: string | undefined, name: string): string[] {
+  if (value === undefined) return [];
+  const parts = value.split(',').map(v => v.trim());
+  const items = parts.filter(Boolean);
+  if (items.length > 0 && items.length !== parts.length) {
+    throw badFlag(name, `${name} has an empty entry — a stray, leading, trailing or doubled comma leaves nothing between separators.`,
+      'Separate entries with single commas and keep a value between each pair. Run: phm node --help');
+  }
+  return items;
+}
+
 const needId = (flags: Map<string, string>, name: string): string => {
   const value = need(flags, name);
   if (!validId(value)) throw badFlag(name, `${name} is not a valid id.`, ID_FIX);
@@ -113,21 +131,21 @@ const optId = (flags: Map<string, string>, name: string): string | undefined => 
   return value;
 };
 const needIdList = (flags: Map<string, string>, name: string): string[] => {
-  const items = csv(need(flags, name));
+  const items = nodeFleetListItems(need(flags, name), name);
   if (items.length === 0 || items.length > 64 || !items.every(validId)) {
     throw badFlag(name, `${name} must be a comma-separated list of 1-64 ids.`, joinFix(ID_FIX, LIST_FIX));
   }
   return items;
 };
 const optCapList = (flags: Map<string, string>, name: string): string[] => {
-  const items = csv(flags.get(name));
+  const items = nodeFleetListItems(flags.get(name), name);
   if (items.length > 64 || !items.every(validCap)) {
     throw badFlag(name, `${name} must be a comma-separated list of up to 64 capabilities.`, joinFix(CAP_FIX, LIST_FIX));
   }
   return items;
 };
 const optSecretList = (flags: Map<string, string>, name: string): string[] => {
-  const items = csv(flags.get(name));
+  const items = nodeFleetListItems(flags.get(name), name);
   if (items.length > 64 || !items.every(validSecretName)) {
     throw badFlag(name, `${name} must be a comma-separated list of up to 64 secret NAMES such as DEPLOY_KEY, never values.`, SECRET_FIX);
   }

@@ -1541,6 +1541,41 @@ describe('fleet flag value validation', () => {
     expect(f.a.snapshot().nodes.map(n => n.nodeId)).not.toContain('n1');
     expect(f.a.snapshot().jobs).toEqual([]);
   });
+  it('refuses a comma list with an empty entry instead of silently dropping it', () => {
+    const f = fixture();
+    // A trailing, leading or doubled comma used to filter down to the valid
+    // entries, narrowing what the node advertised or what a job required
+    // without saying so — the same stray-comma refusal org join's --lane makes.
+    for (const [verb, args, code] of [
+      ['join', ['--node', 'n1', '--owner', 'acme,'], 'bad-owner'],
+      ['join', ['--node', 'n1', '--owner', 'acme,,ops'], 'bad-owner'],
+      ['join', ['--node', 'n1', '--owner', ',acme'], 'bad-owner'],
+      ['status', ['--owner', 'acme,'], 'bad-owner'],
+      ['join', ['--node', 'n1', '--owner', 'acme', '--caps', 'build,'], 'bad-caps'],
+      ['join', ['--node', 'n1', '--owner', 'acme', '--caps', ',build'], 'bad-caps'],
+      ['enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'build,'], 'bad-requires'],
+      ['enqueue', ['--job', 'j1', '--owner', 'acme', '--secrets', 'KEY_A,'], 'bad-secrets'],
+    ] as const) {
+      const err = run(verb, [...args], f);
+      expect(err, `${verb} ${args.join(' ')}`).toMatchObject({ code, exit: 2 });
+      expect(err.message).toContain('empty entry');
+      expect(err.fix).toContain('phm node --help');
+    }
+    // Nothing was recorded by the refused calls.
+    expect(f.a.snapshot().nodes.map(n => n.nodeId)).not.toContain('n1');
+    expect(f.a.snapshot().jobs).toEqual([]);
+    // An absent, all-blank or all-separator list value stays an empty list:
+    // the ready-bridge enqueue passes `--requires ''` when a job needs no
+    // capability fence, and ',' reads the same way.
+    for (const empty of ['', '   ', ',']) {
+      expect(executeNodeFleet('enqueue', ['--job', `j-${empty.length}`, '--owner', 'acme', '--requires', empty], f.a))
+        .toEqual({ jobId: `j-${empty.length}`, enqueued: true });
+    }
+    expect(f.a.snapshot().jobs.map(j => j.requires)).toEqual([[], [], []]);
+    // A required list still refuses the all-separator value: --owner needs
+    // 1-64 ids, so ',' is the list-shape error, not an empty entry.
+    expect(run('status', ['--owner', ','], f)).toMatchObject({ code: 'bad-owner', exit: 2 });
+  });
   it('prints the help pointer once, at the end, on a composed list fix', () => {
     const f = fixture();
     // needIdList and optCapList each compose two fix sentences that both end

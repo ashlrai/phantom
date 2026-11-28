@@ -53,6 +53,25 @@ describe('standalone join --caps that names nothing', () => {
     } finally { vi.restoreAllMocks(); }
   });
 
+  it('refuses a real cap beside an empty entry — the version merge must not launder the stray comma', async () => {
+    const lines = capture();
+    try {
+      const store = new MemoryStore();
+      const deps = { store, phmVersion: () => '9.9.9',
+        providerLanes: () => { throw new Error('the sign-in probe must not run'); } };
+      // `--caps build,` used to join advertising only build: the version-cap
+      // merge re-split the flag and dropped the empty item before the list
+      // validator ran, silently narrowing the advertisement.
+      for (const caps of ['build,', ',build', 'build,,gh']) {
+        expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', caps, '--json'], deps)).toBe(2);
+        const out = JSON.parse(lines.at(-1)!);
+        expect(out, caps).toMatchObject({ command: 'join', error: { code: 'bad-caps' } });
+        expect(out.error.message).toContain('empty entry');
+      }
+      expect(store.state.nodes).toEqual([]);
+    } finally { vi.restoreAllMocks(); }
+  });
+
   it('the pool wire still accepts an empty --caps: a lane-less worker legitimately joins with none', () => {
     const store = new MemoryStore();
     const nodes = new DriveNodes(store, { now: () => 1_000, nodeTtlMs: 100, leaderTtlMs: 20, claimTtlMs: 40 });

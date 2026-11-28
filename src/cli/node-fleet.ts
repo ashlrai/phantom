@@ -1,7 +1,7 @@
 /** `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave`: thin handlers over DriveNodes. */
 import { hostname } from 'node:os';
 import type { DriveNodes, NodesStore } from '../core/drive/nodes/index.js';
-import { UsageError, joinHintCommand, knownOwnerScopes, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
+import { UsageError, joinHintCommand, knownOwnerScopes, nodeFleetListItems, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
 import { validId, type NodeAuth } from '../core/drive/nodes/state.js';
 import type { SelfUpdatePlan } from '../core/drive/nodes/phm-version.js';
 import type { LocalLaneProbeDeps } from '../core/drive/nodes/local-model-caps.js';
@@ -490,7 +490,10 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
         // looks joined but can never take a lane job. The pool wire still
         // accepts an empty --caps (a lane-less worker legitimately joins with
         // none), so this refusal stays on the standalone CLI path only.
-        const named = (flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean);
+        // nodeFleetListItems also refuses a real entry beside an empty one —
+        // checked here because the version and lane merges below rewrite
+        // --caps before runNodeFleet's own list validation can see it.
+        const named = nodeFleetListItems(flags.get('--caps'), '--caps');
         if (named.length === 0) {
           throw new UsageError('bad-caps', '--caps needs at least one capability.',
             'Omit --caps to auto-detect this machine\'s sign-ins, or name capabilities such as build,gh. Run: phm node --help');
@@ -505,7 +508,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // joining worker — not this host — owns the version it reports.
       const reported = versionCap((deps.phmVersion ?? localPhmVersion)());
       if (reported !== null) {
-        const caps = (flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean)
+        const caps = nodeFleetListItems(flags.get('--caps'), '--caps')
           .filter(c => versionFromCaps([c]) === null);
         caps.push(reported);
         flags.set('--caps', caps.join(','));
@@ -525,7 +528,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       localLaneError = laneProbe?.configError ?? null;
       const localCaps = laneProbe?.plan.caps ?? [];
       if (localCaps.length > 0) {
-        const caps = [...new Set([...(flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean), ...localCaps])];
+        const caps = [...new Set([...nodeFleetListItems(flags.get('--caps'), '--caps'), ...localCaps])];
         flags.set('--caps', caps.join(','));
       }
     }

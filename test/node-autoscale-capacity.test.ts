@@ -640,6 +640,39 @@ describe('phm node capacity / route CLI', () => {
     expect(JSON.parse(lines[2]!).error.message).toMatch(/node-capacity\.v1/);
   });
 
+  it('trims --exhausted items and refuses a real provider beside an empty entry', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { cmdNodeRoute } = await import('../src/cli/node-capacity.js');
+    const dir = mkdtempSync(join(tmpdir(), 'node-route-exhausted-'));
+    const file = (name: string, value: unknown) => { writeFileSync(join(dir, name), JSON.stringify(value)); return join(dir, name); };
+    const doc = computeNodeCapacity(snap({ measuredAtMs: Date.now() }));
+    const cap = file('cap.json', doc);
+    const costs = file('costs.json', [
+      { provider: 'grok', model: 'grok-5', harness: 'grok', tokensPerJob: 1e6, minutesPerJob: 20 },
+      { provider: 'claude', model: 'claude-x', harness: 'claude', tokensPerJob: 1e6, minutesPerJob: 20 },
+    ]);
+    const jobs = file('jobs.json', [{ id: 'j1', providers: ['grok', 'claude'] }]);
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (line: string) => { lines.push(line); };
+    try {
+      // 'grok,' used to mark only grok exhausted — the empty item was filtered
+      // before the provider match, silently narrowing the operator's list.
+      expect(await cmdNodeRoute(['--capacity', cap, '--costs', costs, '--jobs', jobs, '--exhausted', 'grok,', '--json'])).toBe(2);
+      expect(JSON.parse(lines.at(-1)!).error.message).toContain('empty entry');
+      lines.length = 0;
+      // Items trim, so 'grok, claude' exhausts both and the job has nowhere to go.
+      expect(await cmdNodeRoute(['--capacity', cap, '--costs', costs, '--jobs', jobs, '--exhausted', 'grok, claude', '--json'])).toBe(0);
+      expect(JSON.parse(lines[0]!).plan[0]).toMatchObject({ jobId: 'j1', nodeId: null });
+      lines.length = 0;
+      // An all-separator value stays an empty list, like an absent flag.
+      expect(await cmdNodeRoute(['--capacity', cap, '--costs', costs, '--jobs', jobs, '--exhausted', ',', '--json'])).toBe(0);
+      expect(JSON.parse(lines[0]!).plan[0]).toMatchObject({ jobId: 'j1', nodeId: 'mbp' });
+    } finally { console.log = log; }
+  });
+
   it('reports fleet-wide runnable sessions per harness next to the plan', async () => {
     const { mkdtempSync, writeFileSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
