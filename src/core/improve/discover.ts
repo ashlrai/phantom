@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. One hundred thirty-three sources, all of which Phantom
+ * evidence instead of a hand-kept list. One hundred thirty-four sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -1921,6 +1921,26 @@
  *     are stated as lower bounds, and items emit only for the fleet's
  *     own repository since the journal describes this install's
  *     lanes and carries no repo column;
+ *   - the daemon work queue's per-item worked ledger: the bounded
+ *     {itemId, outcome, ts} events recordOutcome appends to
+ *     ~/.ashlr/fleet/worked.json for every selected item's terminal
+ *     dispatch result — 'diff', 'empty', 'dispatch-blocked' and the
+ *     judge-feedback sweep's 'judged-review'/'judged-noise'/
+ *     'judged-decline' verdicts (workedLedgerBacklogItems below).
+ *     Until now the ledger's only readers were its own gates —
+ *     recentlyDeclined, the attempt cap and proposalAlreadySwept —
+ *     plus fleet status's learning metrics and fleet feedback stats,
+ *     so a fleet whose selected items kept yielding nothing, whose
+ *     launches kept blocking, or whose proposals kept dying at the
+ *     judge never became work, and a degraded ledger that silently
+ *     disarms that suppression never surfaced either. An
+ *     adverse-outcome cell emits per outcome class at three distinct
+ *     item ids across two distinct UTC days inside the window, the
+ *     sweep's dedup markers count as proposal evidence rather than
+ *     items, undated events are reported, a degraded strict read
+ *     emits one item naming its reasons, and items emit only for the
+ *     fleet's own repository since the ledger describes this
+ *     install's work queue and carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2086,6 +2106,7 @@ import { runsHistoryBacklogItems } from './runs-history-backlog.js';
 import { resolutionWitnessBacklogItems } from './resolution-witness-backlog.js';
 import { incidentLedgerBacklogItems } from './incident-ledger-backlog.js';
 import { jobCostBacklogItems } from './job-cost-backlog.js';
+import { workedLedgerBacklogItems } from './worked-ledger-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4392,6 +4413,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the journal describes this install's
   // lanes and carries no repo column.
   items.push(...await jobCostBacklogItems({ repo }));
+
+  // Daemon work-queue worked ledger (~/.ashlr/fleet/worked.json): the
+  // per-item outcome events recordOutcome appends for every selected
+  // item's terminal dispatch result, plus the judge-feedback sweep's
+  // judged-* verdicts (workedLedgerBacklogItems below). Until now the
+  // ledger's only readers were its own anti-clog gates and point-in-time
+  // status/feedback reports, so recurring empty, blocked or
+  // judge-rejected yields — and a degraded ledger that silently disarms
+  // the suppression — never became work. A cell emits per adverse
+  // outcome at three distinct item ids across two distinct UTC days
+  // inside the window; 'diff' rows are quoted as yield context only,
+  // swept-proposal markers count as proposal evidence rather than
+  // items, undated events are reported, a degraded strict read emits
+  // one item naming its reasons, and only the fleet's own repository
+  // inherits the item since the ledger describes this install's work
+  // queue.
+  items.push(...await workedLedgerBacklogItems({ repo }));
   return { items, errors };
 }
 
