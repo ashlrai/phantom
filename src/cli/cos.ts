@@ -3,15 +3,14 @@ import { cosJobId, cosStatus } from '../core/cos/intake.js';
 import { createChannelReceiver, INBOUND_CHANNELS, type InboundChannel } from '../core/fleet/channel-envelope.js';
 import { formatChannelAck } from '../core/fleet/channel-ack-text.js';
 
-export async function cmdCos(args: string[]): Promise<number> {
+export async function cmdCos(args: string[], usage = 'phm cos ask "<text>" --channel <cli|desktop|telegram|email|mobile|page> --json; phm cos status <id> --json'): Promise<number> {
   const json = args.includes('--json');
   try {
     const runsDir = process.env.ASHLR_RUNS_DIR;
     const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
-      channel: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean' },
+      channel: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
     } });
     if (values.help) {
-      const usage = 'phm cos ask "<text>" --channel <cli|desktop|telegram|email|mobile|page> --json; phm cos status <id> --json';
       console.log(json ? JSON.stringify({ usage }) : usage); return 0;
     }
     const [command, operand] = positionals;
