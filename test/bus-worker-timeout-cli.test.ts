@@ -16,7 +16,6 @@ let base: string, root: string, snapshot: string, prompt: string, requestFile: s
 let childFinished: boolean;
 const request = (id: string): BusEnvelope => ({ id, from: 'leader', to: 'worker', priority: 'P1', ttl: 120_000, body: { kind: 'work' } });
 const sink = () => new Writable({ write(_chunk, _encoding, done) { done(); } });
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const claims = () => join(root, 'bus-work-claims', 'claims.json');
 const launches = () => existsSync(marker) ? readFileSync(marker, 'utf8').trim().split('\n') : [];
 const child = (ignoreTerm = false, quick = false) => [process.execPath, '-e',
@@ -77,7 +76,12 @@ it.each(['loop', 'claimed', 'reply'])('%s terminates a slow child at the explici
     const successor = mutateBusWorkClaim({ action: 'acquire', id: 'first', owner: 'successor', leaseMs: 30000, root });
     expect(successor.status).toBe('acquired');
     const state = readFileSync(claims(), 'utf8');
-    await delay(2100);
+    // We already observed cancellation of the exact timer. Exercise the
+    // stronger race directly: a renewal callback already queued at timeout
+    // must be fenced against the successor, without sleeping for another tick.
+    const renewal = setIntervalSpy.mock.calls[renewalIndex]![0];
+    if (typeof renewal !== 'function') throw new Error('expected a renewal callback');
+    renewal();
     expect(readFileSync(claims(), 'utf8')).toBe(state);
     expect(launches()).toHaveLength(1);
   }
