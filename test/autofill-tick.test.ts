@@ -159,6 +159,37 @@ describe('autofill picks starved lanes from the status facts', () => {
     expect(report.lanes).toEqual([{ lane: 'devin', starved: false, fed: 0, why: 'held, so it is skipped' }]);
   });
 
+  it('does not feed a lane while lane-open rows wait for any lane', async () => {
+    const report = await tick({}, { readLanes: async () => ({
+      lanes: [{ lane: 'claude', running: 0, target: 6, queued: 0, held: false, remainingPct: 68 }], openRows: 3,
+    }) });
+    expect(report.runs).toEqual([]);
+    expect(report.lanes).toEqual([{ lane: 'claude', starved: false, fed: 0, why: '3 lane-open rows are waiting for any lane' }]);
+    expect(report.reason).toBe('No lane is starved: claude 3 lane-open rows are waiting for any lane.');
+    expect(await queued()).toHaveLength(0);
+  });
+
+  it('keeps a lane starved when the lane-open count is zero', async () => {
+    const report = await tick({}, { readLanes: async () => ({
+      lanes: [{ lane: 'claude', running: 0, target: 6, queued: 0, held: false, remainingPct: 68 }], openRows: 0,
+    }) });
+    expect(report.lanes).toEqual([{ lane: 'claude', starved: true, fed: 4, why: 'running 0 of 6, 0 queued, pool 32% used' }]);
+  });
+
+  it('keeps a lane starved when the lane-open count is unknown', async () => {
+    const report = await tick({}, { readLanes: async () => ({
+      lanes: [{ lane: 'claude', running: 0, target: 6, queued: 0, held: false, remainingPct: 68 }], openRows: null,
+    }) });
+    expect(report.lanes).toEqual([{ lane: 'claude', starved: true, fed: 4, why: 'running 0 of 6, 0 queued, pool 32% used' }]);
+  });
+
+  it('still reports a full lane as full, not as fed by open supply', async () => {
+    const report = await tick({}, { readLanes: async () => ({
+      lanes: [{ lane: 'claude', running: 6, target: 6, queued: 0, held: false, remainingPct: 68 }], openRows: 2,
+    }) });
+    expect(report.lanes).toEqual([{ lane: 'claude', starved: false, fed: 0, why: 'full: 6 of 6 running' }]);
+  });
+
   it('says why a starved lane was not fed when autofill is off', async () => {
     const report = await runAutofillTick({ runsDir, apply: true, now: () => NOW, root, entries: [], readLanes: fromStatus, readOff: async () => true });
     expect(report.lanes!.find(r => r.lane === 'claude')).toEqual({ lane: 'claude', starved: true, fed: 0, why: 'autofill off' });
