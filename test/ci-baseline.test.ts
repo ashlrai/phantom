@@ -199,6 +199,43 @@ describe('CI baseline evidence', () => {
     expect(report.master).toEqual({ head: master, known: true });
     expect(report.groups[0]).toMatchObject({ action: 'rerun-failed', master: 'pass' });
   });
+  it('excludes release-automation runs from master check evidence', async () => {
+    // release-please/release-prep land on nearly every master tip and their
+    // jobs check out unpinned refs, so their logs can never prove the head;
+    // counted as evidence they would mark masterKnown false on every tip.
+    const { gh, calls } = github({ count: 1, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const endpoint = args[1] ?? '';
+      if (!endpoint.includes('/actions/runs?')) return gh(args);
+      const params = new URLSearchParams(endpoint.split('?')[1]);
+      if (params.get('head_sha') !== master || params.get('branch') !== 'master') return gh(args);
+      const base = JSON.parse((await gh(args)).stdout) as { total_count: number; workflow_runs: Record<string, unknown>[] };
+      base.total_count += 1;
+      base.workflow_runs.push({ id: 50, workflow_id: 77, status: 'completed', conclusion: 'failure', head_sha: master, path: '.github/workflows/release-please.yml' });
+      return { ok: true, stdout: JSON.stringify(base), stderr: '' };
+    });
+    expect(report.master).toEqual({ head: master, known: true });
+    expect(report.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
+    // The excluded run never entered evidence collection: no jobs or logs call.
+    expect(calls.some(c => (c[1] ?? '').includes('/runs/50/'))).toBe(false);
+  });
+  it('still counts master runs of workflows outside the automation list', async () => {
+    // An unrecognized workflow path fails toward unknown: it is fetched and
+    // its unverifiable log keeps masterKnown false rather than being skipped.
+    const { gh, calls } = github({ count: 1, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const endpoint = args[1] ?? '';
+      if (!endpoint.includes('/actions/runs?')) return gh(args);
+      const params = new URLSearchParams(endpoint.split('?')[1]);
+      if (params.get('head_sha') !== master || params.get('branch') !== 'master') return gh(args);
+      const base = JSON.parse((await gh(args)).stdout) as { total_count: number; workflow_runs: Record<string, unknown>[] };
+      base.total_count += 1;
+      base.workflow_runs.push({ id: 50, workflow_id: 77, status: 'completed', head_sha: master, path: '.github/workflows/mystery-nightly.yml' });
+      return { ok: true, stdout: JSON.stringify(base), stderr: '' };
+    });
+    expect(report.master.known).toBe(false);
+    expect(calls.some(c => (c[1] ?? '').includes('/runs/50/jobs'))).toBe(true);
+  });
   it('reads default-reporter file-pass lines as master pass evidence', async () => {
     // The default reporter prints `✓ file (N tests)` for a green module and
     // no per-test pass lines; a green module means every test in it passed.
