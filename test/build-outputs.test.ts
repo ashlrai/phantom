@@ -40,7 +40,10 @@ function probe(output: string): string {
 
 describe('release build output inventory', () => {
   it('declares exactly the commands `npm run build` runs, in order', () => {
-    expect(pkg.scripts.build.split(' && ')).toEqual(NPM_BUILD_STEPS.map((step) => step.command));
+    expect(pkg.scripts.build).toBe('node scripts/build.mjs');
+    expect(readFileSync(join(REPO_ROOT, 'scripts/build.mjs'), 'utf8')).toContain('steps = NPM_BUILD_STEPS');
+    expect(NPM_BUILD_STEPS.filter(step => step.normalizeBefore).map(step => step.command))
+      .toEqual(['node scripts/build-release-dependency-inventory.mjs']);
   });
 
   it('never regenerates a tracked file during the build', () => {

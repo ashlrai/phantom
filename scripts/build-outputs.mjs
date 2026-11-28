@@ -13,7 +13,11 @@
  * are not listed: they cannot change the source tree.
  */
 
-/** `npm run build`, in order. Each entry must equal one `&&` segment of package.json scripts.build. */
+/**
+ * `npm run build`, in order. Executed by scripts/build.mjs with a portable creation mask.
+ * build.mjs normalizes existing release outputs before the first step, before each
+ * `normalizeBefore` step and after the last; umask alone leaves warm outputs unchanged.
+ */
 export const NPM_BUILD_STEPS = Object.freeze([
   Object.freeze({ command: 'npm run check:version', writes: Object.freeze([]) }),
   // tsBuildInfoFile lives under node_modules/.cache (tsconfig.json).
@@ -22,7 +26,8 @@ export const NPM_BUILD_STEPS = Object.freeze([
   Object.freeze({ command: 'node scripts/copy-assets.mjs', writes: Object.freeze(['dist/']) }),
   Object.freeze({ command: 'node scripts/build-preparation-builtin.mjs', writes: Object.freeze(['dist/']) }),
   Object.freeze({ command: 'vite build --config vite.config.web.ts', writes: Object.freeze(['dist/', 'node_modules/']) }),
-  Object.freeze({ command: 'node scripts/build-release-dependency-inventory.mjs', writes: Object.freeze(['dist/']) }),
+  // npm pack reports on-disk modes, and the inventory accepts only 0644/0755.
+  Object.freeze({ command: 'node scripts/build-release-dependency-inventory.mjs', writes: Object.freeze(['dist/']), normalizeBefore: true }),
   Object.freeze({ command: 'node scripts/build-identity.mjs', writes: Object.freeze(['dist/']) }),
 ]);
 
