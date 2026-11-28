@@ -1,4 +1,5 @@
 /** Read-only projection of retained bus receipts; routing labels grant no authority. */
+import { BUS_INBOX_MAX_MESSAGES } from '../fleet/bus-inbox.js';
 import { validateBusEnvelope } from '../fleet/bus-envelope.js';
 import {
   participantSchema, providerSchema, workFeedSchema, workPostBodySchema, workResultBodySchema, workStatusBodySchema,
@@ -55,8 +56,10 @@ export type WorkFeedProviderFor = (from: string) => Participant['provider'] | un
 export type WorkFeedOwnerKeyFor = (from: string) => string | undefined;
 
 /**
- * Project one retained snapshot in cursor order (at most 1024 receipts).
- * This is not a historical ledger: orphan statuses are ignored. A provider must
+ * Project one retained snapshot in cursor order (at most the bus store's
+ * retained bound, `BUS_INBOX_MAX_MESSAGES` receipts, and at most the feed's
+ * 1024-job wire bound). This is not a historical ledger: orphan statuses are
+ * ignored. A provider must
  * come from the post, explicit participant metadata or the injected resolver —
  * never a guessed label. Statuses update jobs owned by the same sender label,
  * or by any label the injected `ownerKeyFor` resolver maps to the same key;
@@ -65,7 +68,7 @@ export type WorkFeedOwnerKeyFor = (from: string) => string | undefined;
  */
 export function projectBusWorkFeed(receipts: readonly unknown[], participants: readonly Participant[] = [],
   providerFor?: WorkFeedProviderFor, ownerKeyFor?: WorkFeedOwnerKeyFor): WorkFeedResult {
-  if (receipts.length > 1024) return { status: 'refused', reason: 'invalid-receipts' };
+  if (receipts.length > BUS_INBOX_MAX_MESSAGES) return { status: 'refused', reason: 'invalid-receipts' };
   const providers = new Map<string, Participant['provider']>();
   for (const input of participants) {
     const participant = participantSchema.safeParse(input);
@@ -152,5 +155,8 @@ export function projectBusWorkFeed(receipts: readonly unknown[], participants: r
         receivedAt: row.receivedAt };
     }
   }
+  // The wire feed caps jobs at 1024 (workFeedSchema); a snapshot announcing
+  // more distinct jobs is a volume refusal, not a schema failure.
+  if (jobs.size > 1024) return { status: 'refused', reason: 'invalid-receipts' };
   return { status: 'ok', feed: workFeedSchema.parse({ v: 2, jobs: [...jobs.values()] }), citations };
 }

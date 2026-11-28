@@ -8,7 +8,7 @@ import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKe
 import { createAgentChannel, registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { workFeedSchema, type Participant, WORK_STATUSES } from '../src/core/agents/bus-v2-schema.js';
 import { isClaimableWork } from '../src/core/fleet/bus-envelope.js';
-import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
+import { appendBusInbox, BUS_INBOX_MAX_MESSAGES, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 
 const post = { kind: 'work.post', jobId: 'job', title: 'Review', repo: 'a/b', claimKeys: ['repo:a/b'], provider: 'devin' };
 const receipt = (body: unknown, cursor = 1, from = 'agent', to = 'leaders') => ({ cursor, receivedAt: cursor * 100,
@@ -193,13 +193,29 @@ describe('retained v2 work projection', () => {
   });
   it.each([
     [null], [receipt(post), receipt(post)], [{ ...receipt(post), receivedAt: -1 }],
-    [{ ...receipt(post), cursor: 1.5 }], [receipt({ bad: Number.NaN })], Array(1025).fill(null),
+    [{ ...receipt(post), cursor: 1.5 }], [receipt({ bad: Number.NaN })], Array(BUS_INBOX_MAX_MESSAGES + 1).fill(null),
   ])('refuses invalid receipt snapshots', (...rows) => {
     expect(projectBusWorkFeed(rows)).toEqual({ status: 'refused', reason: 'invalid-receipts' });
   });
   it('uses cursor order for sparse retained rows even with reversed receipt clocks', () => {
     expect(projectBusWorkFeed([receipt(post), { ...receipt({ kind: 'work.status', jobId: 'job', status: 'done' }, 10), receivedAt: 1 }]))
       .toMatchObject({ status: 'ok', feed: { jobs: [{ status: 'done', updatedAt: 1 }] } });
+  });
+  it('projects any snapshot the bus store can retain and refuses only past its bounds', () => {
+    // More live receipts than the retired 1024 cap: opaque bodies plus one
+    // announced job still read ok — non-feed receipts cost a validation, not a refusal.
+    const busy = Array.from({ length: 1100 }, (_, i) =>
+      receipt(i === 0 ? post : { kind: 'note', n: i }, i + 1));
+    expect(projectBusWorkFeed(busy)).toMatchObject({ status: 'ok',
+      feed: { v: 2, jobs: [{ id: 'job', status: 'queued' }] } });
+    // The store's own retained bound still refuses, as does a snapshot that
+    // would emit more jobs than the feed's 1024-job wire bound.
+    expect(projectBusWorkFeed(Array(BUS_INBOX_MAX_MESSAGES + 1).fill(null)))
+      .toEqual({ status: 'refused', reason: 'invalid-receipts' });
+    const announced = (count: number) => Array.from({ length: count }, (_, i) =>
+      receipt({ ...post, jobId: `job-${i}` }, i + 1));
+    expect(projectBusWorkFeed(announced(1024))).toMatchObject({ status: 'ok' });
+    expect(projectBusWorkFeed(announced(1025))).toEqual({ status: 'refused', reason: 'invalid-receipts' });
   });
   it('matches status owners through ownerKeyFor only when both labels resolve to one key', () => {
     const keys: Record<string, string> = { 'agent:bot': 'agt_one', 'bot-alias': 'agt_one', 'agent:other': 'agt_two' };
@@ -232,7 +248,7 @@ describe('retained v2 work projection', () => {
         'owner-mismatch', { id: 'm-2', receivedAt: 200, ttl: 1000 }],
       // Receipt-shape, participant-metadata and volume refusals blame no single receipt.
       [[null], 'invalid-receipts', undefined],
-      [Array(1025).fill(null), 'invalid-receipts', undefined],
+      [Array(BUS_INBOX_MAX_MESSAGES + 1).fill(null), 'invalid-receipts', undefined],
       [[], 'invalid-participants', undefined],
     ];
     for (const [rows, reason, receiptSite] of cases) {

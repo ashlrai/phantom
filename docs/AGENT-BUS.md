@@ -232,7 +232,8 @@ The `BusEnvelope` carries exactly six wire fields — each is a flat value:
 - `ttl` positive remaining lifetime in milliseconds (safe integer).
 - `body` opaque strict JSON data; no event-kind or payload interpretation.
 
-Caps: 1024 messages, 1 MiB total, 100 per read page.
+Caps: 1 MiB total, at most `BUS_INBOX_MAX_MESSAGES` (~9,986 minimal-size
+receipts) retained, 100 per read page.
 
 ## Conventions
 
@@ -2778,7 +2779,9 @@ Statuses from that owner update retained jobs in cursor order with receipt time
 as `updatedAt`; when the read layer supplies `ownerKeyFor`, any sender label
 resolving to the job owner's key counts as that owner, while labels it cannot
 resolve still require exact label equality. Orphan statuses are ignored.
-Duplicate posts and malformed work bodies are refused. A body-level refusal
+Duplicate posts and malformed work bodies are refused. The projection accepts
+any snapshot the bus store can retain (`BUS_INBOX_MAX_MESSAGES` receipts) and
+refuses one that would emit more than the feed's 1024-job wire bound. A body-level refusal
 carries `receipt` — the wire id, receipt time and TTL of the retained envelope
 whose processing refused the projection — so a poisoned feed names its cause
 (`agents bus show <id>` resolves it) instead of silently hiding every job
