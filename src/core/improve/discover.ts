@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. One hundred thirty-five sources, all of which Phantom
+ * evidence instead of a hand-kept list. One hundred thirty-six sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -2007,6 +2007,29 @@
  *     bounds, est_merges_lost stays labelled inference, stall and
  *     check coverage is stated against merge-drop rows, and items
  *     emit only for the fleet's own repository;
+ *   - the Multi-model chat outcome journal's recurring adverse
+ *     evidence: the {at, seatId, engine, kind, signal} SeatOutcome
+ *     rows the Verse sidecar's POST /api/verse/multimodel/outcome
+ *     appends to ~/.ashlr/verse/multimodel/outcomes.jsonl — thumbs,
+ *     retries, switches, Auto follows/overrides, Compare picks,
+ *     escalations and draft verdicts per prompt kind — folded through
+ *     the same aggregateOutcomes/learnedTilt math the Auto advisor
+ *     reads (multimodelOutcomesBacklogItems below). Until now the
+ *     journal's only reader was the advisor itself, so a seat or
+ *     engine the operator keeps rejecting for a kind, or an Auto
+ *     picker that keeps getting overridden, never became work. A
+ *     preference cell emits per (kind, seat) and (kind, engine) only
+ *     when the production learned stat clears LEARNING_MIN_SIGNALS
+ *     decayed signals AND the advisor's own adverse-tilt phrase gate
+ *     across MULTIMODEL_OUTCOMES_MIN_DAYS distinct UTC days inside the
+ *     7-day window; an advisor cell emits per (kind, seat) at
+ *     MULTIMODEL_OUTCOMES_MIN_OVERRIDES 'auto-overridden' rows across
+ *     the same day bar when overrides are at least half of the
+ *     recorded suggestion outcomes. sessionId and model are contract
+ *     fields that are never folded, truncated tails are stated as
+ *     lower bounds, and items emit only for the fleet's own
+ *     repository since the journal describes this install's
+ *     interactive seats and carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2177,6 +2200,7 @@ import { incidentLedgerBacklogItems } from './incident-ledger-backlog.js';
 import { jobCostBacklogItems } from './job-cost-backlog.js';
 import { workedLedgerBacklogItems } from './worked-ledger-backlog.js';
 import { bottleneckBacklogItems } from './bottleneck-backlog.js';
+import { multimodelOutcomesBacklogItems } from './multimodel-outcomes-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4578,6 +4602,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // bounds, est_merges_lost stays labelled inference, and only the
   // fleet's own repository inherits the items.
   items.push(...await bottleneckBacklogItems({ repo }));
+
+  // Multi-model chat outcome journal (~/.ashlr/verse/multimodel/
+  // outcomes.jsonl): the SeatOutcome rows the Verse sidecar appends per
+  // recorded operator action — recurring adverse (kind, seat) and
+  // (kind, engine) learned-preference cells at the advisor's own
+  // evidence and phrase gates, and recurring per-(kind, seat)
+  // Auto-suggestion overrides — become backlog items too. Until now
+  // the journal's only reader was the Auto advisor itself, so a seat
+  // or engine the operator keeps rejecting, or a picker that keeps
+  // getting overridden, never became work. sessionId and model are
+  // never folded, truncated tails are stated as lower bounds, and
+  // only the fleet's own repository inherits the items since the
+  // journal describes this install's interactive seats and carries
+  // no repo column.
+  items.push(...await multimodelOutcomesBacklogItems({ repo }));
   return { items, errors };
 }
 
