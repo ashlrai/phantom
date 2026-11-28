@@ -1341,6 +1341,22 @@
  *     are quoted as coverage, truncated tails are stated as lower
  *     bounds, and items self-target each outside PR's own repository
  *     since the merge-path fix lives where the merges land;
+ *   - the same journal's recurring merges with zero recorded
+ *     reviewers: the fleet.outside-pr-outcome.v1 rows' `reviews`
+ *     field — gh's latestReviews count plus computed reviewDecision —
+ *     folded per repository so outside merges that keep landing with
+ *     an empty latestReviews array become work
+ *     (outsidePrReviewBacklogItems below). Until now the field's only
+ *     readers were the sibling prompts' context tallies and the
+ *     router-weight report's advisory community-seat section. A repo
+ *     cell emits only at three unreviewed merges inside the same
+ *     30-day window; null reviews records (pre-fields rows, unparseable
+ *     gh reads) and merges with at least one recorded reviewer never
+ *     count toward the bar, the reviewDecision tallies and standing
+ *     reverts quote as context, the newest scan row's degraded reads
+ *     are quoted as coverage, truncated tails are stated as lower
+ *     bounds, and items self-target each outside PR's own repository
+ *     since the review-path fix lives where the merges land;
  *   - the work market's repo-share journal's recurring adverse
  *     freshness verdicts: the per-repo `repo_share` rows dispatchd's
  *     market_metric appends to metrics/work-market.jsonl whenever the
@@ -2125,6 +2141,7 @@ import { feedbackSubmissionsBacklogItems } from './feedback-submissions-backlog.
 import { outsidePrBacklogItems } from './outside-pr-backlog.js';
 import { outsidePrAgentBacklogItems } from './outside-pr-agent-backlog.js';
 import { outsidePrCiBacklogItems } from './outside-pr-ci-backlog.js';
+import { outsidePrReviewBacklogItems } from './outside-pr-review-backlog.js';
 import { repoShareBacklogItems } from './repo-share-backlog.js';
 import { reasoningInsightBacklogItems } from './reasoning-insight-backlog.js';
 import { fleetGapBacklogItems } from './fleet-gap-backlog.js';
@@ -3907,6 +3924,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // stated as lower bounds, and items self-target the outside PRs' own
   // repository — the fix lives where the merges land.
   items.push(...await outsidePrCiBacklogItems());
+
+  // Outside-PR review-coverage journal: the same
+  // metrics/outside-pr-outcomes.jsonl rows folded per repository on
+  // their journaled `reviews` field — gh's latestReviews count plus
+  // computed reviewDecision, where `latest === 0` is a real "merged
+  // unreviewed" signal (gh returned an empty latestReviews array)
+  // distinct from a null record's missing evidence. Until now the
+  // field's only readers were the sibling prompts' context tallies
+  // and the router-weight report's advisory community-seat section,
+  // so a repo whose outside merges kept landing with green CI, no
+  // revert and zero recorded reviewers never became work. A repo cell
+  // emits only at the same recurring bar of unreviewed merges inside
+  // the window, reviewed and unknown evidence quote as the
+  // denominator, decision tallies and standing reverts quote as
+  // context, degraded scan coverage is quoted, truncated tails are
+  // stated as lower bounds, and items self-target the outside PRs'
+  // own repository — the review-path fix lives where the merges land.
+  items.push(...await outsidePrReviewBacklogItems());
 
   // Work-market share journal: the same journal's change-triggered
   // `repo_share` rows folded per (repo, code) cell for the three adverse
