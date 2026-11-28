@@ -24,6 +24,13 @@ phm desktop click --app Devin --x 100 --y 200 --json
 
 `--json` prints one object. Exit 0 when `ok` is true, 1 when `ok` is false, 2 for usage. `phm desktop install` is unchanged.
 
+In `list-apps`, `appPolicy.readAllowed` describes the read policy (the legacy
+`operable` value means the same thing). `appPolicy.inputVerbs` lists input that
+the app identity's policy could allow; an empty list means input is not allowed.
+The top-level `inputHold` separately reports a fleet KILL or comms pause. The
+list never grants input or confirms the focused window: individual calls still
+check holds, app and window identity, permissions, and the intent receipt.
+
 MCP tools on the Phantom gateway use the same verbs: `desktop_list_apps`, `desktop_windows`, `desktop_read`, `desktop_screenshot`, `desktop_doctor`, `desktop_focus`, `desktop_scroll`, `desktop_type`, `desktop_click`. Read tools stay available while KILL is on. Write tools are refused while KILL is on.
 
 ## Permissions
