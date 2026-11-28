@@ -366,13 +366,15 @@ export interface BusWorkFeedViewFilters {
   /**
    * Keep only jobs whose descriptive text carries the needle as a
    * case-insensitive substring — the announcement title, the newest status
-   * detail and the declared dispatch scope/acceptance, each scrubbed,
-   * single-lined and clipped at the same bounds `formatBusWorkFeedJob`
-   * renders, with whitespace collapsed on both sides: the same `--contains`
-   * rule every other bus read applies, so "which announced jobs mention X"
-   * is one filtered read and a secret-shaped value stays unfindable. Ids,
-   * claim keys, statuses and routing labels are structured fields with
-   * their own filters, never search text.
+   * detail, the declared dispatch scope/acceptance and the newest
+   * `work.result` citation's reason code, each scrubbed, single-lined and
+   * clipped at the same bounds `formatBusWorkFeedJob` renders, with
+   * whitespace collapsed on both sides: the same `--contains` rule every
+   * other bus read applies, so "which announced jobs mention X" and "which
+   * jobs reported a result for reason X" are each one filtered read and a
+   * secret-shaped value stays unfindable. Ids, claim keys, statuses, result
+   * outcomes and routing labels are structured fields with their own
+   * filters, never search text.
    */
   contains?: string;
   /**
@@ -514,12 +516,15 @@ function feedField(value: string, max: number): string {
 
 /**
  * The descriptive text a feed job's `--contains` filter searches: the
- * announcement title, the newest status detail and the declared dispatch
- * scope/acceptance — each through the same `feedField` scrub, single-line
- * and display clip the job line renders, joined and normalized like every
+ * announcement title, the newest status detail, the declared dispatch
+ * scope/acceptance and the newest `work.result` citation's reason code —
+ * each through the same `feedField` scrub, single-line and display clip
+ * the job line renders (the reason at the 64-char bound
+ * `busWorkJobResultSuffix` applies), joined and normalized like every
  * other `--contains` haystack. A match is therefore always visible in the
- * row it selects, and a secret-shaped value is scrubbed before the match
- * even though the stored envelope keeps it.
+ * row it selects — "which jobs reported a `tests-red` result" finds the
+ * job whose line prints `reason=tests-red` — and a secret-shaped value is
+ * scrubbed before the match even though the stored envelope keeps it.
  */
 export function busWorkFeedJobSearchText(job: BusWorkFeedJob): string {
   return [
@@ -527,6 +532,7 @@ export function busWorkFeedJobSearchText(job: BusWorkFeedJob): string {
     job.detail === undefined ? '' : feedField(job.detail, FEED_DETAIL_MAX),
     job.dispatch === undefined ? '' : feedField(job.dispatch.scope, DISPATCH_SCOPE_MAX),
     job.dispatch === undefined ? '' : feedField(job.dispatch.acceptance, DISPATCH_ACCEPTANCE_MAX),
+    job.result?.reason === undefined ? '' : feedField(job.result.reason, 64),
   ].join(' ').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
@@ -594,7 +600,7 @@ export function formatBusWorkFeed(result: BusWorkFeedReadResult | BusWorkFeedPag
     }
     if (result.claims) {
       for (const hold of result.claims.holds) {
-        lines.push(`held ${hold.jobId} ${hold.claimKey} owner=${hold.owner} until=${new Date(hold.leaseUntil).toISOString()}`);
+        lines.push(`held ${hold.jobId} ${hold.claimKey} owner=${hold.owner} until=${new Date(hold.leaseUntil).toISOString()} origin=${hold.origin}`);
       }
     }
   }

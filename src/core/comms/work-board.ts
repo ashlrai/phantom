@@ -9,6 +9,10 @@
  * claims inspection, so a board response is one internally consistent
  * evidence projection even while the fleet churns; nothing is cached across
  * calls. */
+import { agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
+import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
+import { busBodyKind, busBodyResultOutcome, type WorkResultOutcome } from '../agents/bus-v2-schema.js';
+import type { BusPriority } from '../fleet/bus-envelope.js';
 import { groupAddressTopicOf, isGroupPresenceBody } from '../fleet/bus-group.js';
 import { inspectBusWorkClaims, type BusWorkClaimView, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import type { BusInboxReceipt } from '../fleet/bus-inbox.js';
@@ -92,12 +96,12 @@ export interface WorkBoardResult {
   /** The true filtered total across the whole settled scan before the
    * display cap: requests passing every applied filter — the channel_ref
    * scope, the `since`/`before` receivedAt window, the `channel`/`topic`/`id`
-   * address filters and the `state` match —
+   * address filters, the sender/recipient/priority/body filters and the
+   * `state` match —
    * counted before the newest-first slice, so `items` may be a slice of it.
-   * Present whenever `state`, a `since`/`before` bound or one of the address
-   * filters narrowed the read;
-   * a `channelRef`-only read keeps the unfiltered shape. Never a count of
-   * just the shown window. */
+   * Present whenever `state`, a `since`/`before` bound or one of the
+   * narrowing filters applied; a `channelRef`-only read keeps the
+   * unfiltered shape. Never a count of just the shown window. */
   matched?: number;
 }
 
@@ -156,6 +160,57 @@ export function listWorkBoard(opts: {
    * `agents bus show <id>` resolves, decided on the retained envelope id
    * alone. */
   id?: string;
+  /** Keep only requests addressed to this agent — the shared
+   * `agentPendingAddressMatcher` rule `bus next` claims by: the literal
+   * `to` label, any label of the identity the ref resolves to through the
+   * bus registry, or a member channel's `group:<name>:` address, minus
+   * channel posts the identity sent itself. The registry is read only when
+   * an address ref is present; an unresolvable ref or an unreadable
+   * registry keeps exact-label matching, so unknown identity state never
+   * widens the filter. Callers validate the printable routing-label
+   * grammar; a value that reaches here unmatched is an honest empty match,
+   * never an error. */
+  to?: string;
+  /** Keep only requests whose `from` label the ref matches — the shared
+   * `agentRefAddressMatcher` rule every bus read's `--from` applies: the
+   * literal label or any other label of the identity it resolves to,
+   * exact-label matching kept on an unresolvable ref or unreadable
+   * registry. */
+  from?: string;
+  /** Drop requests whose `from` label the ref matches, under the same
+   * `agentRefAddressMatcher` identity-label rule `from` applies — a sender
+   * both included and excluded matches nothing. */
+  excludeFrom?: string;
+  /** Keep only requests stamped with this exact P0..P3 band — the same
+   * `envelope.priority` equality every bus read's `--priority` applies. */
+  priority?: BusPriority;
+  /** Keep only requests whose body names this one job — the shared
+   * `busBodyJobMatch` rule every bus read's `--job` applies: a
+   * feed-citing body's own `jobId`, a `worker-handoff` `taskId`, or a
+   * `job:<id>` v2 thread label on a note/context body. */
+  job?: string;
+  /** Keep only requests whose body carries this exact kind discriminator —
+   * the shared `busBodyKind` own-field match every bus read's `--body-kind`
+   * applies (the v2 `kind` field, a `worker-handoff`/`protocol.kind`/
+   * `type`/`schema` fallback), case-sensitive; a body carrying no
+   * discriminator never matches. */
+  bodyKind?: string;
+  /** Keep only requests whose body is a `work.result` receipt reporting
+   * this one outcome — the shared `busBodyResultOutcome` own-field match
+   * every bus read's `--result` applies over the WORK_RESULT_OUTCOMES
+   * vocabulary; every other body kind and a result carrying no outcome
+   * never matches. */
+  result?: WorkResultOutcome;
+  /** Keep only requests whose scrubbed one-line summary carries this
+   * needle as a case-insensitive substring — the shared
+   * `busReadContainsMatch` rule every bus read's `--contains` applies,
+   * matching the rendered summary, never the raw body, so a secret-shaped
+   * value stays unfindable. `opts.contains` arrives as the caller spelled
+   * it; the read normalizes through `busReadContains` itself, and callers
+   * validate the bounded non-blank grammar first — an invalid value
+   * reaching here is ignored like every other surface's pre-validated
+   * filter, never a widened match. */
+  contains?: string;
 }): WorkBoardResult {
   const now = Number.isSafeInteger(opts.now) && opts.now >= 0 ? opts.now : 0;
   // One claims inspection for the whole board, taken even when the inbox
@@ -189,6 +244,23 @@ export function listWorkBoard(opts: {
     // churning scan reports 'unavailable', never a partial listing.
     const read = readBusInboxEvidence(opts.root);
     if (read.status !== 'ok') return empty;
+    // The shared bus-read address matchers resolve once per read, and only
+    // when an address ref is present: the registry sits beside the bus
+    // store under the same root, an unresolvable ref or an unreadable
+    // registry keeps exact-label matching, so unknown identity state never
+    // widens the board. `to` takes the pending-address rule `bus next`
+    // claims by; `from`/`excludeFrom` the sender-label rule every bus
+    // read's sender filters share.
+    const registry = opts.to === undefined && opts.from === undefined && opts.excludeFrom === undefined
+      ? undefined
+      : (() => { const r = readAgentRegistry({ root: opts.root }); return r.status === 'ok' ? r.registry : undefined; })();
+    const addressedTo = opts.to === undefined ? undefined : agentPendingAddressMatcher(opts.to, registry);
+    const fromMatch = opts.from === undefined ? undefined : agentRefAddressMatcher(opts.from, registry);
+    const excludeFromMatch = opts.excludeFrom === undefined ? undefined : agentRefAddressMatcher(opts.excludeFrom, registry);
+    // The caller validated the needle grammar; the read still normalizes
+    // through the shared `busReadContains` rule so the match compares the
+    // same normalized form every other bus read applies.
+    const containsNeedle = busReadContains(opts.contains) ?? undefined;
     const requests: BusInboxReceipt[] = [];
     const channelPrefix = opts.channel === undefined ? undefined : `group:${opts.channel}:`;
     for (const row of read.receipts) {
@@ -206,6 +278,17 @@ export function listWorkBoard(opts: {
       if (channelPrefix !== undefined && !row.envelope.to.startsWith(channelPrefix)) continue;
       if (opts.topic !== undefined && groupAddressTopicOf(row.envelope.to) !== opts.topic) continue;
       if (opts.id !== undefined && row.envelope.id !== opts.id) continue;
+      // The shared sender/recipient, band and body filters — the same
+      // per-envelope rules `busThreadRowFilter` and `busPageRowMatch`
+      // apply, decided on the request envelope's own fields.
+      if (addressedTo !== undefined && !addressedTo(row.envelope.to, row.envelope.from)) continue;
+      if (fromMatch !== undefined && !fromMatch(row.envelope.from)) continue;
+      if (excludeFromMatch !== undefined && excludeFromMatch(row.envelope.from)) continue;
+      if (opts.priority !== undefined && row.envelope.priority !== opts.priority) continue;
+      if (opts.job !== undefined && !busBodyJobMatch(row.envelope.body, opts.job)) continue;
+      if (opts.bodyKind !== undefined && busBodyKind(row.envelope.body) !== opts.bodyKind) continue;
+      if (opts.result !== undefined && busBodyResultOutcome(row.envelope.body) !== opts.result) continue;
+      if (containsNeedle !== undefined && !busReadContainsMatch(row.envelope.body, containsNeedle)) continue;
       requests.push(row);
     }
     requests.sort((a, b) => b.receivedAt - a.receivedAt || b.cursor - a.cursor);
@@ -230,12 +313,16 @@ export function listWorkBoard(opts: {
         ...(result ? { result } : {}),
       };
     };
-    // A narrowing filter — a time bound or one of the address filters —
-    // narrows the read exactly like a state filter does, so it earns the
-    // same `matched` total: the count of requests inside the window
-    // before the display cap, never just the shown slice.
+    // A narrowing filter — a time bound, one of the address filters or one
+    // of the shared sender/recipient, band and body filters — narrows the
+    // read exactly like a state filter does, so it earns the same `matched`
+    // total: the count of requests inside the window before the display
+    // cap, never just the shown slice.
     const bounded = opts.since !== undefined || opts.before !== undefined
-      || opts.channel !== undefined || opts.topic !== undefined || opts.id !== undefined;
+      || opts.channel !== undefined || opts.topic !== undefined || opts.id !== undefined
+      || opts.to !== undefined || opts.from !== undefined || opts.excludeFrom !== undefined
+      || opts.priority !== undefined || opts.job !== undefined
+      || opts.bodyKind !== undefined || opts.result !== undefined || opts.contains !== undefined;
     if (opts.state === undefined) {
       const kept = requests.slice(0, limit(opts));
       return { items: kept.map(toItem), inbox: 'ok', truncated: requests.length > kept.length,

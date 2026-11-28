@@ -30,7 +30,7 @@ export interface InventoryItem {
   detail: string;
   /** ISO time its source was last read; null when the source could not be read. */
   lastChecked: string | null;
-  /** Lanes that can use it; 'all' when it is not limited to a lane; 'unknown' when no source says. */
+  /** Lanes reported by the source: 'all' if unrestricted, 'unknown' if absent. Not an authorization or runtime receipt. */
   usedByLanes: string[] | 'all' | 'unknown';
   /** The single next step: set when the state is 'needs setup', and on other states only when a source names one. */
   next: InventoryNextStep | null;

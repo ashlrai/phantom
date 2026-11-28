@@ -31,9 +31,9 @@ import { evalBudget } from './budget-alert.js';
 import { estCostUsd } from '../run/budget.js';
 import { loadIndex } from '../index-engine.js';
 import { localDay } from '../reasoning/insights.js';
-import { fleetHopSpoolPath } from './fleet-hop.js';
+import { FLEET_HOP_EVENT, FLEET_HOP_ID_RE, fleetHopSpoolPath } from './fleet-hop.js';
 import type { AshlrIndex } from '../types.js';
-import { collectHopEvents, parseHopEvent } from './hop-events.js';
+import { asObservabilityRecord, collectHopEvents, isNonNegativeFinite, isPositiveSafeInt, parseHopEvent } from './hop-events.js';
 import type { HopEfficiencyMetrics, HopEvent, HopRollup, HopSourceState } from './hop-events.js';
 import { parseGithubRemote } from '../knowledge/wiki/scan.js';
 
@@ -392,11 +392,6 @@ export async function warmCommitCounts(repoPaths: readonly string[], sinceMs: nu
   return pending.length;
 }
 
-/** Drop every cached commit history (tests; `ashlr index` rebuilds). */
-export function invalidateCommitCountCache(): void {
-  commitHistory.clear();
-}
-
 // ---------------------------------------------------------------------------
 // Cost estimation — map model id to a provider key for estCostUsd()
 // ---------------------------------------------------------------------------
@@ -509,9 +504,8 @@ export function rollupJobLanes(sinceMs: number, now: number, project?: string): 
   }
   for (const line of contents.split('\n')) {
     try {
-      const row: unknown = JSON.parse(line);
-      if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-      const r = row as Record<string, unknown>;
+      const r = asObservabilityRecord(JSON.parse(line));
+      if (!r) continue;
       if (typeof r['lane'] !== 'string' || !r['lane'].trim() ||
           typeof r['jobId'] !== 'string' || !r['jobId'] ||
           typeof r['ts'] !== 'string' || !Number.isFinite(Date.parse(r['ts']))) continue;
@@ -1033,7 +1027,7 @@ export async function getCachedRollup(
 /** Drop cached rollups and commit histories (tests; after a reindex). */
 export function invalidateRollupCache(): void {
   rollupCache.clear();
-  invalidateCommitCountCache();
+  commitHistory.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -1063,13 +1057,10 @@ export function invalidateRollupCache(): void {
 // counters (fleet-hop.ts); the rollup emits ids, timestamps and sums. No env,
 // no credentials, never throws.
 
-const FLEET_HOP_EVENT_NAME = 'fleet_hop';
 const MERGED_STATION = 'merged';
 const UNKNOWN_POOL = 'unknown';
 /** Cap on spool bytes scanned; a larger spool still contributes its prefix. */
 const FLEET_HOP_SPOOL_MAX_BYTES = 32 * 1024 * 1024;
-/** Same bounded id shape the emitter enforces (fleet-hop.ts ID_RE). */
-const HOP_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,119}$/;
 /**
  * Repo labels additionally allow '/' ('ashlrai/phantom'), matching the coding
  * pool cost feed's record label charset.
@@ -1099,21 +1090,13 @@ interface PoolAcc {
   missingUsd: number;
 }
 
-function positiveInt(v: unknown): number | null {
-  return typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? v : null;
-}
-
-function nonNegNumber(v: unknown): number | null {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
-}
-
 /**
  * null and absent both mean unattributed. A present value that is not
  * id-shaped is malformed, so the whole hop is refused (returns undefined).
  */
 function idOrAbsent(v: unknown): string | null | undefined {
   if (v === null || v === undefined) return null;
-  return typeof v === 'string' && HOP_ID_RE.test(v) ? v : undefined;
+  return typeof v === 'string' && FLEET_HOP_ID_RE.test(v) ? v : undefined;
 }
 
 /** Prefer the station exit time; fall back to the event timestamp. */
@@ -1137,12 +1120,10 @@ function stableHopIdentity(props: Record<string, unknown>): string {
 
 /** Reduce an emitted fleet_hop envelope to cost fields, or null when malformed. */
 function hopCostRow(value: unknown): FleetHopCostRow | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const envelope = value as Record<string, unknown>;
-  if (envelope['event'] !== FLEET_HOP_EVENT_NAME) return null;
-  const props = envelope['properties'];
-  if (!props || typeof props !== 'object' || Array.isArray(props)) return null;
-  const p = props as Record<string, unknown>;
+  const envelope = asObservabilityRecord(value);
+  if (!envelope || envelope['event'] !== FLEET_HOP_EVENT) return null;
+  const p = asObservabilityRecord(envelope['properties']);
+  if (!p) return null;
 
   const station = idOrAbsent(p['station']);
   const ts = hopTimestamp(p, envelope['timestamp']);
@@ -1156,13 +1137,13 @@ function hopCostRow(value: unknown): FleetHopCostRow | null {
   const insertId = p['$insert_id'];
 
   return {
-    pr: positiveInt(p['pr']),
+    pr: isPositiveSafeInt(p['pr']) ? p['pr'] : null,
     station,
     pool,
     repo,
     jobId,
-    tokens: nonNegNumber(p['tokens']),
-    usd: nonNegNumber(p['usd']),
+    tokens: isNonNegativeFinite(p['tokens']) ? p['tokens'] : null,
+    usd: isNonNegativeFinite(p['usd']) ? p['usd'] : null,
     ts,
     dedupKey: typeof insertId === 'string' && insertId.length > 0
       ? `i:${insertId}` : `c:${stableHopIdentity(p)}`,

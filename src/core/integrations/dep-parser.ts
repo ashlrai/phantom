@@ -118,6 +118,43 @@ const UNSUPPORTED_MANIFESTS: ReadonlyArray<readonly [file: string, ecosystem: st
 ];
 
 // ---------------------------------------------------------------------------
+// Shared JSON/record guards for integrations
+// ---------------------------------------------------------------------------
+
+/** Narrow an unknown value to a plain non-array JSON object record. */
+export function isIntegrationRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Return `value` as a plain record, or null for primitives, null, or arrays. */
+export function asIntegrationRecord(value: unknown): Record<string, unknown> | null {
+  return isIntegrationRecord(value) ? value : null;
+}
+
+/** Parse a JSON string as a plain object record, returning null on any failure. */
+export function parseJsonRecord(raw: string): Record<string, unknown> | null {
+  try {
+    return asIntegrationRecord(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+/** Unwrap a bare JSON array or the first matching array property on a wrapper object. */
+export function unwrapJsonArray(
+  parsed: unknown,
+  wrapperKeys: readonly string[],
+): unknown[] | null {
+  if (Array.isArray(parsed)) return parsed;
+  const record = asIntegrationRecord(parsed);
+  if (!record) return null;
+  for (const key of wrapperKeys) {
+    if (Array.isArray(record[key])) return record[key];
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers (all no-throw)
 // ---------------------------------------------------------------------------
 
@@ -150,8 +187,7 @@ function jsonSafe(raw: string | null): unknown {
  * nameWithOwner). Falls back to the directory basename when unknown, which still
  * produces a stable—if owner-less—node ref. NEVER reads git config or network.
  */
-export function repoRefFor(repoPath: string, repoFullName?: string | null): string {
-  if (repoFullName && repoFullName.includes('/')) return repoFullName;
+function repoRefFor(repoPath: string, repoFullName?: string | null): string {
   if (repoFullName) return repoFullName;
   const base = basename(repoPath.replace(/[\\/]+$/, ''));
   return base || 'unknown-repo';
@@ -217,9 +253,9 @@ function edgesFromPackageJson(pkg: Record<string, unknown>, repoNode: string): D
   ];
 
   for (const [field, depKind] of SECTIONS) {
-    const section = pkg[field];
-    if (section === null || typeof section !== 'object' || Array.isArray(section)) continue;
-    for (const [name, range] of Object.entries(section as Record<string, unknown>)) {
+    const section = asIntegrationRecord(pkg[field]);
+    if (!section) continue;
+    for (const [name, range] of Object.entries(section)) {
       if (!name) continue;
       // De-dup by (name + kind) — a package can legitimately appear in two
       // sections; keep both kinds but never the same one twice.
@@ -663,7 +699,7 @@ const JS_LOCKFILES: readonly string[] = [
  * source of truth, and resolved version trees would leak a fuller dependency
  * graph than the project intends to publish.
  */
-export function detectJsLockfiles(repoPath: string): string[] {
+function detectJsLockfiles(repoPath: string): string[] {
   const found: string[] = [];
   for (const lf of JS_LOCKFILES) {
     try {
@@ -680,7 +716,7 @@ export function detectJsLockfiles(repoPath: string): string[] {
  * yet support. Returns stable ecosystem labels for the caller's followups list.
  * NEVER reads their contents.
  */
-export function unsupportedManifests(repoPath: string): string[] {
+function unsupportedManifests(repoPath: string): string[] {
   const out = new Set<string>();
   for (const [file, eco] of UNSUPPORTED_MANIFESTS) {
     try {
@@ -736,10 +772,10 @@ export function parseRepoDeps(
 
   // ── package.json (npm) ────────────────────────────────────────────────────
   const pkgRaw = readSafe(join(repoPath, 'package.json'));
-  const pkgParsed = jsonSafe(pkgRaw);
-  if (pkgParsed !== null && typeof pkgParsed === 'object' && !Array.isArray(pkgParsed)) {
+  const pkgParsed = asIntegrationRecord(jsonSafe(pkgRaw));
+  if (pkgParsed) {
     result.manifests.push('package.json');
-    pushAll(edgesFromPackageJson(pkgParsed as Record<string, unknown>, repoNode));
+    pushAll(edgesFromPackageJson(pkgParsed, repoNode));
   }
 
   // ── Cargo.toml (cargo) ────────────────────────────────────────────────────

@@ -83,7 +83,10 @@ describe('fleet usage-audit', () => {
   });
 
   it('classifies moving, idle and reset-observed lanes in one fully observed audit (exit 0)', async () => {
-    await put('ready.tsv', 'id\tstatus\tpool\nRQ-B9\tDONE\tlane-beta\nRQ-G1\tREADY\tlane-gamma\nRQ-D1\tDONE\tlane-delta\n');
+    // A live-status row keeps the snapshot's liveJobs evidence non-empty: with
+    // zero LIVE_STATUSES rows the lane source reports live as unknown, which
+    // would make lane-delta's unchanged meter unclassifiable.
+    await put('ready.tsv', 'id\tstatus\tpool\nRQ-B9\tDONE\tlane-beta\nRQ-G1\tREADY\tlane-gamma\nRQ-D1\tDONE\tlane-delta\nRQ-E1\tRUNNING\tlane-epsilon\n');
     await put('usage-readings.log', [
       canon,
       reading('lane-beta', 40, 80), reading('lane-beta', 55, 4),           // moving, empty queue
@@ -141,6 +144,23 @@ describe('fleet usage-audit', () => {
     expect(laneOf(json!, 'lane-zeta')).toMatchObject({ classification: 'insufficient-evidence', droppedReadings: 1 });
     expect(laneOf(json!, 'lane-eta')).toMatchObject({ classification: 'insufficient-evidence', conflicts: 1 });
     expect(await readFile(join(queueDir, 'usage-readings.log'), 'utf8')).toBe(journal);
+  });
+
+  it('keeps the newest rows when the journal exceeds the row bound', async () => {
+    // The journal is append-only and chronological: past the 50,000-row bound
+    // the retained window must be the tail — the head-first read this replaces
+    // silently analyzed the oldest rows and dropped the newest evidence.
+    const pad = JSON.stringify({ pool: 'lane-pad', pctUsed: 1, writtenAt: '2020-01-01T00:00:00Z' });
+    const filler = Array.from({ length: 50_001 }, () => pad).join('\n');
+    const newest = [canon, reading('lane-new', 10, 75), reading('lane-new', 20, 5)].join('\n');
+    await put('usage-readings.log', `${filler}\n${newest}\n`);
+    await put('ready.tsv', 'id\tstatus\tpool\nRQ-N1\tREADY\tlane-new\n');
+    const { code, json } = await runAudit(['--queue-dir', queueDir, '--json']);
+    expect(code).toBe(2); // lane-pad's retained rows are one stale reading — insufficient-evidence
+    expect(json!.sources.usageJournal).toMatchObject({ state: 'degraded', truncated: true, rows: 50_000 });
+    expect(laneOf(json!, 'lane-new')).toMatchObject({ classification: 'moving', readings: 2, pctUsedDelta: 10 });
+    // lane-pad's retained rows all share one old timestamp — one deduped reading.
+    expect(laneOf(json!, 'lane-pad').readings).toBe(1);
   });
 
   it('keeps a journal-only lane with null queue counts and never guesses its work state', async () => {

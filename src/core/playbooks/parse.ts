@@ -61,6 +61,9 @@ import {
   PLAYBOOK_MAX_BYTES,
   PLAYBOOK_SECTIONS,
   REQUIRED_PLAYBOOK_SECTIONS,
+  normalizeLineEndings,
+  utf8ByteLength,
+  type PlaybookCanonicalResult,
   type PlaybookKind,
   type PlaybookMeta,
   type PlaybookParseResult,
@@ -79,11 +82,6 @@ const MAX_NAME = 80;
 const MAX_DESCRIPTION = 200;
 const MAX_LIST = 20;
 const MAX_ITEM = 200;
-
-function utf8Length(s: string): number {
-  // TextEncoder exists in browsers and Node alike.
-  return new TextEncoder().encode(s).length;
-}
 
 function unquote(value: string): string {
   const v = value.trim();
@@ -255,10 +253,10 @@ export function parsePlaybook(source: string): PlaybookParseResult {
   if (typeof source !== 'string' || !source.trim()) {
     return { ok: false, errors: [{ field: 'source', message: 'The playbook is empty.' }] };
   }
-  if (utf8Length(source) > PLAYBOOK_MAX_BYTES) {
+  if (utf8ByteLength(source) > PLAYBOOK_MAX_BYTES) {
     return { ok: false, errors: [{ field: 'source', message: `A playbook is at most ${PLAYBOOK_MAX_BYTES / 1024} KiB.` }] };
   }
-  const lines = source.replace(/\r\n?/g, '\n').split('\n');
+  const lines = normalizeLineEndings(source).split('\n');
   const fm = readFrontMatter(lines, errors);
   if (!fm) return { ok: false, errors };
   const { scalars, lists } = fm.raw;
@@ -459,7 +457,7 @@ export function serializePlaybook(meta: PlaybookMeta, sections: PlaybookSections
 }
 
 /** Parse then re-serialize. The form the store writes. */
-export function canonicalizePlaybook(source: string): PlaybookParseResult & { source?: string } {
+export function canonicalizePlaybook(source: string): PlaybookCanonicalResult {
   const parsed = parsePlaybook(source);
   if (!parsed.ok) return parsed;
   return { ...parsed, source: serializePlaybook(parsed.meta, parsed.sections) };

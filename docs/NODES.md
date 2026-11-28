@@ -33,8 +33,13 @@ Secondary workers probe their own native Codex and Claude CLI sign-in status,
 advertise only those lanes, pull fenced owner-scoped jobs and return result
 references. Provider binaries are resolved without a `PATH` lookup: the first
 executable regular file among `/opt/homebrew/bin`, `/usr/local/bin`,
-`~/.local/bin`, `~/.npm-global/bin` and the running Node's `bin` directory
-(`resolveProviderBinary` in `src/core/drive/nodes/provider-binary.ts`). A lane is
+`~/.local/bin`, `~/.npm-global/bin` and the running Node's `bin` directory,
+then the version-manager shims (`~/.volta/bin`, `~/.bun/bin`,
+`~/.local/share/mise/shims`, `~/.asdf/shims`) and the Linux system locations
+`/usr/bin`, `/bin`, `/snap/bin`
+(`resolveProviderBinary` in `src/core/drive/nodes/provider-binary.ts`). The
+later directories only resolve when nothing earlier exists, so an existing
+installation keeps its precedence. A lane is
 advertised only when that exact path exits 0 for `login status` (Codex) or
 `auth status --json` (Claude); output and auth files are never read. They check the host-local PAUSE and KILL
 sentinels in the runs directory (`ASHLR_RUNS_DIR`, else `~/.ashlr-runs`) and stop the runner process group

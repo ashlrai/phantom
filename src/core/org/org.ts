@@ -14,47 +14,135 @@ import type { ResourceView } from '../fabric/resource-view.js';
 
 export class OrgError extends Error {}
 export class OrgNotConfiguredError extends OrgError {}
-const fail = (message: string): never => { throw new OrgError(message); };
+function fail(message: string): never { throw new OrgError(message); }
 
-const id = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
-const lane = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
+export const ORG_FILE_MAX_BYTES = 256 * 1024;
+export const orgIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
+export const orgShareSchema = z.number().min(0).max(100);
+export const orgJoinRecordSchema = z.object({
+  v: z.literal(1),
+  member: orgIdSchema,
+  machine: orgIdSchema,
+  joinedAt: z.string().datetime(),
+  lanes: z.array(z.object({ lane: orgIdSchema, share: orgShareSchema })).max(16),
+});
+
 const ROLES = ['leader', 'implementer', 'reviewer', 'researcher'] as const;
-const machine = z.object({ id, host: z.string().min(1).max(253).optional() }).strict();
+const machine = z.object({ id: orgIdSchema, host: z.string().min(1).max(253).optional() }).strict();
 const contribution = z.object({
-  lane,
+  lane: orgIdSchema,
   /** Percent of this member's lane they offer the org. 0 means declared but unavailable. */
-  share: z.number().min(0).max(100),
+  share: orgShareSchema,
   /** Resource pool whose usage/reset telemetry the leader can read for this lane; absent means unknown usage. */
-  pool: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
+  pool: orgIdSchema.optional(),
 }).strict();
 const agent = z.object({
-  id, lane, machine: id,
+  id: orgIdSchema, lane: orgIdSchema, machine: orgIdSchema,
   roles: z.array(z.enum(ROLES)).min(1).max(ROLES.length),
   /** An agent id or a member id. */
-  reports_to: id.optional(),
+  reports_to: orgIdSchema.optional(),
 }).strict();
 const member = z.object({
-  id, name: z.string().min(1).max(100), nickname: z.string().min(1).max(40).optional(),
+  id: orgIdSchema, name: z.string().min(1).max(100), nickname: z.string().min(1).max(40).optional(),
   role: z.enum(['founder', 'cofounder', 'member']),
   machines: z.array(machine).max(32).default([]),
   agents: z.array(agent).max(64).default([]),
   contributions: z.array(contribution).max(16).default([]),
 }).strict();
-const schema = z.object({ version: z.literal(1), leader: id, members: z.array(member).min(1).max(64) }).strict();
-export type OrgMember = z.infer<typeof member>;
-export type OrgAgent = z.infer<typeof agent>;
+const schema = z.object({ version: z.literal(1), leader: orgIdSchema, members: z.array(member).min(1).max(64) }).strict();
 export type Org = z.infer<typeof schema>;
 export type OrgRole = typeof ROLES[number];
 
 export function orgFile(): string { return join(ashlrHome(), 'org.toml'); }
 export function joinsDir(): string { return join(ashlrHome(), 'org', 'joins'); }
+export function joinRecordFilename(memberId: string, machineId: string): string { return `${memberId}.${machineId}.json`; }
+export function joinRecordPath(memberId: string, machineId: string, dir = joinsDir()): string {
+  return join(dir, joinRecordFilename(memberId, machineId));
+}
+
+function writePrivateAtomic(file: string, content: string): void {
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, content, { mode: 0o600 });
+  renameSync(tmp, file);
+}
+
+function memberLaneKey(memberId: string, laneId: string): string {
+  return `${memberId}/${laneId}`;
+}
+
+/** Render a runnable `phm org join` command for error hints and opt-in guidance. */
+export function formatOrgJoinCommand(
+  memberId: string,
+  machineId: string,
+  lanes: readonly (string | { lane: string; share?: number })[] = [],
+): string {
+  const laneFlags = lanes.map((entry) => {
+    if (typeof entry === 'string') return ` --lane ${entry}`;
+    return entry.share === undefined ? ` --lane ${entry.lane}` : ` --lane ${entry.lane}=${entry.share}`;
+  }).join('');
+  return `phm org join --member ${memberId} --machine ${machineId}${laneFlags}`;
+}
+
+/**
+ * Parse `--lane` tokens (`<lane>` or `<lane>=<share>`) and reject duplicates.
+ * When `defaultShare` is given (as in `org init`), bare lanes take that share and
+ * explicit shares are checked against `0..100`; otherwise shares stay optional
+ * for `joinOrg` to bound against each member's declared share.
+ */
+export function parseOrgLaneSpecs(args: readonly string[], options: { defaultShare: number }): { lane: string; share: number }[];
+export function parseOrgLaneSpecs(args: readonly string[], options?: { defaultShare?: undefined }): { lane: string; share?: number }[];
+export function parseOrgLaneSpecs(
+  args: readonly string[],
+  options: { defaultShare?: number } = {},
+): { lane: string; share?: number }[] {
+  const specs = args.map((s) => {
+    const eq = s.indexOf('=');
+    if (eq >= 0 && s.indexOf('=', eq + 1) >= 0) fail(`--lane takes <lane> or <lane>=<share>: '${s}'`);
+    const laneName = eq < 0 ? s : s.slice(0, eq);
+    const shareText = eq < 0 ? undefined : s.slice(eq + 1);
+    if (laneName === '') fail(`--lane needs a lane name: '${s}'`);
+    if (shareText === undefined) {
+      return options.defaultShare === undefined ? { lane: laneName, share: undefined } : { lane: laneName, share: options.defaultShare };
+    }
+    const share = Number(shareText);
+    const badNumber = shareText.trim() === '' || !Number.isFinite(share);
+    if (options.defaultShare !== undefined) {
+      if (badNumber || share < 0 || share > 100) fail(`--lane share must be a number from 0 to 100: '${s}'`);
+    } else if (badNumber) {
+      fail(`--lane share must be a number: '${s}'`);
+    }
+    return { lane: laneName, share };
+  });
+  const seen = new Set<string>();
+  for (const spec of specs) {
+    if (seen.has(spec.lane)) fail(`--lane ${spec.lane} was given more than once.`);
+    seen.add(spec.lane);
+  }
+  return specs;
+}
+
+/** Parse `--agent <id>:<lane>` tokens and reject duplicate agent ids. */
+export function parseOrgAgentSpecs(args: readonly string[]): { id: string; lane: string }[] {
+  const agents = args.map((s) => {
+    const parts = s.split(':');
+    if (parts.length !== 2 || parts[0] === '' || parts[1] === '') fail(`--agent takes <id>:<lane>: '${s}'`);
+    return { id: parts[0]!, lane: parts[1]! };
+  });
+  const seen = new Set<string>();
+  for (const a of agents) {
+    if (seen.has(a.id)) fail(`--agent ${a.id} was given more than once.`);
+    seen.add(a.id);
+  }
+  return agents;
+}
 
 export function validateOrg(value: unknown): Org {
   // Inspect before schema errors: diagnostics must never echo rejected values.
   assertMetadata(JSON.stringify(value));
   const parsed = schema.safeParse(value);
   if (!parsed.success) fail(`Invalid org.toml: ${parsed.error.issues.slice(0, 3).map((i) => i.path.join('.')).join(', ')}. See docs/AGENT-NETWORK.md#team-org.`);
-  const org = parsed.data!;
+  const org = parsed.data;
   const members = new Set<string>(), agents = new Map<string, string>();
   for (const m of org.members) {
     if (members.has(m.id)) fail(`Duplicate member ${m.id}.`);
@@ -90,19 +178,19 @@ export function loadOrg(file = orgFile()): Org {
   try { text = readFileSync(file, 'utf8'); } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       let missing: boolean;
-      try { missing = !lstatSync(file, { throwIfNoEntry: false }); } catch { return fail('Could not read org.toml.'); }
+      try { missing = !lstatSync(file, { throwIfNoEntry: false }); } catch { fail('Could not read org.toml.'); }
       if (missing) throw new OrgNotConfiguredError(`No org file at ${file}. org.toml holds org ids and lane shares only, never credentials: get a copy from your org leader, or start a new org with phm org init --member <id> --machine <id>.`);
     }
-    return fail('Could not read org.toml.');
+    fail('Could not read org.toml.');
   }
-  if (text.length > 256 * 1024) fail('org.toml is too large.');
+  if (Buffer.byteLength(text) > ORG_FILE_MAX_BYTES) fail('org.toml is too large.');
   let doc: unknown;
   try { doc = parse(text); } catch (err) {
     // TomlError carries the 1-based position of the first bad token; naming it
     // gives a member something concrete to send their leader. File content is
     // never echoed — org.toml holds member and machine ids only.
     const at = err instanceof TomlError ? ` at line ${err.line}` : '';
-    return fail(`org.toml is not valid TOML${at}. org.toml is maintained by your org leader — ask them to repair it and send a fresh copy.`);
+    fail(`org.toml is not valid TOML${at}. org.toml is maintained by your org leader — ask them to repair it and send a fresh copy.`);
   }
   return validateOrg(doc);
 }
@@ -136,9 +224,7 @@ export function initOrg(req: { member: string; machine: string; name?: string; l
   };
   const org = validateOrg(doc);
   if (existsSync(file)) fail(`org.toml already exists at ${file}. Edit it or remove it first.`);
-  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-  writeFileSync(`${file}.tmp`, INIT_HEADER + stringify(doc), { mode: 0o600 });
-  renameSync(`${file}.tmp`, file);
+  writePrivateAtomic(file, INIT_HEADER + stringify(doc));
   return { file, org };
 }
 
@@ -184,7 +270,7 @@ export function joinOrg(org: Org, req: { member: string; machine: string; optIn:
     // and only the leader can re-point it in org.toml.
     const matches = m.machines.filter((x) => x.id !== mach.id && x.host !== undefined && sameHost(x.host, here));
     const way = matches.length === 1
-      ? ` This computer matches declared machine ${matches[0]!.id}: run phm org join --member ${m.id} --machine ${matches[0]!.id}.`
+      ? ` This computer matches declared machine ${matches[0]!.id}: run ${formatOrgJoinCommand(m.id, matches[0]!.id)}.`
       : ' If this computer replaced it or was renamed, ask the leader to update the machine\'s host in org.toml.';
     fail(`Run join on ${mach.host}; this is not that machine.${way}`);
   }
@@ -197,11 +283,7 @@ export function joinOrg(org: Org, req: { member: string; machine: string; optIn:
     return { lane: o.lane, share };
   });
   const record: JoinRecord = { v: 1, member: m.id, machine: mach.id, lanes, joinedAt: (opts.now ?? new Date()).toISOString() };
-  const dir = opts.dir ?? joinsDir();
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const file = join(dir, `${m.id}.${mach.id}.json`);
-  writeFileSync(`${file}.tmp`, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
-  renameSync(`${file}.tmp`, file);
+  writePrivateAtomic(joinRecordPath(m.id, mach.id, opts.dir ?? joinsDir()), JSON.stringify(record, null, 2) + '\n');
   return record;
 }
 
@@ -233,13 +315,13 @@ export interface QueueJob { id: string; title?: string; priority?: number; lane?
 export function parseQueue(text: string): QueueJob[] {
   assertMetadata(text);
   let v: unknown;
-  try { v = JSON.parse(text); } catch { return fail('Queue must be JSON.'); }
+  try { v = JSON.parse(text); } catch { fail('Queue must be JSON.'); }
   const parsed = z.array(z.object({
     id: z.string().min(1).max(120), title: z.string().max(300).optional(), priority: z.number().min(0).max(1000).optional(),
-    lane: lane.optional(), costPct: z.number().positive().max(100).optional(),
+    lane: orgIdSchema.optional(), costPct: z.number().positive().max(100).optional(),
   }).strict()).max(2000).safeParse(v);
   if (!parsed.success) fail('Queue entries are {id, title?, priority?, lane?, costPct?}.');
-  return parsed.data!;
+  return parsed.data;
 }
 
 const POOL_OF: Record<string, string> = { claude: 'claude-max' };
@@ -288,27 +370,32 @@ export function planOrg(org: Org, joins: readonly JoinRecord[], view: ResourceVi
       budgetPct: Math.round((headroomPct ?? UNKNOWN_HEADROOM_PCT) * share) / 100, usage: known ? 'known' : 'unknown',
     });
   }
-  const remaining = new Map(budgets.map((b) => [`${b.member}/${b.lane}`, b.budgetPct]));
+  const remaining = new Map(budgets.map((b) => [memberLaneKey(b.member, b.lane), b.budgetPct]));
   const roles: OrgPlan['roles'] = [];
   const implementers = new Map<string, string[]>();
   for (const m of org.members) for (const b of budgets.filter((x) => x.member === m.id)) {
+    const key = memberLaneKey(m.id, b.lane);
     const agents = m.agents.filter((a) => a.lane === b.lane);
     agents.forEach((a, i) => {
       const wantsReview = a.roles.includes('reviewer') && agents.length > 1 && i === agents.length - 1;
       const role: OrgRole = a.roles.includes('leader') && m.id === org.leader ? 'leader' : wantsReview ? 'reviewer' : a.roles.find((r) => r !== 'leader') ?? a.roles[0]!;
       roles.push({ agent: a.id, member: m.id, lane: a.lane, role, reportsTo: a.reports_to ?? null });
-      if (role === 'implementer') implementers.set(`${m.id}/${b.lane}`, [...(implementers.get(`${m.id}/${b.lane}`) ?? []), a.id]);
+      if (role === 'implementer') {
+        const list = implementers.get(key);
+        if (list) list.push(a.id);
+        else implementers.set(key, [a.id]);
+      }
     });
   }
   const assignments: OrgPlan['assignments'] = [], unassigned: OrgPlan['unassigned'] = [];
   const load = new Map<string, number>();
   const slots = new Map(capacity?.map(row => [row.lane, row.additional_slots]));
   const cost = (j: QueueJob) => j.costPct ?? DEFAULT_COST_PCT;
-  const staffed = (b: LaneBudget) => (implementers.get(`${b.member}/${b.lane}`)?.length ?? 0) > 0;
+  const staffed = (b: LaneBudget) => (implementers.get(memberLaneKey(b.member, b.lane))?.length ?? 0) > 0;
   const ordered = [...queue].sort((a, b) => (b.priority ?? 1) / cost(b) - (a.priority ?? 1) / cost(a) || a.id.localeCompare(b.id));
   for (const job of ordered) {
     const covers = (b: LaneBudget) => !job.lane || b.lane === job.lane;
-    const funded = budgets.filter((b) => covers(b) && staffed(b) && remaining.get(`${b.member}/${b.lane}`)! >= cost(job));
+    const funded = budgets.filter((b) => covers(b) && staffed(b) && remaining.get(memberLaneKey(b.member, b.lane))! >= cost(job));
     const fits = funded.filter(b => slots.get(b.lane) !== 0);
     if (fits.length === 0) {
       // The reason names the real blocker: a pinned lane nobody opted into,
@@ -318,12 +405,12 @@ export function planOrg(org: Org, joins: readonly JoinRecord[], view: ResourceVi
       unassigned.push({ job: job.id, reason: funded.length ? 'no resource-plan slots left' : covering.length === 0
         ? (job.lane ? `no opted-in contribution on ${job.lane}` : 'no contributed budget left')
         : covering.every((b) => !staffed(b))
-          ? `no implementer agent declared on ${[...new Set(covering.map((b) => `${b.member}/${b.lane}`))].join(', ')}`
+          ? `no implementer agent declared on ${[...new Set(covering.map((b) => memberLaneKey(b.member, b.lane)))].join(', ')}`
           : 'no contributed budget left' });
       continue;
     }
-    const best = fits.reduce((p, c) => c.urgency * remaining.get(`${c.member}/${c.lane}`)! > p.urgency * remaining.get(`${p.member}/${p.lane}`)! ? c : p);
-    const key = `${best.member}/${best.lane}`;
+    const best = fits.reduce((p, c) => c.urgency * remaining.get(memberLaneKey(c.member, c.lane))! > p.urgency * remaining.get(memberLaneKey(p.member, p.lane))! ? c : p);
+    const key = memberLaneKey(best.member, best.lane);
     const spare = slots.get(best.lane);
     if (spare != null) slots.set(best.lane, spare - 1);
     const agentId = implementers.get(key)!.reduce((p, c) => (load.get(c) ?? 0) < (load.get(p) ?? 0) ? c : p);

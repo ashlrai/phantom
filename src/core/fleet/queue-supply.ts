@@ -262,7 +262,7 @@ export async function readQueueSupply(opts: { runsDir?: string; now?: () => numb
     () => null,
   );
   const [view, ready, startsByLane] = await Promise.all([
-    readResourceLedger({ runsDir, now: () => nowMs }).then(async ledger => buildPoolsView(ledger, nowMs, await readUsageSamples({ nowMs }))),
+    readResourceLedger({ runsDir, now: () => nowMs }).then(async ledger => buildPoolsView(ledger, nowMs, await readUsageSamples({ runsDir, nowMs }))),
     readyByLane,
     readStarts(join(runsDir, 'dispatch-events.log'), nowMs).catch(() => null),
   ]);

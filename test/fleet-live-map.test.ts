@@ -3,7 +3,7 @@ import { buildFleetLiveMap, renderFleetLiveMapText, type FleetLiveMap } from '..
 import { fleetOrgMap } from '../src/core/fleet/org-map.js';
 import { fleetOrgTree } from '../src/core/fleet/org-tree.js';
 import { projectFleetEdges } from '../src/core/fleet/fleet-edges.js';
-import type { NodeRow, NodesView } from '../src/core/fleet/nodes-view.js';
+import { NODES_SCHEMA, type NodeRow, type NodesView } from '../src/core/fleet/nodes-view.js';
 import type { FleetRunsDirState } from '../src/core/fleet/runs-dir-state.js';
 import type { ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
 import type { FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
@@ -30,8 +30,9 @@ function org(sessions: object[], receipts?: ReturnType<typeof receipt>[]) {
   return { ...map, tree: fleetOrgTree(map, { runs }) };
 }
 const computer = (name: string, extra: Partial<NodeRow> = {}): NodeRow => ({ name, isSelf: false, reachable: true, lastSeen: AT, phantom: 'running',
-  freeMemoryBytes: 8e9, cpuHeadroomPercent: 50, lanes: ['claude'], jobsRunning: [], freeSlots: 1, stateCode: 'ready', state: 'ready for work', ...extra });
-const computers = (nodes: NodeRow[], reasons: string[] = []): NodesView => ({ schemaVersion: 1, asOf: AT, self: 'node-a', registry: 'local', nodes, reasons });
+  heartbeatAgeSeconds: 'unknown', freeMemoryBytes: 8e9, freeMemoryPercent: 'unknown', load: 'unknown', cpuHeadroomPercent: 50, lanes: ['claude'], jobsRunning: [],
+  freeSlots: 1, stateCode: 'ready', state: 'ready for work', joined: true, joinCommand: null, ...extra });
+const computers = (nodes: NodeRow[], reasons: string[] = []): NodesView => ({ schema: NODES_SCHEMA, schemaVersion: 1, asOf: AT, self: 'node-a', registry: 'local', nodes, reasons });
 const usage = { v: 1, generatedAt: AT, asOf: AT, sources: { status: 'healthy', apiSpend: 'missing', jobs: 'missing' }, apiSpend: null, jobsMalformedRows: null, lanes: [
   { lane: 'claude', window: 'weekly', usedPct: 41.6, creditsRemaining: null, deadSignal: null },
   { lane: 'devin', window: 'credits', usedPct: null, creditsRemaining: 12, deadSignal: null },
@@ -132,6 +133,29 @@ describe('buildFleetLiveMap', () => {
     expect(map.edges.some(row => row.from === 'job:RQ-POOL' && row.kind === 'reports-to')).toBe(false);
     expect(map.gaps).toContain('Computers: tailscale unavailable or status unreadable');
     expect(renderFleetLiveMapText(map)).toContain('* RQ-B | running | fixture-model · phantom | on node-b');
+  });
+
+  it('draws a ready row the claim bridge runs on a node under its own job id, on the computer holding it', () => {
+    const map = buildFleetLiveMap({ now: NOW, org: org([session('RQ-A', 'claude')]),
+      computers: computers([computer('node-b', { jobsRunning: ['ready:RQ-9:2', 'RQ-B', 'gone'] })]),
+      jobs: liveJobs([liveJob('RQ-B', 'claude')]) });
+    // The bridge id names the ready row, not a second job: one node, lane unknown, on node-b.
+    expect(ids(map, 'job')).toEqual(['job:RQ-9', 'job:RQ-B']);
+    expect(map.nodes.find(n => n.id === 'job:RQ-9')).toMatchObject({ status: 'running', state: 'running', detail: 'lane unknown', lane: null, repo: null });
+    expect(edge(map, 'runs-on:job:RQ-9->computer:node-b')).toBeDefined();
+    // A plain claim still needs the live report's confirmation: RQ-B has it, 'gone' does not.
+    expect(edge(map, 'runs-on:job:RQ-B->computer:node-b')).toBeDefined();
+    expect(map.nodes.find(n => n.id === 'job:RQ-B')?.lane).toBe('claude');
+    expect(ids(map, 'job')).not.toContain('job:gone');
+    expect(ids(map, 'job')).not.toContain('job:ready:RQ-9:2');
+  });
+
+  it('attaches a bridge claim to the org job of the same ready id instead of minting a second node', () => {
+    const map = buildFleetLiveMap({ now: NOW, org: org([session('RQ-9', 'claude')]),
+      computers: computers([computer('node-b', { jobsRunning: ['ready:RQ-9:2'] })]) });
+    expect(ids(map, 'job')).toEqual(['job:RQ-9']);
+    expect(map.nodes.find(n => n.id === 'job:RQ-9')).toMatchObject({ lane: 'claude' });
+    expect(edge(map, 'runs-on:job:RQ-9->computer:node-b')).toBeDefined();
   });
 
   it('a message chain: leader to lane to job, counted per edge, pulsing only within the last minute', () => {

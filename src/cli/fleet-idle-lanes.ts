@@ -45,7 +45,7 @@ export async function cmdFleetIdleLanes(
   const stuckAfterMin = stuckAfterArg ?? DEFAULT_STUCK_AFTER_MIN;
   const json = args.includes('--json');
   try {
-    const runsDir = join(homedir(), '.ashlr-runs');
+    const runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
     const lanes = parseIdleLanes(await reader(join(runsDir, 'queue', 'status.json')));
     const events = await readIdleLaneEvents(runsDir, reader);
     const rows: Array<IdleLane & Partial<IdleLaneAge>> = hasPooledDatedEvent(events)
@@ -61,7 +61,7 @@ export async function cmdFleetIdleLanes(
     }
     return lanes.some(lane => lane.status === 'red') ? 1 : 0;
   } catch {
-    const error = 'Cannot read lane status. Expected lanes with held, running, target and queued in ~/.ashlr-runs/queue/status.json.';
+    const error = 'Cannot read lane status. Expected lanes with held, running, target and queued in queue/status.json under ASHLR_RUNS_DIR (default ~/.ashlr-runs).';
     console.log(json ? JSON.stringify({ schema: IDLE_LANES_SCHEMA, error }) : error);
     return 2;
   }

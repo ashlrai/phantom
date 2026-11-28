@@ -26,7 +26,18 @@
  * `latestReviews` count plus its computed `reviewDecision`, the same
  * fields cloud/tracker.ts reads for fleet task outcomes) — so a
  * community seat's outcome record covers more than the revert verdict.
- * An absent `gh` reports
+ * `ci` carries the same check-rollup verdict cloud/tracker.ts reports
+ * for fleet outcomes, read per surviving outside PR through a bounded
+ * `gh pr view --json statusCheckRollup` pass (the light `pr list`
+ * fields stay light — rollup data is ~10 KB per PR and would swamp the
+ * merged-list read); null when gh returned no parseable rollup, an
+ * honest unknown distinct from a real empty-rollup 'none'. `diff`
+ * carries gh's recorded merge size — `additions`, `deletions` and
+ * `changedFiles`, three fields of the same merged-list read so they
+ * cost no extra gh calls and are frozen at merge — or null when any of
+ * the three is missing or malformed, an honest unknown never a guessed
+ * zero. An absent
+ * `gh` reports
  * sourceState 'missing'; an unreadable revert ledger marks every revert
  * verdict 'unknown' rather than implying "not reverted"; a missing ledger
  * is a genuine empty evidence set. Never throws; malformed gh rows are
@@ -52,7 +63,16 @@ const MAX_MERGED_PER_REPO = 200;
 const MAX_REPOS = 10;
 const DEFAULT_WINDOW_DAYS = 30;
 const MAX_WINDOW_DAYS = 365;
-const MERGED_PR_FIELDS = 'number,title,author,mergedAt,headRefName,createdAt,latestReviews,reviewDecision';
+const MERGED_PR_FIELDS = 'number,title,author,mergedAt,headRefName,createdAt,latestReviews,reviewDecision,additions,deletions,changedFiles';
+/** The `gh pr view --json` field the bounded per-PR CI read asks for. */
+const CI_PR_FIELDS = 'statusCheckRollup';
+/**
+ * Global per-pass bound on `gh pr view` CI reads across every repo —
+ * surviving outside merges are rare, but a wide window on a busy repo
+ * must not turn one outcomes read into a call storm. PRs past the cap
+ * keep `ci: null`, an honest unknown, never a guessed verdict.
+ */
+const MAX_CI_READS = 120;
 
 /**
  * Agent products whose default pushed-branch namespace is `<product>/…`
@@ -161,6 +181,31 @@ export interface OutsidePrReviewEvidence {
   latest: number;
 }
 
+/**
+ * CI verdict on the merge's head checks — the same vocabulary
+ * cloud/tracker.ts's parseOutcome reports for fleet task outcomes:
+ * 'success' every recorded check passed, 'failure' at least one failed,
+ * 'pending' checks still incomplete, 'none' gh returned an empty rollup
+ * (a real no-CI signal, distinct from evidence never captured). null
+ * when gh returned no parseable rollup — the bounded per-PR read failed,
+ * the PR sat past MAX_CI_READS, or the row predates the field.
+ */
+export type OutsidePrCiVerdict = 'success' | 'failure' | 'pending' | 'none';
+
+/**
+ * gh's recorded diff size for one merged PR: `additions` and
+ * `deletions` are the merge's added/removed line counts and
+ * `changedFiles` the number of files the diff touched — all three
+ * recorded by the same `pr list` read, frozen at merge. Present only
+ * when every field parsed as a nonnegative safe integer; a partial or
+ * malformed record reads null, never a guessed zero.
+ */
+export interface OutsidePrDiffEvidence {
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+}
+
 export interface OutsidePrOutcomeV1 {
   repo: string; number: number; title: string;
   /** gh author login, or null when gh recorded none (ghost author). */
@@ -169,6 +214,10 @@ export interface OutsidePrOutcomeV1 {
   createdAt: string | null;
   /** gh's review evidence for the merge; null when gh returned no parseable review fields. */
   reviews: OutsidePrReviewEvidence | null;
+  /** CI verdict on the merge's head checks; null when gh returned no parseable rollup. */
+  ci: OutsidePrCiVerdict | null;
+  /** gh's recorded diff size for the merge; null when any of the three fields was missing or malformed. */
+  diff: OutsidePrDiffEvidence | null;
   /** Agent product attributed by recorded branch/login convention; null = no known convention matched. */
   agent: string | null;
   /** gh never records which model produced a change — always null. */
@@ -273,9 +322,11 @@ function isoTime(value: unknown): string | null {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 
-interface RawMergedPr { number: number; title: string; author: string | null; head: string; mergedAt: string; createdAt: string | null; reviews: OutsidePrReviewEvidence | null }
+interface RawMergedPr { number: number; title: string; author: string | null; head: string; mergedAt: string; createdAt: string | null; reviews: OutsidePrReviewEvidence | null; diff: OutsidePrDiffEvidence | null }
 
 const REVIEW_DECISIONS: ReadonlySet<string> = new Set(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']);
+/** Check conclusions/states that mark a failed head check — the same set cloud/tracker.ts's parseOutcome applies. */
+const FAILED_CHECK_VERDICTS: ReadonlySet<string> = new Set(['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'ERROR']);
 
 /**
  * gh's review evidence for one PR row, or null when the bounded review
@@ -292,6 +343,53 @@ function parseReviewEvidence(raw: Record<string, unknown>): OutsidePrReviewEvide
   return { decision, latest: latest.length };
 }
 
+/**
+ * The CI verdict for one `statusCheckRollup` array, or null when the
+ * value is not an array — mirrors cloud/tracker.ts's parseOutcome: a
+ * failed conclusion marks 'failure', an incomplete status or
+ * PENDING/EXPECTED verdict marks 'pending', an empty rollup is the real
+ * 'none' signal, anything else 'success'. Unlike tracker this keeps no
+ * check names, so a failed verdict counts on its own rather than
+ * needing a recorded name — the conservative direction for a merge
+ * that landed on red checks.
+ */
+function parseCheckRollupCi(rollup: unknown): OutsidePrCiVerdict | null {
+  if (!Array.isArray(rollup)) return null;
+  let pending = false;
+  let failed = false;
+  for (const item of rollup) {
+    if (!isRecord(item)) continue;
+    const verdict = String(item['conclusion'] ?? item['state'] ?? '');
+    if (FAILED_CHECK_VERDICTS.has(verdict)) { failed = true; continue; }
+    if ((item['status'] !== undefined && item['status'] !== 'COMPLETED') || verdict === 'PENDING' || verdict === 'EXPECTED') pending = true;
+  }
+  if (failed) return 'failure';
+  if (pending) return 'pending';
+  return rollup.length === 0 ? 'none' : 'success';
+}
+
+/**
+ * gh's recorded diff size for one PR row, or null when any of the three
+ * fields is missing or not a nonnegative safe integer — a partial record
+ * is an honest unknown, never a guessed zero. The fields are frozen at
+ * merge, so a parsed value never needs re-reading.
+ */
+function parseDiffEvidence(raw: Record<string, unknown>): OutsidePrDiffEvidence | null {
+  const additions = raw['additions'];
+  const deletions = raw['deletions'];
+  const changedFiles = raw['changedFiles'];
+  const count = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+  if (!count(additions) || !count(deletions) || !count(changedFiles)) return null;
+  return { additions, deletions, changedFiles };
+}
+
+/** One bounded `gh pr view --json statusCheckRollup` read; null on any gh/parse failure. */
+async function readPrCi(gh: OutsidePrsGhRunner, cwd: string, repo: string, number: number): Promise<OutsidePrCiVerdict | null> {
+  const raw = safeJson(await gh(cwd, ['pr', 'view', String(number), '--repo', repo, '--json', CI_PR_FIELDS]));
+  if (!isRecord(raw)) return null;
+  return parseCheckRollupCi(raw['statusCheckRollup']);
+}
+
 /** Parse `gh pr list --state merged --json <MERGED_PR_FIELDS>`; malformed entries are dropped. */
 function parseMergedList(parsed: unknown): RawMergedPr[] {
   if (!Array.isArray(parsed)) return [];
@@ -305,7 +403,7 @@ function parseMergedList(parsed: unknown): RawMergedPr[] {
     if (n === null || title === null || head === null || mergedAt === null) continue;
     out.push({
       number: n, title, author: authorLogin(raw['author']), head, mergedAt,
-      createdAt: isoTime(raw['createdAt']), reviews: parseReviewEvidence(raw),
+      createdAt: isoTime(raw['createdAt']), reviews: parseReviewEvidence(raw), diff: parseDiffEvidence(raw),
     });
   }
   return out;
@@ -386,12 +484,27 @@ async function computeOutsidePrOutcomes(opts: ListOutsidePrOutcomesOptions): Pro
         agentCounts.set(agent, agentCell);
         return {
           repo, number: pr.number, title: pr.title, author: pr.author, head: pr.head, mergedAt: pr.mergedAt,
-          createdAt: pr.createdAt, reviews: pr.reviews, agent, model: null, reverted,
+          createdAt: pr.createdAt, reviews: pr.reviews, ci: null, diff: pr.diff, agent, model: null, reverted,
         };
       });
     return { repo, state: 'healthy' as const, listed: rows.length, hitLimit: rows.length >= limit, prs };
   });
   if (result.repos.some((repo) => repo.state === 'degraded')) degrade();
+
+  // Bounded per-PR CI evidence: one `gh pr view` per surviving outside
+  // merge, capped globally at MAX_CI_READS so a wide window cannot turn
+  // the read into a call storm. PRs past the cap keep ci:null — the
+  // honest unknown — and a failed read degrades nothing: CI evidence is
+  // additive, never a reason to mark the repo read unhealthy.
+  const ciTargets: Array<{ cwd: string; repo: string; pr: OutsidePrOutcomeV1 }> = [];
+  for (const repoRow of result.repos) {
+    const cwd = discovery.repoCwds.get(repoRow.repo);
+    if (cwd === undefined) continue;
+    for (const pr of repoRow.prs) ciTargets.push({ cwd, repo: repoRow.repo, pr });
+  }
+  await mapConcurrent(ciTargets.slice(0, MAX_CI_READS), 6, async (target) => {
+    target.pr.ci = await readPrCi(gh, target.cwd, target.repo, target.pr.number);
+  });
 
   result.authors = [...authorCounts.entries()]
     .map(([author, c]) => ({ author, agent: null, model: null, prs: c.prs, reverted: c.reverted }))

@@ -1,3 +1,4 @@
+import { QUOTA_EVIDENCE_MAX_AGE_MS } from './resource-reset-evidence.js';
 /** Pure advisory projections. No slot, hold, reader or dispatch mutations. */
 import { parseResetWindows } from '../fabric/reset-windows.js';
 import type { ResourceLedgerV1 } from './runs-resource-ledger.js';
@@ -53,8 +54,14 @@ export function resetWindowPlan(resources: readonly ResetWindowResource[], nowMs
 /** The plan for the resource ledger's lanes; a reading older than five minutes counts as unknown. Shared by `fleet window-plan` and `phm home`. */
 export function ledgerWindowPlan(ledger: ResourceLedgerV1, nowMs: number): ResetWindowPlanRow[] {
   return resetWindowPlan(ledger.lanes.map(row => {
-    const observed = Date.parse(row.observation?.asOf ?? ledger.asOf ?? '');
-    const fresh = Number.isFinite(observed) && observed <= nowMs && nowMs - observed <= 300_000;
+    // The controller tick is not a quota capture. Use a lane source that
+    // supplied the actual displayed usage window, never the ledger's clock.
+    const quota = row.quotaEvidence?.statusQuota;
+    const statusCapture = quota?.lane === row.lane && quota.window === row.window &&
+      quota.usedPct === row.usedPct && quota.resetAt === row.resetAt && quota.source === row.source
+      ? quota.observedAt : null;
+    const observed = Date.parse((row.observation ? row.observation.asOf : statusCapture) ?? '');
+    const fresh = Number.isFinite(observed) && observed <= nowMs && nowMs - observed <= QUOTA_EVIDENCE_MAX_AGE_MS;
     return { resource: row.lane, usedPercent: fresh ? row.usedPct : null, resetAt: row.resetAt,
       burnPctPerHour: fresh ? row.burnPctPerHour : null, running: row.running, target: row.target,
       // Weekly allowances expire; credit balances alone do not establish expiry.

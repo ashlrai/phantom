@@ -18,6 +18,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import { makeColors, isTty } from './ui.js';
 import { loadConfig } from '../core/config.js';
+import { parseJsonRecord } from '../core/integrations/dep-parser.js';
 import { editorDeepLink } from './open.js';
 import type { AshlrConfig } from '../core/types.js';
 
@@ -208,18 +209,6 @@ function readFlag(args: string[], name: string): string | undefined {
   return undefined;
 }
 
-/** Parse a stdin string as a JSON object, or null on any failure. */
-function parseJsonObject(s: string): Record<string, unknown> | null {
-  try {
-    const o = JSON.parse(s) as unknown;
-    return o && typeof o === 'object' && !Array.isArray(o)
-      ? (o as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Read a hook JSON payload from stdin. Claude Code pipes a JSON context (with
  * `cwd`, `message`, …) to hook commands.
@@ -252,14 +241,14 @@ function readStdinPayload(): Promise<Record<string, unknown> | null> {
       resolve(v);
     };
     // Safety net: never wait more than this for a payload that never EOFs.
-    const timer = setTimeout(() => finish(parseJsonObject(buf)), 800);
+    const timer = setTimeout(() => finish(parseJsonRecord(buf)), 800);
     try {
       process.stdin.setEncoding('utf8');
       process.stdin.on('data', (c: string) => {
         buf += c;
-        if (buf.length > 65_536) finish(parseJsonObject(buf));
+        if (buf.length > 65_536) finish(parseJsonRecord(buf));
       });
-      process.stdin.on('end', () => finish(parseJsonObject(buf)));
+      process.stdin.on('end', () => finish(parseJsonRecord(buf)));
       process.stdin.on('error', () => finish(null));
       process.stdin.resume();
     } catch {

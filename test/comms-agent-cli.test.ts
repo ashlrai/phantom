@@ -218,6 +218,90 @@ describe('phm comms-agent', () => {
     expect(await cmdCommsAgent(['run', '--transport', 'email', '--dir', runsDir, '--json'])).toBe(2);
   });
 
+  it('drafts --to/--contains/--since/--before/--id/--limit narrow the read', async () => {
+    const runsDir = temp();
+    const draft = (id: string, over: Partial<CommsDraft> = {}): CommsDraft => ({
+      id, status: 'pending', transport: 'email',
+      recipient: `${id}@example.com`, subject: `Subject ${id}`, body: `Body ${id}`,
+      messageId: `msg-${id}`, createdAt: '2026-01-01T00:00:00.000Z',
+      ...over,
+    });
+    await appendDraft(runsDir, draft('d-alpha', { recipient: 'ada@example.com', subject: 'Invoice question', body: 'Can you check the invoice total?' }));
+    await appendDraft(runsDir, draft('d-beta', { recipient: 'grace@example.com', subject: 'Lunch', body: 'Are you free for lunch?' }));
+    await appendDraft(runsDir, draft('d-gamma', {
+      status: 'sent', resolvedAt: '2026-01-03T00:00:00.000Z',
+      recipient: 'ada@example.com', subject: 'Re: Invoice', body: 'Invoice paid.',
+      createdAt: '2026-01-04T12:00:00.000Z',
+    }));
+    // A record whose createdAt never parses is storable but can prove no
+    // window membership: it lists unfiltered and drops out under any bound.
+    await appendDraft(runsDir, draft('d-undated', { createdAt: 'not-a-date' }));
+
+    const read = async (args: string[]): Promise<{ drafts: Array<{ id: string }>; matched: number; truncated: boolean }> => {
+      const out = capture();
+      expect(await cmdCommsAgent([...args, '--dir', runsDir, '--json'])).toBe(0);
+      const parsed = JSON.parse(out.lines.at(-1) ?? '{}') as { drafts: Array<{ id: string }>; matched: number; truncated: boolean };
+      out.restore();
+      return { ...parsed, drafts: parsed.drafts.map(row => ({ id: row.id })).sort((a, b) => a.id.localeCompare(b.id)) };
+    };
+    const ids = async (args: string[]): Promise<string[]> => (await read(args)).drafts.map(row => row.id);
+
+    // --to is the exact recipient pairing standing approvals apply: a
+    // substring or case-folded value matches nothing.
+    expect(await ids(['drafts', '--to', 'ada@example.com'])).toEqual(['d-alpha']);
+    expect(await ids(['drafts', '--status', 'all', '--to', 'ada@example.com'])).toEqual(['d-alpha', 'd-gamma']);
+    expect(await ids(['drafts', '--to', 'ADA@example.com'])).toEqual([]);
+    expect(await ids(['drafts', '--to', 'ada@'])).toEqual([]);
+
+    // --contains searches the scrubbed subject and body case-insensitively,
+    // whitespace collapsed — never the recipient, transport or ids.
+    expect(await ids(['drafts', '--contains', 'INVOICE'])).toEqual(['d-alpha']);
+    expect(await ids(['drafts', '--status', 'all', '--contains', 'invoice paid'])).toEqual(['d-gamma']);
+    expect(await ids(['drafts', '--contains', 'ada@example.com'])).toEqual([]);
+    expect(await ids(['drafts', '--contains', '  lunch   are  '])).toEqual(['d-beta']);
+
+    // --since/--before bound createdAt in one [since, before) window; the
+    // undated record drops out under either bound but stays in unfiltered
+    // reads, and resolvedAt never stands in for createdAt.
+    expect(await ids(['drafts', '--since', '2026-01-02T00:00:00.000Z'])).toEqual([]);
+    expect(await ids(['drafts', '--status', 'all', '--since', '2026-01-04T00:00:00.000Z'])).toEqual(['d-gamma']);
+    expect(await ids(['drafts', '--status', 'all', '--before', '2026-01-02T00:00:00.000Z'])).toEqual(['d-alpha', 'd-beta']);
+    expect(await ids(['drafts', '--status', 'all', '--since', '2026-01-03T00:00:00.000Z', '--before', '2026-01-05T00:00:00.000Z'])).toEqual(['d-gamma']);
+    expect(await ids(['drafts', '--status', 'all', '--since', '2026-01-01T00:00:00.000Z'])).toEqual(['d-alpha', 'd-beta', 'd-gamma']);
+
+    // --id is the strict id match.
+    expect(await ids(['drafts', '--id', 'd-beta'])).toEqual(['d-beta']);
+    expect(await ids(['drafts', '--id', 'd-beta-ish'])).toEqual([]);
+
+    // --limit caps the page oldest-first while matched keeps the true
+    // filtered total and truncated says the page was clipped.
+    const limited = await read(['drafts', '--status', 'all', '--limit', '2']);
+    expect(limited.drafts.map(row => row.id)).toEqual(['d-alpha', 'd-beta']);
+    expect(limited.matched).toBe(4);
+    expect(limited.truncated).toBe(true);
+    const unbounded = await read(['drafts', '--status', 'all']);
+    expect(unbounded.matched).toBe(4);
+    expect(unbounded.truncated).toBe(false);
+
+    // Filters compose with the existing status/transport slice.
+    expect(await ids(['drafts', '--status', 'sent', '--to', 'ada@example.com', '--contains', 'invoice'])).toEqual(['d-gamma']);
+
+    // Bad values and filters on the wrong verb stay usage errors.
+    expect(await cmdCommsAgent(['drafts', '--to', '   ', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['drafts', '--contains', '', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['drafts', '--since', 'bogus', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['drafts', '--before', 'soon', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['drafts', '--limit', '0', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['drafts', '--limit', '201', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['drafts', '--limit', 'x', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['status', '--to', 'ada@example.com', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['run', '--contains', 'x', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['status', '--since', '2h', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['run', '--limit', '5', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['run', '--id', 'd-alpha', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['run', '--before', '2h', '--dir', runsDir, '--json'])).toBe(2);
+  });
+
   it('ashlr_comms_agent_drafts accepts the same status and transport filters', async () => {
     const runsDir = temp();
     const draft = (id: string, status: 'pending' | 'sent', transport: CommsTransport): CommsDraft => ({
@@ -243,12 +327,32 @@ describe('phm comms-agent', () => {
       expect(sent.isError).toBeUndefined();
       expect((JSON.parse(text(sent)) as { drafts: Array<{ id: string }> }).drafts.map(row => row.id)).toEqual(['m-sent-imessage']);
 
+      // The shared read filters reach the same store: to is the exact
+      // recipient, contains searches subject/body, since/before bound
+      // createdAt, id is strict and limit reports matched under the cap.
+      const byTo = await callNativeTool('ashlr_comms_agent_drafts', { to: 'm-pending-email@example.com' });
+      expect(byTo.isError).toBeUndefined();
+      expect((JSON.parse(text(byTo)) as { drafts: Array<{ id: string }> }).drafts.map(row => row.id)).toEqual(['m-pending-email']);
+      const byWindow = await callNativeTool('ashlr_comms_agent_drafts', { status: 'all', since: '2026-01-01T00:00:00.000Z' });
+      expect(byWindow.isError).toBeUndefined();
+      expect((JSON.parse(text(byWindow)) as { matched: number }).matched).toBe(2);
+      const byId = await callNativeTool('ashlr_comms_agent_drafts', { status: 'all', id: 'm-sent-imessage' });
+      expect(byId.isError).toBeUndefined();
+      expect((JSON.parse(text(byId)) as { drafts: Array<{ id: string }> }).drafts.map(row => row.id)).toEqual(['m-sent-imessage']);
+      const limited = await callNativeTool('ashlr_comms_agent_drafts', { status: 'all', limit: 1 });
+      expect(limited.isError).toBeUndefined();
+      expect(JSON.parse(text(limited))).toMatchObject({ matched: 2, truncated: true });
+
       // The schema enum refuses an unknown status before the handler runs;
       // the handler refuses an unknown transport the same way the CLI does.
       const badStatus = await callNativeTool('ashlr_comms_agent_drafts', { status: 'bogus' });
       expect(badStatus.isError).toBe(true);
       const badTransport = await callNativeTool('ashlr_comms_agent_drafts', { transport: 'bogus' });
       expect(badTransport.isError).toBe(true);
+      const badSince = await callNativeTool('ashlr_comms_agent_drafts', { since: 'bogus' });
+      expect(badSince.isError).toBe(true);
+      const badLimit = await callNativeTool('ashlr_comms_agent_drafts', { limit: 0 });
+      expect(badLimit.isError).toBe(true);
     } finally {
       if (previous === undefined) delete process.env.ASHLR_RUNS_DIR;
       else process.env.ASHLR_RUNS_DIR = previous;

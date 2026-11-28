@@ -159,15 +159,21 @@ async function boundedRead(path: string, limit: number): Promise<{ text: string;
   } finally { await handle.close(); }
 }
 
-/** Fixed homes; intentionally ignores CODEX_HOME and never visits ~/.codex. */
+/** Fixed homes; intentionally ignores CODEX_HOME and never visits ~/.codex.
+ * The slots tree follows ASHLR_RUNS_DIR when `home` is the process home — the
+ * same runs-dir override every other fleet reader honors. A relocated home
+ * (tests, fixtures) keeps its own .ashlr-runs so the override cannot leak in. */
 export function defaultLaneTruthReaders(home = homedir(), now = Date.now()): LaneTruthReaders {
+  const runsDir = home === homedir()
+    ? process.env['ASHLR_RUNS_DIR'] ?? join(home, '.ashlr-runs')
+    : join(home, '.ashlr-runs');
   return {
     async lanes() {
       try {
-        for (const path of [join(home, '.ashlr-runs'), join(home, '.ashlr-runs/queue')]) {
+        for (const path of [runsDir, join(runsDir, 'queue')]) {
           if (!(await lstat(path)).isDirectory()) return [];
         }
-        const file = await boundedRead(join(home, '.ashlr-runs/queue/slots.json'), 64 * 1024);
+        const file = await boundedRead(join(runsDir, 'queue', 'slots.json'), 64 * 1024);
         const raw = object(JSON.parse(file.text));
         const current = fresh(new Date(file.mtime).toISOString(), now);
         return Object.entries(object(raw.lanes ?? raw)).filter(([lane]) => lane !== 'hard_cap').map(([lane, value]) => {

@@ -34,7 +34,7 @@ export function driveJobKind(jobId: string): string | null {
   return KIND.exec(jobId)?.[1] ?? null;
 }
 
-export const CODEX_PERSONAL_POOL = 'codex-personal';
+const CODEX_PERSONAL_POOL = 'codex-personal';
 
 /** The only kinds `codex-personal` may serve. */
 export const PERSONAL_ONLY_KINDS: readonly string[] = Object.freeze(['LAND', 'FIXUP', 'DRAIN', 'DAILYFIX']);
@@ -76,12 +76,36 @@ export interface PoolDayShare {
   endMs: number;
 }
 
+// ---------------------------------------------------------------------------
+// Shared drive value guards (pure, zero imports)
+// ---------------------------------------------------------------------------
+
+/** Narrow an unknown value to a plain non-array object record. */
+export function isDriveRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Return `value` as a plain record, or `{}` for primitives, null, or arrays. */
+export function asDriveRecord(value: unknown): Record<string, unknown> {
+  return isDriveRecord(value) ? value : {};
+}
+
+/** Non-negative safe integer guard shared by drive snapshots and durable state. */
+export function isNonNegativeSafeInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+/** Bounded non-negative safe integer (0..100_000) for pool/job counts. */
+export function isBoundedDriveCount(value: unknown): value is number {
+  return isNonNegativeSafeInt(value) && value <= 100_000;
+}
+
 export function isPoolDayShare(value: unknown): value is PoolDayShare {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const day = value as Record<string, unknown>;
-  return [day.share, day.used].every((n) => Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) <= 100_000)
-    && Number.isSafeInteger(day.startMs) && Number.isSafeInteger(day.endMs)
-    && (day.endMs as number) > (day.startMs as number);
+  if (!isDriveRecord(value)) return false;
+  return isBoundedDriveCount(value.share)
+    && isBoundedDriveCount(value.used)
+    && Number.isSafeInteger(value.startMs) && Number.isSafeInteger(value.endMs)
+    && (value.endMs as number) > (value.startMs as number);
 }
 
 /**

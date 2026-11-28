@@ -49,9 +49,12 @@ new `phm` command or dispatcher dependency.
 
 - Keep both upstream and target default branch names, `main`, `master`, GitHub
   protected branches, security/pin/hold branch components and configured globs.
-- Keep open PRs (including drafts), matching by head repository and branch,
-  across the target and canonical upstream. Pagination has no search-result cap.
-  The constitutional held PR numbers are also retained, even when closed.
+- Keep both head branches of open PRs (including drafts) and any branch that
+  an open PR targets in the repository being pruned. Match each ref to its own
+  repository across the target and canonical upstream; a same-named base in
+  another repository is not a match. Missing or invalid open PR base metadata
+  blocks deletion. Pagination has no search-result cap. The constitutional
+  held PR numbers are also retained, even when closed.
 - Keep local checked-out branches, detached HEAD tips, every registered linked
   worktree (including missing/locked paths), existing `wt/` job directories,
   `.base` branch records, queue run leases/markers and `queue/keep.txt` jobs.

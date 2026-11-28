@@ -11,7 +11,7 @@ import {
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, busWorkJobDispatch, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
-import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
+import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusClaims, frameBusDeadLetters, frameBusInbox, frameBusShow, frameBusThread, frameBusWakes, frameBusWorkFeed, frameBusWorkMine, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, claimNextBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   waitClaimNextBusWorkJob,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope,
@@ -50,17 +50,17 @@ ashlr agents bus channel list [--agent <agent>]
 ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--after <cursor>] [--limit <1..100>] [--frame <cli>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
-ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> [--interval-ms <100..60000>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] --json
-ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
-ashlr agents bus dead-letters [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--priority P0..P3] [--id <id>] [--reason <${BUS_DEAD_LETTER_REASONS.join('|')}>] [--from <agent>] [--exclude-from <agent>] [--to <agent>] [--channel <name>] [--topic <topic>] [--body-kind <kind>] [--limit <1-100>]
-ashlr agents bus show <id>
-ashlr agents bus thread <id> [--to <ref>] [--from <ref>] [--exclude-from <ref>] [--channel <name>] [--topic <topic>] [--job <id>] [--priority P0..P3] [--thread <t>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--topic <topic>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
+ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> [--interval-ms <100..60000>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--topic <topic>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] --json
+ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--frame <cli>]
+ashlr agents bus dead-letters [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--priority P0..P3] [--id <id>] [--reason <${BUS_DEAD_LETTER_REASONS.join('|')}>] [--from <agent>] [--exclude-from <agent>] [--to <agent>] [--channel <name>] [--topic <topic>] [--body-kind <kind>] [--limit <1-100>] [--frame <cli>]
+ashlr agents bus show <id> [--frame <cli>]
+ashlr agents bus thread <id> [--to <ref>] [--from <ref>] [--exclude-from <ref>] [--channel <name>] [--topic <topic>] [--job <id>] [--priority P0..P3] [--thread <t>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--frame <cli>]
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
 ashlr agents bus claim release --key <claimKey> --token <64hex> --outcome released|completed
-ashlr agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--jobs]
+ashlr agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--jobs] [--frame <cli>]
 ashlr agents bus claim message acquire --id <envelope-id> --lease-ms <1..3600000> [--owner <label>]
 ashlr agents bus claim message renew|release|complete --id <envelope-id> --token <64hex>
 ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--claim <key>]... [--to <label>]
@@ -68,10 +68,10 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--exclude-owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--exclude-owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>] [--frame <cli>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work claim-next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>] [--exclude-announcer <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--wait-ms <1..300000>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>] [--frame <cli>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>] [--wait-ms <1..300000>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -181,7 +181,20 @@ channel's group:<name>:* addresses — channel posts and channel-addressed
 handoffs alike — so an agent in several rooms reads one room's pending
 mail in one filtered read; it composes with --kind to separate a room's
 direct mail from its assignments, and a channel the agent is not a
-member of simply has no mail to show. --contains on inbox and channel
+member of simply has no mail to show. --topic on inbox, follow and wakes
+keeps only rows addressed under that exact topic component of a
+well-formed group:<room>:<topic> address — the same groupAddressTopicOf
+verdict channel read --topic, phm messages --topic, work feed --topic,
+work claim-next --topic, work next --topic, dead-letters --topic,
+thread --topic and work mine --topic apply, decided on the row's own to
+label rather than the room name, so it composes with --channel into one
+room AND one topic and a DM, legacy label or deeper group: label parses
+to no topic and never matches; on wakes the verdict is the hint's own to
+label like --channel — a claim-holder wh-… hint's bare owner label
+parses to no topic — so it counts in matched inside the queue-tail
+match and needs no referent resolution. "Which of my pending mail /
+which wake hints concern group:eng:alerts" is one filtered read on each.
+--contains on inbox and channel
 read keeps only rows whose scrubbed one-line summary — the same text
 the frame renders per row — carries the needle as a case-insensitive
 substring, so "did anyone send me mail about X" and "has anyone posted
@@ -277,7 +290,16 @@ cannot answer — so the citation resolves to where the job stands in one
 read. A claim-holder wh-… hint id resolves through the wake
 queue to the live terminal work.status receipt that cites it, returned
 with its wakeHint citation; a hint no live receipt reproduces reports
-not-found.
+not-found. --frame <cli> prints the same resolution — the receipt row,
+scrubbed body summary and held/holder/job/wake-hint evidence — as one
+bounded block marked untrusted under BEGIN/END UNTRUSTED AGENT BUS
+ENVELOPE markers, the same scrub, flattening and 32 KiB clip bound the
+inbox, channel-read, wakes, work-mine, work-feed, thread, claims and
+dead-letters frames apply with the cut stated, so a host can hand the
+envelope a citation names to a CLI's next turn as data in a single
+block; --json carries it as framed beside the full lookup, and a
+not-found or unreadable lookup answers its own status rather than an
+invented envelope.
 thread
 reads the reply chain rooted at one retained envelope id — the same
 readBusThread projection fleet bus-thread and fleet_bus_thread serve,
@@ -301,7 +323,15 @@ excludes reports rootFound with an empty messages, never a miss. --topic
 keeps only members addressed to a well-formed group:<room>:<topic>
 address carrying that exact topic component — the same
 groupAddressTopicOf match every other bus read's --topic applies,
-composing with --channel into one room AND one topic.
+composing with --channel into one room AND one topic. --frame <cli>
+prints the same chain — the verdict header and every receipt's summary
+and held/holder/job evidence — as one bounded block marked untrusted
+under BEGIN/END UNTRUSTED AGENT BUS THREAD markers, the same scrub,
+flattening and 32 KiB clip bound the inbox, channel-read, wakes,
+work-mine and work-feed frames apply with the cut stated, so a host can
+hand a whole exchange to a CLI's next turn as data in a single block;
+--json carries it as framed beside the full projection, and a proven
+miss frames its own not-found verdict rather than an invented chain.
 A terminal work status also queues a routing-only wake hint for each live claim
 holder on the job's keys; --no-wake opts out. Holder labels need not be
 registered identities, so wakes (and the work mine wakes section) keep
@@ -332,11 +362,12 @@ grammar inbox --since takes), --before keeps only jobs whose last activity
 is strictly before its own cutoff on the same field so the pair reads one
 [since, before) window and older pages stay reachable past the newest-first
 --limit cap, while --job keeps one job id. --contains on
-work feed keeps only jobs whose title, newest status detail or declared
-dispatch scope/acceptance carries the needle as a case-insensitive
-substring over the same scrubbed display-clipped text the job line renders
-— ids, keys, statuses and labels stay structured fields with their own
-filters, and a secret-shaped value stays unfindable. --limit pages the
+work feed keeps only jobs whose title, newest status detail, declared
+dispatch scope/acceptance or newest work.result reason code carries the
+needle as a case-insensitive substring over the same scrubbed
+display-clipped text the job line renders — ids, keys, statuses, result
+outcomes and labels stay structured fields with their own filters, and a
+secret-shaped value stays unfindable. --limit pages the
 filtered view newest-first (1..200) and reports matched as the true
 filtered total before the cap and omitted as the rest, with claims holds
 regrouped under the shown jobs only — the same page fleet_work_feed's
@@ -349,7 +380,13 @@ include that wire id — the work.post announcement, newest work.status
 receipt or newest work.result receipt the job cites, the same
 busWorkFeedJobCitesEnvelope match work mine --id applies to its job
 sections, so "which feed job does envelope X belong to" is one filtered
-read and an id nothing on the feed cites is an honest empty match. A job
+read and an id nothing on the feed cites is an honest empty match. --frame
+on work feed prints the same feed as one bounded block marked untrusted —
+BEGIN/END UNTRUSTED AGENT BUS WORK FEED markers, the same scrub and 32 KiB
+clip bound the inbox, channel-read, wakes and work-mine frames apply, the
+cut stated — so a host can hand the fleet's whole work board to the CLI's
+next turn as data in a single block; --json carries it as framed beside
+the full projection. A job
 line
 also cites the newest retained work.result receipt — the outcome a
 worker reported with its receipt id — as evidence only: it never moves
@@ -362,6 +399,15 @@ never authenticate. claim list reads that table back, and --job keeps only
 the live claims blocking one announced feed job's declared claim keys —
 the claims-side answer to work feed --job --claims, with the feed read
 state and the job's announced/key-count resolution reported honestly.
+--frame <cli> prints the same list — every claim row, its --jobs
+blocked-job labels when asked, and the claims/source/as-of summary — as
+one bounded block marked untrusted under BEGIN/END UNTRUSTED AGENT BUS
+CLAIMS markers, the same scrub, flattening and 32 KiB clip bound every
+other bus --frame read applies with the cut stated, so a host can hand
+the whole held-scope table to a CLI's next turn as data in a single
+block; --json carries it as framed beside the full projection, and a
+read that cannot complete still answers its own status line rather than
+an invented claim list.
 work mine is a read-only per-agent digest — the live
 claims it holds under any of its labels, where a message-id claim also
 names the retained envelope it leases (id, cursor, kind, sender,
@@ -514,7 +560,26 @@ lists; board, channels, sessions,
 coordination and seats
 carry no
 per-item room and stay unfiltered, and every count stays the filtered
-total. --from on work mine keeps only pending items provably sent by the
+total. --topic on work mine keeps only pending items provably addressed
+under one group:<room>:<topic> topic of a bus channel — the same
+groupAddressTopicOf verdict every bus read's shared group-topic filter
+applies, narrower than --channel's room prefix, so "what is pending for
+me on this topic" is one filtered digest: feed jobs and announced jobs
+keep announcements whose to parses to that exact topic, next, handoffs
+and mailbox keep envelopes whose to parses to it, claims keep only
+message claims whose resolved leased envelope sits on the topic (a claim
+naming no resolved message never lists), deadLetters keep reports whose
+ORIGINAL recipient parses to it, the thread sections keep threads whose
+latest message is addressed to the topic, and work-board requests keep
+those whose to parses to it — a board item naming no provable to never
+lists; wakes and inbox delegate to reads that carry the same
+group-topic filter, so the digest forwards topic to both — wakes
+counting the topic-matched hints inside the bounded queue-tail match
+(matched exact on a complete tail read, a proven lower bound under
+truncated) while inbox's matched:true read reports the true
+topic-filtered total across the retained store; board, channels, sessions,
+coordination and seats carry no per-item topic and stay unfiltered, and
+every count stays the filtered total. --from on work mine keeps only pending items provably sent by the
 named agent — the same sender rule every bus read's --from applies, so
 "what is pending for me from X" is one filtered digest: feed jobs and
 announced jobs keep announcements whose owner resolves to the ref, next,
@@ -645,7 +710,13 @@ while jobs, announced, board, channels, work-board items — the board
 projection exposes no thread label — sessions, coordination and
 seats carry no per-item thread label the digest can prove and stay
 unfiltered; a label nothing on the bus carries is an honest empty match
-and every count stays the filtered total. work next claims the next claimable
+and every count stays the filtered total. --frame on work mine prints the
+digest as the same bounded block the inbox, channel-read and wakes
+--frame reads produce — BEGIN/END UNTRUSTED AGENT BUS WORK DIGEST
+markers, the same scrub and 32 KiB clip bound with the cut stated — so a
+host can hand the agent's whole pending-work picture to the CLI's next
+turn as marked-untrusted data in one block; --json carries it as the
+framed field beside the full projection. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
 receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
@@ -721,7 +792,15 @@ topic; --body-kind keeps the original
 envelope kind; --limit caps the page while matched reports the filtered
 total and truncated marks the cut. A verified-missing store reports real
 zeros, an unreadable one unavailable and a scan that cannot finish
-retryable — never a partial matched.
+retryable — never a partial matched. --frame <cli> prints the same list —
+every letter line and the matched/shown summary — as one bounded block
+marked untrusted under BEGIN/END UNTRUSTED AGENT BUS DEAD LETTERS markers,
+the same scrub, flattening and 32 KiB clip bound the inbox, channel-read,
+wakes, work-mine, work-feed, thread, claims and dead-letters frames
+apply with the cut stated, so a host can hand the whole delivery-failure
+backlog to a CLI's next turn as data in a single block; --json carries it
+as framed beside the full projection, and a verified-missing store frames
+its own missing line rather than an invented letter.
 No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
@@ -1021,7 +1100,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         `claimDrift ${result.claimDrift.state} matched=${result.claimDrift.matched ?? unknown} ` +
           `busOnly=${result.claimDrift.busOnly ?? unknown} coordOnly=${result.claimDrift.coordOnly ?? unknown} ` +
           `ownerMismatch=${result.claimDrift.ownerMismatch ?? unknown}`,
-        `feed ${result.feed.status}${result.feed.reason === undefined ? '' : `:${result.feed.reason}`} jobs=${result.feed.jobs ?? unknown}`,
+        `feed ${result.feed.status}${result.feed.reason === undefined ? '' : `:${result.feed.reason}`} ` +
+          `jobs=${result.feed.jobs ?? unknown}` +
+          `${result.feed.receipt === undefined ? '' : ` receipt=${result.feed.receipt}`}`,
         `mailbox ${result.mailbox.source} pending=${result.mailbox.pending ?? unknown}`,
         `ownerChat ${result.ownerChat.source} receipts=${result.ownerChat.receipts ?? unknown}`,
         `board ${result.board.source} threads=${result.board.threads ?? unknown} ` +
@@ -1052,6 +1133,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           `truncated=${result.sessionHandoffs.truncated ?? unknown}`,
         `fleetCoordination ${result.fleetCoordination.source} messages=${result.fleetCoordination.messages ?? unknown} ` +
           `proposals=${result.fleetCoordination.proposals ?? unknown} returns=${result.fleetCoordination.returns ?? unknown}`,
+        `orgOutbox ${result.orgOutbox.source} pending=${result.orgOutbox.pending ?? unknown}`,
+        `channels ${result.channels.adapters === null ? 'unavailable' : result.channels.adapters.map(a =>
+          `${a.id}=${a.adapterRegistered ? (a.healthy === 'unknown' ? 'unknown' : a.healthy ? 'ok' : 'down') : 'no-adapter'}`).join(' ')}`,
         `sendGate ${result.sendGate.state} kill=${result.sendGate.kill.state}:${result.sendGate.kill.reason} ` +
           `pause=${result.sendGate.pause.state}` +
           `${result.sendGate.pause.reason === null ? '' : `:${result.sendGate.pause.reason}`}` +
@@ -1203,6 +1287,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
         thread: one('--thread'), from: one('--from'), excludeFrom: one('--exclude-from'), with: one('--with'), priority: priorityArg(),
         kind: kindArg(), job: one('--job'), since: sinceArg(), before: beforeArg(), channel: one('--channel'),
+        topic: one('--topic'),
         contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'), bodyKind: one('--body-kind'),
         result: resultArg(),
         matched: p.bools.has('--matched') }, options);
@@ -1236,7 +1321,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         agent, after: integer(one('--after'), '--after'), durationMs, intervalMs: integer(one('--interval-ms'), '--interval-ms'),
         thread: one('--thread'), from: one('--from'), excludeFrom: one('--exclude-from'), with: one('--with'),
         priority: priorityArg(), kind: kindArg(), job: one('--job'), since: sinceArg(), before: beforeArg(),
-        channel: one('--channel'), contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'),
+        channel: one('--channel'), topic: one('--topic'), contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'),
         bodyKind: one('--body-kind'), result: resultArg(),
       };
       const controller = new AbortController();
@@ -1256,6 +1341,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'show') {
       noExtra(2);
       if (sub === undefined) throw new UsageError('A message id is required.');
+      const frame = one('--frame');
+      if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
       const result = readBusEnvelopeById(sub, options);
       if (result.status !== 'ok') {
         if (result.status === 'not-found') {
@@ -1265,7 +1352,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         return finish(result, '');
       }
       const m = result.message;
-      out(json ? JSON.stringify(result) : [
+      const lines = [
         `${m.cursor} ${m.envelope.priority} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from} -> ${m.envelope.to}`,
         `  ${busBodyFallbackSummary(m.envelope.body)}`,
         ...(result.held === undefined ? [] : [`  held=${result.held === null ? 'unknown' : result.held ? 'yes' : 'no'}` +
@@ -1273,12 +1360,17 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         ...(result.wakeHint === undefined ? [] : [`  via claim-holder wake hint ${result.id}` +
           ` to=${result.wakeHint.to} job=${result.wakeHint.jobId} status=${result.wakeHint.status}`]),
         ...(result.job === undefined ? [] : [showJobLine(result.job)]),
-      ].join('\n'));
+      ];
+      const framed = frame === undefined ? undefined : frameBusShow(frame as BusCli, lines);
+      out(json ? JSON.stringify(framed === undefined ? result : { ...result, framed })
+        : framed ?? lines.join('\n'));
       return 0;
     }
     if (verb === 'thread') {
       noExtra(2);
       if (sub === undefined) throw new UsageError('A message id is required.');
+      const frame = one('--frame');
+      if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
       const result = readAgentBusThread(sub, options, {
         to: one('--to'), from: one('--from'), excludeFrom: one('--exclude-from'),
         channel: one('--channel'), topic: one('--topic'), job: one('--job'), thread: one('--thread'),
@@ -1287,13 +1379,16 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       });
       if (result.status !== 'ok') return finish(result, '');
       const thread = result.thread;
-      out(json ? JSON.stringify(thread) : threadHuman(thread, sub).join('\n'));
+      const lines = threadHuman(thread, sub);
+      const framed = frame === undefined ? undefined : frameBusThread(frame as BusCli, lines);
+      out(json ? JSON.stringify(framed === undefined ? thread : { ...thread, framed })
+        : framed ?? lines.join('\n'));
       return thread.complete && thread.rootFound ? 0 : 1;
     }
     if (verb === 'wakes') {
       noExtra(2);
       const filter = { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'),
-        channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id'),
+        channel: one('--channel'), topic: one('--topic'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id'),
         thread: one('--thread'), inReplyTo: one('--in-reply-to'), bodyKind: one('--body-kind'), result: resultArg() };
       const since = sinceArg();
       let page: WakePage | AllWakesPage;
@@ -1306,6 +1401,13 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         page = readAgentWakes(agent, since, options, filter);
       }
       if (page.status !== 'ok') return finish(page, '');
+      const frame = one('--frame');
+      if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
+      if (frame) {
+        out(json ? JSON.stringify({ ...page, framed: frameBusWakes(frame as BusCli, page.wakes) })
+          : frameBusWakes(frame as BusCli, page.wakes));
+        return 0;
+      }
       out(json ? JSON.stringify(page) : [
         ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),
         ...page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}` + agentWakeClaimHolderSuffix(w) + agentWakeMessageSuffix(w)),
@@ -1314,6 +1416,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     }
     if (verb === 'dead-letters') {
       noExtra(1);
+      const frame = one('--frame');
+      if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
       const result = readBusDeadLetters({ root: options.root,
         since: sinceArg(), before: beforeArg(), contains: one('--contains'),
         priority: priorityArg(), id: one('--id'), reason: reasonArg(),
@@ -1328,15 +1432,16 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 1;
       }
-      if (json) { out(JSON.stringify(result)); return 0; }
-      out([
+      const lines = [
         ...(result.source === 'missing' ? ['dead-letter store missing'] : []),
         ...result.letters.map(item =>
           `${item.ts} ${item.priority} ${item.id} ${item.summary}` +
           ` original=${item.originalId ?? 'unknown'} reason=${item.reasonKind}`),
         `matched=${result.matched} shown=${result.letters.length}` +
           `${result.truncated ? ' truncated' : ''} source=${result.source} as-of=${result.asOf}`,
-      ].join('\n'));
+      ];
+      const framed = frame === undefined ? undefined : frameBusDeadLetters(frame as BusCli, lines);
+      out(json ? JSON.stringify(framed === undefined ? result : { ...result, framed }) : framed ?? lines.join('\n'));
       return 0;
     }
     if (verb === 'work' && sub === 'feed') {
@@ -1388,6 +1493,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       const claimable = p.bools.has('--claimable');
       const open = p.bools.has('--open');
+      const frame = one('--frame');
+      if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
       const result = projectBusWorkFeedView(
         readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') || claimable || open }),
         { status: status as WorkJob['status'] | undefined, jobId, repo,
@@ -1397,7 +1504,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }),
           excludeOwnerMatch: excludeOwner === undefined ? undefined : busWorkFeedOwnerMatcher(excludeOwner, { root: options.root }) });
       const paged = limit === undefined ? result : sliceBusWorkFeedView(result, limit);
-      out(json ? JSON.stringify(paged) : formatBusWorkFeed(paged).join('\n'));
+      const lines = formatBusWorkFeed(paged);
+      const framed = frame === undefined ? undefined : frameBusWorkFeed(frame as BusCli, lines);
+      out(json ? JSON.stringify(framed === undefined ? paged : { ...paged, framed }) : framed ?? lines.join('\n'));
       return paged.status === 'ok' ? 0 : 1;
     }
     if (verb === 'work' && sub === 'claim') {
@@ -1491,6 +1600,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (channel !== undefined && !agentChannelNameSchema.safeParse(channel).success) {
         throw new UsageError('--channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).');
       }
+      const topic = one('--topic');
+      if (topic !== undefined && !agentChannelNameSchema.safeParse(topic).success) {
+        throw new UsageError('--topic takes a bus channel-name topic (a-z, 0-9, _ -; 1-32 chars).');
+      }
       const senderArg = (flag: '--from' | '--exclude-from'): string | undefined => {
         const value = one(flag);
         if (value !== undefined && !/^[\x21-\x7e]{1,128}(?![\s\S])/.test(value)) {
@@ -1505,6 +1618,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const bodyKind = one('--body-kind');
       const resultOutcome = resultArg();
       const thread = one('--thread');
+      const frame = one('--frame');
+      if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
       const result = await readBusWorkMineWithSeats(agent,
         { ...options, ...(job === undefined ? {} : { job }),
           ...(contains === undefined ? {} : { contains }),
@@ -1512,6 +1627,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           ...(before === undefined ? {} : { before }),
           ...(priority === undefined ? {} : { priority }),
           ...(channel === undefined ? {} : { channel }),
+          ...(topic === undefined ? {} : { topic }),
           ...(from === undefined ? {} : { from }),
           ...(excludeFrom === undefined ? {} : { excludeFrom }),
           ...(id === undefined ? {} : { id }),
@@ -1523,7 +1639,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;
       }
-      out(json ? JSON.stringify(result) : formatBusWorkMine(result).join('\n'));
+      const lines = formatBusWorkMine(result);
+      const framed = frame === undefined ? undefined : frameBusWorkMine(frame as BusCli, lines);
+      out(json ? JSON.stringify(framed === undefined ? result : { ...result, framed }) : framed ?? lines.join('\n'));
       return 0;
     }
     if (verb === 'work' && sub === 'next') {
@@ -1627,6 +1745,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       noExtra(2);
       if (sub === 'list') {
         const wantsJobs = p.bools.has('--jobs');
+        const frame = one('--frame');
+        if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
         const result = listBusClaims({ root: options.root, key: one('--key'), owner: one('--owner'),
           excludeOwner: one('--exclude-owner'), contains: one('--contains'), origin: originArg(),
           since: sinceArg(), before: beforeArg(), jobs: wantsJobs, job: one('--job') });
@@ -1646,7 +1766,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         const feedNote = result.feed === undefined ? '' : ` feed=${result.feed}`;
         const jobNote = result.job === undefined ? '' :
           ` job=${result.job.id} announced=${result.job.announced} keys=${result.job.claimKeys}`;
-        out(json ? JSON.stringify(result) : [
+        const lines = [
           ...result.claims.map(row => {
             const base = `${row.key} owner=${row.owner} origin=${row.origin} until=${new Date(row.leaseUntil).toISOString()} source=${row.sourceId}`;
             if (!wantsJobs) return base;
@@ -1655,7 +1775,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
             return `${base} jobs=${blocked.length === 0 ? 'none' : blocked.map(claimJobLabel).join(',')}`;
           }),
           `claims=${result.claims.length} source=${result.source}${ownerNote}${excludeNote}${feedNote}${jobNote} as-of=${result.asOf}`,
-        ].join('\n'));
+        ];
+        const framed = frame === undefined ? undefined : frameBusClaims(frame as BusCli, lines);
+        out(json ? JSON.stringify(framed === undefined ? result : { ...result, framed }) : framed ?? lines.join('\n'));
         return 0;
       }
       const claimKey = required('--key');

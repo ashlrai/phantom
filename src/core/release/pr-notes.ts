@@ -136,8 +136,14 @@ const REPO = /^(?:[A-Za-z0-9][A-Za-z0-9-]*\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const TAG = /^[\w][\w./-]*$/;
 const DEFAULT_OWNER = 'ashlrai';
 const PAGE = 200;
-/** Per-PR file resolution makes the merged-PR list read take ~8 s at the page cap. */
-const PR_LIST_TIMEOUT_MS = 60_000;
+/** Every gh read in this command shares one budget. The tag-stamp read is the
+ * first gh call of the command, so it can run on a cold CLI (token refresh,
+ * first-run notices) that legitimately passes the 8 s default — and a timeout
+ * there is then reported as a missing tag for a tag that exists. The
+ * files-bearing PR list also runs past the default at the page cap. A missing
+ * ref still fails fast on its 404, so the longer ceiling only bounds slow
+ * reads and a timeout can no longer masquerade as an absent tag or repo. */
+const GH_READ_TIMEOUT_MS = 60_000;
 
 /** `phantom` means `ashlrai/phantom`; `owner/name` is used as given. */
 export function resolveRepo(name: string): string {
@@ -151,20 +157,17 @@ export const ghPrSource: PrSource = {
     if (!TAG.test(since)) throw new Error('Invalid release tag');
     const cwd = process.cwd();
     const slug = repo ?? '{owner}/{repo}';
-    const stamp = await runGhAsync(cwd, ['api', `repos/${slug}/commits/${since}`, '--jq', '.commit.committer.date']);
+    const stamp = await runGhAsync(cwd, ['api', `repos/${slug}/commits/${since}`, '--jq', '.commit.committer.date'], undefined, GH_READ_TIMEOUT_MS);
     if (!isValidReleaseDate(stamp)) {
       // A null answer conflates "gh cannot run or read" with "the ref is
       // missing". Probe the repo itself: an unreadable repo means the gh
       // transport failed (missing binary, sign-in, network), while a readable
       // repo with an unreadable commit means the tag is the problem.
-      const repoProbe = await runGhAsync(cwd, ['api', `repos/${slug}`, '--jq', '.full_name']);
+      const repoProbe = await runGhAsync(cwd, ['api', `repos/${slug}`, '--jq', '.full_name'], undefined, GH_READ_TIMEOUT_MS);
       if (repoProbe === null) throw new Error('Cannot reach the repo through gh; check that gh is installed, signed in (`gh auth status`) and the repo is readable');
       throw new Error('Cannot read the release tag from GitHub; check the repo and tag');
     }
-    // `gh pr list --json files` resolves changed files per PR; for a release
-    // window of hundreds of merges that legitimately runs past the default
-    // 8 s read timeout, so this one call opts into a longer budget.
-    const raw = await runGhAsync(cwd, ['pr', 'list', ...(repo ? ['--repo', repo] : []), '--state', 'merged', '--search', `merged:>=${stamp.slice(0, 10)}`, '--limit', String(PAGE), '--json', 'number,title,body,mergedAt,files'], undefined, PR_LIST_TIMEOUT_MS);
+    const raw = await runGhAsync(cwd, ['pr', 'list', ...(repo ? ['--repo', repo] : []), '--state', 'merged', '--search', `merged:>=${stamp.slice(0, 10)}`, '--limit', String(PAGE), '--json', 'number,title,body,mergedAt,files'], undefined, GH_READ_TIMEOUT_MS);
     let list: unknown;
     try { list = raw === null ? null : JSON.parse(raw); } catch { list = null; }
     if (!Array.isArray(list)) throw new Error('Cannot read merged PRs from GitHub');

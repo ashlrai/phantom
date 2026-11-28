@@ -1,6 +1,5 @@
 /** OS-1 routing is data only. A plan never launches a surface or grants authority. */
-import { BUILTIN_ENGINE_REGISTRY } from '../run/engine-registry.js';
-import { resolveSurfaceModelPair, type CapsPair } from './registry.js';
+import { lookupBuiltinEngine, resolveSurfaceModelPair, type CapsPair } from './registry.js';
 import type { CapsRegistry } from './schema.js';
 
 export type SurfaceDispatch =
@@ -13,8 +12,7 @@ const ADAPTERS = Object.freeze<Record<'engine' | 'hosted' | 'unavailable', Adapt
   engine: (reg, pair) => {
     const surface = reg.surfaces.find(s => s.id === pair.surface)!;
     const model = reg.models.find(m => m.id === pair.model)!;
-    const spec = surface.engine && Object.hasOwn(BUILTIN_ENGINE_REGISTRY, surface.engine)
-      ? BUILTIN_ENGINE_REGISTRY[surface.engine] : undefined;
+    const spec = lookupBuiltinEngine(surface.engine);
     if (!spec || spec.kind === 'builtin') return { ok: false, reason: 'Surface has no execution engine.' };
     // A shared quota lane does not imply that two engines accept the same model.
     if (model.catalogId !== null && model.catalogId.slice(0, model.catalogId.indexOf(':')) !== surface.engine) {

@@ -14,8 +14,9 @@
  *                       subset where queued work could have used the idle
  *                       guaranteed slots (a real policy failure).
  */
-import type { LaneId } from './model.js';
-import type { RunTrace } from './engine.js';
+import type { LaneId, SimInput } from './model.js';
+import { runSimulation, type RunTrace } from './engine.js';
+import type { DrivePolicy } from './policy.js';
 
 const HOUR = 3_600_000;
 
@@ -216,6 +217,45 @@ export function buildReport(trace: RunTrace): SimReport {
       rejectionsByReason,
     },
     outcomes,
+  };
+}
+
+/** Compare two synthetic policies on the exact same arrival and fault timeline.
+ * Only jobs started in both runs contribute to paired wait. Unpaired starts
+ * and completions cannot disappear into latency averages or a zero sample.
+ */
+export function compareDrivePolicies(input: SimInput, baseline: DrivePolicy, candidate: DrivePolicy) {
+  const before = buildReport(runSimulation(input, baseline));
+  const after = buildReport(runSimulation(input, candidate));
+  const byId = new Map(before.outcomes.map((row) => [row.id, row]));
+  const pairedWaitMs: number[] = [];
+  let baselineOnlyStarted = 0, candidateOnlyStarted = 0;
+  let baselineOnlyCompleted = 0, candidateOnlyCompleted = 0;
+  for (const row of after.outcomes) {
+    // Both runs admit the same fixed input arrivals before the horizon. A
+    // policy can change their outcomes but not cohort membership.
+    const prev = byId.get(row.id)!;
+    if (row.waitMs !== null && prev.waitMs !== null) pairedWaitMs.push(row.waitMs - prev.waitMs);
+    else if (row.waitMs !== null) candidateOnlyStarted++;
+    else if (prev.waitMs !== null) baselineOnlyStarted++;
+    if (prev.state === 'done' && row.state !== 'done') baselineOnlyCompleted++;
+    if (row.state === 'done' && prev.state !== 'done') candidateOnlyCompleted++;
+  }
+  pairedWaitMs.sort((a, b) => a - b);
+  const count = pairedWaitMs.length;
+  return {
+    evidence: 'synthetic' as const,
+    baseline: before, candidate: after,
+    coverage: {
+      cohort: after.jobs.arrived, pairedStarted: count,
+      baselineOnlyStarted, candidateOnlyStarted,
+      baselineOnlyCompleted, candidateOnlyCompleted,
+    },
+    // Negative is faster; no paired observations is unknown, not zero.
+    waitDeltaMs: count === 0 ? null : {
+      mean: pairedWaitMs.reduce((a, b) => a + b, 0) / count,
+      p90: percentile(pairedWaitMs, 90),
+    },
   };
 }
 

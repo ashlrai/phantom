@@ -21,7 +21,10 @@
  * advisory fleet coordination ledger's pending surface (`fleetCoordination`
  * — live messages, proposals and unposted returns counts behind `work
  * mine`'s coordination section, `phm fleet coordination` and the unified
- * inbox coordination source), and the
+ * inbox coordination source), the org plane's membership outbox
+ * (`orgOutbox` — the `org.membership` events `phm fleet org-sync --apply`
+ * has not yet posted to the bus, the same `busDelivered:false` set the
+ * unified inbox org-outbox source itemizes), and the
  * outbound send gate (`sendGate.state`
  * open/blocked/unknown with the kill-switch and comms-pause verdicts
  * kept separate) an agent can check before assuming a write would land.
