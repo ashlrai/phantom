@@ -340,6 +340,10 @@ phm pool admission --json
 
 ## Utilization and unfed capacity
 
+`phm fleet launch-stall-why` treats quota usage as unknown once its recorded
+reset time is at or before report time. A hold still reported by the dispatcher
+remains visible and prompts a check of the current hold status.
+
 `phm fleet autopilot --once --json` requires a healthy `ready.tsv` read to
 identify starved lanes or propose restock. When that read is missing or
 degraded, per-lane `ready` stays null. The dispatcher’s `queued` count remains

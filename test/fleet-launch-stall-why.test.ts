@@ -18,6 +18,22 @@ describe('explainLaunchStall', () => {
     const v = explainLaunchStall({ ...base, usageFrac: 1, usageResetAt: '2026-11-17T20:00:00Z' }, NOW);
     expect(v.reasons[0]).toContain('usage exhausted: 100% used, resets 2026-11-17T20:00:00Z');
   });
+  it.each([-1, 0])('treats usage as unknown when the reset is %i ms from report time', (offset) => {
+    const usageResetAt = new Date(NOW + offset).toISOString();
+    const v = explainLaunchStall({ ...base, usageFrac: 1, usageResetAt }, NOW);
+    expect(v.stalled).toBe(true);
+    expect(v.reasons).toContain(`usage window ended at ${usageResetAt}`);
+    expect(v.reasons.at(-1)).toBe('unknown (not assumed fine): usage');
+    expect(v.firstAction).not.toContain('wait for the reset');
+  });
+  it('keeps a reported hold after the associated usage window ends', () => {
+    const v = explainLaunchStall({
+      ...base, held: true, heldReason: 'usage_limit', usageFrac: 1,
+      usageResetAt: new Date(NOW).toISOString(),
+    }, NOW);
+    expect(v.reasons[0]).toBe('held: usage_limit');
+    expect(v.firstAction).toBe('lane held: usage_limit; check the current hold status');
+  });
   it('lists the first three blocked head lines', () => {
     const heads = ['A', 'B', 'C', 'D'].map(x => ({ id: `RQ-FAKE-000${x}`, blockedBy: 'RQ-FAKE-9999' }));
     const v = explainLaunchStall({ ...base, headLines: heads }, NOW);
