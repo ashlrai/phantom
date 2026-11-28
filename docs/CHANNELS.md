@@ -338,7 +338,18 @@ conversations, messages and edges projections deliberately exclude it as
 original parties/kind/id and correlation id when the letter kept them
 (`payloadDropped` says when the original body was too large to keep),
 with `agents bus show <letter-id>` and `comms bus read --to
-bus.dead-letter` acts), and
+bus.dead-letter` acts), every live `forum.mention` envelope the fleet
+forum posts into the bus (the forum store keeps the post and its thread;
+this envelope is the only bus-side trace that someone pulled the `to`
+addressee into a forum thread — without the item a live mention is
+visible only inside the addressee's own inbox mail until the wake TTL
+lapses, and finding it otherwise takes a forum read this view cannot
+run; each warn item names the addressee, the forum channel, a scrubbed
+body summary carrying the mention excerpt, the thread/post/channel ids
+and cursor as detail, `since` the receipt time and `expiresAt` the
+envelope's own TTL deadline, deep-linking `phm agents bus show` and
+`phm comms bus read --to <addressee>`; agent coordination, never
+Mason-blocking) — and
 open agent-bus v2 work-feed jobs (queued or rescheduled
 `work.post` announcements with at least one claim key not fully held, plus
 jobs the feed shows `blocked` or `failed` — stuck work needs a decision — or
@@ -919,7 +930,7 @@ that cannot be read reports `missing`, `degraded`, or `unavailable` in
 items with the remainder counted in `omitted`. The bare view also narrows:
 `--source <name>` keeps one source's items, `--kind <name>` one item kind —
 the item's own classification, finer than `--source` where one source emits
-several kinds (the `bus` source's `bus-work`/`bus-handoff`/`bus-dead-letter`
+several kinds (the `bus` source's `bus-work`/`bus-handoff`/`bus-dead-letter`/`forum-mention`
 split, the `board` source's `board-delivery`/`board-task` split) — `--severity
 <info|warn|high>` one
 severity band, `--blocking` only items that block, `--id <item-id>` only

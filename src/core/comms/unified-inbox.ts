@@ -144,6 +144,15 @@
  *               and edges projections deliberately exclude it as "not agent
  *               mail" — act: `phm agents bus show`, `phm agents bus
  *               dead-letters`, `phm comms bus read --to bus.dead-letter`.
+ *               Every live `forum.mention` envelope lists too, as
+ *               `forum-mention`: the fleet forum's wake into the bus —
+ *               the forum store keeps the post and its thread, so this
+ *               envelope is the only bus-side trace that someone pulled
+ *               the `to` addressee into a forum thread, and without the
+ *               item a live mention is visible only inside the
+ *               addressee's own inbox mail until the wake TTL lapses —
+ *               act: `phm agents bus show`, `phm comms bus read --to
+ *               <addressee>`.
  *               When the claims table itself
  *               cannot be read the section reports 'degraded' and still lists
  *               candidates rather than hiding possibly unclaimed work; a
@@ -1016,7 +1025,7 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
  * `--kind` filters on. */
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
-  'owner-reply-undelivered', 'owner-pair-waiting', 'inbox-ack', 'draft-approval', 'comms-mail', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
+  'owner-reply-undelivered', 'owner-pair-waiting', 'inbox-ack', 'draft-approval', 'comms-mail', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'forum-mention', 'mailbox-message',
   'board-delivery', 'board-task', 'work-board-received', 'work-board-assigned', 'work-board-blocked',
   'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'peer-message', 'session-handoff', 'org-membership', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
@@ -2369,6 +2378,54 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
           act: [
             `phm agents bus show ${envelope.id}`,
             `phm comms bus read --to ${BUS_DEAD_LETTER_ADDRESS}`,
+          ],
+        });
+        continue;
+      }
+      // A forum mention is the fleet forum's wake into the bus: the forum
+      // store keeps the post and its thread, this envelope is the only
+      // trace the bus carries that someone pulled the `to` addressee into
+      // a forum thread. It is neither claimable work nor feed traffic, so
+      // without this branch a live mention is visible only inside the
+      // addressee's own inbox mail — and only until the wake TTL lapses —
+      // while finding it otherwise takes a forum read this view cannot
+      // run. Listing it here keeps the one pending view honest about
+      // mentions that would otherwise need the forum store to discover.
+      // Agent coordination, never Mason-blocking.
+      if (busBodyKind(envelope.body) === 'forum.mention') {
+        // busBodyKind matched, so the body is a non-array object; every
+        // field below is read defensively because stored bodies are
+        // untrusted data.
+        const record = envelope.body as Record<string, unknown>;
+        const mentionField = (key: string): string | null => {
+          const value = record[key];
+          return typeof value === 'string' && value.trim() ? value : null;
+        };
+        const threadId = mentionField('threadId');
+        const postId = mentionField('postId');
+        const channelId = mentionField('channelId');
+        const detail = oneLine([
+          threadId === null ? null : `thread ${threadId}`,
+          postId === null ? null : `post ${postId}`,
+          channelId === null ? null : `channel ${channelId}`,
+          `from ${envelope.from}`,
+          `cursor ${receipt.cursor}`,
+        ].filter((part): part is string => part !== null).join(' · '), DETAIL_MAX);
+        covered.envelopes.add(envelope.id);
+        items.push({
+          id: `bus-mention:${envelope.id}`,
+          source: 'bus',
+          kind: 'forum-mention',
+          severity: envelope.priority === 'P0' ? 'high' : 'warn',
+          blocking: false,
+          title: oneLine(`forum mention for ${envelope.to}: ${busBodySummary(envelope.body) ?? 'forum thread'}`, TITLE_MAX),
+          detail: detail || null,
+          since: iso(receipt.receivedAt),
+          expiresAt: iso(now + envelope.ttl),
+          ...jobIdsField(busBodyJobIds(envelope.body)),
+          act: [
+            `phm agents bus show ${envelope.id}`,
+            `phm comms bus read --to ${envelope.to}`,
           ],
         });
         continue;

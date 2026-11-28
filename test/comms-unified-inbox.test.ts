@@ -1006,6 +1006,83 @@ describe('dead-letter reports in the bus source', () => {
   });
 });
 
+describe('forum mentions in the bus source', () => {
+  /** The forum's wake body (forum/service.ts defaultDeliver): a `type`-keyed
+   * notice — channelId, threadId, postId and a bounded excerpt — posted from
+   * 'forum' to the mentioned agent's callsign under a ten-minute TTL. */
+  const mentionBody = (over: { channelId?: string; threadId?: string; postId?: string; excerpt?: string } = {}) => ({
+    type: 'forum.mention',
+    channelId: over.channelId ?? 'general',
+    threadId: over.threadId ?? 't-abc123',
+    postId: over.postId ?? 'p-def456',
+    excerpt: over.excerpt ?? '@devin-lead can you sanity-check the shed plan?',
+  });
+  const postMention = (body: unknown, extra: { priority?: 'P0' | 'P1' | 'P2' | 'P3'; ttl?: number; at?: number; to?: string } = {}) =>
+    postV2Body(body as BusJsonValue, { from: 'forum', to: extra.to ?? 'devin-lead', priority: extra.priority ?? 'P2', ttl: extra.ttl ?? 600_000, at: extra.at });
+
+  it('lists a live mention naming the addressee, thread and post with inspect acts', async () => {
+    const id = postMention(mentionBody());
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id)).toEqual([`bus-mention:${id}`]);
+    expect(items[0]).toMatchObject({
+      kind: 'forum-mention', severity: 'warn', blocking: false,
+      title: 'forum mention for devin-lead: forum.mention general: @devin-lead can you sanity-check the shed plan?',
+      detail: 'thread t-abc123 · post p-def456 · channel general · from forum · cursor 1',
+      since: new Date(now).toISOString(),
+      expiresAt: new Date(now + 600_000).toISOString(),
+      act: [`phm agents bus show ${id}`, 'phm comms bus read --to devin-lead'],
+    });
+    expect(items[0]!.jobIds).toBeUndefined();
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('drops an expired mention and never mistakes one for claimable work', async () => {
+    postMention(mentionBody(), { ttl: 1, at: now - 10_000 });
+    const live = postMention(mentionBody());
+    postWork('still-work');
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id).sort()).toEqual([`bus-mention:${live}`, 'bus:still-work']);
+    expect(items.find(i => i.id === `bus-mention:${live}`)).toMatchObject({ kind: 'forum-mention' });
+    expect(items.find(i => i.id === 'bus:still-work')).toMatchObject({ kind: 'bus-work' });
+  });
+
+  it('filters by its own kind without joining --job or the work kinds', async () => {
+    const id = postMention(mentionBody());
+    postWork('mention-neighbor');
+    const mentions = await read({ filter: { kind: 'forum-mention' } });
+    expect(mentions.items.map(i => i.id)).toEqual([`bus-mention:${id}`]);
+    expect(mentions.items[0]!.source).toBe('bus');
+    // A mention names no job citation, so --job never claims one.
+    const byJob = await read({ filter: { kind: 'forum-mention', job: 'RQ-NOTHING' } });
+    expect(byJob.total).toBe(0);
+    const work = await read({ filter: { kind: 'bus-work' } });
+    expect(work.items.map(i => i.id)).toEqual(['bus:mention-neighbor']);
+  });
+
+  it('scrubs secret-shaped excerpt text before it reaches the item', async () => {
+    const id = postMention(mentionBody({ excerpt: 'use key sk-abcdefghijklmnop for the eval' }));
+    const inbox = await read();
+    const item = inbox.items.find(i => i.id === `bus-mention:${id}`)!;
+    expect(item).toMatchObject({ kind: 'forum-mention' });
+    expect(item.title).toContain('[REDACTED]');
+    expect(item.title).not.toContain('sk-abcdefghijklmnop');
+    expect(JSON.stringify(item)).not.toContain('sk-abcdefghijklmnop');
+  });
+
+  it('keeps unknown mention fields out of the detail rather than guessing', async () => {
+    const id = postMention({ type: 'forum.mention' });
+    const inbox = await read();
+    const item = inbox.items.find(i => i.id === `bus-mention:${id}`)!;
+    expect(item).toMatchObject({
+      kind: 'forum-mention', severity: 'warn',
+      title: 'forum mention for devin-lead: forum thread',
+      detail: 'from forum · cursor 1',
+    });
+  });
+});
+
 describe('agent conversation threads in the unified inbox', () => {
   const ask = (text: string, thread: string, extra: { from?: string; to?: string; at?: number } = {}) =>
     postV2Body({ kind: 'note', text, thread }, { from: extra.from ?? 'agent:asker', to: extra.to ?? 'agent:reviewer', at: extra.at });
