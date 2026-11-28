@@ -369,7 +369,10 @@ that host. Placement ranks remaining slots divided by the median accepted
 claim-to-completion duration over 24 hours; a producer withdrawal is a fence,
 not an execution, and adds no sample. Missing latency uses the mean of
 measured host medians (equal weights when none exist). Unknown duration is never
-reported as zero. Owner, capability, local-auth and fencing checks still apply.
+reported as zero. Among eligible workers on the same host, placement prefers
+the worker with fewer active claims and assignments already reserved in the
+current plan. Remaining ties use node ID. Owner, capability, local-auth and
+fencing checks still apply.
 
 `phm node status --json` exposes scoped capacity samples. `phm fleet status-api
 --json` and the existing Fleet compute API add lane occupancy, targets, floors

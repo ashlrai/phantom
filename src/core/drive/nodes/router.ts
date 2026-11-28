@@ -118,7 +118,8 @@ function authFix(job: QueueJobV1, nodes: NodeRecord[], state: NodesState): strin
 }
 
 /** Deterministic plan: pools rank measured free host slots per observed execution millisecond;
- * standalone legacy queues retain their load policy. Ties break by node ID.
+ * workers on the same host prefer fewer active and planned claims. Standalone
+ * legacy queues retain their load policy. Remaining ties break by node ID.
  * Pure: the same state and clock always produce the same plan. Jobs without an
  * owner scope are never routed, so a legacy job cannot leak across scopes.
  */
@@ -147,7 +148,9 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
         const h = hosts.get(n.nodeId)!;
         return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency) : -load.get(n.nodeId)!;
       };
-      if (!best || score(node) > score(best)) best = node;
+      if (!best || score(node) > score(best) ||
+          (state.pool && host === hosts.get(best.nodeId) &&
+            claims.get(node.nodeId)! < claims.get(best.nodeId)!)) best = node;
     }
     if (best) {
       const host = hosts.get(best.nodeId);
