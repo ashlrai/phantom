@@ -365,7 +365,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   const futureDated = inbound.filter((t) => t > nowMs).length + replies.filter((t) => t > nowMs).length;
   base.unansweredCount = pending.length;
   const proof: ChannelProof = {
-    requestCoverage: evidence?.projectionOmitted || pending.length ? 'unproven'
+    requestCoverage: invalidInboundTime || evidence?.projectionOmitted || pending.length ? 'unproven'
       : binding && answeredCount > 0 ? 'verified'
         : windowInbound.length ? 'unproven' : 'idle',
     futureDatedCount: futureDated,
