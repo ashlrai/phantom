@@ -1084,6 +1084,17 @@ for (the same `derivedRowCodes` rules `phm fleet unfed` replays), and
 other ready.tsv dialects are never scored. `blocked` and `scored` stay
 `null` when `slots.json` is absent or unreadable, and the text output says
 `blocked unknown`; an unreadable optional input never fails the report.
+Each starved lane also reports `diskguarded`, how many of its
+market-evaluated ready rows carry the dispatcher's `.diskguard` mark in
+`queue/run/`: dispatchd writes `<job>.diskguard` when its disk reuse-only
+gate defers a non-reuse job before market selection, and removes it when
+the job launches, so a waiting row that still carries the mark is
+disk-deferred rather than merely market-blocked. The report totals the
+marks across every market-evaluated row — lane-open supply included — as
+`disk_guarded_rows`, and the text output adds a per-lane `disk-guarded N`
+clause plus a footer explaining the mark when any row carries one.
+Tolerant ready.tsv dialects are not dispatcher jobs and never count, and
+both fields stay `null` when `queue/run` cannot be listed.
 Lanes with `held: true` in the dispatcher snapshot are excluded.
 A dispatcher pause, an explicit admission stop, or a full shared fleet cap
 suppresses all lane verdicts and yields exit 0. The lane-open row count is
