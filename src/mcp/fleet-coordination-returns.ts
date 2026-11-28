@@ -6,10 +6,14 @@
  * returning agent named that evidence, not that Phantom checked the PR,
  * and unknown means unknown, not absent.
  *
- * `claim`, `repo`, `result`, `from`, `since`, `before` and `contains`
- * take the same names and rules the CLI flags share — validation
+ * `claim`, `repo`, `result`, `from`, `excludeFrom`, `since`, `before` and
+ * `contains` take the same names and rules the
+ * CLI flags share — validation
  * delegates to the one `parseCoordinationReturnsFilters` parser, so an
  * MCP client can never disagree with the CLI about what a filter means.
+ * `excludeFrom` is the inverted twin of `from`: receipts one sender label
+ * posted drop while the include-then-exclude order every bus read's sender
+ * filter pair applies is preserved.
  * The filters narrow the parsed set before the newest-50 page, so a
  * filtered read reaches receipts the unfiltered cap hides, and
  * `coverage.matched`/`coverage.omitted` keep the filtered truncation
@@ -23,7 +27,7 @@ import {
   type CoordinationReturnsFilters, type CoordinationReturnsFilterInput,
 } from '../core/fleet/coordination-returns-view.js';
 
-const FILTER_KEYS = ['claim', 'repo', 'result', 'from', 'since', 'before', 'contains'] as const;
+const FILTER_KEYS = ['claim', 'repo', 'result', 'from', 'excludeFrom', 'since', 'before', 'contains'] as const;
 const RETURNS_KEYS: ReadonlySet<string> = new Set(FILTER_KEYS);
 
 /** Resolved returns filters — the same `CoordinationReturnsFilters` the CLI read applies. */
@@ -33,7 +37,8 @@ export type FleetCoordinationReturnsArgs = CoordinationReturnsFilters;
  * Runtime argument validation: low-level SDK servers never check the
  * tools/list schema, so the server re-validates on every call. Every
  * value must be a string — the shared `parseCoordinationReturnsFilters`
- * then applies the receipt grammar (`claim`/`from` the ledger's
+ * then applies the receipt grammar (`claim`/`from`/`excludeFrom` the
+ * ledger's
  * printable-label bound, `repo` the owner/name shape compared
  * case-insensitively, `result` the VERIFIED|BLOCKED verdict, `since`/
  * `before` the shared 15m/2h/1d/epoch-ms/ISO time grammar composing one
