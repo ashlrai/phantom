@@ -109,8 +109,6 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
 export function planRoutes(state: NodesState, now: number, owner?: string): RouteAssignment[] {
   const capacity = nodeCapacityView(state, now);
   const hosts = new Map(capacity.flatMap(h => h.nodeIds.map(id => [id, h] as const)));
-  const measuredLatency = capacity.map(h => h.latency.medianMs).filter((n): n is number => n !== null && n > 0);
-  const neutralLatency = measuredLatency.length ? measuredLatency.reduce((a, b) => a + b, 0) / measuredLatency.length : 1;
   const reserved = new Map<string, number>();
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n, now)]));
@@ -119,7 +117,8 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
     const reasons = new Map<string, number>();
-    let best: NodeRecord | null = null;
+    const candidates: NodeRecord[] = [];
+    const measuredLatency = new Map<string, number>();
     for (const node of nodes) {
       const why = shortfall(node, job);
       if (why) { reasons.set(why.split(':')[0]!, 1); continue; }
@@ -127,12 +126,19 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       const host = hosts.get(node.nodeId);
       if (state.pool && (!host || !host.eligibleNodeIds.includes(node.nodeId) ||
           (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) { reasons.set('capacity', 1); continue; }
-      const score = (n: NodeRecord) => {
-        const h = hosts.get(n.nodeId)!;
-        return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency) : -load.get(n.nodeId)!;
-      };
-      if (!best || score(node) > score(best)) best = node;
+      candidates.push(node);
+      if (state.pool && host && host.latency.medianMs !== null && host.latency.medianMs > 0) {
+        measuredLatency.set(host.hostId, host.latency.medianMs);
+      }
     }
+    const neutralLatency = measuredLatency.size
+      ? [...measuredLatency.values()].reduce((sum, ms) => sum + ms, 0) / measuredLatency.size : 1;
+    const score = (node: NodeRecord) => {
+      if (!state.pool) return -load.get(node.nodeId)!;
+      const host = hosts.get(node.nodeId)!;
+      return ((host.freeSlots ?? 0) - (reserved.get(host.hostId) ?? 0)) / Math.max(1, host.latency.medianMs ?? neutralLatency);
+    };
+    const best = candidates.reduce<NodeRecord | null>((best, node) => !best || score(node) > score(best) ? node : best, null);
     if (best) {
       const host = hosts.get(best.nodeId);
       if (host) reserved.set(host.hostId, (reserved.get(host.hostId) ?? 0) + 1);
