@@ -5041,8 +5041,15 @@ queueId/receiptId never appear in a summary.
 shared validation `GET /api/verse/comms/inbox`
 (`src/core/verse/comms-inbox-api.ts`) applies to its query — `limit`
 (1–200, default 50) plus the `UnifiedInboxFilter` dimensions `source`,
-`kind`, `severity`, `blocking` (`true`/`false`), `job`, `since`, `before`
-and `contains`, each at most once — `since` the inclusive appearance-time
+`kind`, `severity`, `blocking` (`true`/`false`), `id`, `job`, `since`,
+`before`
+and `contains`, each at most once — `id` (`UnifiedInboxFilter.id`,
+`comms inbox --id`, `isUnifiedInboxItemId` bounded by
+`UNIFIED_INBOX_ID_MAX`) keeps only the item whose stable `<source>:<ref>`
+id strictly equals the value — the same exact-id match every bus read's
+`--id` applies, the one dimension that pinpoints a single projected item
+since `--contains` searches title/detail only and `--job` matches the
+citation set — `since` the inclusive appearance-time
 lower bound, `before` (`UnifiedInboxFilter.before`, `comms inbox --before`)
 the exclusive `<` upper bound composing with it into one
 `[since, before)` window under the same `parseSince` grammar every bus

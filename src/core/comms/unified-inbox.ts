@@ -943,6 +943,12 @@ import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
 export const UNIFIED_INBOX_CONTAINS_MAX = 512;
+/** Longest `--id` value the unified view accepts — a `<source>:<ref>` item id is a bounded machine label, never free text. */
+export const UNIFIED_INBOX_ID_MAX = 256;
+/** The `--id` value rule: a non-empty printable label of at most UNIFIED_INBOX_ID_MAX chars — the same shape every bus read's `--id` takes, widened for the namespaced `<source>:<ref>` form. */
+const UNIFIED_INBOX_ITEM_ID = /^[\x21-\x7e]+$/;
+export const isUnifiedInboxItemId = (value: string): boolean =>
+  value.length <= UNIFIED_INBOX_ID_MAX && UNIFIED_INBOX_ITEM_ID.test(value);
 const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
@@ -1057,6 +1063,15 @@ export interface UnifiedInboxFilter {
   severity?: UnifiedInboxSeverity;
   /** Keep only blocking items when true, only non-blocking when false. */
   blocking?: boolean;
+  /** Keep only the item whose stable namespaced id (`<source>:<ref>`, the
+   * id every row reports) strictly equals this value — the same exact-id
+   * match every bus read's `--id` applies, so an agent holding a cited item
+   * id re-resolves exactly that item across every source in one read rather
+   * than guessing which source read to run. `--contains` never sees the id
+   * (it searches title/detail only) and `--job` matches the citation set,
+   * not the item id, so this is the one dimension that pinpoints a single
+   * projected item. Callers bound the raw value to UNIFIED_INBOX_ID_MAX. */
+  id?: string;
   /** Keep only items that provably name this job id — the same citation
    * rule every `--job` bus read shares, joined with the feed-id, board
    * `itemId`, conversation-thread, teammate-task, seat node-job,
@@ -5129,7 +5144,8 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const filter = requested !== undefined &&
     (requested.source !== undefined || requested.kind !== undefined ||
       requested.severity !== undefined ||
-      requested.blocking !== undefined || requested.job !== undefined ||
+      requested.blocking !== undefined || requested.id !== undefined ||
+      requested.job !== undefined ||
       requested.since !== undefined || requested.before !== undefined ||
       requested.contains !== undefined)
     ? requested : undefined;
@@ -5146,6 +5162,10 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     (filter.kind === undefined || item.kind === filter.kind) &&
     (filter.severity === undefined || item.severity === filter.severity) &&
     (filter.blocking === undefined || item.blocking === filter.blocking) &&
+    // An id filter keeps only the item whose stable <source>:<ref> id strictly
+    // equals the value — the same exact-id match every bus read's --id
+    // applies; an item can never partially match its own id.
+    (filter.id === undefined || item.id === filter.id) &&
     // A job filter keeps only items whose own citation set names the job —
     // an item with no provable job relation stays out of the match.
     (filter.job === undefined || item.jobIds?.includes(filter.job) === true) &&

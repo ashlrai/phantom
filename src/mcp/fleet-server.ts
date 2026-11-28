@@ -142,7 +142,7 @@ import { PROVIDERS, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS } from '../c
 import { COORDINATION_ORIGINS } from '../core/agents/claim-store.js';
 import { HANDOFF_SIGNAL_KINDS } from '../core/agents/session-handoff-schema.js';
 import type { SessionHandoffListFilter } from '../core/agents/session-handoff.js';
-import { UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_KINDS, UNIFIED_INBOX_SOURCES } from '../core/comms/unified-inbox.js';
+import { UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_ID_MAX, UNIFIED_INBOX_KINDS, UNIFIED_INBOX_SOURCES } from '../core/comms/unified-inbox.js';
 import { BUS_PRIORITIES } from '../core/fleet/bus-envelope.js';
 import { BUS_PROTOCOL_KINDS } from '../core/fleet/bus-protocol.js';
 import { BUS_READ_CONTAINS_MAX, INBOX_KINDS } from '../core/agents/bus-unified.js';
@@ -1555,7 +1555,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_comms_inbox',
-      description: 'Read the ranked unified comms inbox — the same readUnifiedInbox projection `phm comms inbox` serves. Optional source, kind, severity, blocking, job, since, before and contains narrow the item list with the same rules as the CLI flags; the per-source pending reports stay the unfiltered store truth and an applied filter is echoed on the result. limit caps returned items (1–200, default 50). Read-only; items quote private text.',
+      description: 'Read the ranked unified comms inbox — the same readUnifiedInbox projection `phm comms inbox` serves. Optional source, kind, severity, blocking, id, job, since, before and contains narrow the item list with the same rules as the CLI flags; the per-source pending reports stay the unfiltered store truth and an applied filter is echoed on the result. limit caps returned items (1–200, default 50). Read-only; items quote private text.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1564,6 +1564,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
           kind: { type: 'string', enum: [...UNIFIED_INBOX_KINDS], description: 'Keep items of one kind — the item\'s own classification, finer than source where one source emits several kinds (the bus source\'s bus-work/bus-handoff/bus-dead-letter split, the board source\'s board-delivery/board-task split).' },
           severity: { type: 'string', enum: ['info', 'warn', 'high'], description: 'Keep items of one severity.' },
           blocking: { type: 'boolean', description: 'true keeps only blocking items; false keeps only non-blocking items.' },
+          id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,256}$', maxLength: UNIFIED_INBOX_ID_MAX, description: 'Keep only the item whose stable <source>:<ref> id strictly equals this value — the exact-id match `phm comms inbox --id` applies; --contains searches title/detail only, never the id.' },
           job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only items whose citation set names this job id.' },
           since: { type: 'string', description: 'Keep items whose recorded appearance time reaches the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the same grammar `phm comms inbox --since` takes.' },
           before: { type: 'string', description: 'Keep items whose recorded appearance time is strictly before the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the exclusive upper bound composing with since into one [since, before) window, the same grammar `phm comms inbox --before` takes.' },
