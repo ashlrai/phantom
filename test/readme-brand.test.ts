@@ -63,6 +63,8 @@ describe('README top-half brand contract', () => {
     const path = 'docs/images/phantom-fleet-overview.png';
     expect(readme).toMatch(/!\[[^\]]*resource balances[^\]]*\]\(docs\/images\/phantom-fleet-overview\.png\)/);
     expect(readme).toContain('Phantom Fleet overview with sample data.');
+    expect(readme).toContain('362 merges in 24 hours');
+    expect(readme).toContain('Leader inbox with dictation');
     expect(readme).toContain('[See the current Fleet capture with demo data](docs/images/phantom-fleet-demo.png)');
     const png = readFileSync(join(ROOT, path));
     expect(png.subarray(1, 4).toString()).toBe('PNG');

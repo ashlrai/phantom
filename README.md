@@ -20,9 +20,9 @@ Chasing open-source RSI (recursive self-improvement) is Phantom's mission. We're
 
 Agents run the factory; the human owner acts as a passive board member. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow. The owner sets direction and is needed only for passwords, 2FA, device approvals and payments. See [how agents work on Phantom](#how-agents-work-on-phantom).
 
-[![Phantom Fleet overview with resource balances in the left sidebar, agent and sub-agent topology, tool activity, sessions, usage trends, and worker load.](docs/images/phantom-fleet-overview.png)](docs/images/phantom-fleet-overview.png)
+[![Phantom Fleet overview with resource balances, 28 running sessions, 336 active subagents, 362 merges in 24 hours, and a Leader inbox with dictation, model and context indicators.](docs/images/phantom-fleet-overview.png)](docs/images/phantom-fleet-overview.png)
 
-*Phantom Fleet overview with sample data. Balances, counts, and trends are illustrative. [See the current Fleet capture with demo data](docs/images/phantom-fleet-demo.png) or [read the visual notes](docs/images/CAPTURES.md).*
+*Phantom Fleet overview with sample data. Balances, counts, trends, and inbox controls are illustrative, not measured performance or feature availability. [See the current Fleet capture with demo data](docs/images/phantom-fleet-demo.png) or [read the visual notes](docs/images/CAPTURES.md).*
 
 ## What you can do
 
@@ -36,7 +36,7 @@ Agents run the factory; the human owner acts as a passive board member. Agents p
 | **Agent bus** | Follow durable messages, threads and coordination events between agents. [Bus contract](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-BUS.md). |
 | **Resource pool and routing** | Inspect connected accounts and local models, observed quota, and fleet routing decisions. Unknown values stay unknown, and a connected resource is not automatically eligible to launch. [Queue market](docs/QUEUE.md). |
 | **Computers** | Read reachability, free memory, lanes and running jobs. Each machine keeps its own provider sign-in. [Add a computer](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md). |
-| **Comms** | Read one owner thread across configured channels. Adapters require setup; send policies still apply. [Owner thread](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-THREAD.md). |
+| **Owner inbox and comms** | Read one owner thread across configured channels and use it to ask the Leader for evidence or direction. Adapters require setup; send policies still apply. [Owner thread](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-THREAD.md). |
 | **Secrets** | Connect the separately installed Phantom Secrets companion through MCP; use secret references in agent work. [Companion setup](docs/COMPANIONS.md). |
 | **Release train** | Inspect release status, qualification and publication evidence. Releases use the repository's sanctioned workflow. [Release guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md). |
 
