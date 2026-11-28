@@ -6,7 +6,8 @@
  * hint (`fleet.unfed.v1`'s `resources`, `waiting`, `unfedLanes`,
  * `unfedSlots`, `fleetStop`, `statusAsOf`/`statusFresh`), plus the window
  * folds — unfed ticks, route-decision overrides and rejections, claim
- * launches that left their hint, and decided-job outcomes.
+ * launches that left their hint, decided-job outcomes, and the Leader's
+ * queue_reroute re-hints toward expiring-quota lanes.
  * `fleet_lanes` reports each lane's posture (running/target/hold/usage)
  * and `fleet_work_feed` lists the jobs themselves; neither answers "which
  * lanes have free slots while runnable rows wait under another lane's
@@ -35,7 +36,7 @@ import type { UnfedReport } from '../core/fleet/unfed-capacity.js';
 const UNFED_KEYS = new Set(['windowHours']);
 
 export interface FleetUnfedArgs {
-  /** Fold window in hours for the history/override/claims/outcome/rejection sections; omitted means 24. */
+  /** Fold window in hours for the history/override/claims/outcome/rejection/reroute sections; omitted means 24. */
   windowHours?: number;
 }
 

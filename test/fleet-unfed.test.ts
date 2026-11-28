@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { cmdFleetUnfed } from '../src/cli/fleet-unfed.js';
-import { currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides, foldRouteRejections, foldUnfedHistory, readyHints, renderUnfed } from '../src/core/fleet/unfed-capacity.js';
+import { currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides, foldReroutes, foldRouteRejections, foldUnfedHistory, readyHints, renderUnfed } from '../src/core/fleet/unfed-capacity.js';
 
 let dir: string;
 const saved = process.env.ASHLR_RUNS_DIR;
@@ -38,6 +38,14 @@ const unfedRow = (ts: number, lanes: Record<string, unknown>) =>
   JSON.stringify({ schema: 'work-market.v1', event: 'unfed_capacity', ts, lanes });
 const decisionRow = (job: string, ts: number, override: unknown = { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback' }) =>
   JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job, ts, chosen_lane: 'claude', preferred_lane: 'codex-personal', override });
+const rerouteRow = (job: string, ts: number, extra: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    schema: 'work-market.v1', event: 'queue_reroute', job, ts,
+    preferred_lane: 'codex-personal', target_lane: 'codex-cmp',
+    deadline_at: new Date((ts + 3600) * 1000).toISOString(), running: 1, target: 4,
+    reason_codes: ['resource_plan_under_target', 'expiring_included_quota'],
+    ...extra,
+  });
 
 async function run(args: string[] = ['--json']) {
   const out = vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -827,6 +835,7 @@ describe('foldRouteRejections', () => {
       claims: foldClaimOverrides(null, now, 24),
       decisionOutcomes: foldDecisionOutcomes(journal, null, now, 24),
       rejections: foldRouteRejections(journal.split('\n')[2]!, now, 24),
+      reroutes: foldReroutes(journal, now, 24),
     };
     expect(renderUnfed(report)).toContain(
       'Last 24h: lane rejections across 1 decided job(s), 1 routed nowhere: global_admission 1',
@@ -869,6 +878,121 @@ describe('foldRouteRejections', () => {
   it('says when there is no market journal', () => {
     expect(foldRouteRejections(null, now, 24)).toEqual({ available: false, decided: 0, unrouted: 0, lanes: [], byReason: {} });
     expect(foldRouteRejections('', now, 24)).toEqual({ available: true, decided: 0, unrouted: 0, lanes: [], byReason: {} });
+  });
+});
+
+describe('foldReroutes', () => {
+  const now = 1_800_000_000_000;
+  const t = now / 1000;
+  const reroute = (job: string, ts: number, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      schema: 'work-market.v1', event: 'queue_reroute', job, ts,
+      preferred_lane: 'codex-personal', target_lane: 'codex-cmp',
+      deadline_at: '2026-11-28T00:00:00.000Z', running: 1, target: 4,
+      reason_codes: ['resource_plan_under_target', 'expiring_included_quota'],
+      ...extra,
+    });
+
+  it('counts every applied re-hint while collapsing jobs to distinct ids', () => {
+    const journal = [
+      reroute('RQ-A', t - 300),
+      reroute('RQ-A', t - 200), // same job, same route: churn counts as two receipts
+      reroute('RQ-B', t - 100, {
+        preferred_lane: null, target_lane: 'claude',
+        reason_codes: ['resource_plan_under_target', 'expiring_reset_bank'],
+      }),
+      // Out-of-window, future, broken and non-reroute rows never count.
+      reroute('RQ-OLD', t - 25 * 3600),
+      reroute('RQ-FUTURE', t + 1),
+      '{"event":"queue_reroute" broken',
+      unfedRow(t - 60, {}),
+      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'RQ-D', ts: t - 50 }),
+    ].join('\n');
+    expect(foldReroutes(journal, now, 24)).toEqual({
+      available: true,
+      receipts: 3,
+      jobs: 2,
+      byReason: { expiring_included_quota: 2, expiring_reset_bank: 1 },
+      lanes: [
+        { from: 'codex-personal', to: 'codex-cmp', reason: 'expiring_included_quota', receipts: 2, jobs: 1 },
+        { from: null, to: 'claude', reason: 'expiring_reset_bank', receipts: 1, jobs: 1 },
+      ],
+    });
+  });
+
+  it('tracks distinct jobs per route separately from receipt churn', () => {
+    const journal = [
+      reroute('RQ-A', t - 300),
+      reroute('RQ-A', t - 200, { target_lane: 'claude' }), // the same job moved again elsewhere
+      reroute('RQ-B', t - 100),
+    ].join('\n');
+    const tally = foldReroutes(journal, now, 24);
+    expect(tally).toMatchObject({ receipts: 3, jobs: 2 });
+    expect(tally.lanes).toEqual([
+      { from: 'codex-personal', to: 'codex-cmp', reason: 'expiring_included_quota', receipts: 2, jobs: 2 },
+      { from: 'codex-personal', to: 'claude', reason: 'expiring_included_quota', receipts: 1, jobs: 1 },
+    ]);
+  });
+
+  it('skips rows that fail the writer contract, never guessing', () => {
+    const journal = [
+      reroute('RQ-A', t - 100),
+      JSON.stringify({ schema: 'other.v1', event: 'queue_reroute', job: 'RQ-B', ts: t - 90,
+        preferred_lane: 'codex-personal', target_lane: 'codex-cmp', deadline_at: '2026-11-28T00:00:00.000Z',
+        running: 1, target: 4, reason_codes: ['resource_plan_under_target', 'expiring_included_quota'] }),
+      reroute('RQ-C', t - 90, { preferred_lane: undefined }), // key dropped by JSON: not a receipt
+      reroute('RQ-D', t - 80, { preferred_lane: 'bad lane!' }),
+      reroute('RQ-E', t - 80, { target_lane: 'bad lane!' }),
+      reroute('RQ-F', t - 80, { deadline_at: 'not a date' }),
+      reroute('RQ-G', t - 80, { running: -1 }),
+      reroute('RQ-H', t - 80, { target: 1.5 }),
+      reroute('RQ-I', t - 80, { reason_codes: 'expiring_included_quota' }),
+      // The marker and an expiring_* code are both required.
+      reroute('RQ-J', t - 80, { reason_codes: ['expiring_included_quota'] }),
+      reroute('RQ-K', t - 80, { reason_codes: ['resource_plan_under_target'] }),
+      reroute('RQ-L', t - 80, { reason_codes: ['resource_plan_under_target', 'not_expiring'] }),
+      // Non-code entries are ignored; a valid pair still counts the row.
+      reroute('RQ-M', t - 70, { reason_codes: ['resource_plan_under_target', 'BAD CODE', 'expiring_reset_bank'] }),
+    ].join('\n');
+    expect(foldReroutes(journal, now, 24)).toEqual({
+      available: true,
+      receipts: 2,
+      jobs: 2,
+      byReason: { expiring_included_quota: 1, expiring_reset_bank: 1 },
+      lanes: [
+        { from: 'codex-personal', to: 'codex-cmp', reason: 'expiring_included_quota', receipts: 1, jobs: 1 },
+        { from: 'codex-personal', to: 'codex-cmp', reason: 'expiring_reset_bank', receipts: 1, jobs: 1 },
+      ],
+    });
+  });
+
+  it('tallies each expiring code a receipt records under its own reason', () => {
+    const journal = reroute('RQ-A', t - 100, {
+      reason_codes: ['resource_plan_under_target', 'expiring_included_quota', 'expiring_reset_bank'],
+    });
+    expect(foldReroutes(journal, now, 24)).toEqual({
+      available: true, receipts: 1, jobs: 1,
+      byReason: { expiring_included_quota: 1, expiring_reset_bank: 1 },
+      lanes: [
+        { from: 'codex-personal', to: 'codex-cmp', reason: 'expiring_included_quota', receipts: 1, jobs: 1 },
+        { from: 'codex-personal', to: 'codex-cmp', reason: 'expiring_reset_bank', receipts: 1, jobs: 1 },
+      ],
+    });
+  });
+
+  it('includes both window endpoints and excludes slightly future receipts', () => {
+    const journal = [
+      reroute('RQ-A', t - 24 * 3600),
+      reroute('RQ-B', t - 24 * 3600 - 1),
+      reroute('RQ-C', t),
+      reroute('RQ-D', t + 0.5),
+    ].join('\n');
+    expect(foldReroutes(journal, now, 24)).toMatchObject({ receipts: 2, jobs: 2 });
+  });
+
+  it('says when there is no history file', () => {
+    expect(foldReroutes(null, now, 24)).toEqual({ available: false, receipts: 0, jobs: 0, byReason: {}, lanes: [] });
+    expect(foldReroutes('', now, 24)).toEqual({ available: true, receipts: 0, jobs: 0, byReason: {}, lanes: [] });
   });
 });
 
@@ -1002,6 +1126,15 @@ describe('phm fleet unfed', () => {
       // RQ-M1's latest decision also records the lanes it rejected and why.
       JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'RQ-M1', ts: t - 100, chosen_lane: 'claude', preferred_lane: 'codex-personal', override: null,
         rejected_lanes: [{ lane: 'codex-cmp', reason_codes: ['saturated'] }, { lane: 'devin', reason_codes: ['quota_exhausted'] }] }),
+      // Leader re-hints: RQ-R1 moved twice (churn), RQ-R2 once from an open hint.
+      rerouteRow('RQ-R1', t - 500),
+      rerouteRow('RQ-R1', t - 200, { preferred_lane: 'claude', target_lane: 'devin' }),
+      rerouteRow('RQ-R2', t - 300, {
+        preferred_lane: null, target_lane: 'codex-cmp',
+        reason_codes: ['resource_plan_under_target', 'expiring_reset_bank'],
+      }),
+      // Outside the one-hour JSON window but inside the text run's 24h window.
+      rerouteRow('RQ-R3', t - 3700),
     ].join('\n') + '\n');
     const claimTs = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
     writeFileSync(join(dir, 'metrics', 'jobs.jsonl'), [
@@ -1061,6 +1194,16 @@ describe('phm fleet unfed', () => {
       ],
       byReason: { saturated: 1, quota_exhausted: 1 },
     });
+    // The one-hour window keeps the three recent re-hints and drops RQ-R3.
+    expect(report.reroutes).toEqual({
+      available: true, receipts: 3, jobs: 2,
+      byReason: { expiring_included_quota: 2, expiring_reset_bank: 1 },
+      lanes: [
+        { from: null, to: 'codex-cmp', reason: 'expiring_reset_bank', receipts: 1, jobs: 1 },
+        { from: 'claude', to: 'devin', reason: 'expiring_included_quota', receipts: 1, jobs: 1 },
+        { from: 'codex-personal', to: 'codex-cmp', reason: 'expiring_included_quota', receipts: 1, jobs: 1 },
+      ],
+    });
     vi.restoreAllMocks();
     const text = await run([]);
     expect(text.code).toBe(1);
@@ -1084,6 +1227,12 @@ describe('phm fleet unfed', () => {
     expect(body).toContain('Last 24h: lane rejections across 2 decided job(s): quota_exhausted 1, saturated 1');
     expect(body).toContain('codex-cmp: 1 job(s) rejected (saturated 1)');
     expect(body).toContain('devin: 1 job(s) rejected (quota_exhausted 1)');
+    // The 24h text window also counts RQ-R3: four receipts over three jobs.
+    expect(body).toContain('Last 24h: 4 queue re-hint(s) moved 3 job(s) toward expiring-quota lanes.');
+    expect(body).toContain('re-hint reasons: expiring_included_quota 3, expiring_reset_bank 1');
+    expect(body).toContain('open -> codex-cmp (expiring_reset_bank): 1 re-hint(s)');
+    expect(body).toContain('claude -> devin (expiring_included_quota): 1 re-hint(s)');
+    expect(body).toContain('codex-personal -> codex-cmp (expiring_included_quota): 2 re-hint(s)');
   });
 
   it('labels window folds built from a truncated work-market journal', async () => {
@@ -1193,7 +1342,7 @@ describe('status freshness', () => {
     ...(lastTick === undefined ? {} : { last_tick: lastTick }),
   });
   const render = (report: ReturnType<typeof currentUnfed>) =>
-    renderUnfed({ ...report, marketTruncated: false, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) });
+    renderUnfed({ ...report, marketTruncated: false, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24), reroutes: foldReroutes('', 0, 24) });
 
   it('marks a fresh dispatcher tick fresh and reports its timestamp', () => {
     const tick = new Date(NOW - 30_000).toISOString();
@@ -1236,17 +1385,17 @@ describe('status freshness', () => {
 
 describe('renderUnfed', () => {
   it('says so when there are no lanes', () => {
-    const report = { ...currentUnfed('{"lanes":{}}', ''), marketTruncated: false, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) };
+    const report = { ...currentUnfed('{"lanes":{}}', ''), marketTruncated: false, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24), reroutes: foldReroutes('', 0, 24) };
     expect(renderUnfed(report)).toEqual(['No lanes in queue/status.json.', 'No unfed capacity: 0 rows waiting.',
       'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.', 'Last 24h: no unfed ticks recorded.',
-      'Last 24h: no route decisions recorded.', 'Last 24h: no claims recorded.']);
+      'Last 24h: no route decisions recorded.', 'Last 24h: no queue re-hints recorded.', 'Last 24h: no claims recorded.']);
   });
 
   it('marks a lane whose unfed verdict is unknown instead of leaving it blank', () => {
     const report = currentUnfed(JSON.stringify({
       lanes: { a: { running: 0, target: 2 }, b: { running: 2, target: 2 } },
     }), null);
-    const text = renderUnfed({ ...report, marketTruncated: false, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) }).join('\n');
+    const text = renderUnfed({ ...report, marketTruncated: false, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24), reroutes: foldReroutes('', 0, 24) }).join('\n');
     // Lane a has headroom but no readable queue: its unfed verdict is unknown,
     // which must not render identically to lane b's confirmed-fed state.
     expect(text).toContain('a  0/2 running (0%), unknown hinted here  UNFED?: 2 free, elsewhere rows unknown');

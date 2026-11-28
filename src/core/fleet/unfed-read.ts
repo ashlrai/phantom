@@ -15,7 +15,7 @@ import { readTail, runsRoot } from '../metrics/loop-collect.js';
 import { readFleetResourcePlan } from '../usage/resource-live/fleet-plan.js';
 import {
   currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides,
-  foldRouteRejections, foldUnfedHistory, readyHints, type UnfedReport,
+  foldReroutes, foldRouteRejections, foldUnfedHistory, readyHints, type UnfedReport,
 } from './unfed-capacity.js';
 
 export const UNFED_DEFAULT_WINDOW_HOURS = 24;
@@ -52,7 +52,7 @@ async function readOptional(path: string, maxBytes = MAX_FILE_BYTES): Promise<st
 export interface UnfedReadOptions {
   /** Runs root holding queue/ and metrics/. Default: ASHLR_RUNS_DIR, then ~/.ashlr-runs (as the CLI resolves it). */
   runsDir?: string;
-  /** Fold window in hours for the history/override/claims/outcome/rejection sections. Default 24. */
+  /** Fold window in hours for the history/override/claims/outcome/rejection/reroute sections. Default 24. */
   windowHours?: number;
   /** Evaluation clock; defaults to Date.now. */
   now?: () => number;
@@ -133,5 +133,6 @@ export async function readUnfedReport(options: UnfedReadOptions = {}): Promise<U
     claims: foldClaimOverrides(jobsText, nowMs, window, jobsTruncated),
     decisionOutcomes: foldDecisionOutcomes(history, jobsText, nowMs, window, jobsTruncated),
     rejections: foldRouteRejections(history, nowMs, window),
+    reroutes: foldReroutes(history, nowMs, window),
   };
 }
