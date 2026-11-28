@@ -161,6 +161,50 @@ it('applies the shared body-citation filters to comms bus group read', async () 
   expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', '--kind', 'bogus'], { root, now: () => 101 }, deps)).toBe(2);
 });
 
+it('frames comms bus group read pages as bounded untrusted data', async () => {
+  const { cmdCommsBus } = await import('../src/cli/comms-bus.js');
+  const { BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END } = await import('../src/core/agents/bus-cli-adapters.js');
+  const root = setup();
+  const output: string[] = [];
+  const deps = { emit: (value: string) => { output.push(value); } };
+  const at = { root, now: () => 100 };
+  expect(await cmdCommsBus(['group', 'publish', 'team', 'work', 'm1', 'codex', '1000', '{"text":"ship it"}'], at, deps)).toBe(0);
+  expect(await cmdCommsBus(['group', 'publish', 'team', 'work', 'm2', 'claude', '1000', '{"text":"looks good"}'], at, deps)).toBe(0);
+  const read = async (args: string[]) => {
+    expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', ...args], { root, now: () => 101 }, deps)).toBe(0);
+    return JSON.parse(output.at(-1)!) as Record<string, unknown>;
+  };
+  const page = await read(['--frame', 'claude']);
+  expect(page.status).toBe('ok');
+  expect((page.messages as unknown[]).length).toBe(2);
+  const block = page.framed as string;
+  expect(block.startsWith(BUS_INBOX_FRAME_BEGIN)).toBe(true);
+  expect(block.endsWith(BUS_INBOX_FRAME_END)).toBe(true);
+  expect(block).toContain('id=m1');
+  expect(block).toContain('id=m2');
+  expect(block).toContain('to group:team:work');
+  // The block is identical for every CLI and composes with the page filters.
+  expect((await read(['--frame=devin'])).framed).toBe(block);
+  const filtered = await read(['--frame', 'codex', '--from', 'claude']);
+  expect((filtered.messages as { envelope: { id: string } }[]).map(row => row.envelope.id)).toEqual(['m2']);
+  expect(filtered.framed as string).toContain('id=m2');
+  expect(filtered.framed as string).not.toContain('id=m1');
+  // An honestly empty page still carries the markers and no rows.
+  const empty = await cmdCommsBus(['group', 'read', 'team', 'empty', '0', '--frame', 'grok'], { root, now: () => 101 }, deps);
+  expect(empty).toBe(0);
+  const emptyPage = JSON.parse(output.at(-1)!) as Record<string, unknown>;
+  expect((emptyPage.messages as unknown[]).length).toBe(0);
+  expect(emptyPage.framed as string).toContain(BUS_INBOX_FRAME_BEGIN);
+  expect(emptyPage.framed as string).toContain(BUS_INBOX_FRAME_END);
+  // No --frame leaves the page untouched; a bad option is an argument error.
+  expect('framed' in (await read([]))).toBe(false);
+  expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', '--frame', 'not-a-cli'], { root, now: () => 101 }, deps)).toBe(2);
+  expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', '--frame'], { root, now: () => 101 }, deps)).toBe(2);
+  expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', '--frame', 'claude', '--frame=devin'], { root, now: () => 101 }, deps)).toBe(2);
+  // --frame is only legal inside the post-cursor flag tail.
+  expect(await cmdCommsBus(['group', 'read', 'team', 'work', '--frame', 'claude', '0'], { root, now: () => 101 }, deps)).toBe(2);
+});
+
 it('runs the documented group commands through the CLI', async () => {
   const { cmdCommsBus } = await import('../src/cli/comms-bus.js');
   const doc = readFileSync(join(__dirname, '../docs/GROUP-CHAT.md'), 'utf8');

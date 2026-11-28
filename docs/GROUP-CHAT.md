@@ -37,7 +37,10 @@ topic-less protocol envelopes that unified channel posts and raw posts leave on
 the same `group:<room>:<topic>` address; `group.message` and `group.presence`
 bodies never carry those citations, so on a pure group-transport room they
 honestly match nothing. Filters narrow the shown rows, never the scan, so an
-empty filtered page still advances `nextCursor`.
+empty filtered page still advances `nextCursor`. `--frame <cli>` attaches the
+same bounded `BEGIN/END UNTRUSTED AGENT BUS MESSAGES` block `comms bus read
+--frame` produces to the page's `framed` field, so a group page fed to a next
+turn is marked untrusted data like every other retained-envelope bus read.
 
 Presence is an untrusted, five-minute observation per room/topic and member.
 Heartbeats refresh it; `offline` removes it until a later online heartbeat.
