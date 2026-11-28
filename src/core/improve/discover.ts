@@ -2105,6 +2105,16 @@
  *     lower bounds, and items emit only for the fleet's own repository
  *     since the bus describes this install's machinery and carries no
  *     repo column;
+ *   - the job steering-notes ledger: one queue/job-notes.jsonl row per
+ *     accepted `phm job say` note — the mid-flight redirects a running
+ *     or queued job needed, whose only readers were per-job surfaces a
+ *     human had to open (jobNotesBacklogItems below). An item emits
+ *     only for a job id at the recurring bar of recorded notes inside
+ *     the 7-day window; note text is never quoted (free prose), the
+ *     jobs-ledger lifecycle verdict is attached when a row exists and
+ *     stays 'unknown' when it does not, truncated tails are stated as
+ *     lower bounds, and items emit only for the fleet's own repository
+ *     since the ledger has no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2282,6 +2292,7 @@ import { bottleneckBacklogItems } from './bottleneck-backlog.js';
 import { multimodelOutcomesBacklogItems } from './multimodel-outcomes-backlog.js';
 import { prDeltaBacklogItems } from './pr-delta-backlog.js';
 import { busDeadLetterBacklogItems } from './bus-dead-letter-backlog.js';
+import { jobNotesBacklogItems } from './job-notes-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4820,6 +4831,22 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet's own repository inherits the items since the bus describes
   // this install's machinery and carries no repo column.
   await feed('busDeadLetterBacklogItems', () => busDeadLetterBacklogItems({ repo }));
+
+  // Job steering notes: `phm job say` appends one line per accepted note
+  // to queue/job-notes.jsonl — the mid-flight redirects a running or
+  // queued job needed. A job accumulating several recorded notes inside
+  // the window is evidence the fleet's own machinery should have caught
+  // earlier (ambiguous spec, lane/model mismatch, a detector gap, a
+  // runner that never reads its notes), but the ledger's only readers
+  // were per-job surfaces a human had to open — nothing folded the
+  // recurring pattern into work. Cells emit only at the recurring bar
+  // of recorded notes, note text is never quoted (free prose can carry
+  // anything), the jobs-ledger lifecycle verdict is attached when
+  // metrics/jobs.jsonl has a row and stays 'unknown' when it does not,
+  // truncated tails are stated as lower bounds, and only the fleet's
+  // own repository inherits the item since the ledger has no repo
+  // column.
+  await feed('jobNotesBacklogItems', () => jobNotesBacklogItems({ repo }));
   return { items, errors };
 }
 
