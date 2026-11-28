@@ -7,13 +7,15 @@ import {
 import { returnFleetClaim } from '../core/fleet/coordination-return.js';
 import { parseCoordinationInboxFilters, projectCoordinationInbox, type CoordinationInboxFilters } from '../core/fleet/coordination-inbox.js';
 import { parseCoordinationReturnsFilters, projectCoordinationReturns } from '../core/fleet/coordination-returns-view.js';
+import { parseCoordinationClaimsFilters, projectCoordinationClaims } from '../core/fleet/coordination-claims-view.js';
 import { claimNoticeDir, claimNoticePaths } from '../core/fleet/claim-notice-send.js';
 import { appendClaimThreadBinding, validateClaimThreadKey } from '../core/fleet/claim-thread-binding-write.js';
 
-const USAGE = 'Usage: ashlr fleet coordination <claim|release|return|returns|handoff|board|post|inbox|assign> [options]';
+const USAGE = 'Usage: ashlr fleet coordination <claim|claims|release|return|returns|handoff|board|post|inbox|assign> [options]';
 export const FLEET_COORDINATION_HELP = [
   USAGE,
   '  claim --repo owner/repo --task "work" --agent name [--ttl-seconds 3600] [--thread <slack:T:C:ts | T/C/ts>] [--json] — binds the claim\'s ASSIGNED/RELEASED/BLOCKED/VERIFIED notices to that thread; local state, not authority.',
+  '  claims [--id <claim-id>] [--agent name] [--repo owner/name] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains text] [--json] — live coordination claims, newest first (at most 50, task capped at 200 characters); advisory, never authority. The filters narrow the live-claim set before the newest-50 page, so a filtered read reaches claims the unfiltered cap hides and matched/omitted keep the bounded page honest: --id keeps one exact claim id, --agent one exact coordination agent label (matched exactly, never resolved through the bus registry), --repo one repo (case-insensitive), --since/--before keep claims inside one [since, before) window on their claimedAt stamp, --contains keeps claims whose id, repo, task or agent carries the text (case-insensitive). expiredClaims still reports the board\'s expired total — the filters narrow live claims only.',
   '  release <claim-id> --agent name --lease <lease> [--json]',
   '  return <claim-id> --agent name --lease <lease> (--pr n --head sha | --tests text | --artifact text | --blocked dependency) [--ttl-seconds 86400] [--json] — evidence, not authority; does not merge, verify or close anything; agent labels do not authenticate senders (the lease fences only release).',
   '  handoff <claim-id> --agent name --lease <lease> --to name [--ttl-seconds 3600] [--json]',
@@ -26,7 +28,8 @@ export const FLEET_COORDINATION_HELP = [
   'Keep the lease from claim/handoff private; it fences release and later handoffs.',
 ].join('\n');
 const VALUES: Record<string, string[]> = {
-  claim: ['--repo', '--task', '--agent', '--ttl-seconds', '--thread'], release: ['--agent', '--lease'],
+  claim: ['--repo', '--task', '--agent', '--ttl-seconds', '--thread'], claims: ['--id', '--agent', '--repo', '--since', '--before', '--contains'],
+  release: ['--agent', '--lease'],
   return: ['--agent', '--lease', '--pr', '--head', '--tests', '--artifact', '--blocked', '--ttl-seconds'],
   handoff: ['--agent', '--lease', '--to', '--ttl-seconds'], board: [],
   returns: ['--claim', '--repo', '--result', '--from', '--since', '--before', '--contains'],
@@ -69,6 +72,16 @@ export async function cmdFleetCoordination(args: string[], deps: { runsRoot?: st
       before: values['--before'], contains: values['--contains'] }, now);
     if (!parsed.ok) return invalid();
     const result = projectCoordinationReturns(readFleetBoard({ reap: false, now }), now, parsed.filters);
+    output(result);
+    return result.state === 'known' ? 0 : 1;
+  }
+  if (sub === 'claims') {
+    const now = (deps.now ?? Date.now)();
+    const parsed = parseCoordinationClaimsFilters({ id: values['--id'], agent: values['--agent'],
+      repo: values['--repo'], since: values['--since'], before: values['--before'],
+      contains: values['--contains'] }, now);
+    if (!parsed.ok) return invalid();
+    const result = projectCoordinationClaims(readFleetBoard({ reap: false, now }), now, parsed.filters);
     output(result);
     return result.state === 'known' ? 0 : 1;
   }
