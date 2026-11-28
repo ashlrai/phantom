@@ -367,7 +367,10 @@ A failed snapshot exchange does not affect heartbeat,
 claim or fencing behavior. The worker keeps the last good observation for
 two minutes, then reports unavailable with its last successful timestamp
 instead of counting unknown capacity as zero. Check `lastError` in status
-for the most recent sync failure.
+for the most recent sync failure. A `sync` on a computer with no configured
+leader — no `--leader` flag, no saved alias and no pool primary — exits 1
+with `error.code` `no-leader` and a `fix` naming both ways to supply one;
+`status` still answers with the all-null view.
 
 ## Live pool awareness
 

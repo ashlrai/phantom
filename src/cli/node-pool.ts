@@ -185,7 +185,14 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
       const leader = f.get('--leader');
       if (leader !== undefined && !validSshHost(leader)) throw new PoolUsageError('Use an explicit SSH config alias for --leader');
       const result = action === 'sync' ? await syncFleetReplica({ leader, force: true }) : fleetReplicaStatus();
-      emit({ schema: 'fleet.replica.status.v1', ...result });
+      // A sync with no configured leader returns before any SSH attempt, so
+      // every status field stays null and cannot explain the exit-1 failure:
+      // name the missing precondition and its fixes in-band instead.
+      const unsourced = action === 'sync' && result.leader === null;
+      emit({ schema: 'fleet.replica.status.v1', ...result,
+        ...(unsourced ? { error: { code: 'no-leader',
+          message: 'No fleet leader is configured on this computer, so replica sync has no snapshot source.',
+          fix: 'Pass --leader <ssh-alias> to name the fleet leader (saved for later syncs), or join a node pool whose primary supplies one; then retry: phm node replica sync --json' } } : {}) });
       return action === 'sync' && (!result.leader || result.lastError || result.source?.stale) ? 1 : 0;
     }
     if (verb === 'rpc') {

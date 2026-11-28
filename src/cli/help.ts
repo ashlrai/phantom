@@ -359,7 +359,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     usage: 'phm node replica sync [--leader <alias>] [--json] | phm node replica status [--json]',
     description: 'Refresh the read-only fleet snapshot over authenticated SSH or report its source and freshness. An explicit leader alias is saved locally. Does not import authority or change node admission.',
     safety: 'append',
-    jsonShape: '{schema:"fleet.replica.status.v1",leader,source,receivedAt,lastAttemptAt,lastError}',
+    jsonShape: '{schema:"fleet.replica.status.v1",leader,source,receivedAt,lastAttemptAt,lastError,error?:{code:"no-leader",message,fix}}',
   },
   {
     usage: 'phm metrics levers [--window <7d|30d>] [--json]',
