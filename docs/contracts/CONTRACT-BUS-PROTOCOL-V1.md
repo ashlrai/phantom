@@ -69,7 +69,7 @@ engine (`src/core/fleet/bus-work-claims.ts`, `bus-next-claim.ts`). They add no
 new state:
 
 - `next --to <address|topic> --owner <label> --lease-ms <1..3600000>
-  [--wait-ms <1..300000>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>]
+  [--wait-ms <1..300000>] [--id <envelope-id>] [--in-reply-to <id>] [--body-kind <kind>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>]
   [--priority <P0|P1|P2|P3>] [--channel <name>] [--topic <topic>] [--from <agent>]
   [--exclude-from <agent>]`
   claims
@@ -82,9 +82,16 @@ new state:
   keeps exact-label matching. `--id` keeps only the receipt whose own wire id
   is strictly equal — the same exact-envelope match every bus `--id` read
   applies — so a hinted or listed envelope claims in one step under the same
-  addressed-to, claimable-work and filter rules; `--contains`, `--since`, `--before`,
+  addressed-to, claimable-work and filter rules; `--in-reply-to` keeps only
+  receipts whose own body cites that envelope id through its `inReplyTo`
+  field — the same own-property exact match every bus read's `--in-reply-to`
+  applies — and `--body-kind` keeps only receipts whose body carries that
+  exact kind discriminator via `busBodyKind` — the same match every bus
+  read's `--body-kind` applies, splitting the claimable set into the legacy
+  `work` convention and the protocol-v1 `task` envelopes; `--contains`, `--since`, `--before`,
   `--priority`, `--channel`, `--topic`, `--from` and `--exclude-from` apply
-  the same rules every bus read's filters do — the exact wire id, the scrubbed one-line summary
+  the same rules every bus read's filters do — the exact wire id, the body's
+  own `inReplyTo` citation and `busBodyKind` discriminator, the scrubbed one-line summary
   substring, the inclusive `receivedAt` cutoff, the exclusive `receivedAt`
   ceiling composing with `--since` into one `[since, before)` window, the
   exact P0..P3 band, the `group:<name>:*` room prefix and the exact topic

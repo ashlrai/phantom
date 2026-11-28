@@ -90,6 +90,28 @@ it('applies the topic filter to each poll of the wait', async () => {
   expect(await waitClaimBusWork({ ...request(), topic: 'Bad Name' })).toEqual({ status: 'invalid' });
 });
 
+it('applies the in-reply-to and body-kind filters to each poll of the wait', async () => {
+  // Only an uncited protocol task exists: a citing-work wait and a
+  // legacy-work wait both honestly time out rather than widening to it.
+  expect(appendBusInbox({ id: 'wc-task', from: 'sender', to: 'worker-a', priority: 'P2', ttl: 60000,
+    body: { protocol: { version: 1, kind: 'task' } } }, { root }).status).toBe('posted');
+  expect(await waitClaimBusWork({ ...request(), inReplyTo: 'root-msg', waitMs: 30 })).toEqual({ status: 'timeout' });
+  expect(await waitClaimBusWork({ ...request(), bodyKind: 'work', waitMs: 30 })).toEqual({ status: 'timeout' });
+  // A citing legacy-work receipt arriving mid-wait claims under both filters.
+  expect(appendBusInbox({ id: 'wc-reply', from: 'sender', to: 'worker-a', priority: 'P2', ttl: 60000,
+    body: { kind: 'work', inReplyTo: 'root-msg' } }, { root }).status).toBe('posted');
+  const acquired = await waitClaimBusWork({ ...request(), inReplyTo: 'root-msg', bodyKind: 'work', waitMs: 5000 });
+  expect(acquired.status).toBe('acquired');
+  if (!('token' in acquired)) throw new Error('missing claim');
+  expect(acquired.receipt.envelope.id).toBe('wc-reply');
+  expect(mutateBusWorkClaim({ action: 'complete', id: 'wc-reply', token: acquired.token, root }).status).toBe('completed');
+  // A body-kind nothing claimable carries waits honestly to timeout, and a
+  // malformed value is invalid before any poll — never a widened claim.
+  expect(await waitClaimBusWork({ ...request(), bodyKind: 'result', waitMs: 30 })).toEqual({ status: 'timeout' });
+  expect(await waitClaimBusWork({ ...request(), inReplyTo: 'has space' })).toEqual({ status: 'invalid' });
+  expect(await waitClaimBusWork({ ...request(), bodyKind: '' })).toEqual({ status: 'invalid' });
+});
+
 it('claims only the named envelope under id and refuses malformed ids', async () => {
   post('id-decoy');
   post('id-target');
@@ -113,7 +135,8 @@ it('rejects malformed arguments before creating storage', async () => {
     args().map(x => x === root ? 'relative' : x), args().slice(0, -2),
     [...args(), '--priority', 'P9'], [...args(), '--since', 'bogus'], [...args(), '--before', 'bogus'], [...args(), '--contains', '   '],
     [...args(), '--topic', 'Bad Name'], [...args(), '--topic', 'deploy:extra'],
-    [...args(), '--id', 'has space'], [...args(), '--id', '']]) {
+    [...args(), '--id', 'has space'], [...args(), '--id', ''],
+    [...args(), '--in-reply-to', 'has space'], [...args(), '--body-kind', 'has space']]) {
     expect(await cmdFleetBusWaitClaim(bad)).toBe(2);
     expect(JSON.parse(String(output.mock.calls.at(-1)![0]))).toEqual({ status: 'invalid' });
   }

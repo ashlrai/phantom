@@ -100,7 +100,7 @@ it('claims work addressed under any label of the named agent identity', () => {
   const take = (to: string) => {
     const result = claimNextBusWork({ ...request(), to });
     expect(result.status).toBe('acquired');
-    if (result.status !== 'acquired') throw new Error('expected a claim');
+    if (result.status !== 'acquired' || !('token' in result)) throw new Error('expected a claim');
     // Complete, not release: a released receipt stays claimable and would be
     // picked again ahead of the lower-priority remainder.
     expect(mutateBusWorkClaim({ action: 'complete', id: result.receipt.envelope.id, token: result.token, root }).status).toBe('completed');
@@ -136,7 +136,7 @@ it('claims work addressed to a channel the --to identity belongs to, minus its o
   const take = (to: string, owner: string) => {
     const result = claimNextBusWork({ ...request(), to, owner });
     expect(result.status).toBe('acquired');
-    if (result.status !== 'acquired') throw new Error('expected a claim');
+    if (result.status !== 'acquired' || !('token' in result)) throw new Error('expected a claim');
     expect(mutateBusWorkClaim({ action: 'complete', id: result.receipt.envelope.id, token: result.token, root }).status).toBe('completed');
     return result.receipt.envelope.id;
   };
@@ -181,7 +181,7 @@ it('keeps a case-variant agent ref on exact-label matching, never a folded ident
   const take = (to: string) => {
     const result = claimNextBusWork({ ...request(), to });
     expect(result.status).toBe('acquired');
-    if (result.status !== 'acquired') throw new Error('expected a claim');
+    if (result.status !== 'acquired' || !('token' in result)) throw new Error('expected a claim');
     expect(mutateBusWorkClaim({ action: 'complete', id: result.receipt.envelope.id, token: result.token, root }).status).toBe('completed');
     return result.receipt.envelope.id;
   };
@@ -210,7 +210,7 @@ it('keeps channel work unmatched when the identity registry is unreadable', () =
   writeFileSync(join(root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
   const result = claimNextBusWork(request());
   expect(result.status).toBe('acquired');
-  if (result.status !== 'acquired') throw new Error('expected a claim');
+  if (result.status !== 'acquired' || !('token' in result)) throw new Error('expected a claim');
   // The higher-priority channel-addressed receipt stays unmatched: an
   // unreadable registry narrows to the literal label, never widens.
   expect(result.receipt.envelope.id).toBe('direct');
@@ -227,7 +227,7 @@ it('keeps exact-label matching when the identity registry is unreadable', () => 
   writeFileSync(join(root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
   const result = claimNextBusWork({ ...request(), to: 'agent:worker-a' });
   expect(result.status).toBe('acquired');
-  if (result.status !== 'acquired') throw new Error('expected a claim');
+  if (result.status !== 'acquired' || !('token' in result)) throw new Error('expected a claim');
   // The higher-priority alias-addressed receipt stays unmatched: an
   // unreadable registry narrows to the literal label, never widens.
   expect(result.receipt.envelope.id).toBe('exact');
@@ -269,7 +269,7 @@ it('applies contains, since and priority to the claimable scan and its empty tot
   // higher-priority old-alpha and lower-priority chore stay outside it.
   const byPriority = claimNextBusWork({ ...request(), priority: 'P1' });
   expect(byPriority.status).toBe('acquired');
-  if (byPriority.status === 'acquired') expect(byPriority.receipt.envelope.id).toBe('new-alpha');
+  if (byPriority.status === 'acquired' && 'token' in byPriority) expect(byPriority.receipt.envelope.id).toBe('new-alpha');
   complete(byPriority);
 
   // --contains matches the scrubbed rendered summary case-insensitively:
@@ -277,7 +277,7 @@ it('applies contains, since and priority to the claimable scan and its empty tot
   // takes the P0 old-alpha; the chore never enters the filtered scan.
   const byContains = claimNextBusWork({ ...request(), contains: '  ALPHA  ' });
   expect(byContains.status).toBe('acquired');
-  if (byContains.status === 'acquired') expect(byContains.receipt.envelope.id).toBe('old-alpha');
+  if (byContains.status === 'acquired' && 'token' in byContains) expect(byContains.receipt.envelope.id).toBe('old-alpha');
   complete(byContains);
 
   // --since is the inclusive receivedAt cutoff: old-alpha arrived at t0, the
@@ -292,7 +292,7 @@ it('applies contains, since and priority to the claimable scan and its empty tot
   // and a needle nothing matches reports a verified-empty well.
   const held = claimNextBusWork({ ...request(), owner: 'peer' });
   expect(held.status).toBe('acquired');
-  if (held.status === 'acquired') expect(held.receipt.envelope.id).toBe('new-chore');
+  if (held.status === 'acquired' && 'token' in held) expect(held.receipt.envelope.id).toBe('new-chore');
   expect(claimNextBusWork({ ...request(), contains: 'chore' }))
     .toEqual({ status: 'empty', candidates: 1, held: 1 });
   expect(claimNextBusWork({ ...request(), contains: 'zzz' }))
@@ -465,7 +465,7 @@ it('applies the id filter to the claimable scan and its empty totals', () => {
   // exists — a targeted claim never picks work the matching read would hide.
   const result = claimNextBusWork({ ...request(), id: 'target' });
   expect(result.status).toBe('acquired');
-  if (result.status !== 'acquired') throw new Error('expected a claim');
+  if (result.status !== 'acquired' || !('token' in result)) throw new Error('expected a claim');
   expect(result.receipt.envelope.id).toBe('target');
   // The held named envelope answers conflict — held work, not a dry well.
   expect(claimNextBusWork({ ...request(), id: 'target' }))
@@ -473,7 +473,7 @@ it('applies the id filter to the claimable scan and its empty totals', () => {
   // Another named claimable receipt claims under its own id the same way.
   const second = claimNextBusWork({ ...request(), id: 'decoy' });
   expect(second.status).toBe('acquired');
-  if (second.status !== 'acquired') throw new Error('expected a claim');
+  if (second.status !== 'acquired' || !('token' in second)) throw new Error('expected a claim');
   expect(second.receipt.envelope.id).toBe('decoy');
   // An id naming no live claimable receipt addressed to --to is an honest
   // empty match: absent, expired, foreign, or not claimable work.
@@ -486,6 +486,69 @@ it('applies the id filter to the claimable scan and its empty totals', () => {
   expect(claimNextBusWork({ ...request(), id: 'prio', priority: 'P0' }))
     .toEqual({ status: 'empty', candidates: 0, held: 0 });
   expect(claimNextBusWork({ ...request(), id: 'prio', priority: 'P2' }).status).toBe('acquired');
+});
+
+it('applies the in-reply-to and body-kind filters to the claimable scan and its empty totals', () => {
+  post('reply-work', { priority: 'P1', body: { kind: 'work', text: 'answer the root', inReplyTo: 'root-msg' } });
+  post('reply-other', { priority: 'P0', body: { kind: 'work', text: 'answer something else', inReplyTo: 'other-msg' } });
+  post('reply-alias', { priority: 'P0', body: { kind: 'work', text: 'replyTo alias only', replyTo: 'root-msg' } });
+  post('plain-work', { priority: 'P0', body: { kind: 'work', text: 'no citation' } });
+  post('proto-task', { priority: 'P0', body: { protocol: { version: 1, kind: 'task' }, text: 'protocol task' } });
+  post('proto-reply', { priority: 'P2', body: { protocol: { version: 1, kind: 'task' }, inReplyTo: 'root-msg' } });
+  post('result-kind', { priority: 'P0', body: { kind: 'work.result', outcome: 'complete' } });
+  post('chat-msg', { priority: 'P0', body: { kind: 'chat' } });
+  const take = (filters: Partial<BusNextRequest>) => {
+    const result = claimNextBusWork({ ...request(), ...filters });
+    if (result.status !== 'acquired' || !('token' in result)) throw new Error(`expected a claim, got ${result.status}`);
+    expect(mutateBusWorkClaim({ action: 'complete', id: result.receipt.envelope.id, token: result.token, root }).status).toBe('completed');
+    return result.receipt.envelope.id;
+  };
+
+  // --in-reply-to keeps only receipts whose own body cites the id: the P1
+  // legacy reply claims ahead of the P2 protocol reply; the other citation,
+  // the replyTo alias (never an inReplyTo own-field) and the uncited work
+  // stay out, and the non-claimable kinds never enter the scan at all.
+  expect(take({ inReplyTo: 'root-msg' })).toBe('reply-work');
+  expect(take({ inReplyTo: 'root-msg' })).toBe('proto-reply');
+  expect(claimNextBusWork({ ...request(), inReplyTo: 'root-msg' }))
+    .toEqual({ status: 'empty', candidates: 2, held: 0 });
+  // The other citation claims its own receipt the same way; completed, it
+  // stays a live candidate rather than disappearing from the filtered scan.
+  expect(take({ inReplyTo: 'other-msg' })).toBe('reply-other');
+  expect(claimNextBusWork({ ...request(), inReplyTo: 'other-msg' }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
+  expect(claimNextBusWork({ ...request(), inReplyTo: 'missing' }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+
+  // --body-kind splits the claimable set on the body's own discriminator:
+  // 'task' keeps only the protocol-v1 envelopes, 'work' only the legacy
+  // {kind:'work'} convention — 'work.result' and 'chat' are not claimable
+  // work, so even their exact kind names an honest empty scan.
+  expect(take({ bodyKind: 'task' })).toBe('proto-task');
+  expect(claimNextBusWork({ ...request(), bodyKind: 'task' }))
+    .toEqual({ status: 'empty', candidates: 2, held: 0 });
+  expect(take({ bodyKind: 'work' })).toBe('reply-alias');
+  expect(take({ bodyKind: 'work' })).toBe('plain-work');
+  expect(claimNextBusWork({ ...request(), bodyKind: 'work' }))
+    .toEqual({ status: 'empty', candidates: 4, held: 0 });
+  expect(claimNextBusWork({ ...request(), bodyKind: 'work.result' }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+  expect(claimNextBusWork({ ...request(), bodyKind: 'chat' }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+
+  // The two filters compose into one intersection and with the rest of the
+  // set: the citing protocol reply is the only 'task' receipt under
+  // root-msg, and a band it is not in empties honestly.
+  expect(claimNextBusWork({ ...request(), inReplyTo: 'root-msg', bodyKind: 'task' }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
+  expect(claimNextBusWork({ ...request(), inReplyTo: 'root-msg', bodyKind: 'work' }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
+  expect(claimNextBusWork({ ...request(), inReplyTo: 'root-msg', bodyKind: 'task', priority: 'P0' }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+
+  // Unfiltered, every live claimable receipt counts — the six work/task
+  // bodies, completed ones included; the result and chat kinds never do.
+  expect(claimNextBusWork(request())).toEqual({ status: 'empty', candidates: 6, held: 0 });
 });
 
 it('rejects malformed channel, topic, from and exclude-from filters before scanning', () => {
@@ -506,6 +569,12 @@ it('rejects malformed channel, topic, from and exclude-from filters before scann
     { id: 'has space' },
     { id: '' },
     { id: 'x'.repeat(129) },
+    { inReplyTo: 'has space' },
+    { inReplyTo: '' },
+    { inReplyTo: 'x'.repeat(129) },
+    { bodyKind: 'has space' },
+    { bodyKind: '' },
+    { bodyKind: 'x'.repeat(129) },
   ];
   for (const filters of bad) {
     expect(claimNextBusWork({ ...request(), ...filters })).toEqual({ status: 'invalid' });

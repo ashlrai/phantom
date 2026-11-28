@@ -72,7 +72,7 @@ ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] 
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work claim-next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>] [--exclude-announcer <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--wait-ms <1..300000>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>] [--frame <cli>]
-ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>] [--wait-ms <1..300000>]
+ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--id <envelope-id>] [--in-reply-to <id>] [--body-kind <kind>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>] [--wait-ms <1..300000>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
@@ -749,7 +749,12 @@ address, minus the agent's own channel posts. <agent> defaults to
 PHM_AGENT_ID and --owner to PHM_AGENT_ID then the agent ref; --id keeps only
 the receipt whose own wire id is strictly equal, so a hinted or listed
 envelope claims in one step under the same addressed-to, claimable-work and
-filter rules; --contains,
+filter rules; --in-reply-to keeps only receipts whose own body cites that
+envelope id through its inReplyTo field and --body-kind only receipts whose
+body carries that exact kind discriminator ('work' the legacy convention,
+'task' the protocol-v1 task) — the two own-field matches every bus read
+applies, so claimable reply-work and one claimable convention narrow the
+same way a read would show them; --contains,
 --since, --before, --priority, --channel, --topic, --from and --exclude-from narrow
 the claimable set under the same rules the bus reads apply — the scrubbed
 one-line summary substring, the inclusive receivedAt cutoff, the exclusive
@@ -1699,6 +1704,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const waitMs = integer(one('--wait-ms'), '--wait-ms');
       const claim = { to: agent, owner, leaseMs, root: options.root,
         contains: one('--contains'), since: sinceArg(), before: beforeArg(), priority: priorityArg(), id: envelopeId,
+        inReplyTo: one('--in-reply-to'), bodyKind: one('--body-kind'),
         channel, topic, from: senderArg('--from'), excludeFrom: senderArg('--exclude-from') };
       let result: BusNextResult;
       if (waitMs === undefined) {

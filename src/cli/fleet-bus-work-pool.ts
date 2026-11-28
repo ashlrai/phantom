@@ -3,9 +3,9 @@ import { BUS_PRIORITIES } from '../core/fleet/bus-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 import type { ContextWorkerIO } from '../core/fleet/context-worker-run.js';
 
-const usage = 'Usage: ashlr fleet bus-work-pool --to <address> --owner <label> --lease-ms <ms> --wait-ms <ms> --max-jobs <1..16> --concurrency <1..4> --snapshot <absolute> --prompt <absolute> [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority <P0|P1|P2|P3>] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>] [--root <absolute>] [--cwd <absolute directory>] [--timeout-ms <1..3600000>] -- <program> [args...]';
+const usage = 'Usage: ashlr fleet bus-work-pool --to <address> --owner <label> --lease-ms <ms> --wait-ms <ms> --max-jobs <1..16> --concurrency <1..4> --snapshot <absolute> --prompt <absolute> [--id <envelope-id>] [--in-reply-to <id>] [--body-kind <kind>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority <P0|P1|P2|P3>] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>] [--root <absolute>] [--cwd <absolute directory>] [--timeout-ms <1..3600000>] -- <program> [args...]';
 const note = '--max-jobs is the total pool limit on one-job attempts, including failures and timeouts. Healthy consumers share unattempted capacity; consumer quota reports attempts. External effects are not exactly-once.';
-const filters = 'The read filters are the same set every bus claim surface takes — --id keeps only the receipt whose own wire id is strictly equal, --contains only receipts whose scrubbed one-line summary carries the text, --since only receipts received at or after the cutoff and --before only receipts received strictly before its own so the two compose one [since, before) window, --priority only one P0..P3 band, --channel only receipts addressed to group:<name>:* of one bus channel, --topic only receipts addressed to a well-formed group:<room>:<topic> address carrying that exact topic (composing with --channel into one room and one topic), and --from/--exclude-from only receipts one sender wrote or did not write under every registered spelling of one identity — applied inside every consumer\'s claim poll, so the pool claims exactly what the matching read would list and a malformed value is invalid before the first launch.';
+const filters = 'The read filters are the same set every bus claim surface takes — --id keeps only the receipt whose own wire id is strictly equal, --in-reply-to only receipts whose own body cites that envelope id through its inReplyTo field, --body-kind only receipts whose body carries that exact kind discriminator (\'work\' the legacy convention, \'task\' the protocol-v1 task), --contains only receipts whose scrubbed one-line summary carries the text, --since only receipts received at or after the cutoff and --before only receipts received strictly before its own so the two compose one [since, before) window, --priority only one P0..P3 band, --channel only receipts addressed to group:<name>:* of one bus channel, --topic only receipts addressed to a well-formed group:<room>:<topic> address carrying that exact topic (composing with --channel into one room and one topic), and --from/--exclude-from only receipts one sender wrote or did not write under every registered spelling of one identity — applied inside every consumer\'s claim poll, so the pool claims exactly what the matching read would list and a malformed value is invalid before the first launch.';
 
 export async function cmdFleetBusWorkPool(args: string[], io: ContextWorkerIO = {}): Promise<number> {
   const out = io.stdout ?? process.stdout, err = io.stderr ?? process.stderr;
@@ -17,7 +17,7 @@ export async function cmdFleetBusWorkPool(args: string[], io: ContextWorkerIO = 
   for (let i = 0; i < split; i += 2) {
     const key = args[i]!, value = args[i + 1];
     if (!['--to', '--owner', '--lease-ms', '--wait-ms', '--max-jobs', '--concurrency', '--snapshot', '--prompt', '--root', '--cwd', '--timeout-ms',
-      '--id', '--contains', '--since', '--before', '--priority', '--channel', '--topic', '--from', '--exclude-from'].includes(key) ||
+      '--id', '--in-reply-to', '--body-kind', '--contains', '--since', '--before', '--priority', '--channel', '--topic', '--from', '--exclude-from'].includes(key) ||
       flags.has(key) || !value || value.startsWith('--') || value.includes('\0')) return invalid();
     flags.set(key, value);
   }
@@ -38,6 +38,7 @@ export async function cmdFleetBusWorkPool(args: string[], io: ContextWorkerIO = 
     priority: priority as (typeof BUS_PRIORITIES)[number] | undefined,
     channel: flags.get('--channel'), topic: flags.get('--topic'),
     from: flags.get('--from'), excludeFrom: flags.get('--exclude-from'), id: flags.get('--id'),
+    inReplyTo: flags.get('--in-reply-to'), bodyKind: flags.get('--body-kind'),
     ...(cwd !== undefined ? { cwd } : {}),
     ...(flags.has('--timeout-ms') ? { timeoutMs: number('--timeout-ms') } : {}) };
   if (!validBusWorkPoolOptions(opts)) return invalid();

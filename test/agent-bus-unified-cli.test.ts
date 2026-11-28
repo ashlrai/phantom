@@ -1960,6 +1960,28 @@ describe('phm agents bus (unified)', () => {
     expect(nova.json).toMatchObject({ status: 'acquired',
       receipt: { envelope: { id: 'wn-other', to: 'agent:nova' } } });
 
+    // --in-reply-to and --body-kind narrow the claimable scan under the same
+    // own-field rules every bus read applies: the citing reply claims under
+    // its citation and the protocol task under its kind discriminator.
+    post('wn-reply', 'agent:atlas', 'P1', { kind: 'work', text: 'the answer', inReplyTo: 'wn-urgent' });
+    post('wn-task', 'agent:atlas', 'P2', { protocol: { version: 1, kind: 'task' }, text: 'protocol task' });
+    const cited = await run(['work', 'next', '--lease-ms', '60000', '--in-reply-to', 'wn-urgent'],
+      { PHM_AGENT_ID: 'atlas' });
+    expect(cited.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-reply' } } });
+    const task = await run(['work', 'next', '--lease-ms', '60000', '--body-kind', 'task'],
+      { PHM_AGENT_ID: 'atlas' });
+    expect(task.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-task' } } });
+    // A citation nothing cites and a kind nothing claimable carries are
+    // honest empty scans; a malformed value is invalid, never a widened claim.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--in-reply-to', 'wn-missing'],
+      { PHM_AGENT_ID: 'atlas' })).toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--body-kind', 'result'],
+      { PHM_AGENT_ID: 'atlas' })).toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--in-reply-to', 'has space'],
+      { PHM_AGENT_ID: 'atlas' })).toMatchObject({ code: 2, json: { status: 'invalid' } });
+
     // Usage errors exit 2; a lease past the cap is an invalid result, not a claim.
     expect(await run(['work', 'next'])).toMatchObject({ code: 2 });
     expect(await run(['work', 'next', '--lease-ms', '60000'], {})).toMatchObject({ code: 2 });

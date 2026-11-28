@@ -136,6 +136,49 @@ it('filters next by the group-address topic', async () => {
   expect(last()).toEqual({ status: 'invalid' });
 });
 
+it('filters next by in-reply-to and body-kind', async () => {
+  const { root, last } = setup();
+  const options = { root };
+  const task = (id: string, priority: string, body: Record<string, unknown>): string => postTask(root, {
+    id, from: 'fake-sender', to: 'worker-a', priority, ttl: 600_000, body,
+  });
+  expect(await cmdCommsBus(['post', '--file', task('cit-work', 'P1',
+    { kind: 'work', text: 'the answer', inReplyTo: 'root-msg' })], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('cit-alias', 'P0',
+    { kind: 'work', text: 'replyTo alias only', replyTo: 'root-msg' })], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('cit-plain', 'P0',
+    { kind: 'work', text: 'no citation' })], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('cit-task', 'P0',
+    { protocol: { version: 1, kind: 'task' }, text: 'protocol task' })], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('cit-taskreply', 'P2',
+    { protocol: { version: 1, kind: 'task' }, inReplyTo: 'root-msg' })], options)).toBe(0);
+
+  // --in-reply-to keeps only own-field citations, composing with --body-kind:
+  // the citing legacy reply claims first, then the citing protocol task.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000',
+    '--in-reply-to', 'root-msg'], options)).toBe(0);
+  expect(last()).toMatchObject({ status: 'acquired', receipt: { envelope: { id: 'cit-work' } } });
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000',
+    '--in-reply-to', 'root-msg', '--body-kind', 'task'], options)).toBe(0);
+  expect(last()).toMatchObject({ status: 'acquired', receipt: { envelope: { id: 'cit-taskreply' } } });
+  // Both cited receipts are held; the alias spelling and uncited work stay out.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000',
+    '--in-reply-to', 'root-msg'], options)).toBe(0);
+  expect(last()).toEqual({ status: 'empty', candidates: 2, held: 2 });
+  // --body-kind alone splits the claimable set on the body's discriminator.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000',
+    '--body-kind', 'task'], options)).toBe(0);
+  expect(last()).toMatchObject({ status: 'acquired', receipt: { envelope: { id: 'cit-task' } } });
+  // A kind nothing claimable carries is an honest empty scan; malformed
+  // values are invalid, never a widened claim.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000',
+    '--body-kind', 'result'], options)).toBe(0);
+  expect(last()).toEqual({ status: 'empty', candidates: 0, held: 0 });
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000',
+    '--in-reply-to', 'has space'], options)).toBe(2);
+  expect(last()).toEqual({ status: 'invalid' });
+});
+
 it('claims the named envelope under --id and keeps the addressed-to rules', async () => {
   const { root, last } = setup();
   const options = { root };
