@@ -78,7 +78,11 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
     !j.executionHostId && !state.nodes.some(n => n.nodeId === j.claim!.nodeId && isNodeCapacity(n.capacity)));
   const hosts = [...groups].filter(([id, nodes]) => safe(id) && nodes.every(n => safe(n.nodeId))).map(([hostId, nodes]) => {
     const nodeIds = nodes.map(n => n.nodeId).sort();
-    const onHost = (j: NodesState['jobs'][number]) => j.executionHostId ? j.executionHostId === hostId : !!j.claim && nodeIds.includes(j.claim.nodeId);
+    const onHost = (j: NodesState['jobs'][number]) => {
+      if (j.executionHostId) return j.executionHostId === hostId;
+      const claim = j.claim;
+      return claim !== undefined && nodes.some(n => n.nodeId === claim.nodeId && n.session === claim.session);
+    };
     const live = nodes.filter(n => n.expiresAt > now && fresh(n.heartbeatAt, now, NODE_HEARTBEAT_MS));
     const measured = live.filter(n => isNodeCapacity(n.capacity) && fresh(n.capacity.sampledAtMs, now, NODE_HEARTBEAT_MS));
     const held = measured.map(n => n.capacity!.held).find(Boolean) ?? null;
