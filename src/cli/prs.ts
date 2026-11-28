@@ -10,28 +10,53 @@ type Verdict = 'superseded' | 'rebase-clean' | 'rebase-manual' | 'failing-checks
 const run = (dir: string, binary: 'git' | 'gh', args: string[]) => defaultGitRunner(binary, args, { cwd: dir, timeoutMs: 60_000, maxStdoutBytes: 16 * 1024 * 1024 });
 const ok = (r: Awaited<ReturnType<typeof run>>) => r.code === 0 && !r.timedOut && !r.truncated;
 
-export async function inspectTriage(dir: string, remote: string, row: { number: number; headRefOid: string; baseRefName: string; mergeable: string }, checks: string): Promise<Verdict> {
-  if (!sha.test(row.headRefOid) || !ok(await run(dir, 'git', ['check-ref-format', `refs/heads/${row.baseRefName}`]))) return 'unknown';
+type KnownVerdict = Exclude<Verdict, 'unknown'>;
+type TriageHead = { number: number; headRefOid: string; baseRefName: string; mergeable: string };
+type TriageInspection =
+  | { verdict: 'unknown'; evidence: null }
+  | { verdict: KnownVerdict; evidence: { headSha: string; baseTipSha: string; mergeBaseSha: string; proof: 'reverse-patch' | null } };
+
+export async function inspectTriageEvidence(dir: string, remote: string, row: TriageHead, checks: string): Promise<TriageInspection> {
+  const unknown = (): TriageInspection => ({ verdict: 'unknown', evidence: null });
+  if (!sha.test(row.headRefOid) || !ok(await run(dir, 'git', ['check-ref-format', `refs/heads/${row.baseRefName}`]))) return unknown();
   const fetch = await run(dir, 'git', ['-c', 'core.hooksPath=/dev/null', 'fetch', '--no-tags', '--no-write-fetch-head', remote, `+refs/heads/${row.baseRefName}:refs/triage/base`, `+refs/pull/${row.number}/head:refs/triage/head`]);
-  if (!ok(fetch)) return 'unknown';
-  const head = await run(dir, 'git', ['rev-parse', 'refs/triage/head']);
-  if (!ok(head) || head.stdout.trim() !== row.headRefOid) return 'unknown';
-  const base = await run(dir, 'git', ['merge-base', '--all', 'refs/triage/base', 'refs/triage/head']);
-  if (!ok(base) || !sha.test(base.stdout.trim())) return 'unknown';
-  const diff = await run(dir, 'git', ['diff', '--binary', '--full-index', '--no-ext-diff', '--no-textconv', base.stdout.trim(), 'refs/triage/head']);
-  if (!ok(diff)) return 'unknown';
+  if (!ok(fetch)) return unknown();
+  const head = await run(dir, 'git', ['rev-parse', '--verify', 'refs/triage/head^{commit}']);
+  const headSha = head.stdout.trim();
+  if (!ok(head) || headSha !== row.headRefOid) return unknown();
+  const tip = await run(dir, 'git', ['rev-parse', '--verify', 'refs/triage/base^{commit}']);
+  const baseTipSha = tip.stdout.trim();
+  if (!ok(tip) || !sha.test(baseTipSha)) return unknown();
+  // Freeze both fetched object IDs: the patch, index, and trial merge must all
+  // refer to the same commits this row reports, not to mutable scratch refs.
+  const base = await run(dir, 'git', ['merge-base', '--all', baseTipSha, headSha]);
+  const mergeBaseSha = base.stdout.trim();
+  if (!ok(base) || !sha.test(mergeBaseSha)) return unknown();
+  const known = (verdict: KnownVerdict): TriageInspection => ({
+    verdict,
+    evidence: { headSha, baseTipSha, mergeBaseSha, proof: verdict === 'superseded' ? 'reverse-patch' : null },
+  });
+  const diff = await run(dir, 'git', ['diff', '--binary', '--full-index', '--no-ext-diff', '--no-textconv', mergeBaseSha, headSha]);
+  if (!ok(diff)) return unknown();
   if (diff.stdout) {
-    await writeFile(join(dir, 'triage.patch'), diff.stdout);
-    if (!ok(await run(dir, 'git', ['read-tree', 'refs/triage/base']))) return 'unknown';
-    if (ok(await run(dir, 'git', ['apply', '--cached', '--check', '--reverse', 'triage.patch']))) return 'superseded';
+    try { await writeFile(join(dir, 'triage.patch'), diff.stdout); } catch { return unknown(); }
+    if (!ok(await run(dir, 'git', ['read-tree', baseTipSha]))) return unknown();
+    const reverse = await run(dir, 'git', ['apply', '--cached', '--check', '--reverse', 'triage.patch']);
+    if (reverse.timedOut || reverse.truncated || (reverse.code !== 0 && reverse.code !== 1)) return unknown();
+    if (ok(reverse)) return known('superseded');
   }
   if (row.mergeable === 'CONFLICTING') {
-    const merge = await run(dir, 'git', ['merge-tree', '--write-tree', 'refs/triage/base', 'refs/triage/head']);
-    if (merge.timedOut || merge.truncated || (merge.code !== 0 && merge.code !== 1)) return 'unknown';
-    return merge.code === 0 ? 'rebase-clean' : 'rebase-manual';
+    const merge = await run(dir, 'git', ['merge-tree', '--write-tree', baseTipSha, headSha]);
+    if (merge.timedOut || merge.truncated || (merge.code !== 0 && merge.code !== 1)) return unknown();
+    return known(merge.code === 0 ? 'rebase-clean' : 'rebase-manual');
   }
-  if (row.mergeable !== 'MERGEABLE') return 'unknown';
-  return checks === 'failure' ? 'failing-checks' : checks === 'success' ? 'green' : 'unknown';
+  if (row.mergeable !== 'MERGEABLE') return unknown();
+  return checks === 'failure' ? known('failing-checks') : checks === 'success' ? known('green') : unknown();
+}
+
+/** Preserve the verdict-only interface for existing callers. */
+export async function inspectTriage(dir: string, remote: string, row: TriageHead, checks: string): Promise<Verdict> {
+  return (await inspectTriageEvidence(dir, remote, row, checks)).verdict;
 }
 
 export async function cmdPrs(args: string[]): Promise<number> {
@@ -58,8 +83,8 @@ export async function cmdPrs(args: string[]): Promise<number> {
       for (const row of rows) {
         if (!Number.isSafeInteger(row.number) || row.number < 1 || typeof row.headRefName !== 'string' || typeof row.baseRefName !== 'string' || typeof row.headRefOid !== 'string' || typeof row.mergeable !== 'string' || !Number.isFinite(Date.parse(row.createdAt))) throw new Error('invalid');
         const checks = !Array.isArray(row.statusCheckRollup) || row.statusCheckRollup.length === 0 ? 'unknown' : row.statusCheckRollup.some(c => ['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE'].includes(c.conclusion ?? c.state ?? '')) ? 'failure' : row.statusCheckRollup.every(c => ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.conclusion ?? c.state ?? '') && (!c.status || c.status === 'COMPLETED')) ? 'success' : 'pending';
-        const verdict = await inspectTriage(dir, `https://github.com/${repo}.git`, row, checks);
-        out.push({ number: row.number, headBranch: row.headRefName, mergeable: row.mergeable, checks, ageSeconds: Math.max(0, Math.floor((now - Date.parse(row.createdAt)) / 1000)), verdict });
+        const inspection = await inspectTriageEvidence(dir, `https://github.com/${repo}.git`, row, checks);
+        out.push({ number: row.number, headBranch: row.headRefName, mergeable: row.mergeable, checks, ageSeconds: Math.max(0, Math.floor((now - Date.parse(row.createdAt)) / 1000)), ...inspection });
       }
       return out;
     });
