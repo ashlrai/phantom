@@ -33,8 +33,24 @@
  * label carrying that exact topic component through the shared
  * `groupAddressTopicOf` match, composing with `channel` into one room AND
  * one topic, and `id` keeps only the request whose own wire id is strictly
- * equal. Under any of them the board reports `matched` the same way a
- * time bound does. */
+ * equal. `?to=`/`?from=`/`?excludeFrom=` are the shared sender/recipient
+ * filters resolved through the bus registry beside the store — `to` under
+ * the pending-address rule `bus next` claims by, `from`/`excludeFrom`
+ * under the sender-label rule, exact-label matching kept on an unresolvable
+ * ref or unreadable registry so unknown identity state never widens the
+ * read. `?priority=` keeps one exact P0..P3 band, `?job=` requests whose
+ * body names that job through the shared `busBodyJobMatch` rule,
+ * `?bodyKind=` requests whose body carries that exact kind discriminator
+ * through the shared `busBodyKind` own-field match (case-sensitive),
+ * `?result=` requests whose body is a `work.result` receipt reporting that
+ * one outcome, and `?contains=` requests whose scrubbed one-line summary
+ * carries the needle as a case-insensitive substring — the same shared
+ * bus-read filters `ashlr fleet work-board` and `fleet_work_board` apply.
+ * The board lists requests only, so the reply-citation filter never
+ * applies — every listed request is by definition not a reply — and
+ * `thread` here is the channel_ref scope, not the v2 body thread label.
+ * Under `state`, a time bound or one of the narrowing filters the board
+ * reports `matched` the same way `state` does. */
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ApiModule } from './api-modules.js';
@@ -48,6 +64,9 @@ import {
 } from '../comms/work-board.js';
 import { WORK_ITEM_STATES, type WorkItemState } from '../comms/work-item-state.js';
 import { parseSince } from '../fleet/agent-messages.js';
+import { BUS_PRIORITIES, type BusPriority } from '../fleet/bus-envelope.js';
+import { WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../agents/bus-v2-schema.js';
+import { busReadContains } from '../agents/bus-unified.js';
 import { agentChannelNameSchema } from '../agents/bus-identity.js';
 import { workResultBody, type WorkResultBody } from '../comms/work-result-body.js';
 import { postBusReply, replyResult, type ReplyResult } from '../fleet/bus-reply-post.js';
@@ -67,7 +86,9 @@ const ADDRESS_LABEL = /^[\x21-\x7e]{1,128}$/;
 export interface FleetWorkBoardApiDeps {
   /** Reader seam for tests. Default: listWorkBoard() at the server fleet root. */
   read?: (opts: { root: string; now: number; limit?: number; channelRef?: string; state?: WorkItemState;
-    since?: number; before?: number; channel?: string; topic?: string; id?: string }) => WorkBoardResult;
+    since?: number; before?: number; channel?: string; topic?: string; id?: string;
+    to?: string; from?: string; excludeFrom?: string; priority?: BusPriority;
+    job?: string; bodyKind?: string; result?: WorkResultOutcome; contains?: string }) => WorkBoardResult;
   /** Clock seam for tests; stamps asOf and feeds the classifier. */
   now?: () => Date;
   /** Poster seam for tests. Default: postBusReply() at the default fleet root, as the CLI. */
@@ -229,6 +250,37 @@ export function createFleetWorkBoardApi(deps: FleetWorkBoardApiDeps = {}): ApiMo
       sendJson(res, 400, { error: `id takes a printable routing label of 1-${MAX_ADDRESS_CHARS} characters.` });
       return true;
     }
+    // The shared bus-read sender/recipient and body filters, validated on
+    // the same grammars every other bus read's flag and query applies: the
+    // address refs and body-kind/job labels the printable routing-label
+    // bound, `priority`/`result` their enums, `contains` the bounded
+    // `busReadContains` needle. A malformed value is a 400, never a
+    // silently widened match.
+    const to = params.get('to'), from = params.get('from'), excludeFrom = params.get('excludeFrom'),
+      job = params.get('job'), bodyKind = params.get('bodyKind');
+    for (const [param, value] of [['to', to], ['from', from], ['excludeFrom', excludeFrom],
+      ['job', job], ['bodyKind', bodyKind]] as const) {
+      if (value !== null && (value.length > MAX_ADDRESS_CHARS || !ADDRESS_LABEL.test(value))) {
+        sendJson(res, 400, { error: `${param} takes a printable routing label of 1-${MAX_ADDRESS_CHARS} characters.` });
+        return true;
+      }
+    }
+    const priority = params.get('priority');
+    if (priority !== null && !(BUS_PRIORITIES as readonly string[]).includes(priority)) {
+      sendJson(res, 400, { error: 'priority must be one of P0, P1, P2, P3.' });
+      return true;
+    }
+    const result = params.get('result');
+    if (result !== null && !(WORK_RESULT_OUTCOMES as readonly string[]).includes(result)) {
+      sendJson(res, 400, { error: 'result must be one of reserved, admitted, complete, failed.' });
+      return true;
+    }
+    const containsRaw = params.get('contains');
+    const contains = containsRaw === null ? undefined : busReadContains(containsRaw);
+    if (contains === null) {
+      sendJson(res, 400, { error: 'contains takes bounded non-blank text.' });
+      return true;
+    }
     let board: WorkBoardResult;
     try {
       board = read({
@@ -242,6 +294,14 @@ export function createFleetWorkBoardApi(deps: FleetWorkBoardApiDeps = {}): ApiMo
         ...(channel === null ? {} : { channel }),
         ...(topic === null ? {} : { topic }),
         ...(id === null ? {} : { id }),
+        ...(to === null ? {} : { to }),
+        ...(from === null ? {} : { from }),
+        ...(excludeFrom === null ? {} : { excludeFrom }),
+        ...(priority === null ? {} : { priority: priority as BusPriority }),
+        ...(job === null ? {} : { job }),
+        ...(bodyKind === null ? {} : { bodyKind }),
+        ...(result === null ? {} : { result: result as WorkResultOutcome }),
+        ...(contains === undefined ? {} : { contains }),
       });
     } catch {
       board = { items: [], inbox: 'unavailable', truncated: false, claims: 'unavailable' };

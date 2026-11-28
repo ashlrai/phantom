@@ -147,6 +147,29 @@ describe('fleet work-board api', () => {
     }
   });
 
+  it('passes the shared bus-read filters through and rejects malformed values', async () => {
+    const seen: Record<string, unknown> = {};
+    const api = createFleetWorkBoardApi({
+      read: (opts) => { Object.assign(seen, opts); return board([]); }, now: () => NOW,
+    });
+    const r = await call(api, 'GET',
+      `${PATH}?to=fake-lane&from=fake-sender&excludeFrom=fake-other&priority=P1&job=fake-job-7&bodyKind=note&result=failed&contains=needle`);
+    expect(r.status).toBe(200);
+    expect(seen).toMatchObject({ to: 'fake-lane', from: 'fake-sender', excludeFrom: 'fake-other',
+      priority: 'P1', job: 'fake-job-7', bodyKind: 'note', result: 'failed', contains: 'needle' });
+    for (const [param, bad] of [
+      ['to', 'has space'], ['from', 'x'.repeat(129)], ['excludeFrom', 'has space'],
+      ['job', 'has space'], ['bodyKind', ''], ['priority', 'P9'], ['priority', 'p1'],
+      ['result', 'bogus'], ['result', 'FAILED'], ['contains', ''],
+    ] as const) {
+      const res = await call(api, 'GET', `${PATH}?${param}=${encodeURIComponent(bad)}`);
+      expect(res.status, `${param}=${bad}`).toBe(400);
+    }
+    // A 513-char needle exceeds the shared contains bound.
+    const long = await call(api, 'GET', `${PATH}?contains=${'x'.repeat(513)}`);
+    expect(long.status).toBe(400);
+  });
+
   it('rejects non-GET with 405 and ignores other paths', async () => {
     const api = createFleetWorkBoardApi({ read: () => board([]), now: () => NOW });
     const post = await call(api, 'POST');

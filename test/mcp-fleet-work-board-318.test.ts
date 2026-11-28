@@ -13,7 +13,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { appendBusInbox, type BusEnvelope } from '../src/core/fleet/bus-inbox.js';
+import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import { postBusReply } from '../src/core/fleet/bus-reply-post.js';
 import { createFleetServer, type FleetReaders } from '../src/mcp/fleet-server.js';
 import { FLEET_MCP_TOOL_NAMES } from './support/fleet-mcp-tools.js';
@@ -94,6 +95,16 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
       .toMatchObject({ type: 'string', enum: ['RECEIVED', 'ASSIGNED', 'RUNNING', 'BLOCKED', 'VERIFIED'] });
     expect(tool?.inputSchema.properties?.['since']).toMatchObject({ type: 'string' });
     expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
+    for (const key of ['to', 'from', 'excludeFrom', 'job', 'bodyKind'] as const) {
+      expect(tool?.inputSchema.properties?.[key], key)
+        .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    }
+    expect(tool?.inputSchema.properties?.['priority'])
+      .toMatchObject({ type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] });
+    expect(tool?.inputSchema.properties?.['result'])
+      .toMatchObject({ type: 'string', enum: ['reserved', 'admitted', 'complete', 'failed'] });
+    expect(tool?.inputSchema.properties?.['contains'])
+      .toMatchObject({ type: 'string', minLength: 1, maxLength: 512 });
   });
 
   it.each([
@@ -104,6 +115,13 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
     [{ since: 5 }], [{ since: 'bogus' }], [{ since: '' }], [{ since: null }],
     [{ before: 5 }], [{ before: 'not-a-time' }], [{ before: null }],
     [{ since: '15m', before: 'bogus' }],
+    [{ to: 5 }], [{ to: null }], [{ to: 'has space' }], [{ to: 'x'.repeat(129) }],
+    [{ from: 'has space' }], [{ from: null }], [{ excludeFrom: 5 }], [{ excludeFrom: null }],
+    [{ priority: 'P9' }], [{ priority: 'p1' }], [{ priority: 5 }], [{ priority: null }],
+    [{ job: 'has space' }], [{ job: null }], [{ bodyKind: 'has space' }], [{ bodyKind: null }],
+    [{ result: 'bogus' }], [{ result: 'FAILED' }], [{ result: 5 }], [{ result: null }],
+    [{ contains: 5 }], [{ contains: '' }], [{ contains: '   ' }], [{ contains: null }],
+    [{ contains: 'x'.repeat(513) }],
     [{ extra: 1 }], [{ limit: 1, root: '/tmp/fake-root' }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const workBoard = vi.fn();
@@ -131,6 +149,15 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
     await callBoard(client, { since: iso(now - 1_000) });
     expect(workBoard).toHaveBeenLastCalledWith({ limit: 20, thread: undefined, state: undefined,
       since: now - 1_000, before: undefined });
+    // The shared bus-read filters reach the reader under their own names;
+    // contains arrives normalized by the shared busReadContains rule.
+    await callBoard(client, { to: 'fake-lane', from: 'fake-sender', excludeFrom: 'fake-other',
+      priority: 'P1', job: 'fake-job-7', bodyKind: 'note', result: 'failed',
+      contains: '  Fake   Needle  ' });
+    expect(workBoard).toHaveBeenLastCalledWith({ limit: 20, thread: undefined, state: undefined,
+      since: undefined, before: undefined, channel: undefined, topic: undefined, id: undefined,
+      to: 'fake-lane', from: 'fake-sender', excludeFrom: 'fake-other', priority: 'P1',
+      job: 'fake-job-7', bodyKind: 'note', result: 'failed', contains: 'fake needle' });
   });
 
   it('filters real board items by classified state with a true matched total', async () => {
@@ -163,6 +190,35 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
     expect(tail.parsed['matched']).toBe(2);
     expect((tail.parsed['items'] as Array<Record<string, unknown>>).map(item => item['id']))
       .toEqual(['bus-request-c', 'bus-request-b']);
+  });
+
+  it('filters real board items by the shared sender, band and body rules', async () => {
+    const custom = (id: string, over: Partial<BusEnvelope>): BusEnvelope => ({
+      id, from: 'fake-sender', to: 'fake-lane', priority: 'P2', ttl: TTL, body: { kind: 'work' }, ...over,
+    });
+    post(custom('req-alpha', { from: 'fake-alpha', priority: 'P0',
+      body: { kind: 'work.status', jobId: 'fake-job-7', detail: 'deploy step' } }));
+    post(custom('req-beta', { from: 'fake-beta', to: 'agent:lane-bot', priority: 'P3',
+      body: { kind: 'work.result', outcome: 'failed' } }));
+    post(custom('req-gamma', { from: 'fake-gamma', to: 'group:ops:deploy', priority: 'P1',
+      body: { kind: 'note', thread: 'job:fake-job-7', text: 'gamma note' } }));
+    const client = await connect();
+    const byJob = await callBoard(client, { job: 'fake-job-7' });
+    expect(byJob.parsed['matched']).toBe(2);
+    expect((byJob.parsed['items'] as Array<Record<string, unknown>>).map(item => item['id']))
+      .toEqual(['req-gamma', 'req-alpha']);
+    const byResult = await callBoard(client, { result: 'failed', priority: 'P3' });
+    expect((byResult.parsed['items'] as Array<Record<string, unknown>>).map(item => item['id']))
+      .toEqual(['req-beta']);
+    const byKind = await callBoard(client, { bodyKind: 'note', contains: 'gamma' });
+    expect((byKind.parsed['items'] as Array<Record<string, unknown>>).map(item => item['id']))
+      .toEqual(['req-gamma']);
+    const bySender = await callBoard(client, { from: 'fake-alpha', excludeFrom: 'fake-alpha' });
+    expect(bySender.parsed['items']).toEqual([]);
+    expect(bySender.parsed['matched']).toBe(0);
+    const byTo = await callBoard(client, { to: 'fake-lane' });
+    expect((byTo.parsed['items'] as Array<Record<string, unknown>>).map(item => item['id']))
+      .toEqual(['req-alpha']);
   });
 
   it('reports an empty board on an empty store, never inventing items', async () => {

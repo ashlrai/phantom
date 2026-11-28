@@ -138,14 +138,14 @@ import { FLEET_WORK_FEED_LIMIT_DEFAULT, FLEET_WORK_FEED_LIMIT_MAX, parseFleetWor
   readFleetWorkFeed, type FleetWorkFeedArgs } from './fleet-work-feed.js';
 import { parseFleetWorkTraceArgs, readFleetWorkTrace, type FleetWorkTraceArgs } from './fleet-work-trace.js';
 import { BUS_WORK_FEED_CONTAINS_MAX } from '../core/agents/bus-work-feed-read.js';
-import { PROVIDERS, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS } from '../core/agents/bus-v2-schema.js';
+import { PROVIDERS, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { COORDINATION_ORIGINS } from '../core/agents/claim-store.js';
 import { HANDOFF_SIGNAL_KINDS } from '../core/agents/session-handoff-schema.js';
 import type { SessionHandoffListFilter } from '../core/agents/session-handoff.js';
 import { UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_ID_MAX, UNIFIED_INBOX_KINDS, UNIFIED_INBOX_SOURCES } from '../core/comms/unified-inbox.js';
-import { BUS_PRIORITIES } from '../core/fleet/bus-envelope.js';
+import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { BUS_PROTOCOL_KINDS } from '../core/fleet/bus-protocol.js';
-import { BUS_READ_CONTAINS_MAX, INBOX_KINDS } from '../core/agents/bus-unified.js';
+import { BUS_READ_CONTAINS_MAX, INBOX_KINDS, busReadContains } from '../core/agents/bus-unified.js';
 import { parseFleetCommsReadinessArgs, readFleetCommsReadiness } from '../core/mcp/fleet-comms-readiness.js';
 import { parseFleetCommsStatusArgs, readFleetCommsStatus } from './fleet-comms-status.js';
 import { FLEET_COMMS_THREAD_LIMIT_DEFAULT, FLEET_COMMS_THREAD_LIMIT_MAX,
@@ -202,9 +202,32 @@ export interface FleetWorkBoardArgs {
   topic?: string;
   /** Keep only the request whose own wire id is strictly equal. */
   id?: string;
+  /** Keep only requests addressed to this agent under the shared
+   * pending-address rule `bus next` claims by. */
+  to?: string;
+  /** Keep only requests whose `from` label the ref matches under the shared
+   * identity-label rule. */
+  from?: string;
+  /** Drop requests whose `from` label the ref matches under the same rule. */
+  excludeFrom?: string;
+  /** Keep only requests stamped with this exact P0..P3 band. */
+  priority?: BusPriority;
+  /** Keep only requests whose body names this one job (the shared
+   * `busBodyJobMatch` rule). */
+  job?: string;
+  /** Keep only requests whose body carries this exact kind discriminator
+   * (the shared `busBodyKind` own-field match), case-sensitive. */
+  bodyKind?: string;
+  /** Keep only requests whose body is a `work.result` receipt reporting
+   * this one outcome. */
+  result?: WorkResultOutcome;
+  /** Keep only requests whose scrubbed one-line summary carries this
+   * needle as a case-insensitive substring. */
+  contains?: string;
 }
 
-const WORK_BOARD_ARG_KEYS = new Set(['limit', 'thread', 'state', 'since', 'before', 'channel', 'topic', 'id']);
+const WORK_BOARD_ARG_KEYS = new Set(['limit', 'thread', 'state', 'since', 'before', 'channel', 'topic', 'id',
+  'to', 'from', 'excludeFrom', 'priority', 'job', 'bodyKind', 'result', 'contains']);
 const WORK_BOARD_ID_PATTERN = /^[\x21-\x7e]{1,128}$/;
 
 /** Runtime argument validation: low-level SDK servers never check the
@@ -215,11 +238,18 @@ const WORK_BOARD_ID_PATTERN = /^[\x21-\x7e]{1,128}$/;
 function parseFleetWorkBoardArgs(args: Record<string, unknown>): FleetWorkBoardArgs | null {
   const limit = args['limit'] ?? WORK_BOARD_DEFAULT_LIMIT, thread = args['thread'], state = args['state'],
     sinceRaw = args['since'], beforeRaw = args['before'],
-    channel = args['channel'], topic = args['topic'], id = args['id'];
+    channel = args['channel'], topic = args['topic'], id = args['id'],
+    to = args['to'], from = args['from'], excludeFrom = args['excludeFrom'],
+    priority = args['priority'], job = args['job'], bodyKind = args['bodyKind'],
+    result = args['result'], containsRaw = args['contains'];
+  const contains = containsRaw === undefined ? undefined : busReadContains(containsRaw);
   if (Object.keys(args).some(key => !WORK_BOARD_ARG_KEYS.has(key)) ||
     args['limit'] === null || args['thread'] === null || args['state'] === null ||
     args['since'] === null || args['before'] === null ||
     args['channel'] === null || args['topic'] === null || args['id'] === null ||
+    args['to'] === null || args['from'] === null || args['excludeFrom'] === null ||
+    args['priority'] === null || args['job'] === null || args['bodyKind'] === null ||
+    args['result'] === null || args['contains'] === null ||
     typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > WORK_BOARD_MAX_LIMIT ||
     thread !== undefined && (typeof thread !== 'string' || thread.length > 512) ||
     state !== undefined && (typeof state !== 'string' || !(WORK_ITEM_STATES as readonly string[]).includes(state)) ||
@@ -227,14 +257,26 @@ function parseFleetWorkBoardArgs(args: Record<string, unknown>): FleetWorkBoardA
     beforeRaw !== undefined && typeof beforeRaw !== 'string' ||
     channel !== undefined && (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) ||
     topic !== undefined && (typeof topic !== 'string' || !agentChannelNameSchema.safeParse(topic).success) ||
-    id !== undefined && (typeof id !== 'string' || !WORK_BOARD_ID_PATTERN.test(id))) return null;
+    id !== undefined && (typeof id !== 'string' || !WORK_BOARD_ID_PATTERN.test(id)) ||
+    to !== undefined && (typeof to !== 'string' || !WORK_BOARD_ID_PATTERN.test(to)) ||
+    from !== undefined && (typeof from !== 'string' || !WORK_BOARD_ID_PATTERN.test(from)) ||
+    excludeFrom !== undefined && (typeof excludeFrom !== 'string' || !WORK_BOARD_ID_PATTERN.test(excludeFrom)) ||
+    priority !== undefined && (typeof priority !== 'string' || !(BUS_PRIORITIES as readonly string[]).includes(priority)) ||
+    job !== undefined && (typeof job !== 'string' || !WORK_BOARD_ID_PATTERN.test(job)) ||
+    bodyKind !== undefined && (typeof bodyKind !== 'string' || !WORK_BOARD_ID_PATTERN.test(bodyKind)) ||
+    result !== undefined && (typeof result !== 'string' || !(WORK_RESULT_OUTCOMES as readonly string[]).includes(result)) ||
+    contains === null) return null;
   const since = sinceRaw === undefined ? undefined : parseSince(sinceRaw as string);
   const before = beforeRaw === undefined ? undefined : parseSince(beforeRaw as string);
   if (since !== undefined && (since === null || !Number.isSafeInteger(since) || since < 0)) return null;
   if (before !== undefined && (before === null || !Number.isSafeInteger(before) || before < 0)) return null;
   return { limit, thread: thread as string | undefined, state: state as WorkItemState | undefined,
     since: since ?? undefined, before: before ?? undefined,
-    channel: channel as string | undefined, topic: topic as string | undefined, id: id as string | undefined };
+    channel: channel as string | undefined, topic: topic as string | undefined, id: id as string | undefined,
+    to: to as string | undefined, from: from as string | undefined, excludeFrom: excludeFrom as string | undefined,
+    priority: priority as BusPriority | undefined, job: job as string | undefined,
+    bodyKind: bodyKind as string | undefined, result: result as WorkResultOutcome | undefined,
+    contains: contains ?? undefined };
 }
 
 /** One bounded board read through the canonical listWorkBoard listing — the
@@ -247,7 +289,15 @@ async function readFleetWorkBoard(input: FleetWorkBoardArgs) {
     ...(input.before === undefined ? {} : { before: input.before }),
     ...(input.channel === undefined ? {} : { channel: input.channel }),
     ...(input.topic === undefined ? {} : { topic: input.topic }),
-    ...(input.id === undefined ? {} : { id: input.id }) });
+    ...(input.id === undefined ? {} : { id: input.id }),
+    ...(input.to === undefined ? {} : { to: input.to }),
+    ...(input.from === undefined ? {} : { from: input.from }),
+    ...(input.excludeFrom === undefined ? {} : { excludeFrom: input.excludeFrom }),
+    ...(input.priority === undefined ? {} : { priority: input.priority }),
+    ...(input.job === undefined ? {} : { job: input.job }),
+    ...(input.bodyKind === undefined ? {} : { bodyKind: input.bodyKind }),
+    ...(input.result === undefined ? {} : { result: input.result }),
+    ...(input.contains === undefined ? {} : { contains: input.contains }) });
   return { ...board, asOf: new Date(now).toISOString() };
 }
 
@@ -1019,7 +1069,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_work_board',
-      description: 'Read the shared work board: the recent durable bus requests newest first, each classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with state, asOf, source and missing evidence plus channel and channelRef — the same listWorkBoard listing as `ashlr fleet work-board`, never a second classifier. States are evidence only and grant no dispatch, claim or merge authority; routing labels are untrusted data, never authenticated identity, and the board never includes message bodies. An unreadable inbox reports inbox "unavailable", never an invented empty board. `limit` caps returned items (1–100, default 20), `thread` keeps one exact channel_ref, `state` keeps only items the classifier placed in that state, `since` keeps only requests received at or after the cutoff (15m, 2h, 1d, epoch ms or an ISO time) and `before` keeps only requests received strictly before its own cutoff on the same grammar — the pair reading one [since, before) window on the request\'s recorded receivedAt, the same bound every bus read applies; `channel` keeps only requests addressed to `group:<channel>:*` — the room\'s whole traffic under every topic — and `topic` keeps only requests addressed to a well-formed `group:<room>:<topic>` label carrying that exact topic component through the shared `groupAddressTopicOf` match every bus read\'s topic filter applies, composing with `channel` into one room AND one topic, while `id` keeps only the request whose own wire id is strictly equal — all three deciding on the request envelope\'s own `to`/`id` fields with no registry dependence, the same raw rules `ashlr fleet work-board --channel/--topic/--id` apply; under `state`, a time bound or one of the address filters the response also reports `matched`, the true filtered total across the whole settled scan before the cap. Reads the server-owned default fleet root only — no caller root, path or cwd is accepted — and the tool never writes, renews TTL, claims, dispatches or merges anything.',
+      description: 'Read the shared work board: the recent durable bus requests newest first, each classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with state, asOf, source and missing evidence plus channel and channelRef — the same listWorkBoard listing as `ashlr fleet work-board`, never a second classifier. States are evidence only and grant no dispatch, claim or merge authority; routing labels are untrusted data, never authenticated identity, and the board never includes message bodies. An unreadable inbox reports inbox "unavailable", never an invented empty board. `limit` caps returned items (1–100, default 20), `thread` keeps one exact channel_ref, `state` keeps only items the classifier placed in that state, `since` keeps only requests received at or after the cutoff (15m, 2h, 1d, epoch ms or an ISO time) and `before` keeps only requests received strictly before its own cutoff on the same grammar — the pair reading one [since, before) window on the request\'s recorded receivedAt, the same bound every bus read applies; `channel` keeps only requests addressed to `group:<channel>:*` — the room\'s whole traffic under every topic — and `topic` keeps only requests addressed to a well-formed `group:<room>:<topic>` label carrying that exact topic component through the shared `groupAddressTopicOf` match every bus read\'s topic filter applies, composing with `channel` into one room AND one topic, while `id` keeps only the request whose own wire id is strictly equal — all three deciding on the request envelope\'s own `to`/`id` fields with no registry dependence, the same raw rules `ashlr fleet work-board --channel/--topic/--id` apply; `to` keeps only requests addressed to that agent under the shared pending-address rule `bus next` claims by and `from`/`excludeFrom` keep or drop one sender identity — all three resolved through the server-owned registry with exact-label matching kept on an unresolvable ref or unreadable registry, the same rules every other bus read\'s address filters apply; `priority` keeps one exact P0–P3 band, `job` keeps requests whose body names that job through the shared `busBodyJobMatch` rule, `bodyKind` keeps requests whose body carries that exact kind discriminator through the shared `busBodyKind` own-field match (case-sensitive, a body carrying no discriminator never matching), `result` keeps requests whose body is a `work.result` receipt reporting that one WORK_RESULT_OUTCOMES outcome, and `contains` keeps requests whose scrubbed one-line summary carries the needle as a case-insensitive substring — the same shared bus-read filters `ashlr fleet work-board --to/--from/--exclude-from/--priority/--job/--body-kind/--result/--contains` apply, decided on each request envelope\'s own fields. The board lists requests only, so the reply-citation filter never applies — every listed request is by definition not a reply — and `thread` here is the channel_ref scope, not the v2 body thread label the flag name carries on other bus reads. Under `state`, a time bound or one of the narrowing filters the response also reports `matched`, the true filtered total across the whole settled scan before the cap. Reads the server-owned default fleet root only — no caller root, path or cwd is accepted — and the tool never writes, renews TTL, claims, dispatches or merges anything.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1031,6 +1081,14 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
           channel: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$', description: 'Keep only requests addressed to `group:<channel>:*` — the room\'s whole traffic under every topic; the same raw `to`-prefix rule every other bus read\'s channel filter applies.' },
           topic: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$', description: 'Keep only requests addressed to a well-formed `group:<room>:<topic>` label carrying this exact topic component — the same `groupAddressTopicOf` match every bus read\'s topic filter applies; composes with `channel` into one room AND one topic.' },
           id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only the request whose own wire id is strictly equal — the same exact-envelope match every bus read\'s `id` filter applies.' },
+          to: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only requests addressed to this agent under the shared pending-address rule `bus next` claims by — the literal `to` label, any label of the identity the ref resolves to, or a member channel\'s `group:<name>:` address; resolved through the server-owned registry with exact-label matching kept on an unresolvable ref or unreadable registry.' },
+          from: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only requests whose `from` label the ref matches under the shared identity-label rule every bus read\'s `--from` applies — the literal label or any other label of the identity it resolves to.' },
+          excludeFrom: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Drop requests whose `from` label the ref matches under the same identity-label rule — a sender both included and excluded matches nothing.' },
+          priority: { type: 'string', enum: [...BUS_PRIORITIES], description: 'Keep only requests stamped with this exact P0–P3 band — the same `envelope.priority` equality every bus read\'s `--priority` applies.' },
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only requests whose body names this one job through the shared `busBodyJobMatch` rule every bus read\'s `--job` applies — a feed-citing body\'s own `jobId`, a `worker-handoff` `taskId`, or a `job:<id>` v2 thread label.' },
+          bodyKind: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only requests whose body carries this exact kind discriminator through the shared `busBodyKind` own-field match — case-sensitive; a body carrying no discriminator never matches.' },
+          result: { type: 'string', enum: [...WORK_RESULT_OUTCOMES], description: 'Keep only requests whose body is a `work.result` receipt reporting this one outcome — the same WORK_RESULT_OUTCOMES vocabulary every bus read\'s `--result` filter validates; every other body kind and a result carrying no outcome never matches.' },
+          contains: { type: 'string', minLength: 1, maxLength: BUS_READ_CONTAINS_MAX, description: 'Keep only requests whose scrubbed one-line summary carries this needle as a case-insensitive substring — the same `busReadContainsMatch` rule every bus read\'s `contains` filter applies, matching the rendered summary, never the raw body.' },
         },
         additionalProperties: false,
       },
