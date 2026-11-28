@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { inspectTriage } from '../src/cli/prs.js';
+import { inspectTriage, inspectTriageEvidence } from '../src/cli/prs.js';
 import { withScratchRepo } from '../src/core/fleet/dirty-landed-inspect.js';
 
 describe('PR triage against git fixtures', () => {
@@ -14,6 +14,7 @@ describe('PR triage against git fixtures', () => {
       git('init', '-q', '-b', 'master');
       git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.invalid');
       writeFileSync(join(dir, 'file'), 'original\n'); git('add', '.'); git('commit', '-qm', 'base');
+      const mergeBaseSha = git('rev-parse', 'HEAD');
       git('checkout', '-qb', 'change');
       writeFileSync(join(dir, 'file'), 'changed\n'); git('commit', '-qam', 'change');
       const head = git('rev-parse', 'HEAD'); git('update-ref', 'refs/pull/1/head', head);
@@ -22,12 +23,28 @@ describe('PR triage against git fixtures', () => {
       await withScratchRepo(async scratch => {
         expect(await inspectTriage(scratch, dir, row, 'success')).toBe('green');
         expect(await inspectTriage(scratch, dir, row, 'failure')).toBe('failing-checks');
+        expect(await inspectTriageEvidence(scratch, dir, row, 'success')).toEqual({
+          verdict: 'green', evidence: { headSha: head, baseTipSha: mergeBaseSha, mergeBaseSha, proof: null },
+        });
+        expect(await inspectTriageEvidence(scratch, dir, row, 'pending')).toEqual({ verdict: 'unknown', evidence: null });
         expect(await inspectTriage(scratch, dir, { ...row, mergeable: 'CONFLICTING' }, 'success')).toBe('rebase-clean');
         writeFileSync(join(dir, 'file'), 'different\n'); git('commit', '-qam', 'conflict');
         expect(await inspectTriage(scratch, dir, { ...row, mergeable: 'CONFLICTING' }, 'success')).toBe('rebase-manual');
         writeFileSync(join(dir, 'file'), 'changed\n'); git('commit', '-qam', 'landed');
         expect(await inspectTriage(scratch, dir, row, 'success')).toBe('superseded');
-        expect(await inspectTriage(scratch, dir, { ...row, headRefOid: '0'.repeat(40) }, 'success')).toBe('unknown');
+        const baseTipSha = git('rev-parse', 'HEAD');
+        expect(baseTipSha).not.toBe(mergeBaseSha);
+        expect(baseTipSha).not.toBe(head);
+        expect(await inspectTriageEvidence(scratch, dir, row, 'success')).toEqual({
+          verdict: 'superseded',
+          evidence: { headSha: head, baseTipSha, mergeBaseSha, proof: 'reverse-patch' },
+        });
+        git('update-ref', 'refs/pull/1/head', baseTipSha);
+        expect(await inspectTriage(scratch, dir, row, 'success')).toBe('unknown');
+        expect(await inspectTriageEvidence(scratch, dir, row, 'success')).toEqual({
+          verdict: 'unknown',
+          evidence: null,
+        });
       });
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
