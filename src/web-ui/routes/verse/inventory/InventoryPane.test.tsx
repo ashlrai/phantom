@@ -119,7 +119,7 @@ describe.each([['390 px', 390], ['desktop width', 1440]])('Inventory pane at %s'
     expect(gap.getByRole('heading').textContent).toBe('Tool gap between lanes: 2');
     expect(gap.getByText('Each lane against 3 tools and connectors. Unknown is never counted as lacking.')).toBeTruthy();
     const lanes = Array.from(gap.getByRole('list', { name: 'Lanes' }).children);
-    expect(lanes.map(li => li.querySelector('div')!.textContent)).toEqual(['claudecan use 2lacks 0unknown 1', 'codex-localcan use 1lacks 2unknown 0']);
+    expect(lanes.map(li => li.querySelector('div')!.textContent)).toEqual(['claudereported 2lacks 0unknown 1', 'codex-localreported 1lacks 2unknown 0']);
     expect(lanes[0]!.querySelector('details')).toBeNull();
     const lacking = lanes[1]!.querySelector('details')!;
     expect(Array.from(lacking.querySelectorAll('li')).map(li => li.textContent)).toEqual(['browser', 'tool:gone']);
