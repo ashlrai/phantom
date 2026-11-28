@@ -93,25 +93,9 @@ function frontierEngines(cfg: AshlrConfig): EngineId[] {
       ? ((cfg as unknown as { foundry?: { allowedBackends?: EngineId[] } }).foundry?.allowedBackends ?? [])
       : [];
 
-    // Always include claude + codex as the canonical frontier engines; add
-    // any other allowed backends that aren't purely local/builtin.
-    const frontier = new Set<EngineId>(['claude', 'codex']);
-    for (const e of allowed) {
-      // Include explicitly configured allowed backends (the router already
-      // gates non-frontier ones; we surface whatever the user has enabled).
-      frontier.add(e);
-    }
-
-    // Filter down to only the engines that appear in allowed (when it's set),
-    // but always keep claude + codex as they are the primary frontier engines.
-    if (allowed.length > 0) {
-      return Array.from(frontier).filter(
-        (e) => e === 'claude' || e === 'codex' || allowed.includes(e),
-      );
-    }
-
-    // No allowedBackends configured — default to the two canonical ones.
-    return ['claude', 'codex'];
+    // Always include claude + codex as the canonical frontier engines plus any
+    // explicitly configured allowed backends.
+    return [...new Set<EngineId>(['claude', 'codex', ...allowed])];
   } catch {
     return ['claude', 'codex'];
   }

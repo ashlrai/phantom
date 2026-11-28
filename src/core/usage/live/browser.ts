@@ -7,8 +7,10 @@
  * storage-state, token, keychain or file access, and the profile path may not be
  * a Codex home. Sign-in is done by the operator in this browser, the normal way.
  */
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import { isRefusedCodexPath } from '../runway.js';
 import { bindingWindow, needsSignin, parseVisibleWindows, type UsageSite } from './sites.js';
 
 export interface BrowserPage {
@@ -27,9 +29,31 @@ export function usageBrowserDir(home = homedir()): string { return join(home, '.
 export function profileDirAllowed(dir: string, home = homedir()): boolean {
   if (!isAbsolute(dir) || /[\0\r\n]/.test(dir)) return false;
   const norm = resolve(dir);
-  if (/(?:^|\/)\.codex[^/]*(?:\/|$)/.test(norm)) return false;
+  if (isRefusedCodexPath(norm)) return false;
   const root = usageBrowserDir(home);
   return norm === root || norm.startsWith(`${root}/`);
+}
+
+export async function openUsageBrowserSession(options: {
+  home: string;
+  headed: boolean;
+  launch?: BrowserLauncher;
+  unavailableMessage: string;
+  err?: (line: string) => void;
+}): Promise<{ ok: true; session: BrowserSession | null } | { ok: false }> {
+  const err = options.err ?? console.error;
+  const dir = usageBrowserDir(options.home);
+  if (!profileDirAllowed(dir, options.home)) {
+    err('Usage browser profile path refused.');
+    return { ok: false };
+  }
+  try {
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    return { ok: true, session: await (options.launch ?? playwrightLauncher)(dir, { headless: !options.headed }) };
+  } catch {
+    err(options.unavailableMessage);
+    return { ok: true, session: null };
+  }
 }
 
 export type SiteReading =

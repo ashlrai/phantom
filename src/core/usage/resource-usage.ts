@@ -37,6 +37,7 @@ import { readGrokUltraRunway } from '../fleet/grok-ultra-store.js';
 import type { GrokUltraRunway } from '../fleet/grok-ultra-types.js';
 import { fetchClaudeUsageApi, type ClaudeApiUsageResult } from '../fabric/usage-api.js';
 import { readZaiUsage } from './zai-usage.js';
+import { nonNegativeFinite } from './runway.js';
 import { readClaudeApiGrantViews } from '../resources/claude-api-grant.js';
 import type { ClaudeApiGrantReadView } from '../resources/claude-api-grant-types.js';
 import {
@@ -71,7 +72,7 @@ const UNITS: readonly UsageResourceUnit[] = ['percent', 'acu', 'usd', 'points'];
 const SOURCE_MAX = 128;
 
 function finiteAmount(value: unknown): value is number | null {
-  return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+  return value === null || nonNegativeFinite(value) !== null;
 }
 
 function isoInstant(value: unknown): value is string | null {

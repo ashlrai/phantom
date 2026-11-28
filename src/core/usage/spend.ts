@@ -6,16 +6,27 @@
  * This module is in the Tier-1 import closure (test/fixtures/authority/
  * tier1-closure.json): add no imports here without that review.
  */
-import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { PACE_POOLS } from './pace.js';
+import { PACE_POOLS, readDispatchStatus } from './pace.js';
+import {
+  asUsageRecord,
+  formatDurationMinutes,
+  isFiniteNumber,
+  isUsageRecord,
+  nonNegativeFinite,
+  parseDispatchStatus,
+  parseUnixSecondsOrIsoMs,
+  roundTo,
+} from './runway.js';
+
+export { readDispatchStatus };
 
 /** behind = a measured share would go unused at reset; sorted first. */
 export type SpendVerdict = 'behind' | 'on-pace' | 'used-up' | 'expired' | 'unknown';
 /** The one status word every surface prints. used-up and expired both read exhausted. */
 export type SpendStatus = 'on-pace' | 'behind' | 'exhausted' | 'unknown';
-export const USAGE_SPEND_SCHEMA = 'usage.spend.v1' as const;
+const USAGE_SPEND_SCHEMA = 'usage.spend.v1' as const;
 export interface SpendRow {
   pool: string;
   /** 'percent' for a subscription window, 'usd' for a credit or gift balance (`budget.<lane>.gift`). */
@@ -44,7 +55,7 @@ export interface SpendRow {
   resetsIn: string | null;
 }
 export interface SpendSnapshot {
-  schema: typeof USAGE_SPEND_SCHEMA; v: 1; asOf: string | null;
+  schema: 'usage.spend.v1'; v: 1; asOf: string | null;
   /** One plain sentence: the pool that will waste the most, or why nothing is known. */
   headline: string;
   pools: SpendRow[];
@@ -57,20 +68,13 @@ const SPEND_POOLS = ['codex-personal', 'claude', 'claude-api', 'devin', 'zai', '
 const GIFT_MAX_AGE_MS = 24 * HOUR_MS;
 /** Overage readings above this are malformed, not measured. */
 const MAX_USED_PCT = 1000;
-const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
-const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const usd = (v: unknown): number | null => {
   const n = typeof v === 'string' && /^\d+(?:\.\d+)?$/.test(v.trim()) ? Number(v) : v;
-  return num(n) && n >= 0 ? n : null;
+  return nonNegativeFinite(n);
 };
-const time = (v: unknown): number => typeof v === 'string' ? Date.parse(v) : num(v) ? v * 1000 : NaN;
-const round1 = (n: number): number => Math.round(n * 10) / 10;
 
 export function spendCountdown(hours: number | null): string | null {
-  if (hours === null || !(hours > 0)) return null;
-  const minutes = Math.floor(hours * 60);
-  const d = Math.floor(minutes / 1440); const h = Math.floor(minutes % 1440 / 60); const m = minutes % 60;
-  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+  return hours === null || !(hours > 0) ? null : formatDurationMinutes(Math.floor(hours * 60));
 }
 
 function blank(pool: string, unit: SpendRow['unit'], reason: string): SpendRow {
@@ -80,11 +84,11 @@ function blank(pool: string, unit: SpendRow['unit'], reason: string): SpendRow {
 }
 
 function percentRow(pool: string, lane: Record<string, unknown>, fresh: boolean, now: number): SpendRow {
-  const pace = object(lane.use_it_all) ? lane.use_it_all : {};
-  const reset = time(pace.reset_at);
+  const pace = asUsageRecord(lane.use_it_all);
+  const reset = parseUnixSecondsOrIsoMs(pace.reset_at);
   const reason = !fresh ? 'status missing or stale' : pace.stale === true ? 'reading stale' : pace.known !== true || pace.stale !== false ? 'reading missing' :
-    !num(pace.used_pct) || pace.used_pct < 0 || pace.used_pct > MAX_USED_PCT || !Number.isFinite(reset) || reset <= now ||
-    !num(pace.burn_pct_per_hour) || pace.burn_pct_per_hour < 0 ? 'reading incomplete or reset passed' : null;
+    !isFiniteNumber(pace.used_pct) || pace.used_pct < 0 || pace.used_pct > MAX_USED_PCT || !Number.isFinite(reset) || reset <= now ||
+    !isFiniteNumber(pace.burn_pct_per_hour) || pace.burn_pct_per_hour < 0 ? 'reading incomplete or reset passed' : null;
   if (reason !== null) return blank(pool, 'percent', reason);
   const used = pace.used_pct as number; const burn = pace.burn_pct_per_hour as number;
   const hours = (reset - now) / HOUR_MS;
@@ -103,17 +107,17 @@ function percentRow(pool: string, lane: Record<string, unknown>, fresh: boolean,
  */
 function giftRow(pool: string, gift: Record<string, unknown>, fresh: boolean, now: number): SpendRow {
   if (!fresh) return blank(pool, 'usd', 'status missing or stale');
-  const remaining = usd(gift.usd_remaining); const asOf = time(gift.as_of);
+  const remaining = usd(gift.usd_remaining); const asOf = parseUnixSecondsOrIsoMs(gift.as_of);
   if (remaining === null || !Number.isFinite(asOf) || asOf > now + 60_000) return blank(pool, 'usd', 'reading missing');
   if (now - asOf > GIFT_MAX_AGE_MS) return blank(pool, 'usd', 'reading stale');
-  const expires = time(gift.expires_at);
+  const expires = parseUnixSecondsOrIsoMs(gift.expires_at);
   if (Number.isFinite(expires) && expires <= now) {
     return { ...blank(pool, 'usd', 'expired'), resetAt: new Date(expires).toISOString(), verdict: 'expired', status: 'exhausted', summary: 'expired' };
   }
   const grantedRaw = usd(gift.usd_granted);
   const granted = grantedRaw !== null && grantedRaw > 0 && grantedRaw >= remaining ? grantedRaw : null;
   const known = { ...blank(pool, 'usd', ''), remainingUsd: remaining,
-    usedPercent: granted === null ? null : round1((granted - remaining) / granted * 100) };
+    usedPercent: granted === null ? null : roundTo((granted - remaining) / granted * 100, 1) };
   if (remaining === 0) return { ...known, reason: null, verdict: 'used-up', status: 'exhausted', summary: 'used up' };
   if (!Number.isFinite(expires)) return { ...known, reason: 'expiry date missing', summary: 'unknown: expiry date missing' };
   const hours = (expires - now) / HOUR_MS;
@@ -123,7 +127,7 @@ function giftRow(pool: string, gift: Record<string, unknown>, fresh: boolean, no
   const unusedUsd = Math.max(0, remaining - burn * hours);
   const behind = unusedUsd >= 1;
   const unusedPct = granted === null ? null : unusedUsd / granted * 100;
-  return { ...dated, reason: null, burnPerHour: burn, projectedUnusedUsd: round1(unusedUsd), projectedUnusedPercent: unusedPct,
+  return { ...dated, reason: null, burnPerHour: burn, projectedUnusedUsd: roundTo(unusedUsd, 1), projectedUnusedPercent: unusedPct,
     projectedUsedPercent: unusedPct === null ? null : 100 - unusedPct, verdict: behind ? 'behind' : 'on-pace',
     status: behind ? 'behind' : 'on-pace',
     summary: behind ? `behind: ${Math.round(unusedUsd)} USD would go unused` : 'on pace' };
@@ -160,35 +164,15 @@ export function spendHeadline(pools: readonly SpendRow[]): string {
 
 /** Rows sorted behind-first with the largest projected waste on top, then unknown; soonest reset first after that. */
 export function projectUsageSpend(raw: unknown, now = Date.now()): SpendSnapshot {
-  const status = object(raw) ? raw : {};
-  const tick = typeof status.last_tick === 'string' ? Date.parse(status.last_tick) : NaN;
-  const fresh = status.schema === 'dispatchd.status.v1' && Number.isFinite(tick) && now >= tick && now - tick <= 120_000;
-  const budget = object(status.budget) ? status.budget : {};
+  const { asOf, fresh, budget } = parseDispatchStatus(raw, now);
   const names = [...new Set([...SPEND_POOLS, ...Object.keys(budget).filter(k => k !== 'codex-cmp' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(k))])];
   const pools = names.map(pool => {
-    const lane = object(budget[pool]) ? budget[pool] : {};
-    return object(lane.gift) || pool === 'claude-api'
-      ? giftRow(pool, object(lane.gift) ? lane.gift : {}, fresh, now) : percentRow(pool, lane, fresh, now);
+    const lane = asUsageRecord(budget[pool]);
+    return isUsageRecord(lane.gift) || pool === 'claude-api'
+      ? giftRow(pool, asUsageRecord(lane.gift), fresh, now) : percentRow(pool, lane, fresh, now);
   }).sort((a, b) => ORDER[a.verdict] - ORDER[b.verdict] || (a.verdict === 'behind' ? wasteShare(b) - wasteShare(a) : 0)
     || (a.hoursLeft ?? Infinity) - (b.hoursLeft ?? Infinity) || a.pool.localeCompare(b.pool));
-  return { schema: USAGE_SPEND_SCHEMA, v: 1, asOf: Number.isFinite(tick) ? new Date(tick).toISOString() : null, headline: spendHeadline(pools), pools };
-}
-/** The dispatchd status file, read with a 1 MiB bound (also when the file grows); null when missing, oversized or not JSON. */
-export async function readDispatchStatus(path: string): Promise<unknown> {
-  try {
-    const file = await open(path, 'r');
-    try {
-      const bytes = Buffer.alloc(1024 * 1024 + 1);
-      let length = 0;
-      while (length < bytes.length) {
-        const { bytesRead } = await file.read(bytes, length, bytes.length - length, null);
-        if (bytesRead === 0) break;
-        length += bytesRead;
-      }
-      if (length === bytes.length) return null;
-      return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length))) as unknown;
-    } finally { await file.close(); }
-  } catch { return null; }
+  return { schema: USAGE_SPEND_SCHEMA, v: 1, asOf, headline: spendHeadline(pools), pools };
 }
 
 export async function readUsageSpend(path = join(homedir(), '.ashlr-runs', 'queue', 'status.json'), now = Date.now()): Promise<SpendSnapshot> {

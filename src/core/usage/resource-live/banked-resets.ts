@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { z } from 'zod';
+import { asUsageRecord, parseDispatchStatus } from '../runway.js';
 import { readPrivateJson, readResourceEvidenceFile, updateEvidence } from './store.js';
 import {
   CODEX_RESET_BANK_MIN_VERSION, CODEX_RESET_BANK_TOO_OLD, CODEX_RESET_BANK_UNKNOWN_REASONS, RESOURCE_LIVE_STALE_MS,
@@ -44,29 +45,27 @@ export async function publishCodexResetBank(runsDir: string, observedAt: string,
 
 interface ResetInputs { observed_at: string | null; grants: BankedResetGrant[] | null; queued: number | null;
   unknown_reason?: CodexResetBankUnknownReason }
-const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
-  ? value as Record<string, unknown> : {};
 
 export async function readBankedResets(runsDir: string, now: number): Promise<ResetInputs> {
-  const [evidence, status] = await Promise.all([
+  const [rawEvidence, rawStatus] = await Promise.all([
     readResourceEvidenceFile(runsDir), readPrivateJson(join(runsDir, 'queue', 'status.json'), 1024 * 1024),
-  ]).then(rows => rows.map(object));
-  const readings = evidence?.['schema'] === 'resource-evidence.v1' ? object(evidence['readings']) : {};
+  ]);
+  const evidence = asUsageRecord(rawEvidence);
+  const readings = evidence['schema'] === 'resource-evidence.v1' ? asUsageRecord(evidence['readings']) : {};
   const parsed = bankSchema.safeParse(readings[BANK_KEY]);
   const nativeStatus = resetStatusSchema.safeParse(readings[STATUS_KEY]);
   const statusAge = nativeStatus.success ? now - Date.parse(nativeStatus.data.observed_at) : Infinity;
   const reason = nativeStatus.success && statusAge >= 0 && statusAge < RESOURCE_LIVE_STALE_MS ? nativeStatus.data.unknown_reason : null;
   const age = parsed.success ? now - Date.parse(parsed.data.observed_at) : Infinity;
-  const tick = now - Date.parse(String(status?.['last_tick'] ?? ''));
-  const queued = object(object(status?.['lanes'])['codex-personal'])['queued'];
+  const dispatch = parseDispatchStatus(rawStatus, now, 5 * 60_000);
+  const queued = asUsageRecord(dispatch.lanes['codex-personal'])['queued'];
   const grants = parsed.success && age >= 0 && age < RESOURCE_LIVE_STALE_MS ? parsed.data.grants
     .filter(grant => Date.parse(grant.expires_at) > now)
     .sort((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at)) : null;
   return {
     observed_at: grants && parsed.success ? parsed.data.observed_at : null,
     ...(!grants && reason ? { unknown_reason: reason } : {}),
-    grants, queued: status?.['schema'] === 'dispatchd.status.v1' && tick >= 0 && tick <= 5 * 60_000 &&
-      typeof queued === 'number' && Number.isSafeInteger(queued) && queued >= 0 ? queued : null,
+    grants, queued: dispatch.fresh && typeof queued === 'number' && Number.isSafeInteger(queued) && queued >= 0 ? queued : null,
   };
 }
 

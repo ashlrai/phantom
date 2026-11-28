@@ -29,8 +29,9 @@ import {
   type HistorySample, type PollState, type ResetDraft, type ResourceLiveAllowance, type ResourceLiveId,
   type ResourceLiveReading, type ResourceLiveReason, type ResourceLiveSidecar,
 } from './types.js';
+import { isUsageRecord } from '../runway.js';
 
-export const SOURCE_DEADLINE_MS = 20_000;
+const SOURCE_DEADLINE_MS = 20_000;
 /** A lock older than this belongs to a pass that died. */
 export const LOCK_STALE_MS = 5 * 60_000;
 
@@ -147,9 +148,9 @@ export async function readActiveLanes(runsDir: string, nowMs: number): Promise<S
     const tick = typeof status['last_tick'] === 'string' ? Date.parse(status['last_tick']) : NaN;
     if (!Number.isFinite(tick) || tick > nowMs || nowMs - tick > 5 * 60_000) return active;
     const lanes = status['lanes'];
-    if (lanes === null || typeof lanes !== 'object' || Array.isArray(lanes)) return active;
-    for (const [lane, row] of Object.entries(lanes as Record<string, unknown>)) {
-      const running = row !== null && typeof row === 'object' ? (row as Record<string, unknown>)['running'] : null;
+    if (!isUsageRecord(lanes)) return active;
+    for (const [lane, row] of Object.entries(lanes)) {
+      const running = isUsageRecord(row) ? row['running'] : null;
       if (typeof running === 'number' && running > 0) active.add(lane);
     }
   } catch { /* No status file means no lane is known to be active. */ }
