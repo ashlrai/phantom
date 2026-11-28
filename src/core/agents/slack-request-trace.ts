@@ -58,6 +58,16 @@ export interface SlackRequestTraceOptions {
 
 const compareText = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
 
+// Only use this comparison for selection; retain the journal's original identity.
+function sameThread(a: string, b: string): boolean {
+  if (!isSlackTs(a) || !isSlackTs(b)) return false;
+  const canonical = (ts: string): string => {
+    const [seconds, fraction] = ts.split('.');
+    return `${seconds.replace(/^0+(?=\d)/, '')}.${fraction.replace(/0+$/, '')}`;
+  };
+  return canonical(a) === canonical(b);
+}
+
 /**
  * Pure evidence join. Ingested entries missing channel/message/thread ids are
  * skipped (the same rule slackInboundRequests uses: they cannot be bound).
@@ -76,7 +86,7 @@ export function traceSlackRequests(input: {
   const pending: Pending[] = [];
   for (const entry of entries) {
     if (entry.decision !== 'ingested' || !entry.channelId || !entry.messageTs || !entry.threadTs) continue;
-    if (input.thread !== undefined && entry.threadTs !== input.thread) continue;
+    if (input.thread !== undefined && !sameThread(entry.threadTs, input.thread)) continue;
     pending.push({
       req: { at: entry.at, channelId: entry.channelId, messageTs: entry.messageTs, threadTs: entry.threadTs,
         ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}) },
