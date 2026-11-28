@@ -86,7 +86,13 @@ function github(options: { count?: number; sameHead?: boolean; touched?: string;
           ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
           : `/usr/bin/git log -1 --format=%H\n${sha}\n`;
       }
-      return success(`${prefix}${fixture(name)}`);
+      const log = fixture(name);
+      if (options.checkoutRef === undefined && log.startsWith('##[group]Run actions/checkout@')) {
+        // The synthetic proof belongs after the fixture's initial checkout.
+        const afterCheckout = log.indexOf('\n##[endgroup]\n') + '\n##[endgroup]\n'.length;
+        return success(log.slice(0, afterCheckout) + prefix + log.slice(afterCheckout));
+      }
+      return success(prefix + log);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
       const conclusion = isMaster && options.pass ? 'success' : 'failure';
@@ -513,6 +519,25 @@ describe('CI baseline evidence', () => {
         : result;
     });
     expect(report.groups).toMatchObject([{ master: 'pass', action: 'rerun-failed' }]);
+  });
+  it.each([false, true])('requires fresh proof after a later checkout (rebound: %s)', async rebound => {
+    const { gh } = github({ count: 1, pass: true });
+    const report = await analyzeCiBaseline('owner/repo', async args => {
+      const result = await gh(args);
+      if (!args[1]?.endsWith('/jobs/20/logs')) return result;
+      const [command, sha, ...failure] = result.stdout.split('\n');
+      const checkout = [
+        '##[group]Run actions/checkout@v4',
+        'with:',
+        `  ref: ${merged}`,
+        '##[endgroup]',
+      ];
+      const binding = rebound ? [`Bound candidate ${head} to event tree ${master}`] : [];
+      return { ...result, stdout: [command, sha, ...checkout, ...binding, ...failure].join('\n') };
+    });
+    expect(report.freshness).toMatchObject([{ state: rebound ? 'fresh' : 'unknown' }]);
+    if (rebound) expect(report.groups).toMatchObject([{ action: 'rerun-failed' }]);
+    else expect(report.groups).toEqual([]);
   });
   it('verifies unbound gate jobs through the checkout ref echo', async () => {
     // secret-shape, quick, clean-tree, authority-drift, fast-gate,
