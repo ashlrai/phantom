@@ -373,6 +373,41 @@ export function nodeBridgeReadiness(host: NodeBridgeHost): string | null {
   return null;
 }
 
+/**
+ * The operator-facing remediation for each `inert` reason a bridge report can
+ * carry, or null for a code this build does not know. `configPath` is the
+ * bridge config path spelled for the operator (contracted to `~` on a default
+ * install); callers pass the same label the help and error text use.
+ */
+export function nodeBridgeInertFix(reason: string | null, configPath = '~/.ashlr/node-bridge.json'): string | null {
+  switch (reason) {
+    case 'bridge-owner-unset':
+      return `Pass --owner <scope> or set "owner" in ${configPath} to name the scope this bridge claims ready rows for.`;
+    case 'bridge-config-invalid':
+      return `${configPath} is not a valid bridge config; it must hold {"enabled": true, "owner": "<scope>"}.`;
+    case 'bridge-disabled':
+      return `Set "enabled": true in ${configPath} for --apply to claim; a dry run already lists what would offload.`;
+    case 'pool-config-invalid':
+      return 'The node pool config (node-pool/config.json under the Phantom home) could not be read; repair or remove it so the bridge can resolve its router.';
+    case 'not-pool-primary':
+      return 'Only the pool primary claims ready rows for nodes; run the bridge on the primary.';
+    case 'owner-not-pool-scope':
+      return 'The --owner scope does not match this pool\'s owner; omit --owner to use the pool scope.';
+    case 'router-unavailable':
+      return 'The node router is unavailable; check the node registry or pool config the bridge reads.';
+    case 'stopped':
+      return 'A KILL/PAUSE marker or queue/NODE_BRIDGE_OFF is present; remove it to let the bridge claim.';
+    case 'queue-absent':
+      return 'No queue/ready.tsv exists on this host; the bridge only runs where the dispatcher queue lives.';
+    case 'dispatcher-absent':
+      return 'No dispatcher is installed at ~/.ashlr-runs/bin/dispatchd.py; install it before bridging ready rows.';
+    case 'dispatcher-lease-unsupported':
+      return 'The installed dispatchd.py predates the lease protocol the bridge needs; update the dispatcher to enable it.';
+    default:
+      return null;
+  }
+}
+
 const LOCK_SCRIPT = `import fcntl,sys,time
 t=open(sys.argv[1],'a')
 try: fcntl.flock(t,fcntl.LOCK_EX|fcntl.LOCK_NB)

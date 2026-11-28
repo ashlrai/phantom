@@ -172,6 +172,33 @@ describe('phm node dispatcher and bridge', () => {
     expect(await cmdNodeBridge(['--json'])).toBe(1);
     expect(lastJson(lines).error.message).toBe('Invalid drive nodes state');
   });
+
+  it('an inert bridge report names its remediation in text and json', async () => {
+    deps.bridge.mockReturnValue({ schema: 'phantom.node-bridge.v1', mode: 'dry-run', owner: null,
+      inert: 'bridge-owner-unset', held: null, nodes: [], rows: [], leases: [],
+      claimed: [], requeued: [], completed: [], lostRace: [] });
+    const lines = capture();
+    expect(await cmdNodeBridge(['--json'])).toBe(0);
+    const out = lastJson(lines);
+    expect(out.inert).toBe('bridge-owner-unset');
+    expect(out.fix).toContain('--owner');
+    expect(out.fix).toContain('node-bridge.json');
+    lines.length = 0;
+    expect(await cmdNodeBridge([])).toBe(0);
+    expect(lines.join('\n')).toContain('inert: bridge-owner-unset');
+    expect(lines.join('\n')).toContain('fix: ');
+  });
+
+  it('an active bridge report carries no fix', async () => {
+    deps.bridge.mockReturnValue({ schema: 'phantom.node-bridge.v1', mode: 'dry-run', owner: 'ashlr',
+      inert: null, held: null, nodes: [], rows: [], leases: [],
+      claimed: [], requeued: [], completed: [], lostRace: [] });
+    const lines = capture();
+    expect(await cmdNodeBridge(['--json'])).toBe(0);
+    expect(lastJson(lines).fix).toBeUndefined();
+    expect(await cmdNodeBridge([])).toBe(0);
+    expect(lines.join('\n')).not.toContain('fix:');
+  });
 });
 
 describe('node store path honesty under a relocated ASHLR_HOME', () => {
