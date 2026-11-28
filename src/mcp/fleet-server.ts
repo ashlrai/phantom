@@ -1625,7 +1625,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         properties: {
           limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 },
           source: { type: 'string', enum: [...UNIFIED_INBOX_SOURCES], description: 'Keep items from one unified-inbox source.' },
-          kind: { type: 'string', enum: [...UNIFIED_INBOX_KINDS], description: 'Keep items of one kind — the item\'s own classification, finer than source where one source emits several kinds (the bus source\'s bus-work/bus-handoff/bus-dead-letter split, the board source\'s board-delivery/board-task split).' },
+          kind: { type: 'string', enum: [...UNIFIED_INBOX_KINDS], description: 'Keep items of one kind — the item\'s own classification, finer than source where one source emits several kinds (the bus source\'s bus-work/bus-handoff/bus-dead-letter/forum-mention split, the board source\'s board-delivery/board-task split).' },
           severity: { type: 'string', enum: ['info', 'warn', 'high'], description: 'Keep items of one severity.' },
           blocking: { type: 'boolean', description: 'true keeps only blocking items; false keeps only non-blocking items.' },
           id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,256}$', maxLength: UNIFIED_INBOX_ID_MAX, description: 'Keep only the item whose stable <source>:<ref> id strictly equals this value — the exact-id match `phm comms inbox --id` applies; --contains searches title/detail only, never the id.' },

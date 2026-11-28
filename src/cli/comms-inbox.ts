@@ -33,7 +33,7 @@ one prioritized list whose
 items carry the deep-link commands that act on them. The bare view's --source keeps
 one source's items, --kind one item kind — the item's own classification,
 finer than --source where one source emits several kinds (the bus source's
-bus-work/bus-handoff/bus-dead-letter split, the board source's board-delivery/board-task
+bus-work/bus-handoff/bus-dead-letter/forum-mention split, the board source's board-delivery/board-task
 split) — --severity one severity band, --blocking only items that
 block, --id only the item whose stable <source>:<ref> id strictly equals
 the value — the exact-id match every bus read's --id applies, so an agent
