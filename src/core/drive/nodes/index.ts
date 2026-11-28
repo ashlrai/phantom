@@ -334,12 +334,16 @@ export class DriveNodes implements QueueV1 {
     }));
   }
 
-  private currentClaim(state: NodesState, claim: JobClaim, now: number): boolean {
-    const stored = state.jobs.find(j => j.id === claim.jobId && j.state === 'running')?.claim;
+  private liveClaim(state: NodesState, job: NodesState['jobs'][number], now: number): boolean {
     const leader = this.liveLeader(state, now);
-    return !!stored && !!leader && stored.token === claim.token && sameSession(stored, claim) &&
-      stored.leaderToken === claim.leaderToken && stored.leaderToken === leader.token &&
-      stored.expiresAt > now && this.liveNode(state, stored, now);
+    return !!leader && job.claim?.leaderToken === leader.token && actionableClaim(state, job, now);
+  }
+
+  private currentClaim(state: NodesState, claim: JobClaim, now: number): boolean {
+    const job = state.jobs.find(j => j.id === claim.jobId && j.state === 'running');
+    const stored = job?.claim;
+    return !!job && !!stored && stored.token === claim.token && sameSession(stored, claim) &&
+      stored.leaderToken === claim.leaderToken && this.liveClaim(state, job, now);
   }
 
   /** Leader-side assignment under the live lease. Applies the same execution
@@ -420,10 +424,7 @@ export class DriveNodes implements QueueV1 {
         return job.producerWithdrawn === true
           ? { state: 'withdrawn' as const } : { state: 'completed' as const, result: job.result ?? '' };
       }
-      const stored = job.claim;
-      const leader = this.liveLeader(state, now);
-      if (job.state === 'running' && stored && stored.expiresAt > now && this.liveNode(state, stored, now) &&
-          !!leader && stored.leaderToken === leader.token) return { state: 'held' as const };
+      if (this.liveClaim(state, job, now)) return { state: 'held' as const };
       const token = nextToken(state);
       job.claim = { nodeId: WITHDRAWN_RESULT, session: token, jobId, token, leaderToken: token, expiresAt: now };
       job.state = 'completed';
@@ -450,7 +451,7 @@ export class DriveNodes implements QueueV1 {
           ...(job.producerWithdrawn ? { producerWithdrawn: true as const } : {}) };
       }
       if (job.state === 'running') {
-        return { state: 'running', ...(actionableClaim(state, job, now) ? { claimedBy: job.claim!.nodeId } : {}) };
+        return { state: 'running', ...(this.liveClaim(state, job, now) ? { claimedBy: job.claim!.nodeId } : {}) };
       }
       return { state: 'pending' };
     });
