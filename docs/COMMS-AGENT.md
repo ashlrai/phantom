@@ -1,8 +1,10 @@
 # Comms agent
 
 The Comms role sits under the Leader. It triages email, iMessage and LinkedIn:
-classify, summarize, archive bulk and bot mail, and draft replies. It never
-deletes mail. A delivered reply resolves its inbox message into the archive,
+classify, summarize, archive bulk and bot mail, and draft replies. Mail
+reaches its inbox only through `phm comms-agent intake`, which merges a
+dropped inbox document into the pending store; `run` never invents mail.
+It never deletes mail. A delivered reply resolves its inbox message into the archive,
 so pending depth counts only mail still awaiting a reply and a later pass
 never resends an answered message. The router and its bandit choose the lane
 from the lanes that are actually available. The role names no lane and does
@@ -65,7 +67,23 @@ phm comms-agent run --lanes claude,local --json
 phm comms-agent drafts --json
 phm comms-agent drafts --status sent --transport email --json
 phm comms-agent drafts --to known@example.com --contains "invoice" --since 2h --json
+phm comms-agent intake --file drop.json --json
+cat drop.json | phm comms-agent intake --file - --json
 ```
+
+`intake` is the write path into the inbox `run` triages: a mail bridge, the
+owner or another agent drops one inbox document — the same
+`{"messages":[{"id","transport","from","subject","body","labels"?}]}` shape
+the store keeps, at most 200 messages and 16 MiB per call — through
+`--file <path>` or `--file -` for stdin. The document is validated by the
+same strict parser the run applies, then merged into the pending inbox
+atomically: a message id already pending or already archived is a
+duplicate and is skipped, so a retried drop can neither duplicate pending
+mail nor resurrect a resolved or bulk-archived message, and an intake that
+accepts nothing writes nothing. The report counts `accepted`, `duplicates`
+and the resulting `pending` depth — never message contents. KILL and the
+comms pause gate sends only; intake is local record-keeping and is not
+gated by them.
 
 `--lanes` is the candidate set. Omit it and the run reports no lane rather
 than picking one. The run report lists each inbox message's mail class and
@@ -110,7 +128,7 @@ MCP tools: `ashlr_comms_agent_status`, `ashlr_comms_agent_drafts`, and
 The inbox, archive, send log, owner-thread notices and run journal live under
 `~/.ashlr-runs/comms-agent/`
 (or `--dir`). Those files must not be symlinks. The inbox is rewritten
-atomically. Standing approvals stay at the fixed owner path:
+atomically by `intake` and by each `run` pass. Standing approvals stay at the fixed owner path:
 
 ```json
 { "owners": ["you@example.com"], "approvals": [{ "transport": "email", "recipient": "known@example.com" }] }

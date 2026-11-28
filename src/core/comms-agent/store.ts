@@ -235,6 +235,27 @@ export async function appendArchive(runsDir: string, message: Record<string, unk
   await appendPrivate(runsDir, 'archive.jsonl', JSON.stringify(message));
 }
 
+/** Every id the archive already holds. Intake dedupes against it so a
+ * re-delivered message can never resurrect a resolved or bulk-archived row
+ * into the pending inbox. Bad lines are skipped like every append-only log;
+ * an absent archive is a verified-empty set, never an error. */
+export async function readArchiveIds(runsDir: string): Promise<Set<string>> {
+  const text = await readPrivate(runsDir, 'archive.jsonl');
+  const ids = new Set<string>();
+  if (text === null) return ids;
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const id = (parsed as Record<string, unknown>).id;
+        if (typeof id === 'string' && id !== '') ids.add(id);
+      }
+    } catch { /* skip a bad line */ }
+  }
+  return ids;
+}
+
 function isDraft(value: unknown): value is CommsDraft {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const draft = value as Record<string, unknown>;
