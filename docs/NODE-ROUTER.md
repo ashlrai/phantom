@@ -548,7 +548,10 @@ tool runners), measured with `ps`, or with `pgrep` and `footprint` where `ps` is
 denied. macOS reads `vm_stat`, `memory_pressure` and `sysctl`; Linux reads
 `/proc/meminfo` (MemAvailable and swap), `/proc/pressure/memory` PSI `some
 avg10` — the same bands host admission applies — and `/proc/vmstat` `pswpout`.
-A platform or file with no reader reports unknown, never normal. Memory
+Windows has no reader for load average, memory pressure or swap, and
+`os.loadavg()`'s `[0,0,0]` stub there is not a measurement: `cpu.load_*`,
+`cpu.run_queue_per_core`, `mem_free.pressure_level` and the swap fields stay
+null. A platform or file with no reader reports unknown, never normal. Memory
 headroom is the memory above memguard's raise line (30% free).
 CPU headroom is 85% of cores minus busy cores. Measured zero CPU headroom
 blocks placements even when CPU cost per session is unknown or recorded as zero.
