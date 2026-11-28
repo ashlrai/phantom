@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { cmdFleetUnfed } from '../src/cli/fleet-unfed.js';
 import { currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides, foldRouteRejections, foldUnfedHistory, readyHints, renderUnfed } from '../src/core/fleet/unfed-capacity.js';
+import { readUnfedReport } from '../src/core/fleet/unfed-read.js';
+import { buildFleetResourcePlan } from '../src/core/usage/resource-live/fleet-plan.js';
 
 let dir: string;
 const saved = process.env.ASHLR_RUNS_DIR;
@@ -51,6 +53,35 @@ describe('readyHints', () => {
     const hints = readyHints(READY + '\nRQ-SHORT\tphantom\tcodex-cmp');
     expect(hints.waiting).toBe(4);
     expect(Object.fromEntries(hints.byLane)).toEqual({ 'codex-personal': 3, 'codex-cmp': 1 });
+  });
+});
+
+describe('unfed resource-plan comparison', () => {
+  it.each([
+    { elsewhere: [], expected: 0 },
+    { elsewhere: ['RQ-X', 'RQ-Y', 'RQ-Z'], expected: 1 },
+  ])('credits lane-open rows before estimating reroutes ($expected slots)', async ({ elsewhere, expected }) => {
+    const now = Date.parse('2026-11-26T12:00:00Z');
+    const status = { schema: 'dispatchd.status.v1', last_tick: new Date(now).toISOString(), lanes: LANES };
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify(status));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), [
+      row('RQ-OPEN', ''),
+      row('RQ-OPEN', 'codex-personal'),
+      row('RQ-HERE', 'codex-cmp'),
+      ...elsewhere.map(job => row(job, 'codex-personal')),
+    ].join('\n'));
+    const plan = buildFleetResourcePlan(null, [], status, { text: null, truncated: false, missing: true }, now);
+    const lane = plan.lanes.find(entry => entry.lane === 'codex-cmp')!;
+    const report = await readUnfedReport({
+      runsDir: dir,
+      now: () => now,
+      readCapacity: async () => ({
+        ...plan,
+        lanes: [{ ...lane, target_concurrency: 4, additional_slots: 3 }],
+      }),
+    });
+    expect(report.statusFresh).toBe(true);
+    expect(report.resourcePlan).toEqual([{ lane: 'codex-cmp', running: 1, target: 4, unfedSlots: expected }]);
   });
 });
 

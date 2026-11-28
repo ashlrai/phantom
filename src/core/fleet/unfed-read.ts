@@ -119,13 +119,15 @@ export async function readUnfedReport(options: UnfedReadOptions = {}): Promise<U
     throw error;
   }
   const advisory = capacity && ready !== null && current.statusFresh ? readyHints(ready, routerQueue) : null;
+  const openReady = advisory?.byLane.get('') ?? 0;
   return {
     ...current,
     resourcePlan: capacity?.lanes.map(({ lane, running, target_concurrency, additional_slots }) => {
       const readyHere = advisory?.byLane.get(lane) ?? 0;
+      const availableHere = readyHere + openReady;
       return { lane, running, target: target_concurrency,
         unfedSlots: advisory === null || additional_slots === null ? null
-          : Math.min(Math.max(0, additional_slots - readyHere), advisory.waiting - readyHere) };
+          : Math.min(Math.max(0, additional_slots - availableHere), advisory.waiting - availableHere) };
     }) ?? null,
     marketTruncated: marketRead?.truncated ?? false,
     history: foldUnfedHistory(history, nowMs, window),
