@@ -117,7 +117,8 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
-    if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
+    if (!job.owner || !routable(job, now)) continue;
+    const visible = owner === undefined || job.owner === owner;
     const reasons = new Map<string, number>();
     let best: NodeRecord | null = null;
     for (const node of nodes) {
@@ -138,9 +139,10 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       if (host) reserved.set(host.hostId, (reserved.get(host.hostId) ?? 0) + 1);
       load.set(best.nodeId, load.get(best.nodeId)! + CLAIM_LOAD);
       claims.set(best.nodeId, claims.get(best.nodeId)! + 1);
-      plan.push({ jobId: job.id, owner: job.owner, nodeId: best.nodeId });
+      if (visible) plan.push({ jobId: job.id, owner: job.owner, nodeId: best.nodeId });
       continue;
     }
+    if (!visible) continue;
     const requires = job.requires ?? [];
     const fix = !nodes.some(n => n.owners?.includes(job.owner!))
       ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
