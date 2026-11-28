@@ -53,7 +53,7 @@ or model explicitly. No eligible resource means setup is still incomplete.
 Fleet activation is a separate, optional step after this first interactive task.
 See the [first-session guide](VERSE.md#first-local-session) for the same checklist.
 To lend a computer's compute to the fleet, see
-[Add a computer in 60 seconds](add-a-computer.md): each machine joins with its
+[Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md): each machine joins with its
 own sign-in and jobs carry secret names, never values.
 
 <a id="open-verse"></a>
