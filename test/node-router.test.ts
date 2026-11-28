@@ -54,6 +54,21 @@ describe('node router', () => {
     expect(nodes).toEqual(['a', 'b', 'a', 'b']);
   });
 
+  it('counts claims from other owners against a slot only for the live session', () => {
+    const f = fixture();
+    const a = f.box.join('a', { owners: ['alpha', 'beta'], slots: 1 })!;
+    f.mac.join('b', { owners: ['beta'] });
+    f.box.enqueue('alpha-job', { owner: 'alpha' });
+    expect(f.box.pull(a)?.job.id).toBe('alpha-job');
+    f.box.enqueue('beta-job', { owner: 'beta' });
+    expect(f.box.plan('beta')).toMatchObject([{ jobId: 'beta-job', nodeId: 'b' }]);
+
+    expect(f.box.leave(a)).toBe(true);
+    const replacement = f.box.join('a', { owners: ['alpha', 'beta'], slots: 1 })!;
+    expect(f.box.plan('beta')).toMatchObject([{ jobId: 'beta-job', nodeId: 'a' }]);
+    expect(f.box.pull(replacement)?.job.id).toBe('beta-job');
+  });
+
   it('requires a live local gh-auth heartbeat for gh jobs and explains the fix', () => {
     const f = fixture();
     const s = f.box.join('n', { owners: ['o'], caps: ['gh'] })!;

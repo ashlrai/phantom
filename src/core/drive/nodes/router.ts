@@ -42,11 +42,6 @@ export function actionableClaim(state: NodesState, job: QueueJobV1, now: number)
     state.nodes.some(n => n.expiresAt > now && n.nodeId === claim.nodeId && n.session === claim.session);
 }
 
-function activeClaims(state: NodesState, node: NodeRecord, now: number): number {
-  return state.jobs.filter(j => j.state === 'running' && j.claim && j.claim.expiresAt > now &&
-    j.claim.nodeId === node.nodeId && j.claim.session === node.session).length;
-}
-
 /** Capability fences every assignment path honors: a session that released the
  * job unrun is never offered it again, advertised caps must cover `requires`,
  * and `gh` work needs a live local auth heartbeat. Owner scope is routing's
@@ -157,14 +152,18 @@ function authFix(job: QueueJobV1, nodes: NodeRecord[], state: NodesState): strin
  * owner scope are never routed, so a legacy job cannot leak across scopes.
  */
 export function planRoutes(state: NodesState, now: number, owner?: string): RouteAssignment[] {
-  const capacity = nodeCapacityView(state, now);
+  const capacity = state.pool ? nodeCapacityView(state, now) : [];
   const hosts = new Map(capacity.flatMap(h => h.nodeIds.map(id => [id, h] as const)));
   const measuredLatency = capacity.map(h => h.latency.medianMs).filter((n): n is number => n !== null && n > 0);
   const neutralLatency = measuredLatency.length ? measuredLatency.reduce((a, b) => a + b, 0) / measuredLatency.length : 1;
   const reserved = new Map<string, number>();
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
-  const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n, now)]));
-  const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
+  const sessions = new Map(nodes.map(n => [n.nodeId, n.session]));
+  const claims = new Map(nodes.map(n => [n.nodeId, 0]));
+  for (const { state: jobState, claim } of state.jobs) {
+    if (jobState !== 'running' || !claim || claim.expiresAt <= now || sessions.get(claim.nodeId) !== claim.session) continue;
+    claims.set(claim.nodeId, claims.get(claim.nodeId)! + 1);
+  }
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
@@ -179,7 +178,8 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
           (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) { reasons.set('capacity', 1); continue; }
       const score = (n: NodeRecord) => {
         const h = hosts.get(n.nodeId)!;
-        return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency) : -load.get(n.nodeId)!;
+        return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency)
+          : -((n.usage ?? 0) + CLAIM_LOAD * claims.get(n.nodeId)!);
       };
       if (!best || score(node) > score(best) ||
           (state.pool && host === hosts.get(best.nodeId) &&
@@ -188,7 +188,6 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
     if (best) {
       const host = hosts.get(best.nodeId);
       if (host) reserved.set(host.hostId, (reserved.get(host.hostId) ?? 0) + 1);
-      load.set(best.nodeId, load.get(best.nodeId)! + CLAIM_LOAD);
       claims.set(best.nodeId, claims.get(best.nodeId)! + 1);
       plan.push({ jobId: job.id, owner: job.owner, nodeId: best.nodeId });
       continue;
