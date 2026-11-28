@@ -1,0 +1,15 @@
+/* Lane throughput: one row per lane, its name and count on one line, the bar under them. Reads the same in a narrow dock column and a wide one. */
+.heading { margin: 0 0 var(--space-2); color: var(--text-secondary); font-size: var(--text-xs-size); }
+.message { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.list { display: flex; flex-direction: column; gap: var(--space-1); margin: var(--space-2) 0; padding: 0; list-style: none; }
+.lane { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; min-width: 0; padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; font-size: var(--text-xs-size); text-align: start; cursor: pointer; }
+.lane:hover { background: var(--bg-surface); }
+.lane:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
+.top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.name { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; color: var(--text-primary); font-weight: var(--font-weight-semibold); overflow-wrap: anywhere; }
+.facts { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.facts[data-unknown] { font-style: italic; }
+.track { display: block; height: var(--space-1); overflow: hidden; border-radius: var(--radius-sm); background: var(--meter-track); }
+/* No count: hatched, so an unknown lane never looks like one that merged nothing. */
+.track[data-unknown] { background: repeating-linear-gradient(135deg, var(--status-unknown-solid) 0 2px, transparent 2px 6px); }
+.fill { display: block; height: 100%; border-radius: inherit; background: var(--data-seq-4); transition: width var(--duration-slow) ease-out; }
