@@ -187,12 +187,14 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
     // sign-in probe does not cover, so a member whose tools are aider, gemini
     // or the other measured harnesses sees concrete --caps names instead of a
     // dead end. File presence only — "installed" never claims a sign-in, and
-    // --caps replaces the whole advertisement, so the example keeps the
-    // sign-in lanes the auto-detect already found.
+    // --caps replaces the whole advertisement. The suggested command keeps the
+    // sign-in lanes only when the probe found some: an empty autoCaps means
+    // there is nothing to keep, and saying so would contradict the line above.
     const installed = out['installedClis'] as string[] | undefined;
     if (installed !== undefined && installed.length > 0) {
       const all = [...new Set([...(auto ?? []), ...installed])].sort();
-      lines.push(`Agent CLIs installed on this machine that --caps can advertise: ${installed.join(', ')}. Installed is not signed in — each CLI still needs its own login. --caps replaces the whole set, so to keep the sign-in lanes too: --caps ${all.join(',')}`);
+      const keep = auto !== undefined && auto.length > 0;
+      lines.push(`Agent CLIs installed on this machine that --caps can advertise: ${installed.join(', ')}. Installed is not signed in — each CLI still needs its own login. --caps replaces the whole set, so ${keep ? 'to keep the sign-in lanes too' : 'to advertise them'}: --caps ${all.join(',')}`);
     }
     // gh is advertised but this machine's login is not verified ok: name the
     // state and the fix at join — where `gh auth login` is still cheap —
