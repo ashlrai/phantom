@@ -78,7 +78,7 @@ describe('AppsSection — layout', () => {
     // Each account leads with a sentence-case status; signed out says what to do.
     expect(within(accounts).getByText('Signed out')).toBeInTheDocument();
     expect(within(accounts).getByText('· reconnect to use it')).toBeInTheDocument();
-    expect(within(accounts).getByRole('img', { name: /Claude Max weekly fable window: 92% used; 40% kept for you/ })).toBeInTheDocument();
+    expect(within(accounts).getByRole('meter', { name: 'Claude Max weekly fable window' }).getAttribute('aria-valuetext')).toMatch(/^92% used; 40% kept for you/);
     // Signed out → Reconnect; skewed CLI → Fix; every paid seat → Edit budget.
     expect(within(accounts).getByRole('button', { name: 'Reconnect: Grok' })).toBeInTheDocument();
     expect(within(accounts).getByRole('button', { name: 'Fix: Claude Max' })).toBeInTheDocument();

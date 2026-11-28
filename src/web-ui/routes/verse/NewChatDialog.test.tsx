@@ -123,7 +123,7 @@ describe('NewChatDialog — capacity at the point of choice', () => {
     // 3.10: the dialog mounts THE shared capacity strip (usage/CapacityStrip), for the chosen seat only.
     const strip = screen.getByRole('region', { name: 'Claude Max capacity' });
     expect(within(strip).getByText('max')).toBeInTheDocument();
-    expect(within(strip).getByRole('img', { name: /^Claude Max weekly fable window: 92% used/ })).toBeInTheDocument();
+    expect(within(strip).getByRole('meter', { name: 'Claude Max weekly fable window' }).getAttribute('aria-valuetext')).toMatch(/^92% used/);
     expect(within(strip).getAllByText('resets Sep 25 at 7pm (America/New_York)').length).toBeGreaterThan(0);
     expect(within(strip).getByText('tight')).toBeInTheDocument();
   });
@@ -145,10 +145,16 @@ describe('NewChatDialog — capacity at the point of choice', () => {
   it('does not treat measured windows without original quota expiry as current', () => {
     const seat = { ...CLAUDE_TIGHT_SEAT, capacity: { ...CLAUDE_TIGHT_SEAT.capacity!, quotaExpiresAt: undefined } };
     render(<NewChatDialog initialManual open onClose={() => {}} projects={boot.projects} seats={[seat]} onCreate={() => {}} />);
-    expect(screen.getAllByRole('img', { name: /last reading; current usage and resets unconfirmed/ })).toHaveLength(2);
-    expect(screen.getByRole('img', { name: /weekly window:.*last reading; current usage and resets unconfirmed/ })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: /weekly fable window:.*last reading; current usage and resets unconfirmed/ })).toBeInTheDocument();
-    expect(screen.queryByRole('img', { name: /5.hour window/ })).not.toBeInTheDocument();
+    const meters = screen.getAllByRole('meter');
+    expect(meters).toHaveLength(2);
+    for (const name of [/weekly window$/, /weekly fable window$/]) {
+      const meter = screen.getByRole('meter', { name });
+      expect(meter.getAttribute('aria-valuetext')).toMatch(/last reading; current usage and resets unconfirmed$/);
+      // A reading that is no longer current is a hatched track with no number behind it.
+      expect(meter).toHaveAttribute('data-unread');
+      expect(meter).not.toHaveAttribute('aria-valuenow');
+    }
+    expect(screen.queryByRole('meter', { name: /5.hour window/ })).not.toBeInTheDocument();
     expect(screen.queryByText('Usable now')).not.toBeInTheDocument();
     expect(screen.queryByText(/^0%$/)).not.toBeInTheDocument();
   });
@@ -156,7 +162,7 @@ describe('NewChatDialog — capacity at the point of choice', () => {
   it('draws no meter for a seat nothing was read from', () => {
     render(<NewChatDialog initialManual open onClose={() => {}} projects={boot.projects} seats={[UNREAD_SEAT]} onCreate={() => {}} />);
     // Absence drawn as absence: never a 0% bar.
-    expect(screen.queryByRole('img', { name: /% used/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('meter')).not.toBeInTheDocument();
     expect(screen.queryByText('0%')).not.toBeInTheDocument();
   });
 });
