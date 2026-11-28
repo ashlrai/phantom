@@ -18,7 +18,7 @@
 import { readSlackJournal, type SlackJournalRead, type SlackObservation } from './slack-journal.js';
 import { isSlackChannelId, isSlackTs } from './slack-network.js';
 import { readSlackSendReceipts, type SlackSendReceiptRead } from './slack-send-receipts.js';
-import { bindSlackReplies, type InboundRequest, type SentReceipt, type SlackReplyBinding } from './slack-reply-binding.js';
+import { bindSlackReplies, type InboundRequest, type SentReceipt } from './slack-reply-binding.js';
 
 export type SlackTraceIngress = 'posted' | 'duplicate' | 'failed' | 'unknown';
 export type SlackTraceOutcome = 'answered' | 'uncertain' | 'bus-failed' | 'unanswered';
@@ -83,13 +83,9 @@ export function traceSlackRequests(input: {
       ingress: entry.bus ?? 'unknown',
     });
   }
-  // Every ingested row stays in the trace. Failed rows are bound separately so
-  // they keep their reply evidence; the binder shares one verdict between
-  // duplicate journal rows of the same request id.
-  const bind = (ingress: (i: SlackTraceIngress) => boolean): SlackReplyBinding =>
-    bindSlackReplies({ requests: pending.filter((p) => ingress(p.ingress)).map((p) => p.req), receipts, now });
-  const binding = bind((i) => i !== 'failed');
-  const failedBinding = bind((i) => i === 'failed');
+  // Bind all observations together so conflicting identities share one verdict,
+  // including when one observation failed its bus append.
+  const binding = bindSlackReplies({ requests: pending.map((p) => p.req), receipts, now });
   const nowMs = now.getTime();
   const eligible = (req: InboundRequest): boolean =>
     isSlackChannelId(req.channelId) && isSlackTs(req.messageTs) && isSlackTs(req.threadTs) &&
@@ -100,7 +96,7 @@ export function traceSlackRequests(input: {
     const { requestId, ...evidence } = req;
     const row: SlackTraceRow = { ...evidence, ingress, outcome: 'unanswered' };
     const found = requestId !== undefined && eligible(req)
-      ? (ingress === 'failed' ? failedBinding : binding).byRequestId.get(requestId) : undefined;
+      ? binding.byRequestId.get(requestId) : undefined;
     if (ingress === 'failed') {
       row.outcome = 'bus-failed';
       if (found?.replyTs !== undefined) row.replyTs = found.replyTs;
