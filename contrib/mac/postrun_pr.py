@@ -9,13 +9,14 @@ module once per job. Nothing is added to the sandbox and no credential is copied
 Usage (spawned by dispatchd, never by a lane): postrun_pr.py <job-id>
 
 What it does, in order, all idempotent:
-  1. confirm no PR exists for masonwyatt23:codex-bridge/<job> (any state) -> if one does, record it and stop;
-  2. run the unchanged bin/publish.sh <job> (fork-only push, gh pr create, auto-merge via the repo's normal path);
-  3. record the outcome in <queue>/run/<job>.postrun.json and append one line per action to ~/.ashlr-runs/dispatchd.log.
+  1. for fork-target-invalid, verify the fixed fork identity and parent, preserving the kept diff;
+  2. confirm no PR exists for masonwyatt23:codex-bridge/<job> (any state) -> if one does, record it and stop;
+  3. run the unchanged bin/publish.sh <job> (fork-only push, gh pr create, auto-merge via the repo's normal path);
+  4. record the outcome in <queue>/run/<job>.postrun.json and append one line per action to ~/.ashlr-runs/dispatchd.log.
 It never pushes, merges or creates a PR itself, so every existing publish.sh guard (git-safe pin, secret scrub, scope
 stage, fork target check, sensitive-path no-auto-merge) still applies. A failed lookup fails closed (no publish).
 """
-import json, os, re, subprocess, sys, time
+import fcntl, json, os, re, subprocess, sys, time
 
 FORK_OWNER = "masonwyatt23"
 UPSTREAM_OWNER = "ashlrai"
@@ -23,7 +24,8 @@ REPOS = ("phantom", "phantom-secrets", "ashlr-plugin", "locus", "lexicon", "ashl
 JID = re.compile(r"^[A-Za-z0-9._-]+$")
 PUBLISH_TIMEOUT_S = 900
 LOOKUP_TIMEOUT_S = 60
-MAX_ATTEMPTS = 3   # lookup failures only; a publish outcome (any RESULT line) is final for the job
+MAX_ATTEMPTS = 3   # lookup/target verification failures only; a publish outcome (any RESULT line) is final for the job
+FORK_ABORT = "RESULT ABORT fork-target-invalid"
 OFF_SWITCH = "POSTRUN_PR_OFF"   # touch ~/.ashlr-runs/POSTRUN_PR_OFF to disable
 PUBLISH_POLICY_ENV = (
     "PUBLISH_FULL_TESTS",
@@ -34,8 +36,8 @@ PUBLISH_POLICY_ENV = (
 
 
 def eligible(res):
-    """Only a publish that found nothing to publish qualifies; no result yet belongs to reap-one.sh, a PR is done."""
-    return bool(res) and res.startswith("RESULT EMPTY")
+    """Recover empty publishes or the exact fork gate failure; every other abort stays held."""
+    return bool(res) and (res.startswith("RESULT EMPTY") or res == FORK_ABORT)
 
 
 def child_env(home, parent=os.environ):
@@ -79,9 +81,35 @@ def last_result(runs, job):
     return rows[-1] if rows else ""
 
 
+def verified_fork(repo, run, env):
+    """Match publish.sh's fixed target exactly; API failure, redirect or wrong parent stays held."""
+    try:
+        r = run(["gh", "api", "repos/%s/%s" % (FORK_OWNER, repo)],
+                capture_output=True, text=True, timeout=LOOKUP_TIMEOUT_S, env=env, stdin=subprocess.DEVNULL)
+        data = json.loads(r.stdout) if r.returncode == 0 else None
+        return (isinstance(data, dict) and data.get("full_name") == "%s/%s" % (FORK_OWNER, repo)
+                and data.get("fork") is True and isinstance(data.get("parent"), dict)
+                and data["parent"].get("full_name") == "%s/%s" % (UPSTREAM_OWNER, repo))
+    except (OSError, ValueError, subprocess.SubprocessError): return False
+
+
 def main(argv, home=None, run=subprocess.run):
-    home = home or os.path.expanduser("~"); runs = home + "/.ashlr-runs"; run_dir = runs + "/queue/run"
-    if len(argv) != 1 or not JID.match(argv[0]) or ".." in argv[0]: print("usage: postrun_pr.py <job-id>", file=sys.stderr); return 2
+    """Serialize duplicates and honor terminal receipts even when called outside dispatchd."""
+    home = home or os.path.expanduser("~")
+    if len(argv) != 1 or not JID.fullmatch(argv[0]) or ".." in argv[0]: return 2
+    run_dir = home + "/.ashlr-runs/queue/run"
+    try:
+        fd = os.open("%s/%s.postrun.lock" % (run_dir, argv[0]), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as lock:
+            try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError: return 3
+            if os.path.lexists("%s/%s.postrun.json" % (run_dir, argv[0])): return 0
+            return publish_once(argv, home, run)
+    except OSError: return 1
+
+
+def publish_once(argv, home, run):
+    runs = home + "/.ashlr-runs"; run_dir = runs + "/queue/run"
     job = argv[0]
     if os.path.exists(runs + "/" + OFF_SWITCH): note(runs, "skip %s off-switch" % job); return 0
     try:
@@ -89,22 +117,31 @@ def main(argv, home=None, run=subprocess.run):
     except (OSError, IndexError): note(runs, "skip %s no-job-record" % job); return 1
     if repo not in REPOS: note(runs, "skip %s repo-not-allowlisted" % job); return 1
     env = child_env(home)
+    res = last_result(runs, job)
+    recovery = res == FORK_ABORT
+    classification = {"failure_class": "abort_fork-target-invalid"} if recovery else {}
+    if res and not eligible(res): return 1
+    if recovery and not verified_fork(repo, run, env):
+        note(runs, "held %s abort_fork-target-invalid target-unverified; worktree kept" % job)
+        return 3
     url = existing_pr(repo, job, run, env)
     if url is None:
         note(runs, "skip %s pr-lookup-failed (nothing published)" % job); return 3
     if url:
-        record(run_dir, job, "exists", pr=url); note(runs, "exists %s %s (not republished)" % (job, url)); return 0
+        record(run_dir, job, "exists", pr=url, **classification); note(runs, "exists %s %s (not republished)" % (job, url)); return 0
+    if recovery:
+        record(run_dir, job, "retrying", failure_class="abort_fork-target-invalid")
     note(runs, "publish %s no PR for %s:codex-bridge/%s; running publish.sh" % (job, FORK_OWNER, job))
     try:
         run(["/bin/bash", runs + "/bin/publish.sh", job], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             timeout=PUBLISH_TIMEOUT_S, env=env, stdin=subprocess.DEVNULL)   # publish.sh writes its own <job>.publish
     except (OSError, subprocess.SubprocessError) as e:
-        record(run_dir, job, "publish-error", error=type(e).__name__); note(runs, "error %s publish.sh %s" % (job, type(e).__name__)); return 1
+        record(run_dir, job, "publish-error", error=type(e).__name__, **classification); note(runs, "error %s publish.sh %s" % (job, type(e).__name__)); return 1
     res = last_result(runs, job)
     m = re.match(r"RESULT PR (https://github\.com/%s/%s/pull/[1-9][0-9]*)" % (UPSTREAM_OWNER, re.escape(repo)), res)
     if m:
-        record(run_dir, job, "published", pr=m.group(1), result="RESULT PR"); note(runs, "published %s %s" % (job, m.group(1))); return 0
-    record(run_dir, job, "no-pr", result=" ".join(res.split()[:3]) or "none")
+        record(run_dir, job, "published", pr=m.group(1), result="RESULT PR", **classification); note(runs, "published %s %s" % (job, m.group(1))); return 0
+    record(run_dir, job, "no-pr", result=" ".join(res.split()[:3]) or "none", **classification)
     note(runs, "no-pr %s %s" % (job, " ".join(res.split()[:3]) or "no RESULT line")); return 1
 
 
