@@ -267,15 +267,13 @@ describe('ready.tsv -> node router bridge', () => {
       { id: 'worker', caps: READ, slots: 3 },
     ]);
     const capacity = { hostId: 'shared-host', ramBytes: 8 * 1024 ** 3, slots: 2, held: null, sampledAtMs: 1_000_000 };
-    f.nodes.heartbeat(f.sessions.get('capped')!, { capacity });
-    f.nodes.heartbeat(f.sessions.get('worker')!, { capacity });
-    f.nodes.heartbeat(f.sessions.get('capped')!, { slots: 0 });
-    f.nodes.heartbeat(f.sessions.get('worker')!, { slots: 3 });
+    f.nodes.heartbeat(f.sessions.get('capped')!, { capacity, slots: 0 });
+    f.nodes.heartbeat(f.sessions.get('worker')!, { capacity, slots: 3 });
 
     const report = await f.pass(false);
     expect(report.nodes).toMatchObject([
-      { nodeId: 'capped', freeSlots: 0 },
-      { nodeId: 'worker', freeSlots: 2 },
+      { nodeId: 'capped', slots: 0, freeSlots: 0 },
+      { nodeId: 'worker', slots: 3, freeSlots: 2 },
     ]);
     expect(report.rows).toMatchObject([
       { offload: true, nodeId: 'worker' },
