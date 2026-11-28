@@ -1,0 +1,12 @@
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 81ea97063ab..4265df2b288 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -202,6 +202,7 @@ To install the CLI while developing:
+ | `npm run typecheck:fast` | The same two projects through `tsgo`, the native compiler; what `npm run gate` phase A runs |
+ | `npm run gate` | Fast local gate: build, static checks, the tests related to your diff and the smoke set, against the merge-base with `origin/master`; `-- --base <ref>` picks another base and `-- --json` prints a machine-readable result. Local feedback only; it never pushes or contacts model providers |
+ | `npm run gate:full` | The same static checks, then the complete backend and web suites |
++| `npm run test:fast` | Run the backend `unit` project through the `test:ci` runner and write per-file durations to `.ashlr-gate/test-fast-durations.json`, warning on files over 20 seconds |
+ | `npm run check:quarantine` | Validate `queue/quarantine.tsv`; with `-- --base origin/master`, also require a live ledger row for every skip marker your diff adds and refuse an added `.only` |
+ | `npm run authority:regen` | After authority drift, regenerate `.github/CODEOWNERS` and the Tier-1 closure snapshot (`test/fixtures/authority/tier1-closure.json`) and print what changed; list each new Tier-1 root in the pull request body |
+ | `npm run install:worktree` | Shared pnpm install for trusted local worktrees (see [Shared installs](#shared-installs-for-trusted-local-worktrees)) |
