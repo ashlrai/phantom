@@ -7,7 +7,7 @@ import { typecheckArgs } from '../scripts/ci-os-typecheck.mjs';
 import { Buffer } from 'node:buffer';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
@@ -53,6 +53,12 @@ test('docs and unrelated source skip the OS legs; scripts, manifests, workflows,
   assert.equal(diffNeedsOsLegs(['src/cli/index.ts', '.github/workflows/ci.yml']), true);
 });
 
+test('changing the install smoke runner selects the cross-platform install jobs', () => {
+  const filter = readFileSync(new URL('../path-filters/phantom.yml', import.meta.url), 'utf8');
+  const installBlock = /^xplat_install:\r?\n((?:^[ \t]+.*\r?\n|^\r?\n)*)/m.exec(filter)?.[1];
+  assert.match(installBlock ?? '', /^  - \.github\/scripts\/ci-install-smoke\.mjs\r?$/m);
+});
+
 test('an OS gate passes on success or a path-gate skip and fails on failure or cancellation', () => {
   assert.equal(osGateDecision({ fast: { result: 'success' }, smoke: { result: 'skipped' } }).ok, true);
   assert.equal(osGateDecision({ fast: { result: 'failure' }, smoke: { result: 'success' } }).ok, false);
@@ -73,6 +79,47 @@ test('the install smoke names the published package and looks up phm per OS', ()
   const candidates = phmCandidates('/tmp/prefix');
   assert.ok(candidates.some((candidate) => candidate.endsWith('phm') || candidate.endsWith('phm.cmd')));
 });
+
+for (const ignoreScripts of ['false', 'true']) {
+  test(`commit smoke runs the real npm prepack build exactly once (ignore-scripts=${ignoreScripts})`, (t) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'phantom-prepack-fixture-')));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const relativeScript = '.github/scripts/ci-install-smoke.mjs';
+    const script = join(root, relativeScript);
+    mkdirSync(join(root, '.github', 'scripts'), { recursive: true });
+    writeFileSync(script, readFileSync(new URL('../scripts/ci-install-smoke.mjs', import.meta.url)));
+    const manifest = {
+      name: 'phantom-prepack-fixture', version: '1.2.3', files: ['dist'], bin: { phm: 'dist/phm.js' },
+      scripts: { build: 'node build.cjs', prepack: 'npm run build' },
+    };
+    const manifestPath = join(root, 'package.json');
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    writeFileSync(join(root, 'build.cjs'), `
+      const { appendFileSync, mkdirSync, writeFileSync } = require('node:fs');
+      appendFileSync('build-count', 'build\\n');
+      mkdirSync('dist', { recursive: true });
+      writeFileSync('dist/phm.js', '#!/usr/bin/env node\\nconsole.log("1.2.3");\\n');
+    `);
+    const runCommit = () => spawnSync(process.execPath, [script, 'commit'], {
+      cwd: root,
+      env: { ...process.env, GITHUB_STEP_SUMMARY: '', RUNNER_TEMP: root,
+        npm_config_cache: join(root, 'npm-cache'), npm_config_offline: 'true', npm_config_ignore_scripts: ignoreScripts },
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    const result = runCommit();
+    assert.equal(result.status, 0, result.error?.message ?? result.stderr);
+    assert.match(result.stdout, /^phm --version 1\.2\.3\r?$/m);
+    assert.equal(readFileSync(join(root, 'build-count'), 'utf8'), 'build\n');
+
+    delete manifest.scripts.prepack;
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    const missingPrepack = runCommit();
+    assert.equal(missingPrepack.status, 1);
+    assert.match(missingPrepack.stderr, /commit smoke requires prepack to run npm run build/);
+    assert.equal(readFileSync(join(root, 'build-count'), 'utf8'), 'build\n');
+  });
+}
 
 test('the published tarball is rejected before install when its checksum is missing or wrong', () => {
   const bytes = Buffer.from('phantom-release-bytes');

@@ -3,6 +3,8 @@
 # Neither filter is a required check. signer_proof has no job in this repo yet.
 
 xplat_install:
+  # Changes to the smoke runner must exercise the installed package on every OS.
+  - .github/scripts/ci-install-smoke.mjs
   # Root installer: ./install.sh builds Phantom and links phm into ~/.local/bin.
   - install.sh
   # Installed CLI shim the root installer and npm pack both publish.
