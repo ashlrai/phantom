@@ -1,6 +1,9 @@
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 import { groupAddressTopicOf, isGroupPresenceBody } from './bus-group.js';
 import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
+import { AGENT_MESSAGE_KINDS, classify, parseSince, type AgentMessageKind } from './agent-messages.js';
+import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
+import { BUS_PRIORITIES, type BusPriority } from './bus-envelope.js';
 
 export interface FleetEdgeEndpoint { address: string; provider: string | null }
 export interface FleetEdge { from: FleetEdgeEndpoint; to: FleetEdgeEndpoint; messages: number; messagesLastHour: number; lastAt: number }
@@ -42,6 +45,47 @@ export interface FleetEdgeRoomFilter {
   topic?: string;
 }
 
+/**
+ * The shared row-slice filters every bus read applies before its projection —
+ * the same bounds `phm messages`, `agents bus inbox`, `comms bus read|watch`,
+ * `fleet bus-follow` and the work feed enforce on their rows, applied to the
+ * receipts before they aggregate into links. An edge is an aggregate, never
+ * one receipt, so the per-envelope filters (`id`, `inReplyTo`) stay out: no
+ * row-level predicate can keep "the link envelope X rode" without collapsing
+ * the projection to that one message, which `agents bus show` already serves.
+ */
+export interface FleetEdgeSlice {
+  /** Keep only receipts received at or after this epoch-ms cutoff — the same
+   * inclusive `receivedAt >= since` bound every bus read's `--since` applies. */
+  since?: number;
+  /** Keep only receipts received strictly before this epoch-ms cutoff — the
+   * same exclusive `receivedAt < before` bound every bus read's `--before`
+   * applies, composing with `since` into one `[since, before)` window and
+   * with `windowMinutes` into the intersection of both bounds. */
+  before?: number;
+  /** Keep only receipts stamped with this exact P0..P3 band — the envelope's
+   * own priority, the same match every bus read's `--priority` applies. */
+  priority?: BusPriority;
+  /** Keep only receipts `classify` files under this agent-message kind — the
+   * same classified-kind match `phm messages --kind` applies, so "which
+   * links carried handoff traffic" reads the same vocabulary the timeline
+   * projection reports. */
+  kind?: AgentMessageKind;
+  /** Keep only receipts whose body names this job — the same
+   * `busBodyJobMatch` rule every bus read's `--job` applies (a feed-citing
+   * `jobId`, a `worker-handoff` `taskId` or a `job:<id>` thread label), so
+   * "which agents exchanged traffic about job X" is one filtered read. */
+  job?: string;
+  /** Keep only receipts whose scrubbed one-line summary carries this needle
+   * as a case-insensitive substring — the same `busReadContainsMatch` rule
+   * every bus read's `--contains` applies over the rendered summary, never
+   * the raw body, so a secret-shaped value stays unfindable. The projection
+   * normalizes the needle (lowercase, whitespace collapsed) the same way
+   * `matchAgentMessages` does, so callers pass the user's text, not a
+   * pre-lowercased form. */
+  contains?: string;
+}
+
 export interface FleetEdgesOptions extends BusInboxOptions {
   /** Trailing window in minutes; same 1..1440 bound `projectFleetEdges` enforces. */
   windowMinutes?: number;
@@ -71,6 +115,19 @@ export interface FleetEdgesOptions extends BusInboxOptions {
    * match every other bus read's `--topic` applies; composes with `channel`.
    */
   topic?: string;
+  /**
+   * The shared row-slice fields (`--since`/`--before`/`--priority`/`--kind`/
+   * `--job`/`--contains`) flattened onto the options — each narrows the
+   * receipt set before aggregation under the same rule its bus-read sibling
+   * applies, composing conjunctively with `windowMinutes`, `from`/`to` and
+   * `channel`/`topic`. See `FleetEdgeSlice` for each field's bound.
+   */
+  since?: number;
+  before?: number;
+  priority?: BusPriority;
+  kind?: AgentMessageKind;
+  job?: string;
+  contains?: string;
 }
 
 /** The transport dead-letter sink (docs/AGENT-BUS.md "Dead letters"): the
@@ -87,9 +144,13 @@ export const agentToAgent = (envelope: BusInboxReceipt['envelope']): boolean =>
   !(envelope.from === envelope.to || envelope.to === 'leaders' || envelope.to === BUS_DEAD_LETTER_ADDRESS ||
     envelope.sender?.human || envelope.external || isGroupPresenceBody(envelope.body));
 
+/** `classify` reads the body as a record; a non-object body classifies as null like every bus read's summary does. */
+const edgeBodyRecord = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
 /** Routing labels are claims, not authenticated identities. Never expose message bodies. */
 export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now(), windowMinutes?: number,
-  addressFilter?: FleetEdgeAddressFilter, roomFilter?: FleetEdgeRoomFilter): FleetEdge[] {
+  addressFilter?: FleetEdgeAddressFilter, roomFilter?: FleetEdgeRoomFilter, slice?: FleetEdgeSlice): FleetEdge[] {
   if (windowMinutes !== undefined) {
     if (!Number.isInteger(windowMinutes) || windowMinutes < 1 || windowMinutes > 1440) throw new Error('Minutes must be 1..1440');
     rows = rows.filter(row => row.receivedAt > now - windowMinutes * 60_000 && row.receivedAt <= now);
@@ -110,6 +171,26 @@ export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now(), win
     rows = rows.filter(({ envelope }) =>
       (channelPrefix === undefined || envelope.to.startsWith(channelPrefix)) &&
       (roomFilter.topic === undefined || groupAddressTopicOf(envelope.to) === roomFilter.topic));
+  }
+  // The shared slice filters are the same row-level bound the window, address
+  // and room filters apply: a receipt that cannot satisfy them never reaches
+  // the aggregation, so every edge count, lastAt and provider inference
+  // describes only the matching traffic — the self-consistent bound the
+  // window already keeps, never a post-hoc relabel.
+  if (slice !== undefined) {
+    // --contains is a case-insensitive substring over the scrubbed one-line
+    // summary; the needle normalizes the same way matchAgentMessages does —
+    // lowercase, whitespace collapsed — so a direct readFleetEdges caller
+    // gets the same match the parsers' busReadContains normalization gives.
+    const containsNeedle = slice.contains === undefined ? undefined
+      : slice.contains.toLowerCase().replace(/\s+/g, ' ').trim();
+    rows = rows.filter(({ envelope, receivedAt }) =>
+      (slice.since === undefined || receivedAt >= slice.since) &&
+      (slice.before === undefined || receivedAt < slice.before) &&
+      (slice.priority === undefined || envelope.priority === slice.priority) &&
+      (slice.kind === undefined || classify(envelope, edgeBodyRecord(envelope.body)) === slice.kind) &&
+      (slice.job === undefined || busBodyJobMatch(envelope.body, slice.job)) &&
+      (containsNeedle === undefined || containsNeedle === '' || busReadContainsMatch(envelope.body, containsNeedle)));
   }
   const edges = new Map<string, FleetEdge>();
   const providers = new Map<string, Set<string>>();
@@ -150,9 +231,13 @@ function fleetEdgeAddressFilter(options: FleetEdgesOptions): FleetEdgeAddressFil
   };
 }
 
-/** The query keys the edges link read accepts — the same five filters the
- * `phm fleet edges` flags and the `fleet_agent_edges` MCP arguments carry. */
-export const FLEET_EDGES_QUERY_PARAMS = ['windowMinutes', 'from', 'to', 'channel', 'topic'] as const;
+/** The query keys the edges link read accepts — the same filters the
+ * `phm fleet edges` flags and the `fleet_agent_edges` MCP arguments carry:
+ * the window, the endpoint and room narrows, and the shared row-slice
+ * vocabulary (`since`/`before`/`priority`/`kind`/`job`/`contains`) every
+ * other bus read applies before its projection. */
+export const FLEET_EDGES_QUERY_PARAMS = ['windowMinutes', 'from', 'to', 'channel', 'topic',
+  'since', 'before', 'priority', 'kind', 'job', 'contains'] as const;
 
 /** String-valued query input — one entry per `FLEET_EDGES_QUERY_PARAMS` key. */
 export interface FleetEdgesQueryInput {
@@ -161,6 +246,13 @@ export interface FleetEdgesQueryInput {
   to?: string;
   channel?: string;
   topic?: string;
+  /** `15m`, `2h`, `1d`, epoch ms or an ISO time — the shared parseSince grammar. */
+  since?: string;
+  before?: string;
+  priority?: string;
+  kind?: string;
+  job?: string;
+  contains?: string;
 }
 
 export type FleetEdgesQuery =
@@ -175,11 +267,16 @@ const EDGE_QUERY_LABEL = /^[\x21-\x7e]{1,128}(?![\s\S])/;
  * the same value rules `phm fleet edges` enforces on its flags and
  * `fleet_agent_edges` re-validates on every call: `windowMinutes` is a whole
  * number of minutes inside the projection's own 1..1440 bound, `from` and
- * `to` stay printable routing labels, and `channel`/`topic` take the strict
- * channel-name grammar every other bus read's room filters enforce. A
+ * `to` stay printable routing labels, `channel`/`topic` take the strict
+ * channel-name grammar every other bus read's room filters enforce, and the
+ * row-slice fields take the same rules their bus-read siblings apply —
+ * `since`/`before` resolve through the shared `parseSince` grammar (anchored
+ * on `now` once per read), `priority` stays an exact P0..P3 member, `kind`
+ * lowercases into the classified-kind enum, `job` takes the printable job
+ * label and `contains` the bounded needle `busReadContains` normalizes. A
  * malformed value is a usage error, never a silently empty edge list.
  */
-export function parseFleetEdgesQuery(input: FleetEdgesQueryInput): FleetEdgesQuery {
+export function parseFleetEdgesQuery(input: FleetEdgesQueryInput, now = Date.now()): FleetEdgesQuery {
   const options: FleetEdgesOptions = {};
   if (input.windowMinutes !== undefined) {
     if (!/^[0-9]+$/.test(input.windowMinutes)) {
@@ -207,6 +304,41 @@ export function parseFleetEdgesQuery(input: FleetEdgesQueryInput): FleetEdgesQue
     }
     options[key] = value;
   }
+  for (const key of ['since', 'before'] as const) {
+    const value = input[key];
+    if (value === undefined) continue;
+    const resolved = parseSince(value, now);
+    if (resolved === null) {
+      return { ok: false, error: `${key} takes 15m, 2h, 1d, epoch ms or an ISO time.` };
+    }
+    options[key] = resolved;
+  }
+  if (input.priority !== undefined) {
+    if (!(BUS_PRIORITIES as readonly string[]).includes(input.priority)) {
+      return { ok: false, error: 'priority takes P0, P1, P2 or P3.' };
+    }
+    options.priority = input.priority as BusPriority;
+  }
+  if (input.kind !== undefined) {
+    const kind = input.kind.toLowerCase();
+    if (!(AGENT_MESSAGE_KINDS as readonly string[]).includes(kind)) {
+      return { ok: false, error: `kind takes one of ${AGENT_MESSAGE_KINDS.join(', ')}.` };
+    }
+    options.kind = kind as AgentMessageKind;
+  }
+  if (input.job !== undefined) {
+    if (!EDGE_QUERY_LABEL.test(input.job)) {
+      return { ok: false, error: 'job takes a job id (printable label, 1-128 chars).' };
+    }
+    options.job = input.job;
+  }
+  if (input.contains !== undefined) {
+    const needle = busReadContains(input.contains);
+    if (needle === null) {
+      return { ok: false, error: 'contains takes a non-empty search text of at most 512 characters.' };
+    }
+    if (needle !== undefined) options.contains = needle;
+  }
   return { ok: true, options };
 }
 
@@ -218,13 +350,22 @@ export function readFleetEdges(options: FleetEdgesOptions = {}): FleetEdges {
     options.channel === undefined && options.topic === undefined ? undefined
       : { ...(options.channel === undefined ? {} : { channel: options.channel }),
           ...(options.topic === undefined ? {} : { topic: options.topic }) };
+  const slice: FleetEdgeSlice | undefined =
+    options.since === undefined && options.before === undefined && options.priority === undefined &&
+    options.kind === undefined && options.job === undefined && options.contains === undefined ? undefined
+      : { ...(options.since === undefined ? {} : { since: options.since }),
+          ...(options.before === undefined ? {} : { before: options.before }),
+          ...(options.priority === undefined ? {} : { priority: options.priority }),
+          ...(options.kind === undefined ? {} : { kind: options.kind }),
+          ...(options.job === undefined ? {} : { job: options.job }),
+          ...(options.contains === undefined ? {} : { contains: options.contains }) };
   const rows: BusInboxReceipt[] = [];
   let cursor = 0;
   for (let page = 0; page <= BUS_INBOX_MAX_MESSAGES / BUS_INBOX_MAX_READ; page++) {
     const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, options);
     if (result.status !== 'ok') return { schema: 'fleet.edges.v1', source: 'unavailable', edges: null };
     rows.push(...result.messages);
-    if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) return { schema: 'fleet.edges.v1', source, edges: projectFleetEdges(rows, options.now?.() ?? Date.now(), options.windowMinutes, addressFilter, roomFilter) };
+    if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) return { schema: 'fleet.edges.v1', source, edges: projectFleetEdges(rows, options.now?.() ?? Date.now(), options.windowMinutes, addressFilter, roomFilter, slice) };
     cursor = result.nextCursor;
   }
   return { schema: 'fleet.edges.v1', source: 'unavailable', edges: null };

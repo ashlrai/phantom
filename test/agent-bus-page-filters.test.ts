@@ -319,6 +319,33 @@ describe('GET /api/verse/agent-bus/edges filters', () => {
     expect(links(day.wire)).toHaveLength(5);
   });
 
+  it('serves the shared row-slice filters before the link projection', async () => {
+    const { seed, handler } = setup();
+    const post = (id: string, over: Record<string, unknown> = {}, at = 200_000) => {
+      expect(seed(envelope(id, over), at).status, id).toBe('posted');
+    };
+    post('m1', { from: 'a', to: 'b', priority: 'P1',
+      body: { kind: 'note', thread: 'job:RQ-9', text: 'please deploy the fix?' } });
+    post('m2', { from: 'a', to: 'b', priority: 'P2', body: { kind: 'note', text: 'ship has sailed' } });
+    post('m3', { from: 'c', to: 'd', priority: 'P0',
+      body: { kind: 'handoff', text: 'taking over the lane' } }, 100_000);
+    // kind/priority/job/contains narrow the receipt set before it aggregates —
+    // the same bounds the CLI flags and MCP arguments apply.
+    expect(links((await get(handler, `${EDGES}?kind=ask`)).wire)).toEqual(['a->b']);
+    expect(links((await get(handler, `${EDGES}?kind=Ask`)).wire)).toEqual(['a->b']);
+    expect(links((await get(handler, `${EDGES}?kind=handoff`)).wire)).toEqual(['c->d']);
+    expect(links((await get(handler, `${EDGES}?priority=P0`)).wire)).toEqual(['c->d']);
+    expect(links((await get(handler, `${EDGES}?job=RQ-9`)).wire)).toEqual(['a->b']);
+    expect(links((await get(handler, `${EDGES}?contains=deploy`)).wire)).toEqual(['a->b']);
+    // since/before compose into the [since, before) receipt-time window.
+    expect(links((await get(handler, `${EDGES}?since=150000`)).wire)).toEqual(['a->b']);
+    expect(links((await get(handler, `${EDGES}?before=150000`)).wire)).toEqual(['c->d']);
+    expect(links((await get(handler, `${EDGES}?since=150000&before=250000`)).wire)).toEqual(['a->b']);
+    // The filters compose conjunctively.
+    expect(links((await get(handler, `${EDGES}?kind=ask&priority=P2`)).wire)).toEqual([]);
+    expect(links((await get(handler, `${EDGES}?kind=status&since=150000`)).wire)).toEqual(['a->b']);
+  });
+
   it('keeps a missing store honest — null edges, never an invented empty list', async () => {
     const { handler } = setup();
     const res = await get(handler, EDGES);
@@ -332,6 +359,8 @@ describe('GET /api/verse/agent-bus/edges filters', () => {
       '?windowMinutes=0', '?windowMinutes=1441', '?windowMinutes=1.5', '?windowMinutes=abc',
       '?windowMinutes=', '?from=has%20space', '?from=', '?to=bad%20label',
       '?channel=Bad%20Room', '?channel=', '?topic=has%20space', '?topic=UPPER',
+      '?since=bogus', '?since=', '?before=soon', '?priority=P4', '?priority=p1',
+      '?kind=unknown', '?job=has%20space', '?job=', '?contains=',
       '?after=0', '?limit=5', '?bogus=1', '?windowMinutes=1&windowMinutes=2',
       '?from=a&from=b',
     ]) {
