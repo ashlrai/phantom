@@ -5,12 +5,14 @@ import { consumePeerWork } from '../core/agentnet/work-dispatch.js';
 import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import { readPeerFleet } from '../core/agentnet/mesh-read.js';
 import { parseBusWorkFeedQuery, type BusWorkFeedQueryInput } from '../core/agents/bus-work-feed-query.js';
-import { BUS_WORK_FEED_LIMIT_MAX } from '../core/agents/bus-work-feed-read.js';
+import { BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
+import { BUS_CLIS, type BusCli } from '../core/agents/bus-identity.js';
+import { frameBusWorkFeed, framePeerMail } from '../core/agents/bus-cli-adapters.js';
 import { PROVIDERS, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS } from '../core/agents/bus-v2-schema.js';
 const usage = `phm agentnet peers mesh [--json]
-phm agentnet peers work-feed [--claims] [--open] [--claimable] [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <${PROVIDERS.join('|')}>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--exclude-owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>] [--json]
+phm agentnet peers work-feed [--claims] [--open] [--claimable] [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <${PROVIDERS.join('|')}>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--exclude-owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>] [--frame <cli>] [--json]
 phm agentnet peers list [--json]
-phm agentnet peers read [--after <cursor>] [--from <callsign>] [--exclude-from <callsign>] [--to <label>] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains <text>] [--id <id>] [--kind <kind>] [--body-kind <kind>] [--priority P0..P3] [--peer-kind <task|review|handoff|query|social>] [--thread <id>] [--job <id>] [--result <reserved|admitted|complete|failed>] [--json]
+phm agentnet peers read [--after <cursor>] [--from <callsign>] [--exclude-from <callsign>] [--to <label>] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains <text>] [--id <id>] [--kind <kind>] [--body-kind <kind>] [--priority P0..P3] [--peer-kind <task|review|handoff|query|social>] [--thread <id>] [--job <id>] [--result <reserved|admitted|complete|failed>] [--frame <cli>] [--json]
 phm agentnet peers send <to|#channel-id> <task|review|handoff|query|social> <text> [--reply-to <id>] [--thread <id>] [--json]
 phm agentnet peers post <to> <work-json> [--json]
 phm agentnet peers dispatch [--after <cursor>] [--apply] [--json]
@@ -27,12 +29,15 @@ const FEED_QUERY_KEYS = ['status', 'job', 'repo', 'provider', 'tier', 'to', 'own
   'since', 'before', 'contains', 'channel', 'topic', 'result', 'id', 'limit'] as const;
 /** The argv spelling of each feed query key that is not already `--<key>` — kebab-case flags for camelCase query keys. */
 const FEED_FLAG_SPELLING: Partial<Record<(typeof FEED_QUERY_KEYS)[number], string>> = { excludeOwner: '--exclude-owner' };
+/** The `--frame <cli>` vocabulary every bus read applies; anything outside it is a usage error. */
+const frameCli = (value: string): BusCli | undefined =>
+  (BUS_CLIS as readonly string[]).includes(value) ? value as BusCli : undefined;
 export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, session: PeerSession = {
   lane: process.env.PHM_AGENTNET_LANE ?? '', sessionId: process.env.PHM_AGENTNET_SESSION_ID ?? '', token: readEnvironmentCredential('PHM_AGENTNET_SESSION_TOKEN') ?? '',
 }): Promise<number> {
   if (!args.length || args.includes('--help') || args.includes('-h')) { console.log(usage); return 0; }
   const positional: string[] = []; let after: number | undefined; let apply = false, replyTo: string | undefined, threadId: string | undefined;
-  let feedClaims = false, feedOpen = false, feedClaimable = false;
+  let feedClaims = false, feedOpen = false, feedClaimable = false, frame: string | undefined;
   const readFilters: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -48,6 +53,12 @@ export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, 
       if (arg === '--reply-to') replyTo = value; else threadId = value;
       continue;
     }
+    if (arg === '--frame' && frame === undefined) {
+      const value = args[++i];
+      if (value === undefined || value.startsWith('-')) return 2;
+      frame = value;
+      continue;
+    }
     if ((READ_FILTER_FLAGS.has(arg) || FEED_VALUE_FLAGS.has(arg)) && readFilters[arg] === undefined) {
       const value = args[++i];
       if (value === undefined || value.startsWith('-')) return 2;
@@ -61,11 +72,14 @@ export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, 
   const hasReadFilters = Object.keys(readFilters).length > 0;
   const hasFeedFlags = feedClaims || feedOpen || feedClaimable ||
     [...FEED_VALUE_FLAGS].some(flag => readFilters[flag] !== undefined);
+  const hasFrame = frame !== undefined;
   try {
     let result: unknown;
     if (group === 'peers' && verb === 'read') {
       // --thread doubles as the read's thread filter; --reply-to stays send-only.
       if (positional.length !== 2 || apply || replyTo || hasFeedFlags) { console.error(usage); return 2; }
+      const cli = frame === undefined ? undefined : frameCli(frame);
+      if (frame !== undefined && cli === undefined) { console.error(usage); return 2; }
       const query = parsePeerInboxFilters({
         from: readFilters['--from'], excludeFrom: readFilters['--exclude-from'], to: readFilters['--to'],
         since: readFilters['--since'], before: readFilters['--before'], contains: readFilters['--contains'],
@@ -76,9 +90,15 @@ export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, 
       }, (options.now ?? Date.now)());
       if (!query.ok) return 2;
       const page = readPeerInbox(session, after ?? 0, options);
-      result = page.status === 'ok'
+      const filtered = page.status === 'ok'
         ? { ...page, messages: page.messages.filter(message => peerInboxMessageMatches(message, query.filters)) }
         : page;
+      // Peer mail is remote-authored untrusted data — the admitted page's
+      // envelopes carry the same BEGIN/END untrusted block every bus read
+      // frames; a non-ok page carries no messages and never invents one.
+      result = cli !== undefined && filtered.status === 'ok'
+        ? { ...filtered, framed: framePeerMail(cli, filtered.messages.map(message => message.envelope)) }
+        : filtered;
     }
     else if (group === 'peers' && verb === 'work-feed') {
       // The same query phm fleet work-feed, phm agents bus work feed, the
@@ -88,6 +108,8 @@ export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, 
           after !== undefined || FEED_READ_ONLY_FLAGS.some(flag => readFilters[flag] !== undefined)) {
         console.error(usage); return 2;
       }
+      const cli = frame === undefined ? undefined : frameCli(frame);
+      if (frame !== undefined && cli === undefined) { console.error(usage); return 2; }
       const input: BusWorkFeedQueryInput = {};
       for (const key of FEED_QUERY_KEYS) {
         const value = readFilters[FEED_FLAG_SPELLING[key] ?? `--${key}`];
@@ -99,9 +121,15 @@ export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, 
       const parsed = parseBusWorkFeedQuery(input,
         { root: { ...agentnetPaths(), ...options }.busRoot, now: (options.now ?? Date.now)() });
       if (!parsed.ok) { console.error(`phm agentnet: ${parsed.error}`); return 2; }
-      result = readPeerFleet('work-feed', session, options, parsed);
+      const feed = readPeerFleet('work-feed', session, options, parsed);
+      // The feed view frames exactly like phm fleet work-feed — the honest
+      // state line stands in for rows on a refused or unreadable read. Only
+      // the work-feed variant lacks `agents`; the mesh report always carries it.
+      result = cli !== undefined && !('agents' in feed)
+        ? { ...feed, framed: frameBusWorkFeed(cli, formatBusWorkFeed(feed)) }
+        : feed;
     }
-    else if (hasReadFilters || hasFeedFlags) return 2;
+    else if (hasReadFilters || hasFeedFlags || hasFrame) return 2;
     else if (group === 'peers' && verb === 'dispatch' && positional.length === 2 && !replyTo && !threadId) result = await consumePeerWork(session, { apply, after }, options);
     else if (after !== undefined) return 2;
     else if (group === 'peers' && verb === 'mesh' && positional.length === 2 && !apply && !replyTo && !threadId) {

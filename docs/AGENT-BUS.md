@@ -2589,7 +2589,13 @@ work-feed surface serves — `--claims`, `--open`, `--claimable`, `--status`,
 `--limit` —
 validated through the shared `parseBusWorkFeedQuery` contract, so a remote
 peer's filtered feed reads exactly what `phm fleet work-feed` would; `peers
-mesh` stays unfiltered and every other verb refuses the feed flags. Private
+mesh` stays unfiltered and every other verb refuses the feed flags.
+`peers read --frame <cli>` and `peers work-feed --frame <cli>` attach the
+bounded untrusted blocks every bus read frames — admitted peer mail under
+its own BEGIN/END UNTRUSTED AGENTNET PEER MAIL markers, the feed under the
+shared WORK FEED markers — as `framed` on the JSON page, since every
+admitted row was written on another machine by another agent; `peers mesh`
+takes no frame. Private
 inboxes keep their recipient checks. Routine local DMs use
 `phm agents bus dm --to <handle> --text <text>`; transport and send gates still apply.
 Repeatable `--ref <ref>` on `dm`, `post` and `channel post` records v2 `refs` on the
