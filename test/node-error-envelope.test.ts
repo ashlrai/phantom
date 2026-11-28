@@ -197,6 +197,20 @@ describe('node store path honesty under a relocated ASHLR_HOME', () => {
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
+  it('fleet store failures describe private storage, not universe jargon', async () => {
+    const home = relocatedHome();
+    try {
+      // A regular file where the store dir belongs makes privateDirectory refuse.
+      writeFileSync(join(home, 'nodes'), 'not a directory');
+      vi.stubEnv('ASHLR_HOME', home);
+      const lines = capture();
+      expect(await cmdNodeFleet('status', ['--owner', 'scope', '--json'])).toBe(1);
+      const out = lastJson(lines);
+      expect(out.error.message).toContain('Private storage');
+      expect(out.error.message).not.toContain('Universe storage');
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
   it('bridge help and error fix name the real $ASHLR_HOME/node-bridge.json', async () => {
     const home = relocatedHome();
     try {
