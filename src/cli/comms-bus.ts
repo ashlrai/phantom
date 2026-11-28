@@ -10,13 +10,13 @@ import { openBusCheckpoint } from './comms-bus-checkpoint.js';
 import { busStatusExitCode } from './comms-bus-exit.js';
 import { cmdCommsBusClaim, COMMS_BUS_CLAIM_HELP } from './comms-bus-claim.js';
 import { withCodexPeersSession, type LocusPeersEndpoint } from '../core/fleet/adapters/codex-peers.js';
-import { BUS_PROTOCOL_KINDS, BUS_PROTOCOL_VERSION, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
-import { agentChannelNameSchema, agentRefAddressMatcher, BUS_CLIS, readAgentRegistry, type BusCli } from '../core/agents/bus-identity.js';
+import { BUS_PROTOCOL_KINDS, BUS_PROTOCOL_VERSION, isTopicPattern } from '../core/fleet/bus-protocol.js';
+import { agentChannelNameSchema, BUS_CLIS, type BusCli } from '../core/agents/bus-identity.js';
 import { frameCommsBusRead } from '../core/agents/bus-cli-adapters.js';
-import { WORK_RESULT_OUTCOMES, busBodyKind, busBodyResultOutcome, busBodyThread } from '../core/agents/bus-v2-schema.js';
-import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
+import { WORK_RESULT_OUTCOMES } from '../core/agents/bus-v2-schema.js';
+import { busReadContains } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
-import { busPageAddressMatchers, busPageRowMatch, type BusPageAddressRefs, type BusPageFilters } from '../core/fleet/bus-page-filters.js';
+import { busPageAddressMatchers, busPageRowMatch, filterBusInboxPage, type BusPageAddressRefs, type BusPageFilters, type BusPageMatchers } from '../core/fleet/bus-page-filters.js';
 
 const HELP = `phm comms bus group read <room> <topic> <cursor> [--from <address>] [--exclude-from <address>] [--id <id>] [--priority <P0|P1|P2|P3>] [--body-kind <kind>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
 phm comms bus group presence <room> <topic>
@@ -123,28 +123,6 @@ export interface CommsBusDependencies {
 
 type BusFilters = { id?: string; inReplyTo?: string; to?: string; from?: string; excludeFrom?: string; priority?: string; kind?: string; topic?: string; thread?: string; job?: string; channel?: string; bodyKind?: string; result?: string; since?: string; before?: string; contains?: string };
 
-/** Resolved address predicates; each is present exactly when its filter is. */
-type BusAddressMatchers = { to?: (value: string) => boolean; from?: (value: string) => boolean; excludeFrom?: (value: string) => boolean };
-
-/**
- * Address filters resolve once per read/watch through the agent identity
- * registry beside the bus store: a filter naming any label of a registered
- * identity matches every label of that identity, the same read `bus next`,
- * `bus-follow`, `bus-request` and `handoff-receive` use. An unresolvable
- * filter label and an unreadable registry keep exact-label matching, so
- * unknown identity state never widens a page.
- */
-function busAddressMatchers(filters: BusFilters, options: BusInboxOptions): BusAddressMatchers {
-  const matchers: BusAddressMatchers = {};
-  if (filters.to === undefined && filters.from === undefined && filters.excludeFrom === undefined) return matchers;
-  const read = readAgentRegistry({ root: options.root });
-  const registry = read.status === 'ok' ? read.registry : undefined;
-  if (filters.to !== undefined) matchers.to = agentRefAddressMatcher(filters.to, registry);
-  if (filters.from !== undefined) matchers.from = agentRefAddressMatcher(filters.from, registry);
-  if (filters.excludeFrom !== undefined) matchers.excludeFrom = agentRefAddressMatcher(filters.excludeFrom, registry);
-  return matchers;
-}
-
 function composeReply(values: Map<string, string>, options: BusInboxOptions, deps: CommsBusDependencies): BusInboxPost {
   const parentId = values.get('--reply-to')!, id = values.get('--id')!, from = values.get('--from')!;
   const ttl = Number(values.get('--ttl-ms') ?? 60000), text = values.get('--text')!;
@@ -245,28 +223,6 @@ async function postBatch(args: string[], options: BusInboxOptions, deps: CommsBu
   return receipt.complete ? 0 : receipt.status === 'invalid' ? 2 : 1;
 }
 
-function filterPage(page: BusInboxPage, filters: BusFilters, addresses: BusAddressMatchers, sinceMs?: number, beforeMs?: number, containsNeedle?: string): BusInboxPage {
-  if (page.status !== 'ok' || Object.values(filters).every(value => value === undefined)) return page;
-  const channelPrefix = filters.channel === undefined ? undefined : `group:${filters.channel}:`;
-  return { ...page, messages: page.messages.filter(({ envelope, receivedAt }) =>
-    (filters.id === undefined || envelope.id === filters.id) &&
-    (filters.inReplyTo === undefined || busBodyInReplyToMatch(envelope.body, filters.inReplyTo)) &&
-    (addresses.to === undefined || addresses.to(envelope.to)) &&
-    (channelPrefix === undefined || envelope.to.startsWith(channelPrefix)) &&
-    (addresses.from === undefined || addresses.from(envelope.from)) &&
-    (addresses.excludeFrom === undefined || !addresses.excludeFrom(envelope.from)) &&
-    (filters.priority === undefined || envelope.priority === filters.priority) &&
-    (filters.kind === undefined || protocolOf(envelope.body)?.kind === filters.kind) &&
-    (filters.topic === undefined || topicMatches(filters.topic, protocolOf(envelope.body)?.topic ?? '')) &&
-    (filters.thread === undefined || busBodyThread(envelope.body) === filters.thread) &&
-    (filters.job === undefined || busBodyJobMatch(envelope.body, filters.job)) &&
-    (filters.bodyKind === undefined || busBodyKind(envelope.body) === filters.bodyKind) &&
-    (filters.result === undefined || busBodyResultOutcome(envelope.body) === filters.result) &&
-    (sinceMs === undefined || receivedAt >= sinceMs) &&
-    (beforeMs === undefined || receivedAt < beforeMs) &&
-    (containsNeedle === undefined || busReadContainsMatch(envelope.body, containsNeedle))) };
-}
-
 function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
@@ -295,7 +251,7 @@ function deliver(json: string, deps: CommsBusDependencies, checkpoint?: ReturnTy
   });
 }
 
-async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, filters: BusFilters, addresses: BusAddressMatchers, sinceMs: number | undefined, beforeMs: number | undefined, containsNeedle: string | undefined, options: BusInboxOptions, deps: CommsBusDependencies, checkpoint: ReturnType<typeof openBusCheckpoint> | undefined, untilReply: boolean): Promise<number> {
+async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, pageFilters: BusPageFilters, pageMatchers: BusPageMatchers, options: BusInboxOptions, deps: CommsBusDependencies, checkpoint: ReturnType<typeof openBusCheckpoint> | undefined, untilReply: boolean): Promise<number> {
   const controller = new AbortController(), stop = (): void => controller.abort();
   const list = deps.list ?? listBusInboxAfter;
   const deliverPage = (json: string): void | Promise<boolean> => {
@@ -324,7 +280,7 @@ async function watch(after: number, limit: number, interval: number, maxPages: n
       }
       if (expired()) break;
       if (page.status === 'ok') {
-        const filtered = filterPage(page, filters, addresses, sinceMs, beforeMs, containsNeedle);
+        const filtered = filterBusInboxPage(page, pageFilters, pageMatchers);
         if (untilReply && filtered.status === 'ok' && filtered.messages.length === 0) {
           // Unrelated page: advance the scan position without emitting output.
           checkpoint?.save(page.nextCursor);
@@ -521,7 +477,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const value = values.get(key);
     if (value !== undefined && (!/^(0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value)))) return invalid();
   }
-  const filters = { id: values.get('--id'), inReplyTo: values.get('--in-reply-to'), to: values.get('--to'), from: values.get('--from'), excludeFrom: values.get('--exclude-from'), priority: values.get('--priority'), kind: values.get('--kind'), topic: values.get('--topic'), thread: values.get('--thread'), job: values.get('--job'), channel: values.get('--channel'), bodyKind: values.get('--body-kind'), result: values.get('--result'), since: values.get('--since'), before: values.get('--before'), contains: values.get('--contains') };
+  const filters: BusFilters = { id: values.get('--id'), inReplyTo: values.get('--in-reply-to'), to: values.get('--to'), from: values.get('--from'), excludeFrom: values.get('--exclude-from'), priority: values.get('--priority'), kind: values.get('--kind'), topic: values.get('--topic'), thread: values.get('--thread'), job: values.get('--job'), channel: values.get('--channel'), bodyKind: values.get('--body-kind'), result: values.get('--result'), since: values.get('--since'), before: values.get('--before'), contains: values.get('--contains') };
   if (filters.priority !== undefined && !BUS_PRIORITIES.includes(filters.priority as BusPriority)) return invalid();
   if (filters.kind !== undefined && !(BUS_PROTOCOL_KINDS as readonly string[]).includes(filters.kind)) return invalid();
   if (filters.topic !== undefined && !isTopicPattern(filters.topic)) return invalid();
@@ -539,6 +495,22 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
   for (const label of [filters.id, filters.inReplyTo, filters.to, filters.from, filters.excludeFrom]) {
     if (label !== undefined && !validateBusEnvelope({ id: label, from: label, to: label, priority: 'P3', ttl: 1, body: null }).ok) return invalid();
   }
+  // The read/watch row rule is the shared bus page filter set every raw-page
+  // consumer applies — fleet_bus_inbox, the verse agent-bus API and group
+  // read already run it; this resolves the argv spellings into the same
+  // BusPageFilters/BusPageMatchers once so a page can never disagree about
+  // what a filter keeps. Address refs resolve through the same registry rule.
+  const pageFilters: BusPageFilters = {
+    id: filters.id, inReplyTo: filters.inReplyTo,
+    priority: filters.priority as BusPageFilters['priority'],
+    kind: filters.kind as BusPageFilters['kind'],
+    topic: filters.topic, thread: filters.thread, job: filters.job,
+    channel: filters.channel, bodyKind: filters.bodyKind,
+    result: filters.result as BusPageFilters['result'],
+    since: sinceMs, before: beforeMs, contains: containsNeedle,
+  };
+  const pageMatchers = busPageAddressMatchers(
+    { to: filters.to, from: filters.from, excludeFrom: filters.excludeFrom }, { root: options.root });
   const frame = values.get('--frame');
   if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) return invalid();
   if (values.has('--checkpoint') && values.has('--after')) return invalid();
@@ -560,7 +532,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
       if (timeout !== undefined && (timeout < 1 || timeout > 3600000)) return invalid();
       const untilReply = values.has('--until-reply');
       if (untilReply && (filters.inReplyTo === undefined || timeout === undefined || maxPages !== undefined)) return invalid();
-      return await watch(after, limit, interval, maxPages, timeout, filters, busAddressMatchers(filters, options), sinceMs, beforeMs, containsNeedle, options, deps, checkpoint, untilReply);
+      return await watch(after, limit, interval, maxPages, timeout, pageFilters, pageMatchers, options, deps, checkpoint, untilReply);
     }
     let result;
     if (verb === 'post') {
@@ -578,7 +550,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
         const parsed = text === null ? null : parseBusEnvelope(text);
         result = parsed?.ok ? appendBusInbox(parsed.value, options) : { status: 'invalid' };
       }
-    } else result = filterPage((deps.list ?? listBusInboxAfter)(after, limit, options), filters, busAddressMatchers(filters, options), sinceMs, beforeMs, containsNeedle);
+    } else result = filterBusInboxPage((deps.list ?? listBusInboxAfter)(after, limit, options), pageFilters, pageMatchers);
     if (verb === 'read' && frame !== undefined && result.status === 'ok' && Array.isArray(result.messages)) {
       result = { ...result, framed: frameCommsBusRead(frame as BusCli, result.messages) };
     }
