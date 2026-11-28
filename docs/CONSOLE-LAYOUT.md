@@ -401,10 +401,25 @@ square per slot (filled when a worker holds it; a lane with more than 32 slots
 draws one bar instead), the running/target and queued counts, and labelled
 readings for tokens in the last hour, merges in 24 hours and merge rate, where
 a missing reading says unknown, never zero. The target stepper, Pause and the
-hold release sit under the readings. The same data for agents:
+hold release sit under the readings.
+
+Under the readings each lane card draws when the lane worked: one row of bars
+for the jobs launched on it across the last 24 hours (a bar an hour) or 7 days
+(a bar per 7 hours), a mark under each bar that had a PR merged, and the
+counts in words. It is the same line the Models board draws, read from the
+per-lane throughput report that Home's Merged PRs card and the Throughput pane
+already share. Every row is drawn against the busiest bar on the board, so
+lanes compare. Point at a bar, or press Left, Right, Home or End on a focused
+row, to hold that stretch of time on every lane card at once; the line above
+the cards then gives the fleet's counts for it, and Esc lets go. A lane the
+report holds nothing for draws an empty line and says no work was recorded; a
+report that cannot be read hatches every row and says unknown, and a lane the
+report names that has no card is listed above the cards. The same data for
+agents:
 
 ```sh
 phm fleet runs --json
+phm throughput --by lane --json
 ```
 
 The Supply pane is one board of how many job files to write so the lanes stay

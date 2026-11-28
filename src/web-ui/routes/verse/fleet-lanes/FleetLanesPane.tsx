@@ -1,8 +1,9 @@
 /**
  * routes/verse/fleet-lanes/FleetLanesPane.tsx — the Lanes board: how many slots are running against what was asked
  * for, one strip of every lane's slots, then a card per lane (provider mark, state, a square per slot, labelled
- * readings, target and pause controls), the workers and the last hour's merges. Everything comes from
- * GET /api/verse/fleet/runs, the read `phm fleet runs --json` prints.
+ * readings, the work line, target and pause controls), the workers and the last hour's merges. Everything comes from
+ * GET /api/verse/fleet/runs, the read `phm fleet runs --json` prints, but the work line: jobs launched and PRs merged
+ * on the lane hour by hour, from `phm throughput --by lane` (LaneWork.tsx).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { copyText } from '../../../components/primitives/clipboard.js';
@@ -19,6 +20,7 @@ import { claudeLaneFix, parseClaudeLane } from './claude-lane-state.js';
 import { burnLine, burnTotals, isPhantomRepo, repoMix, repoMixLine, repoShort, workerRows } from './fleet-lanes-model.js';
 import { boardHeadline, fleetStrip, laneCard, laneFacts, pulseLine } from './lanes-board-model.js';
 import { FleetStrip, LaneSlots } from './LaneSlots.js';
+import { LaneWorkHead, LaneWorkLine, useLaneWork } from './LaneWork.js';
 import { strayLine, strayRows, strayTotals, strayTotalsLine } from './stray-slots-model.js';
 import { VerseControlLockedError } from '../autonomy/control-queries.js';
 import { postStrayStop } from './stray-stop.js';
@@ -103,6 +105,8 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
   const claude = parseClaudeLane(data?.claudeLane, now);
   const cards = data ? data.lanes.map((lane) => laneCard(lane, claude.down)) : [];
   const strip = fleetStrip(cards);
+  // When each lane worked, hour by hour: `phm throughput --by lane`, on the read Home and the Throughput pane share.
+  const work = useLaneWork(cards.map((lane) => lane.lane), { read: active && !!data, poll: visible && !!data });
 
   return <div className={styles.pane} aria-label="Lanes">
     <header className={styles.header}>
@@ -122,6 +126,7 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
         <section className={styles.section} aria-labelledby="fleet-lanes-capacity">
           <h3 id="fleet-lanes-capacity" className={styles.title}>Lane capacity</h3>
           <p className={styles.burn}>{burnLine(burnTotals(data))}</p>
+          {cards.length > 0 ? <LaneWorkHead work={work} /> : null}
           {cards.length === 0 ? <p className={styles.muted}>No lanes reported.</p> : <ul className={styles.list}>
             {cards.map((lane) => {
               const outcomeLine = laneOutcomeLine(lane.lane, outcomes.data);
@@ -145,6 +150,7 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
                   <dt>{fact.label}</dt>
                   <dd data-unknown={fact.value === null || undefined}>{fact.value ?? 'unknown'}</dd>
                 </div>)}</dl>
+                <LaneWorkLine lane={lane.lane} work={work} />
                 <div className={styles.controls}>
                   <span className={styles.controlLabel}>Target</span>
                   <LaneTargetStepper lane={lane.lane} /><LanePauseButton lane={lane.lane} /><LaneHoldReleaseButton lane={lane.lane} heldReason={lane.held ? lane.heldReason : null} heldUntil={null} />
