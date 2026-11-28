@@ -70,3 +70,22 @@ export function describeJob(d: JobWordsInput, nowMs: number): JobWords {
   if (missing || empty) return { status: 'no-log', showLog: false, text: 'No log yet.' };
   return { status: 'live', showLog: true, text: null };
 }
+
+export type JobLineKind = 'say' | 'tool' | 'result' | 'error';
+
+const ERROR_LINE = /\b(error|failed|failure|fatal|exception|traceback|panic)\b/i;
+const TOOL_LINE = /^(?:[$>]\s|\[?(?:tool|exec|bash|shell|read|edit|write|grep|glob|apply_patch)\b)/i;
+const RESULT_LINE = /^(?:result\b|done\b|finished\b|published\b|job \S+ finished)/i;
+
+/**
+ * What one tail line is, in four plain buckets, from its text alone (job logs
+ * carry no structured marker): an error, a tool call, a final result, or
+ * everything else the agent said. Errors win; a status line is a result.
+ */
+export function classifyJobLine(source: 'log' | 'event' | 'status', text: string): JobLineKind {
+  const line = text.trimStart();
+  if (ERROR_LINE.test(line)) return 'error';
+  if (source === 'status' || RESULT_LINE.test(line)) return 'result';
+  if (TOOL_LINE.test(line)) return 'tool';
+  return 'say';
+}
