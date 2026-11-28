@@ -2134,6 +2134,37 @@
  *     (null stays unrecorded, never zero), truncated tails are stated
  *     as lower bounds, and items emit only for the fleet's own
  *     repository since the ledger has no repo column;
+ *   - the model radar's pending inbox review notes: the daily
+ *     `phm models radar --fetch --propose` job
+ *     (modelRadarSchedule in src/core/fleet/model-radar-schedule.ts)
+ *     diffs the saved provider release-note pages against the shipped
+ *     verified registry and files one pending 'note' proposal per
+ *     fresh high-confidence model addition into the approval inbox —
+ *     title '[model radar] Review <provider>:<id>', summary carrying
+ *     the source URL, retrieval date, matched doc line and an
+ *     unapplied models.registry-patch.v1 patch
+ *     (fileModelRadarProposals in
+ *     src/core/fleet/model-radar-proposals.ts) — review-only evidence
+ *     whose only surface was the inbox listing a human had to open, so
+ *     a detected candidate nobody reviewed kept the router refusing a
+ *     model the provider's own docs already name
+ *     (modelRadarBacklogItems below). A cell — one
+ *     '<provider>:<id>' candidate — emits only while its note stays
+ *     pending past the one-week review grace: pending notes are state,
+ *     not events, so the sibling min-rows/min-days bars do not apply
+ *     and the grace itself is the adverse bar, while a decided note
+ *     stops pending and stops re-adding. The candidate key requires
+ *     the writer's title shape plus the summary's patch marker —
+ *     manual notes imitating the prefix are not radar evidence —
+ *     unparseable or future-dated createdAt stamps never count,
+ *     quoted fields are scrubbed and capped with `phm inbox show
+ *     <id>` as the detail pointer, the inbox is enumerated through
+ *     listProposalsDetailed's bounded all-or-nothing read (a degraded
+ *     or partial set yields nothing), doneWhen retires an item once
+ *     docs/model-registry.json names the id on the default branch,
+ *     and items emit only for the fleet's own repository since the
+ *     radar, registry and inbox are this install's machinery and the
+ *     notes carry no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2315,6 +2346,7 @@ import { prDeltaBacklogItems } from './pr-delta-backlog.js';
 import { busDeadLetterBacklogItems } from './bus-dead-letter-backlog.js';
 import { jobNotesBacklogItems } from './job-notes-backlog.js';
 import { poolDetectBacklogItems } from './pool-detect-backlog.js';
+import { modelRadarBacklogItems } from './model-radar-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4900,6 +4932,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since jobs.jsonl carries no repo
   // column.
   await feed('poolDetectBacklogItems', () => poolDetectBacklogItems({ repo }));
+  // Pending model-radar inbox review notes (modelRadarBacklogItems
+  // below): the daily `phm models radar --fetch --propose` job files one
+  // pending 'note' proposal per fresh high-confidence model addition —
+  // source URL, retrieval date, matched doc line and an unapplied
+  // registry patch — and until now the only surface was the inbox
+  // listing a human had to open, so a detected candidate nobody reviewed
+  // kept the router refusing a model the provider's own docs already
+  // name. A cell emits only while its note stays pending past the
+  // one-week review grace (state, not events — decided notes stop
+  // pending and stop re-adding); the candidate key comes from the
+  // writer's '[model radar] Review <provider>:<id>' title contract plus
+  // the summary's registry-patch marker, unparseable or future-dated
+  // createdAt stamps never count, quoted fields are scrubbed and
+  // capped, the inbox read goes through listProposalsDetailed's
+  // bounded all-or-nothing enumeration, and items emit only for the
+  // fleet's own repository since the radar and registry are this
+  // install's machinery and the notes carry no repo column.
+  await feed('modelRadarBacklogItems', () => modelRadarBacklogItems({ repo }));
   return { items, errors };
 }
 

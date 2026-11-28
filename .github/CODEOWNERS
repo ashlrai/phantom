@@ -688,6 +688,7 @@
 /test/improve-market-posture-backlog.test.ts @masonwyatt23
 /test/improve-measure-sync.test.ts @masonwyatt23
 /test/improve-memory-backlog.test.ts @masonwyatt23
+/test/improve-model-radar-backlog.test.ts @masonwyatt23
 /test/improve-multimodel-outcomes-backlog.test.ts @masonwyatt23
 /test/improve-needs-you-auto-backlog.test.ts @masonwyatt23
 /test/improve-nodes-offload-backlog.test.ts @masonwyatt23
