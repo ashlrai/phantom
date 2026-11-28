@@ -528,6 +528,7 @@ export function UsageSection(): ReactNode {
                             expanded={open}
                             triggerId={`verse-account-trigger-${entry.key}`}
                             detailId={`verse-account-detail-${entry.key}`}
+                            nowMs={now}
                           />
                           {/*
                             The detail belongs BESIDE the card it explains.
@@ -546,6 +547,7 @@ export function UsageSection(): ReactNode {
                                 card={entry.card}
                                 headingId={`verse-account-heading-${entry.key}`}
                                 onClose={closeAccount}
+                                nowMs={now}
                               />
                             </div>
                           ) : null}

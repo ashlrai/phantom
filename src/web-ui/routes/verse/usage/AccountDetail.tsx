@@ -72,8 +72,11 @@ export function AccountDetail({
   card,
   onClose,
   headingId,
+  nowMs,
 }: {
   card: AccountCardModel;
+  /** The section's clock, for the time-gone mark on each window. Omitted = no mark. */
+  nowMs?: number | undefined;
   onClose: () => void;
   /** Ties the region back to the card's own trigger for assistive tech. */
   headingId: string;
@@ -143,6 +146,7 @@ export function AccountDetail({
                   ariaPrefix={card.label}
                   prominent={i === 0}
                   historical={historical}
+                  nowMs={nowMs}
                 />
               ))}
             </div>
