@@ -49,7 +49,8 @@ export interface QueueV1 {
   enqueue(jobId: string): boolean;
   /** Assign `jobId` to `worker` under the live leader lease. Refuses (null) when the worker fails
    * the job's execution fences — its session declined the job, its caps miss `requires`, or `gh`
-   * work lacks a live local auth heartbeat — the same fences pull routing applies. */
+   * work lacks a live local auth heartbeat — the same fences pull routing applies.
+   * A running job is eligible only once its claim expires, even after a leader change. */
   claim(leader: LeaderLease, worker: NodeSession, jobId: string): JobClaim | null;
   renewClaim(claim: JobClaim): JobClaim | null;
   complete(claim: JobClaim, result: string): boolean;

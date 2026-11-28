@@ -28,6 +28,8 @@ runs on two nodes.
   still act on consumes capacity: a lapsed claim is re-routable, and a claim
   fenced by a rejoin or departure frees the node's slot and host budget at
   once even though the job itself stays fenced until the claim expires.
+  A leader change fences the previous token immediately. Both pull and direct
+  leader assignment wait for the job's claim to expire before reassigning it.
 - **Handing a claim back.** A node that pulls a job it will not run releases
   the claim at once with `phm node release`, so the job returns to pending
   instead of showing as running until the lease lapses. A pool worker

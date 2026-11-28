@@ -344,7 +344,7 @@ export class DriveNodes implements QueueV1 {
 
   /** Leader-side assignment under the live lease. Applies the same execution
    * fences as `pull` — a declined session, missing caps or absent `gh` auth is
-   * refused — so a claim can never hand a job to a node routing would reject.
+   * refused — and waits for a running job's lease to lapse, like `pull`.
    * Owner scope stays the leader's deliberate choice. */
   claim(leader: LeaderLease, worker: NodeSession, jobId: string): JobClaim | null {
     return this.transaction((state, now) => {
@@ -358,7 +358,7 @@ export class DriveNodes implements QueueV1 {
       if (node.slots !== undefined && active >= node.slots) return null;
       if (state.pool && !nodeCapacityView(state, now).some(h => h.eligibleNodeIds.includes(node.nodeId) && (h.freeSlots ?? 0) > 0)) return null;
       const job = state.jobs.find(j => j.id === jobId);
-      if (!job || job.state === 'completed' || (job.claim && this.currentClaim(state, job.claim, now))) return null;
+      if (!job || !routable(job, now)) return null;
       if (jobBlockers(node, job).length > 0) return null;
       const claim = { ...worker, jobId, token: nextToken(state), leaderToken: current.token,
         expiresAt: now + this.claimTtl };
