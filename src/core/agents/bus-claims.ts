@@ -587,12 +587,14 @@ export function claimBusWorkJob(options: BusWorkJobClaimOptions): BusWorkJobClai
  * open-plus-claimable pair (a next-claim only ever considers provably
  * claimable open jobs) and `status`/`limit`, which a claim cannot use.
  * `repo` takes the same `owner/name` slug `busWorkFeedRepoKey` normalizes;
- * `to`/`announcer` are routing refs resolved through the same matchers the
- * feed's `--to`/`--owner` flags build; `id` is the retained-envelope
- * citation wire id `busWorkFeedJobCitesEnvelope` matches.
- * `excludeAnnouncer` is the one dim the feed view does not serve — the
- * feed read has no negative announcer filter — so it is applied to the
- * candidate set on the job's `owner` label directly, after the view.
+ * `to`/`announcer`/`excludeAnnouncer` are routing refs resolved through the
+ * same matchers the feed's `--to`/`--owner`/`--exclude-owner` flags build —
+ * `announcer` feeds the view's `ownerMatch` and `excludeAnnouncer` its
+ * `excludeOwnerMatch`, so the negative announcer filter narrows inside the
+ * shared projection exactly like every other feed consumer's exclusion;
+ * `id` is the retained-envelope citation wire id `busWorkFeedJobCitesEnvelope`
+ * matches. Every dim therefore applies through the one `projectBusWorkFeedView`
+ * filter set, never a parallel post-view predicate.
  */
 export interface BusWorkJobNextFilters {
   /** Keep only the job with this exact id — the feed `--job` filter. */
@@ -621,14 +623,14 @@ export interface BusWorkJobNextFilters {
   announcer?: string;
   /**
    * Drop jobs announced by this routing ref — the negative counterpart of
-   * `announcer`, resolved through the same `busWorkFeedOwnerMatcher`
-   * identity-label rule the feed `--owner` filter and every bus read's
-   * `--exclude-from` share, so "claim the next job X did not announce" is
-   * one step instead of a filtered read followed by a manual skip. It
-   * composes with `announcer`: a job whose owner both matches and is
-   * excluded drops out, and an unresolvable ref or unreadable registry
-   * keeps exact-label matching so unknown identity state never widens the
-   * claim.
+   * `announcer`, fed to the view's `excludeOwnerMatch` through the same
+   * `busWorkFeedOwnerMatcher` identity-label rule the feed `--exclude-owner`
+   * filter and every bus read's `--exclude-from` share, so "claim the next
+   * job X did not announce" is one step instead of a filtered read followed
+   * by a manual skip. It composes with `announcer` inside the shared
+   * projection: a job whose owner both matches and is excluded drops out,
+   * and an unresolvable ref or unreadable registry keeps exact-label
+   * matching so unknown identity state never widens the claim.
    */
   excludeAnnouncer?: string;
   /** Keep only jobs announced to `group:<channel>:*` — the feed `--channel` filter. */
@@ -751,22 +753,17 @@ export function claimNextBusWorkJob(options: BusWorkJobNextOptions): BusWorkJobN
     channel: options.channel, topic: options.topic, result: options.result, id: options.id,
     toMatch: options.to === undefined ? undefined : busWorkFeedPendingToMatcher(options.to, { root: options.root }),
     ownerMatch: options.announcer === undefined ? undefined : busWorkFeedOwnerMatcher(options.announcer, { root: options.root }),
+    excludeOwnerMatch: options.excludeAnnouncer === undefined ? undefined
+      : busWorkFeedOwnerMatcher(options.excludeAnnouncer, { root: options.root }),
   });
   if (view.status !== 'ok') return { status: 'unavailable', reason: 'work-feed-view', attempted: 0 };
-  // `excludeAnnouncer` narrows the candidate set on the job's `owner` label
-  // through the same identity matcher `announcer` uses — a claim can never
-  // pick a job the matching read's exclusion would hide, and the observed
-  // candidate/held counts below reflect the narrowed set.
-  const excludeOwner = options.excludeAnnouncer === undefined ? undefined
-    : busWorkFeedOwnerMatcher(options.excludeAnnouncer, { root: options.root });
   // The candidate set is every filtered open job with declared claim keys —
   // the feed `--open` rule minus its complete-coverage exclusion, so a job
   // whose every key is provably held still counts as a held candidate the
   // way `work next`'s drained `empty` reports held work rather than a dry
   // well. Non-open jobs and keyless jobs can never be claimed, so they are
   // not candidates at all.
-  const candidates = view.jobs.filter(job => BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0 &&
-    (excludeOwner === undefined || !excludeOwner(job.owner)));
+  const candidates = view.jobs.filter(job => BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0);
   const opId = newBusClaimOpId();
   let attempted = 0, held = 0;
   for (const job of candidates) {
