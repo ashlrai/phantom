@@ -519,7 +519,7 @@ export function refreshCloudPrPreviewsGuarded(): Promise<{ checked: number; upda
 // Guarded jobs (shared by the scheduler and the POST routes)
 // ---------------------------------------------------------------------------
 
-type JobName = 'refresh' | 'improve' | 'preview';
+type JobName = 'refresh' | 'improve' | 'preview' | 'measure';
 const inFlight: Partial<Record<JobName, Promise<unknown>>> = {};
 
 /**
@@ -559,6 +559,7 @@ async function improveGuarded(opts: { count: number; auto: boolean }): Promise<C
 
 export const CLOUD_REFRESH_EVERY_MS = 10 * 60 * 1000;
 export const CLOUD_IMPROVE_EVERY_MS = 60 * 60 * 1000;
+export const CLOUD_MEASURE_EVERY_MS = 60 * 60 * 1000;
 export const CLOUD_IMPROVE_FIRST_DELAY_MS = 2 * 60 * 1000;
 
 /** Why this process must not run the scheduler; null when it may. */
@@ -585,6 +586,7 @@ async function unattendedHold(): Promise<string | null> {
 export interface CloudSchedulerDeps {
   refresh?: () => Promise<unknown>;
   improve?: () => Promise<unknown>;
+  measure?: () => Promise<unknown>;
   log?: (message: string) => void;
 }
 
@@ -658,6 +660,27 @@ export function startCloudScheduler(env: NodeJS.ProcessEnv = process.env, deps: 
     } catch { /* never throws */ }
     return improveGuarded({ count: 1, auto: true });
   });
+  // Measure registered proposals' declared metrics on the fleet mirrors and
+  // append 'measured' events — the third outcome-ledger sync, so
+  // scoreOutcomes/kindLeverage stop starving for evidence now that
+  // registration and observation are automated. Its own job on its own
+  // cadence: a slow `npm ci` inside measureAt must never delay the launch
+  // pick, and Stop/Pause hold it exactly like the improve job because it
+  // runs agent-written code. Best-effort: a failure is logged once per
+  // distinct error and the next tick retries.
+  const measure = deps.measure ?? (async () => {
+    const held = await unattendedHold();
+    if (held) { try { log(`cloud measure skipped: ${held}`); } catch { /* never throws */ } return null; }
+    try {
+      const { syncImproveMeasurements } = await import('../improve/measure-sync.js');
+      const res = await syncImproveMeasurements();
+      if (res.measured > 0) try { log(`cloud measure: ${res.appended} measurement(s) for ${res.measured} proposal(s)`) } catch { /* never throws */ }
+      return res;
+    } catch (err) {
+      try { log(`cloud measure failed (${errorText(err)})`) } catch { /* never throws */ }
+      return null;
+    }
+  });
   const state: SchedulerState = { timers: [], running: {}, lastError: {} };
 
   const tick = (name: JobName, job: () => Promise<unknown>): void => {
@@ -689,9 +712,13 @@ export function startCloudScheduler(env: NodeJS.ProcessEnv = process.env, deps: 
     };
     every(CLOUD_REFRESH_EVERY_MS, () => tick('refresh', refresh));
     every(CLOUD_IMPROVE_EVERY_MS, () => tick('improve', improve));
+    every(CLOUD_MEASURE_EVERY_MS, () => tick('measure', measure));
     const first = setTimeout(() => tick('improve', improve), CLOUD_IMPROVE_FIRST_DELAY_MS);
     first.unref?.();
     state.timers.push(first);
+    const firstMeasure = setTimeout(() => tick('measure', measure), CLOUD_IMPROVE_FIRST_DELAY_MS);
+    firstMeasure.unref?.();
+    state.timers.push(firstMeasure);
   } catch {
     for (const t of state.timers) clearInterval(t);
     return false;
