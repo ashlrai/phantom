@@ -52,6 +52,35 @@ describe('node slot admission', () => {
     expect(nodes.plan()[0]?.fix).toContain('no free job slots');
   });
 
+  it('counts only unexpired claims of the current session toward planned slots', () => {
+    const store = new MemoryStore();
+    let now = 1_000;
+    const nodes = new DriveNodes(store, { now: () => now, claimTtlMs: 20 });
+    const first = nodes.join('first', { owners: ['mason'], slots: 1 })!;
+    const second = nodes.join('second', { owners: ['mason'], slots: 1 })!;
+    nodes.enqueue('lapsed', { owner: 'mason' });
+    nodes.pull(first);
+    now += 10;
+    nodes.enqueue('fenced', { owner: 'mason' });
+    nodes.pull(second);
+    nodes.leave(second);
+    nodes.join('second', { owners: ['mason'], slots: 1 });
+
+    now += 10;
+    nodes.enqueue('waiting', { owner: 'mason' });
+    expect(nodes.plan().map(({ jobId, nodeId }) => [jobId, nodeId])).toEqual([
+      ['lapsed', 'first'],
+      ['waiting', 'second'],
+    ]);
+
+    expect(nodes.pull(first)?.job.id).toBe('lapsed');
+    nodes.enqueue('extra', { owner: 'mason' });
+    expect(nodes.plan().map(({ jobId, nodeId }) => [jobId, nodeId])).toEqual([
+      ['waiting', 'second'],
+      ['extra', null],
+    ]);
+  });
+
   it('holds immediately at zero slots and resumes from a fresh heartbeat', () => {
     const { nodes } = fixture();
     const session = nodes.join('air', { owners: ['mason'], slots: 2 })!;
