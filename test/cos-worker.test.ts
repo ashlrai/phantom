@@ -59,8 +59,8 @@ function fakeRunner(script: FakeScript) {
         setImmediate(() => events.emit('close', null, 'SIGKILL'));
         return true;
       },
-      on: (event: string, listener: (...args: never[]) => void) => { events.on(event, listener); return proc; },
-      once: (event: string, listener: (...args: never[]) => void) => { events.once(event, listener); return proc; },
+      on: (event: string, listener: (...args: any[]) => void) => { events.on(event, listener); return proc; },
+      once: (event: string, listener: (...args: any[]) => void) => { events.once(event, listener); return proc; },
     } as unknown as SpawnedPlannerProcess;
     stdin.on('finish', () => {
       if (script.hang) return;
@@ -204,5 +204,11 @@ describe('fleet cos verbs', () => {
     expect(await cmdFleetCos(['--help', '--json'])).toBe(0);
     const parsed = JSON.parse(output.mock.calls.at(-1)![0] as string);
     expect(parsed.usage).toContain('cos ask');
+  });
+
+  it('fleet cos -h prints usage and exits 0 without touching the queue', async () => {
+    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdFleetCos(['-h'])).toBe(0);
+    expect(output.mock.calls.at(-1)![0]).toContain('phm fleet cos ask');
   });
 });

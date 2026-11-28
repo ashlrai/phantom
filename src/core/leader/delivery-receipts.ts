@@ -62,3 +62,46 @@ export function readReceipts(runsDir: string, messageIds: readonly string[]): Re
   }
   return out;
 }
+
+/**
+ * The writer's channel vocabulary — OwnerChannel in
+ * src/core/comms/leader-mailbox.ts, duplicated rather than imported so this
+ * reader stays a leaf for every consumer's import closure (the same split
+ * the improve backlog feed keeps). recordDelivery's channel parameter is
+ * typed string, so a row outside this set is off-contract.
+ */
+const RECEIPT_CHANNELS = ['desktop', 'telegram', 'email', 'imessage', 'slack'] as const;
+const RECEIPT_CHANNEL_SET: ReadonlySet<string> = new Set(RECEIPT_CHANNELS);
+export type DeliveryReceiptChannel = typeof RECEIPT_CHANNELS[number];
+
+/**
+ * Newest confirmed ('delivered') receipt time per channel across the
+ * retained tail — the same bounded read `readReceipts` performs, folded by
+ * channel instead of keyed by message id, for surfaces that need "when did
+ * this channel last carry an outbound" without naming message ids. Only
+ * `delivered` rows carrying a parseable `at` contribute: a pending or
+ * failed attempt is not an outbound that landed, and a row written before
+ * the stamp existed is undated evidence that can never claim a "last
+ * outbound" time. A channel with no delivered row is absent — unknown
+ * stays unknown, never a fabricated timestamp. An absent or unreadable
+ * journal folds to {} — the same "nothing proven" answer, never a throw.
+ */
+export function readLatestDeliveredAt(runsDir: string): Partial<Record<DeliveryReceiptChannel, string>> {
+  const latest = new Map<string, number>();
+  for (const line of tailLines(fileOf(runsDir))) {
+    let row: unknown;
+    try { row = JSON.parse(line); } catch { continue; }
+    if (row === null || typeof row !== 'object') continue;
+    const { channel, state, at } = row as Record<string, unknown>;
+    if (typeof channel !== 'string' || !RECEIPT_CHANNEL_SET.has(channel) || state !== 'delivered') continue;
+    if (typeof at !== 'string') continue;
+    const ms = Date.parse(at);
+    if (!Number.isFinite(ms)) continue;
+    if ((latest.get(channel) ?? Number.NEGATIVE_INFINITY) < ms) latest.set(channel, ms);
+  }
+  const out: Partial<Record<DeliveryReceiptChannel, string>> = {};
+  for (const [channel, ms] of latest) {
+    out[channel as DeliveryReceiptChannel] = new Date(ms).toISOString();
+  }
+  return out;
+}

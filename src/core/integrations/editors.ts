@@ -34,7 +34,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { fsyncDirectory } from '../util/durability.js';
-import { isOwnGatewayEntry, legacyGatewayKeys } from './gateway-entry.js';
+import { isIntegrationRecord as isRecord } from './dep-parser.js';
+import { GATEWAY_MCP_SERVER, isOwnGatewayEntry, legacyGatewayKeys } from './gateway-entry.js';
 
 /** Targets `wire` can write. */
 export type WritableEditorTarget = 'claude' | 'codex' | 'cursor';
@@ -44,10 +45,10 @@ export type WritableEditorTarget = 'claude' | 'codex' | 'cursor';
  * (https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md).
  */
 export type EditorTarget = WritableEditorTarget | 'gemini';
-export const WRITABLE_EDITOR_TARGETS: readonly WritableEditorTarget[] = ['claude', 'codex', 'cursor'];
+const WRITABLE_EDITOR_TARGETS: readonly WritableEditorTarget[] = ['claude', 'codex', 'cursor'];
 export const ALL_EDITOR_TARGETS: readonly EditorTarget[] = ['claude', 'codex', 'cursor', 'gemini'];
 
-export const ASHLR_HUB_MCP_SERVER = 'ashlr-hub';
+export const ASHLR_HUB_MCP_SERVER = GATEWAY_MCP_SERVER;
 const MAX_COMMAND_OUTPUT_BYTES = 256 * 1024;
 const MAX_JSON_CONFIG_BYTES = 4 * 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 15_000;
@@ -128,10 +129,6 @@ class ConfigParseError extends Error {
     super(`${detail}: ${path}`);
     this.name = 'ConfigParseError';
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 interface MissingConfigSnapshot { found: false }

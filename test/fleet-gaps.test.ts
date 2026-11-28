@@ -1,9 +1,10 @@
-import { mkdtempSync, existsSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cmdFleetAwake } from '../src/cli/fleet-awake.js';
 import { cmdFleetGaps } from '../src/cli/fleet-gaps.js';
+import { cmdFleetPlannerTick } from '../src/cli/fleet-planner-tick.js';
 import { holdKeepAwake, awakeStatus } from '../src/core/fleet/keep-awake.js';
 import { buildFleetGaps, parseTicks, readFleetGaps, type Tick } from '../src/core/fleet/sleep-gaps.js';
 import { cmdFleetSelfTick } from '../src/cli/fleet-self-tick.js';
@@ -53,6 +54,40 @@ describe('fleet gaps', () => {
     expect(report.gaps[0]!.line).toContain('the queue was empty');
   });
 
+  it('keeps queue depth unknown when an edge tick could not read it', () => {
+    // The planner tick omits phx when ready.tsv was unreadable; a gap whose
+    // end edge carries no count cannot claim the queue stayed empty.
+    const report = buildFleetGaps({ ...base, samples: [], now: T0 + 135 * MIN, ticks: [tick(0, null), tick(120, null), tick(130, null)] });
+    expect(report.gaps[0]).toMatchObject({ kind: 'no-tick', cause: 'unknown', lostWork: null, jobsQueued: null });
+    expect(report.gaps[0]!.cause).not.toBe('queue-empty');
+    expect(report.lostMinutes).toBe(120);
+  });
+
+  it('does not call a gap provably empty when only its start edge read zero', () => {
+    // ready=0 at the gap start but the end tick could not read the queue:
+    // work may have been enqueued mid-gap, so depth and lost work stay unknown.
+    const report = buildFleetGaps({ ...base, samples: [], now: T0 + 135 * MIN, ticks: [tick(0, 0), tick(120, null), tick(130, 0)] });
+    expect(report.gaps[0]).toMatchObject({ kind: 'no-tick', cause: 'unknown', lostWork: null, jobsQueued: null });
+    expect(report.lostMinutes).toBe(120);
+  });
+
+  it('the planner tick omits phx when the ready queue was unreadable', async () => {
+    const dir = scratch();
+    mkdirSync(join(dir, 'queue'), { recursive: true });
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: new Date(T0).toISOString(), paused: false, mem_free_pct: 50,
+      lanes: { devin: { running: 0, target: 2, queued: 0, floor: null, ceiling: null, held: false } },
+    }));
+    const out: string[] = [];
+    const code = await cmdFleetPlannerTick(['--runs-dir', dir], { now: T0, output: (line) => out.push(line) });
+    expect(code).toBe(0);
+    // The unreadable detail proves this is the unknown-depth path, not an empty queue.
+    expect(out.join('\n')).toContain('unreadable');
+    const line = readFileSync(join(dir, 'queue', 'dispatch-events.log'), 'utf8').trim().split('\n').at(-1)!;
+    expect(line).not.toContain('phx=');
+    expect(parseTicks(line, T0 + MIN)).toMatchObject([{ ready: null, free: 2 }]);
+  });
+
   it('flags admission-blocked when ticks ran on time, jobs waited and nothing launched', () => {
     const ticks = Array.from({ length: 5 }, (_, i) => tick(i * 10, 4));
     const report = buildFleetGaps({ ...base, samples: [], now: T0 + 45 * MIN, ticks });
@@ -71,6 +106,10 @@ describe('fleet gaps', () => {
   it('parses PLANNER_TICK lines and rejects bad options', async () => {
     const ticks = parseTicks('2026-11-19 07:00:00 PLANNER_TICK skip reason=slots-full phx=3 free=0\nnoise\n', Date.parse('2026-11-20T00:00:00Z'));
     expect(ticks).toMatchObject([{ run: false, reason: 'slots-full', ready: 3, free: 0 }]);
+    // The planner tick omits phx when the ready queue was unreadable; the
+    // fold must read that as unknown depth, never a proven-empty queue.
+    const unknown = parseTicks('2026-11-19 07:00:00 PLANNER_TICK run reason=low-supply free=2\n', Date.parse('2026-11-20T00:00:00Z'));
+    expect(unknown).toMatchObject([{ run: true, reason: 'low-supply', ready: null, free: 2 }]);
     const report = await readFleetGaps({ runsDir: '/none', now: T0, read: async () => null, samples: null, claudeLeftPct: 40 });
     expect(report.claudeLeftPct).toBe(40);
     expect(await cmdFleetGaps(['--since', 'x'], { err: () => undefined })).toBe(2);

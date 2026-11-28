@@ -20,76 +20,16 @@
  */
 
 import { makeColors, pad } from './ui.js';
-import type { WorkItem, WorkSource } from '../core/types.js';
-
-// ---------------------------------------------------------------------------
-// Module-level lazy loaders — degrade gracefully if portfolio modules not yet built
-// ---------------------------------------------------------------------------
-
-type BuildBacklogFn = (opts?: { repos?: string[] }) => Promise<import('../core/types.js').Backlog>;
-type LoadBacklogFn  = () => import('../core/types.js').Backlog | null;
-
-let _buildBacklog: BuildBacklogFn | null | undefined;
-let _loadBacklog:  LoadBacklogFn  | null | undefined;
-
-async function getBuildBacklog(): Promise<BuildBacklogFn | null> {
-  if (_buildBacklog === undefined) {
-    try {
-      const mod = await import('../core/portfolio/backlog.js') as {
-        buildBacklog: BuildBacklogFn;
-        loadBacklog:  LoadBacklogFn;
-      };
-      _buildBacklog = mod.buildBacklog;
-      _loadBacklog  = mod.loadBacklog;
-    } catch {
-      _buildBacklog = null;
-      _loadBacklog  = null;
-    }
-  }
-  return _buildBacklog;
-}
-
-async function getLoadBacklog(): Promise<LoadBacklogFn | null> {
-  // Ensure the module load attempt has been made.
-  await getBuildBacklog();
-  return _loadBacklog ?? null;
-}
+import { isWorkSource, WORK_SOURCES } from '../core/portfolio/scoring.js';
+import type { Backlog, WorkItem, WorkSource } from '../core/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-export const BACKLOG_SOURCE_FILTERS = [
-  'issue',
-  'todo',
-  'test',
-  'dep',
-  'doc',
-  'security',
-  'plugin',
-  'self',
-  'lint',
-  'goal',
-  'hygiene',
-  'invent',
-] as const satisfies readonly WorkSource[];
+export const BACKLOG_SOURCE_FILTERS = WORK_SOURCES;
 
 export const BACKLOG_SOURCE_FILTER_HELP = BACKLOG_SOURCE_FILTERS.join('|');
-
-const SOURCE_LABELS: Record<WorkSource, string> = {
-  issue:    'issue',
-  todo:     'todo',
-  test:     'test',
-  dep:      'dep',
-  doc:      'doc',
-  security: 'security',
-    plugin: 'plugin', // M33
-  self:     'self',   // M54
-  lint:     'lint',   // M101
-  goal:     'goal',   // M161
-  hygiene:  'hygiene', // M161
-  invent:   'invent', // M181
-};
 
 const SOURCE_COLORS: Record<WorkSource, keyof ReturnType<typeof makeColors>> = {
   issue:    'blue',
@@ -160,7 +100,7 @@ function printTable(items: WorkItem[], tty: boolean): void {
 
     const scoreFmt = item.score.toFixed(2);
     const bar      = tty ? col.green(scoreBar(item.score)) : scoreBar(item.score);
-    const src      = colorFn(pad(SOURCE_LABELS[item.source] ?? item.source, srcW));
+    const src      = colorFn(pad(item.source, srcW));
     const repo     = col.dim(pad(shortRepo(item.repo), repoW));
     const ve       = col.dim(`V${item.value}/E${item.effort}`);
     // Truncate long titles.
@@ -230,6 +170,36 @@ function printBacklogHelp(col: ReturnType<typeof makeColors>): void {
   console.log('');
 }
 
+function formatBacklogAge(generatedAt: string): string {
+  const ms = Date.now() - new Date(generatedAt).getTime();
+  if (!Number.isFinite(ms)) return generatedAt;
+  if (ms < 60_000) return 'just now';
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
+}
+
+async function runBacklogBuild(
+  statusLine: string,
+  jsonMode: boolean,
+  tty: boolean,
+  col: ReturnType<typeof makeColors>,
+  buildBacklog: () => Promise<Backlog>,
+): Promise<Backlog | null> {
+  if (!jsonMode) {
+    process.stdout.write(col.dim(statusLine) + (tty ? '\r' : '\n'));
+  }
+  try {
+    const backlog = await buildBacklog();
+    if (!jsonMode && tty) process.stdout.write('\x1b[2K\r');
+    return backlog;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(col.red('error: ') + msg);
+    return null;
+  }
+}
+
 export async function cmdBacklog(args: string[]): Promise<number> {
   if (args[0] === 'plan') {
     const { cmdBacklogPlan } = await import('./backlog-plan.js');
@@ -255,8 +225,6 @@ export async function cmdBacklog(args: string[]): Promise<number> {
   let limit:        number | undefined;
   let jsonMode      = false;
 
-  const validSources = new Set<string>(BACKLOG_SOURCE_FILTERS);
-
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === 'refresh' || a === 'list') {
@@ -276,11 +244,11 @@ export async function cmdBacklog(args: string[]): Promise<number> {
       }
     } else if (a === '--source') {
       const raw = args[++i];
-      if (!raw || !validSources.has(raw)) {
+      if (!isWorkSource(raw)) {
         console.error(col.red('error: ') + `--source requires one of: ${BACKLOG_SOURCE_FILTER_HELP}, got: ${raw ?? '(missing)'}`);
         return 2;
       }
-      filterSource = raw as WorkSource;
+      filterSource = raw;
     } else if (a === '--limit') {
       const raw = args[++i];
       const n = raw !== undefined && /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
@@ -301,51 +269,20 @@ export async function cmdBacklog(args: string[]): Promise<number> {
     }
   }
 
-  // ── Load portfolio modules ───────────────────────────────────────────────
-  const buildBacklog = await getBuildBacklog();
-  const loadBacklog  = await getLoadBacklog();
-
-  if (!buildBacklog || !loadBacklog) {
-    console.error(col.red('error: ') + 'backlog command requires src/core/portfolio/backlog.ts (M22 module not yet built).');
-    return 1;
-  }
-
   // ── Execute subcommand ───────────────────────────────────────────────────
-  let backlog: import('../core/types.js').Backlog | null = null;
+  const { buildBacklog, loadBacklog } = await import('../core/portfolio/backlog.js');
+  let backlog: Backlog | null = null;
 
   if (subcommand === 'refresh') {
-    if (!jsonMode) {
-      process.stdout.write(col.dim('Scanning enrolled repos…') + (tty ? '\r' : '\n'));
-    }
-    try {
-      backlog = await buildBacklog();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(col.red('error: ') + msg);
-      return 1;
-    }
-    if (!jsonMode) {
-      // Clear the scanning line on TTY.
-      if (tty) process.stdout.write('\x1b[2K\r');
-      printSummary(backlog.repos, backlog.items, col);
-    }
+    backlog = await runBacklogBuild('Scanning enrolled repos…', jsonMode, tty, col, buildBacklog);
+    if (!backlog) return 1;
+    if (!jsonMode) printSummary(backlog.repos, backlog.items, col);
   } else {
     // Default: list — load from disk; build if missing.
     backlog = loadBacklog();
     if (!backlog) {
-      if (!jsonMode) {
-        process.stdout.write(col.dim('No backlog found — building now…') + (tty ? '\r' : '\n'));
-      }
-      try {
-        backlog = await buildBacklog();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(col.red('error: ') + msg);
-        return 1;
-      }
-      if (!jsonMode && tty) {
-        process.stdout.write('\x1b[2K\r');
-      }
+      backlog = await runBacklogBuild('No backlog found — building now…', jsonMode, tty, col, buildBacklog);
+      if (!backlog) return 1;
     }
   }
 
@@ -384,7 +321,7 @@ export async function cmdBacklog(args: string[]): Promise<number> {
 
   // ── Output ───────────────────────────────────────────────────────────────
   if (jsonMode) {
-    const out: import('../core/types.js').Backlog = {
+    const out: Backlog = {
       generatedAt: backlog.generatedAt,
       repos:       backlog.repos,
       items,
@@ -394,17 +331,7 @@ export async function cmdBacklog(args: string[]): Promise<number> {
   }
 
   // Human-readable header.
-  const age = (() => {
-    try {
-      const ms = Date.now() - new Date(backlog.generatedAt).getTime();
-      if (ms < 60_000)            return 'just now';
-      if (ms < 3_600_000)         return `${Math.floor(ms / 60_000)}m ago`;
-      if (ms < 86_400_000)        return `${Math.floor(ms / 3_600_000)}h ago`;
-      return `${Math.floor(ms / 86_400_000)}d ago`;
-    } catch {
-      return backlog.generatedAt;
-    }
-  })();
+  const age = formatBacklogAge(backlog.generatedAt);
 
   console.log('');
   console.log(

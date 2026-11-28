@@ -13,6 +13,7 @@ import {
   ACCESSIBILITY_PERMISSION,
   DESKTOP_OPERATOR_BINARY,
   DESKTOP_OPERATOR_BUILD,
+  DESKTOP_WRITE_VERBS,
   MAX_SCROLL,
   MAX_TASK_CHARS,
   SCREEN_RECORDING_PERMISSION,
@@ -378,10 +379,15 @@ export async function runDesktopOperator(request: OperatorRequest, deps: Operato
       ok: true,
       verb: 'list-apps',
       data: {
-        apps: listed.value.map((app) => ({
-          ...app,
-          operable: operatorDenyReason({ name: app.name, bundleId: app.bundleId, executablePath: app.executablePath, verb: 'read' }) === null,
-        })),
+        inputHold: kill ? 'killed' : commsPaused ? 'comms_paused' : null,
+        apps: listed.value.map((app) => {
+          const identity = { name: app.name, bundleId: app.bundleId, executablePath: app.executablePath };
+          const readAllowed = operatorDenyReason({ ...identity, verb: 'read' }) === null;
+          // An app-level policy preview only. Actual calls still resolve the
+          // target window, recheck the holds and grants, and post an intent.
+          const inputVerbs = DESKTOP_WRITE_VERBS.filter((verb) => operatorDenyReason({ ...identity, verb }) === null);
+          return { ...app, operable: readAllowed, appPolicy: { readAllowed, inputVerbs } };
+        }),
       },
     };
   }

@@ -3419,7 +3419,6 @@ async function main(): Promise<void> {
         const ownerLiveUsage = 'usage: phm owner-live status|enable imessage|disable imessage [--json]';
         process.exitCode = rest[0] === 'status' ? await cmdOwnerLiveStatus(rest.slice(1))
           : rest[0] === 'enable' || rest[0] === 'disable' ? await cmdOwnerLiveSwitch(rest)
-          : rest.includes('--help') || rest.includes('-h') ? (console.log(ownerLiveUsage), 0)
           : (console.error(ownerLiveUsage), 2);
         break;
       }

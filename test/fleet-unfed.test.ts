@@ -1241,6 +1241,17 @@ describe('renderUnfed', () => {
       'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.', 'Last 24h: no unfed ticks recorded.',
       'Last 24h: no route decisions recorded.', 'Last 24h: no claims recorded.']);
   });
+
+  it('marks a lane whose unfed verdict is unknown instead of leaving it blank', () => {
+    const report = currentUnfed(JSON.stringify({
+      lanes: { a: { running: 0, target: 2 }, b: { running: 2, target: 2 } },
+    }), null);
+    const text = renderUnfed({ ...report, marketTruncated: false, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) }).join('\n');
+    // Lane a has headroom but no readable queue: its unfed verdict is unknown,
+    // which must not render identically to lane b's confirmed-fed state.
+    expect(text).toContain('a  0/2 running (0%), unknown hinted here  UNFED?: 2 free, elsewhere rows unknown');
+    expect(text).toContain('b  2/2 running (100%), unknown hinted here\n');
+  });
 });
 
 describe('derived market reasons', () => {
@@ -1337,6 +1348,41 @@ describe('derived market reasons', () => {
     expect(report.resources.map(({ lane, blocked }) => [lane, blocked])).toEqual([
       ['openai-api', { metered_api_opt_in_required: 1 }],
     ]);
+  });
+
+  it('marks a proven-unhealthy omlx lane local_unhealthy, overwriting invalid capabilities', () => {
+    const lanes = {
+      omlx: { running: 0, target: 2, held: false, healthy: false },
+      // A healthy flag on a non-local lane is not the dispatcher's omlx gate.
+      claude: { running: 0, target: 2, held: false, healthy: false },
+    };
+    const ready = [
+      mrow('RQ-A', 'claude', 'mid'),
+      mrow('RQ-B', 'claude', 'mid', '{"preferred_lane":"omlx"}'),
+    ].join('\n');
+    const report = currentUnfed(JSON.stringify({ lanes }), ready, {
+      slots: JSON.stringify({ omlx: { capabilities: ['Bad_Cap'] }, claude: {} }),
+    });
+    const byLane = Object.fromEntries(report.resources.map(r => [r.lane, r]));
+    // dispatchd writes local_unhealthy after lane_view's
+    // invalid_capability_advertisement, so the lane records one unavailable
+    // code — never both — plus the ordinary local opt-in rejection.
+    expect(byLane.omlx!.blocked).toEqual({ local_opt_in_required: 1, local_unhealthy: 1 });
+    expect(byLane.omlx!.unfed).toBe(true);
+    expect(byLane.claude!.blocked).toEqual({ local_execution_required: 1 });
+  });
+
+  it('keeps omlx eligible when its published health is true, absent or unreadable', () => {
+    for (const healthy of [true, 'yes'] as const) {
+      const report = currentUnfed(JSON.stringify({
+        lanes: { omlx: { running: 0, target: 2, held: false, healthy } },
+      }), mrow('RQ-A', 'claude', 'mid'), { slots: JSON.stringify({ omlx: {}, claude: {} }) });
+      expect(report.resources.find(r => r.lane === 'omlx')!.blocked).toEqual({ local_opt_in_required: 1 });
+    }
+    const report = currentUnfed(JSON.stringify({
+      lanes: { omlx: { running: 0, target: 2, held: false } },
+    }), mrow('RQ-A', 'claude', 'mid'), { slots: JSON.stringify({ omlx: {}, claude: {} }) });
+    expect(report.resources.find(r => r.lane === 'omlx')!.blocked).toEqual({ local_opt_in_required: 1 });
   });
 
   it('does not recompute reasons when the dispatcher published its verdict', () => {

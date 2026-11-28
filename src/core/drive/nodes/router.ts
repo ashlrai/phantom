@@ -88,7 +88,8 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
     const running = state === null ? 0 : state.jobs.filter(j => actionableClaim(state, j, now) && onHost(j)).length;
     // A producer withdrawal completes without executing: its startedAt→completedAt
     // span is claim-hold plus detection lag, not runner time, so it is no latency evidence.
-    const durations = (state?.jobs ?? []).filter(j => j.state === 'completed' && j.claim && j.producerWithdrawn !== true && onHost(j) &&
+    // A worker ID can move between machines, so historical samples need a recorded execution host.
+    const durations = (state?.jobs ?? []).filter(j => j.state === 'completed' && j.claim && j.producerWithdrawn !== true && j.executionHostId === hostId &&
       j.startedAt !== undefined && j.completedAt !== undefined && j.startedAt <= j.completedAt &&
       j.completedAt <= now && now - j.completedAt <= 86_400_000).map(j => j.completedAt! - j.startedAt!).sort((a, b) => a - b);
     const median = durations.length ? (durations[Math.floor((durations.length - 1) / 2)]! + durations[Math.floor(durations.length / 2)]!) / 2 : null;
@@ -101,8 +102,25 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
   return hosts;
 }
 
+/** The gh-auth fix must be runnable: `phm node beat --probe-auth` alone is a
+ * missing-flag error without --node/--session. On the standalone registry —
+ * a single host — the first node whose only blocker is auth supplies the full
+ * command, and one --probe-auth beat sticks (later beats only overwrite auth
+ * when they carry it). A pool worker's auth is self-reported on its own beats,
+ * and --probe-auth run from any other machine would read that machine's gh
+ * login, not the node's, so the pool fix stays guidance without a command. */
+function authFix(job: QueueJobV1, nodes: NodeRecord[], state: NodesState): string {
+  const blocked = state.pool === undefined ? nodes.find(n =>
+    n.owners?.includes(job.owner!) === true &&
+    jobBlockers(n, job).length === 1 && jobBlockers(n, job)[0] === 'auth') : undefined;
+  return blocked === undefined
+    ? `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on a machine running a node in that scope; its own beats report the login.`
+    : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on this computer, then: phm node beat --node ${blocked.nodeId} --session ${blocked.session} --probe-auth`;
+}
+
 /** Deterministic plan: pools rank measured free host slots per observed execution millisecond;
- * standalone legacy queues retain their load policy. Ties break by node ID.
+ * workers on the same host prefer fewer active and planned claims. Standalone
+ * legacy queues retain their load policy. Remaining ties break by node ID.
  * Pure: the same state and clock always produce the same plan. Jobs without an
  * owner scope are never routed, so a legacy job cannot leak across scopes.
  */
@@ -131,7 +149,9 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
         const h = hosts.get(n.nodeId)!;
         return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency) : -load.get(n.nodeId)!;
       };
-      if (!best || score(node) > score(best)) best = node;
+      if (!best || score(node) > score(best) ||
+          (state.pool && host === hosts.get(best.nodeId) &&
+            claims.get(node.nodeId)! < claims.get(best.nodeId)!)) best = node;
     }
     if (best) {
       const host = hosts.get(best.nodeId);
@@ -150,7 +170,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
         ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
       : reasons.has('caps')
         ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
-        : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
+        : authFix(job, nodes, state);
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
   return plan;

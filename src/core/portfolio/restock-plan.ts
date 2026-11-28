@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import { lintRestockDocument, type RestockCandidate, type RestockLintOptions, type RestockDrop } from './restock-lint.js';
+import { rqDigest } from './rq-backlog.js';
 
 export interface RestockPlan {
   schema: 'fleet.restock-plan.v1';
@@ -38,7 +38,7 @@ export async function planRestock(text: string, check: RestockPrecheck, options:
     for (let i = 0; i < groups; i++) {
       const size = Math.ceil((usable - offset) / (groups - i));
       const batch = items.slice(offset, offset + size); offset += size;
-      const digest = createHash('sha256').update(JSON.stringify(batch.map(item => item.raw))).digest('hex').slice(0, 12);
+      const digest = rqDigest(JSON.stringify(batch.map(item => item.raw))).slice(0, 12);
       const jobId = `RQ-RESTOCK-${repo.toUpperCase()}-${digest.toUpperCase()}`;
       report.jobs.push({ jobId, repo, items: batch,
         prompt: `${jobId} (repo=${repo}): Complete these ${batch.length} items as one change. Verify each item.\n${batch.map((item, index) => `${index + 1}. ${item.jobId}: ${item.task}`).join('\n')}` });

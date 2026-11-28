@@ -252,11 +252,11 @@ export interface ReadJobBriefOptions {
   gaps?: (hours: number) => Promise<JobGapsReport | null>;
 }
 
-async function defaultPools(now: number): Promise<PoolsViewV1 | null> {
+async function defaultPools(now: number, runsDir: string): Promise<PoolsViewV1 | null> {
   const [{ readResourceLedger }, { buildPoolsView }, { readUsageSamples }] = await Promise.all([
     import('./runs-resource-ledger.js'), import('./pools-view.js'), import('./usage-history.js'),
   ]);
-  return buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now }));
+  return buildPoolsView(await readResourceLedger({ runsDir, now: () => now }), now, await readUsageSamples({ runsDir, nowMs: now }));
 }
 
 /** Reads every source on its own; a failed one is passed on as null and shown as unknown. */
@@ -270,7 +270,7 @@ export async function readJobBrief(opts: ReadJobBriefOptions = {}): Promise<Lead
     safe(() => read(join(runs, 'queue', 'router-queue.md'), 2 * 1024 * 1024)),
     safe(() => read(join(runs, 'metrics', 'jobs.jsonl'), 8 * 1024 * 1024)),
     safe(() => read(join(runs, 'queue', 'status.json'), 1024 * 1024)),
-    safe(() => (opts.pools ?? defaultPools)(now)),
+    safe(() => (opts.pools ?? ((n: number) => defaultPools(n, runs)))(now)),
     safe(() => (opts.gaps ?? ((h: number) => readJobGaps(h, { runsDir: runs, wtDir: wt, now, read })))(Math.max(hours, GAP_WINDOW_HOURS))),
     safe(() => read(join(runs, 'leader', 'PLAN-LOG.md'), 256 * 1024)),
     safe(() => read(join(runs, 'leader', 'VISION.md'), 256 * 1024)),

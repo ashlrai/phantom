@@ -37,6 +37,29 @@ describe('group bus', () => {
       expect(groupAddressTopicOf(label)).toBeNull();
     }
   });
+  it('narrows a subscription through the caller match predicate without fabricating rows', () => {
+    const root = setup();
+    publishGroupMessage({ id: 'm1', room: 'team', topic: 'work', from: 'codex', ttl: 10000, body: { text: 'ship it' } }, { root, now: () => 100 });
+    publishGroupPresence({ id: 'p1', room: 'team', topic: 'work', member: 'devin', state: 'online' }, { root, now: () => 101 });
+    publishGroupMessage({ id: 'm2', room: 'team', topic: 'work', from: 'claude', ttl: 10000, body: { text: 'looks good' } }, { root, now: () => 102 });
+    // The address check applies before the predicate: a predicate that accepts
+    // everything still sees only this room+topic's rows, and nextCursor keeps
+    // advancing over scanned-but-filtered records.
+    const all = subscribeGroup('team', 'work', 0, 100, { root, now: () => 103 }, () => true);
+    expect(all.status).toBe('ok');
+    if (all.status !== 'ok') throw new Error('read failed');
+    expect(all.messages).toHaveLength(3);
+    const messagesOnly = subscribeGroup('team', 'work', 0, 100, { root, now: () => 103 },
+      row => (row.envelope.body as { kind?: string }).kind === 'group.message');
+    expect(messagesOnly.status).toBe('ok');
+    if (messagesOnly.status !== 'ok') throw new Error('read failed');
+    expect(messagesOnly.messages.map(row => row.envelope.id)).toEqual(['m1', 'm2']);
+    const none = subscribeGroup('team', 'work', 0, 100, { root, now: () => 103 }, () => false);
+    expect(none.status).toBe('ok');
+    if (none.status !== 'ok') throw new Error('read failed');
+    expect(none.messages).toEqual([]);
+    expect(none.nextCursor).toBe(all.nextCursor);
+  });
   it('folds presence by cursor, isolates topics, and expires observations', () => {
     const root = setup();
     const presence = (id: string, member: string, state: 'online' | 'offline', at: number, topic = 'work') => publishGroupPresence({ id, room: 'team', topic, member, state }, { root, now: () => at });
@@ -44,8 +67,25 @@ describe('group bus', () => {
     expect(presence('2', 'codex', 'online', 101).status).toBe('posted');
     expect(presence('3', 'devin', 'offline', 102).status).toBe('posted');
     expect(presence('4', 'claude', 'online', 103, 'other').status).toBe('posted');
-    expect(groupPresence('team', 'work', { root, now: () => 104 })).toEqual({ status: 'ok', members: [{ member: 'codex', state: 'online', receivedAt: 101 }] });
-    expect(groupPresence('team', 'work', { root, now: () => 104 + GROUP_PRESENCE_TTL_MS })).toEqual({ status: 'ok', members: [] });
+    expect(groupPresence('team', 'work', { root, now: () => 104 })).toEqual({ status: 'ok', asOf: new Date(104).toISOString(), members: [{ member: 'codex', state: 'online', receivedAt: 101 }] });
+    expect(groupPresence('team', 'work', { root, now: () => 104 + GROUP_PRESENCE_TTL_MS })).toEqual({ status: 'ok', asOf: new Date(104 + GROUP_PRESENCE_TTL_MS).toISOString(), members: [] });
+  });
+  it('freezes the read clock across the presence fold and stamps asOf', () => {
+    const root = setup();
+    // A clock that advances on every read would let an early page's TTL
+    // verdict differ from a later page's; the fold must evaluate every page
+    // against one frozen now and report it as asOf.
+    let tick = 100;
+    const now = () => (tick += GROUP_PRESENCE_TTL_MS + 1000);
+    expect(publishGroupPresence({ id: 'p1', room: 'team', topic: 'work', member: 'devin', state: 'online' }, { root, now: () => 100 }).status).toBe('posted');
+    const folded = groupPresence('team', 'work', { root, now });
+    expect(folded.status).toBe('ok');
+    if (folded.status !== 'ok') throw new Error('presence read failed');
+    // The frozen read is one TTL past the observation, so the member list is
+    // honestly empty — and asOf names that same frozen instant, proving the
+    // fold stamped one clock rather than each page's own.
+    expect(folded.members).toEqual([]);
+    expect(folded.asOf).toBe(new Date(100 + GROUP_PRESENCE_TTL_MS + 1000).toISOString());
   });
 });
 
@@ -58,6 +98,31 @@ it('exposes group publishing and cursor reads through the comms CLI', async () =
   expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0'], { root, now: () => 101 }, deps)).toBe(0);
   expect(JSON.parse(output[1]!).messages[0].envelope.body.value).toEqual({ text: 'hi' });
   expect(await cmdCommsBus(['group', 'publish', 'team', 'work', 'bad', 'claude', '1000', '{'], { root }, deps)).toBe(2);
+});
+
+it('applies the shared bus page filters to comms bus group read', async () => {
+  const { cmdCommsBus } = await import('../src/cli/comms-bus.js');
+  const root = setup();
+  const output: string[] = [];
+  const deps = { emit: (value: string) => { output.push(value); } };
+  const at = { root, now: () => 100 };
+  expect(await cmdCommsBus(['group', 'publish', 'team', 'work', 'm1', 'codex', '1000', '{"text":"ship it"}'], at, deps)).toBe(0);
+  expect(await cmdCommsBus(['group', 'heartbeat', 'team', 'work', 'p1', 'devin', 'online'], at, deps)).toBe(0);
+  expect(await cmdCommsBus(['group', 'publish', 'team', 'work', 'm2', 'claude', '1000', '{"text":"looks good"}'], at, deps)).toBe(0);
+  // --body-kind keeps only group.message payloads, dropping the presence heartbeat.
+  expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', '--body-kind', 'group.message'], { root, now: () => 101 }, deps)).toBe(0);
+  const page = JSON.parse(output.at(-1)!);
+  expect(page.status).toBe('ok');
+  expect(page.messages.map((row: { envelope: { id: string } }) => row.envelope.id)).toEqual(['m1', 'm2']);
+  // --from narrows to one sender's posts; the heartbeat's member label is its sender.
+  expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', '--from', 'codex'], { root, now: () => 101 }, deps)).toBe(0);
+  expect(JSON.parse(output.at(-1)!).messages.map((row: { envelope: { id: string } }) => row.envelope.id)).toEqual(['m1']);
+  // --contains matches the scrubbed one-line summary of the room payload.
+  expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', '--contains', 'looks'], { root, now: () => 101 }, deps)).toBe(0);
+  expect(JSON.parse(output.at(-1)!).messages.map((row: { envelope: { id: string } }) => row.envelope.id)).toEqual(['m2']);
+  // An invalid filter is an argument error, never a widened page.
+  expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', '--priority', 'P9'], { root, now: () => 101 }, deps)).toBe(2);
+  expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', '--to', 'x'], { root, now: () => 101 }, deps)).toBe(2);
 });
 
 it('runs the documented group commands through the CLI', async () => {

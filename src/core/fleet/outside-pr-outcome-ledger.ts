@@ -36,11 +36,19 @@
  * count plus the closed-vocabulary `decision`, or null when the row
  * carries none (pre-fields rows read as null until the sync's next pass
  * rewrites them; the dedup treats a changed evidence tuple as a new
- * verdict).
+ * verdict). `ci` is the check-rollup verdict the outcomes read's bounded
+ * per-PR `gh pr view` pass recorded — the same closed vocabulary
+ * cloud/tracker.ts reports — or null when the row carries none
+ * (pre-fields rows, a failed or capped read); 'none' inside that
+ * vocabulary is a real empty-rollup signal, never missing evidence.
+ * `diff` is gh's recorded merge size — the `additions`/`deletions`/
+ * `changedFiles` triple the same merged-list read returns, frozen at
+ * merge — or null when the row carries none (pre-fields rows) or the
+ * record is malformed; a partial triple never counts as real zeros.
  */
 import { join } from 'node:path';
 
-import type { OutsidePrReviewDecision, OutsidePrReviewEvidence, OutsidePrRevertVerdict } from './outside-pr-outcomes.js';
+import type { OutsidePrCiVerdict, OutsidePrDiffEvidence, OutsidePrReviewDecision, OutsidePrReviewEvidence, OutsidePrRevertVerdict } from './outside-pr-outcomes.js';
 
 export const OUTSIDE_PR_OUTCOME_SCHEMA = 'fleet.outside-pr-outcome.v1';
 export const OUTSIDE_PR_SCAN_SCHEMA = 'fleet.outside-pr-scan.v1';
@@ -82,6 +90,10 @@ export interface OutsidePrOutcomeJournalRow {
   createdAt: string | null;
   /** gh's review evidence for the merge; null when the row carries none. */
   reviews: OutsidePrReviewEvidence | null;
+  /** CI verdict on the merge's head checks; null when the row carries none. */
+  ci: OutsidePrCiVerdict | null;
+  /** gh's recorded diff size for the merge; null when the row carries none or the record is malformed. */
+  diff: OutsidePrDiffEvidence | null;
   reverted: OutsidePrRevertVerdict;
 }
 
@@ -116,6 +128,8 @@ const REPO_STATES: ReadonlySet<string> = new Set(['healthy', 'degraded']);
 const REVERT_LEDGER_STATES: ReadonlySet<string> = new Set(['read', 'missing', 'unreadable']);
 /** gh's reviewDecision vocabulary (same closed set cloud/tracker.ts validates). */
 const REVIEW_DECISIONS: ReadonlySet<string> = new Set(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']);
+/** The check-rollup verdict vocabulary outside-pr-outcomes.ts reports (same closed set cloud/tracker.ts uses). */
+const CI_VERDICTS: ReadonlySet<string> = new Set(['success', 'failure', 'pending', 'none']);
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -139,6 +153,23 @@ function parseReviewEvidenceRow(raw: unknown): OutsidePrReviewEvidence | null {
   return { decision, latest };
 }
 
+/**
+ * The journaled diff-size evidence, or null when the row carries none or
+ * the record is malformed — a partial triple never counts as real zeros.
+ * All three counts must be nonnegative safe integers; anything else
+ * (pre-fields rows, corrupt rows) reads as no evidence, matching the
+ * reviews/ci rule.
+ */
+function parseDiffRow(raw: unknown): OutsidePrDiffEvidence | null {
+  if (!isRecord(raw)) return null;
+  const additions = int(raw['additions']);
+  const deletions = int(raw['deletions']);
+  const changedFiles = int(raw['changedFiles']);
+  if (additions === null || additions < 0 || deletions === null || deletions < 0 ||
+      changedFiles === null || changedFiles < 0) return null;
+  return { additions, deletions, changedFiles };
+}
+
 function parseOutcomeRow(row: Record<string, unknown>): OutsidePrOutcomeJournalRow | null {
   const repo = str(row['repo']);
   const number = int(row['number']);
@@ -154,6 +185,9 @@ function parseOutcomeRow(row: Record<string, unknown>): OutsidePrOutcomeJournalR
   const agent = row['agent'];
   const createdAt = str(row['createdAt']);
   const reviews = row['reviews'] === undefined || row['reviews'] === null ? null : parseReviewEvidenceRow(row['reviews']);
+  const ciRaw = row['ci'];
+  const ci = typeof ciRaw === 'string' && CI_VERDICTS.has(ciRaw) ? ciRaw as OutsidePrCiVerdict : null;
+  const diff = row['diff'] === undefined || row['diff'] === null ? null : parseDiffRow(row['diff']);
   return {
     v: 1,
     kind: OUTSIDE_PR_OUTCOME_SCHEMA,
@@ -167,6 +201,8 @@ function parseOutcomeRow(row: Record<string, unknown>): OutsidePrOutcomeJournalR
     mergedAt,
     createdAt,
     reviews,
+    ci,
+    diff,
     reverted: reverted as OutsidePrRevertVerdict,
   };
 }

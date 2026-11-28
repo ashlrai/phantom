@@ -10,6 +10,7 @@
 import { execFileSync } from 'node:child_process';
 import type { AshlrConfig } from '../types.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { asIntegrationRecord, unwrapJsonArray } from './dep-parser.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -78,7 +79,7 @@ export function listAvailableSecretKeys(cfg: AshlrConfig): string[] {
   if (!phantomAvailable()) return [];
 
   try {
-    const stdout = runPhantomSync(['list', '--json'], undefined);
+    const stdout = runPhantomSync(['list', '--json']);
     if (stdout === null) return [];
     return parseSecretNamesFromJson(stdout);
   } catch {
@@ -94,12 +95,11 @@ export function listAvailableSecretKeys(cfg: AshlrConfig): string[] {
  * Run a phantom sub-command synchronously, return stdout or null on error.
  * Never throws — all errors are caught.
  */
-function runPhantomSync(args: string[], cwd?: string): string | null {
+function runPhantomSync(args: string[]): string | null {
   try {
     const stdout = execFileSync(PHANTOM_BIN, args, {
       encoding: 'utf8',
       timeout: TIMEOUT_MS,
-      cwd,
       env: { ...process.env, PHANTOM_NO_UPDATE_CHECK: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -118,38 +118,25 @@ function parseSecretNamesFromJson(raw: string): string[] {
   const trimmed = raw.trim();
   if (!trimmed) return [];
   try {
-    const parsed: unknown = JSON.parse(trimmed);
+    const items = unwrapJsonArray(JSON.parse(trimmed) as unknown, ['secrets', 'keys', 'names']);
+    if (!items) return [];
 
-    // Array of objects: [{ name: "KEY" }, ...]  or  [{ key: "KEY" }, ...]
-    if (Array.isArray(parsed)) {
-      const names: string[] = [];
-      for (const item of parsed) {
-        if (item !== null && typeof item === 'object') {
-          const obj = item as Record<string, unknown>;
-          if (typeof obj['name'] === 'string') {
-            names.push(obj['name']);
-          } else if (typeof obj['key'] === 'string') {
-            names.push(obj['key']);
-          }
-          // Deliberately skip any other field (including 'value').
-        } else if (typeof item === 'string') {
-          names.push(item);
+    // Array of objects ([{ name: "KEY" }] / [{ key: "KEY" }]) or bare strings.
+    const names: string[] = [];
+    for (const item of items) {
+      const obj = asIntegrationRecord(item);
+      if (obj) {
+        if (typeof obj['name'] === 'string') {
+          names.push(obj['name']);
+        } else if (typeof obj['key'] === 'string') {
+          names.push(obj['key']);
         }
-      }
-      return names;
-    }
-
-    // Object with a "secrets" or "keys" array.
-    if (parsed !== null && typeof parsed === 'object') {
-      const obj = parsed as Record<string, unknown>;
-      for (const key of ['secrets', 'keys', 'names']) {
-        if (Array.isArray(obj[key])) {
-          return parseSecretNamesFromJson(JSON.stringify(obj[key]));
-        }
+        // Deliberately skip any other field (including 'value').
+      } else if (typeof item === 'string') {
+        names.push(item);
       }
     }
-
-    return [];
+    return names;
   } catch {
     // Non-JSON fallback: SCREAMING_SNAKE_CASE identifiers only.
     const ENV_VAR_RE = /^[A-Z_][A-Z0-9_]{0,127}$/;

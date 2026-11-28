@@ -68,6 +68,17 @@ describe('readNodesPlan', () => {
     expect(plan.reasons).toContain('queue unreadable; job assignments unknown');
   });
 
+  it('does not repeat the free-slots clause a running node\'s state already carries', async () => {
+    // A joined computer that has not reported slots reads "Phantom running;
+    // free slots unknown" — the plan's why must not say it twice.
+    const view = deps(() => tailnet([peer('node-b', true)]),
+      registry([node('node-a'), node('node-b', { slots: undefined })]));
+    const plan = await readNodesPlan({ view, readQueue: async () => queueOf([]) });
+    const row = plan.nodes.find(n => n.name === 'node-b')!;
+    expect(row.suggested_slots).toBe('unknown');
+    expect(row.why).toBe('Phantom running; free slots unknown');
+  });
+
   it('a live heartbeat with unconfirmed reachability suggests unknown slots, never assignable room', async () => {
     // node-d heartbeats into the registry but is absent from the tailnet read,
     // so its state is unconfirmed: the plan must not advertise slots it cannot assign.

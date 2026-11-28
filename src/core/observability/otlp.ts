@@ -21,6 +21,7 @@ import { completeReportedTokens, validateTokenEvidence } from '../run/token-evid
 
 import { randomBytes } from 'node:crypto';
 import type { GenAiSpan, RunState, SwarmRun } from '../types.js';
+import { asObservabilityRecord } from './hop-events.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -146,6 +147,8 @@ export function buildGenAiTrace(spans: GenAiSpan[]): OtlpTrace {
     let end = isoToUnixNano(s.endTs);
     // Guarantee end >= start even if timestamps are equal/inverted.
     if (BigInt(end) < BigInt(start)) end = start;
+    const reported = completeReportedTokens(s);
+    const evidence = validateTokenEvidence(s.tokenEvidence, s.tokensIn, s.tokensOut);
 
     return {
       traceId,
@@ -159,14 +162,14 @@ export function buildGenAiTrace(spans: GenAiSpan[]): OtlpTrace {
       attributes: [
         strAttr('gen_ai.system', s.provider),
         strAttr('gen_ai.request.model', s.model),
-        ...(completeReportedTokens(s) ? [intAttr('gen_ai.usage.input_tokens', s.tokensIn), intAttr('gen_ai.usage.output_tokens', s.tokensOut)] : []),
-        strAttr('phantom.token_provenance', completeReportedTokens(s) ? 'reported' : validateTokenEvidence(s.tokenEvidence, s.tokensIn, s.tokensOut) ? 'partial' : 'unknown'),
+        ...(reported ? [intAttr('gen_ai.usage.input_tokens', s.tokensIn), intAttr('gen_ai.usage.output_tokens', s.tokensOut)] : []),
+        strAttr('phantom.token_provenance', reported ? 'reported' : evidence ? 'partial' : 'unknown'),
         intAttr('phantom.accounted.input_tokens', s.tokensIn),
         intAttr('phantom.accounted.output_tokens', s.tokensOut),
-        ...(['reported', 'estimated', 'reserved', 'unknown'] as const).flatMap(basis => {
-          const evidence = validateTokenEvidence(s.tokenEvidence, s.tokensIn, s.tokensOut);
-          return evidence ? [intAttr(`phantom.${basis}.input_tokens`, evidence.input[basis]), intAttr(`phantom.${basis}.output_tokens`, evidence.output[basis])] : [];
-        }),
+        ...(evidence ? (['reported', 'estimated', 'reserved', 'unknown'] as const).flatMap(basis => [
+          intAttr(`phantom.${basis}.input_tokens`, evidence.input[basis]),
+          intAttr(`phantom.${basis}.output_tokens`, evidence.output[basis]),
+        ]) : []),
         doubleAttr('gen_ai.usage.cost_usd', s.estCostUsd),
         strAttr('ashlr.run.id', s.runId),
         strAttr('ashlr.provider', s.provider),
@@ -354,10 +357,7 @@ const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 /** Stop/finish reasons that mark a refusal in a vendor result stream. */
 const REFUSAL_REASONS = new Set(['refusal', 'content_filter']);
 
-function record(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown> : {};
-}
+const record = (value: unknown): Record<string, unknown> => asObservabilityRecord(value) ?? {};
 
 function list(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];

@@ -13,19 +13,30 @@
 
 import { createHash } from 'node:crypto';
 
+import {
+  canonicalEpochDomainBytes as domainBytes,
+  canonicalEpochJson as canonicalJson,
+  canonicalEpochJsonDigest as digest,
+  deepFreezeEpochValue as immutable,
+  epochPlainRecord as plainRecord,
+  exactEpochBytes as equalBytes,
+  exactEpochKeys as exactKeys,
+  isValidEpochTimestamp as timestamp,
+  isValidPrefixedEpochDigest as prefixedDigest,
+  isValidRawEpochDigest as rawDigest,
+} from './agent-os-epoch-shared.js';
+
 export const AGENT_OS_OBSERVATION_SANDBOX_PROTOCOL_V1 =
   'ashlr-agent-os-observation-sandbox-v1' as const;
-export const AGENT_OS_OBSERVATION_SANDBOX_MAX_DURATION_MS_V1 = 5 * 60_000;
-export const AGENT_OS_OBSERVATION_SANDBOX_MAX_INPUT_BYTES_V1 = 2 * 1024 * 1024;
-export const AGENT_OS_OBSERVATION_SANDBOX_MAX_OUTPUT_BYTES_V1 = 2 * 1024 * 1024;
-export const AGENT_OS_OBSERVATION_SANDBOX_MAX_ATTESTATION_LIFETIME_MS_V1 = 5 * 60_000;
-export const AGENT_OS_OBSERVATION_SANDBOX_MAX_FUTURE_SKEW_MS_V1 = 5_000;
+const AGENT_OS_OBSERVATION_SANDBOX_MAX_DURATION_MS_V1 = 5 * 60_000;
+const AGENT_OS_OBSERVATION_SANDBOX_MAX_INPUT_BYTES_V1 = 2 * 1024 * 1024;
+const AGENT_OS_OBSERVATION_SANDBOX_MAX_OUTPUT_BYTES_V1 = 2 * 1024 * 1024;
+const AGENT_OS_OBSERVATION_SANDBOX_MAX_ATTESTATION_LIFETIME_MS_V1 = 5 * 60_000;
+const AGENT_OS_OBSERVATION_SANDBOX_MAX_FUTURE_SKEW_MS_V1 = 5_000;
 
 const ATTESTATION_DOMAIN = 'ashlr:agent-os:observation-sandbox:attestation:v1\0';
 const REQUEST_DOMAIN = 'ashlr:agent-os:observation-sandbox:request:v1\0';
 const RESPONSE_DOMAIN = 'ashlr:agent-os:observation-sandbox:response:v1\0';
-const RAW_SHA256_RE = /^[a-f0-9]{64}$/u;
-const PREFIXED_SHA256_RE = /^sha256:[a-f0-9]{64}$/u;
 
 const NO_AUTHORITY = Object.freeze({
   authority: 'observation-only' as const,
@@ -310,53 +321,6 @@ const RESPONSE_UNSIGNED_KEYS = [
 ] as const;
 const RESPONSE_KEYS = [...RESPONSE_UNSIGNED_KEYS, 'authenticator', 'frameKeyId', 'responseDigest'] as const;
 
-function plainRecord(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
-}
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const row = value as Record<string, unknown>;
-  return `{${Object.keys(row).sort().map((key) =>
-    `${JSON.stringify(key)}:${canonicalJson(row[key])}`).join(',')}}`;
-}
-
-function digest(domain: string, value: unknown): string {
-  return createHash('sha256').update(domain, 'utf8').update(canonicalJson(value), 'utf8').digest('hex');
-}
-
-function domainBytes(domain: string, value: unknown): Buffer {
-  return Buffer.from(`${domain}${canonicalJson(value)}`, 'utf8');
-}
-
-function timestamp(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > 40) return false;
-  const milliseconds = Date.parse(value);
-  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
-}
-
-function rawDigest(value: unknown): value is string {
-  return typeof value === 'string' && RAW_SHA256_RE.test(value);
-}
-
 function validAttestationVerifier(
   value: unknown,
 ): value is AgentOsObservationSandboxAttestationVerifierV1 {
@@ -375,28 +339,6 @@ function validFrameVerifier(value: unknown): value is AgentOsObservationSandboxF
   const row = plainRecord(value);
   return Boolean(row && exactKeys(row, ['keyId', 'verify']) && rawDigest(row['keyId']) &&
     typeof row['verify'] === 'function');
-}
-
-function prefixedDigest(value: unknown): value is string {
-  return typeof value === 'string' && PREFIXED_SHA256_RE.test(value);
-}
-
-function cloneBytes(bytes: Uint8Array): Buffer {
-  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-}
-
-function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
-  return left.byteLength === right.byteLength && Buffer.compare(cloneBytes(left), cloneBytes(right)) === 0;
-}
-
-function immutable<T>(value: T, seen = new WeakSet<object>()): T {
-  if (ArrayBuffer.isView(value)) return value;
-  if (value !== null && typeof value === 'object' && !seen.has(value)) {
-    seen.add(value);
-    for (const nested of Object.values(value as Record<string, unknown>)) immutable(nested, seen);
-    Object.freeze(value);
-  }
-  return value;
 }
 
 function validControls(value: unknown): value is AgentOsObservationSandboxControlsV1 {

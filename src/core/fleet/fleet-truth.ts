@@ -223,7 +223,9 @@ async function readQueue(root: string): Promise<{ ready: number; blocked: number
   try {
     const { parseReadyTsv } = await import('./lane-console.js');
     const text = await readFile(join(root, 'queue', 'ready.tsv'), 'utf8');
-    const rows = parseReadyTsv(text).rows;
+    // ready.tsv can carry repeated READY rows for one job, but the market
+    // launches jobs, not lines: queued counts each job once (uniqueReady).
+    const rows = parseReadyTsv(text, null, true).rows;
     const parked = (pool: string): boolean => /^PARKED[^.]*\./i.test(pool);
     return {
       ready: rows.filter((r) => r.status === 'READY' && !parked(r.pool)).length,

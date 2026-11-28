@@ -18,16 +18,23 @@
  * pass^k, friction and tick-health sources beside it.
  *
  * Honesty rules, same as every other backlog source:
- *  - Read-only. metrics/jobs.jsonl is read through readLedgerTail's bounded
- *    no-follow tail and metrics/empty-tags.jsonl through readLedgerFile's
- *    bounded no-follow full read; nothing is written and no network is
- *    touched.
+ *  - Read-only. metrics/jobs.jsonl and metrics/empty-tags.jsonl are each
+ *    read through readLedgerTail's bounded no-follow tail — the tags
+ *    ledger is append-only and never rotated, so a whole-file read would
+ *    go blind ('too-large') once it outgrows the bound while every
+ *    sibling consumer (router outcomes, empty-tag-sync) already folds
+ *    the newest window; nothing is written and no network is touched.
  *  - Healthy-only evidence bar. A missing, unreadable or non-file jobs
- *    ledger yields no items; the tags ledger must be fully readable —
+ *    ledger yields no items; the tags ledger must be readable —
  *    'missing' is a clean empty ledger (every joined empty is then
- *    honestly untagged) while 'unreadable', 'not-file' or 'too-large'
- *    means the job→tag join cannot be trusted, so the whole source stays
- *    quiet rather than guessing which finishes carry which tag.
+ *    honestly untagged) while 'unreadable' or 'not-file' means the
+ *    job→tag join cannot be trusted, so the whole source stays quiet
+ *    rather than guessing which finishes carry which tag. A clipped
+ *    tags ledger keeps every tag row still inside the retained window —
+ *    recorded tags remain real evidence (counts become lower bounds) —
+ *    but a finish whose tag row aged out counts 'untagged', so the
+ *    untagged bucket can no longer establish its coverage-gap majority
+ *    and stays withheld, exactly like a clipped jobs ledger.
  *  - Recurring means recorded. A bucket emits only at
  *    EMPTY_TAG_RECURRING recorded occurrences inside the same 72-hour
  *    window the sync itself uses (EMPTY_TAG_SYNC_HOURS), so one-off
@@ -43,7 +50,7 @@
  *    finish with no tag row at all — emits only when untagged finishes
  *    are the majority of the window's empties, the signature of a dead or
  *    starved empty-tag-sync rather than its normal per-pass deferral.
- *    A clipped jobs ledger cannot establish that majority.
+ *    A clipped jobs or tags ledger cannot establish that majority.
  *    already_done, no_change_needed and pool_cap are explained healthy or
  *    owner-domain outcomes and never become work here.
  *  - The ledgers carry no repository dimension — they describe this
@@ -71,8 +78,8 @@ import { EMPTY_TAG_SYNC_HOURS, EMPTY_TAG_SYNC_MAX_CLASSIFY } from '../fleet/empt
 import { currentAttemptFinishes, type EmptiesFinish } from '../fleet/empty-finishes.js';
 import {
   foldEmptyTags,
-  readLedgerFile,
   readLedgerTail,
+  tailTruncated,
   ROUTER_EMPTY_TAGS_LEDGER_RELATIVE,
   ROUTER_OUTCOME_LEDGER_RELATIVE,
 } from '../router/outcomes.js';
@@ -173,12 +180,13 @@ function examplesLine(bucket: ActionableBucket, fold: EmptyTagWindowFold): strin
 
 const NO_CHANGE = 'If the pattern no longer reproduces on the default branch — or the cause is owner-only (credentials, billing, a protected gate or sandbox profile) — report no-change and name the evidence.';
 
-function emptyTagPrompt(bucket: ActionableBucket, fold: EmptyTagWindowFold, truncated: boolean): string {
+function emptyTagPrompt(bucket: ActionableBucket, fold: EmptyTagWindowFold, jobsClipped: boolean, tagsClipped: boolean): string {
   const lead = [
     `Phantom's empty-job tag ledger shows '${bucket}' recurring across the fleet's own finished-empty jobs — the self-improvement work this backlog exists for.`,
     '',
     tallyLine(fold) + examplesLine(bucket, fold) + '.',
-    ...(truncated ? ['The jobs ledger was clipped. These counts cover only the retained receipts.'] : []),
+    ...(jobsClipped ? ['The jobs ledger was clipped. These counts cover only the retained receipts.'] : []),
+    ...(tagsClipped ? ['The empty-tags ledger was clipped. Recorded tag counts cover only the retained tag receipts; finishes whose tag rows aged out of the window count as untagged.'] : []),
     '',
   ];
   const tagClause = bucket === 'untagged' ? '' : ` The recorded tag label is '${EMPTY_TAG_LABELS[bucket as keyof typeof EMPTY_TAG_LABELS]}'.`;
@@ -202,7 +210,7 @@ function emptyTagPrompt(bucket: ActionableBucket, fold: EmptyTagWindowFold, trun
   return [...lead, ...body[bucket]].join('\n');
 }
 
-function emptyTagItem(bucket: ActionableBucket, fold: EmptyTagWindowFold, repo: string, truncated: boolean): CloudBacklogItem {
+function emptyTagItem(bucket: ActionableBucket, fold: EmptyTagWindowFold, repo: string, jobsClipped: boolean, tagsClipped: boolean): CloudBacklogItem {
   const titles: Record<ActionableBucket, string> = {
     blocked: `Fleet empty jobs keep ending 'blocked'`,
     unknown: `Fleet empty finishes stay tagged 'unknown'`,
@@ -211,7 +219,7 @@ function emptyTagItem(bucket: ActionableBucket, fold: EmptyTagWindowFold, repo: 
   return {
     id: `fleet-empty-tag-${bucket}`,
     title: titles[bucket].slice(0, MAX_TITLE_CHARS),
-    prompt: emptyTagPrompt(bucket, fold, truncated),
+    prompt: emptyTagPrompt(bucket, fold, jobsClipped, tagsClipped),
     area: 'fleet-empty-tags',
     priority: 3,
     ...(CLOUD_REPO_PATTERN.test(repo) ? { repo } : {}),
@@ -236,14 +244,15 @@ export async function emptyTagBacklogItems(opts: EmptyTagItemsOptions): Promise<
         ? Promise.resolve({ state: 'read' as const, text: opts.jobsText, truncated: false })
         : readLedgerTail(join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE)),
       opts.tagsText !== undefined
-        ? Promise.resolve({ state: 'read' as const, text: opts.tagsText })
-        : readLedgerFile(join(runsDir, ROUTER_EMPTY_TAGS_LEDGER_RELATIVE)),
+        ? Promise.resolve({ state: 'read' as const, text: opts.tagsText, truncated: false })
+        : readLedgerTail(join(runsDir, ROUTER_EMPTY_TAGS_LEDGER_RELATIVE)),
     ]);
     if (jobs.state !== 'read') return [];
     // 'missing' is a clean empty tags ledger — every joined empty is then
     // honestly untagged. Anything else means the job→tag join cannot be
     // trusted, so the source stays quiet rather than guessing tags.
     if (tags.state !== 'read' && tags.state !== 'missing') return [];
+    const tagsClipped = tailTruncated(tags);
     const tagMap = tags.state === 'read' ? foldEmptyTags(tags.text, nowMs) : new Map<string, string>();
     const finishes = currentAttemptFinishes(jobs.text, nowMs, EMPTY_TAG_WINDOW_HOURS);
     const fold = foldEmptyTagWindow(finishes, tagMap);
@@ -255,9 +264,12 @@ export async function emptyTagBacklogItems(opts: EmptyTagItemsOptions): Promise<
       if (count < EMPTY_TAG_RECURRING) continue;
       // Untagged only evidences a coverage gap when it is the majority of
       // the window's empties — a small untagged share is the sync's normal
-      // per-pass deferral, not a broken ledger.
-      if (bucket === 'untagged' && (jobs.truncated || count * 2 <= fold.empties)) continue;
-      items.push(emptyTagItem(bucket, fold, repo, jobs.truncated));
+      // per-pass deferral, not a broken ledger. A clipped jobs ledger
+      // hides finishes outright and a clipped tags ledger hides recorded
+      // tags (their finishes count untagged), so neither can establish
+      // the majority.
+      if (bucket === 'untagged' && (jobs.truncated || tagsClipped || count * 2 <= fold.empties)) continue;
+      items.push(emptyTagItem(bucket, fold, repo, jobs.truncated, tagsClipped));
     }
     return items;
   } catch {

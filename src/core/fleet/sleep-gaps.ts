@@ -1,7 +1,8 @@
 /**
  * `phm fleet gaps`: every stretch of 15+ minutes with no dispatcher tick, or no launch while jobs were queued,
  * with the likely cause. Read-only. Ticks are the PLANNER_TICK lines in dispatch-events.log (they carry the
- * ready count and free slots); launches are the `launch` rows of metrics/jobs.jsonl. Sleep evidence is the
+ * ready count and free slots; the writer omits phx when the ready queue was unreadable, which parses as
+ * unknown depth, never a proven-empty queue); launches are the `launch` rows of metrics/jobs.jsonl. Sleep evidence is the
  * wall-clock jump between two clock samples a self-tick recorded: wall time minus monotonic time, which does
  * not advance while the Mac sleeps. Anything not measured is null / "unknown", never zero. A gap with an empty
  * queue on both edges is never called lost work.
@@ -142,7 +143,12 @@ export function buildFleetGaps(input: BuildGapsInput): FleetGapsReport {
       const end = b?.at ?? input.now;
       if (end <= input.since) continue;
       if (end - a.at >= minMs) {
-        const queued = a.ready === null ? null : b?.ready === undefined || b.ready === null ? a.ready : Math.max(a.ready, b.ready);
+        // Depth is only as known as its least-known edge: a measured-empty
+        // start beside an unreadable end cannot prove the queue stayed empty,
+        // so the gap reports unknown rather than a fabricated zero.
+        const queued = a.ready === null || (a.ready === 0 && b !== undefined && b.ready === null) ? null
+          : b === undefined || b.ready === null ? a.ready
+          : Math.max(a.ready, b.ready);
         const empty = a.ready === 0 && (b === undefined || b.ready === 0);
         const slept = b ? sleptBetween(samples, a.at, b.at) : null;
         const cause: GapCause = empty ? 'queue-empty' : slept === null ? 'unknown' : slept >= (end - a.at) / MIN / 2 ? 'host-asleep' : 'dispatcher-stalled';

@@ -12,14 +12,15 @@
  * keeps its single caller. An existing iMessage owner is never overwritten.
  * RQ-PAIRMULTIN22ZQ8.
  *
- * State is one 0600 file, comms/owner-pair.json (the pending handles, cursor and
- * times). Everything outside the bridge is injected, so tests send nothing.
+ * State is one 0600 file, comms/owner-pair.json (pending handles, reply cursor,
+ * and automatic invitation history). Tests inject the bridge and send nothing.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { parseTeamIdentities, type TeamIdentity } from '../agents/channel-policy.js';
 import { parseMasonIdentities } from '../agents/leader-network.js';
+import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { IMESSAGE_HANDLE_RE, detectOwnIMessageHandles, pollPairReplies, readMaxRowId, sendIMessage } from '../integrations/imessage.js';
 import type { AshlrConfig } from '../types.js';
 import { readCommsLimits } from './comms-confirm.js';
@@ -36,8 +37,18 @@ export { readOwnerPairPending, type OwnerPairPendingRead, type OwnerPairPendingS
 
 export const PAIR_TEXT = 'Phantom: reply YES to get fleet updates here.';
 export const PAIR_TTL_MS = 24 * 60 * 60 * 1000;
+const PAIR_AUTO_LIMIT = 2;
+const DECLINED_LINE = 'Automatic pairing invitations stopped. Run phm owner pair imessage to pair by hand.';
 
-export interface PairState { pending: PairPending | null; lastStartAt: number | null; /** Set by unpair: the self-tick does not pair again until Mason runs pair. */ autoOff: boolean }
+interface AutoInvitation { sent: number; declinedAt?: number }
+export interface PairState {
+  pending: PairPending | null;
+  lastStartAt: number | null;
+  /** Set by unpair until Mason runs pair. */
+  autoOff: boolean;
+  /** Keyed by lowercased handle. Omitted in older files and when empty. */
+  autoInvitations?: Record<string, AutoInvitation>;
+}
 
 /** `fromMe` is a row Mason's own Apple ID sent, e.g. his YES typed on the phone into the self-chat. */
 export interface PairInbound { rowid: number; text: string; handle: string; fromMe?: boolean }
@@ -53,8 +64,8 @@ export interface PairDeps { configDir: string; bridge: PairBridge; now?: () => n
 
 export interface OwnerPairStatusV1 {
   schema: 'owner-pair.status.v1';
-  state: 'not-paired' | 'waiting' | 'paired';
-  /** One plain line: "not paired", "waiting for YES (sent to N)" or "paired (**ab)". */
+  state: 'not-paired' | 'waiting' | 'paired' | 'declined_auto';
+  /** One plain line describing pairing and any next step. */
   line: string;
   since?: string;
   /** How many own handles the pairing text went to (waiting only). */
@@ -65,7 +76,7 @@ export interface OwnerPairStatusV1 {
 
 export type PairStartResult =
   | { status: 'pending'; handles: string[]; since: number }
-  | { status: 'already-paired' | 'already-pending' | 'too-soon' | 'none-found' | 'send-failed' | 'messages-unreadable' | 'bad-handle' };
+  | { status: 'already-paired' | 'already-pending' | 'too-soon' | 'declined_auto' | 'none-found' | 'send-failed' | 'messages-unreadable' | 'bad-handle' };
 export type PairCheckResult =
   | { status: 'none' | 'waiting' | 'expired' | 'unreadable' }
   | { status: 'bound'; confirmed: boolean; reason?: string };
@@ -79,12 +90,29 @@ const clock = (deps: PairDeps): number => (deps.now ?? Date.now)();
 
 function emptyState(): PairState { return { pending: null, lastStartAt: null, autoOff: false }; }
 
+function parseAutoInvitations(value: unknown): Record<string, AutoInvitation> | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid invitation history');
+  return Object.fromEntries(Object.entries(value).map(([handle, entry]: [string, unknown]) => {
+    const { sent, declinedAt } = (entry ?? {}) as Partial<AutoInvitation>;
+    if (!IMESSAGE_HANDLE_RE.test(handle) || typeof sent !== 'number' || !Number.isSafeInteger(sent) || sent < 0 || sent > PAIR_AUTO_LIMIT ||
+        (declinedAt !== undefined && !Number.isFinite(declinedAt))) throw new Error('Invalid invitation history');
+    return [handle.toLowerCase(), { sent, declinedAt }];
+  }));
+}
+
 export function readPairState(configDir: string): PairState {
   try {
     const raw = JSON.parse(readFileSync(join(configDir, 'comms', OWNER_PAIR_STATE_FILE), 'utf8')) as Record<string, unknown>;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid pair state');
+    const autoInvitations = parseAutoInvitations(raw.autoInvitations);
     return { pending: parsePendingRecord(raw.pending),
-      lastStartAt: Number.isFinite(raw.lastStartAt) ? raw.lastStartAt as number : null, autoOff: raw.autoOff === true };
-  } catch { return emptyState(); }
+      lastStartAt: Number.isFinite(raw.lastStartAt) ? raw.lastStartAt as number : null, autoOff: raw.autoOff === true,
+      ...(autoInvitations === undefined ? {} : { autoInvitations }) };
+  } catch (error) {
+    // Only a missing file is a fresh start. An explicit start can replace damaged history.
+    return { ...emptyState(), autoOff: (error as NodeJS.ErrnoException).code !== 'ENOENT' };
+  }
 }
 
 function atomicWrite(file: string, text: string, mode: number): void {
@@ -97,6 +125,19 @@ function atomicWrite(file: string, text: string, mode: number): void {
 
 function writePairState(configDir: string, state: PairState): void {
   atomicWrite(join(configDir, 'comms', OWNER_PAIR_STATE_FILE), JSON.stringify(state), 0o600);
+}
+
+function acquirePairLock(configDir: string) {
+  mkdirSync(configDir, { recursive: true, mode: 0o700 });
+  const acquired = acquireLocalStoreLockWithOutcome(join(configDir, 'comms', '.owner-pair-lock', 'state.lock'), 0, { anchorPath: configDir });
+  if (acquired.state === 'unavailable') throw new Error('Pairing state lock unavailable');
+  return acquired.lock;
+}
+
+async function withPairLock<T>(configDir: string, busy: T, run: () => Promise<T>): Promise<T> {
+  const lock = acquirePairLock(configDir);
+  if (!lock) return busy;
+  try { return await run(); } finally { releaseLocalStoreLock(lock); }
 }
 
 // ---------------------------------------------------------------------------
@@ -177,31 +218,68 @@ export function readOwnerPairStatus(configDir: string): OwnerPairStatusV1 {
     const confirmed = readCommsLimits(configDir).state === 'confirmed';
     return { schema: 'owner-pair.status.v1', state: 'paired', line: `paired (${mask(bound)})`, confirmed };
   }
-  const pending = readPairState(configDir).pending;
-  if (pending) return { schema: 'owner-pair.status.v1', state: 'waiting', line: `waiting for YES (sent to ${pending.handles.length})`, since: new Date(pending.startedAt).toISOString(), sent: pending.handles.length };
+  const { pending, autoInvitations } = readPairState(configDir);
+  if (pending?.handles.some(handle => autoInvitations?.[handle.toLowerCase()]?.declinedAt === undefined)) {
+    return { schema: 'owner-pair.status.v1', state: 'waiting', line: `waiting for YES (sent to ${pending.handles.length})`, since: new Date(pending.startedAt).toISOString(), sent: pending.handles.length };
+  }
+  const declinedAt = Object.values(autoInvitations ?? {}).reduce((latest, entry) => Math.max(latest, entry.declinedAt ?? -Infinity), -Infinity);
+  if (Number.isFinite(declinedAt)) return { schema: 'owner-pair.status.v1', state: 'declined_auto', line: DECLINED_LINE, since: new Date(declinedAt).toISOString() };
   return { schema: 'owner-pair.status.v1', state: 'not-paired', line: 'not paired' };
 }
 
-/** Send the one pairing text to each own handle (cap 4) and record one pending pair. `auto` is the self-tick: at most one start per 24 h. */
-export async function startOwnerPair(deps: PairDeps, input: { handle?: string; auto?: boolean } = {}): Promise<PairStartResult> {
+/** Automatic starts are limited to two invitations per handle and one round per 24 hours. */
+export function startOwnerPair(deps: PairDeps, input: { handle?: string; auto?: boolean } = {}): Promise<PairStartResult> {
+  return withPairLock<PairStartResult>(deps.configDir, { status: 'too-soon' }, () => startPair(deps, input));
+}
+
+async function startPair(deps: PairDeps, input: { handle?: string; auto?: boolean }): Promise<PairStartResult> {
   const now = clock(deps);
   if (boundHandle(deps.configDir)) return { status: 'already-paired' };
-  const state = readPairState(deps.configDir);
   const explicit = input.handle?.trim();
   if (explicit !== undefined && !IMESSAGE_HANDLE_RE.test(explicit)) return { status: 'bad-handle' };
+  let state = readPairState(deps.configDir);
+  if (input.auto && state.pending && state.pending.expiresAt <= now) {
+    await checkPair(deps, state, now);
+    state = readPairState(deps.configDir);
+  }
+  const history = state.autoInvitations ?? {};
   const live = state.pending && state.pending.expiresAt > now ? state.pending : null;
-  if (live && (explicit === undefined || live.handles.some(h => h.toLowerCase() === explicit.toLowerCase()))) return { status: 'already-pending' };
+  if (live?.handles.some(h => (explicit === undefined || h.toLowerCase() === explicit.toLowerCase()) &&
+      (input.auto || history[h.toLowerCase()]?.declinedAt === undefined))) return { status: 'already-pending' };
   if (input.auto && (state.autoOff || (state.lastStartAt !== null && now - state.lastStartAt < PAIR_TTL_MS))) return { status: 'too-soon' };
 
   // --handle narrows to one; otherwise every own handle found is Mason's.
-  const targets = explicit !== undefined ? [explicit] : [...new Map((await deps.bridge.ownHandles()).map(h => [h.toLowerCase(), h])).values()].slice(0, PAIR_MAX_HANDLES);
-  if (targets.length === 0) return { status: 'none-found' };
+  const found = explicit !== undefined ? [explicit] : [...new Map((await deps.bridge.ownHandles()).map(h => [h.toLowerCase(), h])).values()];
+  if (found.length === 0) return { status: Object.values(history).some(entry => entry.declinedAt !== undefined) && input.auto ? 'declined_auto' : 'none-found' };
+  const targets = (input.auto ? found.filter(h => {
+    const entry = history[h.toLowerCase()];
+    return entry?.declinedAt === undefined && (entry?.sent ?? 0) < PAIR_AUTO_LIMIT;
+  }) : found).slice(0, PAIR_MAX_HANDLES);
+  if (targets.length === 0) return { status: 'declined_auto' };
   const afterRowId = await deps.bridge.baseline();
   if (afterRowId === null) return { status: 'messages-unreadable' };
   const sent: string[] = [];
-  for (const handle of targets) if (await deps.bridge.send(handle, PAIR_TEXT)) sent.push(handle);
+  let invitations = { ...history };
+  const pendingState = (handles: string[], autoInvitations: Record<string, AutoInvitation>): PairState => ({
+    pending: { handles, startedAt: now, expiresAt: now + PAIR_TTL_MS, afterRowId }, lastStartAt: now, autoOff: false,
+    ...(Object.keys(autoInvitations).length === 0 ? {} : { autoInvitations }),
+  });
+  for (const handle of targets) {
+    const key = handle.toLowerCase();
+    const attempt = { ...invitations, [key]: { sent: (invitations[key]?.sent ?? 0) + 1 } };
+    // Record before sending so an interrupted or ambiguous send still uses a slot.
+    if (input.auto) writePairState(deps.configDir, pendingState([...sent, handle], attempt));
+    if (await deps.bridge.send(handle, PAIR_TEXT)) {
+      sent.push(handle);
+      if (input.auto) invitations = attempt;
+      else delete invitations[key];
+    } else if (input.auto) {
+      // A definite failure can be retried. Keep any earlier sends in this round.
+      writePairState(deps.configDir, sent.length === 0 ? state : pendingState(sent, invitations));
+    }
+  }
   if (sent.length === 0) return { status: 'send-failed' };
-  writePairState(deps.configDir, { pending: { handles: sent, startedAt: now, expiresAt: now + PAIR_TTL_MS, afterRowId }, lastStartAt: now, autoOff: false });
+  if (!input.auto) writePairState(deps.configDir, pendingState(sent, invitations));
   return { status: 'pending', handles: sent, since: now };
 }
 
@@ -209,25 +287,40 @@ export async function startOwnerPair(deps: PairDeps, input: { handle?: string; a
 const isYes = (m: PairInbound): boolean => m.text.trim().toUpperCase() === 'YES' && m.text.trim() !== PAIR_TEXT;
 
 /** Look for a YES in a pending own handle's chat. The first handle to say it binds; everything else binds nothing. */
-export async function checkOwnerPair(deps: PairDeps): Promise<PairCheckResult> {
-  const now = clock(deps);
-  const state = readPairState(deps.configDir);
+export function checkOwnerPair(deps: PairDeps): Promise<PairCheckResult> {
+  if (!readPairState(deps.configDir).pending) return Promise.resolve({ status: 'none' });
+  return withPairLock<PairCheckResult>(deps.configDir, { status: 'waiting' }, () => checkPair(deps, readPairState(deps.configDir), clock(deps)));
+}
+
+async function checkPair(deps: PairDeps, state: PairState, now: number): Promise<PairCheckResult> {
   const pending = state.pending;
   if (!pending) return { status: 'none' };
-  if (pending.expiresAt <= now) { writePairState(deps.configDir, { ...state, pending: null }); return { status: 'expired' }; }
+  const expired = pending.expiresAt <= now;
   const inbound = await deps.bridge.replies(pending.afterRowId, pending.handles);
-  if (inbound === null) return { status: 'unreadable' };
+  if (inbound === null && !expired) return { status: 'unreadable' };
   const own = new Set(pending.handles.map(h => h.toLowerCase()));
   // Rows at or before the send are older than the pairing; only the chats with pending own handles count.
-  const mine = inbound.filter(m => m.rowid > pending.afterRowId && own.has(m.handle.toLowerCase())).sort((a, b) => a.rowid - b.rowid);
-  const yes = mine.find(isYes);
-  if (!yes) {
-    const top = mine.reduce((max, m) => Math.max(max, m.rowid), pending.afterRowId);
-    if (top > pending.afterRowId) writePairState(deps.configDir, { ...state, pending: { ...pending, afterRowId: top } });
-    return { status: 'waiting' };
+  const mine = (inbound ?? []).filter(m => m.rowid > pending.afterRowId && own.has(m.handle.toLowerCase())).sort((a, b) => a.rowid - b.rowid);
+  const yes = expired ? undefined : mine.find(isYes);
+  if (yes) {
+    const handle = pending.handles.find(h => h.toLowerCase() === yes.handle.toLowerCase())!;
+    return bindOwnerHandle(deps.configDir, handle, state, () => new Date(now));
   }
-  const handle = pending.handles.find(h => h.toLowerCase() === yes.handle.toLowerCase())!;
-  return bindOwnerHandle(deps.configDir, handle, state, () => new Date(now));
+  let history = { ...state.autoInvitations };
+  // A reply observed between ticks still opts out. The prompt's self-chat echo is not a reply.
+  const declined = new Set(mine.filter(m => m.text.trim() !== PAIR_TEXT && !isYes(m)).map(m => m.handle.toLowerCase()));
+  for (const handle of own) {
+    const entry = history[handle];
+    if (entry?.declinedAt === undefined && (declined.has(handle) || (expired && entry?.sent === PAIR_AUTO_LIMIT))) {
+      history = { ...history, [handle]: { sent: entry?.sent ?? 0, declinedAt: now } };
+    }
+  }
+  const top = mine.at(-1)?.rowid ?? pending.afterRowId;
+  if (expired || top > pending.afterRowId) {
+    writePairState(deps.configDir, { ...state, pending: expired ? null : { ...pending, afterRowId: top },
+      ...(Object.keys(history).length === 0 ? {} : { autoInvitations: history }) });
+  }
+  return { status: expired ? 'expired' : 'waiting' };
 }
 
 async function bindOwnerHandle(configDir: string, handle: string, state: PairState, at: () => Date): Promise<PairCheckResult> {
@@ -249,20 +342,24 @@ async function bindOwnerHandle(configDir: string, handle: string, state: PairSta
 
 /** Remove only the iMessage binding from [mason] and [team], and drop any pending pair. */
 export function unpairOwner(configDir: string): { status: 'unpaired' | 'not-paired' | 'failed' } {
-  const state = readPairState(configDir);
-  const wasBound = boundHandle(configDir) !== undefined;
-  if (wasBound && !writeNetwork(configDir, (text, section) => withoutIdentity(text, section), ['mason', 'team'])) return { status: 'failed' };
-  writePairState(configDir, { pending: null, lastStartAt: state.lastStartAt, autoOff: true });
-  return { status: wasBound || state.pending ? 'unpaired' : 'not-paired' };
+  const lock = acquirePairLock(configDir);
+  if (!lock) return { status: 'failed' };
+  try {
+    const state = readPairState(configDir);
+    const wasBound = boundHandle(configDir) !== undefined;
+    if (wasBound && !writeNetwork(configDir, (text, section) => withoutIdentity(text, section), ['mason', 'team'])) return { status: 'failed' };
+    writePairState(configDir, { ...state, pending: null, autoOff: true });
+    return { status: wasBound || state.pending ? 'unpaired' : 'not-paired' };
+  } finally { releaseLocalStoreLock(lock); }
 }
 
 const sentLine = (n: number): string => `sent to ${n} handle${n === 1 ? '' : 's'}, waiting for YES`;
 
-export interface PairTickReport { action: 'none' | 'started' | 'waiting' | 'bound' | 'expired'; detail: string }
+export interface PairTickReport { action: 'none' | 'started' | 'waiting' | 'bound' | 'expired' | 'declined_auto'; detail: string }
 
 /**
  * One self-tick step (apply mode, iMessage on): no binding and no pending pair
- * starts one, at most once per 24 h; while pending it looks for the YES.
+ * starts one for eligible handles; while pending it looks for the YES.
  */
 export async function pairTick(deps: PairDeps): Promise<PairTickReport> {
   if (boundHandle(deps.configDir)) return { action: 'none', detail: 'paired' };
@@ -271,11 +368,16 @@ export async function pairTick(deps: PairDeps): Promise<PairTickReport> {
     const checked = await checkOwnerPair(deps);
     if (checked.status === 'bound') return { action: 'bound', detail: checked.confirmed ? 'paired and confirmed' : `paired; ${checked.reason ?? 'not confirmed'}` };
     if (checked.status === 'unreadable') return { action: 'waiting', detail: 'Messages replies are unreadable; YES cannot currently be checked' };
-    if (checked.status !== 'expired') return { action: 'waiting', detail: sentLine(readPairState(deps.configDir).pending?.handles.length ?? 0) };
-    expired = true;
+    if (checked.status === 'waiting') {
+      const status = readOwnerPairStatus(deps.configDir);
+      if (status.state === 'declined_auto') return { action: 'declined_auto', detail: status.line };
+      return { action: 'waiting', detail: sentLine(status.sent ?? 0) };
+    }
+    expired = checked.status === 'expired';
   }
   const started = await startOwnerPair(deps, { auto: true });
   if (started.status === 'pending') return { action: 'started', detail: sentLine(started.handles.length) };
+  if (started.status === 'declined_auto') return { action: 'declined_auto', detail: DECLINED_LINE };
   return { action: expired ? 'expired' : 'none', detail: started.status };
 }
 

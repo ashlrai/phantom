@@ -109,7 +109,7 @@ describe('YES', () => {
     expect((await checkOwnerPair(s.deps)).status).toBe('waiting');
     expect(s.file('agent-network.toml')).toBe(before);
     expect(s.file('comms.toml')).toBe('confirmedByMason = false\n');
-    expect(readOwnerPairStatus(s.dir).state).toBe('waiting');
+    expect(readOwnerPairStatus(s.dir).state).toBe('declined_auto');
   });
 
   it('an existing iMessage binding is never overwritten', async () => {

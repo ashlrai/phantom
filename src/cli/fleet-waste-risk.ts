@@ -20,7 +20,7 @@ export async function cmdFleetWasteRisk(args: string[], deps: WasteRiskDeps = {}
     console.log(usage);
     return 0;
   }
-  let runsDir = join(homedir(), '.ashlr-runs');
+  let runsDir = process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--runs-dir' && args[i + 1] && isAbsolute(args[i + 1]!)) runsDir = args[++i]!;
     else if (!['--json', '--notify'].includes(args[i]!)) return 2;

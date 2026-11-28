@@ -36,6 +36,12 @@ const show = (data: unknown, width = 1440) => {
   return render(<HomePane {...({ visible: true } as Parameters<typeof HomePane>[0])} />);
 };
 const card = (name: string) => within(screen.getByRole('region', { name }));
+function expectPoolControls() {
+  const pools = card('Pools');
+  expect(pools.getByRole('button', { name: /^Claude:/ })).toBeTruthy();
+  expect(pools.getByRole('button', { name: /^Local:/ })).toBeTruthy();
+  expect(pools.getByRole('button', { name: 'Open Pools' })).toBeTruthy();
+}
 beforeEach(() => { state.status = 'success'; state.openDockPane.mockClear(); localStorage.clear(); resetHomeChoice(); resetVerseUi(); window.location.hash = ''; });
 afterEach(() => { cleanup(); viewport?.restore(); });
 describe.each([['desktop width', 1440], ['390 px', 390]])('Home at %s', (_name, width) => {
@@ -44,8 +50,12 @@ describe.each([['desktop width', 1440], ['390 px', 390]])('Home at %s', (_name, 
     expect(screen.getByText(HEALTHY.headline).getAttribute('data-health')).toBe('healthy');
     const cards = [...view.container.querySelectorAll('section section')];
     expect(cards.map(node => node.getAttribute('aria-label'))).toEqual(CARDS);
-    // Pools is a bar of eight pool tiles above its one action; Yield only reads, so it has none.
-    for (const node of cards) expect(node.querySelectorAll('button')).toHaveLength({ Pools: 9, Yield: 0 }[node.getAttribute('aria-label') ?? ''] ?? 1);
+    // Pool tiles vary with configured providers; Yield only reads, so it has no action.
+    expectPoolControls();
+    for (const node of cards) {
+      const name = node.getAttribute('aria-label');
+      if (name !== 'Pools') expect(node.querySelectorAll('button')).toHaveLength(name === 'Yield' ? 0 : 1);
+    }
     for (const [name, text] of [['Merged PRs', /Last hour: 2/], ['Merged PRs', /Last 24 hours: 31/], ['Merged PRs', /Median time to merge: 6 minutes/], ['Main', 'locus: red'],
       ['Running jobs', 'claude: 3 of 8'], ['Running jobs', 'grok: 1'], ['Most at risk of going unused', 'claude. 50.0% will expire unused in 10.0h at current burn.'],
       ['Leader', '2 unread replies.']] as const) expect(card(name).getByText(text)).toBeTruthy();
@@ -56,14 +66,16 @@ describe.each([['desktop width', 1440], ['390 px', 390]])('Home at %s', (_name, 
     expect(screen.getByText('Unknown: The job metrics file could not be read.', { selector: 'p' })).toBeTruthy();
     for (const name of CARDS.filter(name => name !== 'Pools' && name !== 'Yield')) expect(card(name).getAllByText(/^Unknown: .+\.$/).length).toBeGreaterThan(0);
     expect(card('Main').getByText('Unknown: The main guardian status could not be read.')).toBeTruthy();
-    expect(screen.getAllByRole('button')).toHaveLength(15);
+    expectPoolControls();
+    expect(screen.getAllByRole('button').filter(button => !button.closest('section[aria-label="Pools"]'))).toHaveLength(6);
   });
   it('says so before the summary arrives and when it cannot be read', () => {
     show(undefined, width);
     expect(screen.getByText('Reading fleet health…')).toBeTruthy(); cleanup();
     show({ error: 'nope' }, width);
     expect(screen.getByText('Fleet health: unknown (the summary could not be read).')).toBeTruthy();
-    expect(screen.queryAllByRole('button')).toHaveLength(9);
+    expectPoolControls();
+    expect(screen.queryByRole('region', { name: 'Merged PRs' })).toBeNull();
   });
 });
 it('each action opens the existing detailed view', () => {

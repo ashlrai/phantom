@@ -46,6 +46,15 @@ const probe = (over: Partial<UnifiedBusStatus> = {}): UnifiedBusStatus => ({
     reasons: { exhausted: 0, expired: 0, noRoute: 0, other: 0 }, truncated: false },
   sessionHandoffs: { source: 'missing', journals: 0, open: 0, awaitingFailover: 0, unreadable: 0, truncated: false },
   fleetCoordination: { source: 'missing', messages: 0, proposals: 0, returns: 0 },
+  orgOutbox: { source: 'missing', pending: 0 },
+  channels: { source: 'available', adapters: [
+    { id: 'bus', adapterRegistered: true, healthy: true },
+    { id: 'slack', adapterRegistered: false, healthy: 'unknown' },
+    { id: 'imessage', adapterRegistered: false, healthy: 'unknown' },
+    { id: 'email', adapterRegistered: false, healthy: 'unknown' },
+    { id: 'telegram', adapterRegistered: false, healthy: 'unknown' },
+    { id: 'handoff', adapterRegistered: true, healthy: true },
+  ] },
   sendGate: {
     state: 'open',
     kill: { state: 'inactive', reason: 'missing' },

@@ -180,7 +180,7 @@ describe('phm node route --outcomes-ledger', () => {
     });
     const plain = await capture(() => cmdNodeRoute(args));
     expect(plain.code).toBe(0);
-    expect(plain.lines[1]).toContain('(merge unknown, unknown/Mtok, unknown/h)');
+    expect(plain.lines[2]).toContain('(merge unknown, unknown/Mtok, unknown/h)');
   });
 
   it('lets an explicit --outcomes file win per provider over the ledger', async () => {

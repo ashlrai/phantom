@@ -27,7 +27,7 @@ import { scrubSecrets } from '../util/scrub.js';
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Max entries to read from hub.jsonl (bounded read). */
+/** Max NEWEST entries kept from hub.jsonl (bounded read). */
 const HUB_MAX_ENTRIES = 2000;
 
 /** Max bytes to inspect for lightweight hub health checks. */
@@ -322,7 +322,10 @@ function collectGenomeFiles(
 
 /**
  * Parse ~/.ashlr/genome/hub.jsonl into GenomeEntry records.
- * Skips malformed or incomplete lines silently. Caps at HUB_MAX_ENTRIES.
+ * Skips malformed or incomplete lines silently. Keeps the NEWEST
+ * HUB_MAX_ENTRIES valid entries: the store is append-only and chronological,
+ * so a head-first cap would freeze recall, playbook synthesis, export and
+ * capture dedupe on the oldest records as the log grows past the cap.
  */
 function loadHubEntries(): GenomeEntry[] {
   const storePath = hubStorePath();
@@ -331,10 +334,10 @@ function loadHubEntries(): GenomeEntry[] {
   try {
     if (!fs.existsSync(storePath)) return [];
     const raw = fs.readFileSync(storePath, 'utf8');
+    const lines = raw.split('\n');
 
-    for (const line of raw.split('\n')) {
-      if (entries.length >= HUB_MAX_ENTRIES) break;
-      const trimmed = line.trim();
+    for (let i = lines.length - 1; i >= 0 && entries.length < HUB_MAX_ENTRIES; i--) {
+      const trimmed = lines[i]!.trim();
       if (!trimmed) continue;
 
       const parsed = safeParseJson(trimmed);
@@ -370,6 +373,9 @@ function loadHubEntries(): GenomeEntry[] {
     // Any error: return whatever we parsed so far.
   }
 
+  // Collected newest-first; restore append order (oldest to newest) so
+  // consumers keep seeing the window in file order.
+  entries.reverse();
   return entries;
 }
 

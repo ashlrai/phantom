@@ -35,23 +35,22 @@ export async function notify(text: string, cfg: AshlrConfig): Promise<boolean> {
   }
 
   const results = await Promise.all([
-    slack ? postSlack(slack, text) : Promise.resolve(false),
-    discord ? postDiscord(discord, text) : Promise.resolve(false),
+    slack ? postWebhookJson(slack, { text }) : Promise.resolve(false),
+    discord ? postWebhookJson(discord, { content: text }) : Promise.resolve(false),
   ]);
 
   return results.some(Boolean);
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers — one per webhook flavour
+// Internal webhook transport
 // ---------------------------------------------------------------------------
 
 /**
- * POST to a Slack incoming-webhook URL.
- * Slack expects `{ "text": "..." }`.
- * Returns true on HTTP 2xx; false on any error.
+ * POST a JSON payload to a configured webhook URL (Slack expects `{ text }`;
+ * Discord expects `{ content }`). Returns true on HTTP 2xx; false on any error.
  */
-async function postSlack(url: string, text: string): Promise<boolean> {
+async function postWebhookJson(url: string, body: Record<string, string>): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -59,37 +58,9 @@ async function postSlack(url: string, text: string): Promise<boolean> {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
-      return res.ok;
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch {
-    // Network error, timeout, or invalid URL — degrade silently.
-    return false;
-  }
-}
-
-/**
- * POST to a Discord webhook URL.
- * Discord expects `{ "content": "..." }`.
- * Returns true on HTTP 2xx (Discord returns 204 No Content on success);
- * false on any error.
- */
-async function postDiscord(url: string, text: string): Promise<boolean> {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: text }),
-        signal: controller.signal,
-      });
-      // Discord returns 204 on success; treat any 2xx as ok.
       return res.ok;
     } finally {
       clearTimeout(timer);

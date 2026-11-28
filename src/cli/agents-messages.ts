@@ -1,5 +1,8 @@
 /** `phm agents messages`: thin argv adapter for core/fleet/agents-messages.ts. Exit 0 read, 1 bus unreadable, 2 bad usage. */
-export const AGENTS_MESSAGES_USAGE = `Usage: phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--limit N] [--json]
+import type { BusCliAdapter } from '../core/agents/bus-cli-adapters.js';
+import type { BusInboxOptions } from '../core/fleet/bus-inbox.js';
+
+export const AGENTS_MESSAGES_USAGE = `Usage: phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--limit N] [--frame <cli>] [--json]
 
 Recent agent-to-agent messages from the agent bus (default: the last hour,
 newest 50): time, from, to, kind, a summary of at most 160 characters and the
@@ -20,22 +23,27 @@ vocabulary the work feed's --result filter validates — with the same
 matching rules and identity
 resolution \`phm messages --help\` describes. --before keeps only messages
 received strictly before its cutoff, so --since and --before read one closed
-[since, before) window. from and to are the node ids the map draws
+[since, before) window. --frame <cli> prints the same read as one bounded
+block marked untrusted under BEGIN/END UNTRUSTED AGENT BUS TIMELINE markers —
+the same frame phm messages --frame produces — with --json carrying it as
+framed beside the full projection and the cut stated when the 32 KiB bound
+clips the page. from and to are the node ids the map draws
 (leader, lane:<name>, job:<id>); an agent the map does not draw is "unknown".
 --json prints agents.messages.v1 (schema, version, messages[], pairs[] with the
 message count and last 5 summaries per line, matched counting every message
 the filters kept before --limit). Read only.`;
 
 export async function runAgentsMessagesCli(args: string[], out: (text: string) => void = console.log,
-  err: (text: string) => void = console.error): Promise<number> {
+  err: (text: string) => void = console.error, options: BusInboxOptions = {}): Promise<number> {
   if (args.some(arg => arg === '--help' || arg === '-h')) { out(AGENTS_MESSAGES_USAGE); return 0; }
-  let json = false;
+  let json = false, frame: string | undefined;
   const values: { since?: string; before?: string; limit?: string; agent?: string; with?: string; kind?: string;
     priority?: string; job?: string; thread?: string; channel?: string; topic?: string; contains?: string; from?: string;
     excludeFrom?: string; to?: string; inReplyTo?: string; id?: string; bodyKind?: string; result?: string } = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!, value = args[i + 1];
     if (arg === '--json' && !json) { json = true; continue; }
+    if (arg === '--frame' && frame === undefined && value !== undefined && !value.startsWith('--')) { frame = value; i++; continue; }
     const key = arg === '--since' ? 'since' : arg === '--before' ? 'before' : arg === '--agent' ? 'agent'
       : arg === '--with' ? 'with' : arg === '--kind' ? 'kind' : arg === '--priority' ? 'priority'
       : arg === '--job' ? 'job' : arg === '--thread' ? 'thread' : arg === '--channel' ? 'channel' : arg === '--topic' ? 'topic'
@@ -46,9 +54,21 @@ export async function runAgentsMessagesCli(args: string[], out: (text: string) =
     if (!key || values[key] !== undefined || value === undefined || value.startsWith('--')) { err(AGENTS_MESSAGES_USAGE); return 2; }
     values[key] = value; i++;
   }
+  let adapter: BusCliAdapter | undefined;
+  if (frame !== undefined) {
+    const { getBusCliAdapter } = await import('../core/agents/bus-cli-adapters.js');
+    adapter = getBusCliAdapter(frame);
+    if (adapter === undefined) { err(AGENTS_MESSAGES_USAGE); return 2; }
+  }
   const { formatAgentsMessagesText, readAgentsMessages } = await import('../core/fleet/agents-messages.js');
-  const read = readAgentsMessages(values);
+  const read = readAgentsMessages(values, options);
   if (!read.ok) { err(read.error); return 2; }
-  out(json ? JSON.stringify(read.result, null, 2) : formatAgentsMessagesText(read.result));
+  if (adapter !== undefined) {
+    const { frameAgentMessages } = await import('../core/agents/bus-cli-adapters.js');
+    const framed = frameAgentMessages(adapter.cli, formatAgentsMessagesText(read.result).split('\n'));
+    out(json ? JSON.stringify({ ...read.result, framed }, null, 2) : framed);
+  } else {
+    out(json ? JSON.stringify(read.result, null, 2) : formatAgentsMessagesText(read.result));
+  }
   return read.result.source === 'unavailable' ? 1 : 0;
 }

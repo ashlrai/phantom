@@ -3,7 +3,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 import { followBusStream, validBusFollowRequest, type BusFollowRecord, type BusFollowRequest } from '../core/fleet/bus-follow-stream.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = 'Usage: ashlr fleet bus-follow --after <nonnegative-safe-cursor> --duration-ms <1..3600000> [--id <id>] [--in-reply-to <id>] [--to <agent-or-topic>] [--channel <name>] [--job <id>] [--from <agent-or-label>] [--exclude-from <agent-or-label>] [--priority P0..P3] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--interval-ms <100..60000>] [--root <absolute>] --json';
+const usage = 'Usage: ashlr fleet bus-follow --after <nonnegative-safe-cursor> --duration-ms <1..3600000> [--id <id>] [--in-reply-to <id>] [--to <agent-or-topic>] [--with <agent-or-label>] [--channel <name>] [--job <id>] [--from <agent-or-label>] [--exclude-from <agent-or-label>] [--priority P0..P3] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--interval-ms <100..60000>] [--root <absolute>] --json';
 
 interface Dependencies {
   /** Receives one scrubbed JSON line per record; resolves when the line is accepted. */
@@ -54,6 +54,11 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
       'then a final checkpoint at the deadline. --to matches mail addressed to one registered agent identity under ' +
       'every routing label or to a channel it belongs to, minus its own channel posts — the same pending-work rule ' +
       'bus next claims by; an unresolvable --to or unreadable registry keeps exact-label matching. ' +
+      '--with keeps only the two-way exchange the --to agent and one peer name — the same pairwise ' +
+      'rule agents bus inbox --with, agents bus follow --with and phm messages --with apply: an ' +
+      'envelope\'s to must be an identity label of the --to agent (never a member-channel post --to ' +
+      'alone streams) and its from must match the peer\'s registered labels; --with requires --to, ' +
+      'and an unresolvable ref keeps exact-label matching. ' +
       '--job keeps only envelopes naming that job — the same citation rule agents bus inbox --job applies. ' +
       '--channel keeps only envelopes addressed to group:<name>:* — the room\'s whole traffic under every ' +
       'topic, the same raw address prefix phm messages --channel, agents bus wakes --channel, ' +
@@ -87,7 +92,7 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
   let json = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json' && !json) { json = true; continue; }
-    const match = /^(--after|--duration-ms|--id|--in-reply-to|--to|--channel|--job|--from|--exclude-from|--priority|--kind|--topic|--body-kind|--result|--thread|--since|--before|--contains|--interval-ms|--root)(?:=(.*))?$/.exec(args[i]!);
+    const match = /^(--after|--duration-ms|--id|--in-reply-to|--to|--with|--channel|--job|--from|--exclude-from|--priority|--kind|--topic|--body-kind|--result|--thread|--since|--before|--contains|--interval-ms|--root)(?:=(.*))?$/.exec(args[i]!);
     if (!match || Object.hasOwn(values, match[1]!)) return invalid();
     const value = match[2] ?? args[++i];
     if (value === undefined || value === '' || value.startsWith('--')) return invalid();
@@ -106,7 +111,7 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
   const request: BusFollowRequest = {
     after: number('--after'), durationMs: number('--duration-ms'),
     intervalMs: values['--interval-ms'] === undefined ? undefined : number('--interval-ms'),
-    to: values['--to'], channel: values['--channel'], job: values['--job'], from: values['--from'], excludeFrom: values['--exclude-from'],
+    to: values['--to'], with: values['--with'], channel: values['--channel'], job: values['--job'], from: values['--from'], excludeFrom: values['--exclude-from'],
     priority: values['--priority'] as BusFollowRequest['priority'],
     kind: values['--kind'] as BusFollowRequest['kind'], topic: values['--topic'], bodyKind: values['--body-kind'],
     result: values['--result'] as BusFollowRequest['result'],

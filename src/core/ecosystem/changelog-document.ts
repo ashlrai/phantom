@@ -11,15 +11,19 @@
  * same inputs always produce byte-identical output.
  */
 
-import type { EcosystemChangelog, EcosystemChange } from './changelog.js';
-import type { StrategicTier } from './focus.js';
+import {
+  parseStrictIsoInstant,
+  type ChangelogSourceStatus,
+  type EcosystemChangelog,
+  type EcosystemChange,
+} from './changelog.js';
+import { DAY_MS, normalizeUnicodeDashes, type StrategicTier } from './focus.js';
 
-export const ECOSYSTEM_CHANGELOG_SCHEMA = 'ecosystem-changelog.v1';
+const ECOSYSTEM_CHANGELOG_SCHEMA = 'ecosystem-changelog.v1' as const;
 export const ECOSYSTEM_CHANGELOG_MARKDOWN_PATH = 'ECOSYSTEM_CHANGELOG.md';
 export const ECOSYSTEM_CHANGELOG_JSON_PATH = 'docs/ecosystem-changelog.json';
 /** Fixed size of the rolling recent-activity summary window. */
-export const ECOSYSTEM_CHANGELOG_RECENT_DAYS = 14;
-const DAY_MS = 24 * 60 * 60 * 1000;
+const ECOSYSTEM_CHANGELOG_RECENT_DAYS = 14;
 
 export interface EcosystemChangelogWindow {
   /** ISO instant the `--since` filter resolved to; null when unfiltered. */
@@ -52,7 +56,7 @@ export interface EcosystemChangelogRecent {
 export type EcosystemChangelogEntry = Omit<EcosystemChange, 'body'>;
 
 export interface EcosystemChangelogDocument {
-  schema: typeof ECOSYSTEM_CHANGELOG_SCHEMA;
+  schema: 'ecosystem-changelog.v1';
   generatedAt: string;
   complete: boolean;
   window: EcosystemChangelogWindow;
@@ -75,17 +79,9 @@ export interface RenderEcosystemChangelogOptions {
 }
 
 function parseInstant(value: string, what: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))?$/.test(value)) {
-    throw new Error(`Invalid ${what}: ${value}`);
-  }
-  const day = value.slice(0, 10);
-  // Date.parse normalizes impossible days (February 30) instead of rejecting.
-  if (new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) !== day) {
-    throw new Error(`Invalid ${what}: ${value}`);
-  }
-  const ms = Date.parse(value.length === 10 ? `${value}T00:00:00Z` : value);
-  if (!Number.isFinite(ms)) throw new Error(`Invalid ${what}: ${value}`);
-  return new Date(ms).toISOString();
+  const parsed = parseStrictIsoInstant(value, { allowDateOnly: true });
+  if (parsed === null) throw new Error(`Invalid ${what}: ${value}`);
+  return parsed;
 }
 
 /**
@@ -111,40 +107,45 @@ function inWindow(entry: EcosystemChange, since: string | null): boolean {
   return since === null || entry.date === null || entry.date >= since;
 }
 
-function totals(repositories: EcosystemChangelogDocument['repositories']): EcosystemChangelogTotals {
-  const sum: EcosystemChangelogTotals = {
-    repositories: repositories.length, changes: 0, changelog: 0, releases: 0, pullRequests: 0, crossRepo: 0,
-  };
-  for (const repo of repositories) {
-    for (const entry of repo.changes) {
-      sum.changes += 1;
-      if (entry.source === 'changelog') sum.changelog += 1;
-      else if (entry.source === 'release') sum.releases += 1;
-      else sum.pullRequests += 1;
-      if (entry.crossRepo) sum.crossRepo += 1;
-    }
+function countChangesBySource(entries: readonly EcosystemChangelogEntry[]): {
+  changes: number;
+  changelog: number;
+  releases: number;
+  pullRequests: number;
+  crossRepo: number;
+} {
+  let changelog = 0;
+  let releases = 0;
+  let pullRequests = 0;
+  let crossRepo = 0;
+  for (const entry of entries) {
+    if (entry.source === 'changelog') changelog += 1;
+    else if (entry.source === 'release') releases += 1;
+    else pullRequests += 1;
+    if (entry.crossRepo) crossRepo += 1;
   }
-  return sum;
+  return { changes: entries.length, changelog, releases, pullRequests, crossRepo };
+}
+
+function totals(repositories: EcosystemChangelogDocument['repositories']): EcosystemChangelogTotals {
+  const counts = countChangesBySource(repositories.flatMap((repo) => repo.changes));
+  return { repositories: repositories.length, ...counts };
 }
 
 function recent(repositories: EcosystemChangelogDocument['repositories'], asOf: string): EcosystemChangelogRecent {
   const since = new Date(Date.parse(asOf) - ECOSYSTEM_CHANGELOG_RECENT_DAYS * DAY_MS).toISOString();
-  const summary: EcosystemChangelogRecent = {
-    days: ECOSYSTEM_CHANGELOG_RECENT_DAYS, since,
-    changes: 0, changelogEntries: 0, releases: 0, pullRequests: 0, crossRepo: 0, repositories: 0,
+  const hitsByRepo = repositories.map((repo) => repo.changes.filter((entry) => entry.date !== null && entry.date >= since));
+  const counts = countChangesBySource(hitsByRepo.flat());
+  return {
+    days: ECOSYSTEM_CHANGELOG_RECENT_DAYS,
+    since,
+    changes: counts.changes,
+    changelogEntries: counts.changelog,
+    releases: counts.releases,
+    pullRequests: counts.pullRequests,
+    crossRepo: counts.crossRepo,
+    repositories: hitsByRepo.filter((hits) => hits.length > 0).length,
   };
-  for (const repo of repositories) {
-    const hits = repo.changes.filter((entry) => entry.date !== null && entry.date >= since);
-    if (hits.length > 0) summary.repositories += 1;
-    for (const entry of hits) {
-      summary.changes += 1;
-      if (entry.source === 'changelog') summary.changelogEntries += 1;
-      else if (entry.source === 'release') summary.releases += 1;
-      else summary.pullRequests += 1;
-      if (entry.crossRepo) summary.crossRepo += 1;
-    }
-  }
-  return summary;
 }
 
 /** Apply the window and derive totals; never mutates the collected report. */
@@ -178,11 +179,11 @@ export function renderEcosystemChangelogDocument(
 // ---------------------------------------------------------------------------
 
 function linkText(title: string): string {
-  return title.replace(/\s+/g, ' ').trim().replace(/\[/g, '\\[').replace(/\]/g, '\\]').replace(/[\u2010-\u2015]/g, '-');
+  return normalizeUnicodeDashes(title.replace(/\s+/g, ' ').trim().replace(/\[/g, '\\[').replace(/\]/g, '\\]'));
 }
 
 function safe(value: string): string {
-  return value.replace(/[\u2010-\u2015]/g, '-').replace(/\s+/g, ' ').trim();
+  return normalizeUnicodeDashes(value).replace(/\s+/g, ' ').trim();
 }
 
 function day(date: string | null): string {
@@ -204,14 +205,34 @@ function plural(count: number, singular: string, pluralForm = `${singular}s`): s
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
+function formatSourceStatus(source: ChangelogSourceStatus): string {
+  return `${source.source} ${source.status}${source.reason ? ` (${source.reason})` : ''}`;
+}
+
 function sourceStatus(repo: EcosystemChangelogDocument['repositories'][number]): string {
-  return repo.sources
-    .map((source) => `${source.source} ${source.status}${source.reason ? ` (${source.reason})` : ''}`)
-    .join('; ');
+  return repo.sources.map(formatSourceStatus).join('; ');
 }
 
 function heading(repository: string, tier: StrategicTier): string {
   return `### ${repository} (${tier})`;
+}
+
+function appendGroupedChanges(
+  out: string[],
+  repositories: EcosystemChangelogDocument['repositories'],
+  select: (entry: EcosystemChangelogEntry) => boolean,
+  emptyLine: string,
+): void {
+  let any = false;
+  for (const repo of repositories) {
+    const matches = repo.changes.filter(select);
+    if (matches.length === 0) continue;
+    any = true;
+    out.push(heading(repo.repository, repo.tier), '', ...matches.map(bullet), '');
+  }
+  if (!any) {
+    out.push(emptyLine, '');
+  }
 }
 
 /**
@@ -234,7 +255,7 @@ export function renderEcosystemChangelogMarkdown(document: EcosystemChangelogDoc
   if (!document.complete) {
     const degraded = document.repositories.flatMap((repo) =>
       repo.sources.filter((source) => source.status !== 'complete')
-        .map((source) => `${repo.repository} ${source.source} ${source.status}${source.reason ? ` (${source.reason})` : ''}`));
+        .map((source) => `${repo.repository} ${formatSourceStatus(source)}`));
     out.push('');
     out.push(`> Coverage incomplete: ${degraded.join('; ')}.`);
   }
@@ -248,39 +269,23 @@ export function renderEcosystemChangelogMarkdown(document: EcosystemChangelogDoc
     `${plural(document.recent14d.releases, 'release')}, ${plural(document.recent14d.changelogEntries, 'changelog entry', 'changelog entries')}).`,
   );
   out.push('');
-  let anyRecent = false;
-  for (const repo of document.repositories) {
-    const hits = repo.changes.filter((entry) => entry.date !== null && entry.date >= document.recent14d.since);
-    if (hits.length === 0) continue;
-    anyRecent = true;
-    out.push(heading(repo.repository, repo.tier));
-    out.push('');
-    out.push(...hits.map(bullet));
-    out.push('');
-  }
-  if (!anyRecent) {
-    out.push(`_No dated ecosystem changes in the last ${document.recent14d.days} days._`);
-    out.push('');
-  }
+  appendGroupedChanges(
+    out,
+    document.repositories,
+    (entry) => entry.date !== null && entry.date >= document.recent14d.since,
+    `_No dated ecosystem changes in the last ${document.recent14d.days} days._`,
+  );
 
   out.push('## Pending release notes');
   out.push('');
   out.push('Changelog sections without a release date.');
   out.push('');
-  let anyPending = false;
-  for (const repo of document.repositories) {
-    const pending = repo.changes.filter((entry) => entry.date === null);
-    if (pending.length === 0) continue;
-    anyPending = true;
-    out.push(heading(repo.repository, repo.tier));
-    out.push('');
-    out.push(...pending.map(bullet));
-    out.push('');
-  }
-  if (!anyPending) {
-    out.push('_No pending release notes._');
-    out.push('');
-  }
+  appendGroupedChanges(
+    out,
+    document.repositories,
+    (entry) => entry.date === null,
+    '_No pending release notes._',
+  );
 
   out.push('## Repositories');
   out.push('');

@@ -117,6 +117,7 @@ export async function cmdOwnerLiveStatus(args: string[], deps: FleetOwnerLiveDep
     pairDir === undefined ? undefined : readOwnerPairStatus(pairDir));
   if (args[0] === '--json') { output(JSON.stringify(report)); return 0; }
   output(report.line);
+  if (report.pair?.state === 'declined_auto') output(`  iMessage pairing: ${report.pair.line}`);
   for (const c of report.channels) {
     output(`  ${c.channel}: ${c.state} — ${c.reason}${c.nextStep && !c.reason.includes(c.nextStep) ? ` Next: ${c.nextStep}` : ''}`);
   }

@@ -69,7 +69,7 @@ it('uses the job receipt and only an explicit outcome for the same PR', async ()
   const oldUrl = 'https://github.com/ashlrai/phantom/pull/41';
   const list = () => listChangeRequests({ runsRoot, statusRoot, now: () => NOW });
   expect(await list()).toMatchObject([{ jobId, pr: null }]);
-  await mkdir(join(runsRoot, 'metrics'));
+  await mkdir(join(runsRoot, 'metrics'), { recursive: true });
   const ledger = join(runsRoot, 'metrics', 'jobs.jsonl');
   const otherRows = [
     { job: 'RQ-PHX-OTHER', event: 'publish', url, state: 'OPEN' },
@@ -96,7 +96,7 @@ it('reads ledger-only publications and matches terminal outcomes by URL', async 
     { event: 'publish', job: 'RQ-PHX-OTHER', url: oldUrl },
     { event: 'publish', job: jobId, url: 'https://example.com/unsafe' },
   ];
-  await mkdir(join(runsRoot, 'metrics'));
+  await mkdir(join(runsRoot, 'metrics'), { recursive: true });
   const writeRows = (...extra: object[]) => writeFile(ledger, ['{malformed', ...[...rows, ...extra].map((row) => JSON.stringify(row))].join('\n'));
   await writeRows();
   expect(await list()).toMatchObject([{ jobId, pr: null }]);

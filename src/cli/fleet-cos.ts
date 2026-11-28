@@ -6,6 +6,13 @@
  */
 import { cmdCos } from './cos.js';
 
+const USAGE = 'Usage: phm fleet cos ask "<text>" --channel <cli|desktop|telegram|email|mobile|page> --json; phm fleet cos status <id> --json';
+
 export async function cmdFleetCos(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) {
+    const json = args.includes('--json');
+    console.log(json ? JSON.stringify({ usage: USAGE }) : USAGE);
+    return 0;
+  }
   return cmdCos(args);
 }

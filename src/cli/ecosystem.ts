@@ -217,15 +217,19 @@ function printHuman(report: EcosystemDoctorReport): void {
   process.stdout.write('\n');
 }
 
-async function runChangelog(parsed: ParsedEcosystemArgs): Promise<number> {
+function failCli(message: string): number {
   const { red } = makeColors(isTty());
+  process.stderr.write(red('error: ') + message + '\n');
+  return 2;
+}
+
+async function runChangelog(parsed: ParsedEcosystemArgs): Promise<number> {
   const asOf = parsed.asOf ?? new Date().toISOString();
   let since: string | null;
   try {
     since = parseEcosystemChangelogSince(parsed.since, asOf);
   } catch (error) {
-    process.stderr.write(red('error: ') + (error instanceof Error ? error.message : String(error)) + '\n');
-    return 2;
+    return failCli(error instanceof Error ? error.message : String(error));
   }
   const report = await collectEcosystemChangelog({
     root: parsed.root ?? defaultEcosystemRoot(),
@@ -235,8 +239,7 @@ async function runChangelog(parsed: ParsedEcosystemArgs): Promise<number> {
   if (parsed.write) {
     const repoRoot = nearestRepoRoot(process.cwd());
     if (repoRoot === null) {
-      process.stderr.write(red('error: ') + '--write requires running inside a repository checkout\n');
-      return 2;
+      return failCli('--write requires running inside a repository checkout');
     }
     const markdownPath = join(repoRoot, ECOSYSTEM_CHANGELOG_MARKDOWN_PATH);
     const jsonPath = join(repoRoot, ECOSYSTEM_CHANGELOG_JSON_PATH);
@@ -257,16 +260,10 @@ export async function cmdEcosystem(args: string[]): Promise<number> {
     return parsed.error ? 2 : 0;
   }
   if (parsed.error) {
-    const { red } = makeColors(isTty());
-    process.stderr.write(red('error: ') + parsed.error + '\n');
-    return 2;
+    return failCli(parsed.error);
   }
   if (parsed.sub === 'changelog') {
     return runChangelog(parsed);
-  }
-  if (parsed.sub !== 'doctor') {
-    printHelp();
-    return 2;
   }
 
   const report = await runEcosystemDoctor({ root: parsed.root, deep: parsed.deep });

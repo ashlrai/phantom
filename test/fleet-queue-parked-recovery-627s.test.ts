@@ -119,4 +119,18 @@ describe('phm fleet queue-parked (read-only, --root only)', () => {
     await run(['--root', dir, '--json']);
     expect(snapshotTree(dir)).toEqual(before);
   });
+
+  it('honors ASHLR_RUNS_DIR when --root is absent', async () => {
+    const dir = seed(parkedRows);
+    const previous = process.env.ASHLR_RUNS_DIR;
+    try {
+      process.env.ASHLR_RUNS_DIR = dir;
+      const { code, out } = await run([]);
+      expect(code).toBe(0);
+      expect(out).toContain('BLOCKED RQ-UNMET (devin): unmet RQ-OPEN');
+      expect(out).toContain('EVIDENCE-ONLY RQ-MET');
+    } finally {
+      if (previous === undefined) delete process.env.ASHLR_RUNS_DIR; else process.env.ASHLR_RUNS_DIR = previous;
+    }
+  });
 });

@@ -48,7 +48,7 @@ export async function cmdFleetWasteIncident(args: string[], deps: Dependencies =
   const nowMs = (deps.now ?? Date.now)();
   let rows;
   try {
-    const inputs = await (deps.read ?? readWasteRiskInputs)(runsDir ?? join(homedir(), '.ashlr-runs'), new Date(nowMs).toISOString());
+    const inputs = await (deps.read ?? readWasteRiskInputs)(runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs'), new Date(nowMs).toISOString());
     rows = inputs.map(projectWasteRisk);
   } catch {
     error('fleet waste-incident: waste-risk evidence unavailable');

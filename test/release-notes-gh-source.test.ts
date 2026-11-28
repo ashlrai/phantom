@@ -27,8 +27,11 @@ describe('ghPrSource.mergedSince', () => {
     const out = await ghPrSource.mergedSince('ashlrai/phantom', 'v3.30.71');
     expect(out.prs.map(pr => pr.number)).toEqual([1]);
     expect(out.complete).toBe(true);
+    // The tag-stamp read is the command's first gh call: it gets the same
+    // extended budget as the list read so a cold CLI cannot time out into a
+    // false "cannot read the tag".
     expect(gh.runGhAsync).toHaveBeenNthCalledWith(1, expect.any(String),
-      ['api', 'repos/ashlrai/phantom/commits/v3.30.71', '--jq', '.commit.committer.date']);
+      ['api', 'repos/ashlrai/phantom/commits/v3.30.71', '--jq', '.commit.committer.date'], undefined, 60_000);
     // The files-bearing list read opts into a longer timeout than the 8 s default.
     expect(gh.runGhAsync).toHaveBeenNthCalledWith(2, expect.any(String),
       expect.arrayContaining(['pr', 'list', '--repo', 'ashlrai/phantom', '--state', 'merged']), undefined, 60_000);
@@ -41,6 +44,10 @@ describe('ghPrSource.mergedSince', () => {
     await expect(ghPrSource.mergedSince('ashlrai/phantom', 'v3.30.71'))
       .rejects.toThrow('Cannot reach the repo through gh');
     expect(gh.runGhAsync).toHaveBeenCalledTimes(2);
+    // The repo probe shares the extended budget: a slow probe must not read as
+    // a dead transport either.
+    expect(gh.runGhAsync).toHaveBeenNthCalledWith(2, expect.any(String),
+      ['api', 'repos/ashlrai/phantom', '--jq', '.full_name'], undefined, 60_000);
   });
 
   it('keeps the tag message when the repo reads but the ref does not', async () => {

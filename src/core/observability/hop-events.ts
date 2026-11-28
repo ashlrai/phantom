@@ -1,7 +1,90 @@
 /** Metadata-only input contract for interval engineering-efficiency insights. */
+import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+const STRICT_UTC_ISO_RE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/;
+const STRICT_UTC_ISO_MS_RE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
+const UUID_V5_URL_NAMESPACE = Buffer.from('6ba7b8119dad11d180b400c04fd430c8', 'hex');
+
+export function isObservabilityRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+export function asObservabilityRecord(value: unknown): Record<string, unknown> | null {
+  return isObservabilityRecord(value) ? value : null;
+}
+export function isNonNegativeFinite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+export function isNonNegativeSafeInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+export function isPositiveSafeInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+/** Parse a canonical UTC ISO-8601 timestamp (rejecting calendar rollovers). */
+export function parseStrictUtcIsoMs(value: unknown, requireMillis = false): number | null {
+  if (typeof value !== 'string') return null;
+  if (!(requireMillis ? STRICT_UTC_ISO_MS_RE : STRICT_UTC_ISO_RE).test(value)) return null;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return null;
+  const expected = value.includes('.') ? value : value.replace('Z', '.000Z');
+  return new Date(ms).toISOString() === expected ? ms : null;
+}
+
+/** Deterministic RFC 4122 UUIDv5 derived in the standard URL namespace. */
+export function uuidV5Url(name: string): string {
+  const bytes = createHash('sha1').update(UUID_V5_URL_NAMESPACE).update(name).digest().subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** Run fetch with an AbortController deadline; aborts throw a credential-free AbortError. */
+export async function fetchWithTimeout(
+  url: string,
+  init: Omit<RequestInit, 'signal'>,
+  timeoutMs: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchImpl(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      const abortErr = new Error('Request timed out');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Read a regular file up to maxBytes (including files growing after stat). */
+export async function readBoundedRegularFile(filePath: string, maxBytes: number): Promise<string> {
+  const handle = await open(filePath, 'r');
+  try {
+    if (!(await handle.stat()).isFile()) throw new Error('Expected regular file');
+    const bytes = Buffer.alloc(maxBytes + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, length, bytes.length - length, null);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    if (length > maxBytes) throw new Error('File exceeds maximum size');
+    return bytes.subarray(0, length).toString('utf8');
+  } finally {
+    await handle.close();
+  }
+}
 
 interface HopEventBase {
   schemaVersion: 1;
@@ -85,32 +168,28 @@ export function collectHopEvents(): HopEventSource {
   }
 }
 
-const nonnegative = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const tokenCount = (value: unknown): value is number | null =>
-  value === null || (nonnegative(value) && Number.isSafeInteger(value));
+  value === null || isNonNegativeSafeInt(value);
 
 /** Allowlist only accounting metadata; extra payload fields never reach JSON. */
 export function parseHopEvent(raw: unknown): HopEvent | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const row = raw as Record<string, unknown>;
-  if (row['schemaVersion'] !== 1 || typeof row['id'] !== 'string' ||
-      !row['id'].trim() || row['id'].length > 256 || typeof row['ts'] !== 'string' ||
-      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(row['ts']) ||
-      !Number.isFinite(Date.parse(row['ts'])) || typeof row['repo'] !== 'string' ||
-      !/^[\w.-]+\/[\w.-]+$/.test(row['repo']) || row['repo'].length > 256) return null;
-  if (new Date(row['ts']).toISOString() !== row['ts']) return null;
+  if (!isObservabilityRecord(raw)) return null;
+  const tsMs = parseStrictUtcIsoMs(raw['ts'], true);
+  if (raw['schemaVersion'] !== 1 || typeof raw['id'] !== 'string' ||
+      !raw['id'].trim() || raw['id'].length > 256 || tsMs === null ||
+      typeof raw['repo'] !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(raw['repo']) ||
+      raw['repo'].length > 256) return null;
   const base: HopEventBase = {
-    schemaVersion: 1, id: row['id'], ts: new Date(row['ts']).toISOString(), repo: row['repo'].toLowerCase(),
+    schemaVersion: 1, id: raw['id'], ts: new Date(tsMs).toISOString(), repo: raw['repo'].toLowerCase(),
   };
-  if (row['kind'] === 'pr.merged' && Number.isSafeInteger(row['prNumber']) && Number(row['prNumber']) > 0) {
-    return { ...base, kind: 'pr.merged', prNumber: Number(row['prNumber']) };
+  if (raw['kind'] === 'pr.merged' && isPositiveSafeInt(raw['prNumber'])) {
+    return { ...base, kind: 'pr.merged', prNumber: raw['prNumber'] };
   }
-  if (row['kind'] !== 'hop.completed') return null;
-  const tokensIn = row['tokensIn'] ?? null;
-  const tokensOut = row['tokensOut'] ?? null;
-  const costUsd = row['costUsd'] ?? null;
+  if (raw['kind'] !== 'hop.completed') return null;
+  const tokensIn = raw['tokensIn'] ?? null;
+  const tokensOut = raw['tokensOut'] ?? null;
+  const costUsd = raw['costUsd'] ?? null;
   if (!tokenCount(tokensIn) || !tokenCount(tokensOut) ||
-      !(costUsd === null || nonnegative(costUsd))) return null;
+      !(costUsd === null || isNonNegativeFinite(costUsd))) return null;
   return { ...base, kind: 'hop.completed', tokensIn, tokensOut, costUsd };
 }
