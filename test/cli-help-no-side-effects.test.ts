@@ -179,6 +179,11 @@ const PINNED_ARGV: string[][] = [
   ['playbook', 'edit', 'add-tests-for-module', '--help'],
   ['config', 'set', 'editor', '--help'],
   ['website', 'pause', 'zz-operand', '--help'],
+  // Third-position verbs completion does not enumerate: the agents mesh
+  // status documented in AGENT-BUS.md, and a help flag after a value option.
+  ['agents', 'mesh', 'status', '--help'],
+  ['agents', 'mesh', 'status', '-h'],
+  ['queue', 'yield', '--since', '24h', '--help'],
 ];
 
 // ---------------------------------------------------------------------------

@@ -41,6 +41,10 @@ export async function runAgentsCli(
   if (args[0] === 'bus' && AGENTS_BUS_UNIFIED_VERBS.has(args.find((arg, i) => i > 0 && arg !== '--json') ?? '')) {
     return runAgentsBusUnified(args.slice(1), out, err);
   }
+  // The read-only fallthrough verbs (mesh status, edges) honor --help/-h in any
+  // position. `bus` keeps its exact contract|channels grammar, so a help flag
+  // there stays a strict refusal like every other unknown token.
+  if (args[0] !== 'bus' && (args.includes('--help') || args.includes('-h'))) { out(HELP); return 0; }
   const json = args.includes('--json');
   if (args.filter(arg => arg === '--json').length > 1) {
     err(json ? JSON.stringify({ error: 'invalid-argument' }) : HELP);

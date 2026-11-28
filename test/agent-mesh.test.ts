@@ -45,6 +45,13 @@ describe('flat agent mesh', () => {
     expect(readdirSync(root)).toEqual([]);
     expect(await runAgentsCli(['mesh', 'publish', '--json'], out, err)).toBe(2);
     expect(await runAgentsCli(['mesh', 'status', '--apply'], out, err)).toBe(2);
+    out.mockClear();
+    expect(await runAgentsCli(['mesh', 'status', '--help'], out, err)).toBe(0);
+    expect(out.mock.calls[0]![0]).toContain('agents mesh status');
+    expect(await runAgentsCli(['edges', '-h'], out, err)).toBe(0);
+    expect(out.mock.calls.at(-1)![0]).toContain('agents edges');
+    // `agents bus` keeps its exact grammar: a help flag there is still a strict refusal.
+    expect(await runAgentsCli(['bus', '--help'], out, err)).toBe(2);
   });
 
   it('publishes every desktop app, CLI claims and teammate state as existing v2 context bodies', async () => {
@@ -87,6 +94,7 @@ describe('flat agent mesh', () => {
     const claimed = acquireCoordination({ root, now, origin: 'resource', key: 'queue:RQ-REAL', owner: 'claude',
       leaseMs: 60000, leaseUntil: now + 60000, sourceId: 'RQ-REAL', started: new Date(now).toISOString() });
     expect(claimed.status).toBe('acquired');
+    if (claimed.status !== 'acquired' || claimed.token === undefined) throw new Error('expected acquired claim with token');
     await publishAgentMesh({ ...sources(), claims: undefined, desktop: async () => ({ ok: true, sessions: [] }) });
     expect(readAgentMesh(options()).agents.find(a => a.agent === 'claude')).toMatchObject({ currentTask: 'queue:RQ-REAL', lastSeen: now });
     expect(readFileSync(join(root, 'bus-inbox', 'messages.json'), 'utf8')).not.toContain(claimed.token);
