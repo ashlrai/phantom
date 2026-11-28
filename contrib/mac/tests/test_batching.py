@@ -44,6 +44,8 @@ class Batching(unittest.TestCase):
         self.assertEqual({m['job'] for m in manifest['members']}, {'RQ-Q-A', 'RQ-Q-C'})
         self.assertFalse((self.q / 'run/RQ-Q-B.batched').exists())
         self.assertIn('RQ-Q-B', self.ready())
+        # The batch's durable claim owns every request even if its marker is lost.
+        (self.q / 'run' / f'{manifest["id"]}.dispatched').unlink(missing_ok=True)
         self.run_tick()
         self.assertIn('RQ-Q-B', self.ready())
         self.assertTrue(any(r.get('job') == 'RQ-Q-B' and r.get('reason') == 'duplicate-request'

@@ -2271,8 +2271,11 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     cand.sort(key=repo_claim_key)
     seen = set(); pc_n = 0; local_ok = None; market_rejects = {}
     claimed_requests = {}
+    # A durable reservation survives missing process/worktree evidence. Use the
+    # same ownership boundary for re-cut IDs as for retries of the original ID.
+    request_owners = alive | ACTIVE_LAUNCHES
     active_claims = {row['job']: row for row in JOBS if isinstance(row, dict)
-                     and row.get('event') == 'claim' and isinstance(row.get('job'), str) and row['job'] in alive}
+                     and row.get('event') == 'claim' and isinstance(row.get('job'), str) and row['job'] in request_owners}
     for owner, row in active_claims.items():
         hashes = row.get('request_hashes', [])
         if isinstance(hashes, list):
@@ -2386,6 +2389,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if parent and (parent in alive | reaping | publishing | ACTIVE_LAUNCHES or os.path.isdir(WTROOT + '/' + parent)):
             rest.append(line); seen.add(j); continue
         if j in ACTIVE_LAUNCHES:
+            metric(dict(event="dispatch_deferred", job=j, repo=repo, reason="active-attempt", repeatOf=j))
             rest.append(line); seen.add(j); continue
         why = retired(parent or j) or retired(j)
         if why:
