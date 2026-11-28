@@ -69,17 +69,40 @@ export function gatherProposals(team: string, steward?: StewardReport): Proposal
     const ev = [{ ref: f.source, summary: f.title }];
     out.push({ id, kind: 'team-feedback', title: `Address feedback item ${id}`, rationale: 'A team feedback/bug report (private; details withheld from the PR).', evidence: publicEvidence(ev), local: { title: localTitle, rationale: f.text.slice(0, 600), evidence: ev }, evalPlan: 'Add a failing test or eval reproducing the report, then make it pass.', metric: 'task success rate on the reported workflow' });
   }
-  for (const a of rollup(readTelemetry()).byAgent) {
-    if (a.prsShipped < 3 || a.avgQuality === null || a.avgQuality >= 0.5) continue;
-    // Attribution and scores remain local, like team feedback and steward data.
-    const localTitle = `Improve PR quality for ${a.key}`;
-    const id = pid(localTitle);
-    const evidence = [{ ref: `metrics:agent/${a.key}`, summary: `value/1M tok ${a.valuePerMTok}` }];
-    out.push({ id, kind: 'metrics-quality', title: `Improve PR quality for agent ${id}`,
-      rationale: 'Local telemetry indicates repeated low-quality PR outcomes (private details withheld).',
-      evidence: publicEvidence(evidence), local: { title: localTitle,
-        rationale: `${a.key} shipped ${a.prsShipped} PRs with mean quality ${a.avgQuality}.`, evidence },
-      evalPlan: 'Compare quality on the next 10 tasks of the same type with a revised strategy.', metric: 'mean PR quality score' });
+  // metrics/events.jsonl is the only append-only, unbounded journal this
+  // gather reads: past the 64 MiB bound readTelemetry refuses the file, and
+  // an unguarded read would take every proposal kind down with it. A
+  // degraded read means agent quality is unknown — the metrics-quality
+  // proposals stay silent and the blind spot itself becomes the proposal.
+  let agents: ReturnType<typeof rollup>['byAgent'] | null = null;
+  let telemetryError: string | null = null;
+  try {
+    agents = rollup(readTelemetry()).byAgent;
+  } catch (err) {
+    telemetryError = err instanceof Error ? err.message : String(err);
+  }
+  if (agents === null) {
+    const title = 'Bound the telemetry journal read';
+    const rationale = 'The local telemetry journal cannot be read back, so agent-quality outcomes are unmeasurable and the metrics-quality signal is blind.';
+    const evidence = [{ ref: 'metrics:telemetry/events.jsonl', summary: `telemetry read failed: ${telemetryError ?? 'unknown'}` }];
+    out.push({ id: pid(title), kind: 'telemetry-read', title, rationale,
+      evidence: publicEvidence(evidence),
+      local: { title, rationale: `${rationale} (${telemetryError ?? 'unknown error'})`, evidence },
+      evalPlan: 'With a telemetry journal past the read bound, gatherProposals still emits the other evidence kinds and exactly one telemetry-read proposal; with a readable journal it emits none.',
+      metric: 'telemetry journal readability' });
+  } else {
+    for (const a of agents) {
+      if (a.prsShipped < 3 || a.avgQuality === null || a.avgQuality >= 0.5) continue;
+      // Attribution and scores remain local, like team feedback and steward data.
+      const localTitle = `Improve PR quality for ${a.key}`;
+      const id = pid(localTitle);
+      const evidence = [{ ref: `metrics:agent/${a.key}`, summary: `value/1M tok ${a.valuePerMTok}` }];
+      out.push({ id, kind: 'metrics-quality', title: `Improve PR quality for agent ${id}`,
+        rationale: 'Local telemetry indicates repeated low-quality PR outcomes (private details withheld).',
+        evidence: publicEvidence(evidence), local: { title: localTitle,
+          rationale: `${a.key} shipped ${a.prsShipped} PRs with mean quality ${a.avgQuality}.`, evidence },
+        evalPlan: 'Compare quality on the next 10 tasks of the same type with a revised strategy.', metric: 'mean PR quality score' });
+    }
   }
   return out;
 }

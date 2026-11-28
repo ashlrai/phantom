@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { closeSync, ftruncateSync, mkdirSync, mkdtempSync, openSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -56,6 +56,19 @@ describe('metrics pillar', () => {
   it('feeds low-quality agents into the self-improvement loop', () => {
     for (let i = 1; i <= 3; i++) session(`q${i}`, 'local-model', 'yolo', 1000, { number: 10 + i, followUpFixes: 3, ciPassedFirstTry: false });
     expect(gatherProposals('default').map((p) => p.local?.title ?? p.title)).toContain('Improve PR quality for local-model');
+  });
+
+  it('files one bounded proposal instead of crashing when telemetry exceeds the read bound', () => {
+    expect(gatherProposals('default').filter((p) => p.kind === 'telemetry-read')).toHaveLength(0);
+    mkdirSync(join(home, 'metrics'), { recursive: true });
+    const file = join(home, 'metrics', 'events.jsonl');
+    const fd = openSync(file, 'w');
+    try { ftruncateSync(fd, 64 * 1024 * 1024 + 1); } finally { closeSync(fd); }
+    expect(() => readTelemetry()).toThrow('Telemetry exceeds the local read limit.');
+    const proposals = gatherProposals('default');
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]).toMatchObject({ kind: 'telemetry-read', title: 'Bound the telemetry journal read' });
+    expect(proposals.filter((p) => p.kind === 'metrics-quality')).toHaveLength(0);
   });
 });
 
