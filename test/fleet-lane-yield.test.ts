@@ -55,6 +55,38 @@ it('counts code-carrying skipped_empty rows as skips and ignores empty-gate decl
     { lane: 'claude', launches: 1, skips_by_code: { 10: 1, 14: 1 }, skips: 2, empty_finishes: 0, merged: 0, rows: 5, yield: 0, red: false },
   ]);
 });
+it('folds the full jobs-ledger dialect and skips node-pool and batch-session machinery', async () => {
+  const iso = (hours: number) => new Date(now - hours * 3_600_000).toISOString();
+  const r = await fleetLaneYield(read(
+    // Launches through type/jobId/pool/timestamp and arm spellings.
+    JSON.stringify({ type: 'launch', jobId: 'D1', pool: 'claude', timestamp: iso(1) }),
+    JSON.stringify({ event: 'launch', job: 'D2', lane: 'codex-personal', ts: iso(1) }),
+    JSON.stringify({ kind: 'launch', job: 'D3', lane: 'codex-personal', time: iso(1) }),
+    JSON.stringify({ event: 'launch', job: 'D4', lane: 'codex-personal', ts: iso(1) }),
+    JSON.stringify({ event: 'launch', job: 'D5', lane: 'codex-personal', ts: iso(1) }),
+    JSON.stringify({ event: 'launch', job: 'D6', arm: 'arm-lane', ts: iso(1) }),
+    JSON.stringify({ type: 'precheck_skip', jobId: 'S1', code: 13, pool: 'claude', timestamp: iso(1) }),
+    // Merges through every dialect spelling: kind/status outcome, eventless
+    // resolved phase, publish-shaped reconciler row, merged flag.
+    JSON.stringify({ kind: 'outcome', job: 'D1', status: 'MERGED', at: iso(0.5) }),
+    JSON.stringify({ jobId: 'D2', outcome: 'MERGED', mergedAt: iso(0.5), source: 'metrics-outcomes-reconciler' }),
+    JSON.stringify({ job: 'D3', event: 'publish', outcome: 'MERGED', source: 'metrics-outcomes-reconciler', mergedAt: iso(0.5) }),
+    JSON.stringify({ job: 'D4', merged: true, ts: iso(0.5) }),
+    // Empty finishes through finished/complete spellings and terminal phases.
+    JSON.stringify({ type: 'finished', job: 'D5', empty: true, timestamp: iso(0.5) }),
+    JSON.stringify({ event: 'outcome', job: 'D6', phase: 'EMPTY_DONE', ts: iso(0.5) }),
+    // Machinery rows: session-pool, node-runner and RQ-BATCH launches never count.
+    JSON.stringify({ schema: 'fleet.session-pool.v1', event: 'launch', job: 'sess:1', jobId: 'ready:X:1', lane: 'claude', ts: iso(0.5) }),
+    JSON.stringify({ schema: 'phm-node-runner.v1', event: 'finish', job: 'X:tok', jobId: 'ready:X:1', lane: 'claude', outcome: 'SUCCESS', ts: iso(0.5) }),
+    JSON.stringify({ event: 'launch', job: 'RQ-BATCH-42', lane: 'claude', ts: iso(0.5) }),
+  ), 2, now);
+  expect(r.lanes).toEqual([
+    { lane: 'arm-lane', launches: 1, skips_by_code: {}, skips: 0, empty_finishes: 1, merged: 0, rows: 2, yield: 0, red: false },
+    { lane: 'claude', launches: 1, skips_by_code: { 13: 1 }, skips: 1, empty_finishes: 0, merged: 1, rows: 3, yield: 0.5, red: false },
+    { lane: 'codex-personal', launches: 4, skips_by_code: {}, skips: 0, empty_finishes: 1, merged: 3, rows: 8, yield: 0.75, red: false },
+  ]);
+});
+
 it('lane-yield reports unknown when the ledger is unreadable or throws', async () => {
   for (const reader of [async () => null, async () => { throw new Error('boom'); }]) {
     expect(await fleetLaneYield(reader, 2, now)).toMatchObject({ known: false, red: false, lanes: [] });
