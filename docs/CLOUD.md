@@ -1961,7 +1961,13 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   priority, areas whose measured outcomes improved their metric go first
   (higher measured leverage first), unmeasured areas next, and areas with a
   measured zero or negative record last (`phm improve outcomes` shows the
-  ledger); then built-in order.
+  ledger). Most discovered items declare no metric, so their areas never
+  leave "unmeasured"; for those, merge/revert evidence folded from the
+  tasks' own post-merge records (merged task outcomes, fleet merge state,
+  the revert journal — the same checkout-free evidence `improve observe`
+  syncs) orders the unmeasured tier: areas whose carrier PRs still stand
+  ahead of areas with none, and an area whose items keep ending in
+  standing reverts drops behind the clean ones. Then built-in order.
 
 There are two ways to launch backlog items:
 
