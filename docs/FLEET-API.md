@@ -122,6 +122,10 @@ receipt proves coordination, not job execution.
 
 ## Leader
 
+The Leader board's conflicting-PR trend uses distinct observations in
+timestamp order. A new tick drops stored samples at or after its timestamp,
+so a repeated timestamp or a clock correction cannot skew the trend.
+
 The Leader board and Fleet lane console share merge attribution. When a merge
 receipt lacks a lane and attribution falls back to the job's ledger history,
 events with an observation or merge timestamp after report time are excluded.
