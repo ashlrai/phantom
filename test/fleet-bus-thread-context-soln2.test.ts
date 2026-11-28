@@ -187,6 +187,52 @@ it('applies the shared bus-read filters to the projected chain members only', as
   }
 }, 60000);
 
+it('frames the reply chain as one bounded untrusted block', async () => {
+  const h = setup();
+  h.post('tf-root', { text: 'root question' });
+  h.post('tf-reply', { inReplyTo: 'tf-root', text: 'classified answer' });
+  h.post('tf-kid', { inReplyTo: 'tf-reply', text: 'kindless follow-up' });
+  // --json --frame carries the bounded block on `framed` beside the full projection.
+  const framedOut = vi.fn();
+  expect(await cmdFleetBusThread(['--id', 'tf-root', '--json', '--frame', 'claude'],
+    { root: h.root, now: () => 150 }, { output: framedOut })).toBe(0);
+  const result = JSON.parse(framedOut.mock.lastCall![0]);
+  expect(result.framed).toContain('BEGIN UNTRUSTED AGENT BUS THREAD');
+  expect(result.framed).toContain('tf-root');
+  expect(result.framed).toContain('tf-reply');
+  expect(result.framed).toContain('tf-kid');
+  expect(result.framed).toContain('root question');
+  expect(result.framed).toContain('classified answer');
+  expect(result.framed).toContain('kindless follow-up');
+  expect(result.framed).toContain('END UNTRUSTED AGENT BUS THREAD');
+  // A thread block can never pass for an inbox page, a digest or a feed.
+  expect(result.framed).not.toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
+  expect(result.framed).not.toContain('WORK DIGEST');
+  expect(result.framed).not.toContain('WORK FEED');
+  // Human (non-json) output is the bare frame — one bounded block, not the
+  // per-line envelope dump the unframed read prints.
+  const framedText = vi.fn();
+  expect(await cmdFleetBusThread(['--id', 'tf-root', '--frame', 'grok'],
+    { root: h.root, now: () => 150 }, { output: framedText })).toBe(0);
+  expect(framedText).toHaveBeenCalledTimes(1);
+  expect(framedText.mock.calls[0]![0]).toContain('BEGIN UNTRUSTED AGENT BUS THREAD');
+  expect(framedText.mock.calls[0]![0]).toContain('kindless follow-up');
+  // A proven miss frames its own not-found verdict, never an invented chain.
+  const miss = vi.fn();
+  expect(await cmdFleetBusThread(['--id', 'tf-404', '--json', '--frame', 'claude'],
+    { root: h.root, now: () => 150 }, { output: miss })).toBe(1);
+  const missResult = JSON.parse(miss.mock.lastCall![0]);
+  expect(missResult.framed).toContain('not found');
+  expect(missResult.framed).toContain('BEGIN UNTRUSTED AGENT BUS THREAD');
+  // --frame takes one of the five session CLIs; anything else is a usage error.
+  for (const bad of [['--frame'], ['--frame', 'gemini'], ['--frame', '--json'],
+    ['--frame='], ['--id', 'tf-root', '--frame', 'claude', '--frame', 'codex']]) {
+    const refused = vi.fn(), refusedError = vi.fn();
+    expect(await cmdFleetBusThread(bad, { root: h.root }, { output: refused, error: refusedError }),
+      JSON.stringify(bad)).toBe(2);
+  }
+}, 60000);
+
 it('rejects invalid options before reading and exposes the convention-resolved export', async () => {
   const list = vi.fn(listBusInboxAfter), output = vi.fn(), error = vi.fn();
   for (const args of [[], ['--id'], ['--id', '--json'], ['--id='], ['--id', 'bad id'], ['--id', 'x', '--id', 'y'], ['--id', 'x', '--unknown'], ['--id', 'x', '--json', '--json']]) {
