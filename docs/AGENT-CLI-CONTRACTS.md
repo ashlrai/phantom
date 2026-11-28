@@ -114,6 +114,44 @@ printf '%s\n' 'Fake handoff: inspect task fake-42.' | phm comms inbox post --fil
 phm comms inbox read --source cli --limit 20 --json
 ```
 
+## Comms request ledger
+
+[`comms-requests.ts`](../src/cli/comms-requests.ts) reads the request store
+([`requests.ts`](../src/core/comms/requests.ts),
+`~/.ashlr/comms/requests.jsonl`) — every question, approval and report in
+each lifecycle state (`pending`, `sent`, `answered`, `expired`), newest
+`createdAt` first. `phm comms status` counts only the live queue and the
+unified inbox lists only pending/sent questions and approvals still owed an
+answer; this is the only read that reaches answered, expired and report
+rows. Output is JSON on stdout only with `--json`; without it the same rows
+print as scannable text blocks.
+
+| Result | Exit | JSON |
+| --- | --- | --- |
+| read, including a verified-empty ledger | 0 | `{schemaVersion:1,status:"available"\|"missing",matched:<n>,limit:<n>,truncated:<bool>,requests:[...]}` |
+| store present but unreadable | 1 | `{...,status:"unavailable",matched:null,requests:[]}` |
+| invalid options | 2 | usage on stderr, no JSON |
+
+`matched` is the full filter total before the `--limit` cap (default 50,
+1–200); `truncated` reports the cut. `status:"missing"` is a verified-empty
+ledger (`matched` 0); `status:"unavailable"` means a store entry exists but
+could not be read — `matched` stays `null`, never a fabricated 0.
+
+`--status` and `--type` may repeat and combine as exact-match sets;
+`--kind` and `--id` are exact single matches. `--since` keeps rows created
+at or after the cutoff and `--before` keeps rows created strictly before
+it — the shared `[since, before)` window on `createdAt` (15m, 2h, 1d,
+epoch ms or ISO); a record whose `createdAt` does not parse never matches a
+bounded window and sorts last unfiltered. `--contains` keeps rows whose
+text, kind, options, recorded answer or expiry reason carries the needle as
+a case-insensitive substring (whitespace collapsed on both sides, at most
+512 characters); the id and metadata are never searched.
+
+```sh
+phm comms requests --status sent --json
+phm comms requests --type approval --status answered --since 7d --contains merge-gate --json
+```
+
 ## Graph
 
 [`graph.ts`](../src/cli/graph.ts) and [`loader.ts`](../src/core/graph/loader.ts)

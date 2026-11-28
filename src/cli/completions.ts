@@ -214,7 +214,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   vision: ['show', 'review', 'preview', 'shadow', 'approve', 'reconcile', 'set'],
   eval: ['attention', 'swe-bench', 'router', 'dataset', 'prompts', 'passk', 'checkpoints'],
   genome: ['recall', 'learn', 'teach', 'consolidate', 'export', 'playbook'],
-  comms: ['status', 'thread', 'send-owner', 'send-test', 'cycle', 'ask', 'digest', 'ask-vision', 'ask-merges', 'setup-telegram', 'telegram-brand', 'inbox', 'bus', 'email-drop', 'email-cycle', 'setup-email', 'pair-telegram', 'diagnose', 'health'],
+  comms: ['status', 'thread', 'send-owner', 'send-test', 'cycle', 'ask', 'digest', 'ask-vision', 'ask-merges', 'setup-telegram', 'telegram-brand', 'inbox', 'bus', 'requests', 'email-drop', 'email-cycle', 'setup-email', 'pair-telegram', 'diagnose', 'health'],
   memory: ['add', 'list', 'search', 'forget', '--kind', '--source', '--json', '--help'],
   library: ['show', 'list', '--kind', '--since', '--q', '--json', '--text', '--help'],
   friction: ['note', '--status', '--owner', '--runs-dir', '--no-record', '--json', '--help'],

@@ -24,6 +24,7 @@ import { cmdCommsOwner, cmdCommsOwnerStatus } from './comms-owner-thread.js';
 import { cmdCommsDiagnose } from './comms-diagnose.js';
 import { cmdCommsBus } from './comms-bus.js';
 import { cmdCommsInbox } from './comms-inbox.js';
+import { cmdCommsRequests } from './comms-requests.js';
 import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import { loadConfig } from '../core/config.js';
 import { commsEnabled } from '../core/integrations/imessage.js';
@@ -582,13 +583,14 @@ function printCommsHelp(): void {
   console.log('');
   console.log('  Phantom comms — bidirectional operator channel (Telegram/iMessage)');
   console.log('');
-  console.log('  Usage: phm comms <inbox|bus|email-drop|email-cycle|setup-email|status|thread|send-owner|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|pair-telegram|telegram-brand>');
+  console.log('  Usage: phm comms <inbox|bus|requests|email-drop|email-cycle|setup-email|status|thread|send-owner|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|pair-telegram|telegram-brand>');
   console.log('  Compatible alias: ashlr comms <command>');
   console.log('');
   console.log('    bus post|read|watch|next|claim  durable local agent message plane (bus --help)');
   console.log('    inbox [--source <n>] [--severity <band>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--json]');
   console.log('                               unified pending view: needs-you, teammate texts, drafts, unclaimed bus work, comms requests');
   console.log('    inbox read|post              Owner inbox for local operators (inbox --help)');
+  console.log('    requests [--status s]... [--json]  the request ledger — every question/approval/report, newest first (requests --help)');
   console.log('    email-drop <dir> --from <a>  ingest .eml files from a drop folder (allowlisted From only)');
   console.log('    email-cycle                  process the enabled saved email drop configuration');
   console.log('    setup-email                  print drop paths and Mail.app / forwarder setup');
@@ -637,6 +639,7 @@ export async function cmdComms(args: string[]): Promise<number> {
   if (args[0] === 'email-drop') return cmdCommsEmailDrop(args.slice(1));
   if (args[0] === 'thread' || args[0] === 'send-owner') return cmdCommsOwner(args);
   if (args[0] === 'owner') return cmdCommsOwner(args.slice(1));
+  if (args[0] === 'requests') return cmdCommsRequests(args.slice(1));
   if (args.includes('--help') || args.includes('-h')) {
     printCommsHelp();
     return 0;

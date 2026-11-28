@@ -233,6 +233,98 @@ export function listRequests(filter?: RequestFilter): CommsRequest[] {
   });
 }
 
+/** Longest `--contains` needle the `phm comms requests` read accepts; the row text it matches is already bounded far shorter. */
+export const COMMS_REQUESTS_CONTAINS_MAX = 512;
+
+/** Default and maximum row counts for the `phm comms requests` ledger read. */
+export const COMMS_REQUESTS_VIEW_LIMIT_DEFAULT = 50;
+export const COMMS_REQUESTS_VIEW_LIMIT_MAX = 200;
+
+/**
+ * The filter set `phm comms requests` applies. `status`/`type` are
+ * exact-match sets (absent = every value); `kind`/`id` are exact single
+ * matches. `sinceMs`/`beforeMs` bound `createdAt` as the shared
+ * [since, before) window every comms read uses — a record whose createdAt
+ * does not parse never matches a bounded window, so unknown never counts
+ * as in-range. `contains` is a case-insensitive substring (whitespace
+ * collapsed on both sides) over the row's own text: the request text, its
+ * kind, each option, the recorded answer and the expiry reason — never
+ * the id or metadata.
+ */
+export type CommsRequestsQuery = {
+  status?: CommsRequest['status'][];
+  type?: CommsRequest['type'][];
+  kind?: string;
+  id?: string;
+  sinceMs?: number;
+  beforeMs?: number;
+  contains?: string;
+};
+
+export type CommsRequestsView = {
+  /** 'missing': no store file exists (a verified-empty ledger). 'available':
+   * the file was read and parsed. 'unavailable': a store entry exists but
+   * could not be read — never an empty list passed off as fact. */
+  status: 'missing' | 'available' | 'unavailable';
+  /** Rows matching every supplied filter, newest `createdAt` first, at most `limit`. */
+  requests: CommsRequest[];
+  /** Rows matching every supplied filter before the limit cut; null when the store could not be read. */
+  matched: number | null;
+  /** The applied row cap. */
+  limit: number;
+};
+
+/** The searchable text of one ledger row — the fields its rendered line carries. */
+function requestSearchText(r: CommsRequest): string {
+  const options = Array.isArray(r.options) ? r.options : [];
+  return [r.text, r.kind, ...options, r.answerText, r.expiredReason]
+    .filter((v): v is string => typeof v === 'string')
+    .join(' ')
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * The filtered ledger read behind `phm comms requests`: the same honest
+ * store tri-state as readCommsRequests, exact status/type/kind/id matches,
+ * the shared [since, before) window on createdAt and the shared
+ * whitespace-collapsed contains rule. Ordering is newest createdAt first;
+ * a record whose createdAt does not parse sorts last rather than
+ * masquerading as fresh. Never throws.
+ */
+export function readCommsRequestsView(query: CommsRequestsQuery | undefined, limit: number): CommsRequestsView {
+  const read = readCommsRequests();
+  if (read.status !== 'available') {
+    return { status: read.status, requests: [], matched: read.status === 'missing' ? 0 : null, limit };
+  }
+  const needle = query?.contains === undefined ? undefined
+    : query.contains.toLowerCase().replace(/\s+/g, ' ').trim();
+  const bounded = query?.sinceMs !== undefined || query?.beforeMs !== undefined;
+  const matched = read.requests.filter((r) => {
+    if (r === null || typeof r !== 'object') return false;
+    if (query?.status !== undefined && !query.status.includes(r.status)) return false;
+    if (query?.type !== undefined && !query.type.includes(r.type)) return false;
+    if (query?.kind !== undefined && r.kind !== query.kind) return false;
+    if (query?.id !== undefined && r.id !== query.id) return false;
+    if (bounded) {
+      const at = Date.parse(r.createdAt);
+      if (!Number.isFinite(at)) return false;
+      if (query.sinceMs !== undefined && at < query.sinceMs) return false;
+      if (query.beforeMs !== undefined && at >= query.beforeMs) return false;
+    }
+    if (needle !== undefined && needle !== '' && !requestSearchText(r).includes(needle)) return false;
+    return true;
+  });
+  const keyed = matched.map((r, index) => ({ r, index, at: Date.parse(r.createdAt) }));
+  keyed.sort((a, b) => {
+    const ka = Number.isFinite(a.at) ? a.at : Number.NEGATIVE_INFINITY;
+    const kb = Number.isFinite(b.at) ? b.at : Number.NEGATIVE_INFINITY;
+    return kb - ka || a.index - b.index;
+  });
+  const ordered = keyed.map(({ r }) => r);
+  return { status: 'available', requests: ordered.slice(0, limit), matched: ordered.length, limit };
+}
+
 /** Mark a request as sent (in-flight, awaiting reply). */
 export function markSent(id: string): void {
   try {
