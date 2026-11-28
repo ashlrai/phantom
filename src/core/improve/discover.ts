@@ -1381,6 +1381,26 @@
  *     are quoted as coverage, truncated tails are stated as lower
  *     bounds, and items self-target each outside PR's own repository
  *     since the review-path fix lives where the merges land;
+ *   - the same journal's recurring held-clean merges per attributed
+ *     agent: the positive half of the outside-PR outcome evidence —
+ *     merges standing without a revert, with a 'success' check-rollup
+ *     verdict and at least one recorded reviewer — folded per agent
+ *     product so an outside agent whose merges keep landing clean
+ *     becomes a fleet-repo study item (outsidePrHeldBacklogItems
+ *     below). Until now every sibling feed counted only adverse
+ *     verdicts, so the outcome community-scale RSI exists to produce
+ *     was visible only in `phm fleet outside-outcomes` and the
+ *     router-weight report's advisory community-seat section. An agent
+ *     cell emits only at three held-clean merges inside the same
+ *     30-day window; 'unknown' reverts, null ci/reviews records and
+ *     kept-but-not-clean merges never count toward the bar,
+ *     dependency-automation slugs are excluded as non-study subjects,
+ *     unattributed rows form no cell, the newest scan row's degraded
+ *     reads are quoted as coverage, truncated tails are stated as
+ *     lower bounds, and items emit only for the fleet's own repository
+ *     since the study question — which conventions held merges share
+ *     that contributor guidance does not yet name — lives in this
+ *     repository's machinery;
  *   - the work market's repo-share journal's recurring adverse
  *     freshness verdicts: the per-repo `repo_share` rows dispatchd's
  *     market_metric appends to metrics/work-market.jsonl whenever the
@@ -2202,6 +2222,7 @@ import { outsidePrBacklogItems } from './outside-pr-backlog.js';
 import { outsidePrAgentBacklogItems } from './outside-pr-agent-backlog.js';
 import { outsidePrCiBacklogItems } from './outside-pr-ci-backlog.js';
 import { outsidePrReviewBacklogItems } from './outside-pr-review-backlog.js';
+import { outsidePrHeldBacklogItems } from './outside-pr-held-backlog.js';
 import { repoShareBacklogItems } from './repo-share-backlog.js';
 import { reasoningInsightBacklogItems } from './reasoning-insight-backlog.js';
 import { fleetGapBacklogItems } from './fleet-gap-backlog.js';
@@ -4058,6 +4079,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // stated as lower bounds, and items self-target the outside PRs'
   // own repository — the review-path fix lives where the merges land.
   await feed('outsidePrReviewBacklogItems', () => outsidePrReviewBacklogItems());
+
+  // Outside-PR held-outcome journal: the same
+  // metrics/outside-pr-outcomes.jsonl rows folded per attributed agent
+  // on their positive verdict — merges standing without a revert, with
+  // a 'success' check-rollup verdict and at least one recorded reviewer
+  // ("held-clean"). Every sibling feed above counts only adverse
+  // evidence, so a community agent product whose outside merges keep
+  // landing clean never became work: the only readers were `phm fleet
+  // outside-outcomes` and the router-weight report's advisory
+  // community-seat section. An agent cell emits only at the same
+  // recurring bar of held-clean merges inside the window ('unknown'
+  // reverts, missing ci/reviews evidence and kept-but-not-clean merges
+  // never count; dependency-automation slugs are excluded as non-study
+  // subjects), the per-repo spread and review/latency/diff evidence
+  // quote as context, degraded scan coverage is quoted, truncated tails
+  // are stated as lower bounds, and items emit only for the fleet's own
+  // repository since the study question — which conventions held merges
+  // share that contributor guidance does not yet name — lives in this
+  // repository's machinery.
+  await feed('outsidePrHeldBacklogItems', () => outsidePrHeldBacklogItems({ repo }));
 
   // Work-market share journal: the same journal's change-triggered
   // `repo_share` rows folded per (repo, code) cell for the three adverse

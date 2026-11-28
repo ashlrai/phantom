@@ -1272,6 +1272,14 @@ that keep landing with an empty `latestReviews` array (zero recorded
 reviewers, a real "merged unreviewed" signal distinct from a null record's
 missing evidence) become self-targeted backlog items; see
 [core/improve/outside-pr-review-backlog.ts](../src/core/improve/outside-pr-review-backlog.ts).
+The same journal is also folded per attributed agent on its positive
+verdict, so an agent product whose outside merges keep landing clean —
+no standing revert, a `success` check-rollup verdict and at least one
+recorded reviewer — becomes a fleet-repo study item asking which
+conventions its held merges share that contributor guidance does not
+yet name; dependency-automation slugs are excluded as non-study
+subjects. See
+[core/improve/outside-pr-held-backlog.ts](../src/core/improve/outside-pr-held-backlog.ts).
 
 `phm fleet pr-hygiene [--repo <owner/name>] [--stale-days <n>] [--limit <n>] [--json]`
 audits one repo's open PRs and emits the `fleet.pr-hygiene.v1` triage report
