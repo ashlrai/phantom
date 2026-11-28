@@ -33,6 +33,7 @@ const digest = (
   announced: { status: 'ok', matched: 0, items: [], truncated: false },
   next: { status: 'ok', holds: 'complete', matched: 0, items: [], truncated: false },
   handoffs: { status: 'ok', holds: 'complete', matched: 0, items: [], truncated: false },
+  deadLetters: { status: 'ok', matched: 0, items: [], truncated: false },
   threads: { status: 'ok', source: 'missing', matched: 0, items: [], truncated: false, skipped: 0 },
   awaiting: { status: 'ok', source: 'missing', matched: 0, items: [], truncated: false, skipped: 0 },
   blocked: { status: 'ok', source: 'missing', matched: 0, items: [], truncated: false, skipped: 0 },
@@ -43,6 +44,7 @@ const digest = (
     deliveries: { matched: 0, items: [], truncated: false },
     tasks: { matched: 0, items: [], truncated: false } },
   workBoard: { status: 'ok', matched: 0, items: [], truncated: false },
+  sessions: { status: 'ok', source: 'missing', matched: 0, sessions: [], truncated: false, unreadable: 0 },
   coordination: { status: 'ok', source: 'missing',
     messages: { matched: 0, items: [], truncated: false },
     proposals: { matched: 0, items: [], truncated: false },
@@ -130,10 +132,13 @@ describe('fleet_agent_work argument parsing', () => {
       expect(parseFleetAgentWorkArgs({ agent: 'a', from: ref })).toEqual({ agent: 'a', from: ref });
       expect(parseFleetAgentWorkArgs({ agent: 'a', excludeFrom: ref }))
         .toEqual({ agent: 'a', excludeFrom: ref });
+      expect(parseFleetAgentWorkArgs({ agent: 'a', with: ref }))
+        .toEqual({ agent: 'a', with: ref });
     }
     for (const ref of ['has space', 'café', 'x'.repeat(129), '', 5, null, true]) {
       expect(parseFleetAgentWorkArgs({ agent: 'a', from: ref })).toBeNull();
       expect(parseFleetAgentWorkArgs({ agent: 'a', excludeFrom: ref })).toBeNull();
+      expect(parseFleetAgentWorkArgs({ agent: 'a', with: ref })).toBeNull();
     }
   });
 
@@ -213,6 +218,7 @@ describe('fleet_agent_work argument parsing', () => {
       { agent: 'a', topic: 'a'.repeat(33) }, { agent: 'a', topic: '' }, { agent: 'a', topic: 5 },
       { agent: 'a', from: 'has space' }, { agent: 'a', from: '' }, { agent: 'a', from: 5 },
       { agent: 'a', excludeFrom: 'has space' }, { agent: 'a', excludeFrom: '' }, { agent: 'a', excludeFrom: 5 },
+      { agent: 'a', with: 'has space' }, { agent: 'a', with: '' }, { agent: 'a', with: 5 },
       { agent: 'a', id: 'has space' }, { agent: 'a', id: '' }, { agent: 'a', id: 5 },
       { agent: 'a', inReplyTo: 'has space' }, { agent: 'a', inReplyTo: '' }, { agent: 'a', inReplyTo: 5 },
       { agent: 'a', bodyKind: 'has space' }, { agent: 'a', bodyKind: '' }, { agent: 'a', bodyKind: 5 },
@@ -306,6 +312,8 @@ describe('fleet_agent_work MCP tool', () => {
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['excludeFrom'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['with'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['id'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['inReplyTo'])
@@ -330,6 +338,7 @@ describe('fleet_agent_work MCP tool', () => {
     [{ agent: 'a', topic: 'General' }], [{ agent: 'a', topic: 'has space' }], [{ agent: 'a', topic: 5 }],
     [{ agent: 'a', from: 'has space' }], [{ agent: 'a', from: '' }], [{ agent: 'a', from: 5 }],
     [{ agent: 'a', excludeFrom: 'has space' }], [{ agent: 'a', excludeFrom: '' }], [{ agent: 'a', excludeFrom: 5 }],
+    [{ agent: 'a', with: 'has space' }], [{ agent: 'a', with: '' }], [{ agent: 'a', with: 5 }],
     [{ agent: 'a', bodyKind: 'has space' }], [{ agent: 'a', bodyKind: '' }], [{ agent: 'a', bodyKind: 5 }],
     [{ agent: 'a', result: 'released' }], [{ agent: 'a', result: 'FAILED' }], [{ agent: 'a', result: '' }],
     [{ agent: 'a', result: 5 }],
@@ -348,10 +357,10 @@ describe('fleet_agent_work MCP tool', () => {
     const payload = digest({ job: 'RQ-9', contains: 'parser fix' });
     const agentWork = vi.fn(async () => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), agentWork });
-    const { parsed } = await callWork(client, { agent: 'planner', job: 'RQ-9', contains: 'Parser Fix', since: '1800000000000', before: '1900000000000', priority: 'P2', channel: 'eng', topic: 'general', from: 'ghost', excludeFrom: 'agent:bots', id: 'env-1', inReplyTo: 'env-0', bodyKind: 'work.result', result: 'failed', thread: 'eng-slice' });
+    const { parsed } = await callWork(client, { agent: 'planner', job: 'RQ-9', contains: 'Parser Fix', since: '1800000000000', before: '1900000000000', priority: 'P2', channel: 'eng', topic: 'general', from: 'ghost', excludeFrom: 'agent:bots', with: 'agent:peer', id: 'env-1', inReplyTo: 'env-0', bodyKind: 'work.result', result: 'failed', thread: 'eng-slice' });
     expect(agentWork).toHaveBeenCalledWith(expect.objectContaining({
       agent: 'planner', job: 'RQ-9', contains: 'parser fix', since: 1800000000000, before: 1900000000000,
-      priority: 'P2', channel: 'eng', topic: 'general', from: 'ghost', excludeFrom: 'agent:bots', id: 'env-1', inReplyTo: 'env-0',
+      priority: 'P2', channel: 'eng', topic: 'general', from: 'ghost', excludeFrom: 'agent:bots', with: 'agent:peer', id: 'env-1', inReplyTo: 'env-0',
       bodyKind: 'work.result', result: 'failed', thread: 'eng-slice',
     }));
     expect(parsed).toEqual(payload);

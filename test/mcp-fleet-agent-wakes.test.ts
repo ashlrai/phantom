@@ -81,13 +81,13 @@ describe('fleet_agent_wakes argument parsing', () => {
   it('maps every shared wakes filter onto the read arguments', () => {
     const parsed = parseFleetAgentWakesArgs({
       agent: 'agent:planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9',
-      from: 'agent:sender', excludeFrom: 'agent:bot', channel: 'ops', topic: 'deploy', priority: 'P0',
+      from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer', channel: 'ops', topic: 'deploy', priority: 'P0',
       contains: '  Parser   Fix ', id: 'm-9', thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status',
       result: 'failed',
     });
     expect(parsed).toEqual({
       agent: 'agent:planner', since: 1800000000000, before: 1700000000000, job: 'RQ-9',
-      from: 'agent:sender', excludeFrom: 'agent:bot', channel: 'ops', topic: 'deploy', priority: 'P0',
+      from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer', channel: 'ops', topic: 'deploy', priority: 'P0',
       contains: 'parser fix', id: 'm-9', thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status',
       result: 'failed',
     });
@@ -117,6 +117,8 @@ describe('fleet_agent_wakes argument parsing', () => {
       { agent: 'a', limit: 5 }, { agent: 'a', after: 0 }, { agent: 'a', matched: true },
       { agent: 'a', job: 'has space' }, { agent: 'a', job: '' }, { agent: 'a', job: 5 },
       { agent: 'a', from: 5 }, { agent: 'a', excludeFrom: null }, { agent: 'a', excludeFrom: 'has space' },
+      { agent: 'a', with: 5 }, { agent: 'a', with: null }, { agent: 'a', with: 'has space' },
+      { agent: 'a', with: 'x'.repeat(129) },
       { agent: 'a', channel: 'Bad Name' }, { agent: 'a', channel: 'has space' }, { agent: 'a', channel: '' },
       { agent: 'a', channel: 'x'.repeat(33) }, { agent: 'a', channel: 5 }, { agent: 'a', channel: null },
       { agent: 'a', topic: 'Bad Name' }, { agent: 'a', topic: 'deploy:extra' }, { agent: 'a', topic: '' },
@@ -148,9 +150,9 @@ describe('fleet_agent_wakes reader', () => {
       return okPage({ matched: 3 });
     };
     const result = await readFleetAgentWakes(
-      parseFleetAgentWakesArgs({ agent: 'planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9', from: 'agent:sender', channel: 'ops', topic: 'deploy', priority: 'P1', thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status', result: 'complete' })!,
+      parseFleetAgentWakesArgs({ agent: 'planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9', from: 'agent:sender', with: 'agent:peer', channel: 'ops', topic: 'deploy', priority: 'P1', thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status', result: 'complete' })!,
       { read });
-    expect(seen).toEqual([['planner', 1800000000000, {}, { job: 'RQ-9', from: 'agent:sender', channel: 'ops', topic: 'deploy', priority: 'P1', before: 1700000000000, thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status', result: 'complete' }]]);
+    expect(seen).toEqual([['planner', 1800000000000, {}, { job: 'RQ-9', from: 'agent:sender', with: 'agent:peer', channel: 'ops', topic: 'deploy', priority: 'P1', before: 1700000000000, thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status', result: 'complete' }]]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       status: 'ok', agent: 'planner', scope: 'identity', matched: 3, truncated: false,

@@ -3641,10 +3641,10 @@ while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
-`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `coordination?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `topic?`, `from?`, `excludeFrom?`, `id?`, `inReplyTo?`, `bodyKind?`, `result?: WorkResultOutcome`, `thread?: string`, `now?: () => number` frozen once
+`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `coordination?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `topic?`, `from?`, `excludeFrom?`, `with?`, `id?`, `inReplyTo?`, `bodyKind?`, `result?: WorkResultOutcome`, `thread?: string`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, contains?, since?, before?, priority?, channel?, topic?, from?, excludeFrom?, id?, inReplyTo?, bodyKind?, result?, thread?, claims, jobs, announced, next, handoffs, deadLetters, threads, awaiting, blocked, wakes, inbox, mailbox, board, workBoard, sessions, coordination, channels, seats?}` or `{status:'invalid',
+asOf, job?, contains?, since?, before?, priority?, channel?, topic?, from?, excludeFrom?, with?, id?, inReplyTo?, bodyKind?, result?, thread?, claims, jobs, announced, next, handoffs, deadLetters, threads, awaiting, blocked, wakes, inbox, mailbox, board, workBoard, sessions, coordination, channels, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, a `job` outside the same rule
 (`invalid-job`), a `contains` outside the shared bounded free-text
@@ -3655,13 +3655,13 @@ rule every bus `--contains` read applies (`invalid-contains`), a
 grammar every bus `--channel` read validates (`invalid-channel`), a
 `topic` outside the same grammar a `group:<room>:<topic>` label's
 topic segment must satisfy (`invalid-topic`), a
-`from`/`excludeFrom` outside the same printable-label bound every bus
-sender filter shares (`invalid-from`/`invalid-exclude-from`), an
+`from`/`excludeFrom`/`with` outside the same printable-label bound every bus
+sender filter shares (`invalid-from`/`invalid-exclude-from`/`invalid-with`), an
 `id`/`inReplyTo`/`bodyKind`/`thread` outside the same printable-label bound every bus
 `--id`/`--in-reply-to`/`--body-kind`/`--thread` read validates (`invalid-id`/`invalid-in-reply-to`/`invalid-body-kind`/`invalid-thread`),
 or a `result` outside the `WORK_RESULT_OUTCOMES` vocabulary every bus
 `--result` read validates (`invalid-result`).
-`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `topic`, `from`, `excludeFrom`, `id`, `inReplyTo`, `bodyKind`, `result` and `thread` echo the applied
+`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `topic`, `from`, `excludeFrom`, `with`, `id`, `inReplyTo`, `bodyKind`, `result` and `thread` echo the applied
 filters and are absent on an
 unfiltered read. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -4461,6 +4461,44 @@ order every bus read applies — a sender both included and excluded
 matches nothing; every count stays the filtered total, and the result
 echoes `excludeFrom`.
 
+`options.with` narrows the whole digest to the two-way exchange the
+agent and one peer name — the same pairwise rule `readAgentInbox`'s
+`with`, `readAgentConversations`' `agent`+`with` and `phm messages
+--with` apply: an item lists only when its exchange endpoints provably
+pair an agent-identity label with the peer's labels in either
+direction, a `group:` room address never standing as either side, and
+an item naming no provable endpoint pair never listing — unknown stays
+out, never a widened match. The peer ref resolves through the registry
+through the same `agentRefAddressMatcher` identity-label rule `from`
+applies, an unresolvable ref keeping exact-label matching and never
+widening. `jobs`/`announced` keep announcements whose `owner`/`to`
+labels pair the two identities in either direction; `next`/`handoffs`/
+`mailbox` keep envelopes whose `to` is the agent's own identity label
+while `from` matches the peer, or the reverse — a room-addressed `to`
+never pairing; `deadLetters` apply the same verdict to the ORIGINAL
+`to`/`from` the lost mail carried, a report naming no provable pair
+never listing; `claims` keep only resolved message claims whose leased
+envelope's endpoints pair the two — a scope-key claim or an
+unresolvable lease names no provable pair and never lists; `wakes` and
+`inbox` pass `with` to their own reads' exchange filters;
+`threads`/`awaiting`/`blocked` pass `agent`+`with` into the one shared
+`readAgentConversations` query, which keeps a thread only while a
+member message pairs the two; `coordination` keeps only ledger
+messages and pending returns whose recorded `from`/`to` labels pair
+the agent's own labels with the peer exactly, proposals carrying no
+endpoints reporting honestly empty; `board` deliveries keep posts
+whose `sender` peer label matches — the recipient is always the
+agent's own label — composed into the same sender slot `from` fills,
+while board tasks and thread rollups, which record no endpoints,
+never match under a positive `with` the same way they drop under
+`from`; `workBoard` keeps requests whose recorded `from`/`to`
+endpoints pair the agent's own labels with the peer's in either
+direction — a request the agent meets only through a third party or
+a room names no agent↔peer pair and never lists. `sessions`, `channels` and `seats` carry no exchange endpoint
+pair in their projections and stay unfiltered, like they do under
+`from`; every count stays the filtered total, the result echoes `with`,
+and an invalid peer ref is refused before any store read.
+
 `options.bodyKind` narrows the whole digest to pending items whose body
 carries that exact kind discriminator — the same `busBodyKind` match
 every bus read's `--body-kind` applies (the body's own `kind`, else
@@ -4744,7 +4782,19 @@ every registered spelling of one identity through the same matcher and
 exact-label fallback, composing with `from` so a sender both included
 and excluded matches nothing — the drop runs inside the queue-tail
 match, so `matched` stays the count the whole filter set accepts, with a
-malformed exclusion answering `invalid`; `filter.channel` keeps only
+malformed exclusion answering `invalid`; `filter.with` keeps only the
+two-way exchange the addressee and one peer name — the same pairwise
+rule `readAgentInbox`'s `with` applies, decided on the hint row's own
+`to`/`from` endpoints: the `to` must resolve to the queried identity's
+label (a member-channel `group:` address is a room, never the peer —
+the inbox's addressed-to rule — and under label scope the literal `to`
+label stands in) and the `from` must match the peer's registered
+labels through the same `agentRefAddressMatcher` identity-label rule,
+an unresolvable peer ref keeping exact-label matching and unknown
+identity state never widening — the verdict needs only the queue row,
+so it counts inside the queue-tail match like `from`/`channel`, never
+fails closed on an unreadable bus store, and a malformed peer answers
+`invalid`; `filter.channel` keeps only
 hints whose own `to` label sits under `group:<name>:*` — the same room
 prefix `readAgentInbox`'s `channel` and `phm messages --channel` match,
 grammar-validated by the shared channel-name rule and decided on the
@@ -4829,9 +4879,13 @@ claim-holder fan-out writes appear beside registered identities' hints,
 each row's own `to` naming its addressee; the ok page carries
 `scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
 queue-tail semantics `readAgentWakes` documents, and the same
-`job`/`from`/`excludeFrom`/`channel`/`topic`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
+`job`/`from`/`excludeFrom`/`with`/`channel`/`topic`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
 and resolves referents identically — sender matchers resolve through
-the registry with exact-label fallback, `channel` keeps only hints whose
+the registry with exact-label fallback, `with` names no addressee on
+the fleet read so the agent side of the pair can never be proven and
+every hint fails the match — an honest empty page (`matched: 0`),
+never a widened one, the same rule `readAgentConversations`' `with`
+without `agent` reports — `channel` keeps only hints whose
 own `to` label sits under `group:<name>:*` inside the queue-tail match,
 `topic` keeps only hints whose own `to` label parses to that exact
 topic component of a well-formed `group:<room>:<topic>` address under

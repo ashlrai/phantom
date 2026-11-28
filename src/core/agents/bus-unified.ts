@@ -1651,9 +1651,9 @@ export type AllWakesPage =
   | { status: 'unavailable' | 'invalid'; reason: string };
 
 /** The filter set every wake read shares: one job id, sender include/exclude, one channel, one group topic, one priority band, contains text, one v2 thread label, one reply citation, one body-kind discriminator, one work-result outcome, the exclusive upper time bound and one exact hint id. */
-interface WakeFilter { job?: string; from?: string; excludeFrom?: string; channel?: string; topic?: string; contains?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome }
+interface WakeFilter { job?: string; from?: string; excludeFrom?: string; with?: string; channel?: string; topic?: string; contains?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome }
 
-type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; channel?: string; topic?: string; containsNeedle?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome }
+type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; with?: string; channel?: string; topic?: string; containsNeedle?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome }
   | { ok: false; reason: string };
 
 /** Validate the shared wakes filter set before any store is touched. */
@@ -1695,6 +1695,11 @@ function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
       (typeof excludeFrom !== 'string' || excludeFrom.length === 0 || excludeFrom.length > 128)) {
     return { ok: false, reason: 'Invalid sender-exclusion filter.' };
   }
+  const withPeer = filter.with;
+  if (withPeer !== undefined &&
+      (typeof withPeer !== 'string' || withPeer.length === 0 || withPeer.length > 128)) {
+    return { ok: false, reason: 'Invalid exchange-peer filter.' };
+  }
   const channel = filter.channel;
   if (channel !== undefined && (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success)) {
     return { ok: false, reason: 'Invalid channel name.' };
@@ -1711,6 +1716,7 @@ function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
   if (containsNeedle === null) return { ok: false, reason: 'Invalid contains filter.' };
   return { ok: true, ...(job === undefined ? {} : { job }),
     ...(from === undefined ? {} : { from }), ...(excludeFrom === undefined ? {} : { excludeFrom }),
+    ...(withPeer === undefined ? {} : { with: withPeer }),
     ...(channel === undefined ? {} : { channel }),
     ...(topic === undefined ? {} : { topic }),
     ...(priority === undefined ? {} : { priority }),
@@ -1957,6 +1963,20 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
  * counts inside the queue-tail match like `channel`/`from`/`excludeFrom`
  * and an unreadable bus store never fails it closed, with a bound outside
  * epoch-ms answering `invalid`.
+ * `filter.with` keeps only the two-way exchange the addressee and one
+ * peer name — the same pairwise rule `inbox --with`, `agents
+ * conversations --with` and `phm messages --with` apply, decided on the
+ * hint row's own `to`/`from` endpoints: the `to` must be an
+ * agent-identity label (a member-channel `group:` address is a room,
+ * never the peer — the inbox's `toLabel` rule, so a channel-addressed
+ * hint never matches) and the `from` must match the peer's registered
+ * labels through the same `agentRefAddressMatcher` identity-label rule
+ * `from`/`excludeFrom` use, an unresolvable peer ref keeping
+ * exact-label matching and unknown identity state never widening. The
+ * verdict needs only the queue row, so it counts inside the queue-tail
+ * match like `channel`/`from`/`excludeFrom` — `matched` stays exact on a
+ * complete tail read — an unreadable bus store never fails it closed,
+ * and a malformed peer answering `invalid`.
  */
 export function readAgentWakes(ref: string, sinceAt: number | undefined, options: UnifiedBusOptions = {},
   filter: WakeFilter = {}): WakePage {
@@ -1973,13 +1993,27 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
     : agentRefAddressMatcher(parsed.from, read.registry, identityOf);
   const excludeFromMatch = parsed.excludeFrom === undefined ? undefined
     : agentRefAddressMatcher(parsed.excludeFrom, read.registry, identityOf);
+  const withMatch = parsed.with === undefined ? undefined
+    : agentRefAddressMatcher(parsed.with, read.registry, identityOf);
   const channelPrefix = parsed.channel === undefined ? undefined : `group:${parsed.channel}:`;
+  // `with` keeps only the exchange the addressee and one peer name — the
+  // same pairwise rule `inbox --with`, `agents conversations --with` and
+  // `phm messages --with` apply, decided on the hint row's own endpoints:
+  // the hint's `to` must be an agent-identity label (a member-channel
+  // `group:` address is a room, never the peer — the inbox's `toLabel`
+  // rule) and its `from` must match the peer's registered labels. The
+  // verdict needs only the queue row, so it counts inside the queue-tail
+  // match like `from`/`channel` and never fails closed on the store.
+  const withExchange = withMatch === undefined ? undefined : (wake: BusWakeRow) =>
+    (target === undefined ? wake.to === ref : identityOf(wake.to) === target.identity.id) &&
+    withMatch(wake.from);
   const page = readWakeRows(sinceAt, options, read.registry, wake =>
     (parsed.id === undefined || wake.id === parsed.id) &&
     (channelPrefix === undefined || wake.to.startsWith(channelPrefix)) &&
     (parsed.topic === undefined || groupAddressTopicOf(wake.to) === parsed.topic) &&
     (fromMatch === undefined || fromMatch(wake.from)) &&
     (excludeFromMatch === undefined || !excludeFromMatch(wake.from)) &&
+    (withExchange === undefined || withExchange(wake)) &&
     // The addressee label folds to its identity exactly as the inbox read
     // and every other addressed-to match does; the channel self-exclusion
     // stays on the exact stored labels like `agentPendingAddressMatcher`.
@@ -2024,7 +2058,12 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
  * wire id on a `bus.send` hint, the `wh-…` claim-holder id on those — the
  * same exact-id match `agents bus inbox`/`channel read`'s `id` apply,
  * decided on the queue row alone inside the queue-tail match so it
- * counts in `matched` and needs no referent resolution.
+ * counts in `matched` and needs no referent resolution. `filter.with`
+ * is the pairwise exchange filter `readAgentWakes` applies — but the
+ * fleet read names no addressee, so the agent side of the pair can never
+ * be proven and every hint fails the match: an honest empty page
+ * (`matched: 0`), never a widened one, the same rule `agents
+ * conversations --with` without `--agent` reports.
  */
 export function readAllWakes(sinceAt: number | undefined, options: UnifiedBusOptions = {},
   filter: WakeFilter = {}): AllWakesPage {
@@ -2042,7 +2081,13 @@ export function readAllWakes(sinceAt: number | undefined, options: UnifiedBusOpt
     (channelPrefix === undefined || wake.to.startsWith(channelPrefix)) &&
     (parsed.topic === undefined || groupAddressTopicOf(wake.to) === parsed.topic) &&
     (fromMatch === undefined || fromMatch(wake.from)) &&
-    (excludeFromMatch === undefined || !excludeFromMatch(wake.from)), parsed);
+    (excludeFromMatch === undefined || !excludeFromMatch(wake.from)) &&
+    // The pairwise exchange rule needs the addressee the per-agent read
+    // supplies; a fleet-wide read names no agent side, so `with` proves
+    // nothing here and matches nothing — the same honest empty
+    // `conversations --with` without `--agent` reports, never a widened
+    // page.
+    parsed.with === undefined, parsed);
   if (page.status !== 'ok') return page;
   return { status: 'ok', scope: 'fleet', wakes: page.wakes, matched: page.matched, truncated: page.truncated };
 }

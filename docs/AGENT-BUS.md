@@ -749,7 +749,7 @@ terminal `outcome`, the safe `cursor` resume point and a 200-record bound
 reported as `limit`, so an MCP-connected agent waits for mail without a
 poll loop or a stdio stream.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
-[--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
+[--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3]
 [--channel <name>] [--topic <topic>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]` lists wake
 hints for the agent — addressed under any spelling that resolves to its
@@ -780,7 +780,24 @@ spelling of one identity through the same matcher and exact-label
 fallback `--from` applies — composing with `--from` so a sender both
 included and excluded matches nothing — so "everyone's wakes except the
 noisy bot's" is one filtered read, and `matched` stays the count the
-whole filter set accepts. `--channel` keeps only hints addressed to
+whole filter set accepts. `--with` keeps only the two-way exchange the
+addressee and one peer name — the same pairwise rule `inbox --with`,
+`agents conversations --with` and `phm messages --with` apply, decided
+on the hint row's own `to`/`from` endpoints: the `to` must be an
+agent-identity label (a member-channel `group:` address is a room,
+never the peer — the inbox's addressed-to rule, so a channel-addressed
+hint never matches) and the `from` must match the peer's registered
+labels through the same `agentRefAddressMatcher` identity-label rule
+`from`/`excludeFrom` use, an unresolvable peer ref keeping exact-label
+matching and unknown identity state never widening. The verdict needs
+only the queue row, so it counts inside the queue-tail match like
+`from`/`channel` — `matched` stays exact on a complete tail read — an
+unreadable bus store never fails it closed, and a malformed peer
+answers `invalid`. Under `--all` the fleet read names no addressee, so
+the agent side of the pair can never be proven and every hint fails
+the match: an honest empty page (`matched: 0`), never a widened one —
+the same rule `agents conversations --with` without `--agent` reports.
+`--channel` keeps only hints addressed to
 `group:<name>:*` of one channel — the same room prefix `inbox --channel`,
 `channel read` and `phm messages --channel` match, grammar-validated by
 the shared channel-name rule — decided on the hint's own `to` label, so
@@ -904,7 +921,7 @@ cannot be read. Triage no longer costs one `agents bus show` per hint.
 `fleet_agent_wakes` (the isolated fleet MCP tool) serves the same read with
 the same dimensions as arguments — `agent` optional (omitted, the
 fleet-wide `--all` read under `scope: 'fleet'`), `since`/`job`/`from`/
-`excludeFrom`/`channel`/`topic`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` the same filters — under the identical
+`excludeFrom`/`with`/`channel`/`topic`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` the same filters — under the identical
 `readAgentWakes`/`readAllWakes` validation, so an MCP-connected agent reads its wake
 hints, claim-holder citations and resolved referents — or the whole
 fleet's pending hints in one call — without shelling out
@@ -1269,7 +1286,7 @@ guessed claim no matter how long the wait runs. Exit 0 on
 otherwise. Claims still coordinate scope only — holding one never permits
 a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>] [--frame <cli>]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>] [--frame <cli>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -1873,7 +1890,46 @@ unfiltered like they do under `--from`. The two compose in the same
 include-then-exclude order every bus read applies — a sender both
 included and excluded matches nothing; every count stays the
 filtered total, the result echoes `excludeFrom` in JSON and the
-human header prints it. `--id <id>` narrows the whole digest the
+human header prints it. `--with <agent>` narrows the whole digest
+to the two-way exchange the agent and one peer name — "what is
+pending between me and X" — under the same pairwise rule `inbox
+--with`, `agents conversations --with` and `phm messages --with`
+apply: an item lists only when its exchange endpoints provably
+pair an agent-identity label with the peer's labels in either
+direction, a `group:` room address never standing as either side,
+and an item naming no provable endpoint pair never listing —
+unknown stays out, never a widened match. The peer ref resolves
+through the registry exactly like `--from`, an unresolvable ref
+keeping exact-label matching and never widening. Per section:
+feed jobs and announced jobs keep announcements whose `owner`/`to`
+labels pair the two identities in either direction; `next`,
+`handoffs` and `mailbox` keep envelopes whose `to` is the agent's
+own identity label while `from` matches the peer, or the reverse —
+a room-addressed `to` never pairing; dead letters apply the same
+verdict to the ORIGINAL `to`/`from` the lost mail carried, a
+report naming no provable pair never listing; claims keep only
+resolved message claims whose leased envelope's endpoints pair the
+two — a scope-key claim or an unresolvable lease names no provable
+pair and never lists; `wakes` and `inbox` pass `with` to their own
+reads' exchange filters; the three thread sections pass `agent` and
+`with` into the one shared conversations read, which keeps a
+thread only while a member message pairs the two — `coordination`
+keeps only ledger messages and pending returns whose recorded
+`from`/`to` labels pair the agent's own labels with the peer
+exactly, proposals carrying no endpoints reporting honestly empty;
+`board` deliveries keep posts whose `sender` peer label matches —
+the recipient is always the agent's own label — while board tasks
+and thread rollups, which record no endpoints, never match under a
+positive `with` the same way they drop under `from`; `workBoard`
+requests keep only those whose recorded `from`/`to` endpoints pair
+the agent's own labels with the peer's in either direction — a
+request the agent meets only through a third party or a room names
+no agent↔peer pair and never lists. `sessions`,
+`channels` and `seats` carry no exchange endpoint pair in their
+projections and stay unfiltered, like they do under `--from`;
+every count stays the filtered total, the result echoes `with` in
+JSON and the human header prints it, and an invalid peer ref is
+refused before any store read. `--id <id>` narrows the whole digest the
 same way — "is envelope X still pending for me, and where" — under
 the same exact-envelope match every bus `--id` read applies,
 validated by the printable-label bound: feed jobs and announced

@@ -52,7 +52,7 @@ ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <a
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--topic <topic>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
 ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> [--interval-ms <100..60000>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--topic <topic>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] --json
-ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--frame <cli>]
+ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--frame <cli>]
 ashlr agents bus dead-letters [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--priority P0..P3] [--id <id>] [--reason <${BUS_DEAD_LETTER_REASONS.join('|')}>] [--from <agent>] [--exclude-from <agent>] [--to <agent>] [--channel <name>] [--topic <topic>] [--body-kind <kind>] [--limit <1-100>] [--frame <cli>]
 ashlr agents bus show <id> [--frame <cli>]
 ashlr agents bus thread <id> [--to <ref>] [--from <ref>] [--exclude-from <ref>] [--channel <name>] [--topic <topic>] [--job <id>] [--priority P0..P3] [--thread <t>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--frame <cli>]
@@ -71,7 +71,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--exclude-owner <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>] [--frame <cli>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work claim-next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <fast|mid|work|frontier>] [--announcer <agent>] [--exclude-announcer <agent>] [--channel <name>] [--topic <topic>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--id <envelope-id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--wait-ms <1..300000>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>] [--frame <cli>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--thread <t>] [--frame <cli>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>] [--wait-ms <1..300000>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -103,7 +103,8 @@ never reaches the page while every other sender still does; it composes
 with --from (a sender both included and excluded matches nothing) and
 every other filter. --with on inbox keeps only the two-way exchange the
 addressed agent and one peer name — the same pairwise rule phm messages
---with and agents conversations --with apply: the peer's labels on the
+--with, agents conversations --with, wakes --with and work mine --with
+apply: the peer's labels on the
 sender side against the agent's own labels on the addressed side, so
 channel posts and channel-addressed handoffs — whose to is a room
 address, never the peer — stay out while every dm, legacy and
@@ -111,7 +112,10 @@ label-addressed handoff the peer sent remains; "our private pending
 thread" is one filtered read, distinct from --from which also keeps the
 peer's room traffic, and the peer ref resolves through the registry
 exactly like --from with an unresolvable ref keeping exact-label
-matching. --priority
+matching. On wakes the same pairwise verdict decides on the hint's own
+queue-row to/from — an agent-identity to and a peer from — so a hint
+naming no provable exchange never lists, and wakes --all, which has no
+addressed agent, reports an honest empty match under --with. --priority
 on inbox and channel read keeps only one exact P0..P3 band — the same match
 comms bus read --priority applies — so urgent mail is one filtered read, not
 a page through the backlog. --kind on inbox keeps only one delivery kind —
@@ -710,7 +714,27 @@ while jobs, announced, board, channels, work-board items — the board
 projection exposes no thread label — sessions, coordination and
 seats carry no per-item thread label the digest can prove and stay
 unfiltered; a label nothing on the bus carries is an honest empty match
-and every count stays the filtered total. --frame on work mine prints the
+and every count stays the filtered total. --with on work mine keeps only
+the pending items that ARE the two-way exchange the agent and one peer
+name — the same pairwise rule inbox, follow and conversations --with
+apply, decided on each section's own provable endpoints: inbox, wakes
+and the three thread sections delegate to their shared reads' own
+agent+with pairwise match, next, handoffs, mailbox and dead letters keep
+envelopes whose to/from pair an agent-identity label with the peer's —
+a group: room address is never the agent or the peer, so channel-
+addressed work drops — claims keep only message claims whose resolved
+leased envelope pairs the two either direction (a claim naming no
+resolved message never lists), jobs and announced keep feed
+announcements whose owner/to labels pair the two, work-board requests
+pair their from/to labels the same way, board deliveries reduce to the
+sender matching the peer (every listed delivery's recipient is already
+an agent label) while the section's tasks and thread rollups record no
+endpoints and drop like they do under --from, and coordination pairs
+recorded ledger labels verbatim — messages and return intents either
+direction, proposals honestly empty — while sessions, channels and
+seats carry no exchange endpoint pair and stay unfiltered; a peer
+nothing on the bus carries is an honest empty match and every count
+stays the filtered total. --frame on work mine prints the
 digest as the same bounded block the inbox, channel-read and wakes
 --frame reads produce — BEGIN/END UNTRUSTED AGENT BUS WORK DIGEST
 markers, the same scrub and 32 KiB clip bound with the cut stated — so a
@@ -1387,7 +1411,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     }
     if (verb === 'wakes') {
       noExtra(2);
-      const filter = { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'),
+      const filter = { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'), with: one('--with'),
         channel: one('--channel'), topic: one('--topic'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id'),
         thread: one('--thread'), inReplyTo: one('--in-reply-to'), bodyKind: one('--body-kind'), result: resultArg() };
       const since = sinceArg();
@@ -1604,7 +1628,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (topic !== undefined && !agentChannelNameSchema.safeParse(topic).success) {
         throw new UsageError('--topic takes a bus channel-name topic (a-z, 0-9, _ -; 1-32 chars).');
       }
-      const senderArg = (flag: '--from' | '--exclude-from'): string | undefined => {
+      const senderArg = (flag: '--from' | '--exclude-from' | '--with'): string | undefined => {
         const value = one(flag);
         if (value !== undefined && !/^[\x21-\x7e]{1,128}(?![\s\S])/.test(value)) {
           throw new UsageError(`${flag} must be a printable routing label of 1-128 characters.`);
@@ -1613,6 +1637,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       };
       const from = senderArg('--from');
       const excludeFrom = senderArg('--exclude-from');
+      const withPeer = senderArg('--with');
       const id = one('--id');
       const inReplyTo = one('--in-reply-to');
       const bodyKind = one('--body-kind');
@@ -1630,6 +1655,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           ...(topic === undefined ? {} : { topic }),
           ...(from === undefined ? {} : { from }),
           ...(excludeFrom === undefined ? {} : { excludeFrom }),
+          ...(withPeer === undefined ? {} : { with: withPeer }),
           ...(id === undefined ? {} : { id }),
           ...(inReplyTo === undefined ? {} : { inReplyTo }),
           ...(bodyKind === undefined ? {} : { bodyKind }),
