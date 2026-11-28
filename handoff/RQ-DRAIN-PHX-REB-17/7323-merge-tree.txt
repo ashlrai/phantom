@@ -1,0 +1,42 @@
+293b1b1a1457f6c1cdd3c66d23b5170dd1aa4c2f
+100644 56a8bc0816ad1969527f1ff169a63e20b0c79b01 1	CONTRACT.md
+100644 04572919f13fe05722d80864a3d49145c72b8db9 2	CONTRACT.md
+100644 f7ff48c042a1be64bf1d30369fcd4cd0881b25b7 3	CONTRACT.md
+100644 a3f73630241901cb1ce6f4d1fe1b35be57774d61 1	docs/AGENT-BUS.md
+100644 b6f9b2175163cf53b243369070382570bed3d68a 2	docs/AGENT-BUS.md
+100644 edaabe1efa4b6121653cc795d20986b6bb544e34 3	docs/AGENT-BUS.md
+100644 fbb8ed08647dd98f9932e5c5b18c83d87c45108b 1	src/cli/agents-bus-unified.ts
+100644 0fde5eedbe59882aee64d2d6bba8458b1bc19544 2	src/cli/agents-bus-unified.ts
+100644 4fe866d0bcbbef94e724dc1fbb253a2eed187409 3	src/cli/agents-bus-unified.ts
+100644 7b1f24d162dd392f5ade3fefd013551da589a071 1	src/cli/fleet-work-feed.ts
+100644 b44857c250248074655abfbb136ee91eee211237 2	src/cli/fleet-work-feed.ts
+100644 63f873532f223dab40f6942c5fb5ba2ef97cdf1c 3	src/cli/fleet-work-feed.ts
+100644 6b826ef6ddca2f366b0a5249be59a705ebc5b4eb 1	src/core/agents/bus-work-feed-read.ts
+100644 b9820c2e13b11e023fd18160054bd21f1fc9fd66 2	src/core/agents/bus-work-feed-read.ts
+100644 4af255a322a4d759a0ca7be498e5f642c5e1fbd1 3	src/core/agents/bus-work-feed-read.ts
+100644 971c06fe6c5c94b7b13e2f074a6291732a16e866 1	src/core/comms/unified-inbox.ts
+100644 95c53c37c6827c2e2ca3216c540c791650b55e1d 2	src/core/comms/unified-inbox.ts
+100644 a748738c5fc2e8d571e00c8ce055883b2a63dd3d 3	src/core/comms/unified-inbox.ts
+100644 049fe6e2351c6f4464f394bdcbbfbf868655df09 1	test/agent-bus-unified-cli.test.ts
+100644 7dbf192f72d34a5d8df7e5a07b4ff16e1eb2a0cf 2	test/agent-bus-unified-cli.test.ts
+100644 8dbaa6b7c5218b44f7d56e45f47ea78ea66f4d91 3	test/agent-bus-unified-cli.test.ts
+100644 ee6d172277136321e8a7327dad3c226e01d0b3fa 1	test/fleet-work-feed-442c.test.ts
+100644 6136cb292d306ccf5d14cc7757f9810339d32279 2	test/fleet-work-feed-442c.test.ts
+100644 565e42428140a3e09a6308e3b2028b36cfa63b6c 3	test/fleet-work-feed-442c.test.ts
+
+Auto-merging CONTRACT.md
+CONFLICT (content): Merge conflict in CONTRACT.md
+Auto-merging docs/AGENT-BUS.md
+CONFLICT (content): Merge conflict in docs/AGENT-BUS.md
+Auto-merging src/cli/agents-bus-unified.ts
+CONFLICT (content): Merge conflict in src/cli/agents-bus-unified.ts
+Auto-merging src/cli/fleet-work-feed.ts
+CONFLICT (content): Merge conflict in src/cli/fleet-work-feed.ts
+Auto-merging src/core/agents/bus-work-feed-read.ts
+CONFLICT (content): Merge conflict in src/core/agents/bus-work-feed-read.ts
+Auto-merging src/core/comms/unified-inbox.ts
+CONFLICT (content): Merge conflict in src/core/comms/unified-inbox.ts
+Auto-merging test/agent-bus-unified-cli.test.ts
+CONFLICT (content): Merge conflict in test/agent-bus-unified-cli.test.ts
+Auto-merging test/fleet-work-feed-442c.test.ts
+CONFLICT (content): Merge conflict in test/fleet-work-feed-442c.test.ts

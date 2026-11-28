@@ -1,0 +1,26 @@
+dc118455ef2fd65b12f0910737244f5ba7af122e
+100644 add56d087fbc8e2df85cbfc4d02dd06a26d536bc 1	docs/CLI-REFERENCE.md
+100644 7fe44a0dcc75f18d11a77a1a005c9609bdd1f17d 2	docs/CLI-REFERENCE.md
+100644 d971d7a3123f718948fbb1f542e7f2e5650eea7c 3	docs/CLI-REFERENCE.md
+100644 825c8690f4ceb0a8a250b873e1382479819c1c19 1	src/cli/completions.ts
+100644 35dd3981c3d830de4f62ea91329d5043cbf3cbac 2	src/cli/completions.ts
+100644 eba0a12df96e0386d06614b1d114973c23a3f985 3	src/cli/completions.ts
+100644 a658c26148bfa1ad25627ce37e6e4a96ca71f1ec 2	src/cli/plan.ts
+100644 487889f546b3bdabfb623a84b77b604f5b95e2c6 3	src/cli/plan.ts
+100644 439f1be03a925e2301e6ed03ccdc54c898041f7e 2	src/core/plan/check.ts
+100644 3500eb0e29b06e5f3544fd7956f5c34403adec4b 3	src/core/plan/check.ts
+100644 24756141f3738ae68edb461b5e57aa4f9e0f9f8e 2	test/plan-check.test.ts
+100644 95b52ae157442c844cb138ba8e7a97e2efeff30e 3	test/plan-check.test.ts
+
+Auto-merging docs/CLI-REFERENCE.md
+CONFLICT (content): Merge conflict in docs/CLI-REFERENCE.md
+Auto-merging src/cli/completions.ts
+CONFLICT (content): Merge conflict in src/cli/completions.ts
+Auto-merging src/cli/help.ts
+Auto-merging src/cli/index.ts
+Auto-merging src/cli/plan.ts
+CONFLICT (add/add): Merge conflict in src/cli/plan.ts
+Auto-merging src/core/plan/check.ts
+CONFLICT (add/add): Merge conflict in src/core/plan/check.ts
+Auto-merging test/plan-check.test.ts
+CONFLICT (add/add): Merge conflict in test/plan-check.test.ts

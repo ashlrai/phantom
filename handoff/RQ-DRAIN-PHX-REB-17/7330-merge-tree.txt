@@ -1,0 +1,31 @@
+3768cc20a694011b22cf9de623d9672c1ae27261
+100644 2f210d0cc0237f980da84bb4fb588cc113d33dbb 1	docs/AGENT-OPERATIONS.md
+100644 1df9024917539336526fa7b6db2320cb580d9b17 2	docs/AGENT-OPERATIONS.md
+100644 117cc9b6ee6c1ebfd5a28621a649c310e529872c 3	docs/AGENT-OPERATIONS.md
+100644 fa68db017f0df83d7f8ff8588d5cd0c9bfc37db8 1	src/cli/fleet-outcomes.ts
+100644 01b1fb19fc8402c8feab0b10c78687041747d116 2	src/cli/fleet-outcomes.ts
+100644 4d31313a8392d413c91b7c302f9e10ed0fd085e0 3	src/cli/fleet-outcomes.ts
+100644 9439f45f154a8498f28eec6a096c43a035b33f4b 1	src/cli/select.ts
+100644 a79be7aef2281621a86ad19b507614f1d96a4838 2	src/cli/select.ts
+100644 c3c93cf779b12dd12fa17af29534fb74da86d43a 3	src/cli/select.ts
+100644 4e71581d6bb397777bf5adc2e270eb71280156d3 1	src/core/fleet/context-pack.ts
+100644 db159154c03b27f042ecd8bc9a7ba21c1da6c4b6 2	src/core/fleet/context-pack.ts
+100644 ae0961eb1cbf5096fa30f4a6cfe09e4a5525b0dd 3	src/core/fleet/context-pack.ts
+100644 498323c6d334ca03f51a5be251417ff5678cff8b 1	src/core/routing/outcome-learning.ts
+100644 e21dcb21e4c17a5d204d1ff1dd64cc370e3c7924 2	src/core/routing/outcome-learning.ts
+100644 948f38b1c79431b24e8d5ae7ff542b097f34caed 3	src/core/routing/outcome-learning.ts
+
+Auto-merging .github/CODEOWNERS
+Auto-merging docs/AGENT-OPERATIONS.md
+CONFLICT (content): Merge conflict in docs/AGENT-OPERATIONS.md
+Auto-merging docs/contracts/CONTRACT-OUTCOME-LEARNING.md
+Auto-merging docs/router/censored-reward.md
+Auto-merging src/cli/fleet-outcomes.ts
+CONFLICT (content): Merge conflict in src/cli/fleet-outcomes.ts
+Auto-merging src/cli/select.ts
+CONFLICT (content): Merge conflict in src/cli/select.ts
+Auto-merging src/core/fleet/context-pack.ts
+CONFLICT (content): Merge conflict in src/core/fleet/context-pack.ts
+Auto-merging src/core/routing/outcome-learning.ts
+CONFLICT (content): Merge conflict in src/core/routing/outcome-learning.ts
+Auto-merging test/routing-outcome-learning.test.ts

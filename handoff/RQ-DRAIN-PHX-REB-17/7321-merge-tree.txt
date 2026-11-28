@@ -1,0 +1,77 @@
+493a1b6de2b24d1f5c21b1e737506080dbe05563
+100644 edf1535f934268a0ca20fc0eb34cb9361cf7fcee 1	AGENTS.md
+100644 74adc2a46dd8a7ea2a04eb2461db582c530be3c6 2	AGENTS.md
+100644 753a0af2ef79243c08d59615888816023a21d13c 3	AGENTS.md
+100644 43f2a7b8be2bfaf56bd56f86fbeb095b9e0c692e 1	CONTRIBUTING.md
+100644 81ea97063abb9c1f49c739a641cd3a4f7a5493f9 2	CONTRIBUTING.md
+100644 02cd156b702df01d20f701e54e85492da27cff45 3	CONTRIBUTING.md
+100644 9d507d24bd743e670d96002162788ac6cb3a425c 1	docs/AGENT-OPERATIONS.md
+100644 1df9024917539336526fa7b6db2320cb580d9b17 2	docs/AGENT-OPERATIONS.md
+100644 53eee8f8157a1fc22662e90cb245708323ee523a 3	docs/AGENT-OPERATIONS.md
+100644 d18c985b88f9387c20b70dee0e50b999452fd229 1	docs/CONTRIBUTE-WITH-AN-AGENT.md
+100644 1946811d61363e91c58d0145bc66778554ba8e4a 2	docs/CONTRIBUTE-WITH-AN-AGENT.md
+100644 e884a72fdabd0aad252f58556468e42093483994 3	docs/CONTRIBUTE-WITH-AN-AGENT.md
+100644 0fbab1e7f8dec6feed85e48157253d1088ed7ded 1	docs/FLEET-VERBS.md
+100644 ec09daced1583b157b5a26a102737251947a6cfd 2	docs/FLEET-VERBS.md
+100644 f0aedfe936dca96a0fe094c4cce1f0a9b3b04f4f 3	docs/FLEET-VERBS.md
+100644 143b8c5ba1ac0d6a012f7b1aa791b62aa4e09186 1	docs/RELEASING.md
+100644 0268b5143927d66c64e32791cd65318135cdbfcc 2	docs/RELEASING.md
+100644 baa13bf1825ab0ceb106540e00dd5288126e348f 3	docs/RELEASING.md
+100644 c7de65873f136aa24a8e23b711e6bd7f51537717 1	scripts/verify-changed.mjs
+100644 3d291868bf94b34299d802ac16f766c9f245063b 2	scripts/verify-changed.mjs
+100644 aaef99951389856683adb5b87276874b13aecc00 3	scripts/verify-changed.mjs
+100644 00724559b5676cffc267381d13ea97886c337863 1	src/core/agents/bus-unified.ts
+100644 8cd5dc75aa708a058ee9039e3b53e71605178fd3 2	src/core/agents/bus-unified.ts
+100644 725d6d95cc6c8a81bd326e65112850febd54a852 3	src/core/agents/bus-unified.ts
+100644 e3f78fc7d55032099aea4dfececd8b7ac16d50c2 1	src/core/fleet/lane-starved.ts
+100644 a7a10afd6a77dbbd8f7a3eadd296ac2ecac5bcc0 2	src/core/fleet/lane-starved.ts
+100644 6c4fe8bf959467ef4c62fbe6efd07ce14af391fb 3	src/core/fleet/lane-starved.ts
+100644 09c5894fbb72155f76002a7a6ffbf481dea98311 1	src/core/release/train.ts
+100644 95ddd5c55fe4d91975cf94b0941914f96fb9c217 2	src/core/release/train.ts
+100644 9c9b90ee87e7547459d5ec576813513fe2dba2c6 3	src/core/release/train.ts
+100644 e029ee6900ef2c7e7ab350d8ef0e434c6c552edc 1	test/fixtures/authority/tier1-closure.json
+100644 fe80d2a9f2315d2afe202533ee7e8ab2acf83735 2	test/fixtures/authority/tier1-closure.json
+100644 df9bbf9dc95425ec171679b60b2ad960f209676b 3	test/fixtures/authority/tier1-closure.json
+100644 af17f75a84867436533a34befb142da1bfb9c4da 1	test/release-train.test.ts
+100644 040e73104c86b6c4ce4a7b96474b82b881477ec2 2	test/release-train.test.ts
+100644 7b02654d066e3a7be0b63157da304175b273f3d2 3	test/release-train.test.ts
+100644 d1a21d7a2b1dabe0964d3db7fe9d383e42b7f3d8 1	test/verify-changed-script.test.ts
+100644 6c921b292ce97262c7a17857488bf87bed65cb59 2	test/verify-changed-script.test.ts
+100644 7294a039ca43bd5c9325a97580d9dd6cd72d7a8e 3	test/verify-changed-script.test.ts
+
+Auto-merging .github/CODEOWNERS
+Auto-merging AGENTS.md
+CONFLICT (content): Merge conflict in AGENTS.md
+Auto-merging CONTRIBUTING.md
+CONFLICT (content): Merge conflict in CONTRIBUTING.md
+Auto-merging docs/AGENT-BUS.md
+Auto-merging docs/AGENT-OPERATIONS.md
+CONFLICT (content): Merge conflict in docs/AGENT-OPERATIONS.md
+Auto-merging docs/CONTRIBUTE-WITH-AN-AGENT.md
+CONFLICT (content): Merge conflict in docs/CONTRIBUTE-WITH-AN-AGENT.md
+Auto-merging docs/FLEET-VERBS.md
+CONFLICT (content): Merge conflict in docs/FLEET-VERBS.md
+Auto-merging docs/QUEUE.md
+Auto-merging docs/RELEASING.md
+CONFLICT (content): Merge conflict in docs/RELEASING.md
+Auto-merging scripts/verify-changed.mjs
+CONFLICT (content): Merge conflict in scripts/verify-changed.mjs
+Auto-merging src/cli/fleet-starved.ts
+Auto-merging src/core/agents/bus-unified.ts
+CONFLICT (content): Merge conflict in src/core/agents/bus-unified.ts
+Auto-merging src/core/fleet/autopilot.ts
+Auto-merging src/core/fleet/lane-console.ts
+Auto-merging src/core/fleet/lane-starved.ts
+CONFLICT (content): Merge conflict in src/core/fleet/lane-starved.ts
+Auto-merging src/core/release/train.ts
+CONFLICT (content): Merge conflict in src/core/release/train.ts
+Auto-merging test/agent-bus-unified.test.ts
+Auto-merging test/fixtures/authority/tier1-closure.json
+CONFLICT (content): Merge conflict in test/fixtures/authority/tier1-closure.json
+Auto-merging test/fleet-lane-console.test.ts
+Auto-merging test/fleet-lane-starved.test.ts
+Auto-merging test/fleet-starved.test.ts
+Auto-merging test/release-train.test.ts
+CONFLICT (content): Merge conflict in test/release-train.test.ts
+Auto-merging test/verify-changed-script.test.ts
+CONFLICT (content): Merge conflict in test/verify-changed-script.test.ts
