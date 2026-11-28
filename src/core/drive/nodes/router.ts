@@ -142,15 +142,23 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       continue;
     }
     const requires = job.requires ?? [];
+    // A declined, auth or capacity blocker already proves some owner node
+    // advertises every required cap, so "no node advertises" them may be claimed
+    // only when the 'caps' reason stands alone — the coarse reason only proves
+    // some node missed a cap, and the fix must name a blocker that remains.
+    const capsAdvertised = requires.length > 0 && nodes.some(n => n.owners?.includes(job.owner!) &&
+      requires.every(c => (n.caps ?? []).includes(c)));
     const fix = !nodes.some(n => n.owners?.includes(job.owner!))
       ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
       : reasons.has('capacity')
         ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
-      : reasons.has('declined') && !reasons.has('caps')
-        ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
-      : reasons.has('caps')
-        ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
-        : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
+        : reasons.has('declined') && !reasons.has('auth')
+          ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
+          : reasons.has('caps') && !capsAdvertised
+            ? `No node owned by '${job.owner}' advertises ${requires.join(',')}. Rejoin a node with --caps including them.`
+            : reasons.has('auth')
+              ? `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`
+              : `Nodes owned by '${job.owner}' cannot take '${job.id}' right now.`;
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
   return plan;

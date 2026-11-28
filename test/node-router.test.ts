@@ -65,6 +65,36 @@ describe('node router', () => {
     expect(f.box.plan()[0]!.nodeId).toBe('n');
   });
 
+  it('names the auth fix when a node advertises the caps but lacks gh auth', () => {
+    const f = fixture();
+    const noCap = f.box.join('no-cap', { owners: ['o'], caps: ['build'] })!;
+    const noAuth = f.mac.join('no-auth', { owners: ['o'], caps: ['gh'] })!;
+    f.box.heartbeat(noCap, { auth: 'missing' });
+    f.mac.heartbeat(noAuth, { auth: 'missing' });
+    f.box.enqueue('j', { owner: 'o', requires: ['gh'] });
+    const plan = f.box.plan('o')[0]!;
+    expect(plan.nodeId).toBeNull();
+    // 'no-auth' does advertise gh, so a "no node advertises" claim would be false.
+    expect(plan.fix).toContain('gh auth login');
+    expect(plan.fix).not.toContain('advertises');
+  });
+
+  it('keeps the declined fix when the cap-advertising node released the job unrun', () => {
+    const f = fixture();
+    const decliner = f.box.join('decliner', { owners: ['o'], caps: ['build'] })!;
+    const noCap = f.mac.join('no-cap', { owners: ['o'], caps: ['gh'] })!;
+    f.box.heartbeat(decliner);
+    f.mac.heartbeat(noCap);
+    f.box.enqueue('j', { owner: 'o', requires: ['build'] });
+    const pulled = f.box.pull(decliner)!;
+    expect(f.box.release(pulled.claim, true)).toBe(true);
+    const plan = f.box.plan('o')[0]!;
+    expect(plan.nodeId).toBeNull();
+    // The decliner advertises build, so the "no node advertises" claim would be false.
+    expect(plan.fix).toContain('unrun');
+    expect(plan.fix).not.toContain('No node owned by');
+  });
+
   it('skips expired nodes and tells the operator how to add one', () => {
     const f = fixture();
     f.box.join('n', { owners: ['o'] });
