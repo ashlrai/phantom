@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. One hundred fifty sources, all of which Phantom
+ * evidence instead of a hand-kept list. One hundred fifty-one sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -2322,6 +2322,27 @@
  *     are scrubbed and capped, and items emit only for the fleet's
  *     own repository since the eval registry and dispatch seam are
  *     this install's machinery;
+ *   - the scheduled steward disk-guardrail journal's recurring
+ *     over-quota roots: `phm steward schedule --install` writes a
+ *     launchd agent or systemd user timer that runs
+ *     `phm steward disk [--apply] --json` daily and appends the
+ *     report's stdout and stderr to ~/.ashlr/logs/steward.jsonl —
+ *     one pretty-printed StewardReport per completed run measuring
+ *     the allowlisted agent-log roots against their retentionDays
+ *     and quotaMB — until now with no reader at all beyond the log
+ *     file itself, so a root whose overQuota verdict held run after
+ *     run (retention and quota never converging, or a report-only
+ *     install nobody reads) never became work
+ *     (stewardBacklogItems below). Documents carry no timestamp, so
+ *     recurrence is measured in recorded runs — a root emits only
+ *     while its overQuota verdict holds on the newest
+ *     STEWARD_MIN_RUNS consecutive valid reports that measured it;
+ *     documents count only under the writer's contract, the
+ *     column-0 brace framing makes torn mid-write documents count
+ *     as coverage, stderr noise between reports is counted never
+ *     quoted, truncated tails are stated as lower bounds, and items
+ *     emit only for the fleet's own repository since the journal
+ *     describes this install's host and agent-log roots;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2513,6 +2534,7 @@ import { loopHintsBacklogItems } from './loop-hints-backlog.js';
 import { frictionItemBacklogItems } from './friction-item-backlog.js';
 import { routerWeightBacklogItems } from './router-weights-backlog.js';
 import { promptVariantBacklogItems } from './prompt-variant-backlog.js';
+import { stewardBacklogItems } from './steward-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -5251,6 +5273,38 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // are skipped and counted, quoted fields are scrubbed and capped,
   // and items emit only for the fleet's own repository.
   await feed('promptVariantBacklogItems', () => promptVariantBacklogItems({ repo }));
+
+  // Scheduled steward disk-guardrail journal (~/.ashlr/logs/
+  // steward.jsonl under the user's home): `phm steward schedule
+  // --install` writes a launchd agent or systemd user timer that runs
+  // `phm steward disk [--apply] --json` daily and appends the report's
+  // stdout AND stderr to the log — one pretty-printed StewardReport
+  // per completed run measuring the allowlisted agent-log roots
+  // (codex-sessions, codex-log, claude-projects, ashlr-logs, ashlr-runs
+  // under defaultStewardPolicy) against each root's retentionDays and
+  // quotaMB. Until now the journal had no reader at all — the
+  // report's only other surfaces are `phm steward disk`'s own stdout
+  // (a report someone had to run) and the improve loop's live
+  // runSteward proposals (a point-in-time gather, never the recorded
+  // series) — so a root whose overQuota verdict persisted run after
+  // run never became work (stewardBacklogItems below). Documents
+  // carry no timestamp, so recurrence is honest run-counting: a root
+  // emits only while its overQuota verdict holds on the newest
+  // STEWARD_MIN_RUNS consecutive valid reports that measured it — a
+  // recovered root, or one the newest reports no longer measure,
+  // carries no current streak. Documents count only under the
+  // writer's logged contract (boolean applied, the closed
+  // delete/archive/report action vocabulary, safe-integer file
+  // counts, non-negative finite byte figures, the deleted/archived
+  // pair shapes); the writer's JSON.stringify(..., 2) framing puts
+  // document braces alone on column 0, so a column-0 `{` inside an
+  // open document counts as a crashed mid-write and an unterminated
+  // tail is a torn fragment, never a run; non-document lines between
+  // reports (stderr noise shares the file) count as coverage; a
+  // truncated tail is stated as a lower bound; and only the fleet's
+  // own repository inherits the items since the journal describes
+  // this install's host and carries no repo column.
+  await feed('stewardBacklogItems', () => stewardBacklogItems({ repo }));
   return { items, errors };
 }
 
