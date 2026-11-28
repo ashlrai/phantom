@@ -2272,6 +2272,7 @@ The runs-directory reader exposes the embedded record's remaining slots as
 ```ts
 export interface LaneTargetRow {
   lane: string; target: number; floor: number; ceiling: number | null;
+  hardCap?: number;
   held: boolean; heldReason: string | null; heldUntil: string | null;
   pausedFrom: number | null; lastChange: string | null; changedBy: string | null;
 }
@@ -2284,7 +2285,8 @@ export interface LaneTargetsV1 {
 
 A null or omitted on-disk `ceiling` projects as `ceiling: null`, meaning no
 fixed ceiling. Numeric ceilings must be nonnegative safe integers at or above
-the floor. Target writes respect the floor and the smaller of the lane's
+the floor. `hardCap` is present when the lane has a nonnegative safe integer
+`hard_cap` in the source. Target writes respect the floor and the smaller of the lane's
 numeric `ceiling` and `hard_cap`, when present; without either cap there is no
 fixed upper bound. Extra dispatcher fields are preserved.
 

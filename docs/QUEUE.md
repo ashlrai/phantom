@@ -361,8 +361,9 @@ lane names. A newly held lane is excluded from starvation, restock and
 suggestions to hold a sibling while the dispatcher catches up.
 For utilization, starvation and restock, autopilot uses the lower of the
 configured lane target and the last fresh tick's launch target (which includes
-any controller shed). A target decrease can suppress a recommendation before
-the next tick. A higher target needs dispatcher confirmation.
+any controller shed). The configured ceiling and hard cap further bound that
+target. Lowering either bound can reduce headroom before the next tick.
+A higher launch target needs dispatcher confirmation.
 
 Autopilot reports empty ready queues against lane-local headroom. A restock
 proposal is limited to the smaller of that headroom and the remaining shared
