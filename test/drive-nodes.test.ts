@@ -1708,8 +1708,10 @@ describe('fleet flag value validation', () => {
       ['--job', 'j1', '--owner', 'acme', '--pack', pack, '--task-part', text, '--task-sha256', digest];
     const badDigest = run('enqueue', taskArgs('codex-file', 'sha256:xyz'), f);
     expect(badDigest).toMatchObject({ code: 'bad-task-sha256', exit: 2 });
-    // The fix names a digest tool every supported platform ships — sha256sum
-    // is not optional garnish beside a macOS-only shasum suggestion.
+    // The fix names a digest path every supported platform ships — the
+    // store-free `phm node task-digest` verb plus sha256sum, not a macOS-only
+    // shasum suggestion a Windows contributor cannot run.
+    expect(badDigest.fix).toContain('task-digest');
     expect(badDigest.fix).toContain('sha256sum');
     expect(run('enqueue', taskArgs('codex-file', `sha256:${sha('other')}`), f)).toMatchObject({ code: 'bad-task-sha256', exit: 2 });
     expect(run('enqueue', taskArgs('codex-file', `sha256:${sha('   ')}`, '   '), f)).toMatchObject({ code: 'bad-task', exit: 2 });

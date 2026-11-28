@@ -45,6 +45,7 @@ phm node rpc --json (SSH stdin endpoint)
 phm node lanes [--json] (local oMLX lane plan: model pick, caps, backoff)
 phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json] (measured agents runnable now per harness)
 phm node measure [--json] (print the measured --capacity sample for phm node beat)
+phm node task-digest --task-part <text> [--task-part <text>...] [--json] (print the --task-sha256 digest for embedded task text)
 phm node route --capacity <file>... --costs <file> --jobs <file> [--outcomes <file>] [--outcomes-ledger] [--runs-dir <dir>] [--nodes <file>] [--exhausted <p,p>] [--json] (node, provider, model scoring; --outcomes-ledger derives lane merge tallies from metrics/jobs.jsonl)
 phm node self-update [--owner <scope>] [--target <x.y.z>] [--json] (plan only: per-node phm version drift)
 phm node bridge [--owner <scope>] [--apply] [--json] (ready.tsv rows that would offload to nodes and why; dry run by default)`;
@@ -89,6 +90,8 @@ async function scopedNodeHelp(
       return `${(await import('./node-capacity.js')).NODE_CAPACITY_USAGE}${pointer}`;
     case 'measure':
       return `${(await import('./node-measure.js')).NODE_MEASURE_USAGE}${pointer}`;
+    case 'task-digest':
+      return `${(await import('./node-task-digest.js')).NODE_TASK_DIGEST_USAGE}${pointer}`;
     case 'self-update':
       return `${(await import('./node-self-update.js')).SELF_UPDATE_USAGE}${pointer}`;
     case 'pool':
@@ -141,6 +144,9 @@ export async function cmdNode(args: string[]): Promise<number> {
   }
   if (args[0] === 'measure' && !args.includes('--help') && !args.includes('-h')) {
     return (await import('./node-measure.js')).cmdNodeMeasure(args.slice(1));
+  }
+  if (args[0] === 'task-digest' && !args.includes('--help') && !args.includes('-h')) {
+    return (await import('./node-task-digest.js')).cmdNodeTaskDigest(args.slice(1));
   }
   if (args[0] === 'self-update' && !args.includes('--help') && !args.includes('-h')) {
     return (await import('./node-self-update.js')).cmdNodeSelfUpdate(args.slice(1));
