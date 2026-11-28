@@ -606,7 +606,10 @@ transitively from master (100-file cap) with bundler resolution: `.js`/`.jsx`
 specifiers map to `.ts`/`.tsx` sources, extensionless specifiers try file then
 directory `index`, `?raw`/`?url`/`?inline` queries and non-code files (`.css`,
 `.json`, assets) join the closure as leaves without recursion, and package
-imports track dependency manifests. Independence also unions the runner
+imports track dependency manifests. A PR change to a higher-priority import
+candidate absent on master counts as touching the import because it can
+change which file resolves. Candidates after the resolved file do not
+affect attribution for that import. Independence also unions the runner
 harness a test's own imports never see: each `vitest.config.*`/`vitest.workspace.*`
 file whose literal `include` globs cover the suite (a config with none governs
 every suite), that config's import closure, its `setupFiles`/`globalSetup`

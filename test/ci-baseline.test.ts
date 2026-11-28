@@ -2548,6 +2548,19 @@ describe('CI baseline evidence', () => {
     const report = await analyzeCiBaseline('owner/repo', github({ contents, contentsMiss: 'error' }).gh);
     expect(report.groups[0]?.classification).toBe('unknown');
   });
+  it.each([
+    ['test/panes.ts', 'pr-caused'],
+    ['test/panes.tsx', 'pr-caused'],
+    ['test/panes/index.tsx', 'probable-flake'],
+  ])('classifies a change to import candidate %s as %s', async (touched, classification) => {
+    const contents = {
+      'test/example.test.ts': "import './wrapper.js';",
+      'test/wrapper.ts': "import './panes';",
+      'test/panes/index.ts': 'export const panes = 1;',
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, contents, touched }).gh);
+    expect(report.groups[0]?.classification).toBe(classification);
+  });
   it('groups web-ui suite failures and resolves bundler imports', async () => {
     const contents = {
       'src/web-ui/design/tokens.test.tsx': "import { palette } from './palette.js';\nimport sheet from '../global.css';",
