@@ -5181,14 +5181,16 @@ honest `jobs=… feed=…` summary — through the same shared line renderer
 under BEGIN/END UNTRUSTED AGENT BUS WORK FEED markers, so a refused or
 unavailable feed frames its own state line and never an invented job
 list; `--json` carries it as `framed` beside the full projection the same
-way. `frameBusThread(cli, lines)` renders one reply chain
-(`agents bus thread <id> --frame <cli>`) — the already-formatted
-`threadHuman` lines, verdict header and per-receipt summary and
-held/holder/job evidence rows — through the same shared line renderer
-under BEGIN/END UNTRUSTED AGENT BUS THREAD markers, so the whole
-exchange reaches a CLI's next turn as marked-untrusted data in a single
-block and a thread block can never pass for an inbox page, a digest or
-a feed; `--json` carries it as `framed` beside the full projection the
+way. `frameBusThread(cli, lines)` renders one reply chain for both CLI
+thread reads — `agents bus thread <id> --frame <cli>` feeds it the
+already-formatted `threadHuman` lines (verdict header and per-receipt
+summary and held/holder/job evidence rows) and `fleet bus-thread --id
+<id> --frame <cli>` feeds it that read's own verdict header and
+per-envelope lines — through the same shared line renderer under
+BEGIN/END UNTRUSTED AGENT BUS THREAD markers, so the whole exchange
+reaches a CLI's next turn as marked-untrusted data in a single block
+and a thread block can never pass for an inbox page, a digest or a
+feed; `--json` carries it as `framed` beside the full projection the
 same way, and a proven miss frames its own not-found verdict.
 `frameBusClaims(cli, lines)` renders the live-claims list
 (`agents bus claim list --frame <cli>`) — the already-formatted claim
