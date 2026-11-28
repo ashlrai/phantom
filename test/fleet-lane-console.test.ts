@@ -564,6 +564,37 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(snapshot.sources.usage.dropped).toBe(0);
   });
 
+  it('expires usage-journal credit and forecasts at the quota reset', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    const resetAt = ANCHOR.toISOString();
+    await writeFile(join(dir, 'ready.tsv'), '');
+    await writeFile(join(dir, 'status.json'), JSON.stringify({
+      last_tick: new Date(ANCHOR.getTime() - 1_000).toISOString(),
+      lanes: { claude: { running: 0, target: 4 } },
+    }));
+    const usagePath = join(dir, 'usage-readings.jsonl');
+    await writeFile(usagePath, JSON.stringify({
+      pool: 'claude', pctUsed: 100, resetAt,
+      observedAt: new Date(ANCHOR.getTime() - 2_000).toISOString(),
+      staleAfter: new Date(ANCHOR.getTime() + 60_000).toISOString(),
+      burnRatePctPerHour: 10, projected100At: resetAt,
+    }));
+    const options = { queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [usagePath] };
+    const before = await getFleetLaneSnapshot({ ...options, now: () => new Date(ANCHOR.getTime() - 1) });
+    expect(before.lanes.find(lane => lane.lane === 'claude')).toMatchObject({
+      credit: { state: 'observed', remainingPct: 0, burnPerHour: 10, projectedExhaustionAt: resetAt },
+      health: { state: 'drained' },
+    });
+    expect(before.starved.lanes.claude?.starved).toBe(false);
+
+    const atReset = await getFleetLaneSnapshot({ ...options, now: () => ANCHOR });
+    expect(atReset.lanes.find(lane => lane.lane === 'claude')?.credit).toMatchObject({
+      state: 'unknown', remainingPct: null, burnPerHour: null, projectedExhaustionAt: null, resetAt,
+    });
+    expect(atReset.starved.lanes.claude?.starved).toBe(true);
+  });
+
   it('projects credit, queue depth, live jobs and merges per lane', async () => {
     const snapshot = await getFleetLaneSnapshot(fixtureOptions);
     expect(snapshot.schema).toBe('fleet.lanes.v1');
