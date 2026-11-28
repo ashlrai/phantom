@@ -29,6 +29,23 @@ describe('fleet shed plan', () => {
     expect(planFleetShed({ ...fixture, mem_free_pct: 31 }, now).lanes[0]?.recommendation).toBe('keep');
   });
   it.each([
+    { held: true, target: 9, effective_target: 9 },
+    { held: false, target: 9, effective_target: 0 },
+    { held: false, target: 0 },
+  ])('skips an active lane with admission already stopped (%j)', restriction => {
+    const local = { running: 9, ...restriction };
+    const plan = planFleetShed({
+      ...fixture, lanes: { 'codex-local': local, claude: { running: 3, target: 5, effective_target: 3, held: false } },
+    }, now);
+    expect(plan.lanes).toMatchObject([
+      { lane: 'codex-local', running: 9, recommendation: 'keep' },
+      { lane: 'claude', recommendation: 'shed' },
+    ]);
+    expect(plan.nextAction).toBe('Reduce claude admission first, then check memory again.');
+    expect(planFleetShed({ ...fixture, lanes: { 'codex-local': local } }, now).nextAction)
+      .toBe('Check running lanes and memory before changing admission.');
+  });
+  it.each([
     undefined,
     'invalid',
     new Date(now + 1).toISOString(),
