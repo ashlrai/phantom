@@ -93,6 +93,31 @@ describe('recordLeaderBoard', () => {
     ]);
   });
 
+  it('orders conflict history by time and compares only distinct observations', async () => {
+    await seed();
+    const first = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+    if (!first.wrote) throw new Error(first.reason);
+    first.board.conflictingPrs.history = [
+      { at: minutesAgo(10), count: 5 },
+      { at: minutesAgo(-1), count: 20 },
+      { at: minutesAgo(30), count: 1 },
+      { at: minutesAgo(10).replace('Z', '+00:00'), count: 3 },
+      { at: minutesAgo(0), count: 4 },
+    ];
+    await writeFile(first.path, JSON.stringify(first.board));
+
+    const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+    if (!result.wrote) throw new Error(result.reason);
+    expect(result.board.conflictingPrs).toEqual({
+      count: 2, delta: -1, trend: 'rising',
+      history: [
+        { at: minutesAgo(30), count: 1 },
+        { at: minutesAgo(10).replace('Z', '+00:00'), count: 3 },
+        { at: minutesAgo(0), count: 2 },
+      ],
+    });
+  });
+
   it('reports unknown conflict figures, not a stale trend, when ready.tsv is unreadable', async () => {
     await seed();
     await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS - 3_600_000 });
