@@ -43,6 +43,18 @@ it('counts ready, parked, running and last-hour merges per lane', async () => {
   expect(report.totals).toEqual({ ready: 3, parked: 1, running: 2, merges: 3, blockedReasons: [{ reason: 'DEP', count: 1 }], stale: 0 });
 });
 
+it('includes lane-open READY jobs in the fleet total without assigning them to a lane', async () => {
+  const open = (id: string) => `${id}\tphantom\t\twork\tprompts/work.md`;
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    open('RQ-OPEN'), open('RQ-OPEN'), row('READY', 'RQ-OPEN', 'codex'),
+    row('READY', 'RQ-HINTED', 'devin'), open('RQ-HINTED'),
+  ].join('\n'));
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.sources.ready).toBe('healthy');
+  expect(report.totals.ready).toBe(2);
+  expect(report.lanes.map(({ lane, ready }) => ({ lane, ready }))).toEqual([{ lane: 'devin', ready: 1 }]);
+});
+
 it('ignores merge events with missing or invalid timestamps', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
   await writeFile(join(queueDir, 'jobs.jsonl'), [
