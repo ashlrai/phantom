@@ -2469,6 +2469,7 @@ import { busHopBacklogItems } from './bus-hop-backlog.js';
 import { ideaVerdictBacklogItems } from './idea-verdict-backlog.js';
 import { loopHintsBacklogItems } from './loop-hints-backlog.js';
 import { frictionItemBacklogItems } from './friction-item-backlog.js';
+import { routerWeightBacklogItems } from './router-weights-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -5158,6 +5159,20 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // own bounded validated reader; items emit only for the fleet's
   // own repository.
   await feed('frictionItemBacklogItems', () => frictionItemBacklogItems({ repo }));
+  // Outcome-driven router-weight proposals (routerWeightBacklogItems
+  // below): `phm fleet router-weights` folds the same bounded
+  // jobs-ledger outcome read every sibling feed shares into
+  // router.weight-proposals.v1 — per-(work_class, lane) held-merge rate
+  // vs the assumed 0.5 baseline, 20 known outcomes required, shifts
+  // capped at 0.1 — but until now the proposal set's only reader was
+  // that advisory CLI report a human had to run, and no weights.json
+  // or weight consumer exists for a proposal to reach. A cell emits
+  // only at status 'proposed' with |shift| at the feed's materiality
+  // bar; refused groups, merged:null unknowns and unclassified
+  // outcomes never produce items; truncated tails are stated as lower
+  // bounds; items emit only for the fleet's own repository since the
+  // ledgers describe this install's routing machinery.
+  await feed('routerWeightBacklogItems', () => routerWeightBacklogItems({ repo }));
   return { items, errors };
 }
 
