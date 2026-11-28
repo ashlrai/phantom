@@ -55,9 +55,9 @@ export function parseNodeFleetFlags(verb: string, args: string[]): Map<string, s
   return flags;
 }
 
-const need = (flags: Map<string, string>, name: string): string => {
+const need = (flags: Map<string, string>, name: string, fix?: () => string | undefined): string => {
   const value = flags.get(name);
-  if (value === undefined) throw new UsageError('missing-flag', `${name} is required.`, `Add ${name} <value>. Run: phm node --help`);
+  if (value === undefined) throw new UsageError('missing-flag', `${name} is required.`, fix?.() ?? `Add ${name} <value>. Run: phm node --help`);
   return value;
 };
 
@@ -120,8 +120,8 @@ export function nodeFleetListItems(value: string | undefined, name: string): str
   return items;
 }
 
-const needId = (flags: Map<string, string>, name: string): string => {
-  const value = need(flags, name);
+const needId = (flags: Map<string, string>, name: string, fix?: () => string | undefined): string => {
+  const value = need(flags, name, fix);
   if (!validId(value)) throw badFlag(name, `${name} is not a valid id.`, ID_FIX);
   return value;
 };
@@ -152,8 +152,8 @@ const optSecretList = (flags: Map<string, string>, name: string): string[] => {
   return items;
 };
 
-function claimOf(flags: Map<string, string>): JobClaim {
-  return { nodeId: needId(flags, '--node'), session: num(flags, '--session'), jobId: needId(flags, '--job'),
+function claimOf(flags: Map<string, string>, nodeFix?: () => string | undefined): JobClaim {
+  return { nodeId: needId(flags, '--node', nodeFix), session: num(flags, '--session'), jobId: needId(flags, '--job'),
     token: num(flags, '--token'), leaderToken: num(flags, '--leader-token'), expiresAt: 0 };
 }
 
@@ -276,6 +276,31 @@ function requireOwnerFlag(flags: Map<string, string>, nodes: DriveNodes, verb: s
   }
 }
 
+/** Node ids this store holds — the same single snapshot read knownOwnerScopes
+ * does for scopes, deduped and sorted. null when the store cannot be read, so
+ * a fix never claims ids it could not see. Left nodes are gone from the
+ * record set; expired ones stay, and their ids still rejoin. */
+function knownNodeIds(nodes: DriveNodes): string[] | null {
+  try {
+    return [...new Set(nodes.snapshot().nodes.map(n => n.nodeId))].sort();
+  } catch { return null; }
+}
+
+/** A missing --node on the session verbs (beat, pull, leave, renew, complete,
+ * release) is the first-run dead end missingOwnerFix covers for --owner: a
+ * store that never held a node has no id to pass, so the fix names the join
+ * that prints one; a store that knows node ids names them, the same "this
+ * store knows" hint the scoped verbs print. undefined when the store cannot
+ * be read, leaving the bare flag error. */
+function missingNodeFix(nodes: DriveNodes): string | undefined {
+  const ids = knownNodeIds(nodes);
+  if (ids === null) return undefined;
+  if (ids.length === 0) {
+    return 'No node has joined this store yet — join this computer first: phm node join --owner <scope>. Run: phm node --help';
+  }
+  return `Add --node <id>; this store knows nodes: ${ids.join(', ')}. Run: phm node --help`;
+}
+
 /** One spec field an enqueue retry conflicts on, both sides rendered for display. */
 interface EnqueueDiff { field: 'owner' | 'requires' | 'pack' | 'secrets' | 'task'; queued: string; requested: string }
 
@@ -317,7 +342,15 @@ function enqueueDiffs(stored: QueueJobV1, requested: JobSpec): EnqueueDiff[] {
 
 export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: DriveNodes, probeAuth: () => NodeAuth,
   opts: { rejoinWatch?: boolean; joinAuth?: NodeAuth } = {}): Record<string, unknown> {
-  const session = (): { nodeId: string; session: number } => ({ nodeId: needId(flags, '--node'), session: num(flags, '--session') });
+  /** --node is the first flag every session verb requires; on the standalone
+   * path its missing-flag fix reads the store (the join that creates the
+   * first node, or the ids the store already knows). The thunk runs only
+   * inside need()'s throw path, so the per-beat cost stays zero. It is wired
+   * only here: executeNodeFleet's pool endpoint leaves it unset — workers
+   * learn node ids from the pool join reply, and endpoint refusals are masked
+   * on the wire anyway. */
+  const nodeFix = opts.rejoinWatch === true ? () => missingNodeFix(nodes) : undefined;
+  const session = (): { nodeId: string; session: number } => ({ nodeId: needId(flags, '--node', nodeFix), session: num(flags, '--session') });
   const stale = (nodeId: string, attempted?: number) => {
     const live = liveSession(nodes, nodeId);
     return new UsageError('session-expired',
@@ -513,7 +546,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         token: claim.token, leaderToken: claim.leaderToken, expiresAt: claim.expiresAt } };
     }
     case 'renew': {
-      const request = claimOf(flags);
+      const request = claimOf(flags, nodeFix);
       const claim = nodes.renewClaim(request);
       if (!claim) throw claimRefusal(request, new UsageError('lease-lost',
         'The lease is gone: it expired, was reassigned, or the leader changed. Stop work on this job.',
@@ -521,7 +554,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       return { jobId: claim.jobId, expiresAt: claim.expiresAt };
     }
     case 'complete': {
-      const request = claimOf(flags);
+      const request = claimOf(flags, nodeFix);
       const done = nodes.complete(request, flags.get('--result') ?? '');
       if (!done) throw claimRefusal(request, new UsageError('lease-lost',
         'Completion refused: the lease is gone or the job is already complete.',
@@ -529,7 +562,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       return { jobId: need(flags, '--job'), completed: true };
     }
     case 'release': {
-      const request = claimOf(flags);
+      const request = claimOf(flags, nodeFix);
       if (!nodes.release(request, flags.has('--decline'))) throw claimRefusal(request, new UsageError('lease-lost',
         'Release refused: the lease is gone or the job is already complete.',
         'Nothing to hand back. Another node holds a newer token or the job finished.', 1));
