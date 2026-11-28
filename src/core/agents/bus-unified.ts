@@ -30,7 +30,7 @@ import { isFleetJobId } from '../fleet/runs-job-detail.js';
 import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { localWriteGate } from './send-gate.js';
-import { coordinationRowBlocks, listCoordination } from './claim-store.js';
+import { coordinationRowBlocks, listCoordination, setWorkStatus } from './claim-store.js';
 import { BUS_V2_TEXT_MAX, WORK_RESULT_OUTCOMES, busBodyKind, busBodyResultOutcome, busBodyThread, contextBodySchema,
   noteBodySchema, wakeBodySchema, workPostBodySchema, workStatusBodySchema,
   type Participant, type WorkJob, type WorkResultOutcome } from './bus-v2-schema.js';
@@ -69,7 +69,19 @@ export type UnifiedSendResult =
        * recorded for the job's keys. Absent when the fan-out did not run;
        * null when the live claim set could not be read (unknown, not none).
        */
-      claimHoldersWoken?: number | null }
+      claimHoldersWoken?: number | null;
+      /**
+       * `work.status` only, and only on a newly-posted envelope: whether the
+       * job's latest status was recorded in the shared coordination
+       * `statuses` table — true when the row was written, false on a
+       * definitive refusal (store full), null when the store could not be
+       * read or written (unknown). Absent on a duplicate post, which adds no
+       * cursor so the recorded status must not be overwritten stale. The
+       * announce verb does not record: `queued` is already the feed's
+       * projection of `work.post`, and a locked coordination write on every
+       * announcement is too costly for a state the feed already shows.
+       */
+      statusRecorded?: boolean | null }
   | { status: 'invalid' | 'unknown-sender' | 'unknown-recipient' | 'not-member' | 'refused' |
       'unavailable' | 'retryable' | 'full' | 'conflict'; reason: string };
 
@@ -489,6 +501,30 @@ function signalWorkClaimHolders(job: WorkJob, sender: AgentIdentity, registry: A
 }
 
 /**
+ * Record one job's latest status in the shared coordination `statuses`
+ * table — the durable per-job status rows `claimBoard` returns and
+ * `agents bus status` counts beside live claims, the registry that survives
+ * feed retention. Best-effort like the claim-holder fan-out: a store fault
+ * reports null (unknown) and never fails the posted message. Call only for
+ * a newly-posted envelope — a duplicate adds no cursor, so the feed's
+ * newest status may already differ and must not be overwritten with a stale
+ * value. Returns true when the row was written, false on a definitive
+ * refusal (the store is full), null when the outcome is unknown.
+ */
+function recordCoordinationWorkStatus(input: {
+  jobId: string; owner: string; provider: string; repo: string;
+  claimKeys: readonly string[]; status: string;
+}, options: UnifiedBusOptions): boolean | null {
+  try {
+    const result = setWorkStatus({ root: options.root, jobId: input.jobId, owner: input.owner,
+      provider: input.provider, repo: input.repo, claimKeys: [...input.claimKeys], status: input.status,
+      updatedAt: (options.now ?? Date.now)() });
+    if (result.status === 'acquired') return true;
+    return result.status === 'unavailable' ? null : false;
+  } catch { return null; }
+}
+
+/**
  * Post a v2 `work.status` for a job the feed shows. Only the identity that
  * announced the job may move it — the same owner rule the projection enforces —
  * so this verb cannot post the status that would refuse the whole feed.
@@ -519,18 +555,30 @@ export async function updateWorkStatus(input: WorkStatusInput, options: UnifiedB
     priority: base.priority, ttl: base.ttl, body: body.data,
     ...metadata(sender, 'bus', `work:${body.data.jobId}`),
   }, shouldWake(base.priority, input.wake), options);
+  if (sent.status !== 'posted' && sent.status !== 'duplicate') return sent;
+  // Record the job's latest status in the coordination `statuses` table — the
+  // durable per-job registry `claimBoard` and `agents bus status` report —
+  // only for a newly-posted envelope, so a duplicate never overwrites a newer
+  // feed status with a stale one. Best-effort: a store fault reports null and
+  // never fails the posted send.
+  const statusRecorded = sent.status === 'posted'
+    ? recordCoordinationWorkStatus({ jobId: job.id, owner: job.owner, provider: job.provider,
+        repo: job.repo, claimKeys: job.claimKeys, status: body.data.status }, options)
+    : undefined;
+  const recorded = statusRecorded === undefined ? {} : { statusRecorded };
   // A terminal status also hints every live claim holder on the job's keys;
   // --no-wake opts out of that fan-out as well as the message's own hint. A
   // fan-out fault leaves holder state unknown — it never fails the posted send.
-  if ((sent.status !== 'posted' && sent.status !== 'duplicate') ||
-      input.wake === false || !WORK_TERMINAL_STATUSES.has(body.data.status)) return sent;
+  // The fan-out runs for a reposted status too: the deduped hint ids keep it
+  // idempotent, exactly like the envelope dedupe keeps the feed unchanged.
+  if (input.wake === false || !WORK_TERMINAL_STATUSES.has(body.data.status)) return { ...sent, ...recorded };
   let claimHoldersWoken: number | null;
   try {
     claimHoldersWoken = signalWorkClaimHolders(job, sender, reg, sent.id, options);
   } catch {
     claimHoldersWoken = null;
   }
-  return { ...sent, claimHoldersWoken };
+  return { ...sent, claimHoldersWoken, ...recorded };
 }
 
 export type InboxKind = 'dm' | 'channel' | 'handoff' | 'legacy';
