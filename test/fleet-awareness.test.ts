@@ -146,6 +146,28 @@ test('accepted witness boundaries weight observed latency and discard expired or
   f.advance(86_400_001); expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.latency.samples === 0)).toBe(true);
 });
 
+test('missing host latency uses only the medians of hosts eligible for each job', () => {
+  const f = fixture();
+  const slow = f.add('a-slow', { slots: 1 });
+  f.enqueue('slow');
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  const first = nodes.pull(slow)!;
+  f.advance(5000);
+  expect(nodes.complete(first.claim, 'done')).toBe(true);
+  slow.caps = ['other'];
+
+  const fast = f.add('b-fast', { slots: 1 });
+  f.enqueue('fast');
+  const second = nodes.pull(fast)!;
+  f.advance(1000);
+  expect(nodes.complete(second.claim, 'done')).toBe(true);
+  f.add('c-unmeasured', { slots: 2 });
+  f.enqueue('next');
+
+  expect(projectFleetAwareness(f.state, f.now()).hosts.map(h => h.latency.medianMs)).toEqual([5000, 1000, null]);
+  expect(f.plan()).toEqual([expect.objectContaining({ jobId: 'next', nodeId: 'c-unmeasured' })]);
+});
+
 test('a producer withdrawal is a fence, not latency evidence; accepted completions still count', () => {
   const f = fixture();
   const worker = f.add('worker', { hostId: 'mac', slots: 4 });

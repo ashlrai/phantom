@@ -357,7 +357,9 @@ claims and planned assignments consume it once; a fresh pressure hold blocks
 that host. Placement ranks remaining slots divided by the median accepted
 claim-to-completion duration over 24 hours; a producer withdrawal is a fence,
 not an execution, and adds no sample. Missing latency uses the mean of
-measured host medians (equal weights when none exist). Unknown duration is never
+positive measured medians from distinct hosts that can take the job at that
+point in the plan. With no such measurements, hosts have equal latency weights.
+Unknown duration is never
 reported as zero. Owner, capability, local-auth and fencing checks still apply.
 
 `phm node status --json` exposes scoped capacity samples. `phm fleet status-api
