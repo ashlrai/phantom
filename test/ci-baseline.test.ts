@@ -364,6 +364,21 @@ describe('CI baseline evidence', () => {
     expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline', master: 'fail' });
     expect(report.freshness.every(p => p.state === 'fresh')).toBe(true);
   });
+  it('ignores failing output from a neutral master job', async () => {
+    const { gh, calls } = github({ count: 1, masterJobConclusion: 'neutral' });
+    const report = await analyzeCiBaseline('owner/repo', gh);
+    expect(report.master.known).toBe(true);
+    expect(report.groups).toMatchObject([{ master: 'unknown', classification: 'unknown' }]);
+    expect(calls.some(args => args.includes('repos/owner/repo/actions/jobs/10/logs'))).toBe(false);
+  });
+  it('keeps PR freshness when a neutral sibling has no log', async () => {
+    const { gh } = github({ count: 1, extraPrJob: 'neutral', pass: true });
+    const report = await analyzeCiBaseline('owner/repo', args => args[1]?.endsWith('/jobs/40/logs')
+      ? Promise.resolve({ ok: false, stdout: '', stderr: 'HTTP 404: Not Found' })
+      : gh(args));
+    expect(report.freshness).toMatchObject([{ state: 'fresh' }]);
+    expect(report.groups).toMatchObject([{ master: 'pass', classification: 'probable-flake' }]);
+  });
   it('keeps verified sibling evidence when an incomplete job has no log', async () => {
     const { gh } = github({ extraMasterJob: 'cancelled' });
     const report = await analyzeCiBaseline('owner/repo', args => args[1]?.endsWith('/jobs/30/logs')
