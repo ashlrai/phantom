@@ -237,7 +237,14 @@ BEGIN/END UNTRUSTED AGENT BUS MESSAGES block — the per-envelope
 priority/id/from/to bracket and scrubbed one-line summary every bus
 `--frame` read renders — so a retained envelope page fed to a next turn is
 marked untrusted data like the agents bus reads it complements. `watch`, a
-stream, takes no frame.
+stream, takes no frame. `phm bus inbox --frame <cli>` frames the durable
+mailbox page (`$ASHLR_HOME/bus-mailbox`) the same way: the pending
+`BusEnvelope` list renders under the same BEGIN/END UNTRUSTED AGENT BUS
+MESSAGES markers with the raw `from`/`to` labels the wire recorded —
+mailbox labels are never authenticated identity — so the one read that
+drains legacy pending mail gives a CLI's next turn the same marked-untrusted
+block every other bus page does, and `--json` carries it as `framed` beside
+the page.
 
 ## Write
 

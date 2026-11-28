@@ -34,8 +34,8 @@ afterEach(() => { vi.restoreAllMocks(); rmSync(home, { recursive: true, force: t
 async function invoke(args: string[], load = () => bus) {
   stdout.mockClear(); stderr.mockClear();
   const code = await cmdBus(args, load);
-  const lines = stdout.mock.calls.map(call => String(call[0]));
-  return { code, lines, error: stderr.mock.calls.map(call => String(call[0])).join('\n') };
+  const lines = stdout.mock.calls.map((call: unknown[]) => String(call[0]));
+  return { code, lines, error: stderr.mock.calls.map((call: unknown[]) => String(call[0])).join('\n') };
 }
 async function json(args: string[], load = () => bus) {
   const result = await invoke([...args, '--json'], load);
@@ -345,6 +345,27 @@ describe('phm bus inbox read filters', () => {
     expect(result.value.hasMore).toBe(false);
   });
 
+  it('frames the pending page as bounded untrusted data and reports it in JSON', async () => {
+    await json(sendArgs);
+    const framed = await invoke(['inbox', '--to', 'fleet', '--frame', 'claude']);
+    expect(framed.code).toBe(0);
+    expect(framed.lines).toHaveLength(1);
+    const text = framed.lines[0]!;
+    expect(text).toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
+    expect(text).toContain('END UNTRUSTED AGENT BUS MESSAGES');
+    expect(text).toContain('[P2 id=');
+    expect(text).toContain('from codex-cmp to fleet');
+    const asJson = await json(['inbox', '--to', 'fleet', '--frame=devin']);
+    expect(asJson.code).toBe(0);
+    expect(asJson.value.framed).toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
+    expect(asJson.value.framed).toContain('END UNTRUSTED AGENT BUS MESSAGES');
+    expect(asJson.value.messages).toHaveLength(1);
+    expect(asJson.value.hasMore).toBe(false);
+    await json(['ack', (await json(['inbox', '--to', 'fleet'])).value.messages[0].id, '--to', 'fleet']);
+    const empty = await invoke(['inbox', '--to', 'fleet', '--frame', 'grok']);
+    expect(empty.lines[0]!.split('\n')).toHaveLength(2);
+  });
+
   it('rejects malformed filter values before loading the store', async () => {
     const load = vi.fn(() => bus);
     for (const args of [
@@ -364,6 +385,10 @@ describe('phm bus inbox read filters', () => {
       ['inbox', '--to', 'fleet', '--body-kind', 'two words'],
       ['inbox', '--to', 'fleet', '--result', 'bogus'],
       ['inbox', '--to', 'fleet', '--result', 'Failed'],
+      ['inbox', '--to', 'fleet', '--frame', 'bogus'],
+      ['inbox', '--to', 'fleet', '--frame='],
+      ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--frame', 'claude'],
+      ['ack', 'a', '--to', 'fleet', '--frame', 'claude'],
       ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--priority', 'P0', '--contains', 'x'],
       ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--body-kind', 'note'],
       ['ack', 'a', '--to', 'fleet', '--since', '1h'],
