@@ -1,5 +1,5 @@
 /** `phm queue supply [--json]`: thin argv layer over core/fleet/queue-supply.ts. Read-only. */
-export const QUEUE_SUPPLY_USAGE = `Usage: phm queue supply [--json]
+const QUEUE_SUPPLY_USAGE = `Usage: phm queue supply [--json]
 One line per pool: usage left, hours to reset, jobs queued for it, its recent starts per hour and the hours of
 work queued (ready / starts per hour), with a plain verdict ("Claude: 0 jobs queued, 16% left, about 3 hours of
 usage idle"). Pools that need work come first. JSON (queue.supply.v1) with --json. Unknown stays unknown.`;

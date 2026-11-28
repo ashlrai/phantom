@@ -1,3 +1,5 @@
+import { compareLexical, isNonEmptyString, isNonNegativeFinite, isNonNegativeInt } from './schema.js';
+
 /**
  * Offline queue.v1 counterfactuals. No clock, filesystem, network or live scheduler.
  * The RQ-QUEUE event fields (jobId/kind/atMs) are retained, with station added.
@@ -33,16 +35,12 @@ export interface CapacityDecision {
   transfer: { from: string; to: string } | null;
 }
 
-const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
-const count = (n: number) => Number.isSafeInteger(n) && n >= 0;
-const finite = (n: number) => Number.isFinite(n) && n >= 0;
-
 function validateStations(stations: readonly QueueStation[]): void {
   const names = new Set<string>();
   if (!stations.length) throw new Error('At least one queue station is required');
   for (const s of stations) {
-    if (typeof s.station !== 'string' || !s.station.trim() || names.has(s.station) ||
-      !count(s.slots) || s.slots < 1 || !count(s.minSlots ?? 1) ||
+    if (!isNonEmptyString(s.station) || names.has(s.station) ||
+      !isNonNegativeInt(s.slots) || s.slots < 1 || !isNonNegativeInt(s.minSlots ?? 1) ||
       (s.minSlots ?? 1) < 1 || (s.minSlots ?? 1) > s.slots) {
       throw new Error('Invalid queue station capacity');
     }
@@ -67,12 +65,12 @@ export function decideQueueCapacity(
   validateStations(stations);
   if (!stations.some(s => s.station === readyStation)) throw new Error('Unknown READY station');
   for (const s of stations) {
-    if (!count(s.running) || s.running > s.slots || !count(s.waiting) || !finite(s.lambda) ||
+    if (!isNonNegativeInt(s.running) || s.running > s.slots || !isNonNegativeInt(s.waiting) || !isNonNegativeFinite(s.lambda) ||
       (s.mu !== null && (!Number.isFinite(s.mu) || s.mu <= 0))) {
       throw new Error('Invalid queue station pressure');
     }
   }
-  const ordered = [...stations].sort((a, b) => compare(a.station, b.station));
+  const ordered = [...stations].sort((a, b) => compareLexical(a.station, b.station));
   const utilization = (s: StationPressure, slots = s.slots) => {
     if (s.mu === null) return null;
     const rho = s.lambda / s.mu / slots;
@@ -82,14 +80,14 @@ export function decideQueueCapacity(
   const rho = Object.fromEntries(ordered.map(s => [s.station, utilization(s)]));
   const slots = Object.fromEntries(ordered.map(s => [s.station, s.slots]));
   const targets = ordered.filter(s => s.waiting > 0 && rho[s.station] !== null)
-    .sort((a, b) => rho[b.station]! - rho[a.station]! || compare(a.station, b.station));
+    .sort((a, b) => rho[b.station]! - rho[a.station]! || compareLexical(a.station, b.station));
   const target = targets[0];
   let transfer: CapacityDecision['transfer'] = null;
   if (target) {
     const donors = ordered.filter(s => s.station !== target.station &&
       s.slots > Math.max(s.minSlots ?? 1, s.running) && rho[s.station] !== null &&
       Math.max(utilization(s, s.slots - 1)!, utilization(target, target.slots + 1)!) < rho[target.station]!)
-      .sort((a, b) => rho[a.station]! - rho[b.station]! || compare(a.station, b.station));
+      .sort((a, b) => rho[a.station]! - rho[b.station]! || compareLexical(a.station, b.station));
     const donor = donors[0];
     if (donor) {
       slots[donor.station]--;
@@ -116,8 +114,8 @@ function visitsFromEvents(events: readonly ControllerQueueEvent[], stations: rea
   const active = new Map<string, { station: string; arrivedAt: number; startedAt?: number }>();
   let previous = -Infinity;
   for (const event of events) {
-    if (!event || !finite(event.atMs) || event.atMs < previous ||
-      typeof event.jobId !== 'string' || !event.jobId.trim() || !known.has(event.station)) {
+    if (!event || !isNonNegativeFinite(event.atMs) || event.atMs < previous ||
+      !isNonEmptyString(event.jobId) || !known.has(event.station)) {
       throw new Error('Invalid or nonchronological queue event');
     }
     previous = event.atMs;
@@ -148,7 +146,7 @@ function visitsFromEvents(events: readonly ControllerQueueEvent[], stations: rea
     }
   }
   if (active.size) throw new Error('Incomplete queue recording: every arrival needs a start and completion');
-  return [...paths.values()].sort((a, b) => a[0].arrivedAt - b[0].arrivedAt || compare(a[0].jobId, b[0].jobId));
+  return [...paths.values()].sort((a, b) => a[0].arrivedAt - b[0].arrivedAt || compareLexical(a[0].jobId, b[0].jobId));
 }
 
 export interface QueueSimulationOptions {
@@ -197,7 +195,7 @@ export function simulateQueueController(
   type Pending = { path: Visit[]; index: number; atMs: number };
   type Running = Pending & { startedAt: number; endMs: number };
   const pending: Pending[] = paths.map(path => ({ path, index: 0, atMs: path[0].arrivedAt }));
-  const states = [...options.stations].sort((a, b) => compare(a.station, b.station)).map(s => ({
+  const states = [...options.stations].sort((a, b) => compareLexical(a.station, b.station)).map(s => ({
     ...s, waiting: [] as Pending[], running: [] as Running[], arrivals: 0, completed: 0,
     busyMs: 0, residenceMs: 0,
   }));
@@ -260,7 +258,7 @@ export function simulateQueueController(
     }
     for (const s of states) {
       if (options.controller !== false && decision.planningThrottled && s.station === options.planningStation) continue;
-      s.waiting.sort((a, b) => a.atMs - b.atMs || compare(a.path[0].jobId, b.path[0].jobId));
+      s.waiting.sort((a, b) => a.atMs - b.atMs || compareLexical(a.path[0].jobId, b.path[0].jobId));
       while (s.waiting.length && s.running.length < s.slots) {
         const p = s.waiting.shift()!;
         const visit = p.path[p.index];

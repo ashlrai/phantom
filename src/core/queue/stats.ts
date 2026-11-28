@@ -1,3 +1,5 @@
+import { compareLexical, isPlainRecord } from './schema.js';
+
 /** The dedup key every journal reader folds on: last appended snapshot per (station, pool, id) wins. */
 export const queueVisitKey = (visit: Pick<QueueVisit, 'station' | 'pool' | 'id'>): string =>
   JSON.stringify([visit.station, visit.pool, visit.id]);
@@ -13,8 +15,8 @@ export interface QueueVisit {
 }
 
 export function isQueueVisit(value: unknown): value is QueueVisit {
-  if (!value || typeof value !== 'object') return false;
-  const v = value as QueueVisit;
+  if (!isPlainRecord(value)) return false;
+  const v = value as unknown as QueueVisit;
   return [v.id, v.station, v.pool].every(s => typeof s === 'string' && s.length > 0) &&
     Number.isFinite(v.arrivedAt) && v.arrivedAt >= 0 &&
     (v.startedAt === undefined || (Number.isFinite(v.startedAt) && v.startedAt >= v.arrivedAt)) &&
@@ -31,7 +33,7 @@ export function estimateQueueStats(visits: readonly QueueVisit[], now: number, w
   const latest = new Map<string, QueueVisit>();
   for (const v of visits) latest.set(queueVisitKey(v), v);
   // Canonical order makes floating-point sums independent of journal arrival order.
-  const all = [...latest.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+  const all = [...latest.entries()].sort(([a], [b]) => compareLexical(a, b))
     .map(([, visit]) => visit).filter(v => v.arrivedAt < now);
   const groups = (key: 'station' | 'pool') => [...new Set(all.map(v => v[key]))].sort().map(name => ({
     [key]: name,

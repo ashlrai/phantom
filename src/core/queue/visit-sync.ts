@@ -7,21 +7,22 @@
  * docs/QUEUE-STATS.md. Derived timestamps only — missing boundaries leave a
  * visit open or absent, never zero-filled; rows after `now` are ignored.
  */
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { parseLedgerTs } from '../metrics/loop.js';
+import { ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
+import { defaultRunsDir } from '../fleet/landed-closes-read.js';
 import {
   readLedgerFile, readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE,
   type LedgerReadState, type LedgerTailRead,
 } from '../router/outcomes.js';
 import { appendQueueVisits, compactQueueVisits, queueJournalPath, readQueueVisits } from './journal.js';
+import { isPlainRecord, nonEmptyString, parseReadyLineEnq } from './schema.js';
 import { isQueueVisit, queueVisitKey, type QueueVisit } from './stats.js';
 
 export const VISIT_SYNC_SCHEMA = 'queue.visits-sync.v1';
 
 /** Bounded read of router-queue.md behind live READY visits; past it READY visits are skipped, never guessed. */
-export const VISIT_SYNC_QUEUE_BYTES = 4 * 1024 * 1024;
+const VISIT_SYNC_QUEUE_BYTES = 4 * 1024 * 1024;
 
 const STATION_READY = 'READY';
 const STATION_CLAIMED = 'claimed';
@@ -55,30 +56,13 @@ const KNOWN_EVENTS = new Set<string>([
   'enqueue', 'queued', 'launch', 'finish', 'publish', 'launch_failed', 'launch_terminal', 'ci_start', 'ci_complete',
 ]);
 
-function str(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
 function stateOf(row: Record<string, unknown>): string {
   return String(row.outcome ?? row.state ?? row.status ?? row.phase ?? row.result ?? row.conclusion ?? '').toUpperCase();
 }
 
-const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
-
-/** First parseable timestamp among the ledger's field variants; MERGED prefers mergedAt, CLOSED closedAt. */
-function eventTs(row: Record<string, unknown>, state: string): number | null {
-  const preferred = state === 'MERGED' ? 'mergedAt' : state === 'CLOSED' ? 'closedAt' : null;
-  const fields = preferred ? [preferred, ...TS_FIELDS.filter(f => f !== preferred)] : [...TS_FIELDS];
-  for (const field of fields) {
-    const at = parseLedgerTs(row[field]);
-    if (at !== null) return at;
-  }
-  return null;
-}
-
 function urlOf(row: Record<string, unknown>): string | null {
   for (const key of ['url', 'prUrl', 'pr_url', 'pr', 'html_url'] as const) {
-    const value = str(row[key]);
+    const value = nonEmptyString(row[key]);
     if (value) return value.replace(/\/+$/, '');
   }
   return null;
@@ -88,7 +72,7 @@ function urlOf(row: Record<string, unknown>): string | null {
  * Mirrors dispatchd's _vc_event/_vc_phase: event|type|kind fields, 'published'
  * normalizes to publish, and eventless phase rows infer their kind. */
 function classifyRow(row: Record<string, unknown>, order: number, now: number): Omit<LedgerEvent, 'job'> | null {
-  let event = str(row.event ?? row.type ?? row.kind);
+  let event = nonEmptyString(row.event ?? row.type ?? row.kind);
   if (event === 'published') event = 'publish';
   const state = stateOf(row);
   let kind: VisitKind | null = null;
@@ -101,14 +85,14 @@ function classifyRow(row: Record<string, unknown>, order: number, now: number): 
     else if (state === 'PUBLISHED') kind = 'publish';
   }
   if (!kind) return null;
-  const at = eventTs(row, state);
+  const at = ledgerEventTs(row, state);
   if (at === null || at > now) return null;
   return {
     kind, at, order,
     url: urlOf(row),
-    lane: str(row.lane ?? row.pool ?? row.arm),
-    action: str(row.action),
-    reason: str(row.reason),
+    lane: nonEmptyString(row.lane ?? row.pool ?? row.arm),
+    action: nonEmptyString(row.action),
+    reason: nonEmptyString(row.reason),
     launchedFalse: row.launched === false,
   };
 }
@@ -315,9 +299,9 @@ export function queueVisitsFromJobs(text: string | null, now = Date.now()): Jobs
     rows++;
     let raw: unknown;
     try { raw = JSON.parse(line); } catch { ignored++; continue; }
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { ignored++; continue; }
-    const row = raw as Record<string, unknown>;
-    const id = str(row.job ?? row.job_id ?? row.jobId ?? row.id);
+    if (!isPlainRecord(raw)) { ignored++; continue; }
+    const row = raw;
+    const id = nonEmptyString(row.job ?? row.job_id ?? row.jobId ?? row.id);
     const classified = id ? classifyRow(row, rows - 1, now) : null;
     if (!id || !classified) { ignored++; continue; }
     const ev: LedgerEvent = { ...classified, job: id };
@@ -361,12 +345,10 @@ export function queueReadyVisits(
 ): QueueVisit[] {
   const visits: QueueVisit[] = [];
   for (const line of queueText.split(/\r?\n/)) {
-    const match = /^- READY\s+([A-Za-z0-9][A-Za-z0-9._-]*)(?=\s|$)/.exec(line);
-    if (!match) continue;
-    const id = match[1]!;
+    const parsed = parseReadyLineEnq(line);
+    if (!parsed) continue;
+    const { id, enqueuedAtMs: stamped } = parsed;
     const info = jobs.get(id);
-    const enq = /(?:^|[\s,(])enq=(\d+)(?=$|[\s,)])/.exec(line);
-    const stamped = enq ? Number(enq[1]) * 1000 : null;
     let arrivedAt: number | null;
     let attempt = 1;
     if (info && info.launches > 0) {
@@ -516,7 +498,7 @@ async function queueTextOrInjected(
  */
 export async function syncQueueVisits(opts: QueueVisitSyncOptions = {}): Promise<QueueVisitSyncResult> {
   const now = opts.now ?? Date.now;
-  const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const runsDir = opts.runsDir ?? defaultRunsDir();
   const jobsPath = join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
   const queuePath = join(runsDir, 'queue', 'router-queue.md');
   const journalPath = opts.journalPath ?? queueJournalPath();
