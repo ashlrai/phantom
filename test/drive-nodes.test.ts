@@ -1143,6 +1143,73 @@ describe('text output names outcomes in plain words', () => {
       expect(last(lines)).toBe('Node box left the registry.');
     } finally { vi.restoreAllMocks(); }
   });
+  it('enqueue names the stored spec when a retry conflicts on the job id', async () => {
+    const { deps, nodes, lines } = harness();
+    try {
+      executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'build'], nodes());
+      // An identical retry is still the plain idempotent answer — and the JSON
+      // now carries the stored job's state for consumers that want it.
+      expect(executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'build'], nodes()))
+        .toMatchObject({ enqueued: false, existing: { state: 'pending', owner: 'acme', differs: [] } });
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'build'], deps)).toBe(0);
+      expect(last(lines)).toBe('Job j1 already exists; nothing changed.');
+      // Flag order and repeats carry no meaning — the same spec, no diff.
+      expect(executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'build,build'], nodes()))
+        .toMatchObject({ enqueued: false, existing: { differs: [] } });
+      // A corrected flag is not silently swallowed: the reply names the field
+      // and both sides, and text says ids are single-use.
+      const conflict = executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'quantum,gh'], nodes());
+      expect(conflict).toMatchObject({ enqueued: false, existing: {
+        state: 'pending', owner: 'acme',
+        differs: [{ field: 'requires', queued: 'build', requested: 'gh,quantum' }] } });
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'quantum'], deps)).toBe(0);
+      expect(last(lines)).toBe('Job j1 already exists — pending under owner acme — spec differs: requires (queued build; requested quantum). Job ids are single-use — pick a new id for different work.');
+      // A different owner scope collides on the same global id — the stored
+      // owner is named so the producer sees whose job holds the id.
+      const other = executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'bob'], nodes());
+      expect(other).toMatchObject({ enqueued: false, existing: { owner: 'acme',
+        differs: expect.arrayContaining([{ field: 'owner', queued: 'acme', requested: 'bob' }]) } });
+      // Multi-field conflicts list each field once, in canonical order.
+      const multi = executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'gh',
+        '--pack', 'pack-fix', '--secrets', 'DEPLOY_KEY'], nodes()) as { existing: { differs: { field: string }[] } };
+      expect(multi.existing.differs.map(d => d.field)).toEqual(['requires', 'pack', 'secrets']);
+      // An embedded task conflicts by digest — the reply shows prefixes, never text.
+      const taskText = 'Summarize the README in one line.';
+      const digest = createHash('sha256').update(taskText).digest('hex');
+      executeNodeFleet('enqueue', ['--job', 'j2', '--owner', 'acme', '--pack', 'codex-file',
+        '--task-part', taskText, '--task-sha256', `sha256:${digest}`], nodes());
+      const otherTask = 'Write a sonnet about queues.';
+      const otherDigest = createHash('sha256').update(otherTask).digest('hex');
+      const taskConflict = executeNodeFleet('enqueue', ['--job', 'j2', '--owner', 'acme', '--pack', 'codex-file',
+        '--task-part', otherTask, '--task-sha256', `sha256:${otherDigest}`], nodes());
+      expect(taskConflict).toMatchObject({ enqueued: false, existing: { differs: [
+        { field: 'task', queued: `embedded ${digest.slice(0, 12)}`, requested: `embedded ${otherDigest.slice(0, 12)}` }] } });
+      expect(JSON.stringify(taskConflict)).not.toContain(taskText);
+      expect(JSON.stringify(taskConflict)).not.toContain(otherTask);
+      // A finished job's id stays reserved; even an identical retry says so.
+      // j1 and j2 are withdrawn first so the pull below claims j3, not them.
+      executeNodeFleet('withdraw', ['--job', 'j1', '--owner', 'acme'], nodes());
+      executeNodeFleet('withdraw', ['--job', 'j2', '--owner', 'acme'], nodes());
+      const session = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme', '--caps', 'build'], nodes())['session']);
+      executeNodeFleet('enqueue', ['--job', 'j3', '--owner', 'acme'], nodes());
+      const claim = executeNodeFleet('pull', ['--node', 'box', '--session', session], nodes())['claim'] as
+        { jobId: string; token: number; leaderToken: number };
+      executeNodeFleet('complete', ['--job', 'j3', '--node', 'box', '--session', session,
+        '--token', String(claim.token), '--leader-token', String(claim.leaderToken), '--result', 'done'], nodes());
+      expect(executeNodeFleet('enqueue', ['--job', 'j3', '--owner', 'acme'], nodes()))
+        .toMatchObject({ enqueued: false, existing: { state: 'completed', differs: [] } });
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j3', '--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe('Job j3 already exists and is completed; job ids are single-use — pick a new id for different work.');
+      // A producer withdrawal reads the same way — terminal, id still reserved.
+      executeNodeFleet('enqueue', ['--job', 'j4', '--owner', 'acme'], nodes());
+      executeNodeFleet('withdraw', ['--job', 'j4', '--owner', 'acme'], nodes());
+      expect(executeNodeFleet('enqueue', ['--job', 'j4', '--owner', 'acme', '--requires', 'gh'], nodes()))
+        .toMatchObject({ enqueued: false, existing: { state: 'completed', producerWithdrawn: true,
+          differs: [{ field: 'requires', queued: '(none)', requested: 'gh' }] } });
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j4', '--owner', 'acme', '--requires', 'gh'], deps)).toBe(0);
+      expect(last(lines)).toBe('Job j4 already exists — completed (withdrawn by the producer) under owner acme — spec differs: requires (queued (none); requested gh). Job ids are single-use — pick a new id for different work.');
+    } finally { vi.restoreAllMocks(); }
+  });
   it('beat confirms the heartbeat in plain words, naming auth only when probed', async () => {
     const { deps, nodes, lines } = harness();
     try {

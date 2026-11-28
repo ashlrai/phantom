@@ -148,6 +148,10 @@ phm node result --job hello-1 --owner acme --json
 phm node status --owner acme --json
 ```
 
+Job ids are single-use: a repeat `enqueue` under an existing id changes
+nothing, and its `--json` reply names the stored job's state and which spec
+fields differ — pick a new id for different work.
+
 A bare `enqueue` is a connectivity ping: the job carries no instructions.
 To hand the node real work, embed the task text — the prompt `pull` prints
 under `Task:` for the operator (or their agent) to run. `--task-part` carries
