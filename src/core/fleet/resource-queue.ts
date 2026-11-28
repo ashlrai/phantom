@@ -30,26 +30,23 @@ export async function readResourceQueue(runsDir: string, now: number, status: un
     for (const token of match[1]!.trim().split(/\s+/)) blockedIds.add(token);
   }
   const lines = ready.text.split('\n');
-  const ids = new Map<string, number>();
-  for (const line of lines) {
-    const id = line.split('\t', 1)[0]!;
-    ids.set(id, (ids.get(id) ?? 0) + 1);
-  }
-  const parkedIds = new Set(lines.flatMap(line => {
-    const [first, second] = line.split('\t', 2);
-    return first?.startsWith('PARKED-') && second ? [second] : [];
-  }));
   const lanes = new Map(Object.entries(object(snapshot.lanes)).flatMap(([lane, raw]) => {
     const row = object(raw), running = count(row.running), target = count(row.effective_target ?? row.target);
     if (running === null || target === null || typeof row.held !== 'boolean' || !Object.hasOwn(ctx.slots, lane)) return [];
     return [[lane, marketLaneView(lane, running, target, row.held, ctx,
       typeof row.healthy === 'boolean' ? row.healthy : null)] as const];
   }));
+  // Each job contributes once, using its first market-valid row — the same
+  // rule readyHints and stoppedReadyHints apply. A duplicate READY row or a
+  // READY row beside a parked shadow must not hide the job from rerouting or
+  // demand accounting; parked rows never parse as market rows.
+  const seen = new Set<string>();
   const rows = lines.flatMap((line, index) => {
     const cells = line.replace(/\r$/, '').split('\t');
-    if (cells.length < 5 || !cells[4] || ids.get(cells[0]!) !== 1 || parkedIds.has(cells[0]!) || blockedIds.has(cells[0]!)) return [];
+    if (cells.length < 5 || !cells[4] || blockedIds.has(cells[0]!)) return [];
     const row = parseReadyMarketRows(cells.join('\t'), router.text).rows[0];
-    if (!row) return [];
+    if (!row || seen.has(row.id)) return [];
+    seen.add(row.id);
     const spec = readySpecCell(cells[5]);
     const source = row.hint === null ? null : lanes.get(row.hint);
     const canReroute = cells.length === 6 && spec !== null && spec !== 'invalid' && spec.exclusive !== true &&
