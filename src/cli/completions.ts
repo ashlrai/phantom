@@ -170,12 +170,12 @@ const SUBCOMMANDS: Record<string, string[]> = {
     // Registered verbs the docs show (see FLEET_SUBCOMMAND_LOADERS). Each one
     // passes test/cli-help-no-side-effects; a registry verb whose --help still
     // misbehaves stays out until it is fixed.
-    'activity', 'admission', 'api-pools', 'apps-follow', 'apps-status', 'apps-watch', 'asks',
+    'activity', 'admission', 'api-pools', 'apps-follow', 'apps-recovery-state', 'apps-status', 'apps-watch', 'asks',
     'bin-diff', 'brains', 'bridge-check', 'brief-send', 'bus-claim', 'caps-route', 'channel-health', 'ci-plan',
     'claim-bind', 'claim-drift', 'claim-notices', 'config', 'conflict-risk', 'coordination',
     'cos', 'cos-decline', 'cos-loop', 'cos-reconcile', 'cos-work', 'dep-gate', 'dirty-landed', 'disk',
     'disk-forecast', 'disk-sweep', 'done-evaluate', 'done-plan', 'dot-handoff', 'drift', 'edges',
-    'email-outbox', 'empty-merges', 'grok-usage', 'guardian-stuck', 'guardian-verify',
+    'email-outbox', 'empty-merges', 'glance', 'grok-usage', 'guardian-stuck', 'guardian-verify',
     'handoff-receive', 'handoff-reply', 'health-age', 'heartbeat', 'held', 'hostload',
     'ideation-status', 'idle-lanes', 'imessage-acks', 'imessage-path', 'imessage-tasks', 'inbox-acks', 'intent', 'intent-evidence',
     'intent-import', 'intent-read', 'intent-summary', 'kept-worktrees', 'lane-hold', 'lane-idle', 'lane-reward', 'lane-share',
