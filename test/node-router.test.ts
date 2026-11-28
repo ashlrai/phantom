@@ -54,6 +54,27 @@ describe('node router', () => {
     expect(nodes).toEqual(['a', 'b', 'a', 'b']);
   });
 
+  it('fills distinct pool hosts when flexible work is queued before specialized work', () => {
+    const f = fixture();
+    f.store.state.pool = { primary: 'a', backup: 'b', active: 'primary', epoch: 1, heartbeatAt: 1_000 };
+    const specialist = f.box.join('a', { owners: ['acme'], caps: ['build'] })!;
+    const sameHost = f.box.join('a-peer', { owners: ['acme'], caps: ['build'] })!;
+    const general = f.mac.join('b', { owners: ['acme'] })!;
+    for (const [worker, hostId] of [[specialist, 'host-a'], [sameHost, 'host-a'], [general, 'host-b']] as const) {
+      f.box.heartbeat(worker, { capacity: { hostId, sampledAtMs: 1_000, ramBytes: 8 * 1024 ** 3, slots: 1, held: null } });
+    }
+    f.box.enqueue('general-first', { owner: 'acme' });
+    f.box.enqueue('specialized', { owner: 'acme', requires: ['build'] });
+    f.box.enqueue('general-second', { owner: 'acme' });
+
+    expect(f.box.plan().map(r => [r.jobId, r.nodeId])).toEqual([
+      ['specialized', 'a'], ['general-first', 'b'], ['general-second', null],
+    ]);
+    expect(f.mac.pull(general)?.job.id).toBe('general-first');
+    expect(f.box.pull(specialist)?.job.id).toBe('specialized');
+    expect(f.box.pull(sameHost)).toBeNull();
+  });
+
   it('requires a live local gh-auth heartbeat for gh jobs and explains the fix', () => {
     const f = fixture();
     const s = f.box.join('n', { owners: ['o'], caps: ['gh'] })!;
