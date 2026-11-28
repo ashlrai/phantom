@@ -54,17 +54,26 @@ describe('fleet runs api', () => {
     const { buildInventory, INVENTORY_PATH } = await import('../src/core/fleet/inventory.js');
     const inventory = buildInventory({
       now: new Date(NOW), channels: null, plugins: null, skills: null, tools: null, registry: [], roster: ['claude'],
-      connectors: [{ id: 'docs', kind: 'mcp-stdio', description: null, lanes: ['claude'], credentials: 1, availability: 'available' }],
+      connectors: [
+        { id: 'docs', kind: 'mcp-stdio', description: null, lanes: ['claude'], credentials: 1, availability: 'available' },
+        { id: 'local', kind: 'cli', description: null, lanes: ['claude'], credentials: 0, availability: 'available' },
+      ],
     });
     const readInventory = vi.fn(async () => inventory);
     const api = createFleetRunsApi(deps({ readInventory }));
     const all = await request(api, { path: INVENTORY_PATH });
     expect(all.status).toBe(200);
     expect(all.wire).toEqual(JSON.parse(JSON.stringify(inventory)));
-    expect(all.wire).toMatchObject({ schema: 'phantom.inventory.v1', version: 1, kind: null, parity: { compared: 1, widestGap: 0 } });
-    const one = (await request(api, { path: `${INVENTORY_PATH}?kind=connectors` })).wire as unknown as typeof inventory;
-    expect(one).toMatchObject({ kind: 'connector', counts: { ready: 1, unknown: 0 }, kinds: [{ kind: 'connector', total: 1 }] });
-    expect(one.items.map(i => i.id)).toEqual(['connector:docs']);
+    expect(all.wire).toMatchObject({ schema: 'phantom.inventory.v1', version: 1, kind: null, parity: { compared: 2, widestGap: 0 } });
+    const filtered = await request(api, { path: `${INVENTORY_PATH}?kind=connectors` });
+    expect(filtered.status).toBe(200);
+    const one = filtered.wire as unknown as typeof inventory;
+    expect(one).toMatchObject({ kind: 'connector', counts: { ready: 1, unknown: 1 }, kinds: [{ kind: 'connector', total: 2 }] });
+    expect(one.items.map(({ id, state, usedByLanes }) => ({ id, state, usedByLanes }))).toEqual([
+      { id: 'connector:docs', state: 'unknown', usedByLanes: ['claude'] },
+      { id: 'connector:local', state: 'ready', usedByLanes: ['claude'] },
+    ]);
+    expect(one.items[0]!.detail).toContain('whether each is set is not checked here');
     expect(one.parity).toEqual(inventory.parity);
     const bad = await request(api, { path: `${INVENTORY_PATH}?kind=secrets` });
     expect(bad.status).toBe(400);
