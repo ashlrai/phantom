@@ -12,7 +12,7 @@ import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { ensurePrivateDirectory } from '../verse/preferences.js';
-import { WORK_STATUSES, claimKeysOverlap, parseClaimKey } from './bus-v2-schema.js';
+import { WORK_STATUSES, canonClaimPath, claimKeysOverlap, parseClaimKey } from './bus-v2-schema.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 
 export const COORDINATION_MAX_ROWS = 1024;
@@ -120,8 +120,10 @@ function live(row: StoredClaim, now: number): boolean {
   return row.state === 'live' && now < row.leaseUntil;
 }
 
+/** The same canonical repo-relative form `claimKeysOverlap` compares under —
+ * `.`/empty segments dropped so `a/./b` and `a//b` scope like `a/b`. */
 function normPath(path: string): string {
-  return path.replace(/^\.?\/+/, '').replace(/\/+$/, '');
+  return canonClaimPath(path);
 }
 
 function pathsOverlap(teamPath: string, glob: string): boolean {

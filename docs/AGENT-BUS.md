@@ -2634,7 +2634,11 @@ issued on acquire, `leaseUntil` is epoch milliseconds.
   intersection under `globMatches` semantics — `*` and `?` stay inside one
   path segment, `**` crosses segments); queue keys overlap on equal id; PR
   keys on equal repo and number. Repo names compare case-insensitively.
-  Other pairs never overlap.
+  Other pairs never overlap. Path scopes compare under `canonClaimPath`:
+  `.` segments and empty segments (`//`) name the same files on disk, so
+  `path:<repo>:a/./b` and `path:<repo>:a//b` overlap exactly like
+  `path:<repo>:a/b` — the check can err toward a conflict, never toward a
+  miss.
 - Renew before `leaseUntil`. An expired claim is free: live means `now <
   leaseUntil`.
 - Only the token holder may renew, release or complete.

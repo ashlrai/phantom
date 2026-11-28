@@ -85,6 +85,14 @@ describe('claim keys and overlap', () => {
     // shared path: 'src/' matches nothing 'src/*.ts' matches.
     ['path:a/b:src/', 'path:a/b:src/*.ts', false],
     ['path:a/b:*.md', 'path:a/b:*.md', true],
+    // `.` segments and empty segments name the same files on disk, so claim
+    // globs differing only by them cover identical scopes.
+    ['path:a/b:src/./core/**', 'path:a/b:src/core/**', true],
+    ['path:a/b:src//core/**', 'path:a/b:src/core/**', true],
+    ['path:a/b:./src/**', 'path:a/b:src/**', true],
+    ['path:a/b:src/core/./x.ts', 'path:a/b:src/core/*.ts', true],
+    ['path:a/b:src//*.ts', 'path:a/b:src/*.ts', true],
+    ['path:a/b:src/./docs/**', 'path:a/b:src/core/**', false],
     ['queue:q1', 'queue:q1', true],
     ['queue:q1', 'queue:q2', false],
     ['pr:a/b#1', 'pr:a/b#1', true],

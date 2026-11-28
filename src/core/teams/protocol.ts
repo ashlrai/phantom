@@ -137,7 +137,12 @@ export function claimsOverlap(a: ClaimTarget, b: ClaimTarget): boolean {
   if (a.repo.toLowerCase() !== b.repo.toLowerCase()) return false;
   if (a.branch && b.branch && a.branch !== b.branch) return false;
   if (a.path && b.path) {
-    const norm = (p: string) => p.replace(/^\.?\/+/, '').replace(/\/+$/, '');
+    // The same canonical repo-relative form the bus claim overlap applies
+    // (`canonClaimPath` in agents/bus-v2-schema): `.` segments and empty
+    // segments name the same files on disk, so `a/./b` and `a//b` scope
+    // like `a/b`; `..` stays verbatim for the callers' own guards.
+    const norm = (p: string) => p.replace(/^\.?\/+/, '').replace(/\/+$/, '')
+      .split('/').filter(segment => segment !== '' && segment !== '.').join('/');
     const pa = norm(a.path); const pb = norm(b.path);
     return pa === pb || pa.startsWith(pb + '/') || pb.startsWith(pa + '/') || pa === '' || pb === '';
   }

@@ -181,12 +181,29 @@ function globLanguagesIntersect(a: string, b: string): boolean {
   return false;
 }
 
+/**
+ * Canonical repo-relative path form for claim-scope comparison: leading
+ * `./`/`/` runs and trailing `/` stripped, `.` segments and empty segments
+ * (`//`) dropped — `a/./b`, `a//b` and `a/b` name the same files on disk.
+ * `..` segments stay verbatim so callers' own guards still see them, and
+ * wildcard segments are untouched: the form only merges distinctions a
+ * filesystem resolves anyway, so overlap checks built on it can err toward
+ * a conflict, never toward a miss.
+ */
+export function canonClaimPath(path: string): string {
+  return path.replace(/^\.?\/+/, '').replace(/\/+$/, '')
+    .split('/').filter(segment => segment !== '' && segment !== '.').join('/');
+}
+
 function pathGlobsOverlap(a: string, b: string): boolean {
-  if (a === b) return true;
+  // `.`/empty segments canonicalize away before the language comparison —
+  // two claim globs differing only by them cover identical file scopes.
+  const ca = canonClaimPath(a), cb = canonClaimPath(b);
+  if (ca === cb) return true;
   // A wildcard-free side is one concrete subject: a single globMatches decides.
-  if (!/[*?]/.test(a)) return globMatches(b, a);
-  if (!/[*?]/.test(b)) return globMatches(a, b);
-  return globLanguagesIntersect(a, b);
+  if (!/[*?]/.test(ca)) return globMatches(cb, ca);
+  if (!/[*?]/.test(cb)) return globMatches(ca, cb);
+  return globLanguagesIntersect(ca, cb);
 }
 
 /** Pure overlap rule. A repo claim overlaps any path claim in that repo; other kinds never cross. */
