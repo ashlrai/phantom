@@ -461,6 +461,43 @@ describe('capacity model', () => {
     expect(parseNodeCapacityDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
   });
 
+  it('does not publish a footprint from sessions that only ever sat idle', () => {
+    // A lone CLI at a prompt has no children and burns no CPU: its RSS is the
+    // idle baseline, not the cost of a working session that spawns tools and
+    // servers. Publishing it reports thousands of runnable sessions, so the
+    // harness stays unmeasured exactly like a sub-floor reading.
+    const doc = computeNodeCapacity(snap({ sessions: [
+      { harness: 'codex', rootPid: 10, processes: 1, memBytes: 400 * MIB, cpuPercent: 0 },
+      { harness: 'grok', rootPid: 20, processes: 1, memBytes: 150 * MIB, cpuPercent: null },
+    ] }));
+    expect(doc.per_harness_footprint.codex).toBeUndefined();
+    expect(doc.agents_runnable_now.codex).toBeNull();
+    expect(doc.basis.limiting.codex).toBe('unmeasured');
+    expect(doc.basis.notes.some(n => n.includes('idle'))).toBe(true);
+    // cpuPercent null cannot prove idleness (the pgrep+footprint source has
+    // no CPU column), so that harness still publishes its measured cost.
+    expect(doc.per_harness_footprint.grok).toMatchObject({ source: 'measured', mem_bytes_max: 150 * MIB });
+    expect(parseNodeCapacityDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
+  });
+
+  it('keeps a usable learned footprint when every live session is idle', () => {
+    const prev = computeNodeCapacity(snap());
+    const doc = computeNodeCapacity(snap({
+      measuredAtMs: T0 + 60_000,
+      sessions: [{ harness: 'codex', rootPid: 10, processes: 1, memBytes: 400 * MIB, cpuPercent: 0 }],
+    }), prev);
+    expect(doc.per_harness_footprint.codex).toMatchObject({ source: 'learned', mem_bytes_max: 600 * MIB, learned_at: prev.measured_at });
+    expect(doc.agents_runnable_now.codex).toBe(15);
+  });
+
+  it('publishes the working session cost when an idle CLI shares the sample', () => {
+    const doc = computeNodeCapacity(snap({ sessions: [
+      { harness: 'codex', rootPid: 10, processes: 1, memBytes: 32 * 1024, cpuPercent: 0 },
+      { harness: 'codex', rootPid: 11, processes: 4, memBytes: 400 * MIB, cpuPercent: 40 },
+    ] }));
+    expect(doc.per_harness_footprint.codex).toMatchObject({ sessions: 2, mem_bytes_max: 400 * MIB, source: 'measured' });
+  });
+
   it('keeps the real session cost when a stub shares the sample', () => {
     const doc = computeNodeCapacity(snap({ sessions: [
       { harness: 'codex', rootPid: 10, processes: 1, memBytes: 32 * 1024, cpuPercent: 0.1 },

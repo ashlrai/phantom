@@ -128,7 +128,15 @@ function footprints(s: NodeSnapshot, prev: NodeCapacityDoc | null, notes: string
     // learned footprint (or stay unmeasured) instead of publishing a cost
     // that would admit unbounded sessions of this harness.
     const maxMem = sessions.length > 0 && mems.length === sessions.length ? Math.max(...mems) : null;
-    if (maxMem !== null && maxMem >= CAPACITY_POLICY.minSessionFootprintBytes) {
+    // A lone process with no children and no measured CPU is a CLI parked at
+    // a prompt, not a working session: its RSS is the idle baseline, far
+    // below what the same session costs once it spawns tools and servers.
+    // Publishing that baseline as the per-session cost reports thousands of
+    // runnable sessions, so the harness keeps its learned footprint instead.
+    // cpuPercent null cannot prove idleness (the pgrep+footprint source has
+    // no CPU column), so those sessions still publish their measured cost.
+    const idleOnly = sessions.length > 0 && sessions.every(s => s.processes === 1 && s.cpuPercent === 0);
+    if (maxMem !== null && maxMem >= CAPACITY_POLICY.minSessionFootprintBytes && !idleOnly) {
       const cpus = sessions.map(x => x.cpuPercent).filter(finite);
       let cpu: number | null = cpus.length === sessions.length ? cpus.reduce((a, b) => a + b, 0) / cpus.length / 100 : null;
       // Without complete per-process CPU, the harness could account for all
@@ -138,7 +146,11 @@ function footprints(s: NodeSnapshot, prev: NodeCapacityDoc | null, notes: string
         cpu_cores_per_session: cpu, source: 'measured', learned_at: null };
       continue;
     }
-    if (maxMem !== null) notes.push(`${adapter.id}: measured session footprint ${maxMem} bytes is below the ${CAPACITY_POLICY.minSessionFootprintBytes}-byte session minimum; footprint not refreshed`);
+    if (maxMem !== null && maxMem >= CAPACITY_POLICY.minSessionFootprintBytes) {
+      notes.push(`${adapter.id}: every live session is a lone idle process (no children, no CPU); footprint not refreshed`);
+    } else if (maxMem !== null) {
+      notes.push(`${adapter.id}: measured session footprint ${maxMem} bytes is below the ${CAPACITY_POLICY.minSessionFootprintBytes}-byte session minimum; footprint not refreshed`);
+    }
     const old = previousFootprints?.[adapter.id];
     const learnedAt = old?.source === 'learned'
       ? Date.parse(old.learned_at ?? '')
