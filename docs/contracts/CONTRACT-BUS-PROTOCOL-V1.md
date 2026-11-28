@@ -69,7 +69,7 @@ engine (`src/core/fleet/bus-work-claims.ts`, `bus-next-claim.ts`). They add no
 new state:
 
 - `next --to <address|topic> --owner <label> --lease-ms <1..3600000>
-  [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>]
+  [--wait-ms <1..300000>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>]
   [--priority <P0|P1|P2|P3>] [--channel <name>] [--topic <topic>] [--from <agent>]
   [--exclude-from <agent>]`
   claims
@@ -107,6 +107,12 @@ new state:
   scan. Both are observed counts over the filtered scan, so `empty`
   distinguishes a dry well
   (`candidates: 0`) from work that exists but is held, without a second read.
+  `--wait-ms <1..300000>` runs the same bounded wait
+  `agents bus work next --wait-ms` and `fleet bus-wait-claim` share
+  (`src/core/fleet/bus-wait-claim.ts`): the claim scan repeats under every
+  filter above until a receipt becomes acquirable, the deadline answers
+  `{status:'timeout'}`, SIGINT/SIGTERM answer `{status:'cancelled'}`, and a
+  malformed wait is `invalid` before any poll.
 - `claim acquire --id <message-id> --owner <label> --lease-ms <n>` claims one
   message by ID. A live lease answers `conflict` to every other claimant.
 - `claim renew|release|complete --id <message-id> --token <token>` act only
@@ -122,7 +128,7 @@ channel. A crashed claimant's lease expires on its own.
 ## Exit codes
 
 `next` exits 0 for `acquired` or `empty`, 2 for `invalid`, and 1 for any other
-status, including `retryable`, `full` and `unavailable`. Claim verbs exit 0 for
+status, including `retryable`, `full`, `unavailable`, `timeout` and `cancelled`. Claim verbs exit 0 for
 `acquired`, `renewed`, `released` or `completed`, 2 for `invalid`, and 1
 otherwise. Output is one JSON line.
 
