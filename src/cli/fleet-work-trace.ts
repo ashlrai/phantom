@@ -10,6 +10,7 @@ import { scrubSecrets } from '../core/util/scrub.js';
 
 const usage = 'Usage: ashlr fleet work-trace --id <bus-message-id> [--root <absolute>] [--json]\n'
   + 'Prints one line: ID STATE as-of=... source=... missing=... inbox=<found|missing|unavailable> claims=<available|missing|unavailable>.\n'
+  + 'RUNNING includes its evidence source and timestamp; a coordination lease is not worker-process proof.\n'
   + 'BLOCKED includes its dependency; VERIFIED includes pr, head, tests and artifact (null when absent).\n'
   + 'State comes only from the durable stores; an unknown id is RECEIVED with as-of=unknown. Read-only.';
 
@@ -38,12 +39,16 @@ export async function cmdFleetWorkTrace(args: string[]): Promise<number> {
       ? { kind: 'verified' as const, pr: evidence.verified.pr ?? null, head: field(evidence.verified.head),
         tests: field(evidence.verified.tests), artifact: field(evidence.verified.artifact) }
       : undefined;
+  const runningEvidence = classified.state === 'RUNNING' && evidence.runningEvidence
+    ? { source: safe(evidence.runningEvidence.source), at: safe(evidence.runningEvidence.at) }
+    : undefined;
   const result = { id, ...classified, inbox: sources.inbox, claims: sources.claims,
     coordination: sources.coordination, owner: evidence.owner ?? null, claimReceipt: evidence.claimReceipt ?? null,
-    ...(proof ? { result: proof } : {}) };
+    ...(proof ? { result: proof } : {}), ...(runningEvidence ? { runningEvidence } : {}) };
   if (json) console.log(JSON.stringify(result));
   else console.log(safe(`${result.id} ${result.state} as-of=${result.asOf} source=${result.source} `
     + `missing=${result.missing.length ? result.missing.join(',') : 'none'} inbox=${result.inbox} claims=${result.claims} `
-    + `coordination=${result.coordination} owner=${result.owner ?? 'null'} claimReceipt=${result.claimReceipt ?? 'null'}` + (proof ? ` result=${JSON.stringify(proof)}` : '')));
+    + `coordination=${result.coordination} owner=${result.owner ?? 'null'} claimReceipt=${result.claimReceipt ?? 'null'}` + (proof ? ` result=${JSON.stringify(proof)}` : '')
+    + (runningEvidence ? ` runningEvidence=${JSON.stringify(runningEvidence)}` : '')));
   return 0;
 }
