@@ -845,7 +845,9 @@ export function renderUnfed(report: UnfedReport): string[] {
   const lines: string[] = [];
   for (const r of report.resources) {
     const use = r.utilization === null ? 'no target' : `${Math.round(r.utilization * 100)}%`;
-    const state = r.held ? '  HELD' : r.unfed ? `  UNFED: ${r.headroom} free, ${r.waitingElsewhere} rows waiting elsewhere${Object.keys(r.blocked).length ? ` (${topCodes(r.blocked)})` : ''}` : '';
+    const state = r.held ? '  HELD'
+      : r.unfed === null ? `  UNFED?: ${r.headroom} free, elsewhere rows unknown`
+      : r.unfed ? `  UNFED: ${r.headroom} free, ${r.waitingElsewhere} rows waiting elsewhere${Object.keys(r.blocked).length ? ` (${topCodes(r.blocked)})` : ''}` : '';
     lines.push(`${r.lane}  ${r.running}/${r.target} running (${use}), ${r.readyHinted ?? 'unknown'} hinted here${state}`);
   }
   for (const lane of report.resourcePlan ?? []) {
