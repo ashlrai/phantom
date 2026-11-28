@@ -308,4 +308,14 @@ describe('generator yield', () => {
       expect(log.mock.calls.flat().join('\n')).toContain('Generator\tDrafted\tRejected\tLaunched');
     } finally { vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(dir, { recursive: true, force: true }); }
   });
+  it('prints usage for --help and -h instead of rejecting them', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await cmdQueueYield(['--help'])).toBe(0);
+      expect(await cmdQueueYield(['-h'])).toBe(0);
+      expect(log.mock.calls.flat().join('\n')).toContain('Usage: phm queue yield [--since 24h] [--json]');
+      expect(err).not.toHaveBeenCalled();
+    } finally { vi.restoreAllMocks(); }
+  });
 });
