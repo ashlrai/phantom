@@ -126,6 +126,10 @@ The Leader board and Fleet lane console share merge attribution. When a merge
 receipt lacks a lane and attribution falls back to the job's ledger history,
 events with an observation or merge timestamp after report time are excluded.
 
+The Leader board orders its conflict history by observation time and excludes
+samples dated after the current tick. A measured tick replaces any sample at
+the same time. The conflict delta requires an earlier distinct observation.
+
 | Method | Path | Query | Response type / source | Handler | Curl example |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/verse/leader` | none | [LeaderStateV1](../src/core/vision/leader-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader'` |
