@@ -345,6 +345,38 @@ describe('ready.tsv -> node router bridge', () => {
     expect(report.rows[0]).toMatchObject({ offload: false, reasons: ['no_free_slot'] });
   });
 
+  it.each(['worker', 'sibling'])('charges other owners’ reservations and claims on %s', async (executor) => {
+    const job = 'RQ-REVIEW-SHARED';
+    const f = fixture([row(job)], [{ id: 'worker', caps: READ, slots: 1 }]);
+    if (executor === 'worker') expect(f.nodes.leave(f.sessions.get('worker')!)).toBe(true);
+    const session = f.nodes.join(executor, {
+      owners: executor === 'worker' ? ['ashlr', 'other'] : ['other'],
+      caps: executor === 'worker' ? [...READ, 'build'] : ['build'],
+      slots: 1,
+    })!;
+    const capacity = { hostId: 'shared-host', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000_000 };
+    f.nodes.heartbeat(session, { capacity });
+    if (executor === 'sibling') f.nodes.heartbeat(f.sessions.get('worker')!, { capacity });
+    f.nodes.enqueue('other-job', { owner: 'other', requires: ['build'] });
+
+    const scoped = f.nodes.view(['ashlr']);
+    expect(scoped.jobs).toEqual([]);
+    expect(scoped.routes).toEqual([]);
+    expect(scoped.nodes.map(n => n.nodeId)).toEqual(['worker']);
+    const pending = await f.pass();
+    expect(pending.rows[0]).toMatchObject({ offload: false, reasons: ['no_free_slot'] });
+    expect(pending.claimed).toEqual([]);
+
+    const pulled = f.nodes.pull(session)!;
+    expect(pulled.job.id).toBe('other-job');
+    const running = await f.pass();
+    expect(running.rows[0]).toMatchObject({ offload: false, reasons: ['no_free_slot'] });
+    expect(running.claimed).toEqual([]);
+
+    expect(f.nodes.complete(pulled.claim, 'done')).toBe(true);
+    expect((await f.pass()).claimed).toEqual([job]);
+  });
+
   it('uses fresh workers on a host while still charging a stale sibling’s claim', async () => {
     const job = 'RQ-REVIEW-HEARTBEAT';
     const f = fixture([row(job)], [
