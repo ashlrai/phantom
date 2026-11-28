@@ -122,7 +122,8 @@ function isoTime(value: unknown): string | null {
 const safeRelPath = (p: string) =>
   p !== '' && p.length <= MAX_PATH_CHARS && !p.startsWith('/') && !p.includes('\0') && !p.split('/').includes('..');
 
-function repoLabel(value: string | null): string | null {
+/** Scrubbed `owner/name` or null — the only repo spelling that may leave a fleet read. */
+export function repoLabel(value: string | null): string | null {
   if (value === null) return null;
   const clean = scrubSecrets(value);
   return NAME_WITH_OWNER.test(clean) ? clean : null;
@@ -232,10 +233,12 @@ export interface FleetRepoDiscovery {
 }
 
 /**
- * The repos fleet work touches: every running job's `.base` worktree resolved
- * to `owner/name`, plus the workspace checkout. Shared by this module's
- * open-PR collision scan and outside-pr-outcomes.ts's merged-PR outcome fold
- * so both agree on which repos count as fleet surface.
+ * The repos fleet work touches right now: every running job's `.base`
+ * worktree resolved to `owner/name`, plus the workspace checkout. Shared
+ * by this module's open-PR collision scan and outside-pr-outcomes.ts's
+ * merged-PR outcome fold as the ACTIVE surface — the outcome fold adds
+ * the standing enrolled checkouts on top, since community merges land on
+ * enrolled repos whether or not a job is running.
  */
 export async function discoverFleetRepos(opts: FleetRepoDiscoveryOptions = {}): Promise<FleetRepoDiscovery> {
   const home = opts.homeDir ?? homedir();

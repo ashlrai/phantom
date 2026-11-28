@@ -347,6 +347,112 @@ describe('listOutsidePrOutcomes', () => {
   });
 });
 
+describe('listOutsidePrOutcomes enrolled surface', () => {
+  /** gh that records each `pr list` cwd and answers every repo with the same merged rows. */
+  function recordingGh(rows: unknown = []): { gh: NonNullable<ListOutsidePrOutcomesOptions['gh']>; listCwds: string[] } {
+    const listCwds: string[] = [];
+    const gh: NonNullable<ListOutsidePrOutcomesOptions['gh']> = async (cwd, args) => {
+      const key = args.join(' ');
+      if (key === '--version') return 'gh version 2.99.0';
+      if (key.startsWith('pr list')) { listCwds.push(cwd); return JSON.stringify(rows); }
+      return null;
+    };
+    return { gh, listCwds };
+  }
+
+  it('scans enrolled checkouts beside the active set, using each enrolled path as the gh cwd', async () => {
+    const { gh, listCwds } = recordingGh(MERGED_ROWS);
+    const result = await listOutsidePrOutcomes(await fixtureOpts({
+      gh,
+      enrolledRepos: () => ({ repos: ['/enrolled/alpha', '/enrolled/beta'], degraded: false }),
+      repoIdentity: (path) => path === '/enrolled/alpha' ? 'acme/alpha' : path === '/enrolled/beta' ? 'acme/beta' : 'acme/widgets',
+    }));
+    // workspace scratch resolves to acme/widgets; the two enrolled repos join the scan.
+    expect(result.repos.map((r) => r.repo).sort()).toEqual(['acme/alpha', 'acme/beta', 'acme/widgets']);
+    expect(result.sourceState).toBe('healthy');
+    expect(listCwds.sort()).toEqual(['/enrolled/alpha', '/enrolled/beta', scratch].sort());
+  });
+
+  it('does not scan an enrolled repo the active set already discovered', async () => {
+    const { gh, listCwds } = recordingGh([]);
+    const result = await listOutsidePrOutcomes(await fixtureOpts({
+      gh,
+      // Both enrolled paths resolve to the workspace repo — deduped, never double-scanned.
+      enrolledRepos: () => ({ repos: ['/enrolled/one', '/enrolled/two'], degraded: false }),
+      repoIdentity: () => 'acme/widgets',
+    }));
+    expect(result.repos.map((r) => r.repo)).toEqual(['acme/widgets']);
+    expect(listCwds).toEqual([scratch]);
+  });
+
+  it('skips enrolled paths that cannot prove an owner/name', async () => {
+    const { gh } = recordingGh([]);
+    const result = await listOutsidePrOutcomes(await fixtureOpts({
+      gh,
+      enrolledRepos: () => ({ repos: ['/bad/path', '/enrolled/ok', '', 42 as unknown as string], degraded: false }),
+      repoIdentity: (path) => path === '/enrolled/ok' ? 'acme/ok' : path === '/bad/path' ? 'not a repo!!' : 'acme/widgets',
+    }));
+    expect(result.repos.map((r) => r.repo).sort()).toEqual(['acme/ok', 'acme/widgets']);
+  });
+
+  it('rotates the enrolled window across hour buckets so every enrolled repo is covered', async () => {
+    // 15 enrolled repos, 9 free slots (10 budget - 1 workspace repo) → 2 chunks of 9+6.
+    const paths = Array.from({ length: 15 }, (_, i) => `/enrolled/r${i}`);
+    const resultAt = async (iso: string) => listOutsidePrOutcomes(await fixtureOpts({
+      gh: recordingGh([]).gh,
+      enrolledRepos: () => ({ repos: paths, degraded: false }),
+      repoIdentity: (path) => path.startsWith('/enrolled/') ? `acme/${path.slice('/enrolled/'.length)}` : 'acme/widgets',
+      now: () => new Date(iso),
+    }));
+    const hour = 3_600_000;
+    const t0 = Date.parse(NOW.toISOString());
+    const first = await resultAt(new Date(t0).toISOString());
+    const second = await resultAt(new Date(t0 + hour).toISOString());
+    const firstRepos = new Set(first.repos.map((r) => r.repo));
+    const secondRepos = new Set(second.repos.map((r) => r.repo));
+    expect(firstRepos.has('acme/widgets')).toBe(true);
+    expect(secondRepos.has('acme/widgets')).toBe(true);
+    // Disjoint enrolled windows sized 9+6 in whichever order the hour
+    // buckets select — no enrolled repo repeats across the two chunks.
+    const enrolledFirst = [...firstRepos].filter((r) => r !== 'acme/widgets');
+    const enrolledSecond = [...secondRepos].filter((r) => r !== 'acme/widgets');
+    expect([enrolledFirst.length, enrolledSecond.length].sort((a, b) => a - b)).toEqual([6, 9]);
+    expect(enrolledFirst.some((r) => enrolledSecond.includes(r))).toBe(false);
+    // Union covers the whole enrolled surface.
+    expect(new Set([...enrolledFirst, ...enrolledSecond]).size).toBe(15);
+    // Same hour rescans the same window — deterministic, not random.
+    const again = await resultAt(new Date(t0).toISOString());
+    expect(again.repos.map((r) => r.repo).sort()).toEqual(first.repos.map((r) => r.repo).sort());
+  });
+
+  it('marks the pass degraded when the enrolled surface cannot be fully read', async () => {
+    const result = await listOutsidePrOutcomes(await fixtureOpts({
+      gh: recordingGh([]).gh,
+      enrolledRepos: () => ({ repos: [], degraded: true }),
+    }));
+    expect(result.sourceState).toBe('degraded');
+    expect(result.repos.map((r) => r.repo)).toEqual(['acme/widgets']);
+  });
+
+  it('gives discovered repos priority: a full active set leaves no enrolled slots', async () => {
+    // Ten job repos fill the whole scan budget — enrolled repos wait for a pass with free slots.
+    const jobs = Array.from({ length: 10 }, (_, i) => `RQ-JOB-${i}`);
+    const result = await listOutsidePrOutcomes(await fixtureOpts({
+      gh: recordingGh([]).gh,
+      runningJobs: () => jobs,
+      jobWorktree: async (job) => `/wt/${job}`,
+      enrolledRepos: () => ({ repos: ['/enrolled/alpha'], degraded: false }),
+      repoIdentity: (path) => {
+        if (path.startsWith('/wt/')) return `acme/${path.slice('/wt/'.length).toLowerCase()}`;
+        if (path === '/enrolled/alpha') return 'acme/alpha';
+        return 'acme/widgets';
+      },
+    }));
+    expect(result.repos).toHaveLength(10);
+    expect(result.repos.some((r) => r.repo === 'acme/alpha')).toBe(false);
+  });
+});
+
 describe('outsidePrAgentAttribution', () => {
   it('matches known branch namespaces case-insensitively and requires the slash', () => {
     expect(outsidePrAgentAttribution('devin/1700000000-x', 'ext-dev')).toBe('devin');

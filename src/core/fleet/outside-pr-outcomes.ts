@@ -44,13 +44,16 @@
  * dropped, not defaulted.
  */
 import { credentialExecFile as execFile } from '../integrations/secrets.js';
+import { readEnrollmentRegistry } from '../sandbox/policy.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { prKey } from '../improve/lesson-trial.js';
 import { readRevertOutcomeRecords, standingRevertKeys } from '../improve/revert-ledger.js';
+import { repoIdentityOfPath } from './repo-identity.js';
 import {
   discoverFleetRepos,
   FLEET_BOT_LOGINS,
   FLEET_BRANCH_PREFIX,
+  repoLabel,
   type FleetRepoDiscoveryOptions,
   type OutsidePrsGhRunner,
 } from './outside-prs.js';
@@ -61,6 +64,10 @@ const MAX_JSON_CHARS = 512 * 1024;
 const MAX_TEXT_CHARS = 256;
 const MAX_MERGED_PER_REPO = 200;
 const MAX_REPOS = 10;
+/** Enrolled checkout paths resolved per pass — the registry is already byte-bounded; this caps identity work. */
+const ENROLLED_SCAN_MAX_PATHS = 256;
+/** Rotation bucket: one hour, matching the cloud scheduler's hourly improve cadence. */
+const ENROLLED_ROTATION_MS = 3_600_000;
 const DEFAULT_WINDOW_DAYS = 30;
 const MAX_WINDOW_DAYS = 365;
 const MERGED_PR_FIELDS = 'number,title,author,mergedAt,headRefName,createdAt,latestReviews,reviewDecision,additions,deletions,changedFiles';
@@ -272,6 +279,14 @@ export interface OutsidePrOutcomesV1 {
   agents: OutsidePrAgentOutcomeV1[];
 }
 
+/** The standing enrolled checkout surface — repos fleet work is chartered for, busy or idle. */
+export interface EnrolledRepoSurface {
+  /** Enrolled checkout paths in registry order (lensed); [] when none are enrolled. */
+  repos: readonly string[];
+  /** True when the enrollment registry could not be fully read — the standing surface is unknown. */
+  degraded: boolean;
+}
+
 export interface ListOutsidePrOutcomesOptions extends FleetRepoDiscoveryOptions {
   gh?: OutsidePrsGhRunner;
   /** Outcome window in days (default 30, clamped to 1..365). */
@@ -280,6 +295,13 @@ export interface ListOutsidePrOutcomesOptions extends FleetRepoDiscoveryOptions 
   limit?: number;
   /** Revert-outcomes ledger path. Default: the improve/revert-outcomes.jsonl under ashlr home. */
   revertLedgerPath?: string;
+  /**
+   * Standing enrolled checkout surface scanned beside the active
+   * job/workspace set. Default: the enrollment registry
+   * (sandbox/policy.ts readEnrollmentRegistry). An injected source is
+   * taken as recorded — `degraded` still marks the pass degraded.
+   */
+  enrolledRepos?: () => EnrolledRepoSurface;
   now?: () => Date;
 }
 
@@ -421,11 +443,72 @@ async function mapConcurrent<T, R>(items: readonly T[], limit: number, fn: (item
   return out;
 }
 
+/** The live enrolled surface: the registry's lensed checkout paths, or degraded when unreadable. */
+function defaultEnrolledRepoSurface(): EnrolledRepoSurface {
+  try {
+    const snapshot = readEnrollmentRegistry();
+    if (snapshot.state !== 'ready') return { repos: [], degraded: true };
+    return { repos: snapshot.repos, degraded: false };
+  } catch {
+    return { repos: [], degraded: true };
+  }
+}
+
+/**
+ * Enrolled checkouts → `owner/name` scan entries, deduped against the
+ * discovered set (an active job/worktree checkout keeps its slot) and
+ * within the surface itself — first path per repo wins. A path that
+ * cannot prove its repo is skipped, never guessed; only the scrubbed
+ * `owner/name` label leaves, same as every other fleet read.
+ */
+function enrolledRepoCwds(
+  surface: EnrolledRepoSurface,
+  discovered: ReadonlyMap<string, string>,
+  opts: ListOutsidePrOutcomesOptions,
+): Array<readonly [string, string]> {
+  const identityOf = (path: string): string | null => {
+    try { return repoLabel((opts.repoIdentity ?? repoIdentityOfPath)(path)); } catch { return null; }
+  };
+  const out: Array<readonly [string, string]> = [];
+  const seen = new Set(discovered.keys());
+  const paths = Array.isArray(surface.repos) ? surface.repos : [];
+  for (const path of paths.slice(0, ENROLLED_SCAN_MAX_PATHS)) {
+    if (typeof path !== 'string' || path === '') continue;
+    const repo = identityOf(path);
+    if (repo === null || seen.has(repo)) continue;
+    seen.add(repo);
+    out.push([repo, path]);
+  }
+  return out;
+}
+
+/**
+ * The enrolled window for this pass: when the extras exceed `slots`,
+ * they split into `ceil(len/slots)` disjoint chunks and the pass scans
+ * the chunk its hour bucket selects — every enrolled repo is covered
+ * once per chunk cycle instead of the first `slots` repos forever. The
+ * last chunk may be short; deterministic in `now`, so a rerun in the
+ * same hour rescans the same window.
+ */
+function enrolledRotationWindow(
+  entries: ReadonlyArray<readonly [string, string]>,
+  slots: number,
+  now: Date,
+): Array<readonly [string, string]> {
+  if (entries.length <= slots) return [...entries];
+  const chunks = Math.ceil(entries.length / slots);
+  const chunk = Math.floor(now.getTime() / ENROLLED_ROTATION_MS) % chunks;
+  return entries.slice(chunk * slots, chunk * slots + slots);
+}
+
 /**
  * Merged outside PRs on the repos fleet work touches (the same repo set
- * outside-prs.ts scans), each joined to the standing revert set. Never
- * throws and emits no path, URL, token or hostname — repos leave as
- * `owner/name` only.
+ * outside-prs.ts scans) plus the standing enrolled surface — community
+ * merges land on enrolled repos whether or not a job is running, so the
+ * outcome fold scans enrolled checkouts in the budget the active set
+ * leaves, rotated across passes — each joined to the standing revert
+ * set. Never throws and emits no path, URL, token or hostname — repos
+ * leave as `owner/name` only.
  */
 async function computeOutsidePrOutcomes(opts: ListOutsidePrOutcomesOptions): Promise<OutsidePrOutcomesV1> {
   const gh = opts.gh ?? realGh;
@@ -460,9 +543,33 @@ async function computeOutsidePrOutcomes(opts: ListOutsidePrOutcomesOptions): Pro
   });
   if (discovery.degraded) degrade();
 
+  // The standing enrolled surface: outside merges land on enrolled repos
+  // whether or not a job is running, so the fold scans enrolled checkouts
+  // in the budget the active set leaves — rotated across passes so every
+  // enrolled repo is covered over time, never just the first N. Discovered
+  // repos keep their slots; an enrolled path already discovered is not
+  // scanned twice.
+  let enrolledSurface: EnrolledRepoSurface = { repos: [], degraded: false };
+  try {
+    const read = (opts.enrolledRepos ?? defaultEnrolledRepoSurface)();
+    enrolledSurface = read !== null && typeof read === 'object'
+      ? { repos: Array.isArray(read.repos) ? read.repos : [], degraded: read.degraded === true }
+      : { repos: [], degraded: true };
+  } catch {
+    enrolledSurface = { repos: [], degraded: true };
+  }
+  if (enrolledSurface.degraded) degrade();
+  const discoveredEntries = [...discovery.repoCwds.entries()].slice(0, MAX_REPOS);
+  const enrolledSlots = MAX_REPOS - discoveredEntries.length;
+  const enrolledEntries = enrolledSlots > 0
+    ? enrolledRotationWindow(enrolledRepoCwds(enrolledSurface, discovery.repoCwds, opts), enrolledSlots, generatedAt)
+    : [];
+  const scanEntries: Array<readonly [string, string]> = [...discoveredEntries, ...enrolledEntries];
+  const scanCwdByRepo = new Map(scanEntries);
+
   const authorCounts = new Map<string | null, { prs: number; reverted: number }>();
   const agentCounts = new Map<string | null, { prs: number; reverted: number }>();
-  result.repos = await mapConcurrent([...discovery.repoCwds.entries()].slice(0, MAX_REPOS), 4, async ([repo, cwd]) => {
+  result.repos = await mapConcurrent(scanEntries, 4, async ([repo, cwd]) => {
     const listed = safeJson(await gh(cwd, ['pr', 'list', '--state', 'merged', '--limit', String(limit), '--json', MERGED_PR_FIELDS]));
     if (!Array.isArray(listed)) return { repo, state: 'degraded' as const, listed: 0, hitLimit: false, prs: [] };
     const rows = parseMergedList(listed);
@@ -498,7 +605,7 @@ async function computeOutsidePrOutcomes(opts: ListOutsidePrOutcomesOptions): Pro
   // additive, never a reason to mark the repo read unhealthy.
   const ciTargets: Array<{ cwd: string; repo: string; pr: OutsidePrOutcomeV1 }> = [];
   for (const repoRow of result.repos) {
-    const cwd = discovery.repoCwds.get(repoRow.repo);
+    const cwd = scanCwdByRepo.get(repoRow.repo);
     if (cwd === undefined) continue;
     for (const pr of repoRow.prs) ciTargets.push({ cwd, repo: repoRow.repo, pr });
   }
