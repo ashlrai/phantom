@@ -248,3 +248,8 @@ not collide with native gateway tools, and placeholders must be declared.
 `createdBy` is a caller-declared label, not an authenticated identity.
 `phm connectors tool list|show|invoke|revoke|remove` manage them; a revoked
 entry is neither discoverable nor invocable. The registry grants no permissions.
+
+Use `phm inventory --json` or the desktop Inventory pane for the aggregate view.
+Lane declarations report configuration, not permission or installation. A local
+connector executable may be found without starting it; named credentials are not
+verified here, and registry connector calls remain disabled.
