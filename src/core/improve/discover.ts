@@ -2201,6 +2201,7 @@ import { jobCostBacklogItems } from './job-cost-backlog.js';
 import { workedLedgerBacklogItems } from './worked-ledger-backlog.js';
 import { bottleneckBacklogItems } from './bottleneck-backlog.js';
 import { multimodelOutcomesBacklogItems } from './multimodel-outcomes-backlog.js';
+import { prDeltaBacklogItems } from './pr-delta-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4617,6 +4618,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // journal describes this install's interactive seats and carries
   // no repo column.
   items.push(...await multimodelOutcomesBacklogItems({ repo }));
+
+  // PR-leverage delta journal (<runsDir>/metrics/pr-delta.jsonl): the
+  // fleet.delta.v1 rows `phm fleet pr-leverage --record-delta` appends
+  // per changed (day, repos) — prsMerged, verifiedLines, unmeasuredPrs
+  // and jobsCompleted for each recorded day (prDeltaBacklogItems
+  // below). Nothing schedules --record-delta, so the journal only
+  // exists where someone ran it, and until now its only reader was the
+  // writer's own dedupe scan — so merges the delta kept reporting as
+  // unverifiable (no clean checkState or no diff stats in the snapshot)
+  // never became work. Cells emit only at the recurring bars of
+  // unmeasuredPrs>0 across three distinct UTC days totaling four or
+  // more unverified merges; jobsCompleted is reported as context since
+  // outside merges legitimately record no fleet job, truncated tails
+  // are stated as lower bounds, and only the fleet's own repository
+  // inherits the item since the delta describes this install's merge
+  // pipeline.
+  items.push(...await prDeltaBacklogItems({ repo }));
   return { items, errors };
 }
 
