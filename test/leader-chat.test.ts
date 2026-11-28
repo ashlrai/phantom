@@ -129,6 +129,31 @@ describe('phm leader thread / say', () => {
     vi.unstubAllEnvs();
   });
 
+  it('thread --legacy --frame prints the chat as one bounded untrusted block', async () => {
+    vi.stubEnv('ASHLR_RUNS_DIR', runsDir);
+    write(INBOX.network + INBOX.malformed, OUTBOX, []);
+    const io = capture();
+    // --text prints the bare frame; JSON default carries it as `framed`.
+    expect(await runLeaderCli(['thread', '--legacy', '--text', '--frame', 'claude'])).toBe(0);
+    const framed = io.out.join('\n');
+    expect(framed.startsWith('BEGIN UNTRUSTED OWNER THREAD')).toBe(true);
+    expect(framed).toContain('Ship the billing fix');
+    expect(framed).toContain('billing fix is merging now');
+    expect(framed).toContain('(1 unreadable inbox block skipped)');
+    expect(framed).toContain('END UNTRUSTED OWNER THREAD');
+    io.out.length = 0;
+    expect(await runLeaderCli(['thread', '--legacy', '--frame', 'devin'])).toBe(0);
+    const json = JSON.parse(io.out.join('\n')) as { framed?: string; messages: unknown[] };
+    expect(json.framed).toContain('BEGIN UNTRUSTED OWNER THREAD');
+    expect(json.framed).toContain('END UNTRUSTED OWNER THREAD');
+    expect(json.messages).toHaveLength(2);
+    // A missing or unknown cli, and the live --follow stream, are usage errors.
+    expect(await runLeaderCli(['thread', '--legacy', '--frame', 'gemini'])).toBe(2);
+    expect(await runLeaderCli(['thread', '--legacy', '--frame'])).toBe(2);
+    expect(await runLeaderCli(['thread', '--follow', '--frame', 'claude'])).toBe(2);
+    vi.unstubAllEnvs();
+  });
+
   it('say writes through the verified inbox writer and returns the id', async () => {
     compose.mockResolvedValue({ ok: true, at: '2026-11-17T15:00:00.000Z', id: REQ });
     const io = capture();

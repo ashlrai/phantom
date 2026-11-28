@@ -91,7 +91,12 @@ store passed off as empty — and the shared 32 KiB clip bound states the
 cut. The archive
 read takes the same flag: `phm fleet owner-history --frame <cli>` frames
 the archived page under the same markers, its `archives:`/`skipped:` tail
-inside the block.
+inside the block. The rest of the owner conversation reads take it too:
+`phm mason thread --frame <cli>` frames the merged owner thread,
+`phm leader thread --frame <cli>` (and its `--legacy` chat) frames the
+Leader's merged inbox/outbox/plan-log view, and `phm leader replies
+--frame <cli>` frames the plan-log replies — each under the same markers
+with the same `framed` JSON field.
 
 The thread read joins the per-channel delivery receipts written at send time:
 `receipts` maps each outbound message id to `{ channel: { state, reason? } }`

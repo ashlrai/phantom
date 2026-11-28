@@ -4,6 +4,8 @@
  * transport and sends nothing. Logic lives in core/comms/mason-thread.ts. */
 import { join } from 'node:path';
 import { rejectUnknownOptions } from './args.js';
+import { BUS_CLIS, type BusCli } from '../core/agents/bus-identity.js';
+import { frameOwnerThread } from '../core/agents/bus-cli-adapters.js';
 import { ashlrHome } from '../core/cloud/store.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings } from '../core/comms/owner-channel.js';
 import { MASON_THREAD_CHANNEL, masonThreadText, readMasonThread, type MasonThreadOptions } from '../core/comms/mason-thread.js';
@@ -11,13 +13,13 @@ import { OWNER_THREAD_CONTAINS_MAX } from '../core/comms/owner-thread.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { cmdFleetMasonDigest, type MasonDigestCliDeps } from './fleet-mason-digest.js';
 
-const USAGE = 'usage: phm mason thread [--since <15m|2h|1d>] [--before <15m|2h|1d>] [--channel <name>] [--direction <inbound|outbound>] [--contains <text>] [--json]\n       phm mason digest [--since 1h] [--post] [--json]';
+const USAGE = 'usage: phm mason thread [--since <15m|2h|1d>] [--before <15m|2h|1d>] [--channel <name>] [--direction <inbound|outbound>] [--contains <text>] [--frame <cli>] [--json]\n       phm mason digest [--since 1h] [--post] [--json]';
 const DEFAULT_SINCE = '1d';
 
 export async function cmdMason(args: string[], overrides: Partial<MasonThreadOptions> = {}, digestDeps: MasonDigestCliDeps = {}): Promise<number> {
   if (args[0] === 'digest') return cmdFleetMasonDigest(args.slice(1), { runsDir: overrides.runsDir, ...digestDeps });
   if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
-  const bad = args[0] !== 'thread' ? { message: `unknown mason command: ${args[0] ?? '(none)'}` } : rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--since', '--before', '--channel', '--direction', '--contains'] });
+  const bad = args[0] !== 'thread' ? { message: `unknown mason command: ${args[0] ?? '(none)'}` } : rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--since', '--before', '--channel', '--direction', '--contains', '--frame'] });
   if (bad) { console.error(bad.message); console.error(USAGE); return 2; }
   const at = args.indexOf('--since');
   const beforeAt = args.indexOf('--before');
@@ -55,6 +57,17 @@ export async function cmdMason(args: string[], overrides: Partial<MasonThreadOpt
     }
     contains = raw;
   }
+  // The same --frame rule `phm comms thread` applies: one of the session
+  // CLIs; a missing or unknown value is a usage error, and the first
+  // occurrence wins like every other flag on this read.
+  const frameValue = args.includes('--frame') ? args[args.indexOf('--frame') + 1] : undefined;
+  const frame = frameValue !== undefined && (BUS_CLIS as readonly string[]).includes(frameValue)
+    ? frameValue as BusCli : undefined;
+  if (args.includes('--frame') && frame === undefined) {
+    console.error('--frame takes one of: claude, codex, devin, cursor, grok.');
+    console.error(USAGE);
+    return 2;
+  }
   const runsDir = overrides.runsDir ?? fixedOwnerRunsDir();
   const thread = await readMasonThread({
     runsDir, busRoot: join(ashlrHome(), 'fleet'), sinceMs, now,
@@ -65,6 +78,15 @@ export async function cmdMason(args: string[], overrides: Partial<MasonThreadOpt
     owner: { runsDir, settings: loadOwnerThreadSettings(fixedOwnerConfigDir()) },
     ...overrides,
   });
+  // --frame prints the same lines as one bounded block marked untrusted —
+  // every line is channel-relayed text — with --json carrying it as
+  // `framed` beside the full thread, the same discipline `phm comms
+  // thread` applies under the shared OWNER THREAD markers.
+  if (frame !== undefined) {
+    const framed = frameOwnerThread(frame, masonThreadText(thread).split('\n'));
+    console.log(args.includes('--json') ? JSON.stringify({ ...thread, framed }) : framed);
+    return 0;
+  }
   console.log(args.includes('--json') ? JSON.stringify(thread) : masonThreadText(thread));
   return 0;
 }
