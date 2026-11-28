@@ -94,24 +94,10 @@ function frontierEngines(cfg: AshlrConfig): EngineId[] {
       : [];
 
     // Always include claude + codex as the canonical frontier engines; add
-    // any other allowed backends that aren't purely local/builtin.
+    // any other explicitly configured allowed backends.
     const frontier = new Set<EngineId>(['claude', 'codex']);
-    for (const e of allowed) {
-      // Include explicitly configured allowed backends (the router already
-      // gates non-frontier ones; we surface whatever the user has enabled).
-      frontier.add(e);
-    }
-
-    // Filter down to only the engines that appear in allowed (when it's set),
-    // but always keep claude + codex as they are the primary frontier engines.
-    if (allowed.length > 0) {
-      return Array.from(frontier).filter(
-        (e) => e === 'claude' || e === 'codex' || allowed.includes(e),
-      );
-    }
-
-    // No allowedBackends configured — default to the two canonical ones.
-    return ['claude', 'codex'];
+    for (const e of allowed) frontier.add(e);
+    return Array.from(frontier);
   } catch {
     return ['claude', 'codex'];
   }
@@ -175,15 +161,6 @@ function readSubscriptionWindow(engine: EngineId, cfg: AshlrConfig): {
     return subscriptionUsage(engine, { cfg });
   } catch {
     return null;
-  }
-}
-
-/** Map engine id to the model-prefix used in observability rollup keys. */
-function engineToModelPrefix(engine: EngineId): string {
-  switch (engine) {
-    case 'claude': return 'claude';
-    case 'codex':  return 'codex';
-    default:       return String(engine);
   }
 }
 
@@ -316,14 +293,11 @@ function buildEngineUsage(engine: EngineId, cfg: AshlrConfig, sources: UsageSour
  *  - ~/.config/codex/sessions/*.jsonl      (subscription rate-limits, synchronous)
  *  - ~/.claude/projects/{project}/*.jsonl + runs  (observability rollup, synchronous)
  */
-export async function getFrontierUsage(cfg: AshlrConfig, opts: FrontierUsageAsyncOptions = {}): Promise<FrontierUsage> {
+function collectFrontierUsage(cfg: AshlrConfig, sources: UsageSources): FrontierUsage {
   const generatedAt = new Date().toISOString();
   const engines: FrontierEngineUsage[] = [];
 
-  const engineIds = frontierEngines(cfg);
-  const sources = await asyncSources(cfg, opts);
-
-  for (const engine of engineIds) {
+  for (const engine of frontierEngines(cfg)) {
     try {
       engines.push(buildEngineUsage(engine, cfg, sources));
     } catch {
@@ -337,6 +311,10 @@ export async function getFrontierUsage(cfg: AshlrConfig, opts: FrontierUsageAsyn
   }
 
   return { generatedAt, engines };
+}
+
+export async function getFrontierUsage(cfg: AshlrConfig, opts: FrontierUsageAsyncOptions = {}): Promise<FrontierUsage> {
+  return collectFrontierUsage(cfg, await asyncSources(cfg, opts));
 }
 
 export interface FrontierUsageAsyncOptions {
@@ -408,7 +386,7 @@ function totalsFor(
   engine: EngineId,
   byModel: ReadonlyArray<{ model: string; tokensIn: number; tokensOut: number; estCostUsd: number }>,
 ): { tokensToday: number; costToday: number } {
-  const prefix = engineToModelPrefix(engine).toLowerCase();
+  const prefix = String(engine).toLowerCase();
   let tokensToday = 0;
   let costToday = 0;
   for (const m of byModel) {
@@ -431,21 +409,5 @@ function totalsFor(
  * mock at this boundary without touching the full cfg loading chain.
  */
 export function getFrontierUsageSync(cfg: AshlrConfig): FrontierUsage {
-  const generatedAt = new Date().toISOString();
-  const engines: FrontierEngineUsage[] = [];
-  const engineIds = frontierEngines(cfg);
-
-  for (const engine of engineIds) {
-    try {
-      engines.push(buildEngineUsage(engine, cfg));
-    } catch {
-      engines.push({
-        engine,
-        callsToday: 0,
-        subscriptionWindow: { state: 'unknown', usedPct: 0 },
-      });
-    }
-  }
-
-  return { generatedAt, engines };
+  return collectFrontierUsage(cfg, syncSources(cfg));
 }

@@ -39,6 +39,7 @@ import { fetchClaudeUsageApi, type ClaudeApiUsageResult } from '../fabric/usage-
 import { readZaiUsage } from './zai-usage.js';
 import { readClaudeApiGrantViews } from '../resources/claude-api-grant.js';
 import type { ClaudeApiGrantReadView } from '../resources/claude-api-grant-types.js';
+import { isUsageRecord, nonNegativeUsageNumber } from './runway.js';
 import {
   USAGE_RESOURCES,
   type UsageResourceId,
@@ -51,17 +52,7 @@ import {
   type UsageResourceUnit,
 } from './resource-usage-types.js';
 
-export {
-  USAGE_RESOURCES,
-  type UsageResourceId,
-  type UsageResourceReader,
-  type UsageResourceReading,
-  type UsageResourceRow,
-  type UsageResourceRowReason,
-  type UsageResourceRowState,
-  type UsageResourcesSnapshot,
-  type UsageResourceUnit,
-};
+export { type UsageResourceId, type UsageResourcesSnapshot };
 
 // ---------------------------------------------------------------------------
 // Reading validation — the boundary a reader's return must cross
@@ -71,7 +62,7 @@ const UNITS: readonly UsageResourceUnit[] = ['percent', 'acu', 'usd', 'points'];
 const SOURCE_MAX = 128;
 
 function finiteAmount(value: unknown): value is number | null {
-  return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+  return value === null || nonNegativeUsageNumber(value) !== null;
 }
 
 function isoInstant(value: unknown): value is string | null {
@@ -90,14 +81,13 @@ function sourceLabel(value: unknown): value is string {
 
 /** Exactly the contract fields, allowlisted; anything else fails closed. */
 export function validUsageReading(value: unknown): value is UsageResourceReading {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const row = value as Record<string, unknown>;
-  return Object.keys(row).every((key) =>
+  if (!isUsageRecord(value)) return false;
+  return Object.keys(value).every((key) =>
     ['used', 'limit', 'unit', 'resetsAt', 'source', 'asOf'].includes(key)) &&
-    finiteAmount(row['used']) && finiteAmount(row['limit']) &&
-    typeof row['unit'] === 'string' && UNITS.includes(row['unit'] as UsageResourceUnit) &&
-    isoInstant(row['resetsAt']) && isoInstant(row['asOf']) && typeof row['asOf'] === 'string' &&
-    sourceLabel(row['source']);
+    finiteAmount(value['used']) && finiteAmount(value['limit']) &&
+    typeof value['unit'] === 'string' && UNITS.includes(value['unit'] as UsageResourceUnit) &&
+    isoInstant(value['resetsAt']) && isoInstant(value['asOf']) && typeof value['asOf'] === 'string' &&
+    sourceLabel(value['source']);
 }
 
 // ---------------------------------------------------------------------------

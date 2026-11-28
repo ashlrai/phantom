@@ -16,11 +16,14 @@ import { readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { burnRate, type BurnSample } from './burn-rate.js';
+import {
+  USAGE_MAX_USED_PCT, isFiniteUsageNumber, isUsageRecord, parseUsageTimestampMs, roundUsage,
+} from './runway.js';
 import { readDispatchStatus } from './spend.js';
 import { localTimestamp, readSource } from '../fleet/runs-parked-queue.js';
 
-export const BURN_WHO_SCHEMA = 'usage.burn.v1' as const;
-export const BURN_POOL = 'claude';
+const BURN_WHO_SCHEMA = 'usage.burn.v1' as const;
+const BURN_POOL = 'claude' as const;
 const HOUR_MS = 3_600_000;
 const WEEK_HOURS = 168;
 const SHARE_WINDOW_HOURS = 6;
@@ -29,8 +32,8 @@ const LOOP_LOG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}\.log$/;
 
 export interface BurnConsumer { name: string; kind: 'dispatchd' | 'loop' | 'leader'; starts: number; startsPerHour: number; sharePercent: number }
 export interface BurnWho {
-  schema: typeof BURN_WHO_SCHEMA; v: 1;
-  pool: typeof BURN_POOL;
+  schema: 'usage.burn.v1'; v: 1;
+  pool: 'claude';
   /** One plain sentence: the same text on the CLI and the Leader card. */
   sentence: string;
   usedPercent: number | null;
@@ -69,9 +72,9 @@ export interface BurnWhoInputs {
   timeZone?: string;
 }
 
-const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
-const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-const round1 = (n: number): number => Math.round(n * 10) / 10;
+const object = isUsageRecord;
+const num = isFiniteUsageNumber;
+const round1 = (n: number): number => roundUsage(n, 1);
 
 function stamp(v: unknown): number {
   if (typeof v === 'string') return Date.parse(v);
@@ -161,9 +164,9 @@ export function whoIsBurning(input: BurnWhoInputs): BurnWho {
   const lane = object(budget[BURN_POOL]) ? budget[BURN_POOL] as Record<string, unknown> : {};
   const pace = object(lane.use_it_all) && lane.use_it_all.known === true && lane.use_it_all.stale === false ? lane.use_it_all : {};
 
-  const statusUsed = num(pace.used_pct) && pace.used_pct >= 0 && pace.used_pct <= 1000 ? pace.used_pct : null;
+  const statusUsed = num(pace.used_pct) && pace.used_pct >= 0 && pace.used_pct <= USAGE_MAX_USED_PCT ? pace.used_pct : null;
   const used = newest ? newest.used_pct : statusUsed;
-  const resetMs = typeof pace.reset_at === 'string' ? Date.parse(pace.reset_at) : num(pace.reset_at) ? pace.reset_at * 1000 : NaN;
+  const resetMs = parseUsageTimestampMs(pace.reset_at);
   const hoursToReset = Number.isFinite(resetMs) && resetMs > now ? (resetMs - now) / HOUR_MS : num(pace.hours_to_reset) && pace.hours_to_reset > 0 ? pace.hours_to_reset : null;
 
   const pace1h = burnRate(samples.filter(s => Date.parse(s.at) >= now - HOUR_MS), now).points_per_hour;

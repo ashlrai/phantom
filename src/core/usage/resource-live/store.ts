@@ -10,6 +10,9 @@ import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../../fleet/local-store-lock.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
+import { hasCodexPathSegment } from '../live/browser.js';
+import { asUsageRecord, isUsageRecord } from '../runway.js';
+import { canonicalIsoTimestampSchema } from '../sensor-reading.js';
 import { EMPTY_RESET_STATE } from './reset-rule.js';
 import { antigravityExecutionContext, antigravityGroupsSchema } from './antigravity-quota.js';
 import {
@@ -29,19 +32,16 @@ const fileSchema = z.object({
 });
 
 export function resourceLiveStateDir(runsDir: string): string {
-  if (!isAbsolute(runsDir) || /(?:^|\/)\.codex[^/]*(?:\/|$)/.test(runsDir)) throw new Error('resource-live runs dir refused');
+  if (!isAbsolute(runsDir) || hasCodexPathSegment(runsDir)) throw new Error('resource-live runs dir refused');
   return join(runsDir, 'state');
 }
 export const resourceLivePath = (runsDir: string): string => join(resourceLiveStateDir(runsDir), 'resource-live.json');
 export const resetDecisionDir = (runsDir: string): string => join(runsDir, 'bus', 'masbot');
 
-const instant = z.string().refine(value => {
-  const time = Date.parse(value);
-  return Number.isFinite(time) && new Date(time).toISOString() === value;
-});
+const instant = canonicalIsoTimestampSchema;
 const amount = z.number().finite().nonnegative().nullable();
 const ids = RESOURCE_LIVE_ALLOWANCES.map(row => row.id) as [ResourceLiveId, ...ResourceLiveId[]];
-export const resourceIdSchema = z.union([z.enum(ids),
+const resourceIdSchema = z.union([z.enum(ids),
   z.custom<`custom:${string}`>(value => typeof value === 'string' && /^custom:[a-z0-9][a-z0-9-]{0,62}$/.test(value))]);
 
 export const readingSchema = z.object({
@@ -114,8 +114,8 @@ export function usable(row: StoredReading): row is StoredReading & { observed_at
 /** Parse a sidecar. Anything malformed is dropped, so a damaged file reads as no prior state. */
 export function parseResourceLiveSidecar(raw: unknown, custom: readonly ResourceLiveAllowance[] = []): Pick<ResourceLiveSidecar, 'readings' | 'poll' | 'history' | 'reset_rule'> & { generated_at: string | null } {
   const empty = { generated_at: null, readings: [], poll: {}, history: {}, reset_rule: { ...EMPTY_RESET_STATE } };
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return empty;
-  const file = raw as Record<string, unknown>;
+  if (!isUsageRecord(raw)) return empty;
+  const file = raw;
   if (file['schema'] !== RESOURCE_LIVE_SCHEMA) return empty;
   const catalog = new Map<string, ResourceLiveAllowance>([...RESOURCE_LIVE_ALLOWANCES, ...custom].map(item => [item.id, item]));
   const accepted = new Set<string>(ids);
@@ -136,18 +136,16 @@ export function parseResourceLiveSidecar(raw: unknown, custom: readonly Resource
   }
   const poll: Partial<Record<ResourceLiveId, PollState>> = {};
   const history: Partial<Record<ResourceLiveId, HistorySample[]>> = {};
-  const record = (value: unknown): Record<string, unknown> =>
-    value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
   for (const id of accepted as Set<ResourceLiveId>) {
-    const state = pollSchema.safeParse(record(file['poll'])[id]);
+    const state = pollSchema.safeParse(asUsageRecord(file['poll'])[id]);
     if (state.success) poll[id] = state.data;
-    const rows = record(file['history'])[id];
+    const rows = asUsageRecord(file['history'])[id];
     if (Array.isArray(rows)) {
       const kept = rows.flatMap(row => { const sample = sampleSchema.safeParse(row); return sample.success ? [sample.data] : []; });
       if (kept.length) history[id] = kept.slice(-HISTORY_PER_ALLOWANCE);
     }
   }
-  const rule = record(file['reset_rule']);
+  const rule = asUsageRecord(file['reset_rule']);
   const fable = draftedSchema.safeParse(rule['fable'] ?? null);
   const weekly = draftedSchema.safeParse(rule['weekly'] ?? null);
   const generated = instant.safeParse(file['generated_at']);

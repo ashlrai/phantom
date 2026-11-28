@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { hasCodexPathSegment } from '../core/usage/live/browser.js';
 import { defaultResourceLiveRunsDir } from '../core/usage/resource-live/feed.js';
 import { readLaneHistory } from '../core/usage/resource-live/history.js';
 
@@ -13,7 +14,7 @@ export async function cmdUsageHistory(args: string[]): Promise<number> {
     else if (arg === '--runs-dir') runsDir = args[++i] ?? '';
     else { console.error(USAGE); return 2; }
   }
-  if (!lane || !isAbsolute(runsDir) || /(?:^|\/)\.codex[^/]*(?:\/|$)/.test(runsDir)) { console.error(USAGE); return 2; }
+  if (!lane || !isAbsolute(runsDir) || hasCodexPathSegment(runsDir)) { console.error(USAGE); return 2; }
   const result = await readLaneHistory(lane, runsDir);
   if (!result) { console.error(USAGE); return 2; }
   if (json) console.log(JSON.stringify(result));

@@ -7,12 +7,12 @@
  * handed to the injected driver as an opaque path.
  */
 import { mkdir, rename, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { usageBrowserDir } from '../live/browser.js';
 import { BROWSER_PROVIDERS, parseUsagePage, type BrowserProvider, type BrowserUsageRecord, type ParseRefusal } from './parsers.js';
 
 /** Default pages. Configurable: provider UIs move, the parsers do not follow URLs. */
-export const BROWSER_USAGE_URLS: Record<BrowserProvider, string> = {
+const BROWSER_USAGE_URLS: Record<BrowserProvider, string> = {
   claude: 'https://claude.ai/settings/usage',
   chatgpt: 'https://chatgpt.com/codex/settings/usage',
   devin: 'https://app.devin.ai/settings/billing',
@@ -34,7 +34,7 @@ export type BrowserUsageResult =
   | { ok: true; provider: BrowserProvider; record: BrowserUsageRecord }
   | { ok: false; provider: BrowserProvider; reason: ParseRefusal | 'fetch-failed' };
 
-export const defaultProfileDir = (home = homedir()): string => join(home, '.ashlr-runs', 'usage-browser');
+export const defaultProfileDir = usageBrowserDir;
 
 export async function readBrowserUsage(provider: BrowserProvider, deps: BrowserUsageDeps): Promise<BrowserUsageResult> {
   const profileDir = deps.profileDir ?? defaultProfileDir(deps.homeDir);

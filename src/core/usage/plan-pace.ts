@@ -13,11 +13,11 @@
  */
 import { join } from 'node:path';
 import type { PoolUsageSeries } from '../fleet/usage-history.js';
-import { poolLabel } from './runway.js';
+import { USAGE_POOL_NAME, isFiniteUsageNumber, isUsageRecord, poolLabel, roundUsage } from './runway.js';
 
-export const PLAN_PACE_SCHEMA = 'usage.plan-pace.v1' as const;
-export const TOO_FAST_HOURS = 6;
-export const TOO_SLOW_UNSPENT_PCT = 15;
+const PLAN_PACE_SCHEMA = 'usage.plan-pace.v1' as const;
+const TOO_FAST_HOURS = 6;
+const TOO_SLOW_UNSPENT_PCT = 15;
 export const PACE_ALERT_GAP_MS = 2 * 3_600_000;
 const STATE_MAX_BYTES = 8 * 1024;
 
@@ -41,9 +41,9 @@ export interface PlanPaceRow {
   reason: string | null;
 }
 
-export interface PlanPaceV1 { schema: typeof PLAN_PACE_SCHEMA; v: 1; generated_at: string; plans: PlanPaceRow[] }
+export interface PlanPaceV1 { schema: 'usage.plan-pace.v1'; v: 1; generated_at: string; plans: PlanPaceRow[] }
 
-const round1 = (n: number): number => Math.round(n * 10) / 10;
+const round1 = (n: number): number => roundUsage(n, 1);
 
 /** Pure verdict from numbers the runway report already measured. */
 export function paceVerdict(hoursEarly: number | null, unspentPct: number | null): PlanPaceVerdict {
@@ -81,7 +81,7 @@ export async function readPlanPace(opts: { runsDir?: string; now?: () => number 
   return { schema: PLAN_PACE_SCHEMA, v: 1, generated_at: new Date(nowMs).toISOString(), plans: planPaceRows(history.pools) };
 }
 
-const num = (n: number): string => String(Math.round(n * 10) / 10);
+const num = (n: number): string => String(round1(n));
 
 /** The one plain line for a plan that is too fast or too slow; null otherwise. */
 export function paceAlertLine(row: PlanPaceRow, nowMs: number, timeZone?: string): string | null {
@@ -117,13 +117,13 @@ export function planPaceAlerts(rows: readonly PlanPaceRow[], state: PaceAlertSta
   return { posts, state: next };
 }
 
-export function parsePaceAlertState(text: string | null): PaceAlertState {
+function parsePaceAlertState(text: string | null): PaceAlertState {
   const out: PaceAlertState = {};
   if (text === null) return out;
   try {
     const raw: unknown = JSON.parse(text);
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-      for (const [plan, at] of Object.entries(raw)) if (typeof at === 'number' && Number.isFinite(at) && /^[a-z0-9][a-z0-9._-]{0,39}$/.test(plan)) out[plan] = at;
+    if (isUsageRecord(raw)) {
+      for (const [plan, at] of Object.entries(raw)) if (isFiniteUsageNumber(at) && USAGE_POOL_NAME.test(plan)) out[plan] = at;
     }
   } catch { /* damaged state: start over, worst case one repeat line */ }
   return out;

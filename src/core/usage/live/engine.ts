@@ -6,9 +6,10 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { isCanonicalIsoTimestamp, isUsageRecord } from '../runway.js';
 import { pullOfficialUsageSensors, type UsageSensorPullOptions } from '../sensor-pull.js';
 import {
-  USAGE_SENSOR_SCHEMA, USAGE_SENSOR_STALE_MS, parseUsageSensorSnapshot, presentUsageSensors,
+  USAGE_SENSOR_SCHEMA, USAGE_SENSOR_STALE_MS, canonicalIsoTimestampSchema, parseUsageSensorSnapshot, presentUsageSensors,
   type UsageSensorLaneView, type UsageSensorReading,
 } from '../sensor-reading.js';
 import { readSite, type BrowserSession, type SiteReading } from './browser.js';
@@ -16,11 +17,11 @@ import { USAGE_SITES, type UsageSite } from './sites.js';
 
 export const ALERT_LEVELS = ['cap-80', 'cap-95', 'expire-unspent'] as const;
 export type AlertLevel = typeof ALERT_LEVELS[number] | 'needs-signin';
-export const HISTORY_PER_LANE = 12;
+const HISTORY_PER_LANE = 12;
 /** Refresh this long after a reset, so the provider has rolled the window. */
-export const RESET_REFRESH_DELAY_MS = 10_000;
-export const EXPIRE_WINDOW_HOURS = 24;
-export const EXPIRE_MIN_UNUSED_PCT = 25;
+const RESET_REFRESH_DELAY_MS = 10_000;
+const EXPIRE_WINDOW_HOURS = 24;
+const EXPIRE_MIN_UNUSED_PCT = 25;
 
 export interface ExtraReading { site: UsageSite['id']; budgetLane: string; used: number; limit: number; unit: 'percent' | 'acu'; resetAt: string | null; observedAt: string }
 export interface UsageAlert { ts: string; level: AlertLevel; subject: string; message: string; pct: number | null; resetAt: string | null }
@@ -85,7 +86,7 @@ export function evaluateAlerts(
  * Keep the earlier instant when the new one is within tolerance, so the window
  * keeps one identity for alert dedupe and burn samples.
  */
-export const RESET_SNAP_MS = 10 * 60_000;
+const RESET_SNAP_MS = 10 * 60_000;
 export function snapReset(next: string | null, previous: readonly (string | null)[]): string | null {
   if (next === null) return null;
   const at = Date.parse(next);
@@ -173,18 +174,13 @@ function parseState(raw: unknown): AlertState {
 /** Sites whose readings live only in `extras` (the sensor schema has no lane for them). */
 const EXTRA_SITES = USAGE_SITES.filter(s => s.lane === null);
 
-const isoTimestamp = z.string().refine(value => {
-  const time = Date.parse(value);
-  return Number.isFinite(time) && new Date(time).toISOString() === value;
-});
-
 const persistedExtraSchema = z.object({
   site: z.string().min(1),
   budgetLane: z.string().min(1),
   used: z.number().finite().nonnegative(),
   limit: z.number().finite().positive(),
   unit: z.enum(['percent', 'acu']),
-  observedAt: isoTimestamp,
+  observedAt: canonicalIsoTimestampSchema,
   resetAt: z.unknown(),
 }).strict();
 
@@ -205,9 +201,8 @@ function usablePersistedExtra(raw: unknown, nowMs: number): ExtraReading | null 
   if (d.unit === 'percent' && (d.limit !== 100 || d.used > 100)) return null;
   const observedMs = Date.parse(d.observedAt);
   if (observedMs > nowMs || observedMs + USAGE_SENSOR_STALE_MS <= nowMs) return null;
-  const resetMs = typeof d.resetAt === 'string' ? Date.parse(d.resetAt) : NaN;
-  const resetAt = Number.isFinite(resetMs) && new Date(resetMs).toISOString() === d.resetAt ? d.resetAt : null;
-  if (resetAt !== null && resetMs <= nowMs) return null;
+  const resetAt = isCanonicalIsoTimestamp(d.resetAt) ? d.resetAt : null;
+  if (resetAt !== null && Date.parse(resetAt) <= nowMs) return null;
   return { site: site.id, budgetLane: site.budgetLane, used: d.used, limit: d.limit, unit: d.unit, resetAt, observedAt: d.observedAt };
 }
 
@@ -219,8 +214,7 @@ export async function runLiveUsageTick(options: LiveTickOptions): Promise<LiveTi
   const snapshotPath = join(options.queueDir, 'usage-live.json');
   const prior = await readJson(snapshotPath);
   const history = parseUsageSensorSnapshot(prior);
-  const priorExtras: unknown[] = (prior && typeof prior === 'object' && Array.isArray((prior as { extras?: unknown }).extras)
-    ? (prior as { extras: unknown[] }).extras : []);
+  const priorExtras: unknown[] = isUsageRecord(prior) && Array.isArray(prior.extras) ? prior.extras : [];
   // Persisted extras count only while fresh and inside their observed window.
   const persistedExtras = new Map<UsageSite['id'], ExtraReading>();
   for (const raw of priorExtras) {

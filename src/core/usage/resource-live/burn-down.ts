@@ -13,6 +13,7 @@
  * is spent or cannot be verified, because past that point every call is new
  * spend.
  */
+import { roundUsage } from '../runway.js';
 import type {
   BurnDownPace, BurnDownPlan, BurnDownRow, HistorySample, ResourceLiveId, ResourceLiveReading,
 } from './types.js';
@@ -20,17 +21,15 @@ import { RESOURCE_LIVE_STALE_MS } from './types.js';
 import { ANTIGRAVITY_EXHAUSTION, antigravityQuota } from './antigravity-quota.js';
 
 /** Observed rate within this share of the target is on pace. */
-export const PACE_TOLERANCE = 0.15;
+const PACE_TOLERANCE = 0.15;
 /** Samples the observed rate may span. */
-export const BURN_SAMPLES = 6;
+const BURN_SAMPLES = 6;
 
 const TIER: Record<ResourceLiveReading['class'], 0 | 1 | 2 | 3> = {
   free: 0, expiring: 0, included: 1, 'metered-included': 2, reserve: 3,
 };
 
-function round(value: number): number {
-  return Math.round(value * 1000) / 1000;
-}
+const round = (value: number): number => roundUsage(value, 3);
 
 function future(iso: string | null, nowMs: number): number | null {
   const at = iso === null ? NaN : Date.parse(iso);
