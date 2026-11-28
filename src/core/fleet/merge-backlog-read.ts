@@ -2,7 +2,7 @@
  * core/fleet/merge-backlog-read.ts — one bounded, read-only snapshot of a
  * repo's open-PR merge backlog, shaped for the desktop console's Merges pane.
  *
- * One `gh pr list --json` read describes every open PR; each row is validated
+ * One `gh pr list --json` read supplies a bounded sample of open PRs; each row is validated
  * by parseFleetPrGhState and joined with its local fleet merge-state record
  * (when one exists) so head-moved and terminal records classify honestly.
  * planMergeBacklog then produces the same advisory classification the CLI's
@@ -82,6 +82,8 @@ export interface MergeBacklogReadV1 {
   repo: string;
   generatedAt: string;
   source: 'ok' | 'gh-failed';
+  /** Absent on older servers or failed reads. No exact count at the list cap. */
+  coverage?: { limit: number; scanned: number; discarded: number; complete: boolean };
   /** Fixed machine token when source is 'gh-failed'; never gh's stderr. */
   reason?: string;
   /** Same bounded reason for the console HTTP client on a 503 response. */
@@ -194,6 +196,9 @@ export async function readMergeBacklog(input: MergeBacklogReadInput): Promise<Me
 
   const states = (input.states ?? readMergeBacklogStates)(repo);
   const missing: FleetMergeStateRead = { state: 'missing' };
+  const scanned = Math.min(read.rows.length, limit);
+  const seen = new Set<number>();
+  let incompleteRows = 0;
   const kept: { raw: Record<string, unknown>; item: MergeBacklogItem }[] = [];
   for (const raw of read.rows.slice(0, limit)) {
     if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue;
@@ -201,6 +206,8 @@ export async function readMergeBacklog(input: MergeBacklogReadInput): Promise<Me
     const github = parseFleetPrGhState(row);
     const number = github?.number ?? row['number'];
     if (!Number.isSafeInteger(number) || (number as number) < 1) continue;
+    if (github === null || seen.has(number as number)) incompleteRows++;
+    seen.add(number as number);
     kept.push({ raw: row, item: { repo, createdAt: mergeBacklogCreatedAt(row), mergeState: (github && states.get(github.number)) || missing, github } });
   }
 
@@ -263,5 +270,7 @@ export async function readMergeBacklog(input: MergeBacklogReadInput): Promise<Me
   const hotFiles = findHotFiles(dirtyFileLists, 1, Infinity)
     .map(file => ({ path: file.path, dirtyPrs: file.count, openPrs: open.get(file.path) ?? 0 }))
     .sort((a, b) => b.dirtyPrs - a.dirtyPrs || b.openPrs - a.openPrs || a.path.localeCompare(b.path)).slice(0, 8);
-  return { v: 1, repo, generatedAt, source: 'ok', items, counts, hotFiles };
+  const discarded = scanned - kept.length;
+  const coverage = { limit, scanned, discarded, complete: read.rows.length < limit && discarded === 0 && incompleteRows === 0 };
+  return { v: 1, repo, generatedAt, source: 'ok', coverage, items, counts, hotFiles };
 }
