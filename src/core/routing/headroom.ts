@@ -301,7 +301,7 @@ function peak(rows: ClassedWindow[]): ClassedWindow | null {
 }
 
 /**
- * When EVERY spent window in `rows` has reset — the seat is blocked until the
+ * When EVERY blocking window in `rows` has reset — the seat is blocked until the
  * last of them does, so this is the latest reset. Null unless every row has a
  * machine-readable reset (one unknown reset makes the reopening unknown).
  */
@@ -410,7 +410,6 @@ export function assessSeat(capacity: SeatCapacity, policy: SeatBudgetPolicy, opt
   const bindingRow = bindingWindow === 'weekly' ? weeklyPeak : bindingWindow === 'session' ? sessionPeak : null;
 
   // Blockers, most fundamental first. Every one gets a plain sentence.
-  let reopensAt: string | null = null;
   const spentRows = account.filter((row) => isSpent(row.window));
   const exhausted = spentRows.length > 0;
   const unknownUsage = !hasReading || stale || nullWindow !== undefined;
@@ -431,7 +430,6 @@ export function assessSeat(capacity: SeatCapacity, policy: SeatBudgetPolicy, opt
       });
     }
     details.push(...spentDetails);
-    reopensAt = lastReset(spentRows);
   }
 
   if (!hasReading) {
@@ -495,8 +493,11 @@ export function assessSeat(capacity: SeatCapacity, policy: SeatBudgetPolicy, opt
         ...resetOf(bindingRow.window),
       });
     }
-    reopensAt = bindingRow.window.resetsAt;
   }
+
+  const blockingRows = account.filter(({ window, cls }) => isSpent(window) ||
+    (window.usedPercent !== null && window.usedPercent >= (cls === 'session' ? sessionLimit : reserveCeiling)));
+  const reopensAt = reserveCeiling === 0 ? null : lastReset(blockingRows);
 
   // Model-scoped windows are facts worth showing, never blockers.
   for (const row of classed) {
