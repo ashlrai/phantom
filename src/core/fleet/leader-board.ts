@@ -77,7 +77,7 @@ export interface LeaderBoardV1 {
   generatedAt: string;
   lanes: LeaderBoardLane[];
   resourcePlan?: FleetBoardV1['resourcePlan'];
-  /** READY jobs by queue tier; 'unknown' covers rows naming no/invalid tier. null when ready.tsv was unreadable. */
+  /** READY jobs by tier. Null without a healthy ready.tsv read or when the requirements file is degraded. */
   queueDepthByTier: Record<string, number> | null;
   /** Unique merged jobs/PRs in the trailing hour across lanes; null without a healthy merge ledger. */
   mergesLastHour: number | null;
@@ -276,7 +276,7 @@ async function buildLeaderBoard(runsDir: string, nowMs: number, previous: Leader
     capacity.catch(() => null),
   ]);
 
-  const depthRows = readySource.state === 'healthy'
+  const depthRows = readySource.state === 'healthy' && routerQueue.state !== 'degraded'
     ? readyRowsForDepth(readySource.text, routerQueue.state === 'healthy' ? routerQueue.text : undefined)
     : null;
   const lanes: LeaderBoardLane[] = (counts.report?.lanes ?? []).map((row) => ({

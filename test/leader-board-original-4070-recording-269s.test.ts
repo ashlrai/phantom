@@ -112,6 +112,26 @@ it('uses router queue envelopes when counting five-column rows by tier', async (
   expect(board?.lanes.find(lane => lane.lane === 'codex')?.ready).toBe(2);
 });
 
+it('withholds tier depth while router queue envelopes are unreadable and resumes after recovery', async () => {
+  const routerQueue = join(queueDir, 'router-queue.md');
+  const id = 'RQ-REBASE-PHANTOM-1234-abc1234';
+  await writeFile(join(queueDir, 'ready.tsv'), `${id}\tphantom\tcodex\twork\tprompts/rebase.md\n`);
+
+  await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  expect((await readFleetBoard({ runsDir: root })).board?.queueDepthByTier).toEqual({ work: 1 });
+
+  await mkdir(routerQueue);
+  await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS + 60_000 });
+  const { board } = await readFleetBoard({ runsDir: root });
+  expect(board?.queueDepthByTier).toBeNull();
+  expect(board?.conflictingPrs.count).toBe(1);
+
+  await rm(routerQueue, { recursive: true });
+  await writeFile(routerQueue, `- READY ${id} (P1, exclusive=maybe): Invalid requirements\n`);
+  await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS + 120_000 });
+  expect((await readFleetBoard({ runsDir: root })).board?.queueDepthByTier).toEqual({});
+});
+
 it('reports honest failures for hostile paths and the reader stays truthful', async () => {
   expect(await recordLeaderBoard({ runsDir: 'relative/path', nowMs: NOW_MS })).toMatchObject({ wrote: false });
   expect(await recordLeaderBoard({ runsDir: '/dev/null/impossible', nowMs: NOW_MS })).toMatchObject({ wrote: false });
