@@ -59,6 +59,7 @@ import { receiptOwnerChat } from '../agents/chat-owner-ingress.js';
  */
 
 import { sendIMessageOutbox } from './imessage-outbox.js';
+import { isPhantomOwnEcho } from './imessage-own-echo.js';
 import { recordTeammateText, senderIdFor } from './imessage-teammate-inbox.js';
 import { bridgeTeammateFindings, type FindingsBridgeOptions, type FindingsBridgeReport } from './imessage-findings-bridge.js';
 import { recordPatchFrame, sweepPatchTransfers, type PatchFrameOutcome, type PatchSweepReport } from './imessage-patch-transfer.js';
@@ -131,6 +132,8 @@ export interface IMessageIngestResult {
   state: IMessageIngestState;
   scanned: number;
   accepted: number;
+  /** Phantom-authored texts consumed without reaching any intake destination. */
+  ownEcho: number;
   notMason: number;
   /** Allowlisted non-Mason texts recorded to the local teammate inbox. */
   teammate: number;
@@ -240,7 +243,7 @@ function recordAck(ack: ChannelAck, rowid: number, runsDir: string | undefined, 
 }
 
 export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps = {}): Promise<IMessageIngestResult> {
-  const result: IMessageIngestResult = { ok: false, state: 'error', scanned: 0, accepted: 0, notMason: 0, teammate: 0, duplicate: 0, refused: 0, deferred: false, cursor: null, findings: null, patches: null };
+  const result: IMessageIngestResult = { ok: false, state: 'error', scanned: 0, accepted: 0, ownEcho: 0, notMason: 0, teammate: 0, duplicate: 0, refused: 0, deferred: false, cursor: null, findings: null, patches: null };
   try {
     if (cfg.comms?.enabled !== true || imessageAllowlist(cfg).length === 0) return { ...result, state: 'disabled' };
     if ((deps.platform ?? process.platform) !== 'darwin') return { ...result, state: 'unsupported' };
@@ -308,6 +311,11 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
     });
     for (const msg of polled.messages) {
       result.scanned++;
+      if (isPhantomOwnEcho(msg.text)) {
+        result.ownEcho++;
+        cursor = msg.rowid;
+        continue;
+      }
       const message = imessageChannelMessage(msg);
       if (!isVerifiedMasonHandle(msg.handle, cfg)) {
         result.notMason++;
