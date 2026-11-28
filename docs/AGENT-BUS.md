@@ -2687,6 +2687,17 @@ unresolvable sender or unreadable registry keeping exact-label matching —
 `--exclude-from` drops envelopes sent under any registered spelling of one
 identity — the same sender-exclusion rule `comms bus read|watch`'s
 `--exclude-from` and `fleet_bus_inbox`'s `excludeFrom` apply —
+`--with <agent-or-label>` narrows a `--to`-scoped stream to the two-way
+exchange that agent and one peer name — the same pairwise rule `agents bus
+inbox --with`, `agents bus follow --with`, `phm messages --with` and `agents
+conversations --with` apply: an envelope emits only when its `to` is an
+identity label of the `--to` agent — the strict match that excludes the
+member-channel posts `--to` alone streams — and its `from` matches every
+registered spelling of the peer, so "stream only our private pending thread
+with the reviewer" is one filtered follow instead of the room traffic `--to`
+also carries; `--with` requires `--to`, an unresolvable ref on either side
+and an unreadable registry keep exact-label matching, and filtered rows
+still advance checkpoints like every other filter —
 `--priority` keeps one `P0`–`P3`, `--thread` keeps `note`/`context` bodies
 carrying that thread label, `--since <15m|2h|1d|ISO>` keeps rows received
 at or after the cutoff, and `--before <15m|2h|1d|ISO>` keeps rows received

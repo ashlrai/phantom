@@ -4962,7 +4962,16 @@ share (`comms bus read|watch --channel`, `fleet bus-follow --channel`,
 `fleet_bus_inbox`'s `channel`, `wakes --channel`, `phm messages --channel`,
 the work feed's `--channel`; the addressed `agents bus inbox --channel`
 resolves the same prefix only across the agent's member channels), strict
-channel-name grammar with no registry dependence — each
+channel-name grammar with no registry dependence — and
+`with`, the pairwise exchange filter `agents bus inbox --with`, `agents bus
+follow --with`, `phm messages --with` and `agents conversations --with`
+share: `--with` requires `--to`, and an envelope emits only when its `to`
+is an identity label of the `--to` agent — the strict match that excludes
+the member-channel posts `--to` alone streams — and its `from` matches
+every registered spelling of the peer through the same
+`agentRefAddressMatcher` rule `--from`/`--exclude-from` apply, an
+unresolvable ref on either side and an unreadable registry keeping
+exact-label matching — each
 skipping non-matching rows while checkpoints still advance past them.
 `bus-page-filters.ts` (`src/core/fleet/`) owns the one page-filter
 contract the durable-store reads share: `BusPageFilters` (the scalar and
