@@ -169,6 +169,22 @@ describe('owner scope isolation', () => {
     expect(f.box.plan()[0]!.fix).toContain("owner 'B'");
   });
 
+  it('scopes plan output after reserving shared slots in queue order', () => {
+    const f = fixture();
+    const worker = f.box.join('shared', { owners: ['A', 'B'], slots: 1 })!;
+    f.box.enqueue('job-b', { owner: 'B' });
+    f.box.enqueue('job-a', { owner: 'A' });
+
+    const preview = f.box.plan('A');
+    expect(preview).toEqual([{
+      jobId: 'job-a', owner: 'A', nodeId: null, fix: expect.stringContaining('no free job slots'),
+    }]);
+    expect(preview).toEqual(f.box.view(['A']).routes);
+    expect(f.box.pull(worker)?.job.id).toBe('job-b');
+    expect(f.box.plan('A')).toEqual(preview);
+    expect(f.box.pull(worker)).toBeNull();
+  });
+
   it('never routes a job that has no owner scope', () => {
     const f = fixture();
     const s = f.box.join('n', { owners: ['o'] })!;
