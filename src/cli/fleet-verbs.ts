@@ -14,6 +14,9 @@ export function readVerbSource(verb: string): string | null {
 }
 
 export async function cmdFleetVerbs(args: string[], deps: { verbs?: string[]; readSource?: (verb: string) => string | null } = {}): Promise<number> {
+  // --help/-h anywhere prints usage on stdout and exits 0, the same contract
+  // the other fleet verbs keep; it never reaches the flag parser's exit 2.
+  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   let json = false;
   let grep: string | undefined;
   for (let i = 0; i < args.length; i++) {

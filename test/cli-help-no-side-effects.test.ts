@@ -134,7 +134,6 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'radar list': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before sources load',
   'radar run': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before any fetch',
   'radar diff': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before snapshots are read',
-  'agents bus': 'runAgentsCli accepts only `bus contract [--json]` (src/cli/agents-bus-contract.ts); anything else prints the contract help and exits 2',
   'capacity publish': '`publish` accepts only --json (src/cli/capacity.ts); anything else prints the usage line and exits 2 before the publisher is built',
 };
 

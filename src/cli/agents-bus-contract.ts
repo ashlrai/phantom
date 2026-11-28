@@ -41,6 +41,11 @@ export async function runAgentsCli(
   if (args[0] === 'bus' && AGENTS_BUS_UNIFIED_VERBS.has(args.find((arg, i) => i > 0 && arg !== '--json') ?? '')) {
     return runAgentsBusUnified(args.slice(1), out, err);
   }
+  // The verbs this dispatcher answers itself (edges, mesh status, bus
+  // contract, bus channels) take --help/-h anywhere: usage on stdout and
+  // exit 0, the same contract the delegated reads keep. Delegated paths
+  // returned above keep their own scoped help.
+  if (args.includes('--help') || args.includes('-h')) { out(HELP); return 0; }
   const json = args.includes('--json');
   if (args.filter(arg => arg === '--json').length > 1) {
     err(json ? JSON.stringify({ error: 'invalid-argument' }) : HELP);
