@@ -176,7 +176,8 @@ function authFix(job: QueueJobV1, nodes: NodeRecord[], state: NodesState): strin
  * workers on the same host prefer fewer active and planned claims. Standalone
  * legacy queues retain their load policy. Remaining ties break by node ID.
  * Pure: the same state and clock always produce the same plan. Jobs without an
- * owner scope are never routed, so a legacy job cannot leak across scopes.
+ * owner scope are never routed. An owner filter limits the returned routes
+ * after all jobs have competed for shared slots in queue order.
  */
 export function planRoutes(state: NodesState, now: number, owner?: string): RouteAssignment[] {
   const capacity = nodeCapacityView(state, now);
@@ -189,7 +190,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
-    if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
+    if (!job.owner || !routable(job, now)) continue;
     const reasons = new Map<string, number>();
     let best: NodeRecord | null = null;
     for (const node of nodes) {
@@ -234,5 +235,5 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
               : authFix(job, nodes, state);
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
-  return plan;
+  return owner === undefined ? plan : plan.filter(route => route.owner === owner);
 }
