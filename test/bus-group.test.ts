@@ -125,6 +125,42 @@ it('applies the shared bus page filters to comms bus group read', async () => {
   expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', '--to', 'x'], { root, now: () => 101 }, deps)).toBe(2);
 });
 
+it('applies the shared body-citation filters to comms bus group read', async () => {
+  const { cmdCommsBus } = await import('../src/cli/comms-bus.js');
+  const { appendBusInbox } = await import('../src/core/fleet/bus-inbox.js');
+  const root = setup();
+  const output: string[] = [];
+  const deps = { emit: (value: string) => { output.push(value); } };
+  const at = { root, now: () => 100 };
+  // The room+topic address is shared with unified channel posts and raw
+  // envelopes: note/context, work.* and topic-less protocol bodies all land
+  // on group:team:work and carry the citations the group.* bodies never do.
+  const post = (id: string, body: unknown) => appendBusInbox(
+    { id, from: 'agent:codex', to: 'group:team:work', priority: 'P2', ttl: 60000, body }, at);
+  expect(post('n1', { kind: 'note', thread: 'job:RQ-9', text: 'pick up the deploy' }).status).toBe('posted');
+  expect(post('r1', { kind: 'work.result', jobId: 'RQ-9', outcome: 'failed', claimKey: 'repo:o/n', queueId: 'q', receiptId: 'x' }).status).toBe('posted');
+  expect(post('v1', { inReplyTo: 'n1', text: 'ack' }).status).toBe('posted');
+  expect(post('p1', { protocol: { version: 1, kind: 'task' } }).status).toBe('posted');
+  const read = async (flag: string, value: string) => {
+    expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', flag, value], { root, now: () => 101 }, deps)).toBe(0);
+    return JSON.parse(output.at(-1)!).messages.map((row: { envelope: { id: string } }) => row.envelope.id);
+  };
+  // --thread keeps the note carrying that v2 thread label.
+  expect(await read('--thread', 'job:RQ-9')).toEqual(['n1']);
+  // --job matches the note through its job:<id> thread label and the
+  // work.result through its jobId — the same busBodyJobMatch rule.
+  expect(await read('--job', 'RQ-9')).toEqual(['n1', 'r1']);
+  // --result keeps the failed work.result receipt only.
+  expect(await read('--result', 'failed')).toEqual(['r1']);
+  // --in-reply-to keeps the reply citing n1.
+  expect(await read('--in-reply-to', 'n1')).toEqual(['v1']);
+  // --kind keeps the topic-less protocol task envelope.
+  expect(await read('--kind', 'task')).toEqual(['p1']);
+  // Invalid filter values stay argument errors, never a widened page.
+  expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', '--result', 'bogus'], { root, now: () => 101 }, deps)).toBe(2);
+  expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0', '--kind', 'bogus'], { root, now: () => 101 }, deps)).toBe(2);
+});
+
 it('runs the documented group commands through the CLI', async () => {
   const { cmdCommsBus } = await import('../src/cli/comms-bus.js');
   const doc = readFileSync(join(__dirname, '../docs/GROUP-CHAT.md'), 'utf8');

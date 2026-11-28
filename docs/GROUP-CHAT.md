@@ -25,10 +25,19 @@ TTL and capacity limits; expiry does not free capacity. No event is executed.
 
 `group read` also takes the shared bus page filters on top of the room+topic
 address: `--from`/`--exclude-from` (sender labels resolved through the identity
-registry like every bus read), `--id`, `--priority`, `--body-kind`,
-`--since`/`--before` and `--contains`. `--body-kind group.message` keeps only
-payloads and drops `group.presence` heartbeats; filters narrow the shown rows,
-never the scan, so an empty filtered page still advances `nextCursor`.
+registry like every bus read), `--id`, `--in-reply-to`, `--priority`, `--kind`,
+`--thread`, `--job`, `--body-kind`, `--result`, `--since`/`--before` and
+`--contains`. The room+topic address already fixes the `to`/`channel` scope and
+the protocol topic — a protocol body's topic must equal the envelope `to`, and
+`group:<room>:<topic>` is never a protocol topic name — so those filters are
+not offered. `--body-kind group.message` keeps only payloads and drops
+`group.presence` heartbeats. The body-citation filters (`--in-reply-to`,
+`--kind`, `--thread`, `--job`, `--result`) match the note/context, work.* and
+topic-less protocol envelopes that unified channel posts and raw posts leave on
+the same `group:<room>:<topic>` address; `group.message` and `group.presence`
+bodies never carry those citations, so on a pure group-transport room they
+honestly match nothing. Filters narrow the shown rows, never the scan, so an
+empty filtered page still advances `nextCursor`.
 
 Presence is an untrusted, five-minute observation per room/topic and member.
 Heartbeats refresh it; `offline` removes it until a later online heartbeat.
