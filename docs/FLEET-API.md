@@ -633,7 +633,7 @@ these frames, with a "Back to live" button.
 
 #### Recent bus messages
 
-`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--body-kind <kind>] [--json]` lists
+`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--frame <cli>] [--json]` lists
 agent-to-agent messages, newest
 first, as `bus.recent.v1`: `{schema, as_of, messages:[{at, from, to, kind,
 summary}]}`. `--before` keeps only messages received strictly before its
@@ -643,7 +643,10 @@ forwards — the matching rules `phm messages --help` describes — so one
 filtered question reads the same on this digest. `from` and `to` are routing labels and `summary` is one plain
 line of at most 100 characters (the scrubbed summary, never the message
 body). An empty bus prints "No messages yet."; `messages` is null when the bus
-could not be read. The Fleet map pulses the same lines, and clicking a line
+could not be read. `--frame <cli>` prints the same read as one bounded block
+marked untrusted under BEGIN/END UNTRUSTED AGENT BUS TIMELINE markers — the
+same frame `phm messages --frame` produces — with `--json` carrying it as
+`framed` beside the full projection. The Fleet map pulses the same lines, and clicking a line
 opens its messages.
 
 #### Message graph

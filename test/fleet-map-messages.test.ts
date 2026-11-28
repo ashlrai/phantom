@@ -258,4 +258,40 @@ describe('fleet map messages', () => {
     expect(await cmdFleetMap(['messages', '--json', '--since', '1m'])).toBe(0);
     expect(Object.keys(JSON.parse(out.mock.lastCall![0]))).toEqual(KEYS);
   });
+
+  it('the CLI --frame prints the rows as a bounded untrusted block and carries it as framed in JSON', async () => {
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {}), err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const root = store([[T0, 'leader', 'claude', 'please look at the build'], [T0 + 1_000, 'claude', 'leader', 'on it?']]);
+    const options = { root, now: () => NOW };
+    // The human read is the bare framed block.
+    expect(cmdFleetMapMessages(['--frame', 'claude'], false, options)).toBe(0);
+    const block = out.mock.lastCall![0] as string;
+    expect(block).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+    expect(block).toContain('please look at the build');
+    expect(block).toContain('END UNTRUSTED AGENT BUS TIMELINE');
+    expect(block).not.toContain('"schema"');
+    // --json carries the block as `framed` beside the full fleet.map-messages.v1 projection.
+    expect(cmdFleetMapMessages(['--frame', 'grok', '--json'], false, options)).toBe(0);
+    const parsed = JSON.parse(out.mock.lastCall![0] as string) as { schema: string; framed: string };
+    expect(parsed.schema).toBe('fleet.map-messages.v1');
+    expect(parsed.framed).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+    expect(parsed.framed).toContain('please look at the build');
+    // The rows-only alias frames the same block; its --json keeps the framed
+    // contract — framed beside the full projection, not the row array.
+    expect(cmdFleetMapMessages(['--frame', 'claude'], true, options)).toBe(0);
+    expect(out.mock.lastCall![0] as string).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+    expect(cmdFleetMapMessages(['--frame', 'devin', '--json'], true, options)).toBe(0);
+    const rows = JSON.parse(out.mock.lastCall![0] as string) as { schema: string; framed: string };
+    expect(rows.schema).toBe('fleet.map-messages.v1');
+    expect(rows.framed).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+    // The fleet messages alias reaches the same frame through the shared handler.
+    expect(await cmdFleetMessages(['--frame', 'cursor'], options)).toBe(0);
+    expect(out.mock.lastCall![0] as string).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+    // A bad cli or a repeated/missing value is a usage error before any store read.
+    for (const args of [['--frame', 'gemini'], ['--frame', 'claude', '--frame', 'grok'], ['--frame'], ['--frame', '--json']]) {
+      expect(cmdFleetMapMessages(args, false, options)).toBe(2);
+      expect(await cmdFleetMessages(args, options)).toBe(2);
+    }
+    expect(err).toHaveBeenCalled();
+  });
 });
