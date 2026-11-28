@@ -45,7 +45,9 @@ never copied or sent, and jobs carry secret NAMES, never values.
 runner executes, which the claiming node's \`pull\` prints. Repeat \`--task-part\`
 for long text (the parts join in order; each at most 4000 characters, 16 KiB
 joined). \`--task-sha256\` is \`sha256:\` plus the lowercase hex sha256 of the
-exact joined text (\`sha256sum\` on Linux, \`shasum -a 256\` on macOS). An embedded
+exact joined text — \`phm node task-digest\` prints it for the same
+\`--task-part\` values on every platform (any sha256 tool gives the same hex:
+\`sha256sum\`, \`shasum -a 256\`, \`Get-FileHash\`). An embedded
 task requires \`--pack codex-file\`, \`--pack codex-file\` requires the embedded
 task (the pack's only input is the task text), and the two flags together or
 neither — enqueue refuses the pair split either way.

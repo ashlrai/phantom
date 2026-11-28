@@ -5,7 +5,7 @@ import { isVersionCap } from './phm-version.js';
 import type { NodeAuth, NodeCapacitySample } from './state.js';
 import { isNodeCapacity, isHostStats, validCap, validId, validSecretName } from './state.js';
 import { jobBlockers, nodeCapacityView, routable, type RouteAssignment } from './router.js';
-import { NODE_TASK_LIMIT, validNodeTask, type EmbeddedNodeTask } from './task.js';
+import { NODE_TASK_LIMIT, NODE_TASK_PART_LIMIT, validNodeTask, type EmbeddedNodeTask } from './task.js';
 
 export class UsageError extends Error {
   constructor(readonly code: string, message: string, readonly fix: string, readonly exit = 2) { super(message); }
@@ -44,7 +44,7 @@ export function parseNodeFleetFlags(verb: string, args: string[]): Map<string, s
       if (name === '--task-part') {
         // Task text is carried in bounded parts and reassembled here; errors never echo it.
         const text = (flags.get(name) ?? '') + value;
-        if (value.length > 4000 || Buffer.byteLength(text) > NODE_TASK_LIMIT) {
+        if (value.length > NODE_TASK_PART_LIMIT || Buffer.byteLength(text) > NODE_TASK_LIMIT) {
           throw new UsageError('bad-task', 'Invalid embedded node task: --task-part is limited to 4000 characters per part and 16 KiB in total.',
             'Split the task into smaller --task-part values or shorten it. Run: phm node --help');
         }
@@ -435,12 +435,12 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         const digest = need(flags, '--task-sha256');
         if (!/^sha256:[0-9a-f]{64}$/.test(digest)) {
           throw new UsageError('bad-task-sha256', 'Invalid embedded node task: --task-sha256 must be sha256: followed by 64 lowercase hex characters.',
-            'Digest the exact --task-part text — sha256sum on Linux or shasum -a 256 on macOS — for example: printf %s "$TASK" | sha256sum. Run: phm node --help');
+            'Digest the exact --task-part text — phm node task-digest --task-part <text> prints the value on every platform, or any sha256 tool (sha256sum, shasum -a 256, Get-FileHash) gives the same hex. Run: phm node --help');
         }
         const sha256 = digest.slice(7);
         if (createHash('sha256').update(text, 'utf8').digest('hex') !== sha256) {
           throw new UsageError('bad-task-sha256', 'Invalid embedded node task: --task-sha256 does not match the --task-part text.',
-            'Recompute the digest over the exact text being sent; the store refuses a mismatch. Run: phm node --help');
+            'Recompute the digest over the exact text being sent — phm node task-digest --task-part <text> prints it — the store refuses a mismatch. Run: phm node --help');
         }
         task = { text, sha256 };
         if (!validNodeTask(task)) {
