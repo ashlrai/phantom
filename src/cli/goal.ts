@@ -19,11 +19,12 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { makeColors } from './ui.js';
 import type { AshlrConfig, Proposal, RunBudget, RunOptions, RunState, WorkItem } from '../core/types.js';
 import type { ListProposalsDetailedOptions, ProposalsReadResult } from '../core/inbox/store.js';
+import { DEFAULT_GOAL_RUN_BUDGET, formatGoalError } from '../core/goals/open-goals.js';
+import { canonicalGoalCorrelationRepo } from '../core/goals/project-match.js';
 
 interface ParsedGoalArgs {
   objective: string;
@@ -141,13 +142,6 @@ const USAGE =
 // --direct path: one sandboxed proposal-only frontier-engine run, verbatim.
 // ---------------------------------------------------------------------------
 
-/** Configured direct-run budget; external CLI usage can only be observed after an invocation. */
-const DIRECT_BUDGET: RunBudget = {
-  maxTokens: 200_000,
-  maxSteps: 40,
-  allowCloud: false,
-};
-
 interface DirectJsonResult {
   schemaVersion: 1;
   mode: 'direct-proposal';
@@ -216,12 +210,20 @@ function directJsonResult(
   };
 }
 
-function canonicalGoalCorrelationRepo(repo: string): string {
-  try {
-    return realpathSync.native(repo);
-  } catch {
-    return repo;
+function failDirect(
+  json: boolean,
+  exitCode: 1 | 2,
+  input: Pick<DirectJsonResult, 'terminalStage' | 'blockerCode' | 'backend' | 'runId'>,
+  humanStderr: string,
+  jsonStderr?: string,
+): number {
+  if (json) {
+    if (jsonStderr) process.stderr.write(jsonStderr);
+    console.log(JSON.stringify(directJsonResult({ ...input, ok: false, proposalId: null })));
+    return exitCode;
   }
+  process.stderr.write(humanStderr);
+  return exitCode;
 }
 
 async function runDirect(
@@ -263,8 +265,7 @@ async function runDirect(
   let assertMayMutate: (repo: string) => void;
 
   const budget: RunBudget = {
-    maxTokens: DIRECT_BUDGET.maxTokens,
-    maxSteps: DIRECT_BUDGET.maxSteps,
+    ...DEFAULT_GOAL_RUN_BUDGET,
     allowCloud,
   };
 
@@ -286,41 +287,24 @@ async function runDirect(
     loadConfig = config.loadConfig as typeof loadConfig;
     assertMayMutate = policy.assertMayMutate as typeof assertMayMutate;
   } catch {
-    if (json) {
-      console.log(JSON.stringify(directJsonResult({
-        ok: false,
-        terminalStage: 'admission',
-        blockerCode: 'direct-core-unavailable',
-        backend: null,
-        runId: null,
-        proposalId: null,
-      })));
-      return 1;
-    }
-    process.stderr.write(
+    return failDirect(
+      json,
+      1,
+      { terminalStage: 'admission', blockerCode: 'direct-core-unavailable', backend: null, runId: null },
       col.red('error: ') + 'direct mode requires the M45 core (src/core/run/orchestrator.js).\n',
     );
-    return 1;
   }
 
   // ENROLLMENT-SCOPED: enforce before any engine starts (mirrors advanceGoal).
   try {
     assertMayMutate(repo);
   } catch (err) {
-    if (json) {
-      console.log(JSON.stringify(directJsonResult({
-        ok: false,
-        terminalStage: 'admission',
-        blockerCode: 'repo-admission-refused',
-        backend: null,
-        runId: null,
-        proposalId: null,
-      })));
-      return 1;
-    }
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(col.red('error: ') + msg + '\n');
-    return 1;
+    return failDirect(
+      json,
+      1,
+      { terminalStage: 'admission', blockerCode: 'repo-admission-refused', backend: null, runId: null },
+      col.red('error: ') + formatGoalError(err) + '\n',
+    );
   }
 
   // Route to the best available frontier backend (same heuristic as the daemon).
@@ -344,36 +328,20 @@ async function runDirect(
     cfg = loadConfig();
     backend = routeBackend(syntheticItem, cfg).backend;
   } catch {
-    if (json) {
-      console.log(JSON.stringify(directJsonResult({
-        ok: false,
-        terminalStage: 'admission',
-        blockerCode: 'routing-unavailable',
-        backend: null,
-        runId: null,
-        proposalId: null,
-      })));
-      return 1;
-    }
-    process.stderr.write(col.red('error: ') + 'direct route/config unavailable.\n');
-    return 1;
+    return failDirect(
+      json,
+      1,
+      { terminalStage: 'admission', blockerCode: 'routing-unavailable', backend: null, runId: null },
+      col.red('error: ') + 'direct route/config unavailable.\n',
+    );
   }
   if (backend === 'builtin') {
-    if (json) {
-      console.log(JSON.stringify(directJsonResult({
-        ok: false,
-        terminalStage: 'admission',
-        blockerCode: 'productive-backend-unavailable',
-        backend,
-        runId: null,
-        proposalId: null,
-      })));
-      return 1;
-    }
-    process.stderr.write(
+    return failDirect(
+      json,
+      1,
+      { terminalStage: 'admission', blockerCode: 'productive-backend-unavailable', backend, runId: null },
       col.yellow('! ') + 'direct mode requires a productive sandboxed backend; builtin fallback was refused.\n',
     );
-    return 1;
   }
 
   let runState: RunState;
@@ -393,20 +361,12 @@ async function runDirect(
       workItemId: syntheticItem.id,
     });
   } catch (err) {
-    if (json) {
-      console.log(JSON.stringify(directJsonResult({
-        ok: false,
-        terminalStage: 'run',
-        blockerCode: 'run-failed',
-        backend,
-        runId: null,
-        proposalId: null,
-      })));
-      return 1;
-    }
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(col.red('error: ') + msg + '\n');
-    return 1;
+    return failDirect(
+      json,
+      1,
+      { terminalStage: 'run', blockerCode: 'run-failed', backend, runId: null },
+      col.red('error: ') + formatGoalError(err) + '\n',
+    );
   }
 
   // The producer's exact filed outcome is the only candidate identity. Reload a
@@ -507,23 +467,14 @@ async function runDirect(
     console.log(col.dim('  source Git, remotes, and services are not independently attested unchanged until submit revalidates them.'));
     return 0;
   } else {
-    if (json) {
-      console.log(JSON.stringify(directJsonResult({
-        ok: false,
-        terminalStage: 'proposal-correlation',
-        blockerCode: blocker,
-        backend,
-        runId: runState.id,
-        proposalId: null,
-      })));
-      return 1;
-    }
-    process.stderr.write(
+    return failDirect(
+      json,
+      1,
+      { terminalStage: 'proposal-correlation', blockerCode: blocker, backend, runId: runState.id },
       col.yellow('! ') +
-        `direct run completed (${backend} run ${runState.id}, status ${runState.status}) but produced no authoritative PENDING proposal [${blocker}].\n`,
+        `direct run completed (${backend} run ${runState.id}, status ${runState.status}) but produced no authoritative PENDING proposal [${blocker}].\n` +
+        col.dim('  Inspect `ashlr inbox` or check the engine output for details.\n'),
     );
-    process.stderr.write(col.dim('  Inspect `ashlr inbox` or check the engine output for details.\n'));
-    return 1;
   }
 }
 
@@ -537,63 +488,40 @@ export async function cmdGoal(args: string[]): Promise<number> {
   const parsed = parseArgs(args);
 
   if (parsed.usageError) {
-    if (parsed.json) {
+    return failDirect(
+      parsed.json,
+      2,
+      { terminalStage: 'usage', blockerCode: 'invalid-arguments', backend: null, runId: null },
+      col.red('error: ') + parsed.usageError + '\n\n' + USAGE + '\n',
       // stdout stays the bounded JSON result; the reason goes to stderr so a
       // caller is not left with a bare `invalid-arguments` and no explanation.
-      process.stderr.write('error: ' + parsed.usageError + '\n');
-      console.log(JSON.stringify(directJsonResult({
-        ok: false,
-        terminalStage: 'usage',
-        blockerCode: 'invalid-arguments',
-        backend: null,
-        runId: null,
-        proposalId: null,
-      })));
-      return 2;
-    }
-    process.stderr.write(col.red('error: ') + parsed.usageError + '\n\n' + USAGE + '\n');
-    return 2;
+      'error: ' + parsed.usageError + '\n',
+    );
   }
 
   if (parsed.help || !parsed.objective) {
-    if (!parsed.help && parsed.direct && parsed.json) {
-      console.log(JSON.stringify(directJsonResult({
-        ok: false,
-        terminalStage: 'usage',
-        blockerCode: 'objective-required',
-        backend: null,
-        runId: null,
-        proposalId: null,
-      })));
-      return 2;
-    }
     if (parsed.help) {
       console.log(USAGE);
       return 0;
     }
-    process.stderr.write(col.red('error: ') + 'an objective is required\n\n' + USAGE + '\n');
-    return 2;
+    return failDirect(
+      parsed.direct && parsed.json,
+      2,
+      { terminalStage: 'usage', blockerCode: 'objective-required', backend: null, runId: null },
+      col.red('error: ') + 'an objective is required\n\n' + USAGE + '\n',
+    );
   }
 
   // --direct: single sandboxed run, verbatim objective, no milestone planning.
   if (parsed.direct) {
     if (!parsed.project) {
-      if (parsed.json) {
-        console.log(JSON.stringify(directJsonResult({
-          ok: false,
-          terminalStage: 'usage',
-          blockerCode: 'project-required',
-          backend: null,
-          runId: null,
-          proposalId: null,
-        })));
-        return 2;
-      }
-      process.stderr.write(
+      return failDirect(
+        parsed.json,
+        2,
+        { terminalStage: 'usage', blockerCode: 'project-required', backend: null, runId: null },
         col.red('error: ') + '--direct requires --project <enrolled-repo>\n' +
           '         (the objective runs directly against the repo; no planning context is created).\n',
       );
-      return 2;
     }
 
     if (!parsed.json) {

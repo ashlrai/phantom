@@ -8,9 +8,10 @@
  */
 
 import type { AshlrConfig, Goal, Milestone } from '../types.js';
+import { parseIsoTimeMs } from './open-goals.js';
 import { goalProjectMatchesRepo } from './project-match.js';
 
-export const DEFAULT_GOAL_FOCUS_ACTIVE_THRESHOLD = 4;
+const DEFAULT_GOAL_FOCUS_ACTIVE_THRESHOLD = 4;
 
 export interface GoalFocusSnapshot {
   enabled: boolean;
@@ -41,7 +42,7 @@ export function goalFocusActiveThreshold(cfg?: Pick<AshlrConfig, 'foundry'> | nu
   return DEFAULT_GOAL_FOCUS_ACTIVE_THRESHOLD;
 }
 
-export function isActionableGoalMilestone(milestone: Milestone): boolean {
+function isActionableGoalMilestone(milestone: Milestone): boolean {
   return milestone.status === 'pending' || milestone.status === 'in-progress';
 }
 
@@ -120,10 +121,8 @@ export function compareGoalFocusCandidates(
   const rightInProgress = right.milestone.status === 'in-progress' ? 1 : 0;
   if (leftInProgress !== rightInProgress) return rightInProgress - leftInProgress;
 
-  const leftUpdated = Date.parse(left.milestone.updatedAt || left.goal.updatedAt || '');
-  const rightUpdated = Date.parse(right.milestone.updatedAt || right.goal.updatedAt || '');
-  const safeLeftUpdated = Number.isFinite(leftUpdated) ? leftUpdated : 0;
-  const safeRightUpdated = Number.isFinite(rightUpdated) ? rightUpdated : 0;
+  const safeLeftUpdated = parseIsoTimeMs(left.milestone.updatedAt || left.goal.updatedAt) ?? 0;
+  const safeRightUpdated = parseIsoTimeMs(right.milestone.updatedAt || right.goal.updatedAt) ?? 0;
   if (safeLeftUpdated !== safeRightUpdated) return safeRightUpdated - safeLeftUpdated;
 
   return left.goal.id.localeCompare(right.goal.id) || left.milestone.id.localeCompare(right.milestone.id);

@@ -16,7 +16,73 @@
  *
  * Pure (no I/O): callers pass the result of a goal-store read.
  */
-import type { Goal } from '../types.js';
+import type { Goal, RunBudget } from '../types.js';
+
+// ---------------------------------------------------------------------------
+// Shared pure goal constants, guards, and normalization helpers
+// ---------------------------------------------------------------------------
+
+const GOAL_ID_PATTERN = /^[\w.-]+$/;
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+export const GOAL_MAX_LIST = 200;
+export const GOAL_MAX_DIRECTORY_ENTRIES = 512;
+export const GOAL_MAX_FILE_BYTES = 256 * 1024;
+export const GOAL_LOCK_WAIT_MS = 2_000;
+
+/** Default bounded budget shared by goal advance and direct goal execution. */
+export const DEFAULT_GOAL_RUN_BUDGET: Readonly<RunBudget> = {
+  maxTokens: 200_000,
+  maxSteps: 40,
+  allowCloud: false,
+};
+
+export function isGoalRecordObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function isValidGoalId(value: unknown): value is string {
+  return typeof value === 'string' && GOAL_ID_PATTERN.test(value);
+}
+
+export function isSha256Hex(value: unknown): value is string {
+  return typeof value === 'string' && SHA256_HEX_PATTERN.test(value);
+}
+
+export function parseIsoTimeMs(value: unknown): number | null {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function isValidIsoTimestamp(value: unknown): value is string {
+  return parseIsoTimeMs(value) !== null;
+}
+
+export function goalIdIdentity(id: string): string {
+  // Win32 resolves goal paths case-insensitively; other platforms retain the
+  // exact persisted spelling so distinct case-sensitive records stay distinct.
+  return process.platform === 'win32' ? id.toLowerCase() : id;
+}
+
+export function goalIdsMatch(left: string, right: string): boolean {
+  return goalIdIdentity(left) === goalIdIdentity(right);
+}
+
+/** Lowercase, hyphenated, alphanumeric slug (shared by goal ids and milestone ids). */
+export function slugifyGoalText(text: string, maxLength = 48): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, maxLength)
+    .replace(/-$/, '');
+}
+
+export function formatGoalError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export function isOpenGoal(goal: Pick<Goal, 'status'>): boolean {
   return goal.status === 'active' || goal.status === 'planning';

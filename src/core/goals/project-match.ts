@@ -19,9 +19,19 @@
  *
  * READ-ONLY (a .git/config read, cached by repo-identity.ts). Never throws.
  */
+import { realpathSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 
 import { fleetMirrorsDir, repoIdentityOfPath } from '../fleet/repo-identity.js';
+
+/** Resolve symlinks for read-only proposal/repo correlation, falling back to `repo` when absent. */
+export function canonicalGoalCorrelationRepo(repo: string): string {
+  try {
+    return realpathSync.native(repo);
+  } catch {
+    return repo;
+  }
+}
 
 function mirrorIdentityOf(repo: string): string | null {
   try {

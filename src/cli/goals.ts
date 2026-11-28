@@ -48,154 +48,52 @@
 import { resolve } from 'node:path';
 import { pad, makeColors, isTty } from './ui.js';
 import { parsePositiveInt } from './args.js';
-import type {
-  AdvanceOptions,
-  AshlrConfig,
-  DecomposeOptions,
-  Goal,
-  GoalProgress,
-  Milestone,
-  MilestoneStatus,
-  SpecArtifact,
-  SwarmRun,
-} from '../core/types.js';
+import { formatGoalError } from '../core/goals/open-goals.js';
+import type { Goal, Milestone, MilestoneStatus, SwarmRun } from '../core/types.js';
 
-// ─── Lazy imports (graceful degradation if M28 core not yet built) ───────────
+// ─── Lazy imports (keep module load off startup and preserve vi.mock seams) ──
 
-type CreateGoalIfAbsentFn = (
-  objective: string,
-  opts?: { project?: string | null },
-) => { status: 'created' | 'exists' | 'failed'; goal: Goal };
-type LoadGoalFn = (id: string) => Goal | null;
-type ListGoalsFn = () => Goal[];
-type AddMilestoneFn = (
-  goalId: string,
-  milestone: Pick<Milestone, 'title' | 'detail'>,
-) => Goal | null;
-type UpdateMilestoneStatusFn = (
-  goalId: string,
-  milestoneId: string,
-  status: MilestoneStatus,
-  link?: { swarmId?: string | null; proposalId?: string | null; specId?: string | null },
-) => Goal | null;
-type PauseMilestoneFn = (goalId: string, milestoneId?: string) => Goal | null;
-type ResumeMilestoneFn = (goalId: string, milestoneId?: string) => Goal | null;
-type SkipMilestoneFn = (goalId: string, milestoneId: string) => Goal | null;
-type DecomposeGoalFn = (
-  objective: string,
-  cfg: AshlrConfig,
-  opts?: DecomposeOptions,
-) => Promise<Milestone[]>;
-type PlanMilestoneSpecFn = (
-  goal: Goal,
-  milestone: Milestone,
-  cfg: AshlrConfig,
-  opts?: { allowCloud?: boolean },
-) => Promise<SpecArtifact>;
-type ReorderMilestonesFn = (goalId: string, orderedIds: string[]) => Goal | null;
-type ClearMilestonesFn = (goalId: string) => Goal | null;
-type DeleteGoalFn = (id: string) => void;
-type RecoverStaleGoalLanesFn = (opts?: {
-  limit?: number;
-  dryRun?: boolean;
-}) => {
-  generatedAt: string;
-  dryRun: boolean;
-  eligible: number;
-  recovered: number;
-  lanes: {
-    goalId: string;
-    milestoneId: string;
-    project: string | null;
-    title: string;
-    ageMs: number;
-  }[];
-};
-type DryRunGoalTimestampRepairFn = () => {
-  mode: 'dry-run';
-  planId: string;
-  scannedGoals: number;
-  repairableGoals: number;
-  entries: unknown[];
-};
-type ApplyGoalTimestampRepairFn = (planId: string) => {
-  mode: 'apply';
-  planId: string;
-  scannedGoals: number;
-  repairableGoals: number;
-  repairedGoals: number;
-  alreadyAppliedGoals: number;
-  receiptCount: number;
-  entries: unknown[];
-};
-type AdvanceGoalFn = (
-  goalId: string,
-  cfg: AshlrConfig,
-  opts?: AdvanceOptions,
-) => Promise<SwarmRun>;
-type ProgressOfFn = (goal: Goal) => GoalProgress;
-type IsEnrolledFn = (repo: string) => boolean;
-
-interface GoalsCore {
-  createGoalIfAbsent: CreateGoalIfAbsentFn;
-  loadGoal: LoadGoalFn;
-  listGoals: ListGoalsFn;
-  addMilestone: AddMilestoneFn;
-  updateMilestoneStatus: UpdateMilestoneStatusFn;
-  pauseMilestone: PauseMilestoneFn;
-  resumeMilestone: ResumeMilestoneFn;
-  skipMilestone: SkipMilestoneFn;
-  reorderMilestones: ReorderMilestonesFn;
-  clearMilestones: ClearMilestonesFn;
-  deleteGoal: DeleteGoalFn;
-  recoverStaleGoalLanes: RecoverStaleGoalLanesFn;
-  dryRunGoalTimestampRepair: DryRunGoalTimestampRepairFn;
-  applyGoalTimestampRepair: ApplyGoalTimestampRepairFn;
-  decomposeGoal: DecomposeGoalFn;
-  planMilestoneSpec: PlanMilestoneSpecFn;
-  advanceGoal: AdvanceGoalFn;
-  progressOf: ProgressOfFn;
-  isEnrolled: IsEnrolledFn;
-  loadConfig: () => AshlrConfig;
+async function loadGoalsCore() {
+  const [store, planner, advance, policy, config, timestampRepair] = await Promise.all([
+    import('../core/goals/store.js'),
+    import('../core/goals/planner.js'),
+    import('../core/goals/advance.js'),
+    import('../core/sandbox/policy.js'),
+    import('../core/config.js'),
+    import('../core/goals/timestamp-repair.js'),
+  ]);
+  return {
+    createGoalIfAbsent: store.createGoalIfAbsent,
+    loadGoal: store.loadGoal,
+    listGoals: store.listGoals,
+    addMilestone: store.addMilestone,
+    updateMilestoneStatus: store.updateMilestoneStatus,
+    pauseMilestone: store.pauseMilestone,
+    resumeMilestone: store.resumeMilestone,
+    skipMilestone: store.skipMilestone,
+    reorderMilestones: store.reorderMilestones,
+    clearMilestones: store.clearMilestones,
+    deleteGoal: store.deleteGoal,
+    recoverStaleGoalLanes: store.recoverStaleGoalLanes,
+    dryRunGoalTimestampRepair: timestampRepair.dryRunGoalTimestampRepair,
+    applyGoalTimestampRepair: timestampRepair.applyGoalTimestampRepair,
+    decomposeGoal: planner.decomposeGoal,
+    planMilestoneSpec: planner.planMilestoneSpec,
+    advanceGoal: advance.advanceGoal,
+    progressOf: advance.progressOf,
+    isEnrolled: policy.isEnrolled,
+    loadConfig: config.loadConfig,
+  };
 }
+
+type GoalsCore = Awaited<ReturnType<typeof loadGoalsCore>>;
 
 let _core: GoalsCore | null | undefined = undefined;
 
 async function importCore(): Promise<GoalsCore | null> {
   if (_core === undefined) {
     try {
-      const [store, planner, advance, policy, config, timestampRepair] = await Promise.all([
-        import('../core/goals/store.js'),
-        import('../core/goals/planner.js'),
-        import('../core/goals/advance.js'),
-        import('../core/sandbox/policy.js'),
-        import('../core/config.js'),
-        import('../core/goals/timestamp-repair.js'),
-      ]);
-      _core = {
-        createGoalIfAbsent: store.createGoalIfAbsent as CreateGoalIfAbsentFn,
-        loadGoal: store.loadGoal as LoadGoalFn,
-        listGoals: store.listGoals as ListGoalsFn,
-        addMilestone: store.addMilestone as AddMilestoneFn,
-        updateMilestoneStatus: store.updateMilestoneStatus as UpdateMilestoneStatusFn,
-        pauseMilestone: store.pauseMilestone as PauseMilestoneFn,
-        resumeMilestone: store.resumeMilestone as ResumeMilestoneFn,
-        skipMilestone: store.skipMilestone as SkipMilestoneFn,
-        reorderMilestones: store.reorderMilestones as ReorderMilestonesFn,
-        clearMilestones: store.clearMilestones as ClearMilestonesFn,
-        deleteGoal: store.deleteGoal as DeleteGoalFn,
-        recoverStaleGoalLanes: store.recoverStaleGoalLanes as RecoverStaleGoalLanesFn,
-        dryRunGoalTimestampRepair:
-          timestampRepair.dryRunGoalTimestampRepair as DryRunGoalTimestampRepairFn,
-        applyGoalTimestampRepair:
-          timestampRepair.applyGoalTimestampRepair as ApplyGoalTimestampRepairFn,
-        decomposeGoal: planner.decomposeGoal as DecomposeGoalFn,
-        planMilestoneSpec: planner.planMilestoneSpec as PlanMilestoneSpecFn,
-        advanceGoal: advance.advanceGoal as AdvanceGoalFn,
-        progressOf: advance.progressOf as ProgressOfFn,
-        isEnrolled: policy.isEnrolled as IsEnrolledFn,
-        loadConfig: config.loadConfig as () => AshlrConfig,
-      };
+      _core = await loadGoalsCore();
     } catch {
       _core = null;
     }
@@ -300,33 +198,23 @@ function parseGoalsArgs(args: string[]): ParsedGoalsArgs {
       parsed.dryRun = true;
     } else if (a === '--apply') {
       parsed.apply = true;
-    } else if (a === '--plan-id') {
-      const val = args[++i];
+    } else if (a === '--plan-id' || a.startsWith('--plan-id=')) {
+      const val = a === '--plan-id' ? args[++i] : a.slice('--plan-id='.length);
       if (val === undefined) {
         parsed.error = '--plan-id requires a value';
         return parsed;
       }
       parsed.planId = val;
-    } else if (a.startsWith('--plan-id=')) {
-      parsed.planId = a.slice('--plan-id='.length);
-    } else if (a === '--project') {
-      const val = args[++i];
+    } else if (a === '--project' || a.startsWith('--project=')) {
+      const val = a === '--project' ? args[++i] : a.slice('--project='.length);
       if (val === undefined) {
         parsed.error = '--project requires a repo path';
         return parsed;
       }
       parsed.project = val;
-    } else if (a.startsWith('--project=')) {
-      parsed.project = a.slice('--project='.length);
-    } else if (a === '--max') {
-      const r = parsePositiveInt('max', args[++i]);
-      if ('error' in r) {
-        parsed.error = r.error;
-        return parsed;
-      }
-      parsed.max = r.n;
-    } else if (a.startsWith('--max=')) {
-      const r = parsePositiveInt('max', a.slice('--max='.length));
+    } else if (a === '--max' || a.startsWith('--max=')) {
+      const raw = a === '--max' ? args[++i] : a.slice('--max='.length);
+      const r = parsePositiveInt('max', raw);
       if ('error' in r) {
         parsed.error = r.error;
         return parsed;
@@ -450,6 +338,10 @@ export async function cmdGoals(args: string[]): Promise<number> {
   const out = (s: string): void => {
     process.stdout.write(s + '\n');
   };
+  const failCli = (message: string, code: 1 | 2): number => {
+    process.stderr.write(red('error: ') + message + '\n');
+    return code;
+  };
   // One shape for an unknown goal id on every subcommand: JSON on stdout under
   // --json, otherwise an error plus the command that lists real ids.
   const goalNotFound = (id: string): number => {
@@ -465,43 +357,34 @@ export async function cmdGoals(args: string[]): Promise<number> {
     return 0;
   }
   if (parsed.error) {
-    process.stderr.write(red('error: ') + parsed.error + '\n');
+    failCli(parsed.error, 2);
     process.stderr.write('Run `ashlr goals --help` for usage.\n');
     return 2;
   }
   if (parsed.sub !== 'repair-timestamps' && (parsed.apply || parsed.planId !== undefined)) {
-    process.stderr.write(red('error: ') + '--apply and --plan-id are only valid with repair-timestamps.\n');
-    return 2;
+    return failCli('--apply and --plan-id are only valid with repair-timestamps.', 2);
   }
 
   const core = await importCore();
   if (!core) {
-    process.stderr.write(
-      red('error: ') + 'goals command requires the M28 core (src/core/goals/*).\n',
-    );
-    return 1;
+    return failCli('goals command requires the M28 core (src/core/goals/*).', 1);
   }
 
   if (parsed.sub === 'repair-timestamps') {
     if (parsed.dryRun === parsed.apply) {
-      process.stderr.write(red('error: ') + 'repair-timestamps requires exactly one of --dry-run or --apply.\n');
-      return 2;
+      return failCli('repair-timestamps requires exactly one of --dry-run or --apply.', 2);
     }
     if (parsed.positionals.length > 0) {
-      process.stderr.write(red('error: ') + 'repair-timestamps accepts no positional arguments.\n');
-      return 2;
+      return failCli('repair-timestamps accepts no positional arguments.', 2);
     }
     if (parsed.project !== undefined || parsed.max !== undefined || parsed.allowCloud || parsed.replace) {
-      process.stderr.write(red('error: ') + 'repair-timestamps accepts only its mode, --plan-id, and --json.\n');
-      return 2;
+      return failCli('repair-timestamps accepts only its mode, --plan-id, and --json.', 2);
     }
     if (parsed.dryRun && parsed.planId !== undefined) {
-      process.stderr.write(red('error: ') + '--plan-id is only valid with --apply.\n');
-      return 2;
+      return failCli('--plan-id is only valid with --apply.', 2);
     }
     if (parsed.apply && parsed.planId === undefined) {
-      process.stderr.write(red('error: ') + '--apply requires --plan-id <sha256>.\n');
-      return 2;
+      return failCli('--apply requires --plan-id <sha256>.', 2);
     }
     try {
       const result = parsed.dryRun
@@ -521,9 +404,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
       }
       return 0;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(red('error: ') + `timestamp repair refused: ${message}\n`);
-      return 1;
+      return failCli(`timestamp repair refused: ${formatGoalError(error)}`, 1);
     }
   }
 
@@ -547,8 +428,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
     case 'add': {
       const objective = parsed.arg1;
       if (!objective || objective.trim().length === 0) {
-        process.stderr.write(red('error: ') + 'add requires an objective string.\n');
-        return 2;
+        return failCli('add requires an objective string.', 2);
       }
 
       // ENROLLMENT-SCOPING (M25 lesson): resolve() + isEnrolled()-check --project
@@ -557,20 +437,18 @@ export async function cmdGoals(args: string[]): Promise<number> {
       if (parsed.project !== undefined) {
         const abs = resolve(parsed.project);
         if (!core.isEnrolled(abs)) {
-          process.stderr.write(
-            red('error: ') +
-              `repo not enrolled for autonomous work: ${abs}\n` +
-              '         Enroll it first (e.g. `ashlr enroll add <repo>`) before binding a goal.\n',
+          return failCli(
+            `repo not enrolled for autonomous work: ${abs}\n` +
+              '         Enroll it first (e.g. `ashlr enroll add <repo>`) before binding a goal.',
+            1,
           );
-          return 1;
         }
         project = abs;
       }
 
       const creation = core.createGoalIfAbsent(objective.trim(), { project });
       if (creation.status === 'failed') {
-        process.stderr.write(red('error: ') + 'goal creation persistence failed.\n');
-        return 1;
+        return failCli('goal creation persistence failed.', 1);
       }
       const goal = creation.goal;
       if (parsed.json) {
@@ -621,10 +499,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
     case 'show': {
       // READ-ONLY.
       const id = parsed.arg1;
-      if (!id) {
-        process.stderr.write(red('error: ') + 'show requires a goal id.\n');
-        return 2;
-      }
+      if (!id) return failCli('show requires a goal id.', 2);
       const goal = core.loadGoal(id);
       if (!goal) {
         return goalNotFound(id);
@@ -660,10 +535,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
     // ─────────────────────────────────────────────────────────────────────
     case 'plan': {
       const id = parsed.arg1;
-      if (!id) {
-        process.stderr.write(red('error: ') + 'plan requires a goal id.\n');
-        return 2;
-      }
+      if (!id) return failCli('plan requires a goal id.', 2);
       const goal = core.loadGoal(id);
       if (!goal) {
         return goalNotFound(id);
@@ -676,23 +548,19 @@ export async function cmdGoals(args: string[]): Promise<number> {
       // first (a deliberate, destructive re-plan). Steering (reorder/skip/pause)
       // is the non-destructive way to adjust an existing plan.
       if (goal.milestones.length > 0 && !parsed.replace) {
-        process.stderr.write(
-          red('error: ') +
-            `goal already planned (${goal.milestones.length} milestone(s)).\n` +
+        return failCli(
+          `goal already planned (${goal.milestones.length} milestone(s)).\n` +
             '         Use `--replace` to clear + re-plan, or steer with ' +
             '`reorder`/`skip`/`pause`,\n' +
-            '         or create a new goal.\n',
+            '         or create a new goal.',
+          1,
         );
-        return 1;
       }
       if (goal.milestones.length > 0 && parsed.replace) {
         // --replace: clear the existing plan so we re-plan from a clean slate.
         const cleared = core.clearMilestones(goal.id);
         if (!cleared) {
-          process.stderr.write(
-            red('error: ') + 'existing plan could not be cleared; concurrent steering won.\n',
-          );
-          return 1;
+          return failCli('existing plan could not be cleared; concurrent steering won.', 1);
         }
       }
 
@@ -758,10 +626,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
     // ─────────────────────────────────────────────────────────────────────
     case 'advance': {
       const id = parsed.arg1;
-      if (!id) {
-        process.stderr.write(red('error: ') + 'advance requires a goal id.\n');
-        return 2;
-      }
+      if (!id) return failCli('advance requires a goal id.', 2);
       const goal = core.loadGoal(id);
       if (!goal) {
         return goalNotFound(id);
@@ -771,19 +636,19 @@ export async function cmdGoals(args: string[]): Promise<number> {
       // any core call that could start a swarm. Core (advanceGoal ->
       // assertMayMutate) enforces this AGAIN.
       if (!goal.project) {
-        process.stderr.write(
-          red('error: ') + 'goal has no enrolled project; cannot advance.\n' +
-            '         Bind a goal to an enrolled repo with `--project` on `add`.\n',
+        return failCli(
+          'goal has no enrolled project; cannot advance.\n' +
+            '         Bind a goal to an enrolled repo with `--project` on `add`.',
+          1,
         );
-        return 1;
       }
       const repo = resolve(goal.project);
       if (!core.isEnrolled(repo)) {
-        process.stderr.write(
-          red('error: ') + `repo not enrolled for autonomous work: ${repo}\n` +
-            '         Enroll it with `ashlr enroll add <repo>`.\n',
+        return failCli(
+          `repo not enrolled for autonomous work: ${repo}\n` +
+            '         Enroll it with `ashlr enroll add <repo>`.',
+          1,
         );
-        return 1;
       }
 
       let run: SwarmRun;
@@ -791,9 +656,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
         // SANDBOXED + PROPOSAL-ONLY (core hardcodes sandbox+requireSandbox+propose).
         run = await core.advanceGoal(id, cfg, { allowCloud: parsed.allowCloud });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(red('error: ') + msg + '\n');
-        return 1;
+        return failCli(formatGoalError(err), 1);
       }
 
       // Re-read the goal to surface the linked PENDING proposal id.
@@ -909,40 +772,19 @@ export async function cmdGoals(args: string[]): Promise<number> {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    case 'pause': {
-      const id = parsed.arg1;
-      if (!id) {
-        process.stderr.write(red('error: ') + 'pause requires a goal id.\n');
-        return 2;
-      }
-      const updated = core.pauseMilestone(id, parsed.arg2);
-      if (!updated) {
-        process.stderr.write(
-          red('error: ') + `goal or milestone not found: ${id}${parsed.arg2 ? ` / ${parsed.arg2}` : ''}\n`,
-        );
-        return 1;
-      }
-      if (parsed.json) out(JSON.stringify(updated, null, 2));
-      else out(green('✓ ') + (parsed.arg2 ? `paused milestone ${parsed.arg2}` : `paused goal ${id}`));
-      return 0;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
+    case 'pause':
     case 'resume': {
       const id = parsed.arg1;
-      if (!id) {
-        process.stderr.write(red('error: ') + 'resume requires a goal id.\n');
-        return 2;
-      }
-      const updated = core.resumeMilestone(id, parsed.arg2);
+      if (!id) return failCli(`${parsed.sub} requires a goal id.`, 2);
+      const updated = parsed.sub === 'pause'
+        ? core.pauseMilestone(id, parsed.arg2)
+        : core.resumeMilestone(id, parsed.arg2);
       if (!updated) {
-        process.stderr.write(
-          red('error: ') + `goal or milestone not found: ${id}${parsed.arg2 ? ` / ${parsed.arg2}` : ''}\n`,
-        );
-        return 1;
+        return failCli(`goal or milestone not found: ${id}${parsed.arg2 ? ` / ${parsed.arg2}` : ''}`, 1);
       }
+      const verb = parsed.sub === 'pause' ? 'paused' : 'resumed';
       if (parsed.json) out(JSON.stringify(updated, null, 2));
-      else out(green('✓ ') + (parsed.arg2 ? `resumed milestone ${parsed.arg2}` : `resumed goal ${id}`));
+      else out(green('✓ ') + (parsed.arg2 ? `${verb} milestone ${parsed.arg2}` : `${verb} goal ${id}`));
       return 0;
     }
 
@@ -950,15 +792,9 @@ export async function cmdGoals(args: string[]): Promise<number> {
     case 'skip': {
       const id = parsed.arg1;
       const milestoneId = parsed.arg2;
-      if (!id || !milestoneId) {
-        process.stderr.write(red('error: ') + 'skip requires a goal id and a milestone id.\n');
-        return 2;
-      }
+      if (!id || !milestoneId) return failCli('skip requires a goal id and a milestone id.', 2);
       const updated = core.skipMilestone(id, milestoneId);
-      if (!updated) {
-        process.stderr.write(red('error: ') + `goal or milestone not found: ${id} / ${milestoneId}\n`);
-        return 1;
-      }
+      if (!updated) return failCli(`goal or milestone not found: ${id} / ${milestoneId}`, 1);
       if (parsed.json) out(JSON.stringify(updated, null, 2));
       else out(green('✓ ') + `skipped milestone ${milestoneId}`);
       return 0;
@@ -972,10 +808,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
       const id = parsed.arg1;
       const orderedIds = parsed.positionals.slice(1);
       if (!id || orderedIds.length === 0) {
-        process.stderr.write(
-          red('error: ') + 'reorder requires a goal id and at least one milestone id.\n',
-        );
-        return 2;
+        return failCli('reorder requires a goal id and at least one milestone id.', 2);
       }
       const updated = core.reorderMilestones(id, orderedIds);
       if (!updated) {
@@ -996,10 +829,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
       // STEERABLE: remove a goal record entirely. Pure local FS delete under
       // ~/.ashlr/goals — never touches a user repo, never applies a proposal.
       const id = parsed.arg1;
-      if (!id) {
-        process.stderr.write(red('error: ') + 'delete requires a goal id.\n');
-        return 2;
-      }
+      if (!id) return failCli('delete requires a goal id.', 2);
       const goal = core.loadGoal(id);
       if (!goal) {
         return goalNotFound(id);
@@ -1008,12 +838,6 @@ export async function cmdGoals(args: string[]): Promise<number> {
       if (parsed.json) out(JSON.stringify({ deleted: id }, null, 2));
       else out(green('✓ ') + `deleted goal ${id}`);
       return 0;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    default: {
-      printHelp();
-      return 2;
     }
   }
 }

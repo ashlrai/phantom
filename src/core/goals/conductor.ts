@@ -19,8 +19,9 @@
  *    can be stopped between milestones without waiting for a swarm to finish.
  */
 import { resolveGoalPreferences } from './preferences.js';
+import { formatGoalError } from './open-goals.js';
 
-import type { AshlrConfig, AdvanceOptions } from '../types.js';
+import type { AshlrConfig, AdvanceOptions, Goal, GoalProgress } from '../types.js';
 
 // ---------------------------------------------------------------------------
 // ConductorCycleSummary
@@ -74,6 +75,32 @@ function emptyConductorSummary(): ConductorCycleSummary {
   };
 }
 
+function refuseConductor(summary: ConductorCycleSummary, reason?: string): ConductorCycleSummary {
+  summary.activationRefused = true;
+  if (reason !== undefined) summary.activationRefusalReason = reason;
+  return summary;
+}
+
+function recordRefreshedGoalActivity(
+  summary: ConductorCycleSummary,
+  goal: Pick<Goal, 'id' | 'objective'>,
+  milestoneTitle: string,
+  result: { proposalsFiled: number; goalDone: boolean },
+  loadGoal: (id: string) => Goal | null,
+  progressOf: (goal: Goal) => Pick<GoalProgress, 'fractionDone'>,
+): void {
+  const refreshed = loadGoal(goal.id);
+  const progress = refreshed ? progressOf(refreshed) : { fractionDone: 0 };
+  summary.goalActivity.push({
+    goalId: goal.id,
+    objective: goal.objective,
+    fractionDone: progress.fractionDone,
+    milestoneTitle,
+    proposalFiled: result.proposalsFiled > 0,
+    goalCompleted: result.goalDone,
+  });
+}
+
 /** One goal's contribution to a conductor cycle. */
 export interface GoalActivity {
   goalId: string;
@@ -119,8 +146,7 @@ export async function runConductor(
   if (!opts.dryRun) {
     const { liveConductorActivationAuthorized } = await import('../daemon/activation-permit.js');
     if (!liveConductorActivationAuthorized()) {
-      summary.activationRefused = true;
-      return summary;
+      return refuseConductor(summary);
     }
   }
 
@@ -139,9 +165,7 @@ export async function runConductor(
   const preferences = resolveGoalPreferences(cfg);
   const maxGoals = opts.maxGoalsPerCycle === undefined ? preferences.maxGoalsPerConductorCycle : opts.maxGoalsPerCycle;
   if (preferences.sourceState !== 'ready' || maxGoals !== null && !(Number.isSafeInteger(maxGoals) && maxGoals > 0)) {
-    summary.activationRefused = true;
-    summary.activationRefusalReason = 'Goal conductor preferences are invalid or unavailable.';
-    return summary;
+    return refuseConductor(summary, 'Goal conductor preferences are invalid or unavailable.');
   }
   // A worker killed mid-advance (SIGKILL/OOM/reboot) never runs advanceGoal's
   // catch, so its milestone stays 'in-progress'. nextActionableMilestone treats
@@ -159,7 +183,7 @@ export async function runConductor(
         }
       }
     } catch (err) {
-      process.stderr.write(`[conductor] stale goal lane recovery failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.stderr.write(`[conductor] stale goal lane recovery failed: ${formatGoalError(err)}\n`);
     }
   }
 
@@ -169,9 +193,7 @@ export async function runConductor(
   // A partial empty read proves neither that no goals exist nor that backlog
   // fallback is appropriate. Known valid goals remain usable in a partial read.
   if (!read.complete && activeGoals.length === 0) {
-    summary.activationRefused = true;
-    summary.activationRefusalReason = 'The active-goal inventory could not be read.';
-    return summary;
+    return refuseConductor(summary, 'The active-goal inventory could not be read.');
   }
 
   // ── No active goals → backlog daemon fallback ──────────────────────────────
@@ -196,17 +218,13 @@ export async function runConductor(
     // allowAnyRepo bypasses the enrollment check (matches assertMayMutate).
     if (!opts.allowAnyRepo) {
       if (!goal.project) {
-        process.stderr.write(
-          `[conductor] goal ${goal.id} skipped — no project set (needs-attention)
-`,
-        );
+        process.stderr.write(`[conductor] goal ${goal.id} skipped — no project set (needs-attention)\n`);
         continue;
       }
       const enrolledPaths = listEnrolled();
       if (enrolledPaths.length > 0 && !enrolledPaths.includes(goal.project)) {
         process.stderr.write(
-          `[conductor] goal ${goal.id} skipped — project "${goal.project}" is not enrolled (needs-attention)
-`,
+          `[conductor] goal ${goal.id} skipped — project "${goal.project}" is not enrolled (needs-attention)\n`,
         );
         continue;
       }
@@ -249,23 +267,11 @@ export async function runConductor(
 
       // Re-load the goal for a fresh fractionDone after the advance.
       const { loadGoal } = await import('./store.js');
-      const refreshed = loadGoal(goal.id);
-      const progress = refreshed ? progressOf(refreshed) : { fractionDone: 0 };
-
-      summary.goalActivity.push({
-        goalId: goal.id,
-        objective: goal.objective,
-        fractionDone: progress.fractionDone,
-        milestoneTitle: milestone.title,
-        proposalFiled: result.proposalsFiled > 0,
-        goalCompleted: result.goalDone,
-      });
+      recordRefreshedGoalActivity(summary, goal, milestone.title, result, loadGoal, progressOf);
     } catch (err) {
       // Log the error but continue with remaining goals so one stuck goal
       // doesn't block the whole conductor cycle.
-      process.stderr.write(
-        `[conductor] goal ${goal.id} advance failed: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
+      process.stderr.write(`[conductor] goal ${goal.id} advance failed: ${formatGoalError(err)}\n`);
     }
   }
 
@@ -285,11 +291,7 @@ export async function runAuthorizedConductorOnce(
   request: { goalId: string },
 ): Promise<ConductorCycleSummary> {
   const summary = emptyConductorSummary();
-  const refuse = (reason: string): ConductorCycleSummary => {
-    summary.activationRefused = true;
-    summary.activationRefusalReason = reason;
-    return summary;
-  };
+  const refuse = (reason: string): ConductorCycleSummary => refuseConductor(summary, reason);
   if (!request.goalId) return refuse('goal-conductor-explicit-goal-required');
 
   const { killSwitchOn, listEnrolled } = await import('../sandbox/policy.js');
@@ -365,18 +367,9 @@ export async function runAuthorizedConductorOnce(
     summary.milestonesAdvanced = 1;
     summary.proposalsFiled = result.proposalsFiled;
     summary.goalsDone = result.goalDone ? 1 : 0;
-    const refreshed = loadGoal(goal.id);
-    const progress = refreshed ? progressOf(refreshed) : { fractionDone: 0 };
-    summary.goalActivity.push({
-      goalId: goal.id,
-      objective: goal.objective,
-      fractionDone: progress.fractionDone,
-      milestoneTitle: milestone.title,
-      proposalFiled: result.proposalsFiled > 0,
-      goalCompleted: result.goalDone,
-    });
+    recordRefreshedGoalActivity(summary, goal, milestone.title, result, loadGoal, progressOf);
     return summary;
   } catch (error) {
-    return refuse(`goal-conductor-advance-failed:${error instanceof Error ? error.message : String(error)}`);
+    return refuse(`goal-conductor-advance-failed:${formatGoalError(error)}`);
   }
 }
