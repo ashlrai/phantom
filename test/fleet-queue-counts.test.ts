@@ -184,6 +184,27 @@ it('measures wait from re-arrival, not the first-ever enqueue', async () => {
   expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(1200);
 });
 
+it.each([
+  { event: 'launch' },
+  { event: 'batch_claim', ts: 'invalid' },
+  { event: 'launch_failed', action: 'retry' },
+  { event: 'task_outcome', outcome: 'deferred', ts: 'invalid' },
+])('clears the previous wait after an undated $event', async (mark) => {
+  await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
+  await mkdir(join(root, 'metrics'));
+  const path = join(root, 'metrics', 'jobs.jsonl');
+  const ledger = [
+    { job: 'a-1', event: 'enqueue', ts: minutesAgo(90) },
+    { job: 'a-1', ...mark },
+  ];
+  await writeFile(path, ledger.map(entry => JSON.stringify(entry)).join('\n'));
+  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBeNull();
+
+  ledger.push({ job: 'a-1', event: 'queued', ts: minutesAgo(10) });
+  await writeFile(path, ledger.map(entry => JSON.stringify(entry)).join('\n'));
+  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(600);
+});
+
 it('counts batch departures and retried member outcomes as queue marks', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), [row('READY', 'a-1', 'devin'), row('READY', 'a-2', 'devin')].join('\n'));
   await mkdir(join(root, 'metrics'));
