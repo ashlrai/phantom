@@ -601,7 +601,10 @@ changes produce `pr-caused`. A singleton unaffected failure with an explicit
 test pass on master's current run produces
 `rerun-failed`. A green Vitest module summary with skipped or todo cases
 proves the suite loaded but leaves individual case outcomes unknown without
-an explicit pass line for the case. Relative imports are followed
+an explicit pass line for the case. A verified master collection failure
+for the same file leaves named case outcomes unknown even if another master
+job prints a case pass or green module summary. This withholds both flake
+reruns and branch-update readiness based on that pass. Relative imports are followed
 transitively from master (100-file cap) with bundler resolution: `.js`/`.jsx`
 specifiers map to `.ts`/`.tsx` sources, extensionless specifiers try file then
 directory `index`, `?raw`/`?url`/`?inline` queries and non-code files (`.css`,
