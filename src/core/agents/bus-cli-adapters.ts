@@ -245,28 +245,47 @@ function frameEvidence(message: { held?: boolean | null; holder?: string | null;
   return `${held}${job}`;
 }
 
+/** Bound the bytes of the finished frame, not the UTF-16 length of its rows. */
+function frameRows<T>(cli: BusCli, begin: string, end: string, rows: readonly T[],
+  format: (row: T) => string, clippedNote: (omitted: number) => string): string {
+  if (!getBusCliAdapter(cli)) throw new Error('Unknown CLI.');
+  const framed = [begin];
+  // One newline already joins the two markers. Inserting a row adds one more.
+  let used = Buffer.byteLength(begin) + Buffer.byteLength(end) + 1;
+  let shown = 0;
+  for (const row of rows) {
+    const line = format(row);
+    const bytes = Buffer.byteLength(line) + 1;
+    if (used + bytes > BUS_INBOX_FRAME_MAX) break;
+    framed.push(line);
+    used += bytes;
+    shown += 1;
+  }
+  if (shown < rows.length) {
+    // Make room for the real omission count and its newline only when needed.
+    let note = clippedNote(rows.length - shown);
+    while (shown > 0 && used + Buffer.byteLength(note) + 1 > BUS_INBOX_FRAME_MAX) {
+      used -= Buffer.byteLength(framed.pop()!) + 1;
+      shown -= 1;
+      note = clippedNote(rows.length - shown);
+    }
+    framed.push(note);
+  }
+  framed.push(end);
+  return framed.join('\n');
+}
+
 /**
  * Text block a host passes to the CLI's next turn. Identical for every CLI so
  * the untrusted framing cannot drift between adapters. Bounded; truncation is
  * stated, never silent.
  */
 export function frameBusInbox(cli: BusCli, messages: readonly InboxMessage[]): string {
-  if (!getBusCliAdapter(cli)) throw new Error('Unknown CLI.');
-  const lines = [BUS_INBOX_FRAME_BEGIN];
-  let used = BUS_INBOX_FRAME_BEGIN.length + BUS_INBOX_FRAME_END.length + 64;
-  let shown = 0;
-  for (const message of messages) {
+  return frameRows(cli, BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END, messages, message => {
     const where = message.kind === 'channel' ? `#${message.channel}` : message.kind;
     const from = message.fromAgent ? `agent:${message.fromAgent}` : `label ${message.envelope.from}`;
-    const line = clean(`[${message.priority} ${where} id=${message.envelope.id} from ${from}${frameEvidence(message)}] ${summary(message.envelope.body)}`);
-    if (used + line.length + 1 > BUS_INBOX_FRAME_MAX) break;
-    lines.push(line);
-    used += line.length + 1;
-    shown += 1;
-  }
-  if (shown < messages.length) lines.push(`(${messages.length - shown} more messages not shown; read the inbox again)`);
-  lines.push(BUS_INBOX_FRAME_END);
-  return lines.join('\n');
+    return clean(`[${message.priority} ${where} id=${message.envelope.id} from ${from}${frameEvidence(message)}] ${summary(message.envelope.body)}`);
+  }, omitted => `(${omitted} more messages not shown; read the inbox again)`);
 }
 
 /**
@@ -280,21 +299,10 @@ export function frameBusInbox(cli: BusCli, messages: readonly InboxMessage[]): s
  * the inbox it complements.
  */
 export function frameBusChannelRead(cli: BusCli, channel: string, messages: readonly ChannelReadMessage[]): string {
-  if (!getBusCliAdapter(cli)) throw new Error('Unknown CLI.');
-  const lines = [BUS_INBOX_FRAME_BEGIN];
-  let used = BUS_INBOX_FRAME_BEGIN.length + BUS_INBOX_FRAME_END.length + 64;
-  let shown = 0;
-  for (const message of messages) {
+  return frameRows(cli, BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END, messages, message => {
     const from = message.fromAgent ? `agent:${message.fromAgent}` : `label ${message.envelope.from}`;
-    const line = clean(`[${message.priority} #${channel}:${message.topic} id=${message.envelope.id} from ${from}${frameEvidence(message)}] ${summary(message.envelope.body)}`);
-    if (used + line.length + 1 > BUS_INBOX_FRAME_MAX) break;
-    lines.push(line);
-    used += line.length + 1;
-    shown += 1;
-  }
-  if (shown < messages.length) lines.push(`(${messages.length - shown} more messages not shown; read the channel again)`);
-  lines.push(BUS_INBOX_FRAME_END);
-  return lines.join('\n');
+    return clean(`[${message.priority} #${channel}:${message.topic} id=${message.envelope.id} from ${from}${frameEvidence(message)}] ${summary(message.envelope.body)}`);
+  }, omitted => `(${omitted} more messages not shown; read the channel again)`);
 }
 
 /**
@@ -308,21 +316,10 @@ export function frameBusChannelRead(cli: BusCli, channel: string, messages: read
  * agents bus reads it complements.
  */
 export function frameCommsBusRead(cli: BusCli, receipts: readonly BusInboxReceipt[]): string {
-  if (!getBusCliAdapter(cli)) throw new Error('Unknown CLI.');
-  const lines = [BUS_INBOX_FRAME_BEGIN];
-  let used = BUS_INBOX_FRAME_BEGIN.length + BUS_INBOX_FRAME_END.length + 64;
-  let shown = 0;
-  for (const receipt of receipts) {
+  return frameRows(cli, BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END, receipts, receipt => {
     const envelope = receipt.envelope;
-    const line = clean(`[${envelope.priority} id=${envelope.id} from ${envelope.from} to ${envelope.to}] ${summary(envelope.body)}`);
-    if (used + line.length + 1 > BUS_INBOX_FRAME_MAX) break;
-    lines.push(line);
-    used += line.length + 1;
-    shown += 1;
-  }
-  if (shown < receipts.length) lines.push(`(${receipts.length - shown} more messages not shown; read the bus again)`);
-  lines.push(BUS_INBOX_FRAME_END);
-  return lines.join('\n');
+    return clean(`[${envelope.priority} id=${envelope.id} from ${envelope.from} to ${envelope.to}] ${summary(envelope.body)}`);
+  }, omitted => `(${omitted} more messages not shown; read the bus again)`);
 }
 
 /**
@@ -384,20 +381,8 @@ function wakeFrameLine(wake: AgentWakeRow): string {
  * rather than an invented summary. Identical for every CLI.
  */
 export function frameBusWakes(cli: BusCli, wakes: readonly AgentWakeRow[]): string {
-  if (!getBusCliAdapter(cli)) throw new Error('Unknown CLI.');
-  const lines = [BUS_INBOX_FRAME_BEGIN];
-  let used = BUS_INBOX_FRAME_BEGIN.length + BUS_INBOX_FRAME_END.length + 64;
-  let shown = 0;
-  for (const wake of wakes) {
-    const line = clean(wakeFrameLine(wake));
-    if (used + line.length + 1 > BUS_INBOX_FRAME_MAX) break;
-    lines.push(line);
-    used += line.length + 1;
-    shown += 1;
-  }
-  if (shown < wakes.length) lines.push(`(${wakes.length - shown} more wake hints not shown; read the wakes again)`);
-  lines.push(BUS_INBOX_FRAME_END);
-  return lines.join('\n');
+  return frameRows(cli, BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END, wakes,
+    wake => clean(wakeFrameLine(wake)), omitted => `(${omitted} more wake hints not shown; read the wakes again)`);
 }
 
 /**
@@ -412,20 +397,7 @@ export function frameBusWakes(cli: BusCli, wakes: readonly AgentWakeRow[]): stri
  */
 function frameFormattedLines(cli: BusCli, begin: string, end: string, lines: readonly string[],
   clippedNote: (omitted: number) => string): string {
-  if (!getBusCliAdapter(cli)) throw new Error('Unknown CLI.');
-  const framed = [begin];
-  let used = begin.length + end.length + 64;
-  let shown = 0;
-  for (const line of lines) {
-    const cleaned = clean(line).replace(/[\t\n]+/g, ' ');
-    if (used + cleaned.length + 1 > BUS_INBOX_FRAME_MAX) break;
-    framed.push(cleaned);
-    used += cleaned.length + 1;
-    shown += 1;
-  }
-  if (shown < lines.length) framed.push(clippedNote(lines.length - shown));
-  framed.push(end);
-  return framed.join('\n');
+  return frameRows(cli, begin, end, lines, line => clean(line).replace(/[\t\n]+/g, ' '), clippedNote);
 }
 
 /**

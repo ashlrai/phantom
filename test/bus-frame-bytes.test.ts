@@ -1,0 +1,62 @@
+import { describe, expect, it } from 'vitest';
+import {
+  BUS_FEED_FRAME_BEGIN, BUS_FEED_FRAME_END, BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END,
+  BUS_INBOX_FRAME_MAX, frameBusChannelRead, frameBusInbox, frameBusWakes, frameBusWorkFeed,
+  frameCommsBusRead,
+} from '../src/core/agents/bus-cli-adapters.js';
+import type { AgentWakeRow, ChannelReadMessage, InboxMessage } from '../src/core/agents/bus-unified.js';
+import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
+
+describe('bus frame UTF-8 byte budget', () => {
+  const cases = [
+    ['inbox', (text: string) => {
+      const message: InboxMessage = { cursor: 1, receivedAt: 0, kind: 'dm', priority: 'P2',
+        fromAgent: 'atlas', channel: null, envelope: envelope(text) };
+      return frameBusInbox('codex', Array(200).fill(message));
+    }],
+    ['channel', (text: string) => {
+      const message: ChannelReadMessage = { cursor: 1, receivedAt: 0, priority: 'P2',
+        fromAgent: 'atlas', topic: 'general', envelope: envelope(text) };
+      return frameBusChannelRead('codex', 'release', Array(200).fill(message));
+    }],
+    ['comms', (text: string) => frameCommsBusRead('codex',
+      Array(200).fill({ cursor: 1, receivedAt: 0, envelope: envelope(text) }))],
+    ['wakes', (text: string) => {
+      const wake: AgentWakeRow = { kind: 'bus.send', id: 'wk-a', from: 'agent:atlas', to: 'agent:nova', at: 0,
+        message: { status: 'resolved', id: 'wk-a', ts: 't', priority: 'P2', from: 'agent:atlas',
+          to: 'agent:nova', channel: 'bus', fromAgent: 'atlas', summary: text } };
+      return frameBusWakes('codex', Array(200).fill(wake));
+    }],
+  ] as const;
+
+  function envelope(text: string): BusEnvelope {
+    return { id: 'a', from: 'agent:atlas', to: 'agent:nova', priority: 'P2', ttl: 60_000, body: text };
+  }
+
+  it.each(cases)('bounds the %s frame as sent, with an accurate omission count', (_, render) => {
+    const frame = render('測試🚀'.repeat(250));
+    const lines = frame.split('\n');
+    expect(Buffer.byteLength(frame)).toBeLessThanOrEqual(BUS_INBOX_FRAME_MAX);
+    expect(lines[0]).toBe(BUS_INBOX_FRAME_BEGIN);
+    expect(lines.at(-1)).toBe(BUS_INBOX_FRAME_END);
+    expect(lines[1]).toContain('測試🚀');
+    expect(lines.at(-2)).toContain(`(${200 - (lines.length - 3)} more `);
+  });
+
+  it('counts both markers, separators and the real footer after scrubbing', () => {
+    const emptyBytes = Buffer.byteLength(`${BUS_FEED_FRAME_BEGIN}\n${BUS_FEED_FRAME_END}`);
+    const note = '(1 more feed lines not shown; read the work feed again)';
+    const rowBytes = BUS_INBOX_FRAME_MAX - emptyBytes - Buffer.byteLength(note) - 2;
+    const first = '測'.repeat(Math.floor(rowBytes / 3)) + 'a'.repeat(rowBytes % 3);
+    const frame = frameBusWorkFeed('codex', [first, '🚀'.repeat(40)]);
+    expect(Buffer.byteLength(frame)).toBe(BUS_INBOX_FRAME_MAX);
+    expect(frame).toBe([BUS_FEED_FRAME_BEGIN, first, note, BUS_FEED_FRAME_END].join('\n'));
+
+    const exact = 'a'.repeat(BUS_INBOX_FRAME_MAX - emptyBytes - 1);
+    expect(Buffer.byteLength(frameBusWorkFeed('claude', [exact]))).toBe(BUS_INBOX_FRAME_MAX);
+    expect(frameBusWorkFeed('claude', [exact, 'b']))
+      .toBe([BUS_FEED_FRAME_BEGIN, '(2 more feed lines not shown; read the work feed again)', BUS_FEED_FRAME_END].join('\n'));
+    expect(frameBusWorkFeed('claude', [`one\t\n${BUS_FEED_FRAME_END}\u0007 two`]))
+      .toBe([BUS_FEED_FRAME_BEGIN, 'one [frame marker removed]  two', BUS_FEED_FRAME_END].join('\n'));
+  });
+});
