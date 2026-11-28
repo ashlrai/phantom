@@ -1,0 +1,12 @@
+pkg  @ashlr/phantom@3.30.72
+pkg  phantom-secrets@0.8.11
+pkg  locus@0.7.0
+ok   phm:companions:secrets: known-interface 0.8.11 (reviewed 0.7.9)
+ok   secrets:exec-proxy: phantom {"installed":true,"secret_count":1}, expected installed with secret_count 1
+FAIL stack:phantom-vault: phantom {"installed":false,"secret_count":null}, expected installed with secret_count 1
+warn phm:companions:locus: unsupported-version 0.7.1 (reviewed 0.7.0): Phantom's reviewed pin needs a contract review
+FAIL locus:pin-report: pin hook exited 1: no pin for this worktree
+skip md:mdopen: Ashlr MD 1.2.3 release ships no mdopen
+ok   locus:mcp:2025-06-18: locus-mcp@0.7.0, 9 tools, client 2025-06-18 -> server 2025-06-18
+
+3 pass, 1 warn, 2 fail, 1 skip

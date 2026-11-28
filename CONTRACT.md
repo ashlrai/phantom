@@ -578,7 +578,12 @@ budget gate's
 `> (first-paint) phone` rows from the `OVER BUDGET: <arm>
 first-paint critical JS <kb> KB (budget <kb> KB)` verdicts and its
 `> (first-paint) gate` row from the script's
-`check-first-paint-budget: <message>` error lines, plus
+`check-first-paint-budget: <message>` error lines, the scheduled
+companion smoke's
+`scripts/companion-workflow-smoke.mjs > (companion-smoke) <check-id>`
+rows from the smoke's `FAIL <check-id>: <detail>` verdict lines --
+counted only inside a log carrying the `N pass, N warn, N fail, N
+skip` tally whose fail count equals the FAIL rows -- plus
 summaries. `auditExceptions` is the optional
 `DependencyAuditException[] | null` list (`{id, package, graph}` with
 graph `full` or `raycast-production`); `null` leaves npm audit reports
@@ -643,10 +648,24 @@ config names, plus each arm's manifest roots
 gate identity takes the union of both arms) -- never the failing
 file's import closure, since the measured bundle graph has no
 enumerable closure, and the harness ambient set does not apply to it
-either. Parenthesized
+either. The companion smoke's dependency set is the closed input list
+`scripts/companion-workflow-smoke.mjs` plus
+`.github/workflows/companion-smoke.yml` -- the checks exercise
+published companions and the ref's built `dist/` graph, which has no
+enumerable closure -- and the harness ambient set does not apply to
+it either. Parenthesized
 gate identities other than `(suite)` can never resolve a master pass or
 flake classification, even when their file is a test path a green-module
-line could otherwise match.
+line could otherwise match. Groups also emit from master evidence
+alone: a parsed failure on a verified master run that no open PR
+reproduced -- scheduled or master-push workflow evidence such as the
+companion smoke, or a suite break with no PR victim -- becomes a
+`shared-baseline`/`queue-master-fix` group with empty `prs`, `runs` and
+`unaffectedPrs`, `master: 'fail'` and a brief naming the master-run
+provenance; a test id an open PR did observe keeps its observation
+group and each id emits once. Master-only groups queue master fixes
+through the same path but never produce update-branch plans or rerun
+proposals.
 `enqueueBaselineFixes(report,
 absoluteQueuePath)` explicitly writes work-tier master-fix rows deduplicated
 by queue state via `nextFixGeneration`: a failure whose prior fix generations

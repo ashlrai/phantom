@@ -2041,6 +2041,16 @@
  *     lower bounds, and items emit only for the fleet's own
  *     repository since the journal describes this install's
  *     interactive seats and carries no repo column;
+ *   - the ideation loop's proposal outcomes: the RQ-IDEA-* jobs the
+ *     daily `phm fleet ideation tick` selects into the research queue,
+ *     whose merged/died/unresolved verdicts ideationQuality already
+ *     folds from metrics/jobs.jsonl back into the next prompt but
+ *     which never became work (ideationOutcomeBacklogItems below). An
+ *     item emits only while died proposals reach the recurring bar
+ *     inside the 7-day window AND outnumber merged ones; unresolved
+ *     stays in-flight context, never failure, truncated tails are
+ *     stated as lower bounds, and items emit only for the fleet's own
+ *     repository since the loop is this install's machinery;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2084,6 +2094,7 @@ import { creditReleaseBacklogItems } from './credit-release-backlog.js';
 import { crossReviewBacklogItems } from './xreview-backlog.js';
 import { emptyTagBacklogItems } from './empty-tag-backlog.js';
 import { postMergeBacklogItems } from './postmerge-backlog.js';
+import { ideationOutcomeBacklogItems } from './ideation-outcome-backlog.js';
 import { ciRerunBacklogItems } from './ci-rerun-backlog.js';
 import { lostLaunchBacklogItems } from './lost-launch-backlog.js';
 import { claudeRecoveryBacklogItems } from './claude-recovery-backlog.js';
@@ -4676,6 +4687,18 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the item since the delta describes this install's merge
   // pipeline.
   await feed('prDeltaBacklogItems', () => prDeltaBacklogItems({ repo }));
+
+  // Ideation-loop proposal outcomes: the daily `phm fleet ideation tick`
+  // selects up to three RQ-IDEA proposals into the research queue, and
+  // ideationQuality already folds their merged/died/unresolved verdicts
+  // back into the next prompt — but until now a died-dominant mix never
+  // became work, visible only inside the prompt itself. The item emits
+  // only while died proposals recur inside the 7-day window AND
+  // outnumber merged ones; unresolved stays in-flight context, never
+  // failure, truncated tails are stated as lower bounds, and only the
+  // fleet's own repository inherits the item since the loop is this
+  // install's machinery.
+  await feed('ideationOutcomeBacklogItems', () => ideationOutcomeBacklogItems({ repo }));
   return { items, errors };
 }
 

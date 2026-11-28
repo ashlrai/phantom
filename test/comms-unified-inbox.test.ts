@@ -48,6 +48,7 @@ import type { FleetAssignment, FleetCoordinationPending, FleetMessage, FleetPend
 import type { ClaimDriftRow, ClaimStoreDrift } from '../src/core/fleet/claim-store-drift.js';
 import type { SessionHandoffList, SessionHandoffListEntry } from '../src/core/agents/session-handoff.js';
 import type { WorkBoardItem, WorkBoardResult } from '../src/core/comms/work-board.js';
+import type { InboxAcksRead, InboxAckReportRow } from '../src/core/fleet/inbox-acks-read.js';
 import type { WorkItemState } from '../src/core/comms/work-item-state.js';
 import type { ChannelHealth, ChannelHealthReport } from '../src/core/fleet/channel-health.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
@@ -145,6 +146,7 @@ describe('readUnifiedInbox sources', () => {
       sources: {
         'needs-you': { state: 'missing', pending: 0 },
         'owner-pair': { state: 'missing', pending: 0 },
+        'inbox-acks': { state: 'missing', pending: 0 },
         imessage: { state: 'missing', pending: 0 },
         'teammate-tasks': { state: 'missing', pending: 0 },
         drafts: { state: 'healthy', pending: 0 },
@@ -6179,5 +6181,107 @@ describe('readUnifiedInbox owner pair', () => {
     // A pair wait names no job — --job never matches it.
     const byJob = await readPair(pending, { filter: { job: 'job-1' } });
     expect(byJob.items.filter(i => i.source === 'owner-pair')).toHaveLength(0);
+  });
+});
+
+describe('readUnifiedInbox inbox acks', () => {
+  const ackRow = (over: Partial<InboxAckReportRow> = {}): InboxAckReportRow => ({
+    raw: '2026-11-07T09:00:00.000Z [src:telegram id:tg-1] check the deploy',
+    entryId: 'tg-1', channel: 'telegram', text: 'check the deploy',
+    state: 'pending', reason: 'no leader reply after this entry yet', ...over,
+  });
+  const acksRead = (entries: InboxAckReportRow[], over: Partial<InboxAcksRead> = {}): InboxAcksRead => ({
+    inbox: 'healthy', ledger: 'healthy', replies: 'healthy', entries, malformedLedgerRows: 0, ...over,
+  });
+  const readAcks = (result: InboxAcksRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readInboxAcks: async () => result, ...extra });
+
+  it('lists entries still owed a channel ack as warn inbox-ack items', async () => {
+    const inbox = await readAcks(acksRead([ackRow()]));
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'healthy', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'inbox-acks:tg-1')!;
+    expect(item).toMatchObject({
+      source: 'inbox-acks', kind: 'inbox-ack', severity: 'warn', blocking: false,
+      since: '2026-11-07T09:00:00.000Z', expiresAt: null,
+      act: ['phm fleet inbox-acks --flush', 'phm fleet inbox-acks', 'phm comms inbox read'],
+    });
+    expect(item.title).toContain('telegram');
+    expect(item.detail).toContain('check the deploy');
+    expect(item.detail).toContain('no leader reply');
+    expect(item.jobIds).toBeUndefined();
+  });
+
+  it('never lists settled rows — acked, skipped and no-channel are recorded decisions', async () => {
+    const inbox = await readAcks(acksRead([
+      ackRow({ entryId: 'done-1', state: 'acked' }),
+      ackRow({ entryId: 'skip-1', state: 'skipped', reason: 'channel has no sender' }),
+      ackRow({ entryId: 'raw-1', channel: null, state: 'no-channel', reason: 'came from web; no reply channel wired' }),
+    ]));
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'inbox-acks')).toHaveLength(0);
+  });
+
+  it('reports a verified-absent inbox missing and a real zero pending', async () => {
+    const inbox = await readAcks(acksRead([], { inbox: 'missing', ledger: 'missing', replies: 'missing' }));
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'missing', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'inbox-acks')).toHaveLength(0);
+  });
+
+  it('reports an unreadable inbox or ack ledger unavailable — pending stays unknown', async () => {
+    for (const over of [{ inbox: 'unavailable' as const }, { ledger: 'unavailable' as const }]) {
+      const inbox = await readAcks(acksRead([ackRow()], over));
+      expect(inbox.sources['inbox-acks']).toEqual({ state: 'unavailable', pending: null });
+      expect(inbox.items.filter(i => i.source === 'inbox-acks')).toHaveLength(0);
+    }
+  });
+
+  it('degrades when a reply journal is only partly readable — pending is an upper bound', async () => {
+    const inbox = await readAcks(acksRead([ackRow()], { replies: 'degraded' }));
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'degraded', pending: 1 });
+    expect(inbox.items.filter(i => i.source === 'inbox-acks')).toHaveLength(1);
+  });
+
+  it('degrades to unavailable when the read throws', async () => {
+    const inbox = await read({ readInboxAcks: async () => { throw new Error('acks boom'); } });
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'inbox-acks')).toHaveLength(0);
+  });
+
+  it('reads the real journals — a later leader reply settles the entry, a newer one stays pending', async () => {
+    mkdirSync(join(runsDir, 'leader'), { recursive: true });
+    mkdirSync(join(runsDir, 'queue'), { recursive: true });
+    writeFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'),
+      '2026-11-07T09:00:00.000Z [src:telegram id:tg-old] first message\n' +
+      '2026-11-07T11:00:00.000Z [src:imessage id:im-new] second message\n', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'leader', 'PLAN-LOG.md'),
+      '## 2026-11-07T10:00:00Z planner pass\n\n**Reply for Mason**: got it, on it\n', { mode: 0o600 });
+    const inbox = await read();
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'healthy', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'inbox-acks');
+    expect(items.map(i => i.id)).toEqual(['inbox-acks:im-new']);
+    expect(items[0]!.since).toBe('2026-11-07T11:00:00.000Z');
+  });
+
+  it('a recorded ledger ack settles the entry for the shared read too', async () => {
+    mkdirSync(join(runsDir, 'leader'), { recursive: true });
+    mkdirSync(join(runsDir, 'queue'), { recursive: true });
+    writeFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'),
+      '2026-11-07T09:00:00.000Z [src:telegram id:tg-old] first message\n', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'queue', 'inbox-acks.jsonl'),
+      `${JSON.stringify({ entryId: 'tg-old', status: 'acked' })}\n`, { mode: 0o600 });
+    const inbox = await read();
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'inbox-acks')).toHaveLength(0);
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    const pending = acksRead([ackRow()]);
+    const bySource = await readAcks(pending, { filter: { source: 'inbox-acks' } });
+    expect(bySource.items.map(i => i.id)).toEqual(['inbox-acks:tg-1']);
+    const byKind = await readAcks(pending, { filter: { kind: 'inbox-ack' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['inbox-acks:tg-1']);
+    // An owed ack names no job — --job never matches it.
+    const byJob = await readAcks(pending, { filter: { job: 'job-1' } });
+    expect(byJob.items.filter(i => i.source === 'inbox-acks')).toHaveLength(0);
   });
 });
