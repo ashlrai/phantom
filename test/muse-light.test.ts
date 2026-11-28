@@ -1,10 +1,12 @@
 import { Readable } from 'node:stream';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
 import { DriveNodes } from '../src/core/drive/nodes/index.js';
 import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
 import { emptyState, parseState, type NodesStore } from '../src/core/drive/nodes/state.js';
 import { lightRecipe, restockLight, runLightJob, type NodeCall } from '../src/core/drive/nodes/light.js';
 import { assessNodeCapacity } from '../src/core/drive/nodes/capacity.js';
+import { cmdNodeLight, type NodeLightDeps } from '../src/cli/node-light.js';
+import type { PoolConfig } from '../src/core/drive/nodes/pool-host.js';
 
 function fixture() {
   let now = 3_600_001;
@@ -107,5 +109,76 @@ describe('muse isolated light slice', () => {
     expect(run).not.toHaveBeenCalled();
     await expect(runLightJob(Readable.from(['x'.repeat(16_385)]), run as never)).rejects.toThrow(/large/);
     await expect(runLightJob(Readable.from([JSON.stringify({ protocol: 'phm-node-worker/v1', ...pulled })]), run as never)).rejects.toThrow(/failed/);
+  });
+});
+
+describe('phm node light error mapping', () => {
+  const pool: PoolConfig = { role: 'worker', primary: 'leader-mac', backup: 'muse-mac', owner: 'ashlr', node: 'muse' };
+  const lightReport: ReturnType<typeof restockLight> = { schema: 'muse.light.v1', observedAt: 1, apply: false, ready: false, outstanding: 0,
+    enqueued: 0, planned: [], completed: 0, museCompleted: 0, completions: [] };
+  const deps = (over: Partial<NodeLightDeps> = {}): NodeLightDeps => ({
+    readConfig: () => pool,
+    restock: () => ({ ...lightReport }),
+    ...over,
+  });
+  const capture = () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    return { lines, last: () => JSON.parse(lines.at(-1)!) as { error?: string } & Record<string, unknown> };
+  };
+  afterEach(() => vi.restoreAllMocks());
+
+  it('answers argument mistakes as usage errors (exit 2), not operational refusals', async () => {
+    const { last } = capture();
+    expect(await cmdNodeLight(['bogus'], deps())).toBe(2);
+    expect(last().error).toContain('Usage: phm node light');
+    expect(await cmdNodeLight(['status', '--bogus'], deps())).toBe(2);
+    expect(await cmdNodeLight(['run', '--apply'], deps())).toBe(2);
+  });
+
+  it('names the missing pool enrollment instead of a generic refusal', async () => {
+    const { last } = capture();
+    expect(await cmdNodeLight(['status'], deps({ readConfig: () => null }))).toBe(1);
+    expect(last().error).toContain('No node pool is configured');
+  });
+
+  it('names an unreadable pool config', async () => {
+    const { last } = capture();
+    expect(await cmdNodeLight(['status'], deps({ readConfig: () => { throw new Error('corrupt'); } }))).toBe(1);
+    expect(last().error).toContain('unreadable');
+  });
+
+  it('names the actual owner when the pool belongs to another scope', async () => {
+    const { last } = capture();
+    const other = { ...pool, owner: 'acme' };
+    expect(await cmdNodeLight(['status'], deps({ readConfig: () => other }))).toBe(1);
+    expect(last().error).toContain("'acme'");
+  });
+
+  it('keeps the pool-unavailable refusal for a configured but unreachable pool', async () => {
+    const { last } = capture();
+    expect(await cmdNodeLight(['status'], deps({ restock: () => { throw new Error('ssh refused'); } }))).toBe(1);
+    expect(last().error).toContain('unreachable or demoted');
+  });
+
+  it('does not blame the pool for a run stdin/recipe failure', async () => {
+    const { last } = capture();
+    expect(await cmdNodeLight(['run'], deps({ runJob: async () => { throw new Error('bad request'); } }))).toBe(1);
+    const error = last().error!;
+    expect(error).toContain('stdin');
+    expect(error).not.toContain('pool');
+  });
+
+  it('prints the report on success and writes metrics only under --apply', async () => {
+    const written: unknown[] = [];
+    const writeStatus = vi.fn((report: unknown) => { written.push(report); });
+    const ok = capture();
+    expect(await cmdNodeLight(['status'], deps({ writeStatus }))).toBe(0);
+    expect(ok.last()).toMatchObject({ schema: 'muse.light.v1', ready: false });
+    expect(writeStatus).not.toHaveBeenCalled();
+    const applied = capture();
+    expect(await cmdNodeLight(['restock', '--apply'], deps({ writeStatus }))).toBe(0);
+    expect(writeStatus).toHaveBeenCalledTimes(1);
+    expect(applied.last()).toMatchObject({ schema: 'muse.light.v1' });
   });
 });
