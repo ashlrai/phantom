@@ -32,6 +32,24 @@ import {
 /** Filler ids end in A, six or more digits, then Q8. */
 export const FILLER_ID = /A\d{6,}Q8$/;
 
+/**
+ * dispatchd's per-job disk-deferral mark: `queue/run/<job>.diskguard` is
+ * written when the dispatcher's disk reuse-only gate defers a non-reuse job
+ * before market evaluation, and removed when that job launches. A waiting
+ * ready row whose job id still carries the mark is disk-deferred, not merely
+ * market-blocked — the evidence `deferred_after_selection` cannot see.
+ */
+export const DISKGUARD_SUFFIX = '.diskguard';
+
+/** Job ids named by `.diskguard` marker entries in a queue/run listing; other entries are ignored. */
+export function diskGuardedJobIds(entryNames: readonly string[]): Set<string> {
+  const ids = new Set<string>();
+  for (const name of entryNames) {
+    if (name.endsWith(DISKGUARD_SUFFIX)) ids.add(name.slice(0, -DISKGUARD_SUFFIX.length));
+  }
+  return ids;
+}
+
 const PARKED = /^PARKED/i;
 const DISPATCHER_MAX_AGE_MS = 60_000;
 
@@ -55,6 +73,15 @@ export interface StarvedLane {
   blocked: Record<string, number> | null;
   /** Market-evaluated ready rows behind `blocked`; null when `blocked` is null. */
   scored: number | null;
+  /**
+   * This lane's market-evaluated ready rows whose job id carries the
+   * dispatcher's `.diskguard` mark — the disk reuse-only gate deferred them
+   * before market evaluation and they have not launched since (dispatchd
+   * clears the mark on launch). Independent of `blocked`: a row can be both
+   * disk-deferred and market-rejected. Null when the queue/run listing
+   * could not be read; a provided listing yields a count, zero included.
+   */
+  diskguarded: number | null;
 }
 
 export interface StarvedLanes {
@@ -62,6 +89,12 @@ export interface StarvedLanes {
   lanes: StarvedLane[];
   /** Lane-open market rows — runnable supply any lane may take; null when ready.tsv is absent. */
   openRows: number | null;
+  /**
+   * Market-evaluated ready rows carrying the `.diskguard` mark across every
+   * lane plus lane-open supply; null when the queue/run listing could not be
+   * read. Per-lane detail lives on each lane's `diskguarded`.
+   */
+  diskGuardedRows: number | null;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -112,11 +145,16 @@ function queueRow(line: string): QueueRow | null {
  * each starved lane also reports the work-market reason codes its own
  * ready rows are blocked by, exactly like `phm fleet unfed` derives them.
  * `market.nowMs` defaults to `now` so adaptive.json freshness is judged
- * against the same instant as the tick check.
+ * against the same instant as the tick check. `diskGuarded` is the set of
+ * job ids carrying the dispatcher's `.diskguard` mark (see
+ * `diskGuardedJobIds`); when it is a set, each lane also counts its
+ * market-evaluated rows the disk reuse-only gate deferred, and the result
+ * totals them in `diskGuardedRows`. Pass `null`/omit when the queue/run
+ * listing is unavailable — the counts then stay null, never a guessed zero.
  */
 export function findStarvedLanes(
   statusJson: string, readyTsv: string | null, routerQueue?: string | null, now?: number,
-  market?: UnfedMarketInputs,
+  market?: UnfedMarketInputs, diskGuarded?: ReadonlySet<string> | null,
 ): StarvedLanes {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
@@ -129,11 +167,20 @@ export function findStarvedLanes(
   const ctx = marketContext(market === undefined ? undefined : { ...market, nowMs: market.nowMs ?? now });
   const split = new Map<string, { filler: number; real: number }>();
   const marketRows = new Map<string, ReadyMarketRow[]>();
+  const diskCounts = new Map<string, number>();
   const countedJobs = new Set<string>();
+  let diskGuardedTotal = 0;
   let open = 0;
   const attribute = (id: string, lane: string | null, row?: ReadyMarketRow): void => {
     if (countedJobs.has(id)) return;
     countedJobs.add(id);
+    // Only market-evaluated rows can carry the dispatcher's disk mark: the
+    // diskguard check runs on dispatcher jobs before market selection, and
+    // tolerant ready.tsv dialects are not dispatcher jobs at all.
+    if (row !== undefined && diskGuarded != null && diskGuarded.has(id)) {
+      diskGuardedTotal++;
+      if (lane !== null) diskCounts.set(lane, (diskCounts.get(lane) ?? 0) + 1);
+    }
     if (lane === null) { open++; return; }
     const entry = split.get(lane) ?? { filler: 0, real: 0 };
     entry[FILLER_ID.test(id) ? 'filler' : 'real']++;
@@ -192,7 +239,12 @@ export function findStarvedLanes(
       filler: readyTsv === null ? null : filler,
       real: readyTsv === null ? null : real,
       blocked, scored,
+      diskguarded: diskGuarded == null ? null : diskCounts.get(lane) ?? 0,
     });
   }
-  return { lanes: out.sort((a, b) => a.lane.localeCompare(b.lane)), openRows: readyTsv === null ? null : open };
+  return {
+    lanes: out.sort((a, b) => a.lane.localeCompare(b.lane)),
+    openRows: readyTsv === null ? null : open,
+    diskGuardedRows: diskGuarded == null ? null : diskGuardedTotal,
+  };
 }

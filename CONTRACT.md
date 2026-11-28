@@ -86,7 +86,7 @@ job IDs deduplicated by the parser. Its optional second argument is the
 queue TSV header, or `null` for a data row. `conflictingPrIds(readyTsvText)`
 reads rebase identifiers from the job ID field, including parked rows.
 
-`findStarvedLanes(statusJson, readyTsv, routerQueue?, now?, market?)`
+`findStarvedLanes(statusJson, readyTsv, routerQueue?, now?, market?, diskGuarded?)`
 (`src/core/fleet/lane-starve.ts`) accepts `null` for a missing ready snapshot
 and an optional `router-queue.md` text that resolves spec-less dispatcher
 rows' requirement envelopes. When supplied, `now` (epoch milliseconds) requires
@@ -114,6 +114,16 @@ of the work-market reason codes `derivedRowCodes` records for that lane's own
 market-hinted ready rows (never lane-open supply, and never rows in other
 ready.tsv dialects), and `scored`, how many ready rows the tally covers; both
 stay `null` when the market inputs cannot be read.
+The optional `diskGuarded` argument is a set of job ids carrying the
+dispatcher's `.diskguard` mark under `queue/run/` — `diskGuardedJobIds`
+extracts them from a directory listing; dispatchd writes the mark when its
+disk reuse-only gate defers a non-reuse job before market selection and
+clears it when the job launches. When a set is supplied, each starved lane
+exposes `diskguarded`, how many of its market-evaluated ready rows carry the
+mark (lane-open supply counts only in the total), the result exposes
+`diskGuardedRows` across all market-evaluated rows, and the
+`fleet.lane-starve.v1` CLI report exposes `disk_guarded_rows`; all stay
+`null` when the `queue/run` listing cannot be read.
 
 ## Wiki context and ecosystem
 
