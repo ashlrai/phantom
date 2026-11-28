@@ -65,6 +65,16 @@ function shortfall(node: NodeRecord, job: QueueJobV1): string | null {
   return jobBlockers(node, job)[0] ?? null;
 }
 
+/** Required `phm-<version>` caps name a build, not a --caps choice: join
+ * re-derives the marker from the running build, so no advertised list can
+ * deliver it — the node must run that version. Every fix that suggests a join
+ * or rejoin for such a job carries this caveat, naming the caps it cannot
+ * serve. */
+function versionCapNote(versioned: string[]): string {
+  return versioned.length === 0 ? '' :
+    ` ${versioned.join(',')} names a phm build, not a --caps choice — join cannot advertise it; the node must run that version (phm node self-update).`;
+}
+
 /** The caps fix names one concrete rejoin instead of "a node": the in-scope
  * candidate missing the fewest required caps (candidates arrive in router
  * order — lowest node id first — and ties keep it), rejoining with its whole
@@ -91,9 +101,21 @@ function capsRejoinFix(job: QueueJobV1, candidates: NodeRecord[]): string {
   const rejoin = `phm node join --node ${best.nodeId} --owner ${owners}${capsArg}${slots}`;
   // The caveat precedes the command so the fix still ends in the join — the
   // shape routesWithJoinWatch rewrites with --watch on the standalone path.
-  const note = versioned.length === 0 ? '' :
-    ` ${versioned.join(',')} names a phm build, not a --caps choice — join cannot advertise it; the node must run that version (phm node self-update).`;
-  return `No node owned by '${job.owner}' advertises every required cap (${requires.join(',')}).${note} On ${best.nodeId}, rejoin with: ${rejoin}`;
+  return `No node owned by '${job.owner}' advertises every required cap (${requires.join(',')}).${versionCapNote(versioned)} On ${best.nodeId}, rejoin with: ${rejoin}`;
+}
+
+/** The fix when no live node belongs to the job's owner scope at all: a first
+ * join on a new machine. It advertises exactly the job's requirements — minus
+ * version-report caps, which join re-derives from the running build and can
+ * never be passed through --caps (the same rule capsRejoinFix follows, with
+ * the caveat carried here too). With nothing left to advertise the bare join
+ * is the command: it auto-detects this machine's sign-in lanes. The caveat
+ * precedes the command so the fix still ends in the join — the shape
+ * routesWithJoinWatch rewrites with --watch on the standalone path. */
+function firstJoinFix(job: QueueJobV1, requires: string[]): string {
+  const caps = requires.filter(c => !isVersionCap(c));
+  const capsArg = caps.length ? ` --caps ${caps.join(',')}` : '';
+  return `No live node belongs to owner '${job.owner}'.${versionCapNote(requires.filter(isVersionCap))} Run: phm node join --owner ${job.owner}${capsArg}`;
 }
 
 /** Shared capacity slice of fleet.awareness.v1. Pool dispatch recomputes it inside the
@@ -200,7 +222,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
     // only each node's first fence, so blocker reasons alone cannot prove it.
     const capsReady = inScope.filter(n => !jobBlockers(n, job).some(b => b.startsWith('caps:')));
     const fix = inScope.length === 0
-      ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
+      ? firstJoinFix(job, requires)
       : reasons.has('capacity')
         ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
         : capsReady.length === 0
