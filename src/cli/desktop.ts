@@ -1,7 +1,7 @@
 import {applyConsumerDesktopInstall, createConsumerInstallDependencies, inspectConsumerDesktopInstall,
   type ConsumerInstallDependencies, type ConsumerInstallResult} from '../core/desktop/consumer-install.js';
 import {cmdDesktopOperator, type DesktopOperatorCliDeps} from './desktop-operator.js';
-import {applyConsumerDesktopUpgrade, createConsumerUpgradeDependencies, inspectConsumerDesktopUpgrade,
+import {applyConsumerDesktopUpgrade, createConsumerUpgradeDependencies, unsupportedConsumerDesktopUpgrade, inspectConsumerDesktopUpgrade,
   type ConsumerUpgradeDependencies, type ConsumerUpgradeOptions, type ConsumerUpgradeResult} from '../core/desktop/consumer-upgrade.js';
 
 const USAGE = `usage: phm desktop install [--apply]
@@ -9,6 +9,9 @@ const USAGE = `usage: phm desktop install [--apply]
        phm desktop install --upgrade [--apply] [--require-app] [--to x.y.z]
        phm desktop install --rollback [--apply]
        phm desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]
+
+The managed native app installer is currently available on Apple Silicon macOS.
+On Windows or Linux, run phm verse to open the browser workbench.
 
 Inspect this installed CLI's original signed macOS arm64 app and paired CLI.
 Inspection downloads verified artifacts into a fresh private stage. Plain --apply
@@ -47,6 +50,17 @@ export async function cmdDesktop(args: string[], dependencies?: ConsumerInstallD
   let options: ReturnType<typeof parseDesktopInstallArgs>;
   try {options=parseDesktopInstallArgs(args);} catch {console.error(USAGE);return 2;}
   if (!options) {console.log(USAGE);return 0;}
+  // Reject unsupported hosts before consulting Apple-specific package and app
+  // custody. Injected ports still pass through their normal target validation.
+  const injected = options.mode ? upgradeDeps : dependencies;
+  if (!injected && (process.platform !== 'darwin' || process.arch !== 'arm64')) {
+    try {
+      await emit(options.mode
+        ? unsupportedConsumerDesktopUpgrade(options.mode)
+        : {state:'held',version:null,reason:'unsupported-platform',installationAccepted:false,authorityResumed:false,shell:[]});
+    } catch {console.error('Desktop installation result channel failed.');}
+    return 1;
+  }
   if(options.mode) {
     try {
       let result=await inspectConsumerDesktopUpgrade(upgradeDeps??createConsumerUpgradeDependencies(),{...options,mode:options.mode,requireApp:options.requireApp??false});
