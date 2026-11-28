@@ -3821,12 +3821,12 @@ a lower bound, never a proven total, when `truncated` marks queue-tail or
 cap cuts beyond the shown slice — carrying the same `scope`
 (`'identity'`/`'label'`) the page reports — claim-holder `wh-…` rows carrying the
 same `claimHolder` citation `readAgentWakes` resolves — and
-`unknown-agent`/`unavailable` with `reason`. The delegated read carries
-no topic filter of its own, so under `topic` the section applies the
-shared `groupAddressTopicOf` verdict to the resolved page's own `to`
-labels: `matched` stays exact when the bounded queue-tail read is
-complete and a proven lower bound under `truncated`, the same
-convention the section's `truncated` flag documents. `inbox` reuses `readAgentInbox`
+`unknown-agent`/`unavailable` with `reason`. Under `topic` the section
+forwards the value to `readAgentWakes`' `filter.topic`, so the shared
+`groupAddressTopicOf` verdict counts inside the bounded queue-tail
+match: `matched` stays exact when that read is complete and a proven
+lower bound under `truncated`, the same convention the section's
+`truncated` flag documents. `inbox` reuses `readAgentInbox`
 for the next page of mail addressed to the agent — same matching, order and
 owner-share receipt checks as `agents bus inbox` — as `{status:'ok', agent,
 messages, nextCursor, matched, truncated}`: `matched` is the true pending
@@ -3848,13 +3848,11 @@ the digest's mail rows answer where each announced job stands without a
 for one row past the 20-message cap so `truncated` is definitive — a full
 window proves mail remains beyond `nextCursor`, a short one proves the scan
 reached the store's end — and on overflow the newest scanned row is the one
-dropped, so `nextCursor` resumes strictly before it. The delegated read
-carries no topic filter of its own, so under `topic` the section instead
-pages `readAgentInbox` to the store's end under a bounded page budget,
-applies the shared `groupAddressTopicOf` verdict itself and reports the
-true topic-filtered total across the retained store — `messages` keeps the
-oldest topic matches in cursor order and `nextCursor` resumes strictly
-before the first undelivered row or at the store's end. A non-ok inbox read
+dropped, so `nextCursor` resumes strictly before it. Under `topic` the
+section forwards the value to `readAgentInbox`'s own `topic` filter, so
+`matched` reports the true topic-filtered total the store-wide scan
+counts and `messages`/`nextCursor` follow the same window rule every
+other filter applies. A non-ok inbox read
 reports `unknown-agent`/`unavailable`/`retryable`/`invalid` with `reason`.
 `mailbox` is the digest's window into the legacy `phm bus` mailbox store
 (`$ASHLR_HOME/bus-mailbox`, the records `phm bus inbox --to <label>` reads and
@@ -4553,7 +4551,7 @@ carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
 check `thread` gets, and `kind` — `note` or `context`, the v2 conversational
 body kind `postLabelMessage` already exposed, now shared by all three so a
-DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, with?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?, bodyKind?, result?}, options?)`
+DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, with?, priority?, kind?, job?, matched?, since?, before?, channel?, topic?, contains?, inReplyTo?, id?, bodyKind?, result?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every
@@ -4575,7 +4573,15 @@ keeps only mail addressed to `group:<name>:*` of one registry channel the
 agent belongs to — channel posts and channel-addressed handoffs alike,
 matched on the delivery address rather than the reported kind, so it
 composes with `kind` and a channel the agent is not a member of simply
-has no mail to show; `job` keeps
+has no mail to show; `topic` keeps only mail whose `to` parses to that
+exact topic component of a well-formed `group:<room>:<topic>` address —
+the same `groupAddressTopicOf` verdict `phm messages --topic`, `channel
+read --topic` and the wakes reads apply, grammar-validated by the shared
+channel-name rule, room-agnostic like `channel`'s prefix but narrowed to
+the topic segment so it composes with `channel` into one room AND one
+topic, decided on the delivery address alone so it needs no registry,
+counted inside the store-wide `matched` scan, and a DM, legacy label or
+deeper `group:` address that parses to no topic never matching; `job` keeps
 only mail that names one job — a `work.post`/`work.status`/`work.result`/`wake`
 body declaring that `jobId`, a `worker-handoff` assigning that fleet job id
 through `taskId`, or a `note`/`context` body carrying the
@@ -4679,6 +4685,15 @@ the addressee scope (a per-agent read narrows to one room's hints for
 that agent) and with every other filter, `matched` counting it inside
 the queue-tail match, a name no hint addresses matching nothing rather
 than erroring, and a malformed channel name answering `invalid`;
+`filter.topic` keeps only hints whose own `to` label parses to that
+exact topic component of a well-formed `group:<room>:<topic>` address —
+the same `groupAddressTopicOf` verdict `readAgentInbox`'s `topic` and
+`phm messages --topic` apply, grammar-validated by the shared
+channel-name rule and decided on the hint's address alone so it needs
+no referent resolution, composes with the addressee scope and with
+`channel` into one room AND one topic, `matched` counting it inside
+the queue-tail match, a topic no hint addresses matching nothing rather
+than erroring, and a malformed topic answering `invalid`;
 `filter.priority` keeps only
 hints in one exact P0..P3 band — the same match every other bus read's
 `--priority` applies — decided on the resolved referent's own band (the
@@ -4746,10 +4761,13 @@ claim-holder fan-out writes appear beside registered identities' hints,
 each row's own `to` naming its addressee; the ok page carries
 `scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
 queue-tail semantics `readAgentWakes` documents, and the same
-`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
+`job`/`from`/`excludeFrom`/`channel`/`topic`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
 and resolves referents identically — sender matchers resolve through
 the registry with exact-label fallback, `channel` keeps only hints whose
 own `to` label sits under `group:<name>:*` inside the queue-tail match,
+`topic` keeps only hints whose own `to` label parses to that exact
+topic component of a well-formed `group:<room>:<topic>` address under
+the same `groupAddressTopicOf` verdict,
 filtered verdicts fail closed
 `unavailable` on an unreadable bus store, and malformed filter values
 answer `invalid`; an unreadable registry or wake queue answers
