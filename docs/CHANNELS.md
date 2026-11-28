@@ -777,7 +777,36 @@ carries the FIXUP-MAIN job's own id so `--job` finds it; a missing
 an unreadable or ledger-unknown read `unavailable` — the stuck set is
 unknown, never an empty list passed off as fact — and a torn ledger line
 is skipped, never fatal; no item is Mason-blocking; deep links `phm
-fleet stuck-fixes`, `phm fleet main-health`) — and each item carries `act` deep-link commands (`phm fleet
+fleet stuck-fixes`, `phm fleet main-health`) — and finished work in
+kept worktrees that never became a pull request (the same
+`readStrandedWork`/`findStrandedWork` fold `phm fleet stranded` serves,
+over `queue/status.json`'s kept list, the `metrics/jobs.jsonl` finish
+events, each job's `.publish` sidecar and the queue run markers, so the
+surfaces can never disagree: until now a job that finished with real
+changes and then stopped short of a PR — a publish abort, a
+safety-gate stop, an unexplained result — had no item-level inbox
+surface: the jobs-stuck source reads open run markers, the queue
+sources read ready/router rows, the stuck-fixes source reads published
+fix PRs, and every bus/feed/board read looks at work not yet claimed,
+while the finished diff sat invisible in a kept worktree at risk of
+being reaped or forgotten; each unrecovered stranded row lists once as
+warn `stranded-worktree` naming the job id, repo, lane, cause and diff
+size with the projection's own next step in the detail — `since` the
+recorded finish time (null when the ledger kept none — unknown stays
+unknown) and `expiresAt` null, since stranded work waits for a
+republish or re-run, never a guessed deadline; `jobIds` carries the
+job's own id so `--job` finds it; rows a later job already recovered —
+or a verify already proved on main — never list, their own next step
+saying there is nothing to do; a verified-absent `queue/status.json` is
+`missing` (no kept worktree can be listed, so no finished work can be
+stranded), a kept list that exists but cannot be read or a throwing
+read `unavailable` — the stranded set is unknown, never an empty list
+passed off as fact — and a known read with gaps (an unreadable metrics
+ledger leaves finish times and sizes unknown, so the listed rows are a
+floor) `degraded`; no item is Mason-blocking; deep links `phm fleet
+stranded`, `phm fleet republish` (the pushed-branch recovery
+`abort after push` rows name), `phm fleet kept-worktrees`) — and each
+item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -801,7 +830,8 @@ queue stuck`, `phm fleet unfed --json`, `phm queue`, `phm jobs stuck`,
 channel-health`, `phm channels slack status`, `phm imessage doctor`, `phm
 comms health --json`, `phm comms cycle`, `phm fleet queue-parked`, `phm
 fleet parked`, `phm fleet autopilot --once`, `phm fleet stuck-fixes`,
-`phm fleet main-health`). It never claims, replies, or mutates; a source
+`phm fleet main-health`, `phm fleet stranded`, `phm fleet republish`,
+`phm fleet kept-worktrees`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:

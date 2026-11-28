@@ -16,9 +16,10 @@ import { appendDraft as appendCommsDraft, writeInbox as writeCommsInbox, type Co
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type StuckFixesSourceRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type StuckFixesSourceRead, type StrandedWorkSourceRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
 import type { ParkedGroup, ParkedMetDep, ParkedUnmetDep } from '../src/core/fleet/runs-parked-queue.js';
 import type { StuckFixRow } from '../src/core/fleet/stuck-fixes.js';
+import type { StrandedItem } from '../src/core/fleet/stranded-work.js';
 import type { StuckJob as RunningStuckJob } from '../src/core/fleet/running-stuck.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
@@ -5577,6 +5578,163 @@ describe('readUnifiedInbox stuck fixes', () => {
     const byJob = await readFixes(pending, { filter: { job: 'FIXUP-MAIN-ashlrai-phantom-zzz9999' } });
     expect(byJob.items.filter(i => i.source === 'stuck-fixes').map(i => i.id))
       .toEqual(['stuck-fixes:FIXUP-MAIN-ashlrai-phantom-zzz9999']);
+  });
+});
+
+describe('readUnifiedInbox stranded work', () => {
+  const strandedRead = (over: Partial<StrandedWorkSourceRead> = {}): StrandedWorkSourceRead => ({
+    state: 'healthy', items: [], ...over,
+  });
+  const readStranded = (s: StrandedWorkSourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readStrandedWork: async () => s, ...extra });
+  const stranded = (over: Partial<StrandedItem> = {}): StrandedItem => ({
+    job: 'RQ-STRAND-1', repo: 'ashlrai/phantom', lane: 'fast',
+    finished_at: new Date(now - 2 * 3_600_000).toISOString(),
+    diff_files: 3, diff_lines: 120,
+    cause: 'abort_other', pushed_branch: null, recovered_by: null, verify: null,
+    next_step: 'Re-run the job: the publish stopped before any branch was pushed.', ...over,
+  });
+
+  it('lists each unrecovered stranded worktree as a warn naming job, repo, lane, cause, size and acts', async () => {
+    const inbox = await readStranded(strandedRead({ items: [
+      stranded(),
+      stranded({ job: 'RQ-STRAND-2', cause: 'abort_after_push',
+        pushed_branch: 'codex-bridge/RQ-STRAND-2',
+        next_step: 'Recover the pushed branch codex-bridge/RQ-STRAND-2: run phm fleet republish for the ready-made recovery job.' }),
+    ] }));
+    expect(inbox.sources['stranded-work']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'stranded-work');
+    expect(items).toHaveLength(2);
+
+    const first = items.find(i => i.id === 'stranded-work:RQ-STRAND-1')!;
+    expect(first).toMatchObject({
+      kind: 'stranded-worktree', severity: 'warn', blocking: false,
+      title: 'Job RQ-STRAND-1 finished with changes but no pull request',
+      since: new Date(now - 2 * 3_600_000).toISOString(), expiresAt: null,
+      jobIds: ['RQ-STRAND-1'],
+      act: ['phm fleet stranded', 'phm fleet kept-worktrees'],
+    });
+    expect(first.detail).toContain('ashlrai/phantom');
+    expect(first.detail).toContain('fast lane');
+    expect(first.detail).toContain('abort other');
+    expect(first.detail).toContain('3 files, 120 lines');
+    expect(first.detail).toContain('Re-run the job');
+
+    // A pushed-branch abort adds the republish act — the recovery path
+    // `phm fleet stranded`'s own next step names.
+    const pushed = items.find(i => i.id === 'stranded-work:RQ-STRAND-2')!;
+    expect(pushed.act).toEqual(['phm fleet stranded', 'phm fleet republish', 'phm fleet kept-worktrees']);
+    expect(pushed.detail).toContain('abort after push');
+  });
+
+  it('never lists rows a later job recovered or a verify proved on main', async () => {
+    const inbox = await readStranded(strandedRead({ items: [
+      stranded(),
+      stranded({ job: 'RQ-STRAND-DONE', recovered_by: 'RQ-RECOVERY-9',
+        next_step: 'Nothing to do: RQ-RECOVERY-9 recovered this work.' }),
+      stranded({ job: 'RQ-STRAND-MAIN', verify: 'already_on_main',
+        next_step: 'Nothing to do: this work is already on the main branch.' }),
+    ] }));
+    expect(inbox.sources['stranded-work']).toEqual({ state: 'healthy', pending: 1 });
+    expect(inbox.items.filter(i => i.source === 'stranded-work').map(i => i.id))
+      .toEqual(['stranded-work:RQ-STRAND-1']);
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readStranded(strandedRead({ state: 'missing', items: [stranded()] }));
+    expect(missing.sources['stranded-work']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+
+    const unavailable = await readStranded(strandedRead({ state: 'unavailable', items: [stranded()] }));
+    expect(unavailable.sources['stranded-work']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+
+    const throwing = await read({ readStrandedWork: async () => { throw new Error('kept list boom'); } });
+    expect(throwing.sources['stranded-work']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+
+    // A degraded read still lists what it found, pending counted.
+    const degraded = await readStranded(strandedRead({ state: 'degraded', items: [stranded()] }));
+    expect(degraded.sources['stranded-work']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'stranded-work')).toHaveLength(1);
+  });
+
+  it('reads the real kept-worktree fold under runsDir: stranded, made, recovered and out-of-window rows', async () => {
+    mkdirSync(join(runsDir, 'queue', 'run'), { recursive: true });
+    mkdirSync(join(runsDir, 'metrics'), { recursive: true });
+    const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
+    const hint = (job: string) => `remote:      https://github.com/someone/phantom/pull/new/codex-bridge/${job}\n`;
+    // Kept worktrees: two stranded, one published PR (made — never lists),
+    // one recovered by a later job's queue line (nothing left to do), one
+    // finished outside the 3-day window (stale — never lists).
+    writeFileSync(join(runsDir, 'queue', 'status.json'), JSON.stringify({
+      lanes: { claude: { running: 1 } },
+      kept_worktrees: ['RQ-STRAND-A', 'RQ-STRAND-B', 'RQ-PR-1', 'RQ-RECOVERED', 'RQ-OLD'],
+    }));
+    const row = (job: string, fields: object, msAgo: number) =>
+      JSON.stringify({ job, lane: 'claude', ts: iso(msAgo), ...fields });
+    writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), [
+      row('RQ-STRAND-A', { event: 'finish', diff_files: 3, diff_lines: 50, empty: false }, 2 * 3_600_000),
+      row('RQ-STRAND-B', { event: 'finish', diff_files: 1, diff_lines: 8, empty: false }, 5 * 3_600_000),
+      row('RQ-PR-1', { event: 'finish', diff_files: 2, diff_lines: 9, empty: false }, 3 * 3_600_000),
+      row('RQ-RECOVERED', { event: 'finish', diff_files: 4, diff_lines: 40, empty: false }, 4 * 3_600_000),
+      row('RQ-OLD', { event: 'finish', diff_files: 9, diff_lines: 90, empty: false }, 10 * 24 * 3_600_000),
+      'not json',
+    ].join('\n'));
+    for (const job of ['RQ-STRAND-A', 'RQ-STRAND-B', 'RQ-PR-1', 'RQ-RECOVERED']) {
+      writeFileSync(join(runsDir, 'queue', 'run', `${job}.line`), `${job}\tphantom\tclaude\twork\n`);
+    }
+    // The recovery job's own line names RQ-RECOVERED and says recover —
+    // the same evidence `recoveredBy` folds, so the row lists as done.
+    writeFileSync(join(runsDir, 'queue', 'run', 'RQ-RECOVERY-1.line'),
+      'RQ-RECOVERY-1\tphantom\tclaude\tRecover the stranded work of RQ-RECOVERED.\n');
+    writeFileSync(join(runsDir, 'RQ-STRAND-A.publish'), 'NOTE scoped\nRESULT ABORT commit\n');
+    writeFileSync(join(runsDir, 'RQ-STRAND-B.publish'), `${hint('RQ-STRAND-B')}RESULT ABORT default-fetch\n`);
+    writeFileSync(join(runsDir, 'RQ-PR-1.publish'), 'RESULT PR https://github.com/ashlrai/phantom/pull/2 SENS=[]\n');
+    writeFileSync(join(runsDir, 'RQ-RECOVERED.publish'), 'RESULT ABORT commit\n');
+    writeFileSync(join(runsDir, 'RQ-OLD.publish'), 'RESULT ABORT commit\n');
+
+    const inbox = await read();
+    expect(inbox.sources['stranded-work']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'stranded-work');
+    expect(items.map(i => i.id).sort()).toEqual(['stranded-work:RQ-STRAND-A', 'stranded-work:RQ-STRAND-B']);
+    const abort = items.find(i => i.id === 'stranded-work:RQ-STRAND-A')!;
+    expect(abort).toMatchObject({
+      kind: 'stranded-worktree', severity: 'warn',
+      since: iso(2 * 3_600_000), expiresAt: null, jobIds: ['RQ-STRAND-A'],
+      act: ['phm fleet stranded', 'phm fleet kept-worktrees'],
+    });
+    expect(abort.detail).toContain('phantom · claude lane · abort other · 3 files, 50 lines');
+    const pushed = items.find(i => i.id === 'stranded-work:RQ-STRAND-B')!;
+    expect(pushed.act).toEqual(['phm fleet stranded', 'phm fleet republish', 'phm fleet kept-worktrees']);
+    expect(pushed.detail).toContain('abort after push');
+  });
+
+  it('reports a missing status.json as missing and an unlistable one as unavailable', async () => {
+    // No queue/status.json at all — verified-absent, no kept worktree can be listed.
+    const missing = await read();
+    expect(missing.sources['stranded-work']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+
+    // A directory where the kept list belongs is a read failure, not verified-empty.
+    mkdirSync(join(runsDir, 'queue', 'status.json'), { recursive: true });
+    const unavailable = await read();
+    expect(unavailable.sources['stranded-work']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = strandedRead({ items: [stranded(), stranded({ job: 'RQ-STRAND-2' })] });
+    const bySource = await readStranded(pending, { filter: { source: 'stranded-work' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'stranded-work')).toBe(true);
+    const byKind = await readStranded(pending, { filter: { kind: 'stranded-worktree' } });
+    expect(byKind.items).toHaveLength(2);
+    expect(byKind.sources['stranded-work']).toEqual({ state: 'healthy', pending: 2 });
+    // The job id is the item's own citation — --job names it directly.
+    const byJob = await readStranded(pending, { filter: { job: 'RQ-STRAND-2' } });
+    expect(byJob.items.filter(i => i.source === 'stranded-work').map(i => i.id))
+      .toEqual(['stranded-work:RQ-STRAND-2']);
   });
 });
 
