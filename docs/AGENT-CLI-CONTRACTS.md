@@ -52,6 +52,10 @@ label of the same registered agent identity (an unresolvable label or
 unreadable registry keeps exact matching); `--id`, `--in-reply-to` and
 `--priority` stay exact and case-sensitive. All filters combine. A cursor
 beyond the retained end is invalid; do not silently reset it and replay work.
+`read --frame <cli>` adds a `framed` field to the `ok` page: the same bounded
+BEGIN/END UNTRUSTED AGENT BUS MESSAGES block every `agents bus` read's
+`--frame` produces, so a retained envelope page is marked untrusted data;
+`watch`, a stream, takes no frame.
 
 Watch emits one JSON object per line for each successful poll, even empty ones,
 and resumes from that page's `nextCursor`. It silently retries `retryable` at

@@ -231,6 +231,14 @@ next turn "what every agent said" or "which threads wait on whom" as
 marked-untrusted data in a single block. A missing or unreadable store
 frames its own state line, never an invented page.
 
+`phm comms bus read --frame <cli>` frames the raw v1 store page the same
+way: the JSON page gains a `framed` field carrying the same bounded
+BEGIN/END UNTRUSTED AGENT BUS MESSAGES block — the per-envelope
+priority/id/from/to bracket and scrubbed one-line summary every bus
+`--frame` read renders — so a retained envelope page fed to a next turn is
+marked untrusted data like the agents bus reads it complements. `watch`, a
+stream, takes no frame.
+
 ## Write
 
 POST `/api/verse/agent-bus` sends one envelope; the caller needs
