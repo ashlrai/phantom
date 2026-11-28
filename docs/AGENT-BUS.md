@@ -84,14 +84,16 @@ substring or a body citation, so "where did envelope X go" is one filtered
 read — `--body-kind <kind>` for only the bodies carrying that exact kind
 discriminator — the same `busBodyKind` own-field exact match `agents bus
 inbox --body-kind`, `agents bus channel read --body-kind`, `agents bus
-wakes --body-kind`, `agents conversations --body-kind` and `fleet
+wakes --body-kind`, `agents conversations --body-kind`, `comms bus
+read|watch --body-kind` and `fleet
 bus-follow --body-kind` apply, decided
 on the raw body before projection so a body carrying no discriminator
 never matches and an unrecognized but printable value is an honest empty
 page — `--result <reserved|admitted|complete|failed>` for only the
 `work.result` receipts reporting that outcome — the same
-`WORK_RESULT_OUTCOMES` vocabulary the work feed's `--result` filter
-validates, read through the kind-scoped `busBodyResultOutcome` own-field
+`WORK_RESULT_OUTCOMES` vocabulary the work feed's `--result` filter and
+`comms bus read|watch --result` validate, read through the kind-scoped
+`busBodyResultOutcome` own-field
 match so a `work.release` body's own `released`/`completed` outcome, every
 other body kind and a result carrying no outcome never match — the
 envelope-level audit trail the feed's per-job newest-result `--result`
@@ -2773,8 +2775,8 @@ apply — `--kind`/`--topic` keep only protocol-v1 bodies whose
 namespace prefix like `fleet.*`, and `--body-kind <kind>` keeps only
 envelopes whose body carries that exact kind discriminator — the same
 `busBodyKind` own-field match `agents bus inbox --body-kind`, `channel
-read --body-kind`, `wakes --body-kind`, `agents conversations --body-kind`
-and `phm messages --body-kind` apply:
+read --body-kind`, `wakes --body-kind`, `agents conversations --body-kind`,
+`comms bus read|watch --body-kind` and `phm messages --body-kind` apply:
 the v2 `kind` field, else a bus-transport v1 `protocol.kind`, else the
 `type`/`schema` a kindless notice keys on, exact and case-sensitive, a
 body carrying no discriminator never matching and an unrecognized but
@@ -2782,7 +2784,8 @@ printable value an honest empty stream. `--result
 <reserved|admitted|complete|failed>` keeps only `work.result` bodies whose
 own `outcome` strictly equals the code — the same `busBodyResultOutcome`
 own-field match and `WORK_RESULT_OUTCOMES` vocabulary `phm messages
---result`, `agents messages --result`, `fleet messages`, `bus recent`,
+--result`, `agents messages --result`, `comms bus read|watch --result`,
+`fleet messages`, `bus recent`,
 `fleet_bus_inbox`'s `result`, `fleet_agent_messages`'s `result` and the
 work feed's `--result` share —
 so the envelope-level audit trail a job-scoped follow already narrows by
