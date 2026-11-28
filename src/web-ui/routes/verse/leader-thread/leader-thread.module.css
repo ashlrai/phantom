@@ -327,3 +327,56 @@
 }
 
 .root [data-find-current='true'] { outline: 2px solid var(--accent-500); outline-offset: -2px; }
+
+/* Owner context: one evidence reading at a time, adjacent to the conversation. */
+.fleetContext {
+  flex: none;
+  padding: 0 var(--card-pad) var(--space-2);
+  max-height: 32%;
+  overflow: auto;
+}
+.contextPanel:not([hidden]) {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+  margin-block-start: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-inline-start: 2px solid var(--accent-500);
+  border-radius: var(--radius-md);
+}
+.contextHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+.contextHeader h3 {
+  margin: 0;
+  font-size: var(--text-sm-size);
+  color: var(--text-primary);
+}
+.contextChoices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.contextReading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-sm-size);
+  color: var(--text-secondary);
+}
+.contextReading dd {
+  margin: 0;
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+.fleetContext button:focus-visible {
+  outline: 2px solid var(--accent-500);
+  outline-offset: 2px;
+}
