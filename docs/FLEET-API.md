@@ -398,6 +398,9 @@ Load per CPU uses the one-minute load average and CPU count; the Machine card
 warns above four times the CPU count. Swap and free disk are in GB. Missing or
 invalid measurements are `null` in JSON and shown as “unknown” in the card.
 Worktrees are the dispatcher's active worker worktrees, not all Git worktrees.
+Machine measurements require a readable dispatcher `last_tick` at most 60
+seconds old and at or before report time. If the admission record includes
+`ts`, it must match `last_tick`. Otherwise all measurements are unknown.
 
 The Fleet Operations deck and `phm fleet vitals` show the launch guard's reason
 from the selected runs directory's `queue/admission-ctl.json`. Missing, invalid,
