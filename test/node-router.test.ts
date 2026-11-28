@@ -188,6 +188,29 @@ describe('node router', () => {
     expect(route.fix).not.toContain(`--caps build,${versionCap('2.0.0')!}`);
   });
 
+  it('the no-node join fix drops required phm-<version> caps the same way', () => {
+    const f = fixture();
+    // With no in-scope node at all the fix is a first join, but join re-derives
+    // the build marker: --caps phm-2.0.0 could never advertise that version, so
+    // the command must not promise it — same rule the caps fix follows. The
+    // note still names the required build (it is what the job asks for); the
+    // assertions anchor on the join command the fix ends with.
+    f.box.enqueue('job-1', { owner: 'acme', requires: ['build', versionCap('2.0.0')!] });
+    f.box.enqueue('job-2', { owner: 'acme', requires: [versionCap('2.0.0')!] });
+    const plan = f.box.plan();
+    const mixed = plan.find(r => r.jobId === 'job-1')!;
+    expect(mixed.nodeId).toBeNull();
+    expect(mixed.fix).toContain('names a phm build, not a --caps choice');
+    expect(mixed.fix).toContain('phm node self-update');
+    expect(mixed.fix).toMatch(/Run: phm node join --owner acme --caps build$/);
+    // A version cap alone leaves nothing --caps can advertise: the bare join
+    // (auto-detect plus the node's own build marker) is the honest command.
+    const only = plan.find(r => r.jobId === 'job-2')!;
+    expect(only.nodeId).toBeNull();
+    expect(only.fix).toContain('names a phm build, not a --caps choice');
+    expect(only.fix).toMatch(/Run: phm node join --owner acme$/);
+  });
+
   it('prefers the auth fix over all-declined when another node merely lacks gh auth', () => {
     const f = fixture();
     const a = f.box.join('node-a', { owners: ['acme'], caps: ['gh'] })!;
