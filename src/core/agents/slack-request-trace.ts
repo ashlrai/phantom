@@ -110,12 +110,14 @@ export function traceSlackRequests(input: {
       // answered nor certified unanswered.
       row.outcome = 'uncertain';
       row.evidence = 'unverified';
-    } else if (found?.verdict === 'answered' && (ingress === 'posted' || ingress === 'duplicate')) {
+    } else if (ingress === 'unknown') {
+      // Send evidence cannot establish whether the request was admitted.
+      row.outcome = 'uncertain';
+    } else if (found?.verdict === 'answered') {
       row.outcome = 'answered';
       row.replyTs = found.replyTs!;
-    } else if (found?.verdict === 'uncertain' || found?.verdict === 'answered') {
-      // Exact-key attempt, inconsistent stored evidence, or a send whose
-      // ingress was never durably recorded: transport cannot prove it.
+    } else if (found?.verdict === 'uncertain') {
+      // Exact-key attempt or inconsistent stored evidence cannot prove a reply.
       row.outcome = 'uncertain';
     }
     counts.total++;
