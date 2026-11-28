@@ -105,6 +105,31 @@ describe('readLeaderReplies', () => {
     expect(result.entries.map((entry: { at: string }) => entry.at)).toEqual(['2026-11-17 09:00']);
   }, 60_000);
 
+  it('frames the replies read as bounded untrusted data with --frame', async () => {
+    await writeFile(plan, pass('09:00', '"Queue is moving."'));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const { runLeaderCli } = await import('../src/cli/leader.js');
+    // --json carries the frame as `framed` beside the full report.
+    expect(await runLeaderCli(['replies', '--json', '--frame', 'claude', '--file', plan])).toBe(0);
+    const framedJson = JSON.parse(String(log.mock.calls.at(-1)![0]));
+    expect(framedJson.framed).toContain('BEGIN UNTRUSTED OWNER THREAD');
+    expect(framedJson.framed).toContain('Queue is moving.');
+    expect(framedJson.framed).toContain('END UNTRUSTED OWNER THREAD');
+    expect(framedJson.entries).toHaveLength(1);
+    // Human output is the bare frame, not a JSON envelope.
+    log.mockClear();
+    expect(await runLeaderCli(['replies', '--frame', 'grok', '--file', plan])).toBe(0);
+    const framedText = String(log.mock.calls.at(-1)![0]);
+    expect(framedText.startsWith('BEGIN UNTRUSTED OWNER THREAD')).toBe(true);
+    expect(framedText).toContain('Queue is moving.');
+    expect(framedText).toContain('END UNTRUSTED OWNER THREAD');
+    // A missing or unknown cli is a usage error; `replies sync` writes, so it takes none.
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await runLeaderCli(['replies', '--frame'])).toBe(2);
+    expect(await runLeaderCli(['replies', '--frame', 'gemini', '--file', plan])).toBe(2);
+    expect(await runLeaderCli(['replies', 'sync', '--frame', 'claude'])).toBe(2);
+  }, 60_000);
+
   it('serves the same report to the Home cards, read only', async () => {
     await writeFile(plan, pass('09:00', '"Queue is moving."'));
     const { createFleetRunsApi } = await import('../src/core/verse/fleet-runs-api.js');

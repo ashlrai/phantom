@@ -156,7 +156,7 @@ describe('phm leader thread', () => {
     writeFileSync(join(runsDir, 'leader', 'PLAN-LOG.md'), PLAN.replace('merging now', 'merged in #7873'));
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await runLeaderCli(['thread'])).toBe(0);
-    expect(log.mock.calls.map(([line]) => line).join('\n')).toContain('Mason (phone)');
+    expect(log.mock.calls.map(([line]) => line).join('\n')).toContain('Owner (phone)');
     expect(log.mock.calls.map(([line]) => line).join('\n')).toContain('Leader (plan-log)');
     log.mockClear();
     expect(await runLeaderCli(['thread', '--text', '--limit', '1'])).toBe(0);
@@ -241,6 +241,33 @@ describe('phm leader thread', () => {
     expect(await runLeaderCli(['thread', '--before', 'abc'])).toBe(2);
     expect(err.join('\n')).toContain('Usage');
   });
+
+  it('frames the merged read as bounded untrusted data with --frame', async () => {
+    writeFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'), LINE);
+    writeFileSync(join(runsDir, 'leader', 'PLAN-LOG.md'), PLAN);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // --json carries the frame as `framed` beside the full read.
+    expect(await runLeaderCli(['thread', '--json', '--frame', 'claude'])).toBe(0);
+    const framedJson = JSON.parse(String(log.mock.calls.at(-1)![0])) as { framed?: string; thread: unknown[] };
+    expect(framedJson.framed).toContain('BEGIN UNTRUSTED OWNER THREAD');
+    expect(framedJson.framed).toContain('Is the release green?');
+    expect(framedJson.framed).toContain('Billing fix is merging now');
+    expect(framedJson.framed).toContain('END UNTRUSTED OWNER THREAD');
+    expect(framedJson.thread).toHaveLength(2);
+    // Human output is the bare frame, not a JSON envelope.
+    log.mockClear();
+    expect(await runLeaderCli(['thread', '--frame', 'grok'])).toBe(0);
+    const framedText = String(log.mock.calls.at(-1)![0]);
+    expect(framedText.startsWith('BEGIN UNTRUSTED OWNER THREAD')).toBe(true);
+    expect(framedText).toContain('Owner (phone)');
+    expect(framedText).toContain('Leader (plan-log)');
+    expect(framedText).toContain('END UNTRUSTED OWNER THREAD');
+    // A missing, unknown or repeated cli is a usage error.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await runLeaderCli(['thread', '--frame'])).toBe(2);
+    expect(await runLeaderCli(['thread', '--frame', 'gemini'])).toBe(2);
+    expect(await runLeaderCli(['thread', '--frame', 'claude', '--frame', 'devin'])).toBe(2);
+  });
 });
 
 describe('GET /api/verse/leader/thread/merged', () => {
@@ -260,7 +287,7 @@ describe('GET /api/verse/leader/thread/merged', () => {
       url: VERSE_LEADER_THREAD_MERGED_PATH + query,
       method: 'GET',
       headers: token === null ? {} : { 'x-ashlr-token': token },
-    }) as IncomingMessage;
+    }) as unknown as IncomingMessage;
     const res = {
       writeHead(code: number) { status = code; return this; },
       end(body: string) { text = body; },

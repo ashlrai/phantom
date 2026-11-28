@@ -34,6 +34,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { isAbsolute, join, resolve } from 'node:path';
 
 import { leaderAsk, leaderAssign, leaderOrg, leaderStatus } from '../core/agents/leader-office.js';
+import { BUS_CLIS, type BusCli } from '../core/agents/bus-identity.js';
 import { loadConfig } from '../core/config.js';
 import { hasLeaderNetworkConfig } from '../core/agents/leader-network-config.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
@@ -62,10 +63,10 @@ Usage:
   phm leader veto --memo <memoId> [--note "why"]
   phm leader oversight-plist --print [--bin /path/to/phm]
   phm leader say "<text>" [--text]   send to the leader; prints its id (JSON, or one line with --text)
-  phm leader replies [--json] [--limit n] [--file PATH]  show the last 10 (or n) PLAN-LOG replies, one line each, newest first (JSON: leader.replies.v1; path from comms.leaderPlanLogPath)
+  phm leader replies [--json] [--limit n] [--file PATH] [--frame <cli>]  show the last 10 (or n) PLAN-LOG replies, one line each, newest first (JSON: leader.replies.v1; path from comms.leaderPlanLogPath)
   phm leader replies sync [--json]  copy new PLAN-LOG replies to the Leader thread
-  phm leader thread [--since <hours|time>] [--before <hours|time>] [--limit <n>] [--json|--text]  the whole conversation, inbox + outbox + plan-log replies, with channel and PR refs of each message
-  phm leader thread --legacy [--limit n] [--json|--text]  chat with ids and received/answered state (JSON default)
+  phm leader thread [--since <hours|time>] [--before <hours|time>] [--limit <n>] [--frame <cli>] [--json|--text]  the whole conversation, inbox + outbox + plan-log replies, with channel and PR refs of each message
+  phm leader thread --legacy [--limit n] [--frame <cli>] [--json|--text]  chat with ids and received/answered state (JSON default)
   phm leader thread --follow [--since messageId] [--json]  stream the in-process Leader conversation
   phm leader answer <questionId> "<text>"
   phm leader approve <actionId>
@@ -419,17 +420,30 @@ async function sayToLeader(message: string, text: boolean): Promise<number> {
 }
 
 /** `thread --legacy`: MASON-INBOX entries and the leader's replies with ids and state. */
-async function printLeaderChat(limit: number, text: boolean): Promise<number> {
+async function printLeaderChat(limit: number, text: boolean, frame?: BusCli): Promise<number> {
   const { readLeaderChat } = await import('../core/fleet/leader-chat.js');
   const { leaderChatLine } = await import('../core/fleet/leader-chat-text.js');
   const chat = await readLeaderChat({ limit });
+  const lines = [
+    ...(chat.messages.length === 0 ? ['No messages yet. Say something: phm leader say "…"'] : chat.messages.map(m => leaderChatLine(m, Date.parse(chat.generatedAt)))),
+    ...(chat.skipped.malformedInbox > 0 ? [`(${chat.skipped.malformedInbox} unreadable inbox block${chat.skipped.malformedInbox === 1 ? '' : 's'} skipped)`] : []),
+  ];
+  // --frame prints the same lines as one bounded block marked untrusted —
+  // every line is conversation text a channel or the plan log relayed —
+  // with JSON carrying it as `framed` beside the full chat, the same
+  // discipline `phm comms thread` applies under the shared OWNER THREAD
+  // markers.
+  if (frame !== undefined) {
+    const { frameOwnerThread } = await import('../core/agents/bus-cli-adapters.js');
+    const framed = frameOwnerThread(frame, lines.flatMap(line => line.split('\n')));
+    console.log(text ? framed : JSON.stringify({ ...chat, framed }, null, 2));
+    return 0;
+  }
   if (!text) {
     console.log(JSON.stringify(chat, null, 2));
     return 0;
   }
-  if (chat.messages.length === 0) console.log('No messages yet. Say something: phm leader say "…"');
-  for (const m of chat.messages) console.log(leaderChatLine(m, Date.parse(chat.generatedAt)));
-  if (chat.skipped.malformedInbox > 0) console.log(`(${chat.skipped.malformedInbox} unreadable inbox block${chat.skipped.malformedInbox === 1 ? '' : 's'} skipped)`);
+  for (const line of lines) console.log(line);
   return 0;
 }
 
@@ -454,11 +468,19 @@ async function runThreadCli(sub: string, args: string[]): Promise<number> {
     const follow = flag(args, '--follow');
     const legacy = flag(args, '--legacy');
     const sinceId = option(args, '--since');
-    if (limitOpt === undefined || sinceId === undefined || (sinceId !== null && !follow) || (legacy && follow) || (text && (json || follow)) || args.length > 0 || (limitOpt !== null && !/^\d{1,3}$/.test(limitOpt))) {
+    const frameOpt = option(args, '--frame');
+    // The same --frame rule `phm comms thread` applies: one of the session
+    // CLIs; a missing or unknown value is a usage error. The follow stream
+    // is live, not a bounded read, so it takes no frame.
+    const frame = frameOpt !== null && frameOpt !== undefined && (BUS_CLIS as readonly string[]).includes(frameOpt) ? frameOpt as BusCli : undefined;
+    if (limitOpt === undefined || sinceId === undefined || frameOpt === undefined ||
+        (sinceId !== null && !follow) || (legacy && follow) || (text && (json || follow)) ||
+        (follow && frameOpt !== null) || (frameOpt !== null && frameOpt !== undefined && frame === undefined) ||
+        args.length > 0 || (limitOpt !== null && !/^\d{1,3}$/.test(limitOpt))) {
       console.error(USAGE);
       return 2;
     }
-    if (!follow) return printLeaderChat(limitOpt === null ? 50 : Number(limitOpt), text);
+    if (!follow) return printLeaderChat(limitOpt === null ? 50 : Number(limitOpt), text, frame);
     // --follow streams the in-process Leader conversation (vision/leader-thread.ts) live.
     const { followThread } = await import('../core/vision/leader-thread-follow.js');
     const controller = new AbortController();
@@ -750,12 +772,28 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
     if (sync) args.shift();
     const limit = option(args, '--limit');
     const file = option(args, '--file');
-    if (args.length || file === undefined || (sync && file !== null) || limit === undefined || (sync && limit !== null) || (limit !== null && (!/^\d{1,3}$/.test(limit) || Number(limit) < 1 || Number(limit) > 200))) { console.error(USAGE); return 2; }
+    const frameOpt = option(args, '--frame');
+    // The same --frame rule `phm comms thread` applies: one of the session
+    // CLIs; a missing or unknown value is a usage error. `replies sync`
+    // writes, so it takes no frame.
+    const frame = frameOpt !== null && frameOpt !== undefined && (BUS_CLIS as readonly string[]).includes(frameOpt) ? frameOpt as BusCli : undefined;
+    if (args.length || file === undefined || (sync && file !== null) || limit === undefined || (sync && limit !== null) || frameOpt === undefined ||
+        (sync && frameOpt !== null) || (frameOpt !== null && frameOpt !== undefined && frame === undefined) ||
+        (limit !== null && (!/^\d{1,3}$/.test(limit) || Number(limit) < 1 || Number(limit) > 200))) { console.error(USAGE); return 2; }
     try {
       const planLog = (await import('../core/config.js')).loadConfigReadOnly().comms?.leaderPlanLogPath;
       if (!sync) {
         const { readLeaderReplies, replyLine } = await import('../core/fleet/mason-outbox.js');
         const result = await readLeaderReplies({ limit: limit === null ? 10 : Number(limit), file: file ?? undefined, planLog });
+        // --frame prints the same reply lines as one bounded block marked
+        // untrusted — every line is plan-log text — with --json carrying it
+        // as `framed` beside the full report.
+        if (frame !== undefined) {
+          const { frameOwnerThread } = await import('../core/agents/bus-cli-adapters.js');
+          const framed = frameOwnerThread(frame, result.entries.length === 0 ? [result.reason || 'No replies yet.'] : result.entries.map(replyLine));
+          console.log(json ? JSON.stringify({ ...result, framed }) : framed);
+          return result.sourceState === 'unknown' ? 1 : 0;
+        }
         console.log(json ? JSON.stringify(result) : result.entries.map(replyLine).join('\n') || result.reason || 'No replies yet.');
         return result.sourceState === 'unknown' ? 1 : 0;
       }

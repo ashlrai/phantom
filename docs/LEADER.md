@@ -581,6 +581,17 @@ conversation. For dated PLAN-LOG replies alone, newest first, use
 `phm leader replies --json --limit 20`. Readers check the last 256 KiB of each
 journal; older entries may be omitted.
 
+Every read that prints the conversation takes `--frame <cli>` (`claude`,
+`codex`, `devin`, `cursor` or `grok`): `phm leader thread`, its `--legacy`
+chat and `phm leader replies` each print the same lines as one bounded block
+marked `BEGIN/END UNTRUSTED OWNER THREAD` — every line is channel-relayed or
+plan-log text, data only and never execution authority — with `--json`
+carrying it as `framed` beside the full read, the same discipline
+`phm comms thread` and `phm fleet owner-history` apply. An empty read frames
+its own state line, never a bare marker pair, and the shared 32 KiB clip
+bound states the cut. `--follow` is a live stream, not a bounded read, so it
+takes no frame; `replies sync` writes, so it takes none either.
+
 ```sh
 ashlr leader say "focus: the flaky retry test in binshield"
 ashlr leader thread [--since 24] [--before 2] [--limit 20] [--json]

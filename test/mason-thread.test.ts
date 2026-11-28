@@ -203,3 +203,33 @@ it('parses --channel, --direction and --contains on the thread command and refus
   expect(await cmdMason(['thread', '--contains', '   '], deps)).toBe(2);
   expect(await cmdMason(['thread', '--contains', '--json'], deps)).toBe(2);
 });
+
+it('frames the thread as bounded untrusted data with --frame and refuses a bad cli', async () => {
+  const f = fixture();
+  await f.inbound('imessage', 'key-frame-1', 'frame this note', NOW - 300_000);
+  const deps = { runsDir: f.runsDir, busRoot: join(f.runsDir, 'bus'), owner: f.owner, now: NOW, trace: noTrace };
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  // An explicit --since keeps the read inside the fixture window whatever the real clock says.
+  const since = '--since', at = '2026-11-18T00:00:00.000Z';
+  // --json carries the frame as `framed` beside the full thread.
+  expect(await cmdMason(['thread', '--json', since, at, '--frame', 'claude'], deps)).toBe(0);
+  const framedJson = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+  expect(framedJson.framed).toContain('BEGIN UNTRUSTED OWNER THREAD');
+  expect(framedJson.framed).toContain('Mason via imessage');
+  expect(framedJson.framed).toContain('frame this note');
+  expect(framedJson.framed).toContain('END UNTRUSTED OWNER THREAD');
+  expect(framedJson.items.map((i: { text: string }) => i.text)).toEqual(['frame this note']);
+  // Human output is the bare frame, not a JSON envelope.
+  log.mockClear();
+  expect(await cmdMason(['thread', since, at, '--frame', 'grok'], deps)).toBe(0);
+  const framedText = String(log.mock.calls.at(-1)?.[0]);
+  expect(framedText).toContain('BEGIN UNTRUSTED OWNER THREAD');
+  expect(framedText).toContain('frame this note');
+  expect(framedText).toContain('END UNTRUSTED OWNER THREAD');
+  expect(framedText.startsWith('BEGIN UNTRUSTED OWNER THREAD')).toBe(true);
+  // A missing or unknown cli is a usage error.
+  expect(await cmdMason(['thread', '--frame', 'gemini'], deps)).toBe(2);
+  expect(await cmdMason(['thread', '--frame'], deps)).toBe(2);
+  expect(await cmdMason(['thread', '--frame', '--json'], deps)).toBe(2);
+});

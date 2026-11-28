@@ -648,17 +648,24 @@ export function frameSessionTranscript(cli: BusCli, lines: readonly string[]): s
 
 /**
  * The same bounded untrusted-data block `frameBusInbox` produces, rendered
- * for the owner-thread reads (`phm comms thread --frame <cli>` and
- * `phm fleet owner-history --frame <cli>`). Every row is a message that
+ * for the owner-thread reads (`phm comms thread --frame <cli>`,
+ * `phm fleet owner-history --frame <cli>`, `phm mason thread --frame
+ * <cli>`, `phm leader thread --frame <cli>` — merged and `--legacy` — and
+ * `phm leader replies --frame <cli>`). Every row is a message that
  * arrived over a channel transport — iMessage, Slack, Telegram, email or
- * the desktop composer — so the text is whatever that channel's sender
- * wrote, scrubbed at intake but never authenticated as fleet data; a host
- * feeding the read to a CLI's next turn needs it marked exactly like a
- * bus page. Input is the already-formatted thread lines: one
+ * the desktop composer — or the Leader's own journal text relayed beside
+ * it, so the text is whatever that sender or the plan log wrote, scrubbed
+ * at intake but never authenticated as fleet data; a host feeding the
+ * read to a CLI's next turn needs it marked exactly like a bus page.
+ * Input is the already-formatted thread lines: one
  * `seq at channel direction text` row per message with its
  * `[awaiting reply]`/`[undelivered]`/receipt annotations on
- * `phm comms thread`, or the `#seq` history row plus the honest
- * `archives: …, skipped: …` tail on `phm fleet owner-history` — an
+ * `phm comms thread`, the `#seq` history row plus the honest
+ * `archives: …, skipped: …` tail on `phm fleet owner-history`, the
+ * `Mason via <channel>`/`Leader to <channel>` item rows on
+ * `phm mason thread`, the `at Who (channel)` header plus indented text
+ * rows on `phm leader thread` and its legacy chat, or the
+ * `<at>  <reply text>` reply rows on `phm leader replies` — an
  * unreadable thread frames its own state line, never an invented
  * conversation. Same markers' discipline under its own OWNER THREAD
  * markers — a thread block can never pass for a bus page, a digest, a
