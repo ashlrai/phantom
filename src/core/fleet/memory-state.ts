@@ -1,9 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { readPauseState, type PauseState } from './pause-state.js';
 
 export interface FleetMemoryPaths {
   pausePath?: string;
+  pauseLocalPath?: string;
   metricsPath?: string;
   admissionPath?: string;
 }
@@ -11,6 +13,8 @@ export interface FleetMemoryPaths {
 /** Local observations only. Null means unavailable, never zero or permission to launch. */
 export interface FleetMemoryStatus {
   pause: { state: 'present' | 'absent' | 'unknown'; reason: string | null };
+  /** Separate observations of the global and local launch switches. */
+  pauseState?: PauseState;
   freeMemoryPercent: number | null;
   swapUsedBytes: number | null;
   admissionWaitsByPool: Record<string, number> | null;
@@ -46,8 +50,10 @@ export async function readFleetMemory(paths: FleetMemoryPaths = {}): Promise<Fle
       };
     }
   };
-  const [pause, metrics, admission] = await Promise.all([
+  const pausePath = paths.pausePath ?? join(root, 'PAUSE');
+  const [pause, pauseState, metrics, admission] = await Promise.all([
     pauseRead(),
+    readPauseState({ pausePath, pauseLocalPath: paths.pauseLocalPath ?? join(dirname(pausePath), 'PAUSE_LOCAL') }),
     readJson(paths.metricsPath ?? join(root, 'memguard.json')),
     readJson(paths.admissionPath ?? join(root, 'admission-waits.json')),
   ]);
@@ -55,7 +61,7 @@ export async function readFleetMemory(paths: FleetMemoryPaths = {}): Promise<Fle
   const swap = record(metrics) ? metrics.swapUsedBytes : null;
   const waits = record(admission) ? admission.admissionWaitsByPool : null;
   return {
-    pause,
+    pause, pauseState,
     freeMemoryPercent: nonnegative(free) && free <= 100 ? free : null,
     swapUsedBytes: nonnegative(swap) ? swap : null,
     admissionWaitsByPool: record(waits) && Object.values(waits).every(
