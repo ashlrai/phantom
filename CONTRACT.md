@@ -2674,6 +2674,13 @@ For each harness it returns the maximum `mem_bytes_max` and maximum measured
 from different nodes. CPU stays `null` when all supplied costs are unknown.
 `planAutoscaleRoutes` supplies only fresh, non-conflicting snapshots and uses
 the aggregate when the candidate node has no footprint for that harness.
+The same module exports `fleetRunnable(docs, nowMs)`, the fleet-wide rollup
+`phm node route` reports as `fleet_runnable` in its `phantom.node-route.v1`
+JSON envelope and as a `fleet runnable now:` line in text: additional
+sessions each harness could start right now, summed over the newest
+plausible snapshot per node under the same freshness, conflict,
+measured-memory, footprint-expiry and host-stop rules the planner applies.
+A harness no eligible node can answer for reports `null`, never zero.
 
 ## Node route lane outcomes (`phantom.node-route-outcomes.v1`)
 
