@@ -211,6 +211,22 @@ an unreadable bus or registry stays null rather than an invented empty
 thread list, and the tool accepts no caller root or path and never posts,
 claims, acks, replies or renews TTL.
 
+The fleet-wide catch-up reads carry the same bounded untrusted-data frame
+every `agents bus` read produces. `phm messages --frame <cli>` and
+`phm agents messages --frame <cli>` print the timeline page — head, one
+scrubbed row per message, the damaged-record tail — as one block marked
+untrusted under BEGIN/END UNTRUSTED AGENT BUS TIMELINE markers;
+`phm agents conversations --frame <cli>` prints the thread rollup the
+same way under BEGIN/END UNTRUSTED AGENT BUS CONVERSATIONS markers. Each
+read's own markers keep a timeline or conversations block from passing
+for an addressed inbox page, the scrub and flattening rules and the 32
+KiB clip bound with the cut stated are the ones every bus `--frame` read
+shares, and `--json` carries the block as `framed` beside the full
+projection while the human read prints it bare — so a host hands a CLI's
+next turn "what every agent said" or "which threads wait on whom" as
+marked-untrusted data in a single block. A missing or unreadable store
+frames its own state line, never an invented page.
+
 ## Write
 
 POST `/api/verse/agent-bus` sends one envelope; the caller needs
