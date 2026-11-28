@@ -100,6 +100,7 @@ import { applyStandingOverlay, clampBudgetPolicy, currentStandingPolicy, standin
 import { revokeArmedMerges, type MergeRevocationOutcome } from '../authority/clamp.js';
 import { currentLedgerHead, readLedger } from '../authority/ledger.js';
 import { loadBudgetPolicy, readCapacitySnapshot, recordShadowDecision, type CapacitySnapshot } from '../routing/budget-store.js';
+import { learnedSeatRouteEvidence, type LearnedSeatRouteEvidence } from '../routing/learned-seat-evidence.js';
 import { assessSeat, type SeatCapacity } from '../routing/headroom.js';
 import { DEVIN_SEAT_ID, effectiveSeatPolicy } from '../routing/policy.js';
 import { probeDevinCli, type DevinCliProbe } from '../devin/cli-probe.js';
@@ -305,6 +306,16 @@ export interface LiveHooksDeps {
   isSubscriptionEngine(engine: EngineId): boolean;
   legacyRoute(item: WorkItem, cfg: AshlrConfig): RouteDecision;
   laneAutoEvidence?: (cfg: AshlrConfig) => Promise<LaneAutoEvidence | null>;
+  /**
+   * The fleet's own outcome record pooled into seat-router penalties
+   * (routing/learned-seat-evidence.ts): merge/revert/allowance evidence from
+   * the jobs ledger and dispatch event log, cached 15 minutes. The default
+   * dep is the production reader; a dep returning `{ learnedPenalty: {} }`
+   * (or throwing, which the tick treats the same) leaves seat ranking exactly
+   * the weights alone. Optional so tests can pin evidence without touching
+   * ledgers.
+   */
+  learnedSeatEvidence?: (nowMs: number) => LearnedSeatRouteEvidence;
   laneAutoNativeModels?: typeof readLaneAutoNativeModels;
   localFleetEngine(cfg: AshlrConfig): EngineId | null;
   readTasks(): TaskQueueRead;
@@ -763,6 +774,7 @@ export function defaultLiveHooksDeps(): LiveHooksDeps {
     isSubscriptionEngine: (engine) => isSubscriptionEngine(engine),
     legacyRoute: (item, cfg) => routeBackend(item, cfg),
     laneAutoEvidence: (cfg) => loadLaneAutoEvidence(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), cfg),
+    learnedSeatEvidence: (nowMs) => learnedSeatRouteEvidence(nowMs),
     laneAutoNativeModels: readLaneAutoNativeModels,
     localFleetEngine: (cfg) => (localFleetEnabled(cfg) ? LOCAL_FLEET_ENGINE : null),
     readTasks: () => readTaskQueue(),
@@ -2021,6 +2033,14 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       const routeLaneCaps = Object.fromEntries(FLEET_ENGINES.map((lane) => [
         lane, Math.max(0, lanes[lane].slots - fanoutReserve[lane]),
       ])) as Record<FleetEngine, number>;
+      // The fleet's own outcome record, pooled per seat and cached for
+      // LEARNED_SEAT_EVIDENCE_TTL_MS; {} when the ledgers have no usable
+      // evidence, which leaves the ranking exactly as the weights alone.
+      // Advisory only: a throwing dep degrades to no evidence, never a held tick.
+      let learnedSeat: LearnedSeatRouteEvidence = { learnedPenalty: {} };
+      try {
+        learnedSeat = deps.learnedSeatEvidence?.(nowMs) ?? learnedSeat;
+      } catch { /* advisory evidence never blocks a tick */ }
       ctx = {
         meteredUsdExhausted: hookCtx.meteredUsdExhausted === true,
         dispatchSources: dispatchBudgetSource && dispatchConfigSource ? createHash('sha256').update(JSON.stringify({budget:dispatchBudgetSource,directives,config:dispatchConfigSource})).digest('hex') : null,
@@ -2036,6 +2056,11 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
           lanes,
           laneEngines: laneEngines.engines,
           ...(laneAuto ? { laneAuto } : {}),
+          // Outcome-learning seat penalties beside the λ weights: the same
+          // pooled record the Leader seat and router gateway already rank
+          // by, so fleet dispatch stops being the one routeSeat consumer
+          // blind to it (CONTRACT-OUTCOME-LEARNING.md).
+          ...learnedSeat,
           demotions,
           // Land-first scheduling reads the same reconciled open-PR counts
           // backpressure computed for this tick (null when they could not be

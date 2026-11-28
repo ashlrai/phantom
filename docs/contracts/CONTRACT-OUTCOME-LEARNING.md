@@ -181,8 +181,13 @@ the same bounded evidence `phm fleet outcomes` folds — the dispatch event
 log (first readable canonical candidate, whole file capped at 8 MiB) and the
 jobs-ledger tail (`ROUTER_OUTCOME_LEDGER_LIMIT`), plus the standing revert
 keys and the router censor config — through synchronous bounded readers, and
-hands `routeSeat` the pooled penalty and a one-line provenance note via
-`LeaderSeatDeps.route` (`loadDefaultLeaderSeatDeps`). The result is cached
+hands `routeSeat` the pooled penalty and a one-line provenance note. Two
+routeSeat consumers supply it: `LeaderSeatDeps.route`
+(`loadDefaultLeaderSeatDeps`, which the router gateway reuses) and the
+fleet tick's dispatch router (`LiveHooksDeps.learnedSeatEvidence`, default
+`learnedSeatRouteEvidence`, spread into the tick's `DispatchRouterContext`
+once per `beforeTick` so every `routeWorkItem` call — fleet job dispatch —
+ranks seats by the same record). The result is cached
 for `LEARNED_SEAT_EVIDENCE_TTL_MS` (15 minutes) because planning calls
 `route` once per seat variant; a changed `ASHLR_RUNS_DIR` invalidates
 immediately. Every read failure degrades to `{ learnedPenalty: {} }` —

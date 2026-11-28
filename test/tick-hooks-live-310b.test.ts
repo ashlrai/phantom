@@ -507,7 +507,7 @@ describe('lanes, presence and the router seam', () => {
     hooks.effectiveConfig(CFG);
     hooks.standingBacklog([item({ effort: 1 })]);
     expect((await hooks.beforeTick(hookCtx)).laneCaps.local).toBe(2);
-    hooks.beginDispatchPlan(['first', 'second', 'third']);
+    hooks.beginDispatchPlan!(['first', 'second', 'third']);
     expect(hooks.route(item({ id: 'first', effort: 1 }), CFG).backend).toBe('llama-server');
     expect(hooks.route(item({ id: 'second', effort: 1 }), CFG).backend).toBe('llama-server');
     expect(hooks.route(item({ id: 'third', effort: 1 }), CFG).backend).toBe('grok-cli');
@@ -610,7 +610,7 @@ describe('lanes, presence and the router seam', () => {
     const preview = hooks.route(item({ id: 'local-1', effort: 2 }), CFG);
     expect(preview.backend).toBe('llama-server');
     expect(hooks.route(item({ id: 'grok-1', effort: 2 }), CFG).backend).toBe('llama-server');
-    hooks.beginDispatchPlan(['local-1', 'grok-1', 'claude-1', 'parked']);
+    hooks.beginDispatchPlan!(['local-1', 'grok-1', 'claude-1', 'parked']);
     const first = hooks.route(item({ id: 'local-1', effort: 2 }), CFG);
     const second = hooks.route(item({ id: 'grok-1', effort: 2 }), CFG);
     expect(first.backend).toBe('llama-server');
@@ -636,7 +636,7 @@ describe('lanes, presence and the router seam', () => {
     } });
     hooks.effectiveConfig(CFG);
     await hooks.beforeTick(hookCtx);
-    hooks.beginDispatchPlan(['first', 'second']);
+    hooks.beginDispatchPlan!(['first', 'second']);
     expect(hooks.route(item({ id: 'first', effort: 2 }), CFG).backend).toBe('llama-server');
     const overflow = hooks.route(item({ id: 'second', effort: 2 }), CFG);
     expect(overflow.hold?.kind).toBe('park');
@@ -679,6 +679,32 @@ describe('lanes, presence and the router seam', () => {
     expect(legacy).toHaveBeenCalledTimes(1);
     expect(h.shadowed).toBe(1);
   });
+
+  it('feeds the pooled outcome record into fleet seat routing once per tick', async () => {
+    const evidence = vi.fn(() => ({ learnedPenalty: { local: 1 }, learningNote: 'Fleet outcome learning ranked seats.' }));
+    const hooks = createLiveTickHooks({ deps: { ...h.deps, learnedSeatEvidence: evidence } });
+    hooks.effectiveConfig(CFG);
+    await hooks.beforeTick(hookCtx);
+    const route = hooks.route(item(), CFG);
+    expect(evidence).toHaveBeenCalledTimes(1);
+    expect(route.backend).not.toBe('llama-server');
+    expect(route.seatDecision?.seatId).not.toBe('local');
+    expect(route.seatDecision?.why).toContain('Fleet outcome learning ranked seats.');
+    hooks.route(item({ id: 'second' }), CFG);
+    expect(evidence).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['empty evidence', (): { learnedPenalty: Record<string, number> } => ({ learnedPenalty: {} })],
+    ['a throwing reader', (): never => { throw new Error('ledger unreadable'); }],
+  ] as const)('keeps fleet seat routing on the weights alone with %s', async (_label, learnedSeatEvidence) => {
+    const hooks = createLiveTickHooks({ deps: { ...h.deps, learnedSeatEvidence } });
+    hooks.effectiveConfig(CFG);
+    await hooks.beforeTick(hookCtx);
+    const route = hooks.route(item(), CFG);
+    expect(route.backend).toBe('llama-server');
+    expect(route.seatDecision?.seatId).toBe('local');
+  });
 });
 
 describe('seatAllows', () => {
@@ -693,7 +719,7 @@ describe('seatAllows', () => {
   it('checks only the explicitly bound Grok account while retaining legacy all-account refusal', async () => {
     const p = policyFixture();
     p.spend.seats.grok.enabled = false;
-    p.spend.seats['grok-b'] = { seatId: 'grok-b', enabled: true, reserveFloorPercent: 0, maxSessionWindowPercent: null, roles: ['producer'] };
+    p.spend.seats = { ...p.spend.seats, 'grok-b': { seatId: 'grok-b', enabled: true, reserveFloorPercent: 0, maxSessionWindowPercent: null, roles: ['producer'] } };
     const b = { ...grokSeat(), seatId: 'grok-b' };
     const hooks = createLiveTickHooks({ deps: { ...h.deps, standingPolicy: () => p,
       capacitySnapshot: () => ({ v: 1, publishedAt: NOW_ISO, seats: [grokSeat(), b] }) } });
@@ -711,13 +737,13 @@ describe('seatAllows', () => {
       const hooks = createLiveTickHooks({ deps: { ...h.deps,
         standingPolicy: () => {
           const p = policyFixture();
-          p.spend.seats['grok-b'] = { seatId:'grok-b', enabled:!(changed && kind==='grant'), reserveFloorPercent:0, maxSessionWindowPercent:null, roles:['producer'] };
+          p.spend.seats = { ...p.spend.seats, 'grok-b': { seatId:'grok-b', enabled:!(changed && kind==='grant'), reserveFloorPercent:0, maxSessionWindowPercent:null, roles:['producer'] } };
           return p;
         },
         capacitySnapshot: () => changed && kind==='missing-capacity' ? null : ({v:1,publishedAt:NOW_ISO,
           seats:[grokSeat(),{...b,...(changed && kind==='capacity' ? {windows:grokSeat(100).windows} : {})},
             ...(changed && kind==='duplicate-capacity' ? [b] : [])]}),
-        loadBudget: () => ({...defaultBudgetPolicy(),...(changed && kind==='budget' ? {mode:'dormant' as const} : {})}),
+        loadBudget: () => ({...defaultBudgetPolicy(),...(changed && kind==='budget' ? {mode:'reserve' as const} : {})}),
         liveLeaderConfig: cfg => {
           if (changed && kind==='config') throw new Error('fixture unavailable');
           return cfg;
@@ -737,7 +763,7 @@ describe('seatAllows', () => {
   function selectedClaudeHooks(other: 'disabled' | 'exhausted' = 'disabled') {
     const p = policyFixture({ engines: ['claude-cli'] });
     p.spend.seats.claude.enabled = other !== 'disabled';
-    p.spend.seats['claude-b'] = { seatId: 'claude-b', enabled: true, reserveFloorPercent: 0, maxSessionWindowPercent: null, roles: ['producer'] };
+    p.spend.seats = { ...p.spend.seats, 'claude-b': { seatId: 'claude-b', enabled: true, reserveFloorPercent: 0, maxSessionWindowPercent: null, roles: ['producer'] } };
     let clock = NOW;
     let stopped = false;
     let snapshot: ReturnType<LiveHooksDeps['capacitySnapshot']> = { v: 1, publishedAt: NOW_ISO,
@@ -874,7 +900,7 @@ describe('afterDispatch / afterLanding', () => {
     await hooks.beforeTick(hookCtx);
     const route = hooks.route(item(), CFG);
     expect(route).toMatchObject({ backend: 'llama-server', hold: null, seatDecision: { seatId: 'local' } });
-    await hooks.afterDispatch(outcome({ backend: route.backend, model: route.model ?? null, seatId: route.seatDecision!.seatId, lane: route.lane }));
+    await hooks.afterDispatch(outcome({ backend: route.backend, model: route.model ?? null, seatId: route.seatDecision!.seatId, lane: fleetLaneOf(route.backend, CFG) }));
     expect(h.journal.at(-1)).toMatchObject({ type: 'dispatch', backend: route.backend, repo: REPO, title: 'Fix the parser', source: 'todo', seatId: 'local', proposalId: 'p-1', seatDecision: { seatId: 'local' } });
   });
 
@@ -1649,7 +1675,7 @@ describe('reset-aware selected batch — real routing seam with injected advice'
     await vi.waitFor(()=>expect(advice).toHaveBeenCalledTimes(1));expect(completed).toBe(false);
     finish(null);const order=await preparation;
     expect(order).toEqual(['one','two']);expect(recordScheduling).toHaveBeenCalledTimes(1);
-    hooks.beginDispatchPlan(selected.map(v=>v.id));
+    hooks.beginDispatchPlan!(selected.map(v=>v.id));
     const first=hooks.route(selected[0]!,CFG);const second=hooks.route(selected[1]!,CFG);
     expect(first.backend).toBe('claude');expect(first.seatDecision?.seatId).toBe('claude');
     expect(second.backend).toBe('grok-cli');expect(hooks.route(selected[0]!,CFG)).toEqual(first);
@@ -1674,13 +1700,13 @@ describe('reset-aware selected batch — real routing seam with injected advice'
     expect(order).toEqual(['near','short']);
     expect(advice).toHaveBeenCalledTimes(1);
     expect(recordScheduling).toHaveBeenCalledTimes(1);
-    hooks.beginDispatchPlan(['near','short']);
+    hooks.beginDispatchPlan!(['near','short']);
     expect(hooks.route(selected[1]!,CFG)).toMatchObject({backend:'claude',hold:null,seatDecision:{seatId:'claude'}});
   });
   it.each(['throws','outside-set','null'] as const)('keeps deterministic useful work on advisory %s',async(kind)=>{
     const advice=vi.fn(async()=>{if(kind==='throws')throw new Error('offline');return kind==='outside-set'?'not-a-candidate':null;});
     const {hooks}=batchHarness(advice);hooks.effectiveConfig(CFG);await hooks.beforeTick(hookCtx);
-    await hooks.prepareDispatchPlan!([item()],CFG);hooks.beginDispatchPlan(['item-1']);
+    await hooks.prepareDispatchPlan!([item()],CFG);hooks.beginDispatchPlan!(['item-1']);
     expect(hooks.route(item(),CFG).backend).toBe('grok-cli');expect(advice).toHaveBeenCalledTimes(1);
   });
   it('re-reads capacity after advice and cannot use a now-spent recommended account',async()=>{
@@ -1689,20 +1715,20 @@ describe('reset-aware selected batch — real routing seam with injected advice'
       return candidates.find(v=>v.seatId==='claude')!.id;
     });
     hooks.effectiveConfig(CFG);await hooks.beforeTick(hookCtx);
-    await hooks.prepareDispatchPlan!([item()],CFG);hooks.beginDispatchPlan(['item-1']);
+    await hooks.prepareDispatchPlan!([item()],CFG);hooks.beginDispatchPlan!(['item-1']);
     expect(hooks.route(item(),CFG).backend).toBe('grok-cli');expect(hooks.seatAllows('claude',{maxPercent:90}).allowed).toBe(false);
   });
   it('holds a revoked grant after the optional wait, without recording display evidence as authority',async()=>{
     const {hooks}=batchHarness(async()=>{policy=null;return null;});
     hooks.effectiveConfig(CFG);await hooks.beforeTick(hookCtx);await hooks.prepareDispatchPlan!([item()],CFG);
-    hooks.beginDispatchPlan(['item-1']);expect(hooks.route(item(),CFG).hold).not.toBeNull();
+    hooks.beginDispatchPlan!(['item-1']);expect(hooks.route(item(),CFG).hold).not.toBeNull();
   });
   it.each(['grant','budget','config','capacity','stop'] as const)('revalidates %s after history I/O before any paid advisory',async(kind)=>{
     let changed=false;
     const advice=vi.fn(async()=>null);
     const {hooks,views}=batchHarness(advice,{
       workHistory:async()=>{changed=true;if(kind==='grant')policy=null;if(kind==='capacity')for(const s of views)for(const w of s.windows)w.usedPercent=100;return [];},
-      loadBudget:()=>({...defaultBudgetPolicy(),...(changed && kind==='budget' ? {mode:'dormant' as const}: {})}),
+      loadBudget:()=>({...defaultBudgetPolicy(),...(changed && kind==='budget' ? {mode:'reserve' as const}: {})}),
       liveLeaderConfig:cfg=>changed && kind==='config' ? {...cfg,foundry:{...cfg.foundry,allowedBackends:['builtin']}} : cfg,
       killActive:()=>changed && kind==='stop',
     });
@@ -1727,7 +1753,7 @@ describe('reset-aware selected batch — real routing seam with injected advice'
   it.each(['budget','config','directives','stop'] as const)('does not dispatch an old plan after %s changes during advice',async(kind)=>{
     let changed=false;
     const {hooks,recordScheduling}=batchHarness(async()=>{changed=true;return null;},{
-      loadBudget:()=>({...defaultBudgetPolicy(),...(changed && kind==='budget' ? {mode:'dormant' as const}: {})}),
+      loadBudget:()=>({...defaultBudgetPolicy(),...(changed && kind==='budget' ? {mode:'reserve' as const}: {})}),
       liveLeaderConfig:cfg=>changed && kind==='config' ? {...cfg,foundry:{...cfg.foundry,allowedBackends:['builtin']}} : cfg,
       directives:()=>changed && kind==='directives' ? ({grokLanes:1} as ReturnType<LiveHooksDeps['directives']>) : null,
       killActive:()=>changed && kind==='stop',
@@ -1742,7 +1768,7 @@ describe('reset-aware selected batch — real routing seam with injected advice'
       const choice=candidates.find(v=>v.seatId==='claude')!.id;
       if(kind==='engine')views[1]!.engine='grok';
       if(kind==='context')views[1]!.contextWindow=10;
-      if(kind==='tier')views[1]!.tier='frontier';
+      if(kind==='tier')views[1]!.tier='elite';
       return choice;
     });
     hooks.effectiveConfig(CFG);await hooks.beforeTick(hookCtx);await hooks.prepareDispatchPlan!([item()],CFG);
@@ -1848,13 +1874,13 @@ describe('reset-aware selected batch — real routing seam with injected advice'
     expect(await hooks.prepareDispatchPlan!(selected,CFG)).toEqual(['short','long']);
     expect(advice.mock.calls[0]![0].find(v=>v.taskId==='long')).toMatchObject({durationP25Ms:120000,durationP75Ms:120000});
     expect(recordScheduling).toHaveBeenLastCalledWith(expect.objectContaining({advisory:expect.objectContaining({state:'fallback',reason:'no-eligible-choice'})}));
-    hooks.beginDispatchPlan(['short','long']);
+    hooks.beginDispatchPlan!(['short','long']);
     expect(hooks.route(selected[1]!,CFG)).toMatchObject({backend:'claude',hold:null});
   });
   it('does not call the paid advisory after exhausted USD; verified producer work still routes',async()=>{
     const advice=vi.fn(async()=>null);const {hooks}=batchHarness(advice);
     hooks.effectiveConfig(CFG);await hooks.beforeTick({...hookCtx,meteredUsdExhausted:true});
-    await hooks.prepareDispatchPlan!([item()],CFG);hooks.beginDispatchPlan(['item-1']);
+    await hooks.prepareDispatchPlan!([item()],CFG);hooks.beginDispatchPlan!(['item-1']);
     expect(advice).not.toHaveBeenCalled();expect(hooks.route(item(),CFG).hold).toBeNull();
   });
 });
@@ -1880,7 +1906,7 @@ describe('task-scoped reset reserve reaches actual dispatch admission',()=>{
   }
   async function prepare(r:ReturnType<typeof resetHarness>) {
     r.hooks.effectiveConfig(CFG);await r.hooks.beforeTick(hookCtx);
-    await r.hooks.prepareDispatchPlan!([item()],CFG);r.hooks.beginDispatchPlan(['item-1']);return r.hooks.route(item(),CFG);
+    await r.hooks.prepareDispatchPlan!([item()],CFG);r.hooks.beginDispatchPlan!(['item-1']);return r.hooks.route(item(),CFG);
   }
   it('admits eligible work above the saved reserve and passes the derived policy through the native gate',async()=>{
     const r=resetHarness();expect(await prepare(r)).toMatchObject({backend:'claude',hold:null,model:'model-a'});
@@ -1921,7 +1947,7 @@ describe('independent local task admission',()=>{
     const capacity=vi.fn<LiveHooksDeps['capacitySnapshot']>(()=>null);
     const hooks=createLiveTickHooks({deps:{...h.deps,capacitySnapshot:capacity,workHistory:async()=>[]}});
     hooks.effectiveConfig(CFG);await hooks.beforeTick(hookCtx);
-    await hooks.prepareDispatchPlan!([item()],CFG);hooks.beginDispatchPlan(['item-1']);
+    await hooks.prepareDispatchPlan!([item()],CFG);hooks.beginDispatchPlan!(['item-1']);
     const route=hooks.route(item(),CFG);expect(route.hold).toBeNull();
     expect(fleetLaneOf(route.backend,CFG)).toBe('local');
     capacity.mockClear();
