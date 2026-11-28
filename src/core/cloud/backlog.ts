@@ -2,8 +2,10 @@
  * Self-improvement backlog (unit C1): built-in items (improvement-backlog.ts)
  * plus operator/Leader items at `<cloudHome>/backlog.json`. An item is
  * "claimed" by its newest task; it becomes available again 3 days after
- * that task ends closed/failed/expired, never after merged or a "no-change" report.
- * Ordering is priority, then measured metric leverage per area kind, then —
+ * that task ends closed/failed/expired — doubling per consecutive unmerged
+ * ending up to CLOUD_BACKLOG_RETRY_MAX_MS — never after merged or a
+ * "no-change" report. Ordering is priority, then measured metric leverage
+ * per area kind, then —
  * for kinds the metric ledger never measured — merge/revert outcomes folded
  * from the tasks' own post-merge evidence (improve/area-outcomes.ts), then
  * file order.
@@ -36,6 +38,13 @@ const CLOUD_BACKLOG_FILE = 'backlog.json';
 export const CLOUD_BACKLOG_MAX_USER_ITEMS = 200;
 /** A closed/failed/expired item is retried after this long (a merged one never is). */
 export const CLOUD_BACKLOG_RETRY_MS = 3 * 24 * 60 * 60 * 1000;
+/**
+ * The retry delay's ceiling: each consecutive unmerged ending doubles the
+ * wait from CLOUD_BACKLOG_RETRY_MS, capped here — a persistently failing
+ * item still retries (about monthly) instead of spending a session every
+ * 3 days forever, while a one-off ending keeps the 3-day cadence.
+ */
+export const CLOUD_BACKLOG_RETRY_MAX_MS = 30 * 24 * 60 * 60 * 1000;
 
 const BACKLOG_VERSION = 1;
 /** 200 items × a 20 000-char prompt, with room for JSON escaping. */
@@ -139,18 +148,43 @@ export type BacklogClaimTask = Pick<CloudTaskV1, 'id' | 'backlogItemId' | 'creat
   state: CloudTaskState | 'blocked';
 };
 
-/** Newest task per backlog item id. */
-function newestTaskByItem<T extends BacklogClaimTask>(tasks: readonly T[]): Map<string, T> {
-  const newest = new Map<string, T>();
+/**
+ * Backlog item id → its tasks newest-first. The sort is stable, so tasks
+ * sharing a createdAt keep input order — the same pick per-item newest
+ * selection always made, extended to the history the retry streak reads.
+ */
+function tasksByItem<T extends BacklogClaimTask>(tasks: readonly T[]): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
   for (const task of tasks) {
     if (!task.backlogItemId) continue;
-    const seen = newest.get(task.backlogItemId);
-    if (!seen || Date.parse(task.createdAt) > Date.parse(seen.createdAt)) newest.set(task.backlogItemId, task);
+    const group = groups.get(task.backlogItemId);
+    if (group) group.push(task);
+    else groups.set(task.backlogItemId, [task]);
   }
-  return newest;
+  for (const group of groups.values()) {
+    group.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  }
+  return groups;
 }
 
-function claimOf(item: CloudBacklogItem, task: BacklogClaimTask | undefined, nowMs: number): Claim {
+/** Consecutive unmerged endings at the head of a newest-first task list. */
+function retryStreak(tasks: readonly BacklogClaimTask[]): number {
+  let streak = 0;
+  for (const task of tasks) {
+    const state: CloudTaskState = task.state === 'blocked' ? 'running' : task.state;
+    if (!RETRYABLE.includes(state) || task.report?.status === 'no-change') break;
+    streak += 1;
+  }
+  return streak;
+}
+
+/** Wait before a retryable-ended item is claimable again: doubles per consecutive unmerged ending, capped. */
+function retryDelayMs(streak: number): number {
+  return Math.min(CLOUD_BACKLOG_RETRY_MS * 2 ** Math.max(0, streak - 1), CLOUD_BACKLOG_RETRY_MAX_MS);
+}
+
+function claimOf(item: CloudBacklogItem, tasks: readonly BacklogClaimTask[], nowMs: number): Claim {
+  const task = tasks[0];
   if (!task) return { claimedBy: null, lastState: null };
   // A Devin session waiting for Mason is still in progress.
   const state: CloudTaskState = task.state === 'blocked' ? 'running' : task.state;
@@ -159,7 +193,7 @@ function claimOf(item: CloudBacklogItem, task: BacklogClaimTask | undefined, now
   if (RETRYABLE.includes(state) && task.report?.status !== 'no-change') {
     // updatedAt is when the task last changed — for a terminal task, when it ended.
     const endedAt = Date.parse(task.updatedAt);
-    const released = Number.isFinite(endedAt) && nowMs - endedAt >= CLOUD_BACKLOG_RETRY_MS;
+    const released = Number.isFinite(endedAt) && nowMs - endedAt >= retryDelayMs(retryStreak(tasks));
     return { claimedBy: released ? null : task.id, lastState: state };
   }
   // A merged end retires an item only until a producer asserts it again.
@@ -252,10 +286,10 @@ function ordered<T extends CloudBacklogItem>(
 export type BacklogOrderOutcomes = ReadonlyMap<string, AreaOutcomeCell>;
 
 export function readCloudBacklog(tasks: readonly BacklogClaimTask[], now: Date, areaOutcomes?: BacklogOrderOutcomes): CloudBacklogView {
-  const newest = newestTaskByItem(tasks);
+  const groups = tasksByItem(tasks);
   const nowMs = now.getTime();
   const all = allItems();
-  const items = ordered(all, areaLeverage(), areaOutcomes ?? areaMergeOutcomes(tasks, all)).map((item) => ({ ...item, ...claimOf(item, newest.get(item.id), nowMs) }));
+  const items = ordered(all, areaLeverage(), areaOutcomes ?? areaMergeOutcomes(tasks, all)).map((item) => ({ ...item, ...claimOf(item, groups.get(item.id) ?? [], nowMs) }));
   return { items, nextUp: items.find((item) => item.claimedBy === null)?.id ?? null };
 }
 
@@ -279,13 +313,13 @@ export function nextBacklogItemWhere(
   accept: (item: CloudBacklogItem, repo: string) => boolean,
   areaOutcomes?: BacklogOrderOutcomes,
 ): { item: CloudBacklogItem; repo: string } | null {
-  const newest = newestTaskByItem(tasks);
+  const groups = tasksByItem(tasks);
   const nowMs = now.getTime();
   const all = allItems();
   for (const item of ordered(all, areaLeverage(), areaOutcomes ?? areaMergeOutcomes(tasks, all))) {
     const repo = item.repo ?? defaultRepo;
     if (repo === null) continue;
-    if (claimOf(item, newest.get(item.id), nowMs).claimedBy !== null) continue;
+    if (claimOf(item, groups.get(item.id) ?? [], nowMs).claimedBy !== null) continue;
     if (accept(item, repo)) return { item, repo };
   }
   return null;
@@ -332,11 +366,11 @@ export function appendUserBacklogItems(items: readonly CloudBacklogItem[], now: 
     // Make room by retiring items that are finished for good (their newest
     // task merged and was never re-asserted since), oldest first — never an
     // item still waiting to run or one a producer keeps asserting.
-    const newest = newestTaskByItem(listCloudTasks());
+    const groups = tasksByItem(listCloudTasks());
     let excess = existing.length + fresh.length - CLOUD_BACKLOG_MAX_USER_ITEMS;
     existing = existing.filter((item) => {
       if (excess > 0) {
-        const claim = claimOf(item, newest.get(item.id), nowMs);
+        const claim = claimOf(item, groups.get(item.id) ?? [], nowMs);
         if (claim.lastState === 'merged' && claim.claimedBy !== null) {
           excess -= 1;
           return false;
