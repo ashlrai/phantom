@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { appendBusInbox, type BusInboxReceipt } from '../src/core/fleet/bus-inbox.js';
 import { projectFleetEdges, parseFleetEdgesQuery, readFleetEdges } from '../src/core/fleet/fleet-edges.js';
 import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { runAgentsCli } from '../src/cli/agents-bus-contract.js';
@@ -109,6 +109,45 @@ describe('fleet edges', () => {
       edge('b', 'group:ops:alerts'), edge('a', 'group:ops:general'),
     ]);
   });
+  it('narrows the receipt set by the shared slice filters before aggregating', () => {
+    const receipt = (cursor: number, receivedAt: number, envelope: BusInboxReceipt['envelope']): BusInboxReceipt =>
+      ({ cursor, receivedAt, envelope });
+    const rows = [
+      // a->b: P1 ask naming job RQ-9, received now.
+      receipt(0, 9_000_000, { id: 'm1', from: 'a', to: 'b', priority: 'P1', ttl: 9_000_000, channel: 'bus',
+        body: { kind: 'note', thread: 'job:RQ-9', text: 'please deploy the fix?' } }),
+      // a->b: P2 status about something else, received now.
+      receipt(1, 9_500_000, { id: 'm2', from: 'a', to: 'b', priority: 'P2', ttl: 9_000_000, channel: 'bus',
+        body: { kind: 'note', text: 'ship has sailed' } }),
+      // c->d: P0 handoff, received hours ago — outside the last-hour count.
+      receipt(2, 100, { id: 'm3', from: 'c', to: 'd', priority: 'P0', ttl: 9_000_000, channel: 'handoff',
+        body: { kind: 'note', text: 'taking over the lane' } }),
+    ];
+    const now = 10_000_000;
+    const edge = (from: string, to: string, messages: number, messagesLastHour: number, lastAt: number) =>
+      ({ from: { address: from, provider: null }, to: { address: to, provider: null },
+        messages, messagesLastHour, lastAt });
+    // kind keeps only the receipts classify files under it — the same vocabulary phm messages --kind reports.
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { kind: 'ask' })).toEqual([edge('a', 'b', 1, 1, 9_000_000)]);
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { kind: 'handoff' })).toEqual([edge('c', 'd', 1, 0, 100)]);
+    // priority keeps only the exact band; job keeps only bodies citing the job; contains keeps only summary matches.
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { priority: 'P0' })).toEqual([edge('c', 'd', 1, 0, 100)]);
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { job: 'RQ-9' })).toEqual([edge('a', 'b', 1, 1, 9_000_000)]);
+    // contains matches case-insensitively over the scrubbed summary — the projection
+    // normalizes the needle itself, so a direct caller needs no pre-lowercasing.
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { contains: 'DEPLOY' })).toEqual([edge('a', 'b', 1, 1, 9_000_000)]);
+    // since/before compose into the [since, before) receipt-time window the other bus reads apply —
+    // m1 and m2 share the a->b link, so the filtered set aggregates into one edge of two messages.
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { since: 1_000 }))
+      .toEqual([edge('a', 'b', 2, 2, 9_500_000)]);
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { since: 1_000, before: 9_200_000 }))
+      .toEqual([edge('a', 'b', 1, 1, 9_000_000)]);
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { before: 9_200_000 }))
+      .toEqual([edge('a', 'b', 1, 1, 9_000_000), edge('c', 'd', 1, 0, 100)]);
+    // The slice composes with the address, room and window bounds, never replacing them.
+    expect(projectFleetEdges(rows, now, undefined, { from: value => value === 'c' }, undefined, { kind: 'status' }))
+      .toEqual([]);
+  });
   it('reads --from/--to through the same identity-label rule the bus reads apply', () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-edges-filter-'));
     const options = { root, now: () => 1000 };
@@ -170,6 +209,15 @@ describe('fleet edges', () => {
       expect(parseFleetEdgesQuery({ windowMinutes: '1' })).toEqual({ ok: true, options: { windowMinutes: 1 } });
       expect(parseFleetEdgesQuery({ windowMinutes: '1440' })).toEqual({ ok: true, options: { windowMinutes: 1440 } });
     });
+    it('parses the shared row-slice filters with the same rules the bus reads apply', () => {
+      const now = 10_000_000;
+      expect(parseFleetEdgesQuery({ since: '2h', before: '15m', priority: 'P1',
+        kind: 'HANDOFF', job: 'RQ-1', contains: 'Deploy  Fix' }, now)).toEqual({ ok: true, options: {
+        since: now - 7_200_000, before: now - 900_000, priority: 'P1',
+        kind: 'handoff', job: 'RQ-1', contains: 'deploy fix' } });
+      expect(parseFleetEdgesQuery({ since: '1700000000000', before: '2026-06-01T00:00:00.000Z' }, now))
+        .toEqual({ ok: true, options: { since: 1_700_000_000_000, before: Date.parse('2026-06-01T00:00:00.000Z') } });
+    });
     it('rejects malformed values before the store is touched', () => {
       for (const input of [
         { windowMinutes: '' }, { windowMinutes: '0' }, { windowMinutes: '1441' },
@@ -179,6 +227,12 @@ describe('fleet edges', () => {
         { to: 'bad label' }, { to: 'x'.repeat(129) },
         { channel: '' }, { channel: 'Bad Room' }, { channel: 'UPPER' }, { channel: 'x'.repeat(33) },
         { topic: 'has space' }, { topic: 'UPPER' }, { topic: 'x'.repeat(33) },
+        { since: '' }, { since: 'bogus' }, { since: '-5' }, { since: '0x10' }, { since: '9'.repeat(40) },
+        { before: 'soon' }, { before: '1.5h' },
+        { priority: '' }, { priority: 'P4' }, { priority: 'p1' }, { priority: 'high' },
+        { kind: '' }, { kind: 'unknown' }, { kind: 'asks' },
+        { job: '' }, { job: 'has space' }, { job: 'x'.repeat(129) },
+        { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) },
       ]) {
         expect(parseFleetEdgesQuery(input).ok, JSON.stringify(input)).toBe(false);
       }
@@ -274,6 +328,46 @@ describe('fleet edges', () => {
       expect(JSON.stringify(ops.out)).not.toContain('private body');
     });
 
+    it('passes the shared slice flags through to the same projection', async () => {
+      const now = Date.now();
+      const post = (id: string, from: string, to: string, priority: string, body: unknown, at = now) => appendBusInbox(
+        { id, from, to, priority, ttl: 9_000_000, body,
+          channel: 'bus', channel_ref: id, sender: { agent_id: from, vendor: 'openai', human: false, team: true }, external: false },
+        { root, now: () => at });
+      expect(post('m1', 'a', 'b', 'P1', { kind: 'note', thread: 'job:RQ-9', text: 'please deploy the fix?' }).status).toBe('posted');
+      expect(post('m2', 'a', 'b', 'P2', { kind: 'note', text: 'ship has sailed' }).status).toBe('posted');
+      expect(post('m3', 'c', 'd', 'P0', { kind: 'note', text: 'taking over the lane' }, now - 7_200_000).status).toBe('posted');
+      // b and d never send, so their provider stays unknown — the same inference bound every filter keeps.
+      const edge = (from: string, to: string, messages: number, lastAt: number) =>
+        ({ from: { address: from, provider: 'openai' }, to: { address: to, provider: null },
+          messages, messagesLastHour: lastAt > now - 3_600_000 ? messages : 0, lastAt });
+      // --kind keeps only the receipts classify files under it.
+      const ask = await run(['--root', root, '--kind', 'ask', '--json']);
+      expect(ask.code).toBe(0);
+      expect(JSON.parse(ask.out[0]!).edges).toEqual([edge('a', 'b', 1, now)]);
+      // --priority keeps only the exact band.
+      const p0 = await run(['--root', root, '--priority', 'P0', '--json']);
+      expect(JSON.parse(p0.out[0]!).edges).toEqual([edge('c', 'd', 1, now - 7_200_000)]);
+      // --job keeps only bodies citing the job; --contains keeps only summary matches.
+      const job = await run(['--root', root, '--job', 'RQ-9', '--json']);
+      expect(JSON.parse(job.out[0]!).edges).toEqual([edge('a', 'b', 1, now)]);
+      const needle = await run(['--root', root, '--contains', 'DEPLOY', '--json']);
+      expect(JSON.parse(needle.out[0]!).edges).toEqual([edge('a', 'b', 1, now)]);
+      // --since/--before compose into the [since, before) receipt-time window.
+      const since = await run(['--root', root, '--since', '1h', '--json']);
+      expect(JSON.parse(since.out[0]!).edges).toEqual([edge('a', 'b', 2, now)]);
+      const before = await run(['--root', root, '--before', '1h', '--json']);
+      expect(JSON.parse(before.out[0]!).edges).toEqual([edge('c', 'd', 1, now - 7_200_000)]);
+      // The filters compose conjunctively.
+      const both = await run(['--root', root, '--kind', 'ask', '--priority', 'P2', '--json']);
+      expect(JSON.parse(both.out[0]!).edges).toEqual([]);
+      // `--flag=value` keeps a needle that itself starts with `--` expressible.
+      const dashed = await run(['--root', root, '--contains=--deploy', '--json']);
+      expect(dashed.code).toBe(0);
+      expect(JSON.parse(dashed.out[0]!).edges).toEqual([]);
+      expect(JSON.stringify(since.out)).not.toContain('private body');
+    });
+
     it('rejects malformed flags before touching the store', async () => {
       for (const bad of [['--help', '--json'], ['--window-minutes'], ['--window-minutes', '--json'],
         ['--window-minutes', '0'], ['--window-minutes', '1441'], ['--window-minutes', '1.5'],
@@ -283,6 +377,16 @@ describe('fleet edges', () => {
         ['--channel'], ['--channel', '--json'], ['--channel', 'Bad Room'], ['--channel', ''],
         ['--channel', 'a', '--channel', 'b'], ['--topic'], ['--topic', '--json'],
         ['--topic', 'has space'], ['--topic', 'x'.repeat(33)], ['--topic', 'a', '--topic', 'b'],
+        ['--since'], ['--since', '--json'], ['--since', 'bogus'], ['--since', ''],
+        ['--since', '1h', '--since', '2h'], ['--before', 'soon'], ['--before', '1.5h'],
+        ['--priority'], ['--priority', '--json'], ['--priority', 'P4'], ['--priority', 'p1'],
+        ['--priority', 'P1', '--priority', 'P2'],
+        ['--kind'], ['--kind', '--json'], ['--kind', 'unknown'], ['--kind', ''],
+        ['--kind', 'ask', '--kind', 'reply'],
+        ['--job'], ['--job', '--json'], ['--job', 'has space'], ['--job', ''],
+        ['--job', 'a', '--job', 'b'],
+        ['--contains'], ['--contains', ''], ['--contains', 'x'.repeat(513)],
+        ['--contains', 'a', '--contains', 'b'],
         ['--root'], ['--root', 'relative'], ['--root', root, '--root', root], ['--json', '--json'],
         ['--unknown'], ['edges']]) {
         expect((await run(bad)).code).toBe(2);

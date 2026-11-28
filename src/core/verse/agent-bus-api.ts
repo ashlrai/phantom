@@ -42,14 +42,18 @@
  * `result` keeps only `work.result` bodies whose own `outcome` strictly
  * equals one `WORK_RESULT_OUTCOMES` code — the same outcome vocabulary the
  * work feed's `--result` filter validates.
- * GET /api/verse/agent-bus/edges[?windowMinutes=60&from=claude&to=devin&channel=eng&topic=deploy]
+ * GET /api/verse/agent-bus/edges[?windowMinutes=60&from=claude&to=devin&channel=eng&topic=deploy&since=2h&priority=P1&kind=handoff&job=RQ-1&contains=deploy]
  * is the same `fleet.edges.v1` link projection `phm fleet edges` and the
  * `fleet_agent_edges` MCP tool serve: `windowMinutes` keeps only links whose
  * receipts fall inside the trailing 1..1440-minute window, `from`/`to` keep
  * only links the named agent's identity sent or was addressed to under the
- * shared identity-label rule, and `channel`/`topic` keep only links whose
+ * shared identity-label rule, `channel`/`topic` keep only links whose
  * receipts are addressed to `group:<channel>:*` or parse to that topic
- * component — every value validated by the shared `parseFleetEdgesQuery`
+ * component, and `since`/`before`/`priority`/`kind`/`job`/`contains` apply
+ * the shared row-slice vocabulary every other bus read enforces before its
+ * projection — the `[since, before)` receipt-time window, one P0–P3 band,
+ * one classified message kind, one job citation and one summary needle —
+ * every value validated by the shared `parseFleetEdgesQuery`
  * rules, so an HTTP read, a CLI read and an MCP read can never disagree
  * about what a filter keeps; any other parameter or malformed value is a 400.
  * GETs require a current read session. Responses wrap store outcomes with v: 1;

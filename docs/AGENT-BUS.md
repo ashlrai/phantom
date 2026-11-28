@@ -3142,13 +3142,36 @@ exact topic component through the shared `groupAddressTopicOf`, composing with
 `--channel` into one room AND one topic while an agent address, a bare
 `group:<room>` or a malformed topic never matches; both take the strict
 channel-name grammar. `--root <absolute>` reads a non-default
-fleet store like the other fleet bus reads. `fleet_agent_edges` (the isolated
+fleet store like the other fleet bus reads. The read also takes the
+shared row-slice vocabulary every other bus read applies before its
+projection: `--since <15m|2h|1d|ISO|epoch>` keeps only links whose
+receipts were received at or after the cutoff and `--before` keeps only
+links received strictly before its own cutoff on the same grammar — the
+exclusive upper bound composing with `--since` into one `[since, before)`
+window on receipt time and with `--window-minutes` into the intersection
+of both bounds; `--priority <P0|P1|P2|P3>` keeps only links carrying
+receipts stamped with that exact band; `--kind
+<ask|reply|handoff|status|blocker>` keeps only links whose receipts
+classify to that one agent-message kind — the same `classify`
+`phm messages --kind` and `fleet_agent_messages` apply, matched
+case-insensitively; `--job <id>` keeps only links whose receipts name
+that job — the shared `busBodyJobMatch` rule every bus read's job
+filter applies; and `--contains <text>` keeps only links whose
+receipts' scrubbed one-line summaries carry the needle as a
+case-insensitive substring — the same `busReadContainsMatch` rule every
+bus read's contains filter applies, so a secret-shaped value stays
+unfindable. Every filter narrows the receipt set before it aggregates,
+so counts, `lastAt` and provider inference describe only the matching
+traffic; the per-envelope filters (`--id`, `--in-reply-to`) stay out —
+an edge is an aggregate, never one receipt, and `agents bus show`
+already serves the single-envelope read. `fleet_agent_edges` (the isolated
 fleet MCP tool) serves the same `readFleetEdges` projection with the same
-`windowMinutes`/`from`/`to`/`channel`/`topic` arguments — every other key
+`windowMinutes`/`from`/`to`/`channel`/`topic`/`since`/`before`/`priority`/
+`kind`/`job`/`contains` arguments — every other key
 refused and no caller root, path or working directory accepted, the bus store
 and registry roots staying server-owned — and `GET
 /api/verse/agent-bus/edges` serves it over HTTP (read session required) with
-the same five parameters, each validated by the shared
+the same parameters, each validated by the shared
 `parseFleetEdgesQuery` rules so the three reads can never disagree about what
 a filter keeps. Provider labels come from sender metadata observed on
 the filtered receipts — a provider proven only by traffic the filters exclude
