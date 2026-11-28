@@ -53,6 +53,12 @@ test('docs and unrelated source skip the OS legs; scripts, manifests, workflows,
   assert.equal(diffNeedsOsLegs(['src/cli/index.ts', '.github/workflows/ci.yml']), true);
 });
 
+test('changing the install smoke runner selects the cross-platform install jobs', () => {
+  const filter = readFileSync(new URL('../path-filters/phantom.yml', import.meta.url), 'utf8');
+  const installBlock = /^xplat_install:\r?\n((?:^[ \t]+.*\r?\n|^\r?\n)*)/m.exec(filter)?.[1];
+  assert.match(installBlock ?? '', /^  - \.github\/scripts\/ci-install-smoke\.mjs\r?$/m);
+});
+
 test('an OS gate passes on success or a path-gate skip and fails on failure or cancellation', () => {
   assert.equal(osGateDecision({ fast: { result: 'success' }, smoke: { result: 'skipped' } }).ok, true);
   assert.equal(osGateDecision({ fast: { result: 'failure' }, smoke: { result: 'success' } }).ok, false);
