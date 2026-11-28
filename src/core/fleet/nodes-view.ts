@@ -20,6 +20,7 @@ import { readPoolConfig } from '../drive/nodes/pool-host.js';
 import { NODE_OFFLINE_MS, nodeCanAcceptWork } from '../drive/nodes/router.js';
 import { isHostStats, isNodeCapacity, parseState, type HostStats, type NodeRecord, type NodesState } from '../drive/nodes/state.js';
 import { isVersionCap } from '../drive/nodes/phm-version.js';
+import { isLocalModelCap } from '../local-runtime/omlx/models.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { aliasMatches } from './pool-reach.js';
 import { remoteLaneCap } from './unfed-market.js';
@@ -306,9 +307,12 @@ export function buildNodesView(
 }
 
 /** The oMLX cap family a node advertises for local-model work: `omlx` plus
- * per-tier `omlx-<tier>` caps (drive/nodes/local-model-caps.ts). Runner packs
- * advertise as `pack:<name>`, so the prefix never claims one. */
-const isLocalModelCap = (cap: string): boolean => cap === 'omlx' || cap.startsWith('omlx-');
+ * per-tier `omlx-<tier>` caps. The whitelist is LOCAL_MODEL_CAPS in
+ * local-runtime/omlx/models.ts — the same list the lane planner advertises
+ * from and the catalog calls "caps a node may advertise; anything else named
+ * omlx-* is not ours" — so a hand-typed `--caps omlx-typo` never counts as
+ * local-model readiness. Runner packs advertise as `pack:<name>`, which the
+ * prefix could never claim anyway. */
 
 /** True when an advertised node cap serves `lane`. Provider lanes share their
  * cap name; `local-model` is the doctor/`--can-take` report name for the oMLX
