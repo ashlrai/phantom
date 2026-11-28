@@ -39,6 +39,19 @@ export const HARNESS_ADAPTERS: readonly HarnessAdapter[] = Object.freeze([
   { id: 'ashlrcode', kind: 'cloud-cli', names: ['ac', 'ashlrcode'] },
   { id: 'hermes', kind: 'cloud-cli', names: ['hermes'] },
   { id: 'opencode', kind: 'cloud-cli', names: ['opencode'] },
+  // The remaining terminal agents a community node can run: the apps
+  // catalog's agent binaries (aider, goose, droid, pi, cline) plus GitHub
+  // Copilot CLI. Without a row their sessions are invisible to `phm node
+  // capacity` and `phm node route` drops their cost rows as unknown harness.
+  // Kernel names only: a pip-installed aider execs its interpreter and stays
+  // unmeasured like every other script, while the standalone `aider` binary
+  // measures normally.
+  { id: 'aider', kind: 'cloud-cli', names: ['aider'] },
+  { id: 'goose', kind: 'cloud-cli', names: ['goose'] },
+  { id: 'droid', kind: 'cloud-cli', names: ['droid'] },
+  { id: 'pi', kind: 'cloud-cli', names: ['pi'] },
+  { id: 'cline', kind: 'cloud-cli', names: ['cline'] },
+  { id: 'copilot', kind: 'cloud-cli', names: ['copilot'] },
   { id: 'local-model', kind: 'local-model', names: ['ollama', 'llama-server', 'omlx'] },
 ]);
 

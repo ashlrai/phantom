@@ -87,6 +87,15 @@ A proposal earns credit only from a metric it declares up front:
   --ignore-scripts` still runs outside it, since it needs the registry and
   runs no package code. A failed run, a missing script, or two runs of one
   commit that disagree make the outcome **unknown**, never zero.
+* Measurement does not only wait for that verb either:
+  `syncImproveMeasurements` (`src/core/improve/measure-sync.ts`) runs on its
+  own cloud-scheduler job (`CLOUD_MEASURE_EVERY_MS`, hourly, held by
+  Stop/Pause like the launch) and appends the same `measured` events for the
+  stalest measurable registered proposals — at most two proposals and eight
+  PR lookups per pass, the fleet mirror as the only checkout, `measureAt`
+  under the same standing confinement, a phase re-measured only when its
+  commit moved or it still scores unknown past a 24-hour retry window.
+  Promotion stays manual: the pass records evidence, never gate decisions.
 * `phm improve outcomes` lists outcomes and compares proposers. Proposals
   chosen by the deterministic rules are the baseline; each exact engine/model
   pair is a fixed-model group. A rate or comparison needs at least three

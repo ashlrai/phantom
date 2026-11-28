@@ -1241,6 +1241,17 @@ describe('renderUnfed', () => {
       'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.', 'Last 24h: no unfed ticks recorded.',
       'Last 24h: no route decisions recorded.', 'Last 24h: no claims recorded.']);
   });
+
+  it('marks a lane whose unfed verdict is unknown instead of leaving it blank', () => {
+    const report = currentUnfed(JSON.stringify({
+      lanes: { a: { running: 0, target: 2 }, b: { running: 2, target: 2 } },
+    }), null);
+    const text = renderUnfed({ ...report, marketTruncated: false, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) }).join('\n');
+    // Lane a has headroom but no readable queue: its unfed verdict is unknown,
+    // which must not render identically to lane b's confirmed-fed state.
+    expect(text).toContain('a  0/2 running (0%), unknown hinted here  UNFED?: 2 free, elsewhere rows unknown');
+    expect(text).toContain('b  2/2 running (100%), unknown hinted here\n');
+  });
 });
 
 describe('derived market reasons', () => {

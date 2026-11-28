@@ -59,7 +59,7 @@ const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const FOLLOW_KEYS = new Set([
   'agent', 'after', 'durationMs', 'intervalMs',
-  'thread', 'from', 'excludeFrom', 'with', 'priority', 'kind', 'job', 'since', 'before', 'channel', 'contains', 'inReplyTo', 'id', 'bodyKind', 'result',
+  'thread', 'from', 'excludeFrom', 'with', 'priority', 'kind', 'job', 'since', 'before', 'channel', 'topic', 'contains', 'inReplyTo', 'id', 'bodyKind', 'result',
 ]);
 const LABEL_KEYS = ['thread', 'from', 'excludeFrom', 'with', 'job', 'inReplyTo', 'id', 'bodyKind'] as const;
 
@@ -128,6 +128,11 @@ export function parseFleetAgentFollowArgs(args: Record<string, unknown>): FleetA
   if (channel !== undefined) {
     if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
     filters.channel = channel;
+  }
+  const topic = args.topic;
+  if (topic !== undefined) {
+    if (typeof topic !== 'string' || !agentChannelNameSchema.safeParse(topic).success) return null;
+    filters.topic = topic;
   }
   const since = args.since;
   if (since !== undefined) {

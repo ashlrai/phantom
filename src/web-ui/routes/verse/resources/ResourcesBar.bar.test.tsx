@@ -63,6 +63,28 @@ describe('rail account rows on the shared bar', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('Weekly window: 71% of the window gone · use is 9 points behind an even spend');
   });
 
+  it('shows the current binding-window reset on the expanded row without using the tooltip', () => {
+    mount([claudeSeat()], true);
+    const row = screen.getByRole('button', { name: /^Claude week:/ });
+    const reset = row.querySelector('time[data-quota-reset]');
+    expect(reset).toHaveAttribute('datetime', RESET);
+    expect(reset?.parentElement).toHaveTextContent(/^Weekly window resets /i);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('does not advertise an unconfirmed or prose-only reset on the expanded row', () => {
+    const prose = seatWindow({ id: 'seven_day', usedPercent: 25, resetDescription: 'resets soon' });
+    const stale = claudeSeat(2 * DAY);
+    mount([stale, nativeSeat(capacity({ windows: [prose], binding: prose, usability: 'ready', observedAt: new Date(NOW - 60_000).toISOString() }),
+      { id: 'claude-prose', label: 'Claude prose' })], true);
+    const staleRow = screen.getByRole('button', { name: /^Claude week:/ });
+    const proseRow = screen.getByRole('button', { name: /^Claude prose:/ });
+    expect(staleRow).toHaveAttribute('data-usage-state', 'retained');
+    expect(proseRow).toHaveAttribute('data-usage-state', 'current');
+    expect(staleRow.querySelector('time[data-quota-reset]')).toBeNull();
+    expect(proseRow.querySelector('time[data-quota-reset]')).toBeNull();
+  });
+
   it('draws a hairline with no time mark in the collapsed rail', () => {
     mount([claudeSeat()], false);
     const meter = within(screen.getByRole('button', { name: /^Claude week:/ })).getByRole('meter', { name: 'Claude week used' });

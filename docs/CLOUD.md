@@ -594,8 +594,11 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   loop's own measured verdicts never became work). A signal becomes
   an item at the recurring bar of three distinct proposals: registered
   proposals with a recorded PR but no `measured` event past the
-  24-hour grace — registration is automated but the later verbs are
-  manual and unscheduled, so the scorecard starves — is a
+  24-hour grace — registration, checkout-free observation and bounded
+  measurement (`syncImproveMeasurements`, its own scheduler job driving
+  `measureAt` on the fleet mirror) are all automated, so a stall now
+  means the pass cannot reach the proposal — no mirror, a closed PR, a
+  metric that never measures — is a
   current-state stall tally; in-window `measured` events that keep
   returning no value become an item at three recorded events across
   two distinct proposals, quoting the recorded reasons; measured

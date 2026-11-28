@@ -612,6 +612,30 @@ describe('v2 work threads', () => {
     expect(await run(['--result', 'bogus'])).toBe(2);
     expect(errors.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('the CLI --frame prints the rollup as a bounded untrusted block and carries it as framed in JSON', async () => {
+    const root = bus(CHAT), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    // The human read is the bare framed block under its own markers.
+    expect(await run(['--frame', 'claude'])).toBe(0);
+    const block = lines.join('\n');
+    expect(block).toContain('BEGIN UNTRUSTED AGENT BUS CONVERSATIONS');
+    expect(block).toContain('need the docs?');
+    expect(block).toContain('leader, claude');
+    expect(block).toContain('END UNTRUSTED AGENT BUS CONVERSATIONS');
+    expect(block).not.toContain('"schema"');
+    // --json carries the block as `framed` beside the full projection.
+    lines.length = 0;
+    expect(await run(['--frame', 'grok', '--json'])).toBe(0);
+    const parsed = JSON.parse(lines.pop()!) as { schema: string; framed: string };
+    expect(parsed.schema).toBe('agents.conversations.v1');
+    expect(parsed.framed).toContain('BEGIN UNTRUSTED AGENT BUS CONVERSATIONS');
+    expect(parsed.framed).toContain('need the docs?');
+    // A bad cli or a repeated flag is a usage error.
+    expect(await run(['--frame', 'gemini'])).toBe(2);
+    expect(await run(['--frame', 'claude', '--frame', 'grok'])).toBe(2);
+    expect(await run(['--frame'])).toBe(2);
+  });
 });
 
 describe('--waiting-on', () => {

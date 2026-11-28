@@ -211,6 +211,22 @@ an unreadable bus or registry stays null rather than an invented empty
 thread list, and the tool accepts no caller root or path and never posts,
 claims, acks, replies or renews TTL.
 
+The fleet-wide catch-up reads carry the same bounded untrusted-data frame
+every `agents bus` read produces. `phm messages --frame <cli>` and
+`phm agents messages --frame <cli>` print the timeline page — head, one
+scrubbed row per message, the damaged-record tail — as one block marked
+untrusted under BEGIN/END UNTRUSTED AGENT BUS TIMELINE markers;
+`phm agents conversations --frame <cli>` prints the thread rollup the
+same way under BEGIN/END UNTRUSTED AGENT BUS CONVERSATIONS markers. Each
+read's own markers keep a timeline or conversations block from passing
+for an addressed inbox page, the scrub and flattening rules and the 32
+KiB clip bound with the cut stated are the ones every bus `--frame` read
+shares, and `--json` carries the block as `framed` beside the full
+projection while the human read prints it bare — so a host hands a CLI's
+next turn "what every agent said" or "which threads wait on whom" as
+marked-untrusted data in a single block. A missing or unreadable store
+frames its own state line, never an invented page.
+
 ## Write
 
 POST `/api/verse/agent-bus` sends one envelope; the caller needs
@@ -530,6 +546,7 @@ untrusted data: a wake is a hint to read the inbox and grants no authority.
 [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>]
+[--topic <topic>]
 [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]`
 returns one page of
@@ -594,7 +611,16 @@ handoffs alike, matched on the delivery address rather than the reported
 kind — so an agent in several rooms reads one room's pending mail in one
 filtered read; it composes with `--kind` to separate a room's direct mail
 from its assignments, and a channel the agent is not a member of simply
-has no mail to show. `--contains` keeps only mail whose scrubbed
+has no mail to show. `--topic` keeps only mail addressed under that exact
+topic component of a well-formed `group:<room>:<topic>` address — the
+same `groupAddressTopicOf` verdict `phm messages --topic`, `channel
+read --topic`, `work feed --topic`, `work claim-next --topic`, `work
+next --topic`, `dead-letters --topic`, `thread --topic` and `work mine
+--topic` apply, decided on the row's own `to` label rather than the room
+name and validated by the same strict channel-name grammar — so it
+composes with `--channel` into one room AND one topic ("which of my
+pending mail concerns `group:eng:alerts`"), and a DM, legacy label or
+deeper `group:` label parses to no topic and never matches. `--contains` keeps only mail whose scrubbed
 one-line summary — the same text the `--frame` read renders per row —
 carries the needle as a case-insensitive substring, whitespace collapsed
 on both sides, so "did anyone send me mail about X" is one filtered read
@@ -712,7 +738,7 @@ reported as `limit`, so an MCP-connected agent waits for mail without a
 poll loop or a stdio stream.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
-[--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
+[--channel <name>] [--topic <topic>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]` lists wake
 hints for the agent — addressed under any spelling that resolves to its
 identity, exact first then lowercase, the same fold the inbox read
@@ -751,7 +777,18 @@ and every other filter: on a per-agent read it narrows to one room's
 hints for that agent (a channel the agent does not belong to simply has
 no hints to show), and on `--all` it answers "which hints concern room
 X" in one fleet read, with `matched` counting it inside the queue-tail
-match like `from`/`excludeFrom`. A ref that resolves to no registered identity keeps exact-label
+match like `from`/`excludeFrom`. `--topic` keeps only hints whose own
+`to` label parses to that exact topic component of a well-formed
+`group:<room>:<topic>` address — the same `groupAddressTopicOf` verdict
+every other bus read's `--topic` applies, decided on the hint's address
+alone like `--channel` so it needs no referent resolution and composes
+with `--channel` into one room AND one topic: a `bus.send` hint whose
+triggering envelope was addressed to `group:eng:alerts` matches
+`--topic alerts`, while a claim-holder `wh-…` hint's bare owner label
+and every DM parse to no topic and never match — "which wake hints
+concern `group:eng:alerts`" is one filtered read on a per-agent read or
+under `--all`, `matched` counting it inside the queue-tail match like
+`channel`. A ref that resolves to no registered identity keeps exact-label
 matching instead — the page reports `scope: 'label'` (vs `'identity'`),
 `agent` the queried label verbatim, and only hints whose `to` is that label
 match — so hints queued under a bare coordination or routing label, like the
@@ -855,7 +892,7 @@ cannot be read. Triage no longer costs one `agents bus show` per hint.
 `fleet_agent_wakes` (the isolated fleet MCP tool) serves the same read with
 the same dimensions as arguments — `agent` optional (omitted, the
 fleet-wide `--all` read under `scope: 'fleet'`), `since`/`job`/`from`/
-`excludeFrom`/`channel`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` the same filters — under the identical
+`excludeFrom`/`channel`/`topic`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` the same filters — under the identical
 `readAgentWakes`/`readAllWakes` validation, so an MCP-connected agent reads its wake
 hints, claim-holder citations and resolved referents — or the whole
 fleet's pending hints in one call — without shelling out
@@ -905,7 +942,17 @@ citation (`to` holder label, `statusId`, `jobId`, `status`, optional
 `detail`). A hint with no retained row or no reproducing receipt reports
 `not-found`, an unreadable wake queue `unavailable` — never a guessed
 receipt. Envelope ids are caller-chosen printable tokens, so a real
-receipt always wins over hint interpretation. `fleet_bus_show` (the
+receipt always wins over hint interpretation. On the unified surface,
+`agents bus show <id> --frame <cli>` prints the same resolution — the
+receipt row, scrubbed body summary and held/holder/job/wake-hint
+evidence — as one bounded block marked untrusted under
+BEGIN/END UNTRUSTED AGENT BUS ENVELOPE markers, the same scrub,
+flattening and 32 KiB clip bound the inbox, channel-read, wakes,
+`work mine`, `work feed`, thread, claims and dead-letters frames apply
+with the cut stated, so a host can hand the envelope a citation names
+to a CLI's next turn as data in a single block; `--json` carries it as
+`framed` beside the full lookup, and a not-found or unreadable lookup
+answers its own status rather than an invented envelope. `fleet_bus_show` (the
 isolated fleet MCP tool) serves the same read with `id` as its only
 argument — the same printable routing-label rule — so an MCP-connected
 agent resolves the `post=`/`status=`/`receipt=`/handoff and wake-hint
@@ -1744,14 +1791,13 @@ wait's own recipient for waiting threads, the block report's
 recipient for blocked ones — is addressed to the topic, and
 work-board requests keep those whose `to` parses to it — a request
 naming no provable `to` never listing. `wakes` and `inbox` delegate
-to reads carrying no topic filter of their own, so the digest
-applies the same verdict to the rows they return: `wakes` filters
-the resolved page's own `to` labels — `matched` exact when the
-bounded queue tail read is complete, a proven lower bound under
-`truncated`, the same convention the section's own `truncated`
-flag documents — while `inbox` pages the delegated read to the
-store's end and reports the true topic-filtered total across the
-retained store. `board`, `channels`, `sessions`, `coordination`
+to reads that carry the same group-topic filter, so the digest
+forwards `topic` to both: `wakes` counts the topic-matched hints
+inside the bounded queue-tail match — `matched` exact when the tail
+read is complete, a proven lower bound under `truncated`, the same
+convention the section's own `truncated` flag documents — while
+`inbox`'s `matched:true` read reports the true topic-filtered total
+across the retained store. `board`, `channels`, `sessions`, `coordination`
 and `seats` carry no per-item topic in their projections and stay
 unfiltered, like they do under `--channel`; every count stays the
 filtered total, the result echoes `topic` in JSON and the human
