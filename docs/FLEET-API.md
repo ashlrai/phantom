@@ -541,7 +541,8 @@ free slots". `--json` is `phantom.nodes-pool.v1`, and
 `GET /api/verse/fleet/control/nodes-pool` serves the same report to the
 Machines card on the desktop and phone Home. Unknown facts say `unknown` and stay
 out of the total (`total.slotsUnknown` counts online Macs whose slots were not
-measured). The offload setting is per Mac; only this Mac's is known, so other
+measured; `total.jobsUnknown` counts online Macs whose running-job count was not
+measured, so `total.jobsRunning` is a lower bound). The offload setting is per Mac; only this Mac's is known, so other
 Macs show `unknown`.
 
 For remote disk readings, the pool and `phm nodes doctor` use the newest host
