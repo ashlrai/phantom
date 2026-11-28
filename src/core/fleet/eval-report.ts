@@ -322,19 +322,14 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
   }
   const jobs = new Map<string, JobFold>();
   const outcomes = new Map<string, OutcomeRow>();
-  const activity: ActivityEvent[] = [];
+  const activity: { event: ActivityEvent; atMs: number }[] = [];
   const jobFold = (id: string): JobFold => {
     let fold = jobs.get(id);
     if (!fold) { fold = { routes: [], finishes: [], urls: new Set() }; jobs.set(id, fold); }
     return fold;
   };
-  /** Lane/tier for rows that do not carry them (publish/outcome): the job's latest routing row. */
-  const routeOf = (jobId: string | null): { lane: string | null; tier: string | null } => {
-    if (!jobId) return { lane: null, tier: null };
-    const foldJob = jobs.get(jobId);
-    if (!foldJob || foldJob.routes.length === 0) return { lane: null, tier: null };
-    const latest = [...foldJob.routes].sort((a, b) => a.atMs - b.atMs).at(-1)!;
-    return { lane: latest.lane, tier: latest.tier };
+  const recordActivity = (atMs: number, event: ActivityEvent): void => {
+    activity.push({ event, atMs });
   };
   for (const row of parsed) {
     const event = EVENT(row);
@@ -354,7 +349,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
       };
       if (job) jobFold(job).routes.push(route);
       if (inWindow && event === 'launch') {
-        activity.push({ kind: 'launch', jobId: job, lane: route.lane, tier: route.tier, failed: false, empty: false });
+        recordActivity(atMs, { kind: 'launch', jobId: job, lane: route.lane, tier: route.tier, failed: false, empty: false });
       }
       continue;
     }
@@ -366,7 +361,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
       const empty = row['empty'] === true;
       if (job && atMs !== null) jobFold(job).finishes.push({ atMs, failed, empty });
       if (inWindow) {
-        activity.push({ kind: 'finish', jobId: job, lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'), failed, empty });
+        recordActivity(atMs, { kind: 'finish', jobId: job, lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'), failed, empty });
       }
       continue;
     }
@@ -374,7 +369,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
       counts.events++;
       if (job && pr) jobFold(job).urls.add(pr.key);
       if (inWindow) {
-        activity.push({ kind: 'publish', jobId: job, lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'), failed: false, empty: false });
+        recordActivity(atMs, { kind: 'publish', jobId: job, lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'), failed: false, empty: false });
       }
       continue;
     }
@@ -396,22 +391,27 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
         });
       }
       if (inWindow && (phase === 'MERGED' || phase === 'CLOSED')) {
-        activity.push({ kind: phase === 'MERGED' ? 'merged' : 'closed', jobId: job ?? (pr ? jobByUrl.get(pr.key) ?? null : null), lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'), failed: false, empty: false });
+        recordActivity(atMs, { kind: phase === 'MERGED' ? 'merged' : 'closed', jobId: job ?? (pr ? jobByUrl.get(pr.key) ?? null : null), lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'), failed: false, empty: false });
       }
       continue;
     }
     // Unrecognized event kinds are valid ledger rows, just not ours.
   }
-  // Rows that do not carry lane/tier (finish tier, publish, outcome) borrow the
-  // producing job's latest routing row — resolved post-pass so routes written
-  // later in the ledger still attribute.
-  for (const a of activity) {
-    if (a.lane !== null && a.tier !== null) continue;
-    const route = routeOf(a.jobId);
-    a.lane ??= route.lane;
-    a.tier ??= route.tier;
+  // Resolve after reading the ledger so late-arriving routes can still supply
+  // attribution, provided their timestamps do not postdate the activity.
+  const latestRoutes = new Map<string, RoutingRow[]>();
+  for (const { event, atMs } of activity) {
+    if (!event.jobId || (event.lane !== null && event.tier !== null)) continue;
+    let routes = latestRoutes.get(event.jobId);
+    if (!routes) {
+      routes = [...(jobs.get(event.jobId)?.routes ?? [])].sort((a, b) => a.atMs - b.atMs).reverse();
+      latestRoutes.set(event.jobId, routes);
+    }
+    const route = routes.find((row) => row.atMs <= atMs);
+    event.lane ??= route?.lane ?? null;
+    event.tier ??= route?.tier ?? null;
   }
-  return { jobByUrl, jobs, outcomes, activity, counts };
+  return { jobByUrl, jobs, outcomes, activity: activity.map(({ event }) => event), counts };
 }
 
 // ---------------------------------------------------------------------------
