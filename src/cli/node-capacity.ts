@@ -81,6 +81,26 @@ function fail(json: boolean, command: string, message: string, exit = 2, code: '
   return exit;
 }
 
+/** Text-mode rendering of a capacity document. Display precision only: the
+ * document and --json keep every measured digit for the route planner, while a
+ * human reading `phm node capacity` gets load/headroom/rate at two decimals
+ * and the same `unknown` marker every other unmeasured field uses. */
+export function nodeCapacityText(doc: NodeCapacityDoc): string {
+  const gib = (n: number | null) => n === null ? 'unknown' : `${(n / 1024 ** 3).toFixed(1)} GiB`;
+  const num = (n: number | null) => n === null ? 'unknown' : n.toFixed(2);
+  return [
+    `node ${doc.node} at ${doc.measured_at} (process source: ${doc.basis.process_source})`,
+    `cpu: ${doc.cpu.cores} cores, busy ${doc.cpu.busy_percent ?? 'unknown'}%, load ${num(doc.cpu.load_1m)}, headroom ${num(doc.cpu.headroom_cores)} cores`,
+    `memory: free ${doc.mem_free.free_percent ?? 'unknown'}%, pressure level ${doc.mem_free.pressure_level ?? 'unknown'}, headroom ${gib(doc.mem_free.headroom_bytes)}`,
+    `swap: used ${gib(doc.swap.used_bytes)}, swapouts/min ${num(doc.swap.swapouts_per_min)}`,
+    ...Object.entries(doc.agents_runnable_now).map(([harness, n]) => {
+      const fp = doc.per_harness_footprint[harness];
+      return `  ${harness}: runnable ${n ?? 'unknown'} (${doc.basis.limiting[harness]})${fp ? `, ${fp.sessions} live, ${gib(fp.mem_bytes_max)} per session [${fp.source}]` : ''}`;
+    }),
+    ...doc.basis.notes.map(note => `note: ${note}`),
+  ].join('\n');
+}
+
 export async function cmdNodeCapacity(args: string[]): Promise<number> {
   const json = args.includes('--json');
   const problem = validate(args, ['--node', '--out', '--previous'], ['--json']);
@@ -102,16 +122,7 @@ export async function cmdNodeCapacity(args: string[]): Promise<number> {
     try { await writeCapacityDoc(out, doc); } catch { return fail(json, 'capacity', `could not write ${out}; check the directory exists and is writable`, 1, 'error'); }
   }
   if (json) { console.log(JSON.stringify(doc)); return 0; }
-  const gib = (n: number | null) => n === null ? 'unknown' : `${(n / 1024 ** 3).toFixed(1)} GiB`;
-  console.log(`node ${doc.node} at ${doc.measured_at} (process source: ${doc.basis.process_source})`);
-  console.log(`cpu: ${doc.cpu.cores} cores, busy ${doc.cpu.busy_percent ?? 'unknown'}%, load ${doc.cpu.load_1m ?? '?'}, headroom ${doc.cpu.headroom_cores ?? 'unknown'} cores`);
-  console.log(`memory: free ${doc.mem_free.free_percent ?? 'unknown'}%, pressure level ${doc.mem_free.pressure_level ?? 'unknown'}, headroom ${gib(doc.mem_free.headroom_bytes)}`);
-  console.log(`swap: used ${gib(doc.swap.used_bytes)}, swapouts/min ${doc.swap.swapouts_per_min ?? 'unknown'}`);
-  for (const [harness, n] of Object.entries(doc.agents_runnable_now)) {
-    const fp = doc.per_harness_footprint[harness];
-    console.log(`  ${harness}: runnable ${n ?? 'unknown'} (${doc.basis.limiting[harness]})${fp ? `, ${fp.sessions} live, ${gib(fp.mem_bytes_max)} per session [${fp.source}]` : ''}`);
-  }
-  for (const note of doc.basis.notes) console.log(`note: ${note}`);
+  console.log(nodeCapacityText(doc));
   return 0;
 }
 
