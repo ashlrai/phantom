@@ -16,7 +16,7 @@ export const BUS_USAGE = `Usage: phm bus <send|inbox|ack> [--json]
         [--priority P0|P1|P2|P3] [--job <id>] [--channel <name>] [--topic <t>]
         [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
         [--in-reply-to <id>] [--thread <t>] [--id <id>] [--body-kind <kind>]
-        [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--frame <cli>]
+        [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--frame <cli>] [--matched]
   ack <id> --to <label>
 
 Local durable mailboxes under $ASHLR_HOME/bus-mailbox (default ~/.ashlr/bus-mailbox).
@@ -57,6 +57,10 @@ cursor or grok) prints the same pending page as one bounded block under the
 BEGIN/END UNTRUSTED AGENT BUS MESSAGES markers every other bus read's
 --frame uses — sender and recipient labels stay unauthenticated routing
 data — and --json adds the block as a framed field beside the page.
+--matched adds matched, the true pending total across the whole filtered
+set — the same count agents bus inbox --matched and channel read --matched
+report, so a truncated page still answers how much mail waits without
+paging through it; --json carries it as the matched field.
 Use --name=value for flag-shaped values, and ack --to <label> [--json] -- <id>
 for a flag-shaped message ID.
 No remote dispatch or agent execution. Use Phantom Secrets phm_<name> references.
@@ -196,6 +200,7 @@ export async function cmdBus(argv: string[], load: () => BusMailbox = createBusM
     const allowed = sub && Object.hasOwn(OPTIONS, sub) ? OPTIONS[sub] : undefined;
     let help = false;
     let seenJson = false;
+    let seenMatched = false;
     // Parse values before interpreting booleans: a quoted body of "--help"
     // must not bypass validation or turn an intended send into a help request.
     for (let i = 0; i < argv.length; i++) {
@@ -211,6 +216,9 @@ export async function cmdBus(argv: string[], load: () => BusMailbox = createBusM
       } else if (token === '--json') {
         if (seenJson) throw new UsageError('Duplicate --json option.');
         seenJson = true;
+      } else if (token === '--matched' && sub === 'inbox') {
+        if (seenMatched) throw new UsageError('Duplicate --matched option.');
+        seenMatched = true;
       } else if (token === '--help' || token === '-h') {
         help = true;
       } else { args.push(token); }
@@ -251,15 +259,15 @@ export async function cmdBus(argv: string[], load: () => BusMailbox = createBusM
       }
       const frame = frameRaw as BusCli | undefined;
       const match = inboxMatch(values);
-      const result = load().inbox(to, limit, match);
+      const result = load().inbox(to, limit, match, seenMatched ? { matched: true } : undefined);
       if (frame !== undefined) {
         const framed = frameBusMailbox(frame, result.messages);
         output({ ok: true, ...result, framed }, framed);
       } else {
-        output({ ok: true, ...result }, result.messages.length
-          ? result.messages.map(m => `${m.id} ${m.priority} ${m.from} -> ${m.to}\n${JSON.stringify(m.body)}`).join('\n') +
-            (result.hasMore ? '\nMore pending messages; increase --limit or acknowledge processed messages.' : '')
-          : 'No pending messages.');
+        const lines = result.messages.map(m => `${m.id} ${m.priority} ${m.from} -> ${m.to}\n${JSON.stringify(m.body)}`);
+        if (result.matched !== undefined) lines.push(`matched ${result.matched}`);
+        if (result.hasMore) lines.push('More pending messages; increase --limit or acknowledge processed messages.');
+        output({ ok: true, ...result }, lines.length > 0 ? lines.join('\n') : 'No pending messages.');
       }
     } else {
       const id = operands[0]!;

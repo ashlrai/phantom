@@ -124,10 +124,14 @@ export interface BusMailbox {
    * reporting truncation. `match`, when given, narrows the pending set before
    * `limit` and `hasMore` count it — the same filter hook `pendingFor` takes —
    * so a filtered read's truncation is the filtered truncation, never the
-   * unfiltered one padded or hidden. Returned envelopes carry the remaining
-   * TTL budget, not the original acceptance-window TTL.
+   * unfiltered one padded or hidden. `report.matched` asks for `matched`, the
+   * true pending total across the whole filtered set — the same count
+   * `pendingFor` always reports and the `--matched` flag `agents bus inbox`
+   * and `channel read` apply — present only when asked. Returned envelopes
+   * carry the remaining TTL budget, not the original acceptance-window TTL.
    */
-  inbox(to: string, limit?: number, match?: (message: BusMailboxPendingMessage) => boolean): { messages: BusEnvelope[]; hasMore: boolean };
+  inbox(to: string, limit?: number, match?: (message: BusMailboxPendingMessage) => boolean,
+    report?: { matched?: boolean }): { messages: BusEnvelope[]; hasMore: boolean; matched?: number };
   /**
    * Pending (unacked, unexpired) mail addressed to ANY of `labels`, merged in
    * the same priority/acceptance/id order `inbox` applies per label. `matched`
@@ -252,7 +256,7 @@ export function createBusMailbox(
       if (!Number.isSafeInteger(acceptedAt) || acceptedAt < 0) throw new BusMailboxError('storage');
       return { id: envelope.id, replayed: write({ v: 1, kind: 'message', acceptedAt, envelope }) };
     },
-    inbox(to, limit = 100, match) {
+    inbox(to, limit = 100, match, report) {
       validateBusAddress(to);
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new BusMailboxError('invalid-envelope');
       const records = read();
@@ -267,6 +271,7 @@ export function createBusMailbox(
       return {
         messages: pending.slice(0, limit).map(r => ({ ...r.envelope, ttl: r.envelope.ttl - (at - r.acceptedAt) })),
         hasMore: pending.length > limit,
+        ...(report?.matched === true ? { matched: pending.length } : {}),
       };
     },
     pendingFor(labels, limit = 1000, match) {

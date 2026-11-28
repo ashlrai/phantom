@@ -366,6 +366,35 @@ describe('phm bus inbox read filters', () => {
     expect(empty.lines[0]!.split('\n')).toHaveLength(2);
   });
 
+  it('reports matched, the true filtered pending total, only when asked', async () => {
+    bus.send(envelope({ id: 'urgent', priority: 'P0' }));
+    time++;
+    bus.send(envelope({ id: 'urgent-later', priority: 'P0' }));
+    bus.send(envelope({ id: 'normal', priority: 'P2' }));
+    // Without the flag the page is byte-identical to before: no matched field.
+    const plain = await json(['inbox', '--to', 'fleet', '--priority', 'P0']);
+    expect(Object.keys(plain.value).sort()).toEqual(['hasMore', 'messages', 'ok']);
+    // --matched counts the whole filtered pending set even when the page truncates.
+    const limited = await json(['inbox', '--to', 'fleet', '--priority', 'P0', '--limit', '1', '--matched']);
+    expect(limited.value.matched).toBe(2);
+    expect(limited.value.hasMore).toBe(true);
+    expect(limited.value.messages.map((m: BusEnvelope) => m.id)).toEqual(['urgent']);
+    const all = await json(['inbox', '--to', 'fleet', '--matched']);
+    expect(all.value.matched).toBe(3);
+    const none = await json(['inbox', '--to', 'fleet', '--priority', 'P1', '--matched']);
+    expect(none.value).toEqual({ ok: true, hasMore: false, messages: [], matched: 0 });
+    const human = await invoke(['inbox', '--to', 'fleet', '--priority', 'P0', '--limit', '1', '--matched']);
+    expect(human.lines[0]).toContain('matched 2');
+    expect(human.lines[0]).toContain('More pending messages');
+    const framed = await json(['inbox', '--to', 'fleet', '--matched', '--frame', 'claude']);
+    expect(framed.value.matched).toBe(3);
+    expect(framed.value.framed).toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
+    // The store reports the same count through its own report flag.
+    expect(bus.inbox('fleet', 1, undefined, { matched: true }).matched).toBe(3);
+    expect(bus.inbox('fleet', 1, undefined, { matched: false }).matched).toBeUndefined();
+    expect(bus.inbox('fleet').matched).toBeUndefined();
+  });
+
   it('rejects malformed filter values before loading the store', async () => {
     const load = vi.fn(() => bus);
     for (const args of [
@@ -387,8 +416,12 @@ describe('phm bus inbox read filters', () => {
       ['inbox', '--to', 'fleet', '--result', 'Failed'],
       ['inbox', '--to', 'fleet', '--frame', 'bogus'],
       ['inbox', '--to', 'fleet', '--frame='],
+      ['inbox', '--to', 'fleet', '--matched', '--matched'],
+      ['inbox', '--to', 'fleet', '--matched=true'],
       ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--frame', 'claude'],
+      ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--matched'],
       ['ack', 'a', '--to', 'fleet', '--frame', 'claude'],
+      ['ack', 'a', '--to', 'fleet', '--matched'],
       ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--priority', 'P0', '--contains', 'x'],
       ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--body-kind', 'note'],
       ['ack', 'a', '--to', 'fleet', '--since', '1h'],

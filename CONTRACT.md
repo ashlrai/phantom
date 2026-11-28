@@ -3934,9 +3934,13 @@ reports `unknown-agent`/`unavailable`/`retryable`/`invalid` with `reason`.
 (unacked, unexpired) message addressed to any of the agent's labels, merged in
 the mailbox's own priority/acceptance/id drain order, capped at the first 20
 shown with `matched` the true total and `truncated` definitive. The store's
-`inbox(to, limit?, match?)` takes the same optional `match` predicate
+`inbox(to, limit?, match?, report?)` takes the same optional `match` predicate
 `pendingFor` does — applied to the pending set before `limit` and `hasMore`
-count it — and `phm bus inbox` composes the shared bus read filters
+count it — plus an optional `{ matched }` report flag that adds `matched`,
+the true filtered pending total, to the page only when asked (the same
+count `pendingFor` always returns and the `--matched` flag `agents bus
+inbox`/`channel read` apply; `phm bus inbox --matched` passes it through) —
+and `phm bus inbox` composes the shared bus read filters
 (`--from`/`--exclude-from` sender matching, `--priority`, `--job`,
 `--channel`, `--topic`, the `[since, before)` acceptance-time window,
 `--contains`, `--in-reply-to`, `--thread`, `--id`, `--body-kind` and
