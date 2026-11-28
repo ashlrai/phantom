@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -544,4 +544,27 @@ it('exposes versioned pulse JSON and plain text, including unreadable ledgers an
   expect(await cmdPulse(['merge-latency', '--jobs'])).toBe(2);
   expect(await cmdPulse(['merge-latency', '--json', '--json'])).toBe(2);
   expect(await cmdPulse(['merge-latency', '--help'])).toBe(0);
+});
+
+it('reads metrics/jobs.jsonl under ASHLR_RUNS_DIR for both latency reports', async () => {
+  const runs = await mkdtemp(join(tmpdir(), 'phantom-job-latency-runs-'));
+  await mkdir(join(runs, 'metrics'), { recursive: true });
+  await writeFile(join(runs, 'metrics', 'jobs.jsonl'), [
+    { job: 'attempt-1', event: 'enqueue', ts: '2026-01-01T00:00:00Z' },
+    { job: 'attempt-1', event: 'launch', ts: '2026-01-01T00:00:10Z' },
+    { job: 'attempt-1', event: 'finish', ts: '2026-01-01T00:01:00Z' },
+    { job: 'attempt-1', event: 'publish', ts: '2026-01-01T00:01:30Z' },
+    { job: 'attempt-1', outcome: 'MERGED', mergedAt: '2026-01-01T00:04:00Z' },
+  ].map(row => JSON.stringify(row)).join('\n'));
+  vi.stubEnv('ASHLR_RUNS_DIR', runs);
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    expect(await cmdFleetJobLatency(['--json'])).toBe(0);
+    expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ schema: 'fleet.job-latency.v1', known: true, jobs: 1 });
+    expect(await cmdPulse(['merge-latency', '--json'])).toBe(0);
+    expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ schema: 'pulse.merge-latency.v1', known: true, jobs: 1 });
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(runs, { recursive: true, force: true });
+  }
 });
