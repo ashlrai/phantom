@@ -14,13 +14,19 @@ import { commsRunsRoot } from '../core/comms-agent/store.js';
 import { COMMS_INTAKE_MAX_FILE_BYTES, intakeCommsInbox } from '../core/comms-agent/intake.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
+import { BUS_CLIS, type BusCli } from '../core/agents/bus-identity.js';
+import { frameCommsDrafts } from '../core/agents/bus-cli-adapters.js';
 
 const USAGE = `phm comms-agent status [--dir <runs>] [--json]
 phm comms-agent run [--lanes <lane,lane>] [--dir <runs>] [--json]
-phm comms-agent drafts [--status pending|sent|all] [--transport <transport>] [--to <recipient>] [--contains <text>] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--id <draft-id>] [--limit <1..${COMMS_DRAFTS_LIMIT_MAX}>] [--dir <runs>] [--json]
+phm comms-agent drafts [--status pending|sent|all] [--transport <transport>] [--to <recipient>] [--contains <text>] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--id <draft-id>] [--limit <1..${COMMS_DRAFTS_LIMIT_MAX}>] [--frame <cli>] [--dir <runs>] [--json]
 phm comms-agent intake --file <path|-> [--dir <runs>] [--json]
 The Comms role is under the Leader. The router picks the lane; none is hard-coded.
-Sends require an owner standing approval. See docs/COMMS-AGENT.md.`;
+Sends require an owner standing approval. See docs/COMMS-AGENT.md.
+--frame <cli> (${BUS_CLIS.join(', ')}) prints the drafts page as one bounded block
+marked untrusted under BEGIN/END UNTRUSTED COMMS AGENT DRAFTS markers — data only,
+never execution authority — with --json carrying it as framed beside the full read;
+it applies to the drafts verb only.`;
 
 const VERBS = ['status', 'run', 'drafts', 'intake'] as const;
 
@@ -72,6 +78,7 @@ export async function cmdCommsAgent(args: string[], options: { stdin?: Readable 
   const beforeFlag = valueOf('--before');
   const idFlag = valueOf('--id');
   const limitFlag = valueOf('--limit');
+  const frameFlag = valueOf('--frame');
   // `--file` takes `-` for stdin, which the shared valueOf rule refuses, so
   // the intake document path parses on its own: a flag-looking or missing
   // value leaves intakeFile unset and the verb check fails it as usage.
@@ -79,12 +86,12 @@ export async function cmdCommsAgent(args: string[], options: { stdin?: Readable 
   const fileValue = fileIndex >= 0 ? args[fileIndex + 1] : undefined;
   const intakeFile = fileValue === '-' ? '-' : fileValue !== undefined && fileValue !== '' && !fileValue.startsWith('-') ? fileValue : undefined;
   if (!dir.ok || !lanesFlag.ok || !statusFlag.ok || !transportFlag.ok
-      || !toFlag.ok || !containsFlag.ok || !sinceFlag.ok || !beforeFlag.ok || !idFlag.ok || !limitFlag.ok) {
+      || !toFlag.ok || !containsFlag.ok || !sinceFlag.ok || !beforeFlag.ok || !idFlag.ok || !limitFlag.ok || !frameFlag.ok) {
     emit(json, { ok: false, error: 'Missing value for flag. See phm comms-agent --help.' });
     return 2;
   }
   const consumed = new Set<number>();
-  for (const flag of ['--dir', '--lanes', '--status', '--transport', '--to', '--contains', '--since', '--before', '--id', '--limit', '--file']) {
+  for (const flag of ['--dir', '--lanes', '--status', '--transport', '--to', '--contains', '--since', '--before', '--id', '--limit', '--file', '--frame']) {
     const index = args.indexOf(flag);
     if (index >= 0) { consumed.add(index); consumed.add(index + 1); }
   }
@@ -110,7 +117,7 @@ export async function cmdCommsAgent(args: string[], options: { stdin?: Readable 
   }
   // The read filters narrow the drafts verb only; on status|run|intake they
   // are a usage error rather than silently ignored flags.
-  const draftsFlags = [statusFlag, transportFlag, toFlag, containsFlag, sinceFlag, beforeFlag, idFlag, limitFlag];
+  const draftsFlags = [statusFlag, transportFlag, toFlag, containsFlag, sinceFlag, beforeFlag, idFlag, limitFlag, frameFlag];
   const draftsFilter: CommsDraftsFilter = {};
   if (verb !== 'drafts' && draftsFlags.some(flag => flag.value !== undefined)) {
     return usageFail();
@@ -158,6 +165,9 @@ export async function cmdCommsAgent(args: string[], options: { stdin?: Readable 
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > COMMS_DRAFTS_LIMIT_MAX) return usageFail();
       draftsFilter.limit = limit;
     }
+    // The same --frame rule every bus read applies: one of the five session
+    // CLIs, never a flag-looking or missing value.
+    if (frameFlag.value !== undefined && !(BUS_CLIS as readonly string[]).includes(frameFlag.value)) return usageFail();
   }
   const runsDir = commsRunsRoot(dir.value);
   const lanes = lanesFlag.value ? lanesFlag.value.split(',').map(lane => lane.trim()).filter(Boolean) : [];
@@ -167,7 +177,14 @@ export async function cmdCommsAgent(args: string[], options: { stdin?: Readable 
       return 0;
     }
     if (verb === 'drafts') {
-      emit(json, await commsDrafts(runsDir, draftsFilter));
+      const result = await commsDrafts(runsDir, draftsFilter);
+      if (frameFlag.value !== undefined) {
+        const framed = frameCommsDrafts(frameFlag.value as BusCli, result);
+        if (json) emit(true, { ...result, framed });
+        else console.log(framed);
+        return 0;
+      }
+      emit(json, result);
       return 0;
     }
     if (verb === 'intake') {

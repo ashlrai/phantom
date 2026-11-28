@@ -50,6 +50,14 @@ The policy is code, not prompt text. A prompt cannot approve a recipient.
   `--id` keeps only the draft whose id strictly equals the value, and
   `--limit` caps the page oldest-first while `matched` still reports the
   true filtered total; every filter applies to the `drafts` verb only.
+  `--frame <cli>` (`claude`, `codex`, `devin`, `cursor` or `grok`) prints
+  the same page as one bounded block marked untrusted under
+  `BEGIN`/`END UNTRUSTED COMMS AGENT DRAFTS` markers — every row is stored
+  draft data, recipients and message text included, data only and never
+  execution authority — with the honest `matched`/`shown`/`truncated`
+  counts inside the block, the 32 KiB clip stating its cut, `--json`
+  carrying it as `framed` beside the full read, and the flag applying to
+  the `drafts` verb only like the filters.
 - KILL and the comms pause refuse every send. Both are read from the account
   home (`os.userInfo().homedir`), so a process with a relocated `$HOME` still
   sees `~/.ashlr/KILL` and `~/.ashlr/comms/pause.json`.
@@ -67,6 +75,7 @@ phm comms-agent run --lanes claude,local --json
 phm comms-agent drafts --json
 phm comms-agent drafts --status sent --transport email --json
 phm comms-agent drafts --to known@example.com --contains "invoice" --since 2h --json
+phm comms-agent drafts --status pending --frame claude
 phm comms-agent intake --file drop.json --json
 cat drop.json | phm comms-agent intake --file - --json
 ```
