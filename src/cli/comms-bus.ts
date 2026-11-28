@@ -18,7 +18,7 @@ import { busReadContains } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { busPageAddressMatchers, busPageRowMatch, filterBusInboxPage, type BusPageAddressRefs, type BusPageFilters, type BusPageMatchers } from '../core/fleet/bus-page-filters.js';
 
-const HELP = `phm comms bus group read <room> <topic> <cursor> [--from <address>] [--exclude-from <address>] [--id <id>] [--in-reply-to <id>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--thread <label>] [--job <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
+const HELP = `phm comms bus group read <room> <topic> <cursor> [--frame <cli>] [--from <address>] [--exclude-from <address>] [--id <id>] [--in-reply-to <id>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--thread <label>] [--job <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
 phm comms bus group presence <room> <topic>
 phm comms bus group heartbeat <room> <topic> <id> <member> <online|offline>
 phm comms bus group publish <room> <topic> <id> <from> <ttl-ms> <json-body>
@@ -34,6 +34,9 @@ the work.result outcome code, --since/--before the [since, before) window on rec
 to/channel scope and the protocol topic — a protocol body's topic must equal --to and
 group:<room>:<topic> is never a protocol topic name — so those filters are not offered; filters
 narrow shown rows, never the scan — keep reading nextCursor until it stops advancing.
+--frame <cli> attaches the same bounded untrusted block the read verb's --frame produces to the
+page's framed field, so a group subscription page fed to a next turn is marked untrusted data
+exactly like every other retained-envelope bus read.
 phm comms bus post --file <envelope.json|->
 phm comms bus post --reply-to <id> --id <new-id> --from <address> --text <text> [--ttl-ms <ms>]
 phm comms bus post-batch --file <batch.json|->
@@ -69,7 +72,7 @@ This is an application convention, not an envelope field or authenticated identi
 --contains keeps only envelopes whose scrubbed one-line summary — the same text agents bus inbox --contains, channel read --contains, phm messages --contains and fleet bus-follow --contains match — carries the needle as a case-insensitive substring, whitespace collapsed on both sides; matching runs over the rendered summary, never the raw body, so a secret-shaped value stays unfindable, and protocol-v1 payloads stay opaque to it. The value is bounded free text (up to 512 characters); --contains=<text> also works for values that look like flags.
 --body-kind keeps only envelopes whose body carries that exact kind discriminator — the same busBodyKind own-field match agents bus inbox --body-kind, channel read --body-kind, wakes --body-kind, agents conversations --body-kind, phm messages --body-kind and fleet bus-follow --body-kind apply: the v2 kind field, else a bus-transport v1 protocol.kind, else the type/schema a kindless notice keys on, matched exactly and case-sensitively; a body carrying no discriminator never matches and an unrecognized but printable value is an honest empty page.
 --result keeps only work.result bodies whose own outcome strictly equals the code — the same busBodyResultOutcome own-field match and WORK_RESULT_OUTCOMES vocabulary phm messages --result, agents messages --result, fleet messages, bus recent, fleet_bus_inbox's result, fleet_agent_messages' result and the work feed's --result share; every other body kind — including a work.release body's own released/completed outcome, a different vocabulary — and a work.result carrying no outcome never match, so "which retained result receipts failed" is one filtered read of the raw store; a value outside the vocabulary is invalid.
---frame <cli> adds a framed field to the read's JSON page: the same bounded block every agents bus read's --frame produces — BEGIN/END UNTRUSTED AGENT BUS MESSAGES markers, per-envelope priority/id/from/to bracket and scrubbed one-line summary, identical for every CLI — so a comms bus page fed to a next turn is marked untrusted data exactly like the agents bus reads it complements; the value is one of ${BUS_CLIS.join(', ')} and watch, a stream, takes no frame.
+--frame <cli> adds a framed field to the read's and group read's JSON page: the same bounded block every agents bus read's --frame produces — BEGIN/END UNTRUSTED AGENT BUS MESSAGES markers, per-envelope priority/id/from/to bracket and scrubbed one-line summary, identical for every CLI — so a comms bus page or group subscription page fed to a next turn is marked untrusted data exactly like the agents bus reads it complements; the value is one of ${BUS_CLIS.join(', ')} and the stream/write verbs — watch, presence, heartbeat and publish — take no frame.
 All supplied filters must match. Limit applies before filtering; it counts scanned live records, not matches.
 Expired records advance the cursor but do not count toward the limit.
 Priority is a routing attribute; it does not establish identity or authority.
@@ -459,13 +462,44 @@ function parseGroupReadFilters(args: string[], options: BusInboxOptions): ((row:
   return (row: BusInboxReceipt) => busPageRowMatch(row, filters, matchers);
 }
 
+/**
+ * Pull the `--frame <cli>` page option out of a `group read` flag tail — the
+ * one retained-envelope bus read `comms bus` serves that carried no
+ * untrusted-data frame. It takes the same `--frame <cli>`/`--frame=<cli>`
+ * spellings and the same BUS_CLIS vocabulary `read --frame` validates; every
+ * other token stays for the shared page-filter parser. Returns null on a
+ * missing, repeated or unknown value — an argument error, never a widened
+ * page. The option is only legal after the positional cursor, inside this
+ * tail; `group read <room> <topic> --frame …` keeps failing the cursor rule.
+ */
+function takeGroupReadFrame(args: string[]): { frame?: BusCli; rest: string[] } | null {
+  const rest: string[] = [];
+  let frame: BusCli | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i]!;
+    const inline = /^--frame=(.*)$/s.exec(token);
+    if (inline === null && token !== '--frame') { rest.push(token); continue; }
+    if (frame !== undefined) return null;
+    const value = inline ? inline[1] : args[++i];
+    if (value === undefined || value === '' || (inline === null && value.startsWith('--'))) return null;
+    if (!(BUS_CLIS as readonly string[]).includes(value)) return null;
+    frame = value as BusCli;
+  }
+  return { frame, rest };
+}
+
 async function groupCommand(args: string[], options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
   const [verb, room, topic, ...rest] = args;
-  let result: { status: string } = { status: 'invalid' };
+  let result: { status: string; framed?: string } = { status: 'invalid' };
   if (room && topic) {
     if (verb === 'read' && rest.length >= 1 && /^(0|[1-9][0-9]*)$/.test(rest[0]!)) {
-      const match = parseGroupReadFilters(rest.slice(1), options);
-      result = match === null ? { status: 'invalid' } : subscribeGroup(room, topic, Number(rest[0]), 100, options, match);
+      const tail = takeGroupReadFrame(rest.slice(1));
+      const match = tail === null ? null : parseGroupReadFilters(tail.rest, options);
+      const page = match === null ? { status: 'invalid' as const }
+        : subscribeGroup(room, topic, Number(rest[0]), 100, options, match);
+      result = tail?.frame !== undefined && page.status === 'ok'
+        ? { ...page, framed: frameCommsBusRead(tail.frame, page.messages) }
+        : page;
     } else if (verb === 'presence' && rest.length === 0) {
       result = groupPresence(room, topic, options);
     } else if (verb === 'heartbeat' && rest.length === 3 && (rest[2] === 'online' || rest[2] === 'offline')) {
