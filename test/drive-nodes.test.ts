@@ -227,7 +227,7 @@ describe('drive node leases', () => {
       { session: f.alice.session }, { leaderToken: leader.token + 1 }, { jobId: 'other' }]) {
       expect(f.a.complete({ ...claim, ...patch }, 'forged')).toBe(false);
     }
-    f.advance(20);
+    f.advance(45);
     expect(f.a.complete({ ...claim, expiresAt: 999999 }, 'late')).toBe(false);
   });
 

@@ -259,7 +259,13 @@ minutes loses its claim mid-run unless something keeps renewing. While a pulled
 job is being worked, the watch repeats the ordinary `renew` — the same job,
 node, session, token and leader token from the pull output — on the same
 interval bounds, through the same dispatch (a pooled member still delegates to
-the primary). The watch flags never reach the renew parser either. A refused
+the primary). Each renew re-arms not only the 30-second claim lease but this
+node's session — and the leader lease too when this node holds it — so the
+watch alone keeps the whole chain alive through real work; no parallel beat
+watch is needed. (A leader lease that merely lapsed is revived by its own
+session's next beat or renew rather than re-elected, so the 10-second watch
+cadence cannot rotate the fencing token out from under a live claim.) The
+watch flags never reach the renew parser either. A refused
 renew — a lost lease or dead session — stops the watch at once with that error;
 Ctrl-C stops it cleanly and the claim then expires on its own, after which the
 job can be pulled again. Without `--watch`, a manual holder renews by hand
