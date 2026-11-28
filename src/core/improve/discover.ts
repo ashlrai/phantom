@@ -2207,6 +2207,24 @@
  *     scrubbed, diffs are never quoted, and items emit only for the
  *     fleet's own repository since racing is this install's
  *     machinery;
+ *   - the agent bus hoplog: one fleet/bus/hops.jsonl row per accepted
+ *     bus send — {id, from, to, inputTokens, outputTokens} with null
+ *     token fields when the transport did not measure usage — whose
+ *     only readers were point-in-time displays (`agents bus status`,
+ *     the fleet-bus view, hop summaries), so unmeasured senders and
+ *     dominant sender→recipient pairs never became work
+ *     (busHopBacklogItems below). Hops carry no timestamp, so the
+ *     retained tail is the whole window and every prompt states the
+ *     read bounds and truncation flags. A per-sender cell emits when
+ *     strictly more than half of a sender's retained hops lack full
+ *     token counts at the sender/hop floors; a per-pair cell emits
+ *     when one pair holds a dominant share of the recorded hop tokens
+ *     at the share-and-floor bars, totals labelled lower bounds where
+ *     hops went unmeasured. An unreadable log — custody or stability
+ *     failure that blinds every hop consumer — yields one degraded
+ *     item; a missing log is a clean empty source, items emit only
+ *     for the fleet's own repository since the bus describes this
+ *     install's machinery and carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2391,6 +2409,7 @@ import { jobNotesBacklogItems } from './job-notes-backlog.js';
 import { poolDetectBacklogItems } from './pool-detect-backlog.js';
 import { modelRadarBacklogItems } from './model-radar-backlog.js';
 import { racingOutcomeBacklogItems } from './racing-outcome-backlog.js';
+import { busHopBacklogItems } from './bus-hop-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -5025,6 +5044,14 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // skipped and incomplete reads never claim 'never accumulated'; diffs
   // are never quoted; items emit only for the fleet's own repository.
   await feed('racingOutcomeBacklogItems', () => racingOutcomeBacklogItems({ repo }));
+  // Agent bus hoplog (~/.ashlr/fleet/bus/hops.jsonl): per-sender token
+  // coverage gaps and dominant sender→recipient spend over the retained
+  // tail become items too — until now the log's only readers were
+  // point-in-time displays (busHopBacklogItems below). Hops carry no
+  // timestamp, so the tail is the window; a missing log is clean empty
+  // and an unreadable one yields the degraded item. Read-only and
+  // bounded; items emit only for the fleet's own repository.
+  await feed('busHopBacklogItems', () => busHopBacklogItems({ repo }));
   return { items, errors };
 }
 
