@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. One hundred thirty-six sources, all of which Phantom
+ * evidence instead of a hand-kept list. One hundred thirty-seven sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -187,6 +187,17 @@
  *     become work instead of sitting in `phm fleet parked`, the
  *     friction feed's holds tally and the router outcome fold's defer
  *     accounting, reports someone had to run;
+ *   - the jobs ledger's empty-gate decline evidence: the skipped_empty
+ *     rows dispatchd's claim loop and restock's pick pass append to
+ *     metrics/jobs.jsonl when launch_precheck's empty_reason() proves a
+ *     ready line already finished empty — recurring decline reasons
+ *     across distinct jobs and job ids the queue keeps re-minting
+ *     (emptyGateBacklogItems below), so producers that keep minting
+ *     proven-empty work, a dedup path missing the gate's task/prompt
+ *     identity, or one gate rule misfiring on a whole class of jobs
+ *     become work instead of sitting in the router outcome fold's
+ *     standing skip verdict, `phm jobs skipped` and the
+ *     queue/skipped-empty.tsv reports, reports someone had to run;
  *   - the producer-yield scoreboard's recurring no-land sources: the
  *     per-source launches, PRs, merges, empties and aborts
  *     `phm jobs yield --by source` folds from metrics/jobs.jsonl and the
@@ -2084,6 +2095,7 @@ import { trajectoryGapBacklogItems } from './trajectory-gap-backlog.js';
 import { skillEvidenceBacklogItems } from './skill-evidence-backlog.js';
 import { precheckSkipBacklogItems } from './precheck-skip-backlog.js';
 import { precheckParkBacklogItems } from './precheck-park-backlog.js';
+import { emptyGateBacklogItems } from './empty-gate-backlog.js';
 import { recheckBacklogItems } from './recheck-backlog.js';
 import { sourceYieldBacklogItems } from './source-yield-backlog.js';
 import { gatewayShadowBacklogItems } from './gateway-shadow-backlog.js';
@@ -2521,6 +2533,22 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // only for the fleet's own repository since the park decision is
   // this install's dispatcher.
   await feed('precheckParkBacklogItems', () => precheckParkBacklogItems({ repo }));
+
+  // Jobs-ledger empty-gate declines: the skipped_empty rows dispatchd's
+  // claim loop and restock's pick pass append when launch_precheck's
+  // empty_reason() proves a ready line already finished empty — carrying
+  // a reason label and no numeric code, which is what separates them
+  // from the precheck declines the coded rows feed — recurring decline
+  // reasons across distinct jobs and job ids the queue keeps re-minting
+  // become backlog items too. Until now the rows only ever fed the
+  // router outcome fold's standing skip verdict, `phm jobs skipped`,
+  // the empty-finishes skipped tallies and the queue/skipped-empty.tsv
+  // reports, reports someone had to run and read. Same bounded tail
+  // read the sibling jobs-ledger folds use, the jobs-ledger dialect's
+  // own row validation, each cell emitting only at the recurring bars
+  // inside the 7-day window and only for the fleet's own repository
+  // since the decline decision is this install's machinery.
+  await feed('emptyGateBacklogItems', () => emptyGateBacklogItems({ repo }));
 
   // Producer yield: the jobs.yield-by.v1 scoreboard's recurring no-land
   // sources — launches attributed to each producer (leader bets, Core
