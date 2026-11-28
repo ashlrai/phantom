@@ -182,13 +182,36 @@ describe('phm sessions', () => {
 
   it('prints the list as JSON or text through the injected reader, passing the filters', async () => {
     const map = await mixedFleet();
-    const read = vi.fn((filter: { lane?: string | null; repo?: string | null }) => readLiveSessions({ ...filter, now: NOW, readMap: async () => map }));
+    const read = vi.fn((filter?: { lane?: string | null; repo?: string | null }) => readLiveSessions({ ...filter, now: NOW, readMap: async () => map }));
     const json = await capture(() => cmdLiveSessions(['--json', '--lane', 'claude'], read));
     expect(json.status).toBe(0);
     expect(read).toHaveBeenLastCalledWith({ lane: 'claude', repo: null });
     expect(JSON.parse(json.out)).toEqual(buildLiveSessions(map, NOW, { lane: 'claude' }));
     const text = await capture(() => cmdLiveSessions(['--repo', 'lexicon'], read));
     expect(text.out).toContain('1 session running: 1 worker; 1 with state unknown (repo lexicon)');
+  });
+
+  it('the CLI --frame prints the tree as a bounded untrusted block and carries it as framed in JSON', async () => {
+    const map = await mixedFleet();
+    const read = vi.fn(() => readLiveSessions({ lane: null, repo: null, now: NOW, readMap: async () => map }));
+    // The human read is the bare framed block under the session-transcript markers.
+    const text = await capture(() => cmdLiveSessions(['--frame', 'claude'], read));
+    expect(text.status).toBe(0);
+    expect(text.out).toContain('BEGIN UNTRUSTED AGENT SESSION TRANSCRIPT');
+    expect(text.out).toContain('END UNTRUSTED AGENT SESSION TRANSCRIPT');
+    expect(text.out).toContain('sessions running');
+    // --json carries the block as `framed` beside the full projection.
+    const json = await capture(() => cmdLiveSessions(['--frame', 'grok', '--json'], read));
+    expect(json.status).toBe(0);
+    const parsed = JSON.parse(json.out) as { schema: string; framed: string };
+    expect(parsed.schema).toBe('fleet.live-sessions.v1');
+    expect(parsed.framed).toContain('BEGIN UNTRUSTED AGENT SESSION TRANSCRIPT');
+    // Unknown cli names, repeats and a missing value are usage errors before any read.
+    const fresh = vi.fn();
+    expect((await capture(() => cmdLiveSessions(['--frame', 'gemini'], fresh))).status).toBe(2);
+    expect((await capture(() => cmdLiveSessions(['--frame', 'claude', '--frame', 'grok'], fresh))).status).toBe(2);
+    expect((await capture(() => cmdLiveSessions(['--frame'], fresh))).status).toBe(2);
+    expect(fresh).not.toHaveBeenCalled();
   });
 
   it('refuses bad flags with usage and exit 2, and keeps the existing verbs and help', async () => {

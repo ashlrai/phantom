@@ -23,7 +23,11 @@ has its model, repo, state, when it last spoke, its last message, PR and the
 computer it runs on. A session with no output for 10 minutes is marked quiet,
 and finished sessions stay for an hour. Narrow it with `--lane <lane>`,
 `--repo <repo>` or `--live` (running only), and add `--json` for the
-`fleet.live-sessions.v1` document. The desktop Sessions pane shows the same tree.
+`fleet.live-sessions.v1` document. `--frame <cli>` (claude, codex, devin,
+cursor or grok) prints the same read as one bounded block marked untrusted
+under BEGIN/END UNTRUSTED AGENT SESSION TRANSCRIPT markers — the same frame
+the bus reads produce, under its own markers — with `--json` carrying it as
+`framed` beside the projection. The desktop Sessions pane shows the same tree.
 
 The leader's row shows what the leader last told you and when. It reads
 `idle` while its last planning pass is under two hours old; with an older
@@ -209,7 +213,10 @@ the tree. It shows up to 40 sessions, running ones before ended ones, and
 says how many it left out and of which kind ("12 more sessions not shown (12
 ended)"). `--json`
 prints `fleet.session-threads.v1`; when the session list cannot be read it
-says so and exits 1 instead of printing an empty list. See
+says so and exits 1 instead of printing an empty list. `--frame <cli>` prints
+the same read as one bounded block marked untrusted under BEGIN/END
+UNTRUSTED AGENT SESSION TRANSCRIPT markers, with `--json` carrying it as
+`framed` beside the projection. See
 [session threads](FLEET-API.md#session-threads).
 
 The console's Conversations pane puts every session on one screen. Each
@@ -325,7 +332,9 @@ bar says so and you are at the newest entry that holds the words. A word needs t
 letters. If the search cannot be read the list says why and the cards are
 still filtered. From a terminal, `phm sessions find <words>` prints the same
 results; add `--json` for the document described under
-[session find](FLEET-API.md#session-find).
+[session find](FLEET-API.md#session-find), or `--frame <cli>` for the same
+read as one bounded block marked untrusted under BEGIN/END UNTRUSTED AGENT
+SESSION TRANSCRIPT markers.
 
 The pane opens the way you left it: the words in the find box and the lane,
 repo and "Running only" you narrowed to are kept in this browser, across a
@@ -403,7 +412,10 @@ session speaking and `-` is a recorded step, which includes each pause,
 resume, stop or move asked of its job with what became of it. The summary is assembled from the
 records, not written by a model. A "To write to it" line near the end says
 where a message to that session goes, or why none can be sent. `--json` prints `fleet.session-thread.v1`;
-an unknown id exits 2. See [session thread](FLEET-API.md#session-thread).
+an unknown id exits 2. `--frame <cli>` prints the same read as one bounded
+block marked untrusted under BEGIN/END UNTRUSTED AGENT SESSION TRANSCRIPT
+markers, with `--json` carrying it as `framed` beside the projection. See
+[session thread](FLEET-API.md#session-thread).
 
 The thread shows the newest few of each record. When earlier ones exist it
 ends with a note naming the command that shows them:

@@ -333,7 +333,7 @@ describe('buildSessionThreads', () => {
     expect(text).toContain('\nRQ-QUIET | worker | quiet\n  Worker on codex, fixture-model, in phantom. Quiet: no output for 25m.\n  Nothing is recorded for this session yet.');
     expect(lines.at(-1)).toBe(`Open one: phm sessions thread <id>. Updated ${ago(0)}.`);
     const empty = renderSessionThreadsText({ ...buildSessionThreads(await liveList([]), { sessionsRead: true, bus: bus([]), activity: none }, NOW), threads: [],
-      counts: { sessions: 0, shown: 0, states: { running: 0, quiet: 0, idle: 0, done: 0, failed: 0, unknown: 0 } }, filter: { lane: 'codex', repo: null, live: true } });
+      counts: { sessions: 0, shown: 0, states: { running: 0, quiet: 0, idle: 0, done: 0, failed: 0, unknown: 0 }, unshown: { running: 0, ended: 0, unknown: 0 } }, filter: { lane: 'codex', repo: null, live: true } });
     expect(empty.split('\n')[0]).toBe('No sessions (lane codex, running only).');
   });
 });
@@ -470,6 +470,26 @@ describe('phm sessions threads', () => {
     const json = await run(['--lane', 'codex', '--repo', 'phantom', '--live', '--json'], read);
     expect(read).toHaveBeenCalledWith({ lane: 'codex', repo: 'phantom', live: true });
     expect(JSON.parse(json.out)).toMatchObject({ schema: 'fleet.session-threads.v1', threads: [{ session: { id: 'leader' } }, { session: { id: 'RQ-A' } }, { session: { id: 'RQ-QUIET' } }] });
+  });
+
+  it('the CLI --frame prints every short conversation as a bounded untrusted block and carries it as framed in JSON', async () => {
+    const text = await run(['--frame', 'claude']);
+    expect(text.code).toBe(0);
+    expect(text.out).toContain('BEGIN UNTRUSTED AGENT SESSION TRANSCRIPT');
+    expect(text.out).toContain('END UNTRUSTED AGENT SESSION TRANSCRIPT');
+    expect(text.out).toContain('3 sessions:');
+    vi.restoreAllMocks();
+    const json = await run(['--frame', 'grok', '--json']);
+    expect(json.code).toBe(0);
+    expect(JSON.parse(json.out)).toMatchObject({ schema: 'fleet.session-threads.v1', framed: expect.stringContaining('BEGIN UNTRUSTED AGENT SESSION TRANSCRIPT') });
+    vi.restoreAllMocks();
+    // Unknown cli names, repeats and a missing value are usage errors before any read.
+    for (const args of [['--frame', 'gemini'], ['--frame', 'claude', '--frame', 'grok'], ['--frame']]) {
+      vi.restoreAllMocks();
+      const read = vi.fn();
+      expect([args, (await run(args, read as never)).code]).toEqual([args, 2]);
+      expect(read).not.toHaveBeenCalled();
+    }
   });
 
   it('exits 2 for bad usage and 1 when sessions cannot be read', async () => {

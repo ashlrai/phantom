@@ -463,6 +463,26 @@ describe('phm sessions thread', () => {
     expect(JSON.parse(json.out)).toMatchObject({ schema: 'fleet.session-thread.v1', id: 'RQ-A', session: { id: 'RQ-A' } });
   });
 
+  it('the CLI --frame prints the thread as a bounded untrusted block and carries it as framed in JSON', async () => {
+    const text = await run(['RQ-A', '--frame', 'claude']);
+    expect(text.code).toBe(0);
+    expect(text.out).toContain('BEGIN UNTRUSTED AGENT SESSION TRANSCRIPT');
+    expect(text.out).toContain('END UNTRUSTED AGENT SESSION TRANSCRIPT');
+    expect(text.out).toContain('RQ-A | worker | running');
+    vi.restoreAllMocks();
+    const json = await run(['RQ-A', '--frame', 'grok', '--json']);
+    expect(json.code).toBe(0);
+    expect(JSON.parse(json.out)).toMatchObject({ schema: 'fleet.session-thread.v1', framed: expect.stringContaining('BEGIN UNTRUSTED AGENT SESSION TRANSCRIPT') });
+    vi.restoreAllMocks();
+    // Unknown cli names, repeats and a missing value are usage errors before any read.
+    for (const args of [['RQ-A', '--frame', 'gemini'], ['RQ-A', '--frame', 'claude', '--frame', 'grok'], ['RQ-A', '--frame']]) {
+      vi.restoreAllMocks();
+      const read = vi.fn();
+      expect([args, (await run(args, read)).code]).toEqual([args, 2]);
+      expect(read).not.toHaveBeenCalled();
+    }
+  });
+
   it('exits 2 for an unknown id or bad usage, and 1 when sessions cannot be read', async () => {
     const unknown = await run(['RQ-NOPE']);
     expect(unknown).toMatchObject({ code: 2, out: '' });
@@ -502,7 +522,7 @@ describe('phm sessions thread', () => {
   });
 
   it('documents the JSON it prints: every top-level key, and every source the thread names', async () => {
-    const doc = AGENT_COMMANDS.find(command => command.usage === 'phm sessions thread <id> [--all] [--json]');
+    const doc = AGENT_COMMANDS.find(command => command.usage === 'phm sessions thread <id> [--all] [--json] [--frame <cli>]');
     const shape = doc?.jsonShape ?? '';
     const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, activity: activity(), bus: bus([]) }, NOW);
     // The documented shape lists `sources` as `sources:{a,b,...}`; it must name the keys the builder returns, in order.
