@@ -8,7 +8,8 @@
  *   queue/ready.tsv              - queued, with the lane
  *   queue/run/<id>.launches/.rc  - started / finished with an exit code
  *   <runs>/<id>.publish          - `RESULT PR <url>` or `RESULT EMPTY <reason>`
- * The furthest evidence wins: PR > finished > launched > ready.tsv > READY.
+ * Publication results outrank exit, launch and queue evidence, but a PR URL
+ * proves publication only; head and test verification remain unavailable.
  * `phm jobs state` and the Slack/iMessage status reply both call this.
  */
 import { lstat, open } from 'node:fs/promises';
@@ -64,7 +65,7 @@ export function workStateOf(e: WorkStateEvidence): JobWorkState {
     const { result } = parsePublishResult(e.publish.text);
     const emptyWithReason = result === null && /^RESULT\s+EMPTY\s*:/m.test(e.publish.text);
     if (result?.kind === 'pr') {
-      return make('VERIFIED', e.publish, `${e.job}.publish`, { detail: result.url, evidence: [`publish record says RESULT PR ${result.url}`] });
+      return make('BLOCKED', e.publish, `${e.job}.publish`, { detail: `PR published; head and test verification evidence unavailable: ${result.url}`, evidence: [`publish record says RESULT PR ${result.url}`] });
     }
     if (result?.kind === 'empty' || emptyWithReason) {
       const why = emptyReason(e.publish.text);

@@ -48,10 +48,10 @@ describe('readJobWorkState', () => {
     const r = await readJobWorkState(JOB, { runsDir: await host({ [`${JOB}.publish`]: 'RESULT EMPTY\n' }) });
     expect(r).toMatchObject({ state: 'BLOCKED', detail: 'finished with no change and no reason recorded' });
   });
-  it('a PR url is VERIFIED even when the exit code is zero', async () => {
+  it('a PR url remains BLOCKED on verification even when the exit code is zero', async () => {
     const url = 'https://github.com/ashlrai/phantom/pull/1';
     const r = await readJobWorkState(JOB, { runsDir: await host({ [`${JOB}.publish`]: `RESULT PR ${url}\n`, [`queue/run/${JOB}.rc`]: '0' }) });
-    expect(r).toMatchObject({ state: 'VERIFIED', detail: url, source: `${JOB}.publish` });
+    expect(r).toMatchObject({ state: 'BLOCKED', detail: `PR published; head and test verification evidence unavailable: ${url}`, source: `${JOB}.publish` });
   });
   it('an id no file names is UNKNOWN, never guessed', async () => {
     const r = await readJobWorkState('RQ-NOPE-9', { runsDir: await host({ 'queue/router-queue.md': `- READY ${JOB} x\n` }) });
