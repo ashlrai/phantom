@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /* global AbortController, process, console */
 // Runs the tests chosen by ci-fast-select.mjs (RQ-CI-FASTGATE-1). Vitest goes
-// through scripts/test-ci.mjs (hermetic HOME, watchdog). The fallback shards run
-// as parallel processes. Failing test files are written for merge-group
+// through scripts/test-ci.mjs (hermetic HOME, watchdog). Fallback shards still
+// select the same tests, but run in one worker pool. Failing files are written for merge-group
 // attribution. No reruns: a failure fails the job.
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -114,8 +114,13 @@ export function commandsFor(plan, cpus = availableParallelism()) {
   const jobs = [];
   if (plan.mode === 'fallback') {
     const live = (plan.shards ?? []).filter((shard) => shard.length);
-    const workers = shardWorkers(cpus, live.length);
-    for (const shard of live) jobs.push({ command: process.execPath, args: withBail(['scripts/test-ci.mjs', `--maxWorkers=${workers}`, ...shard]) });
+    if (live.length > 0) {
+      // Share startup/transforms and let the runner dynamically assign the
+      // remaining files. Preserve the selected files and the old aggregate
+      // worker budget, except when the old floor would oversubscribe vCPUs.
+      const workers = Math.max(1, Math.min(cpus, shardWorkers(cpus, live.length) * live.length));
+      jobs.push({ command: process.execPath, args: withBail(['scripts/test-ci.mjs', `--maxWorkers=${workers}`, ...live.flat()]) });
+    }
   } else if (plan.tests?.length) {
     jobs.push({ command: process.execPath, args: withBail(['scripts/test-ci.mjs', ...plan.tests]) });
   }

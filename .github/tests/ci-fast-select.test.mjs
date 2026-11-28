@@ -581,8 +581,20 @@ test('web failures are named and web tests run under the web vitest config', () 
     node: [],
     shards: [['test/a.test.ts'], [], ['test/b.test.ts']],
   }, 4);
-  assert.equal(fallback.length, 3);
-  assert.ok(fallback[0].args.includes('--maxWorkers=2'));
-  assert.ok(fallback[0].args.includes('--bail=1'));
-  assert.deepEqual(fallback[2].args, ['scripts/test-ci.mjs', '--bail=1', '--config', 'vitest.config.web.ts', 'src/web-ui/Widget.test.tsx']);
+  assert.deepEqual(fallback.map(({ args }) => args), [
+    ['scripts/test-ci.mjs', '--bail=1', '--maxWorkers=4', 'test/a.test.ts', 'test/b.test.ts'],
+    ['scripts/test-ci.mjs', '--bail=1', '--config', 'vitest.config.web.ts', 'src/web-ui/Widget.test.tsx'],
+  ]);
+});
+
+test('fallback does not oversubscribe a two-vCPU runner or drop any shard', () => {
+  const jobs = commandsFor({
+    mode: 'fallback', tests: ['test/a.test.ts', 'test/b.test.ts', 'test/c.test.ts'],
+    shards: [['test/a.test.ts'], ['test/b.test.ts'], ['test/c.test.ts']],
+    node: ['.github/tests/a.test.mjs'],
+  }, 2);
+  assert.deepEqual(jobs.map(({ args }) => args), [
+    ['scripts/test-ci.mjs', '--bail=1', '--maxWorkers=2', 'test/a.test.ts', 'test/b.test.ts', 'test/c.test.ts'],
+    ['--test', '.github/tests/a.test.mjs'],
+  ]);
 });
