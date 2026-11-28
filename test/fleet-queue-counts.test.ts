@@ -184,6 +184,19 @@ it('measures wait from re-arrival, not the first-ever enqueue', async () => {
   expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(1200);
 });
 
+it.each([15, 20])('keeps the retry dwell when a departure is recorded late or at the same time (%i)', async (departureAge) => {
+  await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
+  await mkdir(join(root, 'metrics'));
+  const mark = (event: string, age: number) => ({ job: 'a-1', event, ts: minutesAgo(age) });
+  const departure = mark('launch', departureAge);
+  const retry = { ...mark('launch_failed', 15), action: 'retry' };
+  const transitions = departureAge === 15 ? [departure, retry] : [retry, departure];
+  await writeFile(join(root, 'metrics', 'jobs.jsonl'), [
+    mark('enqueue', 60), ...transitions,
+  ].map(entry => JSON.stringify(entry)).join('\n'));
+  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(900);
+});
+
 it('counts batch departures and retried member outcomes as queue marks', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), [row('READY', 'a-1', 'devin'), row('READY', 'a-2', 'devin')].join('\n'));
   await mkdir(join(root, 'metrics'));
