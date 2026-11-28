@@ -37,7 +37,7 @@ export { readOwnerPairPending, type OwnerPairPendingRead, type OwnerPairPendingS
 export const PAIR_TEXT = 'Phantom: reply YES to get fleet updates here.';
 export const PAIR_TTL_MS = 24 * 60 * 60 * 1000;
 
-export interface PairState { pending: PairPending | null; lastStartAt: number | null; /** Set by unpair: the self-tick does not pair again until Mason runs pair. */ autoOff: boolean }
+export interface PairState { pending: PairPending | null; proof?: { handle: string; pending: PairPending }; lastStartAt: number | null; /** Set by unpair: the self-tick does not pair again until Mason runs pair. */ autoOff: boolean }
 
 /** `fromMe` is a row Mason's own Apple ID sent, e.g. his YES typed on the phone into the self-chat. */
 export interface PairInbound { rowid: number; text: string; handle: string; fromMe?: boolean }
@@ -82,7 +82,10 @@ function emptyState(): PairState { return { pending: null, lastStartAt: null, au
 export function readPairState(configDir: string): PairState {
   try {
     const raw = JSON.parse(readFileSync(join(configDir, 'comms', OWNER_PAIR_STATE_FILE), 'utf8')) as Record<string, unknown>;
-    return { pending: parsePendingRecord(raw.pending),
+    const pending = parsePendingRecord(raw.pending);
+    const proof = raw.proof as { handle?: unknown; pending?: unknown } | undefined;
+    const proofPending = parsePendingRecord(proof?.pending);
+    return { pending, ...(typeof proof?.handle === 'string' && proofPending ? { proof: { handle: proof.handle, pending: proofPending } } : {}),
       lastStartAt: Number.isFinite(raw.lastStartAt) ? raw.lastStartAt as number : null, autoOff: raw.autoOff === true };
   } catch { return emptyState(); }
 }
@@ -215,6 +218,12 @@ export async function checkOwnerPair(deps: PairDeps): Promise<PairCheckResult> {
   const pending = state.pending;
   if (!pending) return { status: 'none' };
   if (pending.expiresAt <= now) { writePairState(deps.configDir, { ...state, pending: null }); return { status: 'expired' }; }
+  if (state.proof && JSON.stringify(state.proof.pending) === JSON.stringify(pending) &&
+      pending.handles.some(h => h.toLowerCase() === state.proof!.handle.toLowerCase()) &&
+      boundHandle(deps.configDir)?.toLowerCase() === state.proof.handle.toLowerCase()) {
+    return confirmPairProof(deps, state.proof.handle, pending);
+  }
+  if (state.proof) return { status: 'waiting' };
   const inbound = await deps.bridge.replies(pending.afterRowId, pending.handles);
   if (inbound === null) return { status: 'unreadable' };
   const own = new Set(pending.handles.map(h => h.toLowerCase()));
@@ -227,24 +236,36 @@ export async function checkOwnerPair(deps: PairDeps): Promise<PairCheckResult> {
     return { status: 'waiting' };
   }
   const handle = pending.handles.find(h => h.toLowerCase() === yes.handle.toLowerCase())!;
-  return bindOwnerHandle(deps.configDir, handle, state, () => new Date(now));
+  const current = readPairState(deps.configDir);
+  if (current.autoOff || JSON.stringify(current.pending) !== JSON.stringify(pending) || clock(deps) >= pending.expiresAt) return { status: 'waiting' };
+  return bindOwnerHandle(deps, handle, current, pending);
 }
 
-async function bindOwnerHandle(configDir: string, handle: string, state: PairState, at: () => Date): Promise<PairCheckResult> {
-  // An existing iMessage owner is never overwritten.
-  if (!boundHandle(configDir)) {
-    const done = writeNetwork(configDir, (text, section) => withIdentity(text, section, handle), ['team', 'mason']);
-    if (!done) return { status: 'waiting' };
+async function bindOwnerHandle(deps: PairDeps, handle: string, state: PairState, pending: PairPending): Promise<PairCheckResult> {
+  const bound = boundHandle(deps.configDir);
+  if (bound && bound.toLowerCase() !== handle.toLowerCase()) return { status: 'waiting' };
+  if (!bound && !writeNetwork(deps.configDir, (text, section) => withIdentity(text, section, handle), ['team', 'mason'])) return { status: 'waiting' };
+  writePairState(deps.configDir, { ...state, proof: { handle, pending } });
+  return confirmPairProof(deps, handle, pending);
+}
+
+async function confirmPairProof(deps: PairDeps, handle: string, pending: PairPending): Promise<PairCheckResult> {
+  try {
+    const { confirmCommsForOwnerProof } = await import('../web/comms-confirm-route.js');
+    const state = readPairState(deps.configDir);
+    if (state.autoOff || clock(deps) >= pending.expiresAt ||
+        JSON.stringify(state.pending) !== JSON.stringify(pending) ||
+        JSON.stringify(state.proof) !== JSON.stringify({ handle, pending }) ||
+        boundHandle(deps.configDir)?.toLowerCase() !== handle.toLowerCase()) return { status: 'waiting' };
+    if (readCommsLimits(deps.configDir).state !== 'confirmed') {
+      const result = confirmCommsForOwnerProof(deps.configDir, new Date(clock(deps)));
+      if (!result.ok) return { status: 'bound', confirmed: false, reason: `not confirmed (${result.reason})` };
+    }
+    writePairState(deps.configDir, { ...state, pending: null, proof: undefined });
+    return { status: 'bound', confirmed: true };
+  } catch {
+    return { status: 'bound', confirmed: false, reason: 'confirmation failed; retry pairing' };
   }
-  writePairState(configDir, { ...state, pending: null });
-  // A YES from an own handle is the owner's proof. The confirmation goes through the owner-gated
-  // route's handler-level function, which stays the only caller of the confirm writer. Loaded on
-  // demand: the web layer is heavy and the self-tick needs it only here.
-  if (readCommsLimits(configDir).state === 'confirmed') return { status: 'bound', confirmed: true };
-  const { confirmCommsForOwnerProof } = await import('../web/comms-confirm-route.js');
-  const result = confirmCommsForOwnerProof(configDir, at());
-  if (result.ok) return { status: 'bound', confirmed: true };
-  return { status: 'bound', confirmed: false, reason: `not confirmed (${result.reason}): confirm in the desktop Comms panel, or set confirmedByMason = true in ~/.ashlr/comms.toml` };
 }
 
 /** Remove only the iMessage binding from [mason] and [team], and drop any pending pair. */
