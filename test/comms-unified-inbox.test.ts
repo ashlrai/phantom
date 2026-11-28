@@ -4161,7 +4161,7 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--id <item-id>] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]');
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--id <item-id>] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--frame <cli>] [--json]');
     for (const args of [['--json', '--json'], ['unified'], ['--limit', '0'], ['bogus', '--json'],
       ['--id'], ['--id', 'has space'], ['--id', 'x'.repeat(257)]]) {
       expect(await command(args)).toBe(2);
@@ -4545,10 +4545,44 @@ describe('phm comms inbox cli', () => {
       ['--limit', '0'], ['--limit', '201'], ['--limit', '1.5'], ['--limit', '-3'],
       ['--limit', 'x'.repeat(40)], ['--limit', '2', '--limit', '3'],
       ['--limit', '5', '--source'], ['--source', 'bus', '--limit'],
+      ['--frame'], ['--frame', '--json'], ['--frame', 'bogus'], ['--frame', 'claude', '--frame', 'codex'],
     ]) {
       expect(await command(args), args.join(' ')).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
     }
+  });
+
+  it('frames the unified view as one bounded untrusted block under --frame', async () => {
+    const { command, lines, json } = setupCli();
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- Rotate the deploy secret for the example app\n');
+    postWork('cli-frame', { priority: 'P0' });
+
+    // --frame prints the same ranked view inside BEGIN/END UNTRUSTED UNIFIED
+    // COMMS INBOX markers — the same handoff every agents bus read's --frame
+    // offers, so a host can pass the whole pending-work picture to a CLI's
+    // next turn as marked-untrusted data in one block.
+    expect(await command(['--frame', 'claude'])).toBe(0);
+    const framed = lines().at(-1)!;
+    expect(framed).toContain('BEGIN UNTRUSTED UNIFIED COMMS INBOX');
+    expect(framed).toContain('END UNTRUSTED UNIFIED COMMS INBOX');
+    expect(framed).toContain('[now] needs-you  Rotate the deploy secret');
+    expect(framed).toContain('2 pending');
+    expect(framed.indexOf('BEGIN UNTRUSTED UNIFIED COMMS INBOX'))
+      .toBeLessThan(framed.indexOf('END UNTRUSTED UNIFIED COMMS INBOX'));
+
+    // --json carries the same block as framed beside the full view.
+    expect(await command(['--frame', 'codex', '--json'])).toBe(0);
+    const report = json() as UnifiedInbox & { framed?: string };
+    expect(report.total).toBe(2);
+    expect(report.framed).toContain('BEGIN UNTRUSTED UNIFIED COMMS INBOX');
+    expect(report.framed).toContain('END UNTRUSTED UNIFIED COMMS INBOX');
+    expect(report.items.map(i => i.source).sort()).toEqual(['bus', 'needs-you']);
+
+    // The frame narrows with the view filters like the plain read does.
+    expect(await command(['--frame', 'devin', '--source', 'bus'])).toBe(0);
+    const narrowed = lines().at(-1)!;
+    expect(narrowed).toContain('1 pending matching source=bus');
+    expect(narrowed).not.toContain('needs-you  Rotate');
   });
 });
 
