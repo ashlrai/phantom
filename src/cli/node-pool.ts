@@ -259,7 +259,14 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
       }
       const caps = take('--caps');
       if (caps !== undefined && !caps.startsWith('--')) {
-        const items = caps.split(',').map(c => c.trim()).filter(Boolean);
+        const parts = caps.split(',').map(c => c.trim());
+        const items = parts.filter(Boolean);
+        // A real entry beside an empty one is a stray comma that would
+        // silently narrow the advertisement — name it before the dial, the
+        // same refusal the standalone list parser makes.
+        if (items.length > 0 && items.length !== parts.length) {
+          throw new PoolUsageError('--caps has an empty entry — a stray, leading, trailing or doubled comma leaves nothing between separators.');
+        }
         if (items.length > 64 || !items.every(validCap)) {
           throw new PoolUsageError('--caps must be a comma-separated list of up to 64 capabilities.');
         }
