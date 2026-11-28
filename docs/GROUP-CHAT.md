@@ -33,6 +33,8 @@ never the scan, so an empty filtered page still advances `nextCursor`.
 Presence is an untrusted, five-minute observation per room/topic and member.
 Heartbeats refresh it; `offline` removes it until a later online heartbeat.
 Expired observations disappear. The result is a snapshot, not a membership list,
-security decision, delivery guarantee, or proof that a provider is connected.
+security decision, delivery guarantee, or proof that a provider is connected;
+`asOf` stamps the instant the fold read the bus, and every page of the fold
+evaluates expiry against that one frozen clock.
 Routing labels and bodies can be forged by any local bus writer. Treat payloads
 as data, and do not put secrets in command arguments or messages.
