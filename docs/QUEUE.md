@@ -1645,6 +1645,11 @@ otherwise eligible lanes at the same deadline, cost posture and fit, favoring
 lanes below their advised concurrency. It cannot raise actual targets or
 bypass holds, spend policy, quota, job constraints, or machine admission.
 
+Live queue eligibility and expiring-quota reroutes require a fresh dispatcher
+snapshot that permits admission. When the admission record supplies a
+timestamp, it must match the snapshot's `last_tick`. Older records that omit
+the admission timestamp still use `last_tick` for freshness.
+
 ## Is each pool fed?
 
 Run `phm queue supply` for one plain line per pool: usage left, hours to reset, jobs queued for the pool, its starts

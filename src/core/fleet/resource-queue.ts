@@ -13,6 +13,7 @@ export async function readResourceQueue(runsDir: string, now: number, status: un
   const snapshot = object(status), admission = object(snapshot.admission);
   const tick = Date.parse(String(snapshot.last_tick ?? ''));
   if (snapshot.schema !== 'dispatchd.status.v1' || !(tick <= now && now - tick <= FRESH_MS) ||
+      (admission.ts !== undefined && admission.ts !== snapshot.last_tick) ||
       (snapshot.paused !== null && snapshot.paused !== false) || admission.admit !== true ||
       admission.decision === 'stop' || admission.gate_reason) return null;
   const read = (name: string, max = MAX_BYTES) => readSource(join(runsDir, name), max, false);
