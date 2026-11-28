@@ -94,6 +94,21 @@ describe('lane plan and caps probe', () => {
     expect(probeLocalModelCaps(deps({ headroom: headroom(), platform: 'linux' }))).toEqual([]);
     expect(probeLocalModelCaps(deps({ headroom: headroom(60, 0, 4) }))).toEqual([]);
   });
+
+  it('the disabled backoff names the local-lanes.json path the probe actually reads', () => {
+    // A custom configPath (an $ASHLR_HOME scratch home in practice) must appear
+    // verbatim — never the default ~/.ashlr spelling the file is not read from.
+    const custom = join(dir, 'scratch-home', 'local-lanes.json');
+    const p = localLanePlan(deps({ configPath: custom, headroom: headroom() })).plan;
+    expect(p.backoff).toBe('disabled');
+    expect(p.backoffReason).toContain(`Enable with ${custom} `);
+    expect(p.backoffReason).not.toContain('~/.ashlr');
+    // With no injected path the reason keeps the documented ~/.ashlr spelling:
+    // the worker home contracts to ~, matching a default install's display.
+    const d = localLanePlan({ totalBytes: () => 16 * GiB, platform: 'darwin', headroom: headroom() }).plan;
+    expect(d.backoff).toBe('disabled');
+    expect(d.backoffReason).toContain('Enable with ~/.ashlr/local-lanes.json ');
+  });
 });
 
 describe('probeNodeLanes merges provider sign-ins with local model caps', () => {
