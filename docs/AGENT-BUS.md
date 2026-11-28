@@ -1023,7 +1023,11 @@ also carries the same per-key hold coverage `work mine` reports —
 coverage is `truncated` or `unknown`, never a guess — and the human lines mark
 it `claimable=yes|no|unknown`; non-open jobs and claimless reads carry none of
 the fields, so "which of these can I claim" answers in one read instead of a
-second join. `--claimable` keeps only the open jobs whose `claimable` is
+second join. Each hold row names the blocking claim's `claimKey`, `owner`,
+lease `until` and `origin` class (`resource`, `message`, `team`, `board` or
+`queue`) — the same claim detail `work mine`'s holders and `claim list`
+already show, so the feed never makes a reader cross-reference the claim
+table to learn what kind of hold blocks a job. `--claimable` keeps only the open jobs whose `claimable` is
 provably true — it implies the claims join, and unknown coverage never counts
 as claimable, so an unreadable hold table answers an honest empty view rather
 than a guessed one. Every job cites the retained envelopes its state came

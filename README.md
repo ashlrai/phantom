@@ -2,7 +2,7 @@
 
 **Phantom is an open-source workbench for running coding agents, coordinating a fleet, and reviewing their work.**
 
-Bring your signed-in coding CLIs and local models into one console. Follow each job from assignment to recorded results, connect agents through a shared bus, and add computers as your fleet grows.
+Bring signed-in coding CLIs, supported cloud and API resources, and tool-capable local models into one workbench. Connect more computers, share work over a durable agent bus, and see which jobs are running and what they produced. Phantom routes eligible jobs against capability, capacity, and quota rather than making every job wait for one provider.
 
 [![CI](https://github.com/ashlrai/phantom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlrai/phantom/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/%40ashlr%2Fphantom)](https://www.npmjs.com/package/@ashlr/phantom)
@@ -20,9 +20,9 @@ Chasing open-source RSI (recursive self-improvement) is Phantom's mission. We're
 
 Agents run the factory; the human owner acts as a passive board member. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow. The owner sets direction and is needed only for passwords, 2FA, device approvals and payments. See [how agents work on Phantom](#how-agents-work-on-phantom).
 
-![Phantom fleet console showing sample worker assignments and lane capacity; labeled demo data, no live execution.](https://github.com/ashlrai/phantom/blob/master/docs/images/phantom-fleet-demo.png)
+[![Phantom Fleet overview with resource balances in the left sidebar, agent and sub-agent topology, tool activity, sessions, usage trends, and worker load.](docs/images/phantom-fleet-overview.png)](docs/images/phantom-fleet-overview.png)
 
-*Current source UI with synthetic demo data, captured at 2× resolution. No provider or fleet ran. [Capture details](https://github.com/ashlrai/phantom/blob/master/docs/images/CAPTURES.md).*
+*Phantom Fleet overview with sample data. Balances, counts, and trends are illustrative. [See the current Fleet capture with demo data](docs/images/phantom-fleet-demo.png) or [read the visual notes](docs/images/CAPTURES.md).*
 
 ## What you can do
 
@@ -34,6 +34,7 @@ Agents run the factory; the human owner acts as a passive board member. Agents p
 | **Autonomy** | Read measured outcomes in Fleet: merges, fleet improvements and work completed without human intervention; missing evidence stays unknown. |
 | **Admission** | Explain the proposed launch interval and its inputs; the report is advisory. |
 | **Agent bus** | Follow durable messages, threads and coordination events between agents. [Bus contract](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-BUS.md). |
+| **Resource pool and routing** | Inspect connected accounts and local models, observed quota, and fleet routing decisions. Unknown values stay unknown, and a connected resource is not automatically eligible to launch. [Queue market](docs/QUEUE.md). |
 | **Computers** | Read reachability, free memory, lanes and running jobs. Each machine keeps its own provider sign-in. [Add a computer](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md). |
 | **Comms** | Read one owner thread across configured channels. Adapters require setup; send policies still apply. [Owner thread](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-THREAD.md). |
 | **Secrets** | Connect the separately installed Phantom Secrets companion through MCP; use secret references in agent work. [Companion setup](docs/COMPANIONS.md). |
@@ -74,7 +75,7 @@ Open [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/) and paste the 
 
 Provider installation and sign-in may take longer. [Full first-session guide](docs/QUICKSTART.md#make-your-first-useful-turn) · [Troubleshooting](docs/QUICKSTART.md#troubleshoot-account-setup-and-return-to-the-tour).
 
-This source tree targets version 3.30.83; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.84; check canonical release availability and exact matching assets before installation.
 The npm badge reads the registry; source version and published release can differ. [Qualified releases](https://github.com/ashlrai/phantom/releases/latest).
 
 ### Connect your coding agent
@@ -192,7 +193,7 @@ effect on Phantom. Rows exclude task content, owner, and credentials.
 
 ## The Phantom ecosystem
 
-Companions install separately. Each has its own capabilities and authorization boundaries.
+Companions install separately. Each has its own capabilities and authorization boundaries. [Browse the full AshlrAI ecosystem, project websites, and live star badges](https://github.com/ashlrai#the-open-source-ecosystem).
 
 The repo's `.mcp.json` declares six companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `context7`, `ashlr`. Registration does not prove readiness; see the [toolchain guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md) for limits and approvals.
 

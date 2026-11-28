@@ -261,6 +261,12 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     const log = output();
     expect(await cmdFleetWorkFeed(['--root', root, '--claims'])).toBe(0);
     expect(log.mock.calls.some(call => String(call[0]).startsWith(`held ${post.jobId} repo:fake/repo owner=fake-holder`))).toBe(true);
+    // The held line names the claim's origin class — the same detail
+    // `work mine`'s holders and `claim list` already show — so a reader
+    // never cross-references the claim table to learn what kind of hold
+    // blocks the job.
+    expect(log.mock.calls.some(call => String(call[0]).startsWith(`held ${post.jobId} repo:fake/repo owner=fake-holder`) &&
+      String(call[0]).includes(' origin=resource'))).toBe(true);
     expect(log.mock.calls.at(-1)?.[0]).toContain('claims=available');
     log.mockClear();
     expect(await cmdFleetWorkFeed(['--root', root, '--claims', '--status', 'done', '--json'])).toBe(0);
