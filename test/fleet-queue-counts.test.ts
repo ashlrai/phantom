@@ -184,6 +184,23 @@ it('measures wait from re-arrival, not the first-ever enqueue', async () => {
   expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(1200);
 });
 
+it.each([
+  [{ event: 'launch' }],
+  [{ event: 'launch_failed', action: 'retry', ts: 'invalid' }],
+  [{ event: 'task_outcome', outcome: 'deferred' }, { event: 'queued', ts: minutesAgo(20) }],
+  [{ event: 'claim' }, { event: 'enqueue' }, { event: 'queued', ts: minutesAgo(20) }],
+])('requires a dated start after undated queue transitions %#', async (...transitions) => {
+  await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
+  await mkdir(join(root, 'metrics'));
+  const path = join(root, 'metrics', 'jobs.jsonl');
+  const writeMarks = (marks: object[]) => writeFile(path, marks.map(mark => JSON.stringify({ job: 'a-1', ...mark })).join('\n'));
+  const marks = [{ event: 'enqueue', ts: minutesAgo(60) }, ...transitions];
+  await writeMarks(marks);
+  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBeNull();
+  await writeMarks([...marks, { event: 'launch_failed', action: 'retry', ts: minutesAgo(10) }]);
+  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(600);
+});
+
 it('counts batch departures and retried member outcomes as queue marks', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), [row('READY', 'a-1', 'devin'), row('READY', 'a-2', 'devin')].join('\n'));
   await mkdir(join(root, 'metrics'));
