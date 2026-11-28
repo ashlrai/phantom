@@ -1,9 +1,7 @@
 import { z } from 'zod';
+import { isCanonicalIsoTimestamp } from './runway.js';
 
-const timestamp = z.string().refine(value => {
-  const time = Date.parse(value);
-  return Number.isFinite(time) && new Date(time).toISOString() === value;
-});
+const timestamp = z.string().refine(isCanonicalIsoTimestamp);
 const nullableTimestamp = timestamp.nullable();
 const base = {
   pool: z.enum(['grok-ultra', 'codex-cmp', 'codex-personal', 'claude-max', 'terra', 'terra@personal', 'terra@cmp']),

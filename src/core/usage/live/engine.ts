@@ -3,24 +3,25 @@
  * readout, then budgets, alerts and a wake time that lands just after a reset.
  * Every provider surface is injected, so a tick is deterministic under test.
  */
-import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { isCanonicalIsoTimestamp, isPlainObject, round1, round2 } from '../runway.js';
 import { pullOfficialUsageSensors, type UsageSensorPullOptions } from '../sensor-pull.js';
 import {
   USAGE_SENSOR_SCHEMA, USAGE_SENSOR_STALE_MS, parseUsageSensorSnapshot, presentUsageSensors,
   type UsageSensorLaneView, type UsageSensorReading,
 } from '../sensor-reading.js';
-import { readSite, type BrowserSession, type SiteReading } from './browser.js';
+import { readSite, writeUsageFileAtomic, type BrowserSession, type SiteReading } from './browser.js';
 import { USAGE_SITES, type UsageSite } from './sites.js';
 
 export const ALERT_LEVELS = ['cap-80', 'cap-95', 'expire-unspent'] as const;
 export type AlertLevel = typeof ALERT_LEVELS[number] | 'needs-signin';
-export const HISTORY_PER_LANE = 12;
+const HISTORY_PER_LANE = 12;
 /** Refresh this long after a reset, so the provider has rolled the window. */
-export const RESET_REFRESH_DELAY_MS = 10_000;
-export const EXPIRE_WINDOW_HOURS = 24;
-export const EXPIRE_MIN_UNUSED_PCT = 25;
+const RESET_REFRESH_DELAY_MS = 10_000;
+const EXPIRE_WINDOW_HOURS = 24;
+const EXPIRE_MIN_UNUSED_PCT = 25;
 
 export interface ExtraReading { site: UsageSite['id']; budgetLane: string; used: number; limit: number; unit: 'percent' | 'acu'; resetAt: string | null; observedAt: string }
 export interface UsageAlert { ts: string; level: AlertLevel; subject: string; message: string; pct: number | null; resetAt: string | null }
@@ -74,7 +75,7 @@ export function evaluateAlerts(
     if (s.hoursLeft !== null && s.hoursLeft <= EXPIRE_WINDOW_HOURS && s.projectedUnusedPct !== null &&
       s.projectedUnusedPct >= EXPIRE_MIN_UNUSED_PCT) {
       fire(s, 'expire-unspent',
-        `${s.id} is projected to expire with ${Math.round(s.projectedUnusedPct)}% unspent in ${Math.round(s.hoursLeft * 10) / 10} h`);
+        `${s.id} is projected to expire with ${Math.round(s.projectedUnusedPct)}% unspent in ${round1(s.hoursLeft)} h`);
     }
   }
   return { alerts, state: { fired } };
@@ -85,7 +86,7 @@ export function evaluateAlerts(
  * Keep the earlier instant when the new one is within tolerance, so the window
  * keeps one identity for alert dedupe and burn samples.
  */
-export const RESET_SNAP_MS = 10 * 60_000;
+const RESET_SNAP_MS = 10 * 60_000;
 export function snapReset(next: string | null, previous: readonly (string | null)[]): string | null {
   if (next === null) return null;
   const at = Date.parse(next);
@@ -115,7 +116,7 @@ export function budgetFragment(
     if (v.status !== 'fresh' || v.used === null || v.limit === null || !(v.limit > 0) || v.lane === 'local') continue;
     const name = v.lane === 'claude-max' ? 'claude' : v.lane;
     const source = sources.get(v.lane) ?? v.source ?? 'unknown';
-    const burnPct = v.burnRate === null ? null : Math.round(v.burnRate / v.limit * 100 * 100) / 100;
+    const burnPct = v.burnRate === null ? null : round2(v.burnRate / v.limit * 100);
     const left = hours(v.resetAt);
     const projected = burnPct !== null && burnPct > 0 && left !== null && left > 0
       ? new Date(nowMs + (100 - pctOf(v.used, v.limit)) / burnPct * 3_600_000).toISOString() : null;
@@ -156,15 +157,10 @@ export interface LiveTickResult {
 async function readJson(path: string): Promise<unknown> {
   try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; }
 }
-async function writeAtomic(path: string, body: string): Promise<void> {
-  const tmp = `${path}.${process.pid}.tmp`;
-  await writeFile(tmp, body, { mode: 0o600 });
-  await rename(tmp, path);
-}
 function parseState(raw: unknown): AlertState {
-  const fired = raw && typeof raw === 'object' ? (raw as { fired?: unknown }).fired : null;
+  const fired = isPlainObject(raw) ? raw['fired'] : null;
   const out: Record<string, string> = {};
-  if (fired && typeof fired === 'object') {
+  if (isPlainObject(fired)) {
     for (const [k, v] of Object.entries(fired)) if (typeof v === 'string' && Number.isFinite(Date.parse(v))) out[k] = v;
   }
   return { fired: out };
@@ -173,10 +169,7 @@ function parseState(raw: unknown): AlertState {
 /** Sites whose readings live only in `extras` (the sensor schema has no lane for them). */
 const EXTRA_SITES = USAGE_SITES.filter(s => s.lane === null);
 
-const isoTimestamp = z.string().refine(value => {
-  const time = Date.parse(value);
-  return Number.isFinite(time) && new Date(time).toISOString() === value;
-});
+const isoTimestamp = z.string().refine(isCanonicalIsoTimestamp);
 
 const persistedExtraSchema = z.object({
   site: z.string().min(1),
@@ -205,9 +198,8 @@ function usablePersistedExtra(raw: unknown, nowMs: number): ExtraReading | null 
   if (d.unit === 'percent' && (d.limit !== 100 || d.used > 100)) return null;
   const observedMs = Date.parse(d.observedAt);
   if (observedMs > nowMs || observedMs + USAGE_SENSOR_STALE_MS <= nowMs) return null;
-  const resetMs = typeof d.resetAt === 'string' ? Date.parse(d.resetAt) : NaN;
-  const resetAt = Number.isFinite(resetMs) && new Date(resetMs).toISOString() === d.resetAt ? d.resetAt : null;
-  if (resetAt !== null && resetMs <= nowMs) return null;
+  const resetAt = isCanonicalIsoTimestamp(d.resetAt) ? d.resetAt : null;
+  if (resetAt !== null && Date.parse(resetAt) <= nowMs) return null;
   return { site: site.id, budgetLane: site.budgetLane, used: d.used, limit: d.limit, unit: d.unit, resetAt, observedAt: d.observedAt };
 }
 
@@ -294,11 +286,11 @@ export async function runLiveUsageTick(options: LiveTickOptions): Promise<LiveTi
   // 5. Persist: snapshot, budget block, state, bus alerts.
   const budget = budgetFragment(report.lanes, sources, liveExtras, nowMs);
   const generatedAt = new Date(nowMs).toISOString();
-  await writeAtomic(snapshotPath, `${JSON.stringify({ schema: USAGE_SENSOR_SCHEMA, generatedAt, readings: kept,
+  await writeUsageFileAtomic(snapshotPath, `${JSON.stringify({ schema: USAGE_SENSOR_SCHEMA, generatedAt, readings: kept,
     extras: liveExtras, needsSignin }, null, 2)}\n`);
-  await writeAtomic(join(options.queueDir, 'usage-live-budget.json'),
+  await writeUsageFileAtomic(join(options.queueDir, 'usage-live-budget.json'),
     `${JSON.stringify({ schema: 'usage-live-budget.v1', ts: Math.floor(nowMs / 1000), lanes: budget }, null, 2)}\n`);
-  await writeAtomic(join(options.queueDir, 'usage-live-state.json'), `${JSON.stringify({ fired })}\n`);
+  await writeUsageFileAtomic(join(options.queueDir, 'usage-live-state.json'), `${JSON.stringify({ fired })}\n`);
   if (alerts.length) {
     await appendFile(join(options.busDir, 'usage-live-alerts.jsonl'),
       alerts.map(a => JSON.stringify(a)).join('\n') + '\n', { mode: 0o600 });

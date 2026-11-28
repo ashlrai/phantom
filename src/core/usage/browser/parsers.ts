@@ -95,7 +95,7 @@ function readWindow(slice: string, spec: Spec, observedAtMs: number): Window | n
 }
 
 /** Every window the page states, each sliced from its heading to the next heading. */
-export function parseWindows(provider: BrowserProvider, text: string, observedAtMs: number): Window[] {
+function parseWindows(provider: BrowserProvider, text: string, observedAtMs: number): Window[] {
   const spec = SPECS[provider];
   const hits: number[] = [];
   for (const re of spec.labels) {

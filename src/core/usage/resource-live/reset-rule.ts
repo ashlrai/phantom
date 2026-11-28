@@ -11,13 +11,14 @@
  * the weekly reset is drafted: the weekly allowance is the one that stops all
  * Claude work, Fable included.
  */
+import { round1 } from '../runway.js';
 import type { ResetDraft, ResetDraftKind, ResetRuleState, ResourceLiveReading } from './types.js';
 import { RESOURCE_LIVE_STALE_MS } from './types.js';
 
-export const RESET_THRESHOLD_PCT = 95;
-export const RESET_MIN_HOURS_LEFT = 24;
-export const RESET_WEEK_MS = 7 * 24 * 3_600_000;
-export const RESET_DECISION_SCHEMA = 'resource-live.reset-decision.v1' as const;
+const RESET_THRESHOLD_PCT = 95;
+const RESET_MIN_HOURS_LEFT = 24;
+const RESET_WEEK_MS = 7 * 24 * 3_600_000;
+const RESET_DECISION_SCHEMA = 'resource-live.reset-decision.v1' as const;
 
 export const EMPTY_RESET_STATE: ResetRuleState = { fable: null, weekly: null, last_decision_file: null };
 
@@ -76,7 +77,7 @@ export function evaluateResetRule(
   const drafts = kinds.map((kind): ResetDraft => {
     const reading = kind === 'weekly' ? weekly : fableFresh!;
     next[kind] = { drafted_at: draftedAt, window };
-    return { kind, used_pct: reading.used_pct, weekly_reset_at: weekly.reset_at!, hours_to_weekly_reset: Math.round(hours * 10) / 10,
+    return { kind, used_pct: reading.used_pct, weekly_reset_at: weekly.reset_at!, hours_to_weekly_reset: round1(hours),
       source: reading.source, observed_at: reading.observed_at };
   });
   return { drafts, state: next };

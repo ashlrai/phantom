@@ -18,7 +18,6 @@ import {
   unmeasuredSensor,
   readingIsFresh,
   usageSensorReadingSchema,
-  type UsageSensorLane,
   type UsageSensorReading,
 } from './sensor-reading.js';
 
@@ -89,10 +88,6 @@ export interface UsageSensorPullOptions {
   readGrok?: () => unknown;
 }
 
-function row(lane: UsageSensorLane, reading: UsageSensorReading | null, nowMs: number): UsageSensorReading {
-  return reading ?? unmeasuredSensor(lane, nowMs);
-}
-
 /** Pull one reading per lane. A refused or failed surface stays unmeasured. */
 export async function pullOfficialUsageSensors(options: UsageSensorPullOptions = {}): Promise<UsageSensorReading[]> {
   const nowMs = options.nowMs ?? Date.now();
@@ -110,12 +105,11 @@ export async function pullOfficialUsageSensors(options: UsageSensorPullOptions =
   try { claude = parseClaudeSensor(readClaude(), nowMs); } catch { claude = null; }
   try { grok = parseGrokSensor(readGrok(), nowMs); } catch { grok = null; }
 
-  const readings = [
-    row('devin', devin, nowMs),
-    row('codex-personal', codexPersonal, nowMs),
-    row('claude-max', claude, nowMs),
-    row('grok-ultra', grok, nowMs),
-    row('terra', null, nowMs),
-  ];
-  return ACTIVE_USAGE_SENSOR_LANES.map(lane => readings.find(item => item.lane === lane) ?? unmeasuredSensor(lane, nowMs));
+  const readings = new Map<UsageSensorReading['lane'], UsageSensorReading | null>([
+    ['devin', devin],
+    ['codex-personal', codexPersonal],
+    ['claude-max', claude],
+    ['grok-ultra', grok],
+  ]);
+  return ACTIVE_USAGE_SENSOR_LANES.map(lane => readings.get(lane) ?? unmeasuredSensor(lane, nowMs));
 }

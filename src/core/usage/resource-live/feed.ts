@@ -8,14 +8,13 @@
  */
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { isPlainObject, nonNegativeFinite, round3 } from '../runway.js';
 import {
   USAGE_SENSOR_STALE_MS, usageSensorReadingSchema, type UsageSensorReading,
 } from '../sensor-reading.js';
-import { parseResourceLiveSidecar, readResourceLiveFile } from './store.js';
-import { RESOURCE_LIVE_ALLOWANCES, type ResourceLiveReading } from './types.js';
+import { parseResourceLiveSidecar, readResourceHistoryFile, readResourceLiveFile } from './store.js';
+import { RESOURCE_LIVE_ALLOWANCES, type LaneHistory, type ResourceLiveReading } from './types.js';
 import { projectLaneHistory } from './history.js';
-import { readResourceHistoryFile } from './store.js';
-import type { LaneHistory } from './types.js';
 
 /** Pacing keys the world model reads from a sensor row. */
 export interface ResourceLivePaceRow {
@@ -53,16 +52,12 @@ function sensorRow(reading: ResourceLiveReading): UsageSensorReading | null {
     observedAt: reading.observed_at,
     source: SENSOR_SOURCE[reading.source] ?? reading.source,
     staleAfter: reading.stale_after ?? new Date(Date.parse(reading.observed_at) + USAGE_SENSOR_STALE_MS).toISOString(),
-    used: Math.round(reading.used * factor * 1000) / 1000,
-    limit: Math.round(reading.limit * factor * 1000) / 1000,
+    used: round3(reading.used * factor),
+    limit: round3(reading.limit * factor),
     unit: reading.unit === 'acu' ? 'acu' : 'percent',
     resetAt: reading.reset_at,
   });
   return parsed.success ? parsed.data : null;
-}
-
-function finite(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 /** Project a stored sidecar. A missing or malformed file yields nothing. */
@@ -72,18 +67,17 @@ export function projectResourceLiveFeed(raw: unknown, nowMs: number): ResourceLi
   const pace: ResourceLivePaceRow[] = [];
   // The plan was computed at generated_at. Past the staleness bound its rates describe an older moment.
   const planAt = sidecar.generated_at === null ? NaN : Date.parse(sidecar.generated_at);
-  const plan = raw !== null && typeof raw === 'object' ? (raw as { burn_down?: { allowances?: unknown } }).burn_down?.allowances : null;
+  const plan = isPlainObject(raw) && isPlainObject(raw['burn_down']) ? raw['burn_down']['allowances'] : null;
   if (Number.isFinite(planAt) && planAt <= nowMs && nowMs - planAt < USAGE_SENSOR_STALE_MS && Array.isArray(plan)) {
     for (const entry of plan) {
-      if (entry === null || typeof entry !== 'object') continue;
-      const row = entry as Record<string, unknown>;
-      const reading = sidecar.readings.find(item => item.id === row['id']);
+      if (!isPlainObject(entry)) continue;
+      const reading = sidecar.readings.find(item => item.id === entry['id']);
       const lane = reading ? sensorLane(reading.id) : null;
       const factor = reading ? scale(reading) : null;
       if (!reading || !lane || factor === null) continue;
-      const required = finite(row['target_rate_per_hour']);
-      const observed = finite(row['observed_rate_per_hour']);
-      const remaining = finite(row['remaining']);
+      const required = nonNegativeFinite(entry['target_rate_per_hour']);
+      const observed = nonNegativeFinite(entry['observed_rate_per_hour']);
+      const remaining = nonNegativeFinite(entry['remaining']);
       pace.push({
         lane,
         pacePerHour: observed === null ? null : observed * factor,

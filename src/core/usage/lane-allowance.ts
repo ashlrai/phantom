@@ -7,6 +7,7 @@ import { projectLaneHistory } from './resource-live/history.js';
 import { planBurnDown } from './resource-live/burn-down.js';
 import { readCustomResources, type CustomResource } from './resource-live/custom.js';
 import { DEVIN_FLASH_EXPIRES_AT, RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_STALE_MS, type LaneHistory, type ResourceLiveTier, type ResourceLiveUnit } from './resource-live/types.js';
+import { nonNegativeFinite as amount } from './runway.js';
 
 type Posture = NonNullable<Awaited<ReturnType<typeof postureEvidence>>>;
 export interface LaneAllowanceInputs {
@@ -32,7 +33,6 @@ export interface LaneAllowanceRow {
       evidence?: { observedAt: string; accountId: string; model: string } } | null } | null;
 }
 export interface LaneAllowanceSnapshot { v: 1; asOf: string; lanes: LaneAllowanceRow[] }
-const amount = (n: unknown): number | null => typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null;
 const named = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 const fresh = (at: string | null | undefined, now: number): boolean => {
   const observed = at ? Date.parse(at) : NaN;

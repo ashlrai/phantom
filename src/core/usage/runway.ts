@@ -70,9 +70,94 @@ export interface RunwaySnapshot {
   shares?: PoolShareSnapshot;
 }
 
-const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-const round1 = (n: number): number => Math.round(n * 10) / 10;
-const round2 = (n: number): number => Math.round(n * 100) / 100;
+const DISPATCH_STATUS_FRESH_MS = 120_000;
+const CODEX_HOME_SEGMENT_RE = /(?:^|\/)\.codex[^/]*(?:\/|$)/;
+
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function asPlainObject(value: unknown): Record<string, unknown> {
+  return isPlainObject(value) ? value : {};
+}
+
+export function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+export function nonNegativeFinite(value: unknown): number | null {
+  return isFiniteNumber(value) && value >= 0 ? value : null;
+}
+
+export const round1 = (n: number): number => Math.round(n * 10) / 10;
+export const round2 = (n: number): number => Math.round(n * 100) / 100;
+export const round3 = (n: number): number => Math.round(n * 1000) / 1000;
+
+export function isCanonicalIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) && new Date(ms).toISOString() === value;
+}
+
+export function parseEpochSecondsOrIsoMs(value: unknown): number {
+  if (typeof value === 'string') return Date.parse(value);
+  return isFiniteNumber(value) && Math.abs(value) <= 8.64e12 ? value * 1000 : NaN;
+}
+
+export function hasCodexHomeSegment(path: string): boolean {
+  return CODEX_HOME_SEGMENT_RE.test(path);
+}
+
+export interface DispatchStatusEnvelope {
+  status: Record<string, unknown>;
+  tick: number;
+  fresh: boolean;
+  asOf: string | null;
+  budget: Record<string, unknown>;
+}
+
+export function parseDispatchStatusEnvelope(
+  raw: unknown,
+  now: number,
+  maxAgeMs = DISPATCH_STATUS_FRESH_MS,
+): DispatchStatusEnvelope {
+  const status = asPlainObject(raw);
+  const tick = typeof status['last_tick'] === 'string' ? Date.parse(status['last_tick']) : NaN;
+  const fresh = status['schema'] === 'dispatchd.status.v1'
+    && Number.isFinite(tick) && now >= tick && now - tick <= maxAgeMs;
+  return {
+    status,
+    tick,
+    fresh,
+    asOf: Number.isFinite(tick) ? new Date(tick).toISOString() : null,
+    budget: asPlainObject(status['budget']),
+  };
+}
+
+export type DeadlineOutcome<T> =
+  | { kind: 'value'; value: T }
+  | { kind: 'timeout' }
+  | { kind: 'error' };
+
+export async function runWithDeadline<T>(
+  task: () => Promise<T> | T,
+  deadlineMs: number,
+): Promise<DeadlineOutcome<T>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const work = Promise.resolve()
+    .then(() => task())
+    .then((value): DeadlineOutcome<T> => ({ kind: 'value', value }))
+    .catch((): DeadlineOutcome<T> => ({ kind: 'error' }))
+    .finally(() => { if (timer !== undefined) clearTimeout(timer); });
+  const timeout = new Promise<DeadlineOutcome<T>>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: 'timeout' }), deadlineMs);
+    if (typeof timer === 'object' && timer !== null && 'unref' in timer && typeof timer.unref === 'function') {
+      timer.unref();
+    }
+  });
+  return Promise.race([work, timeout]);
+}
+
 /** "3d 4h", "5h 12m", "40m"; same shape as spend.ts spendCountdown. */
 export function runwayHours(hours: number): string {
   if (!(hours > 0)) return 'now';
@@ -84,9 +169,9 @@ const hoursText = runwayHours;
 
 /** The pure verdict for one pool. A missing reading makes the state unknown; nothing is inferred. */
 export function runway(input: RunwayInput): PoolRunway {
-  const used = num(input.usedPercent) && input.usedPercent >= 0 ? input.usedPercent : null;
-  const burn = num(input.burnPerHour) && input.burnPerHour >= 0 ? input.burnPerHour : null;
-  const reset = num(input.hoursToReset) && input.hoursToReset > 0 ? input.hoursToReset : null;
+  const used = nonNegativeFinite(input.usedPercent);
+  const burn = nonNegativeFinite(input.burnPerHour);
+  const reset = isFiniteNumber(input.hoursToReset) && input.hoursToReset > 0 ? input.hoursToReset : null;
   const base: PoolRunway = { pool: input.pool, state: 'unknown', usedPercent: used, burnPerHour: burn, hoursToEmpty: null,
     hoursToReset: reset === null ? null : round2(reset), idleHours: null, unusedAtResetPercent: null, safeBurnPerHour: null, reason: null, advice: '' };
   const missing = used === null ? 'no usage reading' : reset === null ? 'reset time unknown' : null;
@@ -146,7 +231,7 @@ export function sortRunways(pools: readonly PoolRunway[]): PoolRunway[] {
 
 /** Wire guard for clients: a reply that is not pool.runway.v1 is treated as unknown, never rendered. */
 export function isRunwaySnapshot(value: unknown): value is RunwaySnapshot {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!isPlainObject(value)) return false;
   const v = value as Partial<RunwaySnapshot>;
   return v.schema === POOL_RUNWAY_SCHEMA && v.v === 1 && typeof v.headline === 'string' && Array.isArray(v.pools)
     && v.pools.every(row => row !== null && typeof row === 'object' && typeof row.pool === 'string'
@@ -163,11 +248,11 @@ export function isRunwaySnapshot(value: unknown): value is RunwaySnapshot {
  *   on_pace   neither.
  *   unknown   any reading is missing, or the reset time has already passed. Never guessed.
  */
-export const POOL_SHARE_SCHEMA = 'fleet.pools.v1' as const;
+const POOL_SHARE_SCHEMA = 'fleet.pools.v1' as const;
 export type PoolShareState = 'starving' | 'wasting' | 'on_pace' | 'unknown';
 export const POOL_SHARE_STATES: readonly PoolShareState[] = ['wasting', 'on_pace', 'starving', 'unknown'];
-export const POOL_STARVING_RUNWAY_SHARE = 0.8;
-export const POOL_WASTING_PROJECTED_PERCENT = 90;
+const POOL_STARVING_RUNWAY_SHARE = 0.8;
+const POOL_WASTING_PROJECTED_PERCENT = 90;
 
 export interface PoolShareInput {
   pool: string;
@@ -234,9 +319,9 @@ const wholeHours = (n: number): string => `${Math.max(0, Math.round(n))} h`;
  */
 export function planPoolShares(inputs: readonly PoolShareInput[]): PoolShare[] {
   const rows = inputs.map(input => {
-    const used = num(input.usedPercent) && input.usedPercent >= 0 ? input.usedPercent : null;
-    const burn = num(input.burnPerHour) && input.burnPerHour >= 0 ? input.burnPerHour : null;
-    const hours = num(input.hoursToReset) ? input.hoursToReset : null;
+    const used = nonNegativeFinite(input.usedPercent);
+    const burn = nonNegativeFinite(input.burnPerHour);
+    const hours = isFiniteNumber(input.hoursToReset) ? input.hoursToReset : null;
     const reason = input.reason ?? (used === null ? 'no usage reading' : burn === null ? 'no burn rate yet'
       : hours === null ? 'reset time unknown' : hours <= 0 ? 'reset already passed; waiting for a new reading' : null);
     const base = { pool: input.pool, reset_at: input.resetAt ?? null, burn_pct_per_hour: burn,

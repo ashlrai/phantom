@@ -5,10 +5,15 @@
  * when readings stop changing). `--show` prints the stored sidecar and reads
  * nothing else.
  */
-import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { playwrightLauncher, profileDirAllowed, usageBrowserDir, type BrowserSession } from '../core/usage/live/browser.js';
+import {
+  openUsageBrowserSession,
+  optionalAbsolutePath,
+  type BrowserLauncher,
+  type BrowserSession,
+} from '../core/usage/live/browser.js';
+import { hasCodexHomeSegment } from '../core/usage/runway.js';
 import { ResourceLiveBusyError, runResourceLiveTick, type ResourceLiveTickResult } from '../core/usage/resource-live/engine.js';
 import type { ResourceLiveSources } from '../core/usage/resource-live/source-types.js';
 import { defaultResourceLiveSources } from '../core/usage/resource-live/sources.js';
@@ -20,7 +25,7 @@ import { liveSourceOptions } from '../core/usage/resource-live/config.js';
 const USAGE = 'Usage: phm usage resource-live [--json] [--watch] [--force] [--show] [--browser [--headed]] [--runs-dir <abs>]';
 
 export interface UsageResourceLiveDeps {
-  launch?: typeof playwrightLauncher;
+  launch?: BrowserLauncher;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   home?: string;
@@ -28,8 +33,6 @@ export interface UsageResourceLiveDeps {
   /** Stops a --watch loop. Tests use it; the CLI runs until it is signalled. */
   shouldStop?: () => boolean;
 }
-
-const abs = (value: string | undefined): string | undefined => typeof value === 'string' && isAbsolute(value) ? value : undefined;
 
 function printTable(sidecar: Pick<ResourceLiveSidecar, 'readings' | 'burn_down'>): void {
   const rank = new Map(sidecar.burn_down.allowances.map(row => [row.id, row]));
@@ -49,7 +52,7 @@ function printTable(sidecar: Pick<ResourceLiveSidecar, 'readings' | 'burn_down'>
 
 export async function cmdUsageResourceLive(args: string[], deps: UsageResourceLiveDeps = {}): Promise<number> {
   const home = deps.home ?? homedir();
-  let runsDir = abs(process.env['ASHLR_RUNS_DIR']) ?? join(home, '.ashlr-runs');
+  let runsDir = optionalAbsolutePath(process.env['ASHLR_RUNS_DIR']) ?? join(home, '.ashlr-runs');
   let json = false, watch = false, force = false, show = false, browser = false, headed = false;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -62,7 +65,7 @@ export async function cmdUsageResourceLive(args: string[], deps: UsageResourceLi
     else if (arg === '--headed') headed = true;
     else if (arg === '--runs-dir') {
       const value = args[++i];
-      if (!value || !isAbsolute(value) || /(?:^|\/)\.codex[^/]*(?:\/|$)/.test(value)) { console.error(USAGE); return 2; }
+      if (!value || !isAbsolute(value) || hasCodexHomeSegment(value)) { console.error(USAGE); return 2; }
       runsDir = value;
     } else { console.error(USAGE); return 2; }
   }
@@ -80,14 +83,10 @@ export async function cmdUsageResourceLive(args: string[], deps: UsageResourceLi
 
   let session: BrowserSession | null = null;
   if (browser) {
-    const dir = usageBrowserDir(home);
-    if (!profileDirAllowed(dir, home)) { console.error('Usage browser profile path refused.'); return 1; }
-    try {
-      await mkdir(dir, { recursive: true, mode: 0o700 });
-      session = await (deps.launch ?? playwrightLauncher)(dir, { headless: !headed });
-    } catch {
-      console.error('Usage browser is unavailable (Playwright is not installed or the profile could not open). Official sources only.');
-    }
+    const opened = await openUsageBrowserSession({ home, headed, launch: deps.launch });
+    if (opened.status === 'refused') { console.error('Usage browser profile path refused.'); return 1; }
+    if (opened.status === 'opened') session = opened.session;
+    else console.error('Usage browser is unavailable (Playwright is not installed or the profile could not open). Official sources only.');
   }
   const sources = deps.sources ?? defaultResourceLiveSources({
     ...liveSourceOptions(loadConfigReadOnly()),

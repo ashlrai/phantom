@@ -5,6 +5,7 @@
  */
 import { readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
+import { optionalAbsolutePath } from '../core/usage/live/browser.js';
 import { pullOfficialUsageSensors, refreshStalePersonalUsage } from '../core/usage/sensor-pull.js';
 import {
   USAGE_SENSOR_SCHEMA,
@@ -69,14 +70,10 @@ export async function cmdUsageSensors(args: string[]): Promise<number> {
 
   let readings: UsageSensorReading[];
   if (refresh) {
-    const home = (name: string): string | undefined => {
-      const value = process.env[name];
-      return typeof value === 'string' && isAbsolute(value) ? value : undefined;
-    };
     try {
       readings = await pullOfficialUsageSensors({
         nowMs: Date.now(),
-        codexPersonalHome: home('PHANTOM_SENSOR_CODEX_PERSONAL_HOME'),
+        codexPersonalHome: optionalAbsolutePath(process.env['PHANTOM_SENSOR_CODEX_PERSONAL_HOME']),
       });
     }
     catch { readings = []; }
