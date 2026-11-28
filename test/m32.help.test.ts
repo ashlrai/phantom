@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { AGENT_COMMANDS, cmdHelp, HELP_ENTRIES } from '../src/cli/help.js';
 import { TOP_LEVEL_COMMANDS } from '../src/cli/completions.js';
+import { NODE_FLEET_VERBS } from '../src/cli/node-fleet-usage.js';
 
 let captured: string[] = [];
 let origLog: typeof console.log;
@@ -208,5 +209,36 @@ describe('cmdHelp routing', () => {
     }
     expect(errs.join('\n')).toContain('Unknown help topic "nonsense".');
     expect(errs.join('\n')).toContain('autonomy');
+  });
+});
+
+describe('phm node help surfaces', () => {
+  /** The `verb|verb` alternation a `phm node ...` usage or `node ...` cmd leads with. */
+  const nodeVerbs = (usage: string): string[] =>
+    usage.replace(/^phm node /, '').replace(/^node /, '').split(' ')[0]!.split('|');
+
+  it('phm docs --agent lists every node fleet verb, plus measure, capacity, route and the pool ops', () => {
+    const fleet = AGENT_COMMANDS.find((entry) => entry.usage.startsWith('phm node join|'));
+    expect(fleet, 'agent docs missing the node fleet entry').toBeDefined();
+    expect(new Set(nodeVerbs(fleet!.usage))).toEqual(new Set(NODE_FLEET_VERBS));
+    const usages = AGENT_COMMANDS.map((entry) => entry.usage);
+    for (const prefix of ['phm node measure ', 'phm node capacity ', 'phm node route ']) {
+      expect(usages.some((usage) => usage.startsWith(prefix)), `agent docs missing ${prefix.trim()}`).toBe(true);
+    }
+    const ops = AGENT_COMMANDS.find((entry) => entry.usage.startsWith('phm node pool|'));
+    expect(ops, 'agent docs missing the node pool/ops entry').toBeDefined();
+    expect(new Set(nodeVerbs(ops!.usage))).toEqual(new Set(
+      ['pool', 'watch', 'worker', 'run-once', 'rpc', 'lanes', 'light', 'self-update', 'bridge']));
+  });
+
+  it('phm help node shows the fleet, capacity and pool rows with the newer verbs', async () => {
+    expect(await cmdHelp(['node'])).toBe(0);
+    const text = output();
+    const fleetRow = HELP_ENTRIES.find((entry) => entry.cmd.startsWith('node join|'));
+    expect(fleetRow, 'help table missing the node fleet row').toBeDefined();
+    expect(new Set(nodeVerbs(fleetRow!.cmd))).toEqual(new Set(NODE_FLEET_VERBS));
+    for (const verb of ['measure', 'capacity', 'route', 'self-update', 'bridge']) {
+      expect(text, `phm help node missing ${verb}`).toContain(verb);
+    }
   });
 });
