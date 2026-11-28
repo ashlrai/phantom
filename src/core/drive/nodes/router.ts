@@ -162,15 +162,22 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       continue;
     }
     const requires = job.requires ?? [];
-    const fix = !nodes.some(n => n.owners?.includes(job.owner!))
+    const inScope = nodes.filter(n => n.owners?.includes(job.owner!));
+    // The "no node advertises" claim needs the literal check: a node blocked on
+    // declined, auth or capacity still advertises its caps, and `reasons` records
+    // only each node's first fence, so blocker reasons alone cannot prove it.
+    const capsReady = inScope.filter(n => !jobBlockers(n, job).some(b => b.startsWith('caps:')));
+    const fix = inScope.length === 0
       ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
       : reasons.has('capacity')
         ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
-      : reasons.has('declined') && !reasons.has('caps')
-        ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
-      : reasons.has('caps')
-        ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
-        : authFix(job, nodes, state);
+        : capsReady.length === 0
+          ? `No node owned by '${job.owner}' advertises ${requires.join(',')}. Rejoin a node with --caps including them.`
+          : reasons.has('auth')
+            ? authFix(job, nodes, state)
+            : reasons.has('declined')
+              ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
+              : authFix(job, nodes, state);
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
   return plan;
