@@ -141,7 +141,7 @@ describe('fleet coordination inbox read filters', () => {
     expect(iso.json.messages.map((m: any) => m.id).sort()).toEqual(['m-all', 'm-late']);
   });
 
-  it('refuses malformed filters and keeps board free of them', async () => {
+  it('refuses malformed filters and keeps board\'s own flag set', async () => {
     await seed();
     for (const args of [
       ['--from', 'bad label'],
@@ -152,8 +152,11 @@ describe('fleet coordination inbox read filters', () => {
       const { code } = await inbox('bob', args);
       expect(code).toBe(2);
     }
-    const { code: boardCode } = await cli(['board', '--from', 'alice', '--json']);
-    expect(boardCode).toBe(2);
+    // board takes the shared filter set but not the returns-only keys.
+    for (const args of [['board', '--claim', 'x', '--json'], ['board', '--result', 'VERIFIED', '--json']]) {
+      const { code: boardCode } = await cli(args);
+      expect(boardCode).toBe(2);
+    }
   });
 
   it('serves the same filters through the phm fleet inbox alias', async () => {
