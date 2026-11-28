@@ -55,6 +55,9 @@ export function parseCliVersion(output) {
 
 function repoVersion() {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+  if (pkg.scripts?.prepack !== 'npm run build') {
+    throw new Error('commit smoke requires prepack to run npm run build');
+  }
   if (typeof pkg.version !== 'string' || !/^\d+\.\d+\.\d+$/.test(pkg.version)) {
     throw new Error('package.json version is missing');
   }
@@ -83,14 +86,16 @@ function installPrefix(label) {
 }
 
 export function smokeCommit() {
-  run('npm', ['run', 'build']);
+  const expected = repoVersion();
   const dest = mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'phantom-pack-'));
-  run('npm', ['pack', '--pack-destination', dest]);
+  // The canonical pack lifecycle builds the CLI before packaging it. Build
+  // exactly once, including when the caller's npm config ignores scripts.
+  run('npm', ['pack', '--ignore-scripts=false', '--pack-destination', dest]);
   const tarball = readdirSync(dest).find((name) => name.endsWith('.tgz'));
   if (!tarball) throw new Error('npm pack produced no tarball');
   const prefix = installPrefix('commit');
   run('npm', ['install', '-g', '--prefix', prefix, join(dest, tarball)]);
-  return assertVersion(findPhm(prefix), repoVersion());
+  return assertVersion(findPhm(prefix), expected);
 }
 
 // npm view <pkg> version dist.integrity dist.tarball --json uses dotted keys.
