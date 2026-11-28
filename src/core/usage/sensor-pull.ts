@@ -110,12 +110,11 @@ export async function pullOfficialUsageSensors(options: UsageSensorPullOptions =
   try { claude = parseClaudeSensor(readClaude(), nowMs); } catch { claude = null; }
   try { grok = parseGrokSensor(readGrok(), nowMs); } catch { grok = null; }
 
-  const readings = [
-    row('devin', devin, nowMs),
-    row('codex-personal', codexPersonal, nowMs),
-    row('claude-max', claude, nowMs),
-    row('grok-ultra', grok, nowMs),
-    row('terra', null, nowMs),
-  ];
-  return ACTIVE_USAGE_SENSOR_LANES.map(lane => readings.find(item => item.lane === lane) ?? unmeasuredSensor(lane, nowMs));
+  const readings = new Map<UsageSensorLane, UsageSensorReading>([
+    ['devin', row('devin', devin, nowMs)],
+    ['codex-personal', row('codex-personal', codexPersonal, nowMs)],
+    ['claude-max', row('claude-max', claude, nowMs)],
+    ['grok-ultra', row('grok-ultra', grok, nowMs)],
+  ]);
+  return ACTIVE_USAGE_SENSOR_LANES.map(lane => readings.get(lane) ?? unmeasuredSensor(lane, nowMs));
 }

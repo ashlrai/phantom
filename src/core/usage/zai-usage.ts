@@ -9,7 +9,12 @@
 import { stat, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { UsageResourceReading } from './resource-usage-types.js';
+import {
+  isNonNegativeNumber,
+  isUsageRecord,
+  parseEpochOrIsoMs,
+  type UsageResourceReading,
+} from './resource-usage-types.js';
 
 export const ZAI_USAGE_SOURCE = 'zai-lane-resources';
 
@@ -23,12 +28,9 @@ export interface ZaiUsageDeps {
   mtimeMs?: (path: string) => Promise<number | null>;
 }
 
-const record = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
 function resetIso(value: unknown): string | null {
-  const ms = typeof value === 'string' ? Date.parse(value) : typeof value === 'number' ? value * 1000 : NaN;
-  return Number.isFinite(ms) && ms >= 0 && ms <= 8.64e15 ? new Date(ms).toISOString() : null;
+  const ms = parseEpochOrIsoMs(value);
+  return Number.isFinite(ms) && ms >= 0 ? new Date(ms).toISOString() : null;
 }
 
 /** The zai window as a percent reading, or null when nothing valid is published. */
@@ -43,12 +45,12 @@ export async function readZaiUsage(deps: ZaiUsageDeps = {}): Promise<UsageResour
   } catch {
     return null;
   }
-  if (!record(raw)) return null;
-  const rows = record(raw.lanes) ? raw.lanes : raw;
+  if (!isUsageRecord(raw)) return null;
+  const rows = isUsageRecord(raw.lanes) ? raw.lanes : raw;
   const row = Object.prototype.hasOwnProperty.call(rows, 'zai') ? rows.zai : undefined;
-  if (!record(row)) return null;
+  if (!isUsageRecord(row)) return null;
   const frac = row.used_frac;
-  if (typeof frac !== 'number' || !Number.isFinite(frac) || frac < 0 || mtime === null) return null;
+  if (!isNonNegativeNumber(frac) || mtime === null) return null;
   return {
     used: Math.round(Math.min(frac, 1) * 10_000) / 100,
     limit: 100,

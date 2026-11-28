@@ -3,7 +3,8 @@
  * the readings of the last 6 hours, with the evidence (`samples`, `window_h`,
  * `method`) beside the number so nobody has to trust it blind.
  *
- * Pure, no imports: browser-safe, shared by `phm pools` and the panes.
+ * Pure, browser-safe (imports only zero-dependency helpers from
+ * resource-usage-types.ts): shared by `phm pools` and the panes.
  *
  * Why not a window average: used% divided by hours since the window opened says
  * how fast the pool was spent on average, not how fast it is being spent now.
@@ -17,6 +18,8 @@
  *  - fewer than BURN_MIN_SAMPLES readings (or no time spread) is "not enough
  *    readings", never a guess.
  */
+import { roundTo } from './resource-usage-types.js';
+
 export const BURN_WINDOW_HOURS = 6;
 export const BURN_MIN_SAMPLES = 3;
 export const BURN_METHOD = 'least-squares-6h' as const;
@@ -43,7 +46,6 @@ export interface BurnRead {
 }
 
 const time = (iso: string | null | undefined): number => iso == null ? NaN : Date.parse(iso);
-const round = (n: number, places: number): number => Math.round(n * 10 ** places) / 10 ** places;
 
 /** The newest unbroken run of readings: oldest first, inside the window, none across a reset. */
 export function burnSeries(samples: readonly BurnSample[], nowMs: number): BurnSample[] {
@@ -67,7 +69,7 @@ export function burnRate(samples: readonly BurnSample[], nowMs: number): BurnRea
   const first = series[0];
   const last = series.at(-1);
   const spanH = first && last ? (time(last.at) - time(first.at)) / HOUR_MS : 0;
-  const none = (reason: string): BurnRead => ({ points_per_hour: null, samples: series.length, window_h: round(spanH, 2), method: BURN_METHOD, reason });
+  const none = (reason: string): BurnRead => ({ points_per_hour: null, samples: series.length, window_h: roundTo(spanH, 2), method: BURN_METHOD, reason });
   if (series.length < BURN_MIN_SAMPLES) return none(`${series.length} reading${series.length === 1 ? '' : 's'} in the last ${BURN_WINDOW_HOURS} h, need ${BURN_MIN_SAMPLES}`);
   if (spanH <= 0) return none('readings share one time');
   // Hours since the first reading keep the arithmetic small and exact.
@@ -78,5 +80,5 @@ export function burnRate(samples: readonly BurnSample[], nowMs: number): BurnRea
   let num = 0;
   let den = 0;
   for (let i = 0; i < xs.length; i++) { num += (xs[i]! - meanX) * (ys[i]! - meanY); den += (xs[i]! - meanX) ** 2; }
-  return { points_per_hour: round(Math.max(0, num / den), 2), samples: series.length, window_h: round(spanH, 2), method: BURN_METHOD, reason: null };
+  return { points_per_hour: roundTo(Math.max(0, num / den), 2), samples: series.length, window_h: roundTo(spanH, 2), method: BURN_METHOD, reason: null };
 }

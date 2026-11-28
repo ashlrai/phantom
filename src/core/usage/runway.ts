@@ -12,9 +12,16 @@
  * with 59 h to reset reads as low waste risk even though it empties in hours
  * and idles for days. Runway asks both questions.
  *
- * Pure, with no imports: the router (routing/decision-candidates.ts, Tier-1
- * closure) uses it. The dispatchd status reader lives in runway-read.ts.
+ * Pure (imports only zero-dependency helpers from resource-usage-types.ts): the
+ * router (routing/decision-candidates.ts, Tier-1 closure) uses it. The
+ * dispatchd status reader lives in runway-read.ts.
  */
+import {
+  formatDurationMinutes,
+  isFiniteNumber,
+  isUsageRecord,
+  roundTo,
+} from './resource-usage-types.js';
 
 export const POOL_RUNWAY_SCHEMA = 'pool.runway.v1' as const;
 export type RunwayState = 'spend' | 'pace' | 'starve' | 'unknown';
@@ -70,45 +77,39 @@ export interface RunwaySnapshot {
   shares?: PoolShareSnapshot;
 }
 
-const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-const round1 = (n: number): number => Math.round(n * 10) / 10;
-const round2 = (n: number): number => Math.round(n * 100) / 100;
 /** "3d 4h", "5h 12m", "40m"; same shape as spend.ts spendCountdown. */
 export function runwayHours(hours: number): string {
   if (!(hours > 0)) return 'now';
-  const minutes = Math.floor(hours * 60);
-  const d = Math.floor(minutes / 1440); const h = Math.floor(minutes % 1440 / 60); const m = minutes % 60;
-  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+  return formatDurationMinutes(Math.floor(hours * 60));
 }
-const hoursText = runwayHours;
 
 /** The pure verdict for one pool. A missing reading makes the state unknown; nothing is inferred. */
 export function runway(input: RunwayInput): PoolRunway {
-  const used = num(input.usedPercent) && input.usedPercent >= 0 ? input.usedPercent : null;
-  const burn = num(input.burnPerHour) && input.burnPerHour >= 0 ? input.burnPerHour : null;
-  const reset = num(input.hoursToReset) && input.hoursToReset > 0 ? input.hoursToReset : null;
+  const used = isFiniteNumber(input.usedPercent) && input.usedPercent >= 0 ? input.usedPercent : null;
+  const burn = isFiniteNumber(input.burnPerHour) && input.burnPerHour >= 0 ? input.burnPerHour : null;
+  const reset = isFiniteNumber(input.hoursToReset) && input.hoursToReset > 0 ? input.hoursToReset : null;
   const base: PoolRunway = { pool: input.pool, state: 'unknown', usedPercent: used, burnPerHour: burn, hoursToEmpty: null,
-    hoursToReset: reset === null ? null : round2(reset), idleHours: null, unusedAtResetPercent: null, safeBurnPerHour: null, reason: null, advice: '' };
+    hoursToReset: reset === null ? null : roundTo(reset, 2), idleHours: null, unusedAtResetPercent: null, safeBurnPerHour: null, reason: null, advice: '' };
   const missing = used === null ? 'no usage reading' : reset === null ? 'reset time unknown' : null;
   if (missing !== null) return { ...base, reason: missing, advice: `unknown: ${missing}` };
   const left = Math.max(0, 100 - used!);
-  const safe = round2(left / reset!);
+  const safe = roundTo(left / reset!, 2);
   if (left === 0) {
-    return { ...base, state: 'starve', hoursToEmpty: 0, idleHours: round2(reset!), unusedAtResetPercent: 0, safeBurnPerHour: 0,
-      advice: `used up, idle ${hoursText(reset!)} until reset: send nothing new here` };
+    return { ...base, state: 'starve', hoursToEmpty: 0, idleHours: roundTo(reset!, 2), unusedAtResetPercent: 0, safeBurnPerHour: 0,
+      advice: `used up, idle ${runwayHours(reset!)} until reset: send nothing new here` };
   }
   // A full reading with no burn rate is still unknown: we will not guess how fast it drains.
   if (burn === null) return { ...base, safeBurnPerHour: safe, reason: 'no burn rate yet', advice: 'unknown: no burn rate yet' };
   const unused = Math.max(0, left - burn * reset!);
-  const known = { ...base, safeBurnPerHour: safe, unusedAtResetPercent: round1(unused) };
+  const known = { ...base, safeBurnPerHour: safe, unusedAtResetPercent: roundTo(unused, 1) };
   if (burn === 0) return { ...known, state: 'spend', advice: `nothing is using it; ${Math.round(left)}% left: send filler here` };
   const empty = left / burn;
   const idle = reset! - empty;
   if (idle >= Math.max(RUNWAY_STARVE_MIN_IDLE_HOURS, reset! * RUNWAY_STARVE_MIN_IDLE_SHARE)) {
-    return { ...known, state: 'starve', hoursToEmpty: round2(empty), idleHours: round2(idle),
-      advice: `runs out in ${hoursText(empty)}, ${hoursText(idle)} before reset: frontier and high-yield work only; slow to ${safe}%/h` };
+    return { ...known, state: 'starve', hoursToEmpty: roundTo(empty, 2), idleHours: roundTo(idle, 2),
+      advice: `runs out in ${runwayHours(empty)}, ${runwayHours(idle)} before reset: frontier and high-yield work only; slow to ${safe}%/h` };
   }
-  const timed = { ...known, hoursToEmpty: round2(empty) };
+  const timed = { ...known, hoursToEmpty: roundTo(empty, 2) };
   return unused >= RUNWAY_SPARE_PERCENT
     ? { ...timed, state: 'spend', advice: `${Math.round(unused)}% would go unused at reset: send filler here` }
     : { ...timed, state: 'pace', advice: 'on track to use it all by reset' };
@@ -130,7 +131,7 @@ export function runwayHeadline(pools: readonly PoolRunway[]): string {
       ? 'Unknown: the dispatcher status is missing or stale.' : 'Unknown: no pool has a burn rate yet.';
   }
   const parts: string[] = [];
-  if (starve.length > 0) parts.push(`${starve.map(row => `${row.pool} runs out ${hoursText(row.idleHours ?? 0)} early`).join(', ')}: frontier work only there`);
+  if (starve.length > 0) parts.push(`${starve.map(row => `${row.pool} runs out ${runwayHours(row.idleHours ?? 0)} early`).join(', ')}: frontier work only there`);
   if (spend.length > 0) parts.push(`send filler to ${spend.map(row => row.pool).join(', ')}`);
   if (parts.length === 0) parts.push('Every measured pool is on pace');
   const sentence = parts.join('; ');
@@ -146,11 +147,11 @@ export function sortRunways(pools: readonly PoolRunway[]): PoolRunway[] {
 
 /** Wire guard for clients: a reply that is not pool.runway.v1 is treated as unknown, never rendered. */
 export function isRunwaySnapshot(value: unknown): value is RunwaySnapshot {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!isUsageRecord(value)) return false;
   const v = value as Partial<RunwaySnapshot>;
   return v.schema === POOL_RUNWAY_SCHEMA && v.v === 1 && typeof v.headline === 'string' && Array.isArray(v.pools)
-    && v.pools.every(row => row !== null && typeof row === 'object' && typeof row.pool === 'string'
-      && RUNWAY_STATES.includes(row.state) && typeof row.advice === 'string');
+    && v.pools.every(row => isUsageRecord(row) && typeof row.pool === 'string'
+      && RUNWAY_STATES.includes(row.state as RunwayState) && typeof row.advice === 'string');
 }
 
 /**
@@ -166,8 +167,8 @@ export function isRunwaySnapshot(value: unknown): value is RunwaySnapshot {
 export const POOL_SHARE_SCHEMA = 'fleet.pools.v1' as const;
 export type PoolShareState = 'starving' | 'wasting' | 'on_pace' | 'unknown';
 export const POOL_SHARE_STATES: readonly PoolShareState[] = ['wasting', 'on_pace', 'starving', 'unknown'];
-export const POOL_STARVING_RUNWAY_SHARE = 0.8;
-export const POOL_WASTING_PROJECTED_PERCENT = 90;
+const POOL_STARVING_RUNWAY_SHARE = 0.8;
+const POOL_WASTING_PROJECTED_PERCENT = 90;
 
 export interface PoolShareInput {
   pool: string;
@@ -234,21 +235,21 @@ const wholeHours = (n: number): string => `${Math.max(0, Math.round(n))} h`;
  */
 export function planPoolShares(inputs: readonly PoolShareInput[]): PoolShare[] {
   const rows = inputs.map(input => {
-    const used = num(input.usedPercent) && input.usedPercent >= 0 ? input.usedPercent : null;
-    const burn = num(input.burnPerHour) && input.burnPerHour >= 0 ? input.burnPerHour : null;
-    const hours = num(input.hoursToReset) ? input.hoursToReset : null;
+    const used = isFiniteNumber(input.usedPercent) && input.usedPercent >= 0 ? input.usedPercent : null;
+    const burn = isFiniteNumber(input.burnPerHour) && input.burnPerHour >= 0 ? input.burnPerHour : null;
+    const hours = isFiniteNumber(input.hoursToReset) ? input.hoursToReset : null;
     const reason = input.reason ?? (used === null ? 'no usage reading' : burn === null ? 'no burn rate yet'
       : hours === null ? 'reset time unknown' : hours <= 0 ? 'reset already passed; waiting for a new reading' : null);
     const base = { pool: input.pool, reset_at: input.resetAt ?? null, burn_pct_per_hour: burn,
-      unit: input.unit ?? 'percent', remaining_usd: input.remainingUsd ?? null, runway_hours: null as number | null, hours_to_reset: hours === null ? null : round1(hours),
-      used_percent: used === null ? null : round1(used), projected_percent_at_reset: null as number | null };
+      unit: input.unit ?? 'percent', remaining_usd: input.remainingUsd ?? null, runway_hours: null as number | null, hours_to_reset: hours === null ? null : roundTo(hours, 1),
+      used_percent: used === null ? null : roundTo(used, 1), projected_percent_at_reset: null as number | null };
     if (reason !== null) return { ...base, state: 'unknown' as PoolShareState, reason, room: 0 };
     const left = Math.max(0, 100 - used!);
     const runwayHours = burn! > 0 ? left / burn! : left === 0 ? 0 : null;
     const projected = Math.min(100, used! + burn! * hours!);
     const state: PoolShareState = runwayHours !== null && runwayHours < hours! * POOL_STARVING_RUNWAY_SHARE ? 'starving'
       : projected < POOL_WASTING_PROJECTED_PERCENT ? 'wasting' : 'on_pace';
-    return { ...base, runway_hours: runwayHours === null ? null : round1(runwayHours), projected_percent_at_reset: round1(projected),
+    return { ...base, runway_hours: runwayHours === null ? null : roundTo(runwayHours, 1), projected_percent_at_reset: roundTo(projected, 1),
       state, reason: null, room: state === 'starving' ? 0 : 100 - projected };
   });
   const open = rows.filter(row => row.state === 'wasting' || row.state === 'on_pace');
@@ -257,7 +258,7 @@ export function planPoolShares(inputs: readonly PoolShareInput[]): PoolShare[] {
     || b.room - a.room || (b.runway_hours ?? 0) - (a.runway_hours ?? 0) || a.pool.localeCompare(b.pool));
   return ranked.map(({ room: own, ...row }, index) => {
     const share = row.state === 'unknown' ? null : row.state === 'starving' ? 0
-      : room > 0 ? round2(own / room) : round2(1 / open.length);
+      : room > 0 ? roundTo(own / room, 2) : roundTo(1 / open.length, 2);
     const name = poolLabel(row.pool);
     const left = row.used_percent === null ? '' : `${Math.max(0, Math.round(100 - row.used_percent))}% left, `;
     const resets = row.hours_to_reset === null || row.hours_to_reset <= 0 ? '' : `resets in ${wholeHours(row.hours_to_reset)}, `;

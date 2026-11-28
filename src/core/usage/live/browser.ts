@@ -7,8 +7,10 @@
  * storage-state, token, keychain or file access, and the profile path may not be
  * a Codex home. Sign-in is done by the operator in this browser, the normal way.
  */
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import { isCodexHomePath } from '../resource-usage-types.js';
 import { bindingWindow, needsSignin, parseVisibleWindows, type UsageSite } from './sites.js';
 
 export interface BrowserPage {
@@ -23,13 +25,39 @@ export type BrowserLauncher = (profileDir: string, options: { headless: boolean 
 
 export function usageBrowserDir(home = homedir()): string { return join(home, '.ashlr-runs', 'usage-browser'); }
 
+/** Return `value` only when it is an absolute path, otherwise undefined. */
+export function absolutePathOrUndefined(value: string | undefined): string | undefined {
+  return typeof value === 'string' && isAbsolute(value) ? value : undefined;
+}
+
 /** The profile must be the usage browser dir (or a child), never a Codex home or other app profile. */
 export function profileDirAllowed(dir: string, home = homedir()): boolean {
   if (!isAbsolute(dir) || /[\0\r\n]/.test(dir)) return false;
   const norm = resolve(dir);
-  if (/(?:^|\/)\.codex[^/]*(?:\/|$)/.test(norm)) return false;
+  if (isCodexHomePath(norm)) return false;
   const root = usageBrowserDir(home);
   return norm === root || norm.startsWith(`${root}/`);
+}
+
+export type UsageBrowserSessionResult =
+  | { ok: true; session: BrowserSession }
+  | { ok: false; reason: 'profile-refused' | 'unavailable' };
+
+/** Validate, initialize, and launch the dedicated usage browser profile for CLI runners. */
+export async function openUsageBrowserSession(options: {
+  home: string;
+  headed: boolean;
+  launch?: BrowserLauncher;
+}): Promise<UsageBrowserSessionResult> {
+  const dir = usageBrowserDir(options.home);
+  if (!profileDirAllowed(dir, options.home)) return { ok: false, reason: 'profile-refused' };
+  try {
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const session = await (options.launch ?? playwrightLauncher)(dir, { headless: !options.headed });
+    return { ok: true, session };
+  } catch {
+    return { ok: false, reason: 'unavailable' };
+  }
 }
 
 export type SiteReading =

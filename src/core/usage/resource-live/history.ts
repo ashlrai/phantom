@@ -37,7 +37,7 @@ export function projectLaneHistory(raw: unknown, nowMs: number): Record<string, 
     if (!a.sensor_lane || seen.has(a.sensor_lane)) return [];
     seen.add(a.sensor_lane);
     const points = file.allowances[a.id];
-    return a.sensor_lane && points?.length ? [[a.sensor_lane, summarizeHistory(points, nowMs)]] : [];
+    return points?.length ? [[a.sensor_lane, summarizeHistory(points, nowMs)]] : [];
   }));
 }
 

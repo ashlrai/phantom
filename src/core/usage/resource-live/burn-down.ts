@@ -13,6 +13,7 @@
  * is spent or cannot be verified, because past that point every call is new
  * spend.
  */
+import { roundTo } from '../resource-usage-types.js';
 import type {
   BurnDownPace, BurnDownPlan, BurnDownRow, HistorySample, ResourceLiveId, ResourceLiveReading,
 } from './types.js';
@@ -20,17 +21,13 @@ import { RESOURCE_LIVE_STALE_MS } from './types.js';
 import { ANTIGRAVITY_EXHAUSTION, antigravityQuota } from './antigravity-quota.js';
 
 /** Observed rate within this share of the target is on pace. */
-export const PACE_TOLERANCE = 0.15;
+const PACE_TOLERANCE = 0.15;
 /** Samples the observed rate may span. */
-export const BURN_SAMPLES = 6;
+const BURN_SAMPLES = 6;
 
 const TIER: Record<ResourceLiveReading['class'], 0 | 1 | 2 | 3> = {
   free: 0, expiring: 0, included: 1, 'metered-included': 2, reserve: 3,
 };
-
-function round(value: number): number {
-  return Math.round(value * 1000) / 1000;
-}
 
 function future(iso: string | null, nowMs: number): number | null {
   const at = iso === null ? NaN : Date.parse(iso);
@@ -82,13 +79,13 @@ function planRow(reading: ResourceLiveReading, samples: readonly HistorySample[]
   if (reading.id === 'antigravity') {
     const quota = antigravityQuota(reading, nowMs);
     if (quota.reset_at) return { ...base, action: 'hold', reason: ANTIGRAVITY_EXHAUSTION, remaining: 0,
-      deadline_at: quota.reset_at, hours_to_deadline: round((Date.parse(quota.reset_at) - nowMs) / 3_600_000), projected_unused: 0 };
+      deadline_at: quota.reset_at, hours_to_deadline: roundTo((Date.parse(quota.reset_at) - nowMs) / 3_600_000, 3), projected_unused: 0 };
   }
   const reset = future(reading.reset_at, nowMs);
   const deadlineMs = reset !== null && expiry !== null ? Math.min(reset, expiry) : reset ?? expiry;
   const deadline = deadlineMs === null ? null : new Date(deadlineMs).toISOString();
   const hours = deadlineMs === null ? null : (deadlineMs - nowMs) / 3_600_000;
-  const measured = { ...base, remaining: reading.remaining, deadline_at: deadline, hours_to_deadline: hours === null ? null : round(hours) };
+  const measured = { ...base, remaining: reading.remaining, deadline_at: deadline, hours_to_deadline: hours === null ? null : roundTo(hours, 3) };
   // Local capacity has no allowance: nothing to pace, always worth using first.
   if (reading.remaining === null) {
     if (metered) return { ...measured, action: 'hold', reason: 'Included balance is unknown. Past it every call is new spend.' };
@@ -108,10 +105,10 @@ function planRow(reading: ResourceLiveReading, samples: readonly HistorySample[]
   }
   const paced = {
     ...measured,
-    target_rate_per_hour: target === null ? null : round(target),
-    observed_rate_per_hour: rate === null ? null : round(rate),
+    target_rate_per_hour: target === null ? null : roundTo(target, 3),
+    observed_rate_per_hour: rate === null ? null : roundTo(rate, 3),
     pace,
-    projected_unused: rate === null || hours === null ? null : round(Math.max(0, reading.remaining - rate * hours)),
+    projected_unused: rate === null || hours === null ? null : roundTo(Math.max(0, reading.remaining - rate * hours), 3),
   };
   if (reading.class === 'reserve') return { ...paced, action: 'reserve', reason: 'Reserve lane. Used after every other allowance.' };
   if (metered) return { ...paced, action: 'burn', reason: 'Spend only the included credit. Stop at zero.' };

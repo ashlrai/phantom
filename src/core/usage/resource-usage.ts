@@ -41,6 +41,9 @@ import { readClaudeApiGrantViews } from '../resources/claude-api-grant.js';
 import type { ClaudeApiGrantReadView } from '../resources/claude-api-grant-types.js';
 import {
   USAGE_RESOURCES,
+  isNonNegativeNumber,
+  isUsageRecord,
+  raceWithDeadline,
   type UsageResourceId,
   type UsageResourceReader,
   type UsageResourceReading,
@@ -71,7 +74,7 @@ const UNITS: readonly UsageResourceUnit[] = ['percent', 'acu', 'usd', 'points'];
 const SOURCE_MAX = 128;
 
 function finiteAmount(value: unknown): value is number | null {
-  return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+  return value === null || isNonNegativeNumber(value);
 }
 
 function isoInstant(value: unknown): value is string | null {
@@ -90,8 +93,8 @@ function sourceLabel(value: unknown): value is string {
 
 /** Exactly the contract fields, allowlisted; anything else fails closed. */
 export function validUsageReading(value: unknown): value is UsageResourceReading {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const row = value as Record<string, unknown>;
+  if (!isUsageRecord(value)) return false;
+  const row = value;
   return Object.keys(row).every((key) =>
     ['used', 'limit', 'unit', 'resetsAt', 'source', 'asOf'].includes(key)) &&
     finiteAmount(row['used']) && finiteAmount(row['limit']) &&
@@ -299,27 +302,9 @@ export function usageResourceReaders(
 
 const DEFAULT_DEADLINE_MS = 12_000;
 
-type ReaderOutcome =
-  | { kind: 'reading'; value: UsageResourceReading | null }
-  | { kind: 'timeout' }
-  | { kind: 'error' };
-
 function emptyRow(id: UsageResourceId, label: string, state: UsageResourceRowState,
   reason: UsageResourceRowReason = null): UsageResourceRow {
   return { id, label, state, used: null, limit: null, unit: null, resetsAt: null, source: null, asOf: null, reason };
-}
-
-async function runReader(reader: UsageResourceReader, deadlineMs: number): Promise<ReaderOutcome> {
-  const work = Promise.resolve()
-    .then(() => reader())
-    .then((value): ReaderOutcome => ({ kind: 'reading', value }))
-    .catch((): ReaderOutcome => ({ kind: 'error' }));
-  const timeout = new Promise<ReaderOutcome>((resolve) => {
-    // A pending deadline must not hold a short-lived process open.
-    setTimeout(() => resolve({ kind: 'timeout' }), deadlineMs).unref();
-  });
-  // Promise.race keeps handlers on the loser, so a late rejection is handled.
-  return Promise.race([work, timeout]);
 }
 
 export interface UsageResourcesOptions extends UsageResourceReaderDeps {
@@ -342,7 +327,7 @@ export async function readUsageResources(options: UsageResourcesOptions = {}): P
   const rows = await Promise.all(USAGE_RESOURCES.map(async ({ id, label }): Promise<UsageResourceRow> => {
     const reader = readers[id];
     if (!reader) return emptyRow(id, label, 'no-reader');
-    const outcome = await runReader(reader, deadlineMs);
+    const outcome = await raceWithDeadline(reader, deadlineMs);
     if (outcome.kind === 'timeout') return emptyRow(id, label, 'unavailable', 'reader-timeout');
     if (outcome.kind === 'error') return emptyRow(id, label, 'unavailable', 'reader-error');
     if (outcome.value === null) return emptyRow(id, label, 'no-reading');

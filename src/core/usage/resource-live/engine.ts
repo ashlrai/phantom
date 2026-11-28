@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isUsageRecord, raceWithDeadline } from '../resource-usage-types.js';
 import { planBurnDown } from './burn-down.js';
 import { planBankedReset, readBankedResets } from './banked-resets.js';
 import { nextPollState, nextWakeMs, pollDue, readingFingerprint } from './cadence.js';
@@ -30,7 +31,7 @@ import {
   type ResourceLiveReading, type ResourceLiveReason, type ResourceLiveSidecar,
 } from './types.js';
 
-export const SOURCE_DEADLINE_MS = 20_000;
+const SOURCE_DEADLINE_MS = 20_000;
 /** A lock older than this belongs to a pass that died. */
 export const LOCK_STALE_MS = 5 * 60_000;
 
@@ -64,16 +65,6 @@ function normalizeInstant(value: string): string {
   return Number.isFinite(time) ? new Date(time).toISOString() : value;
 }
 
-type Outcome = { kind: 'value'; value: Awaited<ReturnType<ResourceLiveSource['read']>> } | { kind: 'error' } | { kind: 'timeout' };
-
-async function runSource(source: ResourceLiveSource, nowMs: number, deadlineMs: number): Promise<Outcome> {
-  const work = Promise.resolve().then(() => source.read(nowMs))
-    .then((value): Outcome => ({ kind: 'value', value }))
-    .catch((): Outcome => ({ kind: 'error' }));
-  const timeout = new Promise<Outcome>(resolve => { setTimeout(() => resolve({ kind: 'timeout' }), deadlineMs).unref(); });
-  return Promise.race([work, timeout]);
-}
-
 /**
  * Try each source in order. The first current reading wins. A reading older
  * than the staleness bound is kept only when no later source has a current
@@ -85,7 +76,7 @@ async function readAllowance(allowance: ResourceLiveAllowance, sources: readonly
   let older: ResourceLiveReading | null = null;
   let context: ResourceLiveReading['execution_context'];
   for (const source of sources) {
-    const outcome = await runSource(source, nowMs, source.deadlineMs ?? deadlineMs);
+    const outcome = await raceWithDeadline(() => source.read(nowMs), source.deadlineMs ?? deadlineMs);
     if (outcome.kind === 'error') { reason = 'source-error'; continue; }
     if (outcome.kind === 'timeout') { reason = 'source-timeout'; continue; }
     if (outcome.value === null) continue;
@@ -147,9 +138,9 @@ export async function readActiveLanes(runsDir: string, nowMs: number): Promise<S
     const tick = typeof status['last_tick'] === 'string' ? Date.parse(status['last_tick']) : NaN;
     if (!Number.isFinite(tick) || tick > nowMs || nowMs - tick > 5 * 60_000) return active;
     const lanes = status['lanes'];
-    if (lanes === null || typeof lanes !== 'object' || Array.isArray(lanes)) return active;
-    for (const [lane, row] of Object.entries(lanes as Record<string, unknown>)) {
-      const running = row !== null && typeof row === 'object' ? (row as Record<string, unknown>)['running'] : null;
+    if (!isUsageRecord(lanes)) return active;
+    for (const [lane, row] of Object.entries(lanes)) {
+      const running = isUsageRecord(row) ? row['running'] : null;
       if (typeof running === 'number' && running > 0) active.add(lane);
     }
   } catch { /* No status file means no lane is known to be active. */ }

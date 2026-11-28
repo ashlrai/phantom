@@ -5,6 +5,7 @@ import { remoteLaneCap } from '../../fleet/unfed-market.js';
 import { readJobsTail, type JobsTailRead } from '../../fleet/report-ledger.js';
 import { readResourceQueue } from '../../fleet/resource-queue.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
+import { asNonNegativeNumber, asUsageRecord, roundTo } from '../resource-usage-types.js';
 import { ANTIGRAVITY_EXHAUSTION, antigravityQuota } from './antigravity-quota.js';
 import { planBurnDown } from './burn-down.js';
 import { codexResetBankUpgradeHint, planBankedReset, readBankedResets } from './banked-resets.js';
@@ -12,14 +13,10 @@ import { readCustomResources } from './custom.js';
 import { parseResourceLiveSidecar, readPrivateJson, readResourceLiveFile, unverified } from './store.js';
 import { RESOURCE_LIVE_ALLOWANCES, type ResourceLiveAllowance } from './types.js';
 
-export const FLEET_RESOURCE_PLAN_SCHEMA = 'phantom.fleet-resource-plan.v1';
+const FLEET_RESOURCE_PLAN_SCHEMA = 'phantom.fleet-resource-plan.v1';
 const MINUTE = 60_000;
-const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
-  ? value as Record<string, unknown> : {};
-const number = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-const count = (value: unknown): number | null => Number.isSafeInteger(value) ? number(value) : null;
+const count = (value: unknown): number | null => Number.isSafeInteger(value) ? asNonNegativeNumber(value) : null;
 const time = (value: unknown): number => typeof value === 'string' ? Date.parse(value) : NaN;
-const round = (n: number): number => Number(n.toFixed(3));
 
 interface Finish { lane: string; at: number; minutes: number; tokens: number | null; fable: boolean }
 function finishes(ledger: JobsTailRead, now: number): Finish[] {
@@ -27,17 +24,17 @@ function finishes(ledger: JobsTailRead, now: number): Finish[] {
   for (const line of ledger.text?.split('\n') ?? []) {
     if (!line) continue;
     let row: Record<string, unknown>;
-    try { row = object(JSON.parse(line)); } catch { continue; }
-    const at = time(row['ts']), seconds = number(row['wall_s']);
+    try { row = asUsageRecord(JSON.parse(line)); } catch { continue; }
+    const at = time(row['ts']), seconds = asNonNegativeNumber(row['wall_s']);
     if (row['event'] !== 'finish' || typeof row['lane'] !== 'string' || !Number.isFinite(at) ||
       at > now || at < now - 7 * 1440 * MINUTE || seconds === null || seconds === 0) continue;
-    out.push({ lane: row['lane'], at, minutes: seconds / 60, tokens: number(row['tokens_total']), fable: row['sublane'] === 'fable' });
+    out.push({ lane: row['lane'], at, minutes: seconds / 60, tokens: asNonNegativeNumber(row['tokens_total']), fable: row['sublane'] === 'fable' });
   }
   return out;
 }
 
 function machine(node: NodeRow) {
-  const cpu = number(node.cpuHeadroomPercent), memory = number(node.freeMemoryPercent);
+  const cpu = asNonNegativeNumber(node.cpuHeadroomPercent), memory = asNonNegativeNumber(node.freeMemoryPercent);
   const free = count(node.freeSlots), running = Array.isArray(node.jobsRunning) ? node.jobsRunning.length : null;
   const additional = node.stateCode === 'offline' || node.stateCode === 'held' || node.phantom === 'not-running' ||
     (node.reachable === true && (cpu === 0 || memory === 0 || free === 0)) ? 0
@@ -58,13 +55,13 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
   const machines = nodes.map(machine);
   const slots = machines.map(row => row.available_slots);
   const jobs = finishes(ledger, now);
-  const dispatch = object(status);
+  const dispatch = asUsageRecord(status);
   const age = now - time(dispatch['last_tick']);
-  const statusLanes = dispatch['schema'] === 'dispatchd.status.v1' && age >= 0 && age < 5 * MINUTE ? object(dispatch['lanes']) : {};
+  const statusLanes = dispatch['schema'] === 'dispatchd.status.v1' && age >= 0 && age < 5 * MINUTE ? asUsageRecord(dispatch['lanes']) : {};
   const antigravity = antigravityQuota(measured.get('antigravity'), now);
   const laneNames = [...new Set([...plan.allowances.flatMap(row => row.lane ? [row.lane] : []), ...Object.keys(statusLanes)])];
   const lanes = laneNames.map(lane => {
-    const row = object(statusLanes[lane]);
+    const row = asUsageRecord(statusLanes[lane]);
     const running = count(row['running']), ceiling = count(row['ceiling']), hard = count(row['hard_cap']);
     const cap = ceiling === null || hard === null ? null : Math.min(ceiling, hard);
     const held = typeof row['held'] === 'boolean' ? row['held'] || Boolean(dispatch['paused']) : null;
@@ -178,7 +175,7 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     }
     if (lane?.additional_slots == null || lane.queued_jobs === null || row.jobs_per_slot === null || row.estimated_quota_per_job === null) continue;
     row.projected_jobs = Math.min(plannedJobs.get(lane.lane) ?? lane.queued_jobs, lane.additional_slots * row.jobs_per_slot);
-    row.projected_waste_at_deadline = round(Math.max(0, row.remaining - row.projected_jobs * row.estimated_quota_per_job));
+    row.projected_waste_at_deadline = roundTo(Math.max(0, row.remaining - row.projected_jobs * row.estimated_quota_per_job), 3);
   }
   const resetReason = resets?.unknown_reason;
   const resetHint = codexResetBankUpgradeHint(resetReason);
@@ -188,10 +185,10 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     reset_bank_deadlines: resets?.grants?.map(({ expires_at, count, kind }) => ({ expires_at, count, kind })) ?? null,
     reset_proposal: resetProposal,
     ledger_truncated: ledger.text === null ? null : ledger.truncated, machines,
-    lanes: lanes.map(row => ({ ...row, minutes_per_job: row.minutes_per_job === null ? null : round(row.minutes_per_job),
-      tokens_per_job: row.tokens_per_job === null ? null : round(row.tokens_per_job) })),
+    lanes: lanes.map(row => ({ ...row, minutes_per_job: row.minutes_per_job === null ? null : roundTo(row.minutes_per_job, 3),
+      tokens_per_job: row.tokens_per_job === null ? null : roundTo(row.tokens_per_job, 3) })),
     allowances: allowances.map(row => ({ ...row,
-      estimated_quota_per_job: row.estimated_quota_per_job === null ? null : round(row.estimated_quota_per_job) })) };
+      estimated_quota_per_job: row.estimated_quota_per_job === null ? null : roundTo(row.estimated_quota_per_job, 3) })) };
 }
 
 export async function readFleetResourcePlan(runsDir: string, now = Date.now()) {

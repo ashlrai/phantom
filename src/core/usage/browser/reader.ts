@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { BROWSER_PROVIDERS, parseUsagePage, type BrowserProvider, type BrowserUsageRecord, type ParseRefusal } from './parsers.js';
 
 /** Default pages. Configurable: provider UIs move, the parsers do not follow URLs. */
-export const BROWSER_USAGE_URLS: Record<BrowserProvider, string> = {
+const BROWSER_USAGE_URLS: Record<BrowserProvider, string> = {
   claude: 'https://claude.ai/settings/usage',
   chatgpt: 'https://chatgpt.com/codex/settings/usage',
   devin: 'https://app.devin.ai/settings/billing',
