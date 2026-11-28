@@ -1,0 +1,5 @@
+/* The reused desktop panels sit in a phone gutter: wrap long text, every control a 44 px target. */
+.wrap { display: grid; gap: var(--space-3); min-width: 0; padding: 0 var(--space-3) var(--space-4); overflow-wrap: anywhere; }
+.wrap button, .wrap input { min-height: 2.75rem; }
+.wrap h2, .wrap h3 { margin: 0; }
+.note { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }

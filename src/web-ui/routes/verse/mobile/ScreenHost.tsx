@@ -20,6 +20,7 @@ const importFeed = () => import('./screens/FeedScreen.js');
 const importGoals = () => import('./screens/GoalsScreen.js');
 const importIdeas = () => import('./screens/IdeasScreen.js');
 const importDropJob = () => import('./screens/DropJobScreen.js');
+const importViews = () => import('./screens/FleetViewScreens.js');
 const importMore = () => import('./screens/MoreScreen.js');
 const importWatch = () => import('./screens/WatchScreen.js');
 
@@ -36,11 +37,16 @@ const FeedScreen = lazy(() => importFeed().then((m) => ({ default: m.FeedScreen 
 const GoalsScreen = lazy(() => importGoals().then((m) => ({ default: m.GoalsScreen })));
 const IdeasScreen = lazy(() => importIdeas().then((m) => ({ default: m.IdeasScreen })));
 const DropJobScreen = lazy(() => importDropJob().then((m) => ({ default: m.DropJobScreen })));
+const SpendScreen = lazy(() => importViews().then((m) => ({ default: m.SpendScreen })));
+const PoolRunwayScreen = lazy(() => importViews().then((m) => ({ default: m.PoolRunwayScreen })));
+const HeldScreen = lazy(() => importViews().then((m) => ({ default: m.HeldScreen })));
+const LibraryScreen = lazy(() => importViews().then((m) => ({ default: m.LibraryScreen })));
+const MessageGraphScreen = lazy(() => importViews().then((m) => ({ default: m.MessageGraphScreen })));
 const MoreScreen = lazy(() => importMore().then((m) => ({ default: m.MoreScreen })));
 const WatchScreen = lazy(() => importWatch().then((m) => ({ default: m.WatchScreen })));
 
 /** Most-visited first: Needs you and Agents are what a phone is opened for. */
-const SCREEN_IMPORTS = [importNeedsYou, importAgents, importAgentDetail, importLeader, importNewAgent, importFleet, importRuns, importWorker, importInbox, importFeed, importGoals, importIdeas, importDropJob, importMore, importWatch];
+const SCREEN_IMPORTS = [importNeedsYou, importAgents, importAgentDetail, importLeader, importNewAgent, importFleet, importRuns, importWorker, importInbox, importFeed, importGoals, importIdeas, importViews, importDropJob, importMore, importWatch];
 
 /** Warm every screen chunk (the shell calls this once the phone is idle); failures are the mount's to report. */
 export function prefetchMobileScreens(): void {
@@ -71,6 +77,16 @@ export function ScreenHost({ route }: { route: Exclude<MobileRoute, { screen: 'h
       return <FeedScreen />;
     case 'goals':
       return <GoalsScreen />;
+    case 'spend':
+      return <SpendScreen />;
+    case 'pools':
+      return <PoolRunwayScreen />;
+    case 'held':
+      return <HeldScreen />;
+    case 'library':
+      return <LibraryScreen />;
+    case 'graph':
+      return <MessageGraphScreen />;
     case 'ideas':
       return <IdeasScreen />;
     case 'drop-job':
