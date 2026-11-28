@@ -26,10 +26,11 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 
+import { hasNoQuery, readQuery, sendInvalid } from './api-http.js';
 import type { ApiModule } from './api-modules.js';
 import type { VerseApiContext } from './verse-api.js';
 import { agentActorForToken } from '../approvals/actor.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { passesMutationGate, readBody, sendJson } from '../web/api-http-helpers.js';
 import { ashlrHome } from '../cloud/store.js';
 import { listTasks, type TaskQueueRead } from '../fleet/task-source.js';
 import {
@@ -101,31 +102,6 @@ export interface OpsApiDeps {
   releases?: (paths: readonly string[]) => Promise<OpsReleasesV1['repos']>;
   postMessage?: (team: string, text: string, actor?: TeamActor) => { ok: boolean; reason?: string };
   releaseDeps?: OpsReleaseProbeDeps;
-}
-
-// ---------------------------------------------------------------------------
-// Small route helpers (the shapes fleet-control-api.ts set)
-// ---------------------------------------------------------------------------
-
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-function queryParam(req: IncomingMessage, res: ServerResponse, allowed: readonly string[]): URLSearchParams | null {
-  let params: URLSearchParams;
-  try {
-    params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  } catch {
-    sendInvalid(res, 'invalid query string');
-    return null;
-  }
-  for (const key of params.keys()) {
-    if (!allowed.includes(key)) {
-      sendInvalid(res, `unknown query parameter: ${key}`);
-      return null;
-    }
-  }
-  return params;
 }
 
 function safe<T>(fn: () => T): T | null {
@@ -467,7 +443,7 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
     if (path !== VERSE_OPS_PATH && !path.startsWith(`${VERSE_OPS_PATH}/`)) return false;
 
     if (path === VERSE_OPS_SELF_UPDATE_PATH && method === 'GET') {
-      if (!queryParam(req, res, [])) return true;
+      if (!hasNoQuery(req, res)) return true;
       // The desktop gear badge polls this route whenever the app is open: it
       // is the heartbeat that arms the autobackoff reset-release loop, once
       // per process and only while mutations are on. Never under Vitest.
@@ -485,7 +461,7 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
       return true;
     }
     if (path === '/api/verse/ops/leader-journal' && method === 'GET') {
-      if (!queryParam(req, res, [])) return true;
+      if (!hasNoQuery(req, res)) return true;
       const { readLeaderJournal } = await import('../fleet/leader-journal.js');
       sendJson(res, 200, await readLeaderJournal({ now }));
       return true;
@@ -528,8 +504,9 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
     }
 
     if (method === 'GET' && path === VERSE_OPS_BOARD_PATH) {
-      if (!queryParam(req, res, ['team'])) return true;
-      const team = new URL(req.url ?? '/', 'http://localhost').searchParams.get('team')?.trim() || DEFAULT_TEAM;
+      const params = readQuery(req, res, ['team']);
+      if (!params) return true;
+      const team = params.get('team')?.trim() || DEFAULT_TEAM;
       if (!validId(team)) { sendInvalid(res, 'unknown team'); return true; }
       const boardDeps = { fleetTasks, teamEvents, companions, journal: deps.journal ?? readJournalSince, now };
       const { rows, sources } = await boardRows(boardDeps, team);
@@ -544,13 +521,13 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
     }
 
     if (method === 'GET' && path === VERSE_OPS_FLEET_PATH) {
-      if (!queryParam(req, res, [])) return true;
+      if (!hasNoQuery(req, res)) return true;
       sendJson(res, 200, await buildFleet(deps));
       return true;
     }
 
     if (method === 'GET' && path === VERSE_OPS_RELEASES_PATH) {
-      if (!queryParam(req, res, [])) return true;
+      if (!hasNoQuery(req, res)) return true;
       const paths = safe(enrolled) ?? null;
       sendJson(res, 200, {
         v: 1,
@@ -563,7 +540,7 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
 
     if (path === VERSE_OPS_RESET_RELEASES_PATH) {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
-      if (!queryParam(req, res, [])) return true;
+      if (!hasNoQuery(req, res)) return true;
       const { getResetReleaseState, readResetReleases } = await import('../fleet/usage-reset-release.js');
       sendJson(res, 200, {
         v: 1,
@@ -575,7 +552,7 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
     }
 
     if (method === 'GET' && path === VERSE_OPS_LEADERS_PATH) {
-      const params = queryParam(req, res, ['team']);
+      const params = readQuery(req, res, ['team']);
       if (!params) return true;
       const team = params.get('team')?.trim() || DEFAULT_TEAM;
       if (!validId(team)) { sendInvalid(res, 'unknown team'); return true; }

@@ -16,9 +16,9 @@
  */
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readSelfTickLast, type SelfTickLastView } from '../fleet/self-tick-last.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { sendJson } from '../web/api-http-helpers.js';
+import { readMutationBody, sendInvalid } from './api-http.js';
 import type { ApiModule } from './api-modules.js';
 
 export const VERSE_FLEET_SELF_TICK_PATH = '/api/verse/fleet/self-tick';
@@ -69,26 +69,6 @@ async function runTickInProcess(args: string[]): Promise<FleetSelfTickRunResult>
   return { exitCode, report };
 }
 
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-/** The POST takes no query parameters — same refusal fleet-holds makes. */
-function noQuery(req: IncomingMessage, res: ServerResponse): boolean {
-  let params: URLSearchParams;
-  try {
-    params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  } catch {
-    sendInvalid(res, 'invalid query string');
-    return false;
-  }
-  for (const key of params.keys()) {
-    sendInvalid(res, `unknown query parameter: ${key}`);
-    return false;
-  }
-  return true;
-}
-
 /** Shared fixed message: thrown errors can carry absolute paths or file text. */
 const UNAVAILABLE = 'fleet self-tick unavailable';
 
@@ -113,31 +93,9 @@ export function createFleetSelfTickApi(deps: FleetSelfTickApiDeps = {}): ApiModu
       return true;
     }
     if (method !== 'POST') return false;
-    if (!ctx.allowDispatch) {
-      sendJson(res, 404, { error: 'not found' });
-      return true;
-    }
-    if (!passesMutationGate(req, res, ctx.token)) return true;
-    if (!noQuery(req, res)) return true;
-    let raw: string;
-    try {
-      raw = await readBody(req);
-    } catch {
-      sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-      return true;
-    }
-    let parsed: unknown;
-    try {
-      parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
-    } catch {
-      sendInvalid(res, 'invalid JSON body');
-      return true;
-    }
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      sendInvalid(res, 'body must be a JSON object');
-      return true;
-    }
-    const apply = (parsed as Record<string, unknown>)['apply'];
+    const parsed = await readMutationBody(ctx, req, res, { rejectQuery: true });
+    if (!parsed) return true;
+    const apply = parsed['apply'];
     if (Object.keys(parsed).some((key) => key !== 'apply') || (apply !== undefined && typeof apply !== 'boolean')) {
       sendInvalid(res, 'body accepts only { "apply": boolean }');
       return true;

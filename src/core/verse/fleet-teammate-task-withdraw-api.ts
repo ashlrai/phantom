@@ -3,14 +3,14 @@
  * body `{ jobId }`. This withdraws a LOCAL reservation only and never asserts a
  * remote stop: core's cancelTeammateTask refuses unless it can prove nothing was
  * sent, and this edge relays only a projection of its answer (never the task,
- * receipt, token or claim key). Same gate as fleet-holds-api.ts: dispatch on,
- * mutation token, JSON object body. Errors never echo their message.
+ * receipt, token or claim key). Uses the shared Verse mutation gate
+ * (api-http.ts): dispatch on, mutation token, JSON object body. Errors never
+ * echo their message.
  */
-import type { IncomingMessage, ServerResponse } from 'node:http';
-
 import { cancelTeammateTask } from '../comms/imessage-teammate-tasks.js';
+import { readMutationBody, sendInvalid } from './api-http.js';
 import type { ApiModule } from './api-modules.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { sendJson } from '../web/api-http-helpers.js';
 
 export const VERSE_FLEET_TEAMMATE_TASK_WITHDRAW_PATH = '/api/verse/fleet/control/teammate-tasks/withdraw';
 
@@ -36,37 +36,6 @@ function publicReceipt(result: unknown, jobId: string) {
     default:
       return null;
   }
-}
-
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-async function readMutationBody(ctx: Parameters<ApiModule>[0], req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  let raw: string;
-  try {
-    raw = await readBody(req);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  return parsed as Record<string, unknown>;
 }
 
 /** One withdraw at a time: a double-click must not interleave two ledger rewrites. */

@@ -28,11 +28,11 @@
  * query parameters are 400s. Every response goes through sendJson() →
  * sanitizePublicJson(). Nothing here returns a path, a token or a command.
  */
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { ServerResponse } from 'node:http';
 
+import { hasNoQuery, readMutationBody, sendInvalid } from './api-http.js';
 import type { ApiModule } from './api-modules.js';
-import type { VerseApiContext } from './verse-api.js';
-import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { sendJson } from '../web/api-http-helpers.js';
 import { VERSE_OVERNIGHT_PATH } from '../fleet/fleet-types.js';
 import {
   disarmOvernightRun,
@@ -192,7 +192,7 @@ function daemonView(): OvernightDaemonView {
   }
 }
 
-export function overnightStatusView(status: OvernightStatus = readOvernightStatus()): OvernightStatusView {
+function overnightStatusView(status: OvernightStatus = readOvernightStatus()): OvernightStatusView {
   return { ...status, pending: pendingOvernightRun(status) !== null, daemon: daemonView() };
 }
 
@@ -260,59 +260,13 @@ export function buildOvernightReport(
 // Request parsing
 // ---------------------------------------------------------------------------
 
-function sendInvalid(res: ServerResponse, message: string): void {
-  sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
-}
-
-function noQuery(req: IncomingMessage, res: ServerResponse): boolean {
-  let params: URLSearchParams;
-  try {
-    params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  } catch {
-    sendInvalid(res, 'invalid query string');
-    return false;
-  }
-  for (const key of params.keys()) {
-    sendInvalid(res, `unknown query parameter: ${key}`);
-    return false;
-  }
-  return true;
-}
-
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
-  if (!ctx.allowDispatch) {
-    sendJson(res, 404, { error: 'not found' });
-    return null;
-  }
-  if (!passesMutationGate(req, res, ctx.token)) return null;
-  let raw: string;
-  try {
-    raw = await readBody(req);
-  } catch {
-    sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
-  } catch {
-    sendInvalid(res, 'invalid JSON body');
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    sendInvalid(res, 'body must be a JSON object');
-    return null;
-  }
-  return parsed as Record<string, unknown>;
-}
-
 function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const own = Object.keys(value);
   return own.length === keys.length && keys.every((k) => Object.prototype.hasOwnProperty.call(value, k));
 }
 
 /** Strict: exactly one stop-rule form, nothing else. */
-export function parseStopRule(value: unknown): RunWindowStopRule | string {
+function parseStopRule(value: unknown): RunWindowStopRule | string {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'stopRule must be an object';
   const rule = value as Record<string, unknown>;
   switch (rule['kind']) {
@@ -504,7 +458,7 @@ export const handleOvernightApi: ApiModule = async (ctx, req, res, path, method)
         sendJson(res, 404, { error: `not found: ${method} ${path}` });
         return true;
       }
-      if (!noQuery(req, res)) return true;
+      if (!hasNoQuery(req, res)) return true;
       let halts: OvernightReportHalt[] = [];
       try {
         halts = deps.halts();
@@ -515,7 +469,7 @@ export const handleOvernightApi: ApiModule = async (ctx, req, res, path, method)
       return true;
     }
     if (method === 'GET') {
-      if (!noQuery(req, res)) return true;
+      if (!hasNoQuery(req, res)) return true;
       sendJson(res, 200, overnightStatusView());
       return true;
     }
