@@ -211,7 +211,12 @@ export class DriveNodes implements QueueV1 {
       node.expiresAt = now + this.nodeTtl;
       if (report?.usage !== undefined) node.usage = report.usage;
       if (report?.slots !== undefined) node.slots = report.slots;
-      if (report?.capacity !== undefined) { node.capacity = structuredClone(report.capacity); node.slots = report.capacity.slots; }
+      const capacity = report?.capacity;
+      if (capacity !== undefined && (node.capacity === undefined ||
+          node.capacity.sampledAtMs > now || capacity.sampledAtMs >= node.capacity.sampledAtMs)) {
+        node.capacity = structuredClone(capacity);
+        node.slots = capacity.slots;
+      }
       if (report?.auth !== undefined) node.auth = report.auth;
       if (report?.hostStats !== undefined) node.hostStats = structuredClone(report.hostStats);
       if (!previous) {

@@ -32,6 +32,25 @@ function fixture() {
 const worker: PoolConfig = { role: 'worker', node: 'worker', owner: 'mason', primary: 'main-mac', backup: 'backup-mac' };
 
 describe('multi-Mac durable fencing witness', () => {
+  it.each([0, 1])('keeps the newest capacity sample with %i slots when an older beat arrives late', (slots) => {
+    const f = fixture();
+    const session = f.run('primary', 'join', ['--node', 'worker', '--caps', 'codex']).result['session'];
+    const workerArgs = ['--node', 'worker', '--session', String(session)];
+    const sample = (sampledAtMs: number, slots: number) => JSON.stringify({
+      hostId: 'mac', sampledAtMs, ramBytes: 8 * 1024 ** 3, slots, held: slots === 0 ? 'memory-pressure' : null,
+    });
+    f.advance(1000);
+    f.run('primary', 'beat', [...workerArgs, '--capacity', sample(2000, slots)]);
+    f.advance(1000);
+    f.run('primary', 'beat', [...workerArgs, '--capacity', sample(1000, 1 - slots)]);
+    f.run('primary', 'enqueue', ['--job', 'j', '--requires', 'codex']);
+
+    expect(f.store.state.nodes[0]).toMatchObject({
+      heartbeatAt: 3000, slots, capacity: { sampledAtMs: 2000, slots },
+    });
+    expect(f.run('primary', 'pull', workerArgs).result['claim'] != null).toBe(slots > 0);
+  });
+
   it('holds backup admission until exactly fifteen minutes without a primary heartbeat', () => {
     const f = fixture();
     f.advance(PRIMARY_TIMEOUT_MS - 1);
