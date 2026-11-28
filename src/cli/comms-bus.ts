@@ -11,7 +11,8 @@ import { busStatusExitCode } from './comms-bus-exit.js';
 import { cmdCommsBusClaim, COMMS_BUS_CLAIM_HELP } from './comms-bus-claim.js';
 import { withCodexPeersSession, type LocusPeersEndpoint } from '../core/fleet/adapters/codex-peers.js';
 import { BUS_PROTOCOL_KINDS, BUS_PROTOCOL_VERSION, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
-import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
+import { agentChannelNameSchema, agentRefAddressMatcher, BUS_CLIS, readAgentRegistry, type BusCli } from '../core/agents/bus-identity.js';
+import { frameCommsBusRead } from '../core/agents/bus-cli-adapters.js';
 import { WORK_RESULT_OUTCOMES, busBodyKind, busBodyResultOutcome, busBodyThread } from '../core/agents/bus-v2-schema.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -33,7 +34,7 @@ phm comms bus post --file <envelope.json|->
 phm comms bus post --reply-to <id> --id <new-id> --from <address> --text <text> [--ttl-ms <ms>]
 phm comms bus post-batch --file <batch.json|->
 phm comms bus status
-phm comms bus read [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--thread <label>] [--job <id>] [--channel <name>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
+phm comms bus read [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--thread <label>] [--job <id>] [--channel <name>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--frame <cli>]
 phm comms bus watch [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--thread <label>] [--job <id>] [--channel <name>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>] [--until-reply]
 ${COMMS_BUS_CLAIM_HELP}
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
@@ -64,6 +65,7 @@ This is an application convention, not an envelope field or authenticated identi
 --contains keeps only envelopes whose scrubbed one-line summary — the same text agents bus inbox --contains, channel read --contains, phm messages --contains and fleet bus-follow --contains match — carries the needle as a case-insensitive substring, whitespace collapsed on both sides; matching runs over the rendered summary, never the raw body, so a secret-shaped value stays unfindable, and protocol-v1 payloads stay opaque to it. The value is bounded free text (up to 512 characters); --contains=<text> also works for values that look like flags.
 --body-kind keeps only envelopes whose body carries that exact kind discriminator — the same busBodyKind own-field match agents bus inbox --body-kind, channel read --body-kind, wakes --body-kind, agents conversations --body-kind, phm messages --body-kind and fleet bus-follow --body-kind apply: the v2 kind field, else a bus-transport v1 protocol.kind, else the type/schema a kindless notice keys on, matched exactly and case-sensitively; a body carrying no discriminator never matches and an unrecognized but printable value is an honest empty page.
 --result keeps only work.result bodies whose own outcome strictly equals the code — the same busBodyResultOutcome own-field match and WORK_RESULT_OUTCOMES vocabulary phm messages --result, agents messages --result, fleet messages, bus recent, fleet_bus_inbox's result, fleet_agent_messages' result and the work feed's --result share; every other body kind — including a work.release body's own released/completed outcome, a different vocabulary — and a work.result carrying no outcome never match, so "which retained result receipts failed" is one filtered read of the raw store; a value outside the vocabulary is invalid.
+--frame <cli> adds a framed field to the read's JSON page: the same bounded block every agents bus read's --frame produces — BEGIN/END UNTRUSTED AGENT BUS MESSAGES markers, per-envelope priority/id/from/to bracket and scrubbed one-line summary, identical for every CLI — so a comms bus page fed to a next turn is marked untrusted data exactly like the agents bus reads it complements; the value is one of ${BUS_CLIS.join(', ')} and watch, a stream, takes no frame.
 All supplied filters must match. Limit applies before filtering; it counts scanned live records, not matches.
 Expired records advance the cursor but do not count toward the limit.
 Priority is a routing attribute; it does not establish identity or authority.
@@ -507,7 +509,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const token = rest[i]!, inline = /^(--id|--in-reply-to|--reply-to|--to|--from|--exclude-from|--text|--contains)=(.*)$/s.exec(token);
     const key = inline?.[1] ?? token;
     const label = key === '--id' || key === '--in-reply-to' || key === '--reply-to' || key === '--to' || key === '--from' || key === '--exclude-from' || key === '--text' || key === '--contains';
-    const flags = verb === 'post' ? ['--file', '--reply-to', '--id', '--from', '--text', '--ttl-ms'] : verb === 'watch' ? ['--checkpoint', '--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--until-reply', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic', '--thread', '--job', '--channel', '--body-kind', '--result', '--since', '--before', '--contains'] : ['--checkpoint', '--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic', '--thread', '--job', '--channel', '--body-kind', '--result', '--since', '--before', '--contains'];
+    const flags = verb === 'post' ? ['--file', '--reply-to', '--id', '--from', '--text', '--ttl-ms'] : verb === 'watch' ? ['--checkpoint', '--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--until-reply', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic', '--thread', '--job', '--channel', '--body-kind', '--result', '--since', '--before', '--contains'] : ['--checkpoint', '--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic', '--thread', '--job', '--channel', '--body-kind', '--result', '--since', '--before', '--contains', '--frame'];
     if (!flags.includes(key) || values.has(key)) return invalid();
     if (key === '--until-reply') { values.set(key, 'true'); continue; }
     const value = inline ? inline[2] : rest[++i];
@@ -537,6 +539,8 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
   for (const label of [filters.id, filters.inReplyTo, filters.to, filters.from, filters.excludeFrom]) {
     if (label !== undefined && !validateBusEnvelope({ id: label, from: label, to: label, priority: 'P3', ttl: 1, body: null }).ok) return invalid();
   }
+  const frame = values.get('--frame');
+  if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) return invalid();
   if (values.has('--checkpoint') && values.has('--after')) return invalid();
   let after = Number(values.get('--after') ?? 0);
   const limit = Number(values.get('--limit') ?? 50);
@@ -575,6 +579,9 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
         result = parsed?.ok ? appendBusInbox(parsed.value, options) : { status: 'invalid' };
       }
     } else result = filterPage((deps.list ?? listBusInboxAfter)(after, limit, options), filters, busAddressMatchers(filters, options), sinceMs, beforeMs, containsNeedle);
+    if (verb === 'read' && frame !== undefined && result.status === 'ok' && Array.isArray(result.messages)) {
+      result = { ...result, framed: frameCommsBusRead(frame as BusCli, result.messages) };
+    }
     await deliver(JSON.stringify(result), deps, checkpoint);
     if (result.status === 'ok' && verb === 'read') checkpoint?.save((result as BusInboxPage & { status: 'ok' }).nextCursor);
     return busStatusExitCode(result.status);

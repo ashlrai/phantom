@@ -19,6 +19,7 @@ import {
 } from './bus-identity.js';
 import { busBodyFallbackSummary, busBodySummary, busInboxJobMarker,
   type AgentWakeRow, type BusEnvelopeLookupJob, type ChannelReadMessage, type InboxMessage } from './bus-unified.js';
+import type { BusInboxReceipt } from '../fleet/bus-inbox.js';
 
 export interface BusCliAdapter {
   readonly cli: BusCli;
@@ -292,6 +293,34 @@ export function frameBusChannelRead(cli: BusCli, channel: string, messages: read
     shown += 1;
   }
   if (shown < messages.length) lines.push(`(${messages.length - shown} more messages not shown; read the channel again)`);
+  lines.push(BUS_INBOX_FRAME_END);
+  return lines.join('\n');
+}
+
+/**
+ * The same bounded untrusted-data block `frameBusInbox` produces, rendered
+ * for one `phm comms bus read` page of the v1 store: every retained envelope
+ * is untrusted routing data, so the bracket carries the raw `from`/`to`
+ * labels the wire recorded — the read resolves its filter labels through the
+ * identity registry but the stored rows keep their routing labels, which are
+ * never authenticated identity. Same markers, scrub and clip bound, so a
+ * comms bus page fed to a next turn is marked untrusted exactly like the
+ * agents bus reads it complements.
+ */
+export function frameCommsBusRead(cli: BusCli, receipts: readonly BusInboxReceipt[]): string {
+  if (!getBusCliAdapter(cli)) throw new Error('Unknown CLI.');
+  const lines = [BUS_INBOX_FRAME_BEGIN];
+  let used = BUS_INBOX_FRAME_BEGIN.length + BUS_INBOX_FRAME_END.length + 64;
+  let shown = 0;
+  for (const receipt of receipts) {
+    const envelope = receipt.envelope;
+    const line = clean(`[${envelope.priority} id=${envelope.id} from ${envelope.from} to ${envelope.to}] ${summary(envelope.body)}`);
+    if (used + line.length + 1 > BUS_INBOX_FRAME_MAX) break;
+    lines.push(line);
+    used += line.length + 1;
+    shown += 1;
+  }
+  if (shown < receipts.length) lines.push(`(${receipts.length - shown} more messages not shown; read the bus again)`);
   lines.push(BUS_INBOX_FRAME_END);
   return lines.join('\n');
 }
