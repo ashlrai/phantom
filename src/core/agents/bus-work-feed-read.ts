@@ -600,7 +600,7 @@ export function formatBusWorkFeed(result: BusWorkFeedReadResult | BusWorkFeedPag
     }
     if (result.claims) {
       for (const hold of result.claims.holds) {
-        lines.push(`held ${hold.jobId} ${hold.claimKey} owner=${hold.owner} until=${new Date(hold.leaseUntil).toISOString()}`);
+        lines.push(`held ${hold.jobId} ${hold.claimKey} owner=${hold.owner} until=${new Date(hold.leaseUntil).toISOString()} origin=${hold.origin}`);
       }
     }
   }
