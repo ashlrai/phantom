@@ -250,6 +250,32 @@ const CAPS_GENERATOR_INPUTS = new Set([
 ]);
 const CAPS_FRESHNESS_SUITE = 'test/caps-registry.test.ts';
 
+/**
+ * `npm run build` opens with `check:version`
+ * (`node scripts/sync-candidate-version.mjs --check`), which re-derives
+ * the candidate version from package.json and fails when any of the
+ * eleven tracked metadata files drifted: package.json,
+ * package-lock.json, desktop/package.json, the Tauri and Cargo
+ * manifests and locks, server.json, and the three docs that carry the
+ * "targets version" line. A version bump that reached only some files
+ * prints a compact drift JSON and exits 1, so every CI build job goes
+ * red while no vitest, typecheck or lint line names it — the
+ * `(version-sync)` failure shape src/core/fleet/ci-baseline.ts parses.
+ * verify-changed runs the same read-only --check when a diff can stale
+ * the sync: any tracked input, or the checker itself (a checker edit
+ * can change the verdict on an identical tree). Deletions count:
+ * removing a metadata file fails the check exactly as it fails the
+ * build. The input list mirrors the script's `files` array — keep the
+ * two in step, as ci-baseline.ts's VERSION_SYNC_INPUTS does.
+ */
+const VERSION_SYNC_FILE = 'scripts/sync-candidate-version.mjs';
+const VERSION_SYNC_INPUTS = new Set([
+  'package.json', 'package-lock.json', 'desktop/package.json',
+  'desktop/src-tauri/tauri.conf.json', 'desktop/src-tauri/Cargo.toml',
+  'desktop/src-tauri/Cargo.lock', 'server.json',
+  'desktop/README.md', 'README.md', 'docs/QUICKSTART.md',
+]);
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -308,6 +334,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
       path.startsWith(CAPS_GENERATED_PREFIX) ||
       path.startsWith(CAPS_GENERATOR_PREFIX) ||
       CAPS_GENERATOR_INPUTS.has(path)),
+    versionSyncCheck: changed.some((path) => VERSION_SYNC_INPUTS.has(path) || path === VERSION_SYNC_FILE),
   };
 }
 
@@ -2720,6 +2747,11 @@ function main() {
     run('caps generated freshness', 'scripts/test-ci.mjs', [CAPS_FRESHNESS_SUITE]);
   } else {
     console.log('PASS caps generated freshness skipped: no capability registry, generator or generated-output change');
+  }
+  if (selection.versionSyncCheck) {
+    run('version sync check', 'scripts/sync-candidate-version.mjs', ['--check']);
+  } else {
+    console.log('PASS version sync check skipped: no version metadata or checker change');
   }
   const preflight = eslintPreflight(root);
   if (!preflight.ok) {
