@@ -3,7 +3,7 @@ import { validNodeTask, type EmbeddedNodeTask } from './task.js';
 import { actionableClaim, jobBlockers, nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
 import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
-import { isNodeCapacity, isHostStats, type NodeCapacitySample, type HostStats } from './state.js';
+import { isNodeCapacity, isHostStats, NODE_JOB_RESULT_BYTES, type NodeCapacitySample, type HostStats } from './state.js';
 export { planRoutes } from './router.js';
 export type { RouteAssignment } from './router.js';
 export { LocalNodesStore } from './local-store.js';
@@ -396,7 +396,7 @@ export class DriveNodes implements QueueV1 {
   }
 
   complete(claim: JobClaim, result: string): boolean {
-    if (typeof result !== 'string' || Buffer.byteLength(result) > 64 * 1024) throw new Error('Invalid drive job result');
+    if (typeof result !== 'string' || Buffer.byteLength(result) > NODE_JOB_RESULT_BYTES) throw new Error('Invalid drive job result');
     return this.transaction((state, now) => {
       if (!this.currentClaim(state, claim, now)) return false;
       const job = state.jobs.find(j => j.id === claim.jobId)!;

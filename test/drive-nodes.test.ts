@@ -247,6 +247,31 @@ describe('drive node leases', () => {
     }
   });
 
+  it('refuses an oversize --result as usage, naming the flag and limit', () => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'] })!;
+    f.a.heartbeat(worker);
+    f.a.enqueue('job', { owner: 'o' });
+    const claim = f.a.pull(worker)!.claim;
+    const lease = ['--job', claim.jobId, '--node', claim.nodeId, '--session', String(claim.session),
+      '--token', String(claim.token), '--leader-token', String(claim.leaderToken)];
+    // One byte over DriveNodes.complete's bound: the flag parser must refuse it
+    // as usage (naming --result and 64 KiB) rather than let the store answer its
+    // masked 'Invalid drive job result', whose fix would point at the state dir.
+    let err: { code?: string; message?: string; fix?: string; exit?: number } | undefined;
+    try {
+      executeNodeFleet('complete', [...lease, '--result', 'x'.repeat(64 * 1024 + 1)], f.a);
+    } catch (e) { err = e as typeof err; }
+    expect(err).toMatchObject({ code: 'bad-result', exit: 2 });
+    expect(err!.message).toContain('64 KiB');
+    expect(err!.fix).toContain('phm node --help');
+    // The refusal is at parse: the live claim is untouched and still running.
+    expect(f.a.snapshot().jobs.find(j => j.id === 'job')!.state).toBe('running');
+    // A result exactly at the bound still parses and completes.
+    expect(executeNodeFleet('complete', [...lease, '--result', 'x'.repeat(64 * 1024)], f.a))
+      .toMatchObject({ completed: true });
+  });
+
   it('persists an explicit marker for producer withdrawals', () => {
     const f = fixture();
     f.a.enqueue('withdrawn-job', { owner: 'o' });
@@ -610,7 +635,7 @@ describe('standalone join version reporting', () => {
       expect(code).toBe(0);
       const node = store.state.nodes.find(n => n.nodeId === 'laptop')!;
       expect(node.caps).toEqual(['build', 'phm-9.9.9']);
-      expect(versionFromCaps(node.caps)).toBe('9.9.9');
+      expect(versionFromCaps(node.caps ?? [])).toBe('9.9.9');
     } finally { vi.restoreAllMocks(); }
   });
   it('leaves --caps untouched when this build version cannot be determined', async () => {
@@ -1320,8 +1345,8 @@ describe('fleet flag value validation', () => {
     try { fn(); } catch (e) { return e as { code?: string; message?: string; fix?: string; exit?: number }; }
     throw new Error('expected the verb to refuse');
   }
-  const run = (verb: string, args: string[], f = fixture()) =>
-    failure(() => executeNodeFleet(verb, args, f.a));
+  const run = (verb: string, args: readonly string[], f = fixture()) =>
+    failure(() => executeNodeFleet(verb, [...args], f.a));
   it('refuses malformed ids on every verb that takes one, as usage', () => {
     const f = fixture();
     const worker = f.a.join('laptop', { owners: ['acme'] })!;
