@@ -19,31 +19,24 @@ import {
   setAutomationEnabled,
 } from './store.js';
 import type { AutomationInput, AutomationV1 } from './types.js';
-import { AutomationInputError, canonicalPlaybookRef } from './validate.js';
+import { AutomationInputError, canonicalPlaybookRef, isRecord } from './validate.js';
 
 export * from './types.js';
-export { AutomationInputError, canonicalPlaybookRef } from './validate.js';
+export { AutomationInputError } from './validate.js';
 export { AUTOMATION_TEMPLATES, automationTemplate } from './templates.js';
 export { parseRrule, nextOccurrence, describeRrule } from './rrule.js';
 export {
   automationsOverview,
-  automationStats,
   fireAutomation,
-  lastBlockedReason,
   receiveTelegramTask,
   receiveWebhook,
   reviewFiring,
   runAutomationsTick,
-  triggerSummary,
   type AutomationEngineDeps,
-  type AutomationsTickSummary,
-  type ReviewResult,
-  type WebhookResult,
 } from './engine.js';
-export type { AutomationDecider, AutomationTriageAnswer, AutomationTriageInput } from './triage.js';
-export type { AutomationGh } from './github.js';
-export type { AutomationLaneDeps, LaneOutcome, LaneStatus } from './lanes.js';
-export { readAutomationJournal, readAutomationState, saveAutomation, type AutomationJournalRecord } from './store.js';
+export type { AutomationDecider } from './triage.js';
+export type { AutomationLaneDeps, LaneStatus } from './lanes.js';
+export { readAutomationJournal, readAutomationState } from './store.js';
 
 export async function listAutomations(): Promise<AutomationV1[]> {
   return (await readAutomations()).automations;
@@ -69,8 +62,8 @@ async function missingPlaybooks(refs: readonly (string | null | undefined)[]): P
 
 /** A named playbook must exist when the automation is saved — a lane would refuse it at launch anyway. */
 async function assertPlaybooksExist(input: Record<string, unknown>): Promise<void> {
-  const triage = input['triage'] as { playbooks?: unknown } | null | undefined;
-  const refs = [input['playbookId'], ...(Array.isArray(triage?.playbooks) ? triage!.playbooks : [])].filter((r): r is string => typeof r === 'string' && r !== '');
+  const triage = isRecord(input['triage']) ? input['triage'] : null;
+  const refs = [input['playbookId'], ...(Array.isArray(triage?.['playbooks']) ? triage['playbooks'] : [])].filter((r): r is string => typeof r === 'string' && r !== '');
   // Malformed refs get validation's own sentence (saveAutomation), not "no such playbook".
   if (refs.some((r) => canonicalPlaybookRef(r) === null)) return;
   const missing = await missingPlaybooks(refs);

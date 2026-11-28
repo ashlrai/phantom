@@ -21,11 +21,15 @@ import { createHash } from 'node:crypto';
 import { localDayKey } from '../cloud/budget.js';
 import { pollIssues, pollRedBranch, untrustedText, untrustedTitle, type AutomationGh, type TriggerEvent } from './github.js';
 import {
+  approvalTargetLane,
   dispatchToLane,
+  estimateLaneUsdSafe,
   grantRepos,
   KILL_REASON,
   laneGateRefusal,
   NO_GRANT_REASON,
+  readKillActiveSafe,
+  readPolicySafe,
   repoInPolicy,
   resolveLaneDeps,
   type AutomationLaneDeps,
@@ -64,6 +68,7 @@ import {
   type AutomationView,
   type AutomationWebhookRequest,
 } from './types.js';
+import { formatLocalMinute, parseIsoDate, roundUsd } from './validate.js';
 
 export interface AutomationEngineDeps extends AutomationLaneDeps {
   gh?: AutomationGh;
@@ -102,7 +107,7 @@ const DROP_QUIET_MS = 24 * 60 * 60_000;
 // Dedupe keys
 // ---------------------------------------------------------------------------
 
-export function defaultDedupeTemplate(kind: AutomationTriggerKind): string {
+function defaultDedupeTemplate(kind: AutomationTriggerKind): string {
   switch (kind) {
     case 'github-issues': return '{repo}#{number}';
     case 'ci-red': return '{repo}@{sha}';
@@ -113,7 +118,7 @@ export function defaultDedupeTemplate(kind: AutomationTriggerKind): string {
   }
 }
 
-export function renderDedupeKey(template: string, repo: string, vars: TriggerEvent['vars']): string {
+function renderDedupeKey(template: string, repo: string, vars: TriggerEvent['vars']): string {
   return template
     .replace(/\{(repo|number|sha|occurrence|key)\}/g, (_m, name: string) => (name === 'repo' ? repo.toLowerCase() : vars[name as keyof TriggerEvent['vars']] ?? '-'))
     .replace(/[^A-Za-z0-9._:#@/+-]/g, '_')
@@ -122,7 +127,7 @@ export function renderDedupeKey(template: string, repo: string, vars: TriggerEve
 
 const seenKey = (automationId: string, dedupeKey: string): string => `${automationId}\u0000${dedupeKey}`;
 
-export function textKey(text: string): string {
+function textKey(text: string): string {
   return createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
@@ -131,28 +136,17 @@ export function textKey(text: string): string {
 // ---------------------------------------------------------------------------
 
 const monthKey = (d: Date): string => localDayKey(d).slice(0, 7);
-const at = (iso: string | null): Date | null => (iso && !Number.isNaN(Date.parse(iso)) ? new Date(iso) : null);
 
-export function automationStats(automation: AutomationV1, state: AutomationStateV1, now: Date): AutomationStats {
-  const today = localDayKey(now);
-  const month = monthKey(now);
+function automationStats(automation: AutomationV1, state: AutomationStateV1, now: Date): AutomationStats {
+  const counts = limitCounts(automation.id, state, now);
   const windowStart = now.getTime() - AUTOMATION_LIMITS.successWindowMs;
   let lastFiredAt: string | null = null;
-  let queued = 0;
-  let active = 0;
-  let firedToday = 0;
-  let spent = 0;
   let succeeded = 0;
   let failed = 0;
   for (const f of state.firings) {
     if (f.automationId !== automation.id) continue;
     if (f.state !== 'dropped' && (lastFiredAt === null || f.createdAt > lastFiredAt)) lastFiredAt = f.createdAt;
-    if (f.state === 'queued') queued += 1;
-    if (AUTOMATION_ACTIVE_STATES.includes(f.state)) active += 1;
-    const dispatched = at(f.dispatchedAt);
-    if (dispatched && localDayKey(dispatched) === today) firedToday += 1;
-    if (dispatched && monthKey(dispatched) === month) spent += f.spendUsd;
-    const settled = at(f.settledAt);
+    const settled = parseIsoDate(f.settledAt);
     if (settled && settled.getTime() >= windowStart) {
       if (f.state === 'succeeded') succeeded += 1;
       if (f.state === 'failed') failed += 1;
@@ -166,17 +160,17 @@ export function automationStats(automation: AutomationV1, state: AutomationState
       const parsed = parseRrule(t.rrule);
       nextRunAt = cursor?.nextRunAt ?? (parsed.ok ? nextOccurrence(parsed.rule, now)?.toISOString() ?? null : null);
     } else if (t.kind === 'github-issues' || t.kind === 'ci-red') {
-      const last = at(cursor?.lastPolledAt ?? null);
+      const last = parseIsoDate(cursor?.lastPolledAt ?? null);
       nextRunAt = last ? new Date(Math.max(now.getTime(), last.getTime() + t.pollMinutes * 60_000)).toISOString() : now.toISOString();
     }
   }
   return {
     lastFiredAt,
     nextRunAt,
-    queued,
-    active,
-    firedToday,
-    spentThisMonthUsd: Math.round(spent * 100) / 100,
+    queued: counts.queued,
+    active: counts.active,
+    firedToday: counts.firedToday,
+    spentThisMonthUsd: roundUsd(counts.spentThisMonthUsd),
     successRate: succeeded + failed === 0 ? null : Math.round((succeeded / (succeeded + failed)) * 1000) / 1000,
     succeeded,
     failed,
@@ -189,7 +183,7 @@ function reposPhrase(repos: readonly string[]): string {
   return repos.length === 1 ? repos[0]! : `${repos.length} repos`;
 }
 
-export function triggerSummary(automation: AutomationV1): string {
+function triggerSummary(automation: AutomationV1): string {
   const t = automation.trigger;
   const repos = reposPhrase(automation.repos);
   switch (t.kind) {
@@ -213,7 +207,7 @@ export function triggerSummary(automation: AutomationV1): string {
   }
 }
 
-export function automationView(automation: AutomationV1, state: AutomationStateV1, now: Date): AutomationView {
+function automationView(automation: AutomationV1, state: AutomationStateV1, now: Date): AutomationView {
   return { automation, stats: automationStats(automation, state, now), triggerSummary: triggerSummary(automation) };
 }
 
@@ -223,15 +217,12 @@ export function automationView(automation: AutomationV1, state: AutomationStateV
 
 async function reposFor(automation: AutomationV1, ctx: Ctx): Promise<string[]> {
   if (automation.repos[0] !== AUTOMATION_ALL_GRANT_REPOS) return [...automation.repos];
-  let policy = null;
-  try { policy = await ctx.lane.policy(); } catch { policy = null; }
-  return grantRepos(policy).slice(0, AUTOMATION_LIMITS.maxRepos);
+  return grantRepos(await readPolicySafe(ctx.lane)).slice(0, AUTOMATION_LIMITS.maxRepos);
 }
 
 async function repoInScope(automation: AutomationV1, repo: string, ctx: Ctx): Promise<boolean> {
   if (automation.repos[0] === AUTOMATION_ALL_GRANT_REPOS) {
-    let policy = null;
-    try { policy = await ctx.lane.policy(); } catch { policy = null; }
+    const policy = await readPolicySafe(ctx.lane);
     return policy !== null && repoInPolicy(policy, repo);
   }
   return automation.repos.some((r) => r.toLowerCase() === repo.toLowerCase());
@@ -244,18 +235,18 @@ async function repoInScope(automation: AutomationV1, repo: string, ctx: Ctx): Pr
 export function pollDue(automation: AutomationV1, cursor: AutomationCursor, now: Date): boolean {
   const t = automation.trigger;
   if (t.kind === 'github-issues' || t.kind === 'ci-red') {
-    const last = at(cursor.lastPolledAt);
+    const last = parseIsoDate(cursor.lastPolledAt);
     return last === null || now.getTime() - last.getTime() >= t.pollMinutes * 60_000 || now.getTime() < last.getTime();
   }
   if (t.kind === 'watch') {
     if (cursor.since['watchDisarmed']) return false;
-    const last = at(cursor.lastPolledAt);
+    const last = parseIsoDate(cursor.lastPolledAt);
     if (last && now.getTime() - last.getTime() < 3_600_000) return false;
-    const next = at(cursor.nextRunAt);
+    const next = parseIsoDate(cursor.nextRunAt);
     return next === null || now.getTime() >= next.getTime();
   }
   if (t.kind === 'schedule') {
-    const next = at(cursor.nextRunAt);
+    const next = parseIsoDate(cursor.nextRunAt);
     return next === null || now.getTime() >= next.getTime();
   }
   return false;
@@ -267,15 +258,9 @@ interface Collected {
   sourceKind: AutomationSourceKind;
 }
 
-function localStamp(iso: string): string {
-  const d = new Date(iso);
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
 /** Read the trigger's source. `force` ignores the poll interval / schedule (a manual run). */
 async function collectEvents(automation: AutomationV1, cursorIn: AutomationCursor, ctx: Ctx, now: Date, force: boolean): Promise<Collected> {
-  const cursor: AutomationCursor = JSON.parse(JSON.stringify(cursorIn)) as AutomationCursor;
+  const cursor: AutomationCursor = structuredClone(cursorIn);
   const t = automation.trigger;
   const events: TriggerEvent[] = [];
   const nowIso = now.toISOString();
@@ -354,7 +339,7 @@ async function collectEvents(automation: AutomationV1, cursorIn: AutomationCurso
       }
       if (occurrence) {
         const repos = await reposFor(automation, ctx);
-        const label = occurrence.startsWith('manual-') ? 'run now' : localStamp(occurrence);
+        const label = occurrence.startsWith('manual-') ? 'run now' : (formatLocalMinute(occurrence) ?? occurrence);
         for (const repo of repos) {
           events.push({ repo, vars: { occurrence }, title: `${automation.name} — ${repo} (${label})`, text: '', url: null, ref: occurrence });
         }
@@ -373,14 +358,14 @@ async function collectEvents(automation: AutomationV1, cursorIn: AutomationCurso
 // Limits
 // ---------------------------------------------------------------------------
 
-export interface LimitCounts {
+interface LimitCounts {
   active: number;
   firedToday: number;
   spentThisMonthUsd: number;
   queued: number;
 }
 
-export function limitCounts(automationId: string, state: AutomationStateV1, now: Date): LimitCounts {
+function limitCounts(automationId: string, state: AutomationStateV1, now: Date): LimitCounts {
   const today = localDayKey(now);
   const month = monthKey(now);
   const counts: LimitCounts = { active: 0, firedToday: 0, spentThisMonthUsd: 0, queued: 0 };
@@ -388,7 +373,7 @@ export function limitCounts(automationId: string, state: AutomationStateV1, now:
     if (f.automationId !== automationId) continue;
     if (AUTOMATION_ACTIVE_STATES.includes(f.state)) counts.active += 1;
     if (f.state === 'queued') counts.queued += 1;
-    const d = at(f.dispatchedAt);
+    const d = parseIsoDate(f.dispatchedAt);
     if (d && localDayKey(d) === today) counts.firedToday += 1;
     if (d && monthKey(d) === month) counts.spentThisMonthUsd += f.spendUsd;
   }
@@ -398,7 +383,7 @@ export function limitCounts(automationId: string, state: AutomationStateV1, now:
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
 
 /** Null when the automation's own limits allow one more dispatch costing `estimateUsd`. */
-export function limitRefusal(automation: AutomationV1, counts: LimitCounts, estimateUsd: number): string | null {
+function limitRefusal(automation: AutomationV1, counts: LimitCounts, estimateUsd: number): string | null {
   if (counts.active >= automation.maxConcurrent) {
     return `Waiting: ${counts.active} of ${automation.maxConcurrent} ${plural(automation.maxConcurrent, 'task', 'tasks')} from this automation still in flight.`;
   }
@@ -438,6 +423,24 @@ function candidatesFor(automation: AutomationV1, events: readonly TriggerEvent[]
 function recentlyDropped(state: AutomationStateV1, automationId: string, dedupeKey: string, nowMs: number): boolean {
   return state.firings.some((f) => f.automationId === automationId && f.dedupeKey === dedupeKey && f.state === 'dropped'
     && nowMs - Date.parse(f.createdAt) < DROP_QUIET_MS);
+}
+
+function isAlreadyHandled(state: AutomationStateV1, automationId: string, dedupeKey: string, nowMs: number): boolean {
+  return seenKey(automationId, dedupeKey) in state.seen || recentlyDropped(state, automationId, dedupeKey, nowMs);
+}
+
+function intakeCapacity(automation: AutomationV1, counts: LimitCounts): number {
+  return automation.queueDepth + Math.max(0, automation.maxConcurrent - counts.active) - counts.queued;
+}
+
+function queueFullDropReason(automation: AutomationV1): string {
+  return `Dropped: this automation's queue is full (${automation.queueDepth} waiting).`;
+}
+
+function queuedFiringsOldestFirst(state: AutomationStateV1, automationId: string): AutomationFiringV1[] {
+  return state.firings
+    .filter((f) => f.automationId === automationId && f.state === 'queued')
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
 }
 
 function newFiring(automation: AutomationV1, c: Candidate, now: Date, lane: AutomationV1['lane'], playbookId: string | null): AutomationFiringV1 {
@@ -483,10 +486,10 @@ async function intake(automation: AutomationV1, candidates: readonly Candidate[]
   const nowMs = now.getTime();
   const snapshot = await readAutomationState();
   const counts = limitCounts(automation.id, snapshot, now);
-  let capacity = automation.queueDepth + Math.max(0, automation.maxConcurrent - counts.active) - counts.queued;
+  let capacity = intakeCapacity(automation, counts);
   const plan: Array<{ c: Candidate; keep: boolean }> = [];
   for (const c of candidates) {
-    if (seenKey(automation.id, c.dedupeKey) in snapshot.seen || recentlyDropped(snapshot, automation.id, c.dedupeKey, nowMs)) {
+    if (isAlreadyHandled(snapshot, automation.id, c.dedupeKey, nowMs)) {
       result.deduped.push(c);
       continue;
     }
@@ -501,16 +504,16 @@ async function intake(automation: AutomationV1, candidates: readonly Candidate[]
   const journal: AutomationJournalRecord[] = [];
   await mutateState(ctx, (state) => {
     for (const { c, keep } of plan) {
-      const key = seenKey(automation.id, c.dedupeKey);
-      if (key in state.seen || recentlyDropped(state, automation.id, c.dedupeKey, nowMs)) {
+      if (isAlreadyHandled(state, automation.id, c.dedupeKey, nowMs)) {
         result.deduped.push(c);
         continue;
       }
+      const key = seenKey(automation.id, c.dedupeKey);
       const t = triaged.get(c.dedupeKey);
       const firing = newFiring(automation, c, now, t?.lane ?? automation.lane, t?.playbookId ?? automation.playbookId);
       if (t) firing.triage = t.record;
       if (!keep) {
-        Object.assign(firing, { state: 'dropped', settledAt: firing.createdAt, reason: `Dropped: this automation's queue is full (${automation.queueDepth} waiting).` });
+        Object.assign(firing, { state: 'dropped', settledAt: firing.createdAt, reason: queueFullDropReason(automation) });
         state.firings.push(firing);
         result.dropped.push(firing);
         journal.push(journalRecord(firing, 'dropped', firing.createdAt));
@@ -576,9 +579,7 @@ function applyOutcome(f: AutomationFiringV1, outcome: LaneOutcome, iso: string):
 async function drainAutomation(automation: AutomationV1, ctx: Ctx): Promise<AutomationFiringV1[]> {
   const touched: AutomationFiringV1[] = [];
   const snapshot = await readAutomationState();
-  const queue = snapshot.firings
-    .filter((f) => f.automationId === automation.id && f.state === 'queued')
-    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
+  const queue = queuedFiringsOldestFirst(snapshot, automation.id)
     .slice(0, automation.maxConcurrent + automation.queueDepth);
   for (const queued of queue) {
     const gate = await laneGateRefusal(queued.lane, queued.repo, ctx.lane);
@@ -587,8 +588,7 @@ async function drainAutomation(automation: AutomationV1, ctx: Ctx): Promise<Auto
       if (gate === KILL_REASON || gate === NO_GRANT_REASON) break;
       continue;
     }
-    let estimate: number;
-    try { estimate = await ctx.lane.estimateUsd(queued.lane); } catch { estimate = Number.POSITIVE_INFINITY; }
+    const estimate = await estimateLaneUsdSafe(queued.lane, ctx.lane);
 
     // Claim under the lock, re-checking limits against the CURRENT state.
     type Claim = { ok: true; firing: AutomationFiringV1 } | { ok: false; reason: string | null };
@@ -632,12 +632,10 @@ async function drainAutomation(automation: AutomationV1, ctx: Ctx): Promise<Auto
 async function trimQueue(automation: AutomationV1, ctx: Ctx): Promise<void> {
   const journal: AutomationJournalRecord[] = [];
   await mutateState(ctx, (state) => {
-    const queued = state.firings
-      .filter((f) => f.automationId === automation.id && f.state === 'queued')
-      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+    const queued = queuedFiringsOldestFirst(state, automation.id);
     for (const f of queued.slice(automation.queueDepth)) {
       const iso = ctx.now().toISOString();
-      Object.assign(f, { state: 'dropped', settledAt: iso, updatedAt: iso, reason: `Dropped: this automation's queue is full (${automation.queueDepth} waiting).` });
+      Object.assign(f, { state: 'dropped', settledAt: iso, updatedAt: iso, reason: queueFullDropReason(automation) });
       delete state.seen[seenKey(automation.id, f.dedupeKey)];
       journal.push(journalRecord(f, 'dropped', iso));
     }
@@ -704,20 +702,12 @@ export interface AutomationsTickSummary {
 }
 
 let tickInFlight: Promise<AutomationsTickSummary> | null = null;
-let lastBlocked: { reason: string | null; at: number } = { reason: null, at: 0 };
-
 /** The last tick's "why nothing dispatches" (KILL / no grant); cached so GET routes stay cheap. */
-export function lastBlockedReason(): string | null {
-  return lastBlocked.reason;
-}
+let lastBlocked: string | null = null;
 
 async function blockedNow(ctx: Ctx): Promise<string | null> {
-  let kill = true;
-  try { kill = await ctx.lane.killActive(); } catch { kill = true; }
-  if (kill) return KILL_REASON;
-  let policy = null;
-  try { policy = await ctx.lane.policy(); } catch { policy = null; }
-  return policy ? null : NO_GRANT_REASON;
+  if (await readKillActiveSafe(ctx.lane)) return KILL_REASON;
+  return (await readPolicySafe(ctx.lane)) ? null : NO_GRANT_REASON;
 }
 
 async function tickOnce(deps: AutomationEngineDeps): Promise<AutomationsTickSummary> {
@@ -725,7 +715,7 @@ async function tickOnce(deps: AutomationEngineDeps): Promise<AutomationsTickSumm
   const summary: AutomationsTickSummary = { polled: 0, queued: 0, dispatched: 0, settled: 0, blocked: null };
   summary.settled = await settle(ctx);
   summary.blocked = await blockedNow(ctx);
-  lastBlocked = { reason: summary.blocked, at: Date.now() };
+  lastBlocked = summary.blocked;
   const { automations } = await readAutomations();
   const enabled = automations.filter((a) => a.enabled);
   const state = await readAutomationState();
@@ -803,11 +793,11 @@ async function pickRepo(automation: AutomationV1, given: unknown, ctx: Ctx): Pro
 async function planFor(automation: AutomationV1, candidates: readonly Candidate[], ctx: Ctx, now: Date): Promise<AutomationPlannedTask[]> {
   const state = await readAutomationState();
   const counts = limitCounts(automation.id, state, now);
-  let capacity = automation.queueDepth + Math.max(0, automation.maxConcurrent - counts.active) - counts.queued;
+  let capacity = intakeCapacity(automation, counts);
   const planned: AutomationPlannedTask[] = [];
   for (const c of candidates) {
     const base = { dedupeKey: c.dedupeKey, repo: c.event.repo, title: c.event.title, lane: automation.lane };
-    if (seenKey(automation.id, c.dedupeKey) in state.seen || recentlyDropped(state, automation.id, c.dedupeKey, now.getTime())) {
+    if (isAlreadyHandled(state, automation.id, c.dedupeKey, now.getTime())) {
       planned.push({ ...base, verdict: 'dedupe: already handled' });
       continue;
     }
@@ -821,8 +811,7 @@ async function planFor(automation: AutomationV1, candidates: readonly Candidate[
       planned.push({ ...base, verdict: `queue, then wait: ${gate}` });
       continue;
     }
-    let estimate: number;
-    try { estimate = await ctx.lane.estimateUsd(automation.lane); } catch { estimate = Number.POSITIVE_INFINITY; }
+    const estimate = await estimateLaneUsdSafe(automation.lane, ctx.lane);
     const refusal = limitRefusal(automation, counts, estimate);
     if (refusal) {
       planned.push({ ...base, verdict: `queue, then ${refusal.charAt(0).toLowerCase()}${refusal.slice(1)}` });
@@ -905,7 +894,7 @@ export async function receiveWebhook(id: string, body: AutomationWebhookRequest,
   if (!automation.enabled) return { ok: false, status: 409, firing: null, deduped: false, error: 'This automation is turned off.' };
   const repo = await pickRepo(automation, body.repo, ctx);
   if (typeof repo !== 'string') return { ok: false, status: 400, firing: null, deduped: false, error: repo.error };
-  const event = eventFromText(repo, body as unknown as Record<string, unknown>);
+  const event = eventFromText(repo, body);
   if (typeof event === 'string') return { ok: false, status: 400, firing: null, deduped: false, error: event };
   const res = await intake(automation, candidatesFor(automation, [event], 'webhook'), ctx, ctx.now());
   if (res.deduped.length > 0) return { ok: true, status: 200, firing: null, deduped: true, error: null };
@@ -962,7 +951,7 @@ export async function reviewFiring(firingId: string, decision: 'approve' | 'reje
   if (decision === 'approve') {
     if (!automation) return { ok: false, status: 409, error: 'Its automation was deleted; reject it instead.' };
     if (firing.source.kind === 'watch') return { ok: false, status: 409, error: 'Notification draft only. Send through your channel approval flow, then reject this draft to dismiss it.' };
-    lane = automation.lane === 'leader-review' ? 'fleet' : automation.lane;
+    lane = approvalTargetLane(automation);
     const gate = await laneGateRefusal(lane, firing.repo, ctx.lane);
     if (gate) return { ok: false, status: 409, error: gate };
     outcome = await dispatchToLane(automation, { ...firing, lane }, ctx.lane);
@@ -1003,7 +992,7 @@ export async function automationsOverview(opts: { schedulerRunning: boolean; now
     automations: automations.map((a) => automationView(a, state, now)),
     firings: [...state.firings].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, OVERVIEW_FIRINGS),
     templates: [...AUTOMATION_TEMPLATES],
-    blocked: opts.schedulerRunning ? lastBlockedReason() : 'The automations scheduler is not running in this process (Phantom server off, test run, or ASHLR_AUTOMATIONS_AUTO=0).',
+    blocked: opts.schedulerRunning ? lastBlocked : 'The automations scheduler is not running in this process (Phantom server off, test run, or ASHLR_AUTOMATIONS_AUTO=0).',
     schedulerRunning: opts.schedulerRunning,
   };
 }

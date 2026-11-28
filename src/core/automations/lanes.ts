@@ -36,7 +36,8 @@ import type { CloudInternalLaunch } from '../cloud/service.js';
 import type { DevinLaunchResponse } from '../devin/types.js';
 import type { DevinInternalLaunch } from '../devin/service.js';
 import type { EnqueueTaskResult, FleetTaskInput } from '../fleet/fleet-types.js';
-import type { AutomationFiringV1, AutomationLaneRef, AutomationV1 } from './types.js';
+import type { AutomationFiringV1, AutomationLane, AutomationLaneRef, AutomationV1 } from './types.js';
+import { roundUsd } from './validate.js';
 
 export type LaneOutcome =
   | { kind: 'dispatched'; ref: AutomationLaneRef; spendUsd: number; reason: string }
@@ -106,7 +107,7 @@ async function defaultEstimateUsd(lane: AutomationV1['lane']): Promise<number> {
     if (lane === 'devin') {
       const { readDevinBudget } = await import('../devin/store.js');
       const b = readDevinBudget();
-      return Math.round(b.maxAcuPerSession * b.usdPerAcu * 100) / 100;
+      return roundUsd(b.maxAcuPerSession * b.usdPerAcu);
     }
   } catch { /* fall through: unknown spend is not free — see caller */ }
   return lane === 'fleet' || lane === 'leader-review' ? 0 : Number.POSITIVE_INFINITY;
@@ -158,6 +159,29 @@ export function resolveLaneDeps(deps: AutomationLaneDeps = {}): Required<Automat
 export const KILL_REASON = 'Stop is on (KILL) — automations dispatch nothing until it is cleared.';
 export const NO_GRANT_REASON = 'No standing grant is in force — automations only dispatch work under the grant.';
 
+/** Fail closed: a throwing kill-switch check counts as active. */
+export async function readKillActiveSafe(deps: Pick<Required<AutomationLaneDeps>, 'killActive'>): Promise<boolean> {
+  try { return await deps.killActive(); } catch { return true; }
+}
+
+/** Fail closed: a throwing policy read counts as no grant. */
+export async function readPolicySafe(deps: Pick<Required<AutomationLaneDeps>, 'policy'>): Promise<EffectivePolicy | null> {
+  try { return await deps.policy(); } catch { return null; }
+}
+
+/** Fail closed: a throwing spend estimate is infinite (never free). */
+export async function estimateLaneUsdSafe(
+  lane: AutomationV1['lane'],
+  deps: Pick<Required<AutomationLaneDeps>, 'estimateUsd'>,
+): Promise<number> {
+  try { return await deps.estimateUsd(lane); } catch { return Number.POSITIVE_INFINITY; }
+}
+
+/** The working lane an approved leader-review firing hands off to. */
+export function approvalTargetLane(automation: AutomationV1 | null): Exclude<AutomationLane, 'leader-review'> {
+  return automation && automation.lane !== 'leader-review' ? automation.lane : 'fleet';
+}
+
 export function repoInPolicy(policy: EffectivePolicy, repo: string): boolean {
   const lower = repo.toLowerCase();
   return policy.repos.some((entry) => entry.nameWithOwner.toLowerCase() === lower);
@@ -170,12 +194,9 @@ export function grantRepos(policy: EffectivePolicy | null): string[] {
 
 /** KILL first (every lane), then the grant (every lane that does work). Null = clear. */
 export async function laneGateRefusal(lane: AutomationV1['lane'], repo: string, deps: Required<AutomationLaneDeps>): Promise<string | null> {
-  let kill = true;
-  try { kill = await deps.killActive(); } catch { kill = true; }
-  if (kill) return KILL_REASON;
+  if (await readKillActiveSafe(deps)) return KILL_REASON;
   if (lane === 'leader-review') return null;
-  let policy: EffectivePolicy | null = null;
-  try { policy = await deps.policy(); } catch { policy = null; }
+  const policy = await readPolicySafe(deps);
   if (!policy) return NO_GRANT_REASON;
   if (!repoInPolicy(policy, repo)) return `${repo} is not in the standing grant's current stage.`;
   return null;
@@ -222,7 +243,7 @@ export function buildAutomationPrompt(automation: AutomationV1, firing: Automati
 }
 
 /** Fleet dedupe keys are short identifiers without spaces (task-source cleanRef). */
-export function fleetDedupeKey(firing: AutomationFiringV1): string {
+function fleetDedupeKey(firing: AutomationFiringV1): string {
   return `automation:${firing.automationId}:${firing.id}`.slice(0, 190);
 }
 

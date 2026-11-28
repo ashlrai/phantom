@@ -19,7 +19,8 @@ import { chmod, lstat, mkdir, open, rename, rm, stat, unlink } from 'node:fs/pro
 import { basename, dirname, join } from 'node:path';
 
 import { ashlrHome } from '../cloud/store.js';
-import { AutomationInputError, normaliseAutomation } from './validate.js';
+import { pad2 } from './rrule.js';
+import { AutomationInputError, isRecord, normaliseAutomation } from './validate.js';
 import {
   AUTOMATION_FIRING_ID_PATTERN,
   AUTOMATION_LIMITS,
@@ -33,8 +34,8 @@ import {
 } from './types.js';
 
 export const AUTOMATIONS_DIR = 'automations';
-export const AUTOMATIONS_FILE = 'automations.json';
-export const AUTOMATIONS_STATE_FILE = 'state.json';
+const AUTOMATIONS_FILE = 'automations.json';
+const AUTOMATIONS_STATE_FILE = 'state.json';
 export const AUTOMATIONS_JOURNAL_FILE = 'firings.jsonl';
 const LOCK_FILE = '.lock';
 
@@ -56,8 +57,8 @@ export function automationsDir(): string {
   return join(ashlrHome(), AUTOMATIONS_DIR);
 }
 export const automationsPath = (): string => join(automationsDir(), AUTOMATIONS_FILE);
-export const automationStatePath = (): string => join(automationsDir(), AUTOMATIONS_STATE_FILE);
-export const automationJournalPath = (): string => join(automationsDir(), AUTOMATIONS_JOURNAL_FILE);
+const automationStatePath = (): string => join(automationsDir(), AUTOMATIONS_STATE_FILE);
+const automationJournalPath = (): string => join(automationsDir(), AUTOMATIONS_JOURNAL_FILE);
 
 async function ensurePrivateDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true, mode: 0o700 });
@@ -67,7 +68,7 @@ async function ensurePrivateDir(path: string): Promise<void> {
   if ((st.mode & 0o077) !== 0) await chmod(path, 0o700);
 }
 
-export async function ensureAutomationsDir(): Promise<string> {
+async function ensureAutomationsDir(): Promise<string> {
   await ensurePrivateDir(ashlrHome());
   const dir = automationsDir();
   await ensurePrivateDir(dir);
@@ -179,7 +180,7 @@ export async function readAutomations(): Promise<DefinitionsRead> {
   } catch {
     return { automations: [], invalid: 1 };
   }
-  const list = (parsed as { automations?: unknown })?.automations;
+  const list = isRecord(parsed) ? parsed['automations'] : undefined;
   if (!Array.isArray(list)) return { automations: [], invalid: 1 };
   const automations: AutomationV1[] = [];
   let invalid = 0;
@@ -263,18 +264,17 @@ export function emptyCursor(): AutomationCursor {
   return { lastPolledAt: null, nextRunAt: null, since: {}, etags: {}, branches: {}, lastError: null };
 }
 
-export function emptyState(): AutomationStateV1 {
+function emptyState(): AutomationStateV1 {
   return { v: AUTOMATION_STATE_SCHEMA_VERSION, cursors: {}, firings: [], seen: {} };
 }
 
 function isStringMap(value: unknown): value is Record<string, string> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    && Object.values(value as Record<string, unknown>).every((v) => typeof v === 'string');
+  return isRecord(value) && Object.values(value).every((v) => typeof v === 'string');
 }
 
 function validCursor(value: unknown): AutomationCursor | null {
-  if (value === null || typeof value !== 'object') return null;
-  const c = value as Record<string, unknown>;
+  if (!isRecord(value)) return null;
+  const c = value;
   const nullableString = (v: unknown): v is string | null => v === null || typeof v === 'string';
   if (!nullableString(c['lastPolledAt']) || !nullableString(c['nextRunAt']) || !nullableString(c['lastError'])) return null;
   if (!isStringMap(c['since']) || !isStringMap(c['etags']) || !isStringMap(c['branches'])) return null;
@@ -288,9 +288,9 @@ function validCursor(value: unknown): AutomationCursor | null {
   };
 }
 
-export function isAutomationFiring(value: unknown): value is AutomationFiringV1 {
-  if (value === null || typeof value !== 'object') return false;
-  const f = value as Record<string, unknown>;
+function isAutomationFiring(value: unknown): value is AutomationFiringV1 {
+  if (!isRecord(value)) return false;
+  const f = value;
   return f['v'] === 1
     && typeof f['id'] === 'string' && AUTOMATION_FIRING_ID_PATTERN.test(f['id'])
     && typeof f['automationId'] === 'string'
@@ -304,31 +304,31 @@ export function isAutomationFiring(value: unknown): value is AutomationFiringV1 
     && typeof f['updatedAt'] === 'string'
     && typeof f['spendUsd'] === 'number'
     && typeof f['attempts'] === 'number'
-    && f['source'] !== null && typeof f['source'] === 'object';
+    && isRecord(f['source']);
 }
 
 export async function readAutomationState(): Promise<AutomationStateV1> {
   const text = await readPrivateText(automationStatePath(), STATE_MAX_BYTES);
   if (text === null) return emptyState();
-  let parsed: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(text) as Record<string, unknown>;
+    parsed = JSON.parse(text);
   } catch {
     return emptyState();
   }
-  if (parsed?.['v'] !== AUTOMATION_STATE_SCHEMA_VERSION) return emptyState();
+  if (!isRecord(parsed) || parsed['v'] !== AUTOMATION_STATE_SCHEMA_VERSION) return emptyState();
   const state = emptyState();
   const cursors = parsed['cursors'];
-  if (cursors && typeof cursors === 'object') {
-    for (const [id, raw] of Object.entries(cursors as Record<string, unknown>)) {
+  if (isRecord(cursors)) {
+    for (const [id, raw] of Object.entries(cursors)) {
       const c = validCursor(raw);
       if (c) state.cursors[id] = c;
     }
   }
   if (Array.isArray(parsed['firings'])) state.firings = parsed['firings'].filter(isAutomationFiring);
   const seen = parsed['seen'];
-  if (seen && typeof seen === 'object') {
-    for (const [key, at] of Object.entries(seen as Record<string, unknown>)) {
+  if (isRecord(seen)) {
+    for (const [key, at] of Object.entries(seen)) {
       if (typeof at === 'number' && Number.isFinite(at)) state.seen[key] = at;
     }
   }
@@ -336,7 +336,7 @@ export async function readAutomationState(): Promise<AutomationStateV1> {
 }
 
 /** Bound the state: drop old dedupe keys and old settled firings (open firings always stay). */
-export function pruneState(state: AutomationStateV1, nowMs: number): AutomationStateV1 {
+function pruneState(state: AutomationStateV1, nowMs: number): AutomationStateV1 {
   const cutoff = nowMs - AUTOMATION_LIMITS.dedupeRetentionMs;
   for (const [key, at] of Object.entries(state.seen)) {
     if (at < cutoff) delete state.seen[key];
@@ -350,7 +350,7 @@ export function pruneState(state: AutomationStateV1, nowMs: number): AutomationS
   return state;
 }
 
-export async function writeAutomationState(state: AutomationStateV1, nowMs: number = Date.now()): Promise<void> {
+async function writeAutomationState(state: AutomationStateV1, nowMs: number = Date.now()): Promise<void> {
   await ensureAutomationsDir();
   await writePrivateAtomic(automationStatePath(), `${JSON.stringify(pruneState(state, nowMs))}\n`);
 }
@@ -449,8 +449,7 @@ export async function readAutomationJournal(limit = 200): Promise<AutomationJour
 }
 
 export function newFiringId(now: Date): string {
-  const p = (n: number, w = 2): string => String(n).padStart(w, '0');
-  const stamp = `${now.getUTCFullYear()}${p(now.getUTCMonth() + 1)}${p(now.getUTCDate())}T${p(now.getUTCHours())}${p(now.getUTCMinutes())}${p(now.getUTCSeconds())}`;
+  const stamp = `${now.getUTCFullYear()}${pad2(now.getUTCMonth() + 1)}${pad2(now.getUTCDate())}T${pad2(now.getUTCHours())}${pad2(now.getUTCMinutes())}${pad2(now.getUTCSeconds())}`;
   const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
   const bytes = randomBytes(6);
   let suffix = '';
