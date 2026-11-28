@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { coalesceQueue } from '../core/queue/coalesce.js';
+import { reportQueueCliError } from './queue.js';
 
 const help = `Usage: phm queue coalesce [<file>] [--apply --out <directory>] [--json]
 Merge small READY lines for the same repo into batch jobs (up to 8 tasks each).
@@ -51,7 +52,6 @@ export async function cmdQueueCoalesce(args: string[]): Promise<number> {
     const message = (error as NodeJS.ErrnoException).code === 'EEXIST'
       ? 'Output directory already has a coalesce plan; choose an empty directory'
       : error instanceof Error ? error.message : 'Queue unavailable';
-    if (json) console.log(JSON.stringify({ error: message })); else console.error(message);
-    return 1;
+    return reportQueueCliError(message, json);
   }
 }

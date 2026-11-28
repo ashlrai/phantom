@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util';
 import { formatQueueBatches, readQueueBatches } from '../core/queue/batches.js';
+import { reportQueueCliError } from './queue.js';
 
 /** `extra` adds fields to the JSON report; `phm queue --json` uses it for the launch order. */
 export async function cmdQueueBatches(args: string[], extra?: () => Promise<Record<string, unknown>>): Promise<number> {
@@ -13,8 +14,6 @@ export async function cmdQueueBatches(args: string[], extra?: () => Promise<Reco
     console.log(values.json ? JSON.stringify(extra ? { ...report, ...await extra() } : report) : formatQueueBatches(report));
     return 0;
   } catch {
-    const error = 'Usage: phm queue batches [--runs <directory>] [--json]';
-    if (args.includes('--json')) console.log(JSON.stringify({ error })); else console.error(error);
-    return 2;
+    return reportQueueCliError('Usage: phm queue batches [--runs <directory>] [--json]', args.includes('--json'), undefined, 2);
   }
 }

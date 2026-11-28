@@ -1,5 +1,6 @@
 /** `phm queue supersede`: thin handler. The plan and the writes live in core/queue/supersede.ts. */
 import { supersedeQueue, supersedeText, type SupersedeOptions, type SupersedeReport } from '../core/queue/supersede.js';
+import { hasQueueHelpFlag, reportQueueCliError } from './queue.js';
 
 const help = `Usage: phm queue supersede [--json] [--apply]
 List queued jobs that a newer cycle of the same job replaces, such as RQ-PHX-RECUTCOREC541 once RQ-PHX-RECUTCOREC544 is queued.
@@ -10,7 +11,7 @@ Ids without a cycle are left alone. Nothing changes unless you add --apply.
   --json   print the typed report (schema queue.supersede.v1)`;
 
 export async function cmdQueueSupersede(args: string[], run: (opts: SupersedeOptions) => Promise<SupersedeReport> = supersedeQueue): Promise<number> {
-  if (args.includes('--help') || args.includes('-h')) { console.log(help); return 0; }
+  if (hasQueueHelpFlag(args)) { console.log(help); return 0; }
   if (args.some(arg => arg !== '--json' && arg !== '--apply')) { console.error(help); return 2; }
   const json = args.includes('--json'), apply = args.includes('--apply');
   try {
@@ -21,7 +22,6 @@ export async function cmdQueueSupersede(args: string[], run: (opts: SupersedeOpt
     return 0;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Queue unavailable';
-    if (json) console.log(JSON.stringify({ error: message })); else console.error(message);
-    return 1;
+    return reportQueueCliError(message, json);
   }
 }

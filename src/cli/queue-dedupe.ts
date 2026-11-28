@@ -1,6 +1,7 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { defaultRunsDir } from '../core/fleet/landed-closes-read.js';
 import { dedupeQueueFile } from '../core/queue/dedupe.js';
+import { reportQueueCliError } from './queue.js';
 
 const help = `Usage: phm queue dedupe [--file <router-queue.md>] [--apply] [--json]
 Find repeated READY jobs; claimed/running goals take precedence over new work.
@@ -8,7 +9,7 @@ By default, show matches and reasons. Add --apply to mark repeats.
 Semantic repeats share a file/module and >=50% goal tokens: DUPLICATE-OF-<id>.
 Jobs missing a repo, file/module or goal tokens are unknown and left alone.`;
 export async function cmdQueueDedupe(args: string[]): Promise<number> {
-  let file = join(process.env.ASHLR_RUNS_DIR || join(homedir(), '.ashlr-runs'), 'queue', 'router-queue.md');
+  let file = join(defaultRunsDir(), 'queue', 'router-queue.md');
   let apply = false, json = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--help' || args[i] === '-h') { console.log(help); return 0; }
@@ -28,7 +29,6 @@ export async function cmdQueueDedupe(args: string[]): Promise<number> {
     return 0;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Queue unavailable';
-    if (json) console.log(JSON.stringify({ error: message })); else console.error(message);
-    return 1;
+    return reportQueueCliError(message, json);
   }
 }

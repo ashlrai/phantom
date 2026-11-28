@@ -39,10 +39,11 @@ import { parseReadyRows, readReadyText, type ReadyRow } from '../fleet/ready-row
 import { readLaneTargets } from '../fleet/runs-lane-targets.js';
 import { replaceQueueText } from './dedupe.js';
 import { queueAgeText, type QueueActionRequest, type QueueActionV1, type QueueOrderV1, type QueueSteerCode } from './order-types.js';
+import { isEnoentError } from './schema.js';
 import { ROUTER_LINE, appendGuarded, cycleOf, eventClock, parked, repoKey, supersedeQueue } from './supersede.js';
 
 export const READY_BACKUP = 'ready.tsv.bak';
-export const DROP_ARCHIVE = 'dropped.tsv';
+const DROP_ARCHIVE = 'dropped.tsv';
 // router-queue.md envelopes resolve spec-less ready rows' requirements; the
 // same 32 MiB bound the unfed report and queue supply read it under.
 const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
@@ -109,7 +110,7 @@ export const flockReady: TakeReadyLock = queueDir => new Promise((resolve, rejec
 });
 
 const missing = (error: unknown): never => {
-  throw (error as NodeJS.ErrnoException).code === 'ENOENT' ? new QueueSteerError('queue-missing') : error;
+  throw isEnoentError(error) ? new QueueSteerError('queue-missing') : error;
 };
 
 /** Lanes a job may move to: the dispatcher's lanes and the drop lanes, minus held ones. */
@@ -176,7 +177,7 @@ function marketHint(row: ReadyRow, routerQueue?: string | null): string | null {
 }
 
 /** Pure: the rows after the action, or null when the queue already is the way the action wants it. */
-export function planQueueAction(rows: readonly ReadyRow[], req: QueueActionRequest, routerQueue?: string | null): ReadyRow[] | null {
+function planQueueAction(rows: readonly ReadyRow[], req: QueueActionRequest, routerQueue?: string | null): ReadyRow[] | null {
   const mine = rows.filter(row => row.id === req.id && !parked(row));
   if (!mine.length) return null;
   const rest = rows.filter(row => !mine.includes(row));

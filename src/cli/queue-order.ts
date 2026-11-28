@@ -1,8 +1,9 @@
 /** `phm queue`, `phm queue top|lane|drop`: thin handler. The reader and the writes live in core/queue/order.ts. */
 import { QUEUE_ORDER_ACTIONS, type QueueActionRequest, type QueueOrderAction } from '../core/queue/order-types.js';
 import { QueueSteerError, queueOrderText, readQueueOrder, steerQueue } from '../core/queue/order.js';
+import { hasQueueHelpFlag, reportQueueCliError } from './queue.js';
 
-export const QUEUE_ORDER_HELP = `Usage: phm queue [--json]
+const QUEUE_ORDER_HELP = `Usage: phm queue [--json]
        phm queue top <id> [--dry-run] [--json]
        phm queue lane <id> <lane> [--dry-run] [--json]
        phm queue drop <id> [--dry-run] [--json]
@@ -17,10 +18,10 @@ and prints what changed. --dry-run prints the change and writes nothing.
 export interface QueueOrderCli { read: typeof readQueueOrder; steer: typeof steerQueue }
 
 /** True when the arguments name one of the steering actions. */
-export const isQueueOrderAction = (word: string | undefined): word is QueueOrderAction => QUEUE_ORDER_ACTIONS.includes(word as QueueOrderAction);
+const isQueueOrderAction = (word: string | undefined): word is QueueOrderAction => QUEUE_ORDER_ACTIONS.includes(word as QueueOrderAction);
 
 export async function cmdQueueOrder(args: string[], cli: QueueOrderCli = { read: readQueueOrder, steer: steerQueue }): Promise<number> {
-  if (args.includes('--help') || args.includes('-h')) { console.log(QUEUE_ORDER_HELP); return 0; }
+  if (hasQueueHelpFlag(args)) { console.log(QUEUE_ORDER_HELP); return 0; }
   const json = args.includes('--json'), dryRun = args.includes('--dry-run');
   const words = args.filter(arg => arg !== '--json' && arg !== '--dry-run');
   const [action, id, lane] = words;
@@ -39,7 +40,6 @@ export async function cmdQueueOrder(args: string[], cli: QueueOrderCli = { read:
     return report.verified === false ? 1 : 0;
   } catch (error) {
     const message = error instanceof QueueSteerError ? error.message : 'The queue is unavailable.';
-    if (json) console.log(JSON.stringify({ error: message, ...(error instanceof QueueSteerError ? { code: error.code } : {}) })); else console.error(message);
-    return 1;
+    return reportQueueCliError(message, json, error instanceof QueueSteerError ? { code: error.code } : undefined);
   }
 }

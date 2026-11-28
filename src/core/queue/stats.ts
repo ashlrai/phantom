@@ -1,3 +1,5 @@
+import { isNonNegativeFinite, isQueueRecord } from './schema.js';
+
 /** The dedup key every journal reader folds on: last appended snapshot per (station, pool, id) wins. */
 export const queueVisitKey = (visit: Pick<QueueVisit, 'station' | 'pool' | 'id'>): string =>
   JSON.stringify([visit.station, visit.pool, visit.id]);
@@ -13,10 +15,10 @@ export interface QueueVisit {
 }
 
 export function isQueueVisit(value: unknown): value is QueueVisit {
-  if (!value || typeof value !== 'object') return false;
-  const v = value as QueueVisit;
+  if (!isQueueRecord(value)) return false;
+  const v = value as unknown as QueueVisit;
   return [v.id, v.station, v.pool].every(s => typeof s === 'string' && s.length > 0) &&
-    Number.isFinite(v.arrivedAt) && v.arrivedAt >= 0 &&
+    isNonNegativeFinite(v.arrivedAt) &&
     (v.startedAt === undefined || (Number.isFinite(v.startedAt) && v.startedAt >= v.arrivedAt)) &&
     (v.completedAt === undefined || (v.startedAt !== undefined && Number.isFinite(v.completedAt) && v.completedAt >= v.startedAt));
 }

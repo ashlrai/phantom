@@ -1,5 +1,5 @@
 import { isFailedJob } from './replay.js';
-import type { QueueDocument, QueueJob } from './schema.js';
+import { escapeQueueRegExp, type QueueDocument, type QueueJob } from './schema.js';
 import type { QueueStore } from './store.js';
 
 export interface IssueGroup {
@@ -16,12 +16,11 @@ export interface IssueRetry { v: 1; retried: Array<{ id: string; retry: string }
 
 const SAMPLE_LIMIT = 3;
 const NO_TEXT = '(no error text)';
-const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Collapse one failure message so repeats of the same problem compare equal. */
 export function normalizeError(text: string | undefined, ownId?: string): string {
   let out = text ?? '';
-  if (ownId) out = out.replace(new RegExp(escapeRegExp(ownId), 'g'), '<id>');
+  if (ownId) out = out.replace(new RegExp(escapeQueueRegExp(ownId), 'g'), '<id>');
   out = out
     .replace(/\d{4}-\d\d-\d\d[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:?\d\d)?/g, '<time>')
     .replace(/\b\d\d:\d\d:\d\d(?:\.\d+)?\b/g, '<time>')

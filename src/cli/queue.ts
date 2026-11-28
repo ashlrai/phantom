@@ -3,6 +3,20 @@ import { queueReportFromText } from '../core/queue-metrics.js';
 import { readQueueVisits } from '../core/queue/journal.js';
 import { estimateQueueStats } from '../core/queue/stats.js';
 
+export const hasQueueHelpFlag = (args: readonly string[]): boolean =>
+  args.includes('--help') || args.includes('-h');
+
+export function reportQueueCliError(
+  message: string,
+  json: boolean,
+  extra?: Record<string, unknown>,
+  exitCode = 1,
+): number {
+  if (json) console.log(JSON.stringify({ error: message, ...extra }));
+  else console.error(message);
+  return exitCode;
+}
+
 const HELP = `Usage: phm queue [--json]
        phm queue top <id> | lane <id> <lane> | drop <id> [--dry-run] [--json]
        phm queue stuck [--json]
@@ -67,9 +81,7 @@ async function cmdQueueStats(args: string[]): Promise<number> {
     return 0;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Queue statistics unavailable';
-    if (args.includes('--json')) console.log(JSON.stringify({ error: message }));
-    else console.error(message);
-    return 1;
+    return reportQueueCliError(message, args.includes('--json'));
   }
 }
 
@@ -134,7 +146,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
       args.some(arg => arg === '--dir' || arg.startsWith('--dir='))) {
     return (await import('./job-queue.js')).cmdJobQueue(args);
   }
-  if (args.length === 0 || args.includes('--help') || args.includes('-h')) { console.log(HELP); return 0; }
+  if (args.length === 0 || hasQueueHelpFlag(args)) { console.log(HELP); return 0; }
   if (args[0] === 'stuck') {
     if (args.slice(1).some(arg => arg !== '--json')) { console.error(HELP); return 2; }
     try {
