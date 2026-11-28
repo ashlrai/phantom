@@ -2687,10 +2687,10 @@ reads apply, through the same identity registry the message filters use; a
 `--to` naming no identity, membership in no channel, or an unreadable registry
 keeps exact-label matching and never widens. All four one-shot claim
 surfaces —
-`agents bus work next` (whose `--wait-ms` flag runs the same bounded wait
-`fleet bus-wait-claim` provides, so the unified surface needs no fleet
-verb to block for work), `fleet bus-next`, `fleet bus-wait-claim` and
-`comms bus next` — take the same `--id <envelope-id>`, `--contains <text>`, `--since
+`agents bus work next` and `comms bus next` (each taking a `--wait-ms`
+flag that runs the same bounded wait `fleet bus-wait-claim` provides, so
+neither surface needs a fleet verb to block for work), `fleet bus-next`
+and `fleet bus-wait-claim` — take the same `--id <envelope-id>`, `--contains <text>`, `--since
 <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--priority <P0|P1|P2|P3>`,
 `--channel <name>`, `--topic <topic>`, `--from <agent>` and `--exclude-from <agent>`
 read filters, applied inside

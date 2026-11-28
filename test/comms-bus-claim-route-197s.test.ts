@@ -183,6 +183,47 @@ it('claims a protocol task envelope addressed to a topic', async () => {
   expect(last().status).toBe('acquired');
 });
 
+it('waits for claimable work under --wait-ms and reports an honest timeout', async () => {
+  const { root, last } = setup();
+  const options = { root };
+  const task = (id: string, to: string): string => postTask(root, {
+    id, from: 'fake-sender', to, priority: 'P1', ttl: 600_000,
+    body: { kind: 'work', text: id },
+  });
+
+  // Work already present is claimed on the first poll of the wait.
+  expect(await cmdCommsBus(['post', '--file', task('wait-ready', 'worker-a')], options)).toBe(0);
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--wait-ms', '5000'], options)).toBe(0);
+  expect(last()).toMatchObject({ status: 'acquired', receipt: { envelope: { id: 'wait-ready' } } });
+  const token = last().token as string;
+  expect(await cmdCommsBus(['claim', 'release', '--id', 'wait-ready', '--token', token], options)).toBe(0);
+
+  // A post arriving mid-wait is claimed by a later poll under the same filters.
+  const waiting = cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000',
+    '--wait-ms', '5000', '--contains', 'waited'], options);
+  await cmdCommsBus(['post', '--file', task('waited-1', 'worker-a')], options);
+  expect(await waiting).toBe(0);
+  expect(last()).toMatchObject({ status: 'acquired', receipt: { envelope: { id: 'waited-1' } } });
+  expect(await cmdCommsBus(['claim', 'release', '--id', 'waited-1', '--token', last().token as string], options)).toBe(0);
+
+  // Nothing acquirable inside the window is an honest timeout, not a widened claim.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000',
+    '--wait-ms', '30', '--contains', 'never-posted'], options)).toBe(1);
+  expect(last()).toEqual({ status: 'timeout' });
+
+  // Malformed waits are invalid before any poll; --wait-ms is a next-only flag.
+  for (const args of [
+    ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--wait-ms', 'abc'],
+    ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--wait-ms', '0'],
+    ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--wait-ms', '300001'],
+    ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--wait-ms', '1e2'],
+    ['claim', 'acquire', '--id', 'waited-1', '--owner', 'worker-b', '--lease-ms', '60000', '--wait-ms', '1000'],
+  ]) {
+    expect(await cmdCommsBus(args, options), args.join(' ')).toBe(2);
+    expect(last(), args.join(' ')).toEqual({ status: 'invalid' });
+  }
+});
+
 it('returns the established invalid code for bad claim arguments', async () => {
   const { root, last } = setup();
   const options = { root };

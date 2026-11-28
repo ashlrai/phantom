@@ -1,9 +1,11 @@
-import { claimNextBusWork } from '../core/fleet/bus-next-claim.js';
+import { claimNextBusWork, type BusNextResult } from '../core/fleet/bus-next-claim.js';
+import { waitClaimBusWork } from '../core/fleet/bus-wait-claim.js';
 import { mutateBusWorkClaim, type BusClaimRequest } from '../core/fleet/bus-work-claims.js';
 import { BUS_PRIORITIES } from '../core/fleet/bus-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
+import { wireAwaitCancel } from '../core/util/await-support.js';
 
-export const COMMS_BUS_CLAIM_HELP = `phm comms bus next --to <address|topic> --owner <label> --lease-ms <1..3600000> [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority <P0|P1|P2|P3>] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]
+export const COMMS_BUS_CLAIM_HELP = `phm comms bus next --to <address|topic> --owner <label> --lease-ms <1..3600000> [--wait-ms <1..300000>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority <P0|P1|P2|P3>] [--channel <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]
 phm comms bus claim acquire --id <message-id> --owner <label> --lease-ms <1..3600000>
 phm comms bus claim renew|release|complete --id <message-id> --token <claim-token>
 Leases make one claimant per message ID: a live lease answers 'conflict' to everyone else.
@@ -23,9 +25,14 @@ that exact topic — composing with --channel into one room and one topic —
 --from only receipts one sender wrote and --exclude-from drops receipts sent under
 every registered spelling of one identity —
 the same rules every bus read applies, so the claimable set is exactly what the matching read
-would list; empty's {candidates, held} totals count only the filtered scan. Exit 0 acquired or
+would list; empty's {candidates, held} totals count only the filtered scan. --wait-ms
+<1..300000> turns the one-shot claim into the same bounded wait agents bus work
+next --wait-ms and fleet bus-wait-claim run: each poll re-applies every filter,
+so the wait claims exactly what the matching read would list and ends 'timeout'
+when the window closes with nothing acquirable or 'cancelled' on SIGINT/SIGTERM.
+Exit 0 acquired or
 empty, 1
-unavailable/retryable, 2 invalid. An empty result still reports {candidates, held}: the live
+unavailable/retryable/timeout/cancelled, 2 invalid. An empty result still reports {candidates, held}: the live
 claimable receipts the scan found addressed to --to and how many answered conflict, so a dry
 well (candidates 0) reads differently from held work. Claim output includes the token; never log it. Renew
 reuses the original lease length.
@@ -46,30 +53,41 @@ function flagValues(args: string[], allowed: readonly string[]): Map<string, str
   return values;
 }
 
-function leaseMs(value: string | undefined): number | undefined {
+function wholeNumber(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
   return /^\d+$/.test(value) ? Number(value) : NaN;
 }
 
 /** Thin handler for `comms bus next` and `comms bus claim`; all lease logic lives in core. */
-export function cmdCommsBusClaim(verb: 'next' | 'claim', args: string[], root: string | undefined): number {
+export async function cmdCommsBusClaim(verb: 'next' | 'claim', args: string[], root: string | undefined): Promise<number> {
   const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
   if (verb === 'next') {
-    const values = flagValues(args, ['--to', '--owner', LEASE_FLAG, '--id', '--contains', '--since', '--before', '--priority', '--channel', '--topic', '--from', '--exclude-from']);
-    const to = values?.get('--to'), owner = values?.get('--owner'), lease = leaseMs(values?.get(LEASE_FLAG));
+    const values = flagValues(args, ['--to', '--owner', LEASE_FLAG, '--wait-ms', '--id', '--contains', '--since', '--before', '--priority', '--channel', '--topic', '--from', '--exclude-from']);
+    const to = values?.get('--to'), owner = values?.get('--owner'), lease = wholeNumber(values?.get(LEASE_FLAG));
     const sinceRaw = values?.get('--since');
     const since = sinceRaw === undefined ? undefined : parseSince(sinceRaw);
     const beforeRaw = values?.get('--before');
     const before = beforeRaw === undefined ? undefined : parseSince(beforeRaw);
     const priority = values?.get('--priority');
+    const waitMs = wholeNumber(values?.get('--wait-ms'));
     if (!values || to === undefined || owner === undefined || lease === undefined ||
         (sinceRaw !== undefined && since === null) ||
         (beforeRaw !== undefined && before === null) ||
         (priority !== undefined && !(BUS_PRIORITIES as readonly string[]).includes(priority))) return invalid();
-    const result = claimNextBusWork({ to, owner, leaseMs: lease, root, id: values.get('--id'),
+    const claim = { to, owner, leaseMs: lease, root, id: values.get('--id'),
       contains: values.get('--contains'), since: since ?? undefined, before: before ?? undefined,
       priority: priority as (typeof BUS_PRIORITIES)[number] | undefined,
-      channel: values.get('--channel'), topic: values.get('--topic'), from: values.get('--from'), excludeFrom: values.get('--exclude-from') });
+      channel: values.get('--channel'), topic: values.get('--topic'), from: values.get('--from'), excludeFrom: values.get('--exclude-from') };
+    let result: BusNextResult;
+    if (waitMs === undefined) {
+      result = claimNextBusWork(claim);
+    } else {
+      const controller = new AbortController();
+      const detach = wireAwaitCancel(controller);
+      try {
+        result = await waitClaimBusWork({ ...claim, waitMs }, controller.signal);
+      } finally { detach(); }
+    }
     console.log(JSON.stringify(result));
     return result.status === 'acquired' || result.status === 'empty' ? 0 : result.status === 'invalid' ? 2 : 1;
   }
@@ -78,7 +96,7 @@ export function cmdCommsBusClaim(verb: 'next' | 'claim', args: string[], root: s
   const acquire = action === 'acquire';
   const values = flagValues(rest, acquire ? ['--id', '--owner', LEASE_FLAG] : ['--id', '--token']);
   if (!values || values.get('--id') === undefined) return invalid();
-  const lease = leaseMs(values.get(LEASE_FLAG));
+  const lease = wholeNumber(values.get(LEASE_FLAG));
   const request: BusClaimRequest = { action: action as BusClaimRequest['action'], id: values.get('--id')!, root,
     ...(acquire ? { owner: values.get('--owner'), leaseMs: lease } : { token: values.get('--token') }) };
   const result = mutateBusWorkClaim(request);
