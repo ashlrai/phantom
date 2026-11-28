@@ -37,6 +37,7 @@ import { readGrokUltraRunway } from '../fleet/grok-ultra-store.js';
 import type { GrokUltraRunway } from '../fleet/grok-ultra-types.js';
 import { fetchClaudeUsageApi, type ClaudeApiUsageResult } from '../fabric/usage-api.js';
 import { readZaiUsage } from './zai-usage.js';
+import { isUsageRecord } from './runway.js';
 import { readClaudeApiGrantViews } from '../resources/claude-api-grant.js';
 import type { ClaudeApiGrantReadView } from '../resources/claude-api-grant-types.js';
 import {
@@ -51,17 +52,7 @@ import {
   type UsageResourceUnit,
 } from './resource-usage-types.js';
 
-export {
-  USAGE_RESOURCES,
-  type UsageResourceId,
-  type UsageResourceReader,
-  type UsageResourceReading,
-  type UsageResourceRow,
-  type UsageResourceRowReason,
-  type UsageResourceRowState,
-  type UsageResourcesSnapshot,
-  type UsageResourceUnit,
-};
+export { type UsageResourceId, type UsageResourcesSnapshot };
 
 // ---------------------------------------------------------------------------
 // Reading validation — the boundary a reader's return must cross
@@ -90,8 +81,8 @@ function sourceLabel(value: unknown): value is string {
 
 /** Exactly the contract fields, allowlisted; anything else fails closed. */
 export function validUsageReading(value: unknown): value is UsageResourceReading {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const row = value as Record<string, unknown>;
+  if (!isUsageRecord(value)) return false;
+  const row = value;
   return Object.keys(row).every((key) =>
     ['used', 'limit', 'unit', 'resetsAt', 'source', 'asOf'].includes(key)) &&
     finiteAmount(row['used']) && finiteAmount(row['limit']) &&

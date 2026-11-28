@@ -9,14 +9,13 @@ import { ANTIGRAVITY_EXHAUSTION, antigravityQuota } from './antigravity-quota.js
 import { planBurnDown } from './burn-down.js';
 import { codexResetBankUpgradeHint, planBankedReset, readBankedResets } from './banked-resets.js';
 import { readCustomResources } from './custom.js';
-import { parseResourceLiveSidecar, readPrivateJson, readResourceLiveFile, unverified } from './store.js';
+import {
+  asRecordObject as object, nonNegativeFinite as number, parseResourceLiveSidecar, readResourceDispatchStatus, readResourceLiveFile, unverified,
+} from './store.js';
 import { RESOURCE_LIVE_ALLOWANCES, type ResourceLiveAllowance } from './types.js';
 
-export const FLEET_RESOURCE_PLAN_SCHEMA = 'phantom.fleet-resource-plan.v1';
+const FLEET_RESOURCE_PLAN_SCHEMA = 'phantom.fleet-resource-plan.v1';
 const MINUTE = 60_000;
-const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
-  ? value as Record<string, unknown> : {};
-const number = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 const count = (value: unknown): number | null => Number.isSafeInteger(value) ? number(value) : null;
 const time = (value: unknown): number => typeof value === 'string' ? Date.parse(value) : NaN;
 const round = (n: number): number => Number(n.toFixed(3));
@@ -196,7 +195,7 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
 
 export async function readFleetResourcePlan(runsDir: string, now = Date.now()) {
   const [live, status, ledger, custom, resets] = await Promise.all([readResourceLiveFile(runsDir),
-    readPrivateJson(join(runsDir, 'queue', 'status.json'), 1024 * 1024), readJobsTail(join(runsDir, 'metrics', 'jobs.jsonl')),
+    readResourceDispatchStatus(runsDir), readJobsTail(join(runsDir, 'metrics', 'jobs.jsonl')),
     readCustomResources(), readBankedResets(runsDir, now)]);
   const queue = await readResourceQueue(runsDir, now, status);
   const demand = queue && new Map([...queue.lanes.keys()].map(lane => [

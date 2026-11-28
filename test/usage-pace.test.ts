@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { paceTarget, projectUsagePace } from '../src/core/usage/pace.js';
+import { resetCountdown } from '../src/core/usage/account-limits.js';
+import {
+  paceTarget, parseDispatchStatusHeader, parseResetTimestampMs, projectUsagePace, readDispatchStatus,
+} from '../src/core/usage/pace.js';
+import { formatDurationMinutes, runwayHours } from '../src/core/usage/runway.js';
+import { readDispatchStatus as readSpendDispatchStatus, spendCountdown } from '../src/core/usage/spend.js';
 
 const now = Date.parse('2026-11-09T16:00:00Z');
 const fixture = { schema: 'dispatchd.status.v1', last_tick: '2026-11-09T16:00:00Z', budget: {
@@ -31,5 +36,19 @@ describe('usage pace', () => {
   it('expires a whole status and rejects malformed evidence', () => {
     expect(projectUsagePace(fixture, now + 120_001).pools.every(row => row.projectedPercent === null)).toBe(true);
     expect(projectUsagePace(null, now).pools.every(row => row.hoursLeft === null)).toBe(true);
+  });
+  it('shares dispatch status header, reset timestamp, bounded reader, and duration formatting across usage projections', () => {
+    expect(readSpendDispatchStatus).toBe(readDispatchStatus);
+    expect(parseDispatchStatusHeader(fixture, now)).toMatchObject({ fresh: true, asOf: '2026-11-09T16:00:00.000Z' });
+    expect(parseDispatchStatusHeader(fixture, now + 120_001).fresh).toBe(false);
+    expect(parseDispatchStatusHeader({ ...fixture, schema: 'other' }, now).fresh).toBe(false);
+    expect(parseResetTimestampMs('2026-11-09T18:00:00Z')).toBe(Date.parse('2026-11-09T18:00:00Z'));
+    expect(parseResetTimestampMs(1_762_704_000)).toBe(1_762_704_000_000);
+    expect(Number.isNaN(parseResetTimestampMs(9e12))).toBe(true);
+    expect(formatDurationMinutes(76 * 60)).toBe('3d 4h');
+    expect(runwayHours(2.5)).toBe('2h 30m');
+    expect(spendCountdown(2.5)).toBe('2h 30m');
+    expect(spendCountdown(0)).toBeNull();
+    expect(resetCountdown(new Date(now + 150 * 60_000).toISOString(), now)).toBe('in 2h 30m');
   });
 });

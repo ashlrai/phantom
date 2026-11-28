@@ -11,11 +11,9 @@ import { isAbsolute, join } from 'node:path';
 import {
   USAGE_SENSOR_STALE_MS, usageSensorReadingSchema, type UsageSensorReading,
 } from '../sensor-reading.js';
-import { parseResourceLiveSidecar, readResourceLiveFile } from './store.js';
-import { RESOURCE_LIVE_ALLOWANCES, type ResourceLiveReading } from './types.js';
 import { projectLaneHistory } from './history.js';
-import { readResourceHistoryFile } from './store.js';
-import type { LaneHistory } from './types.js';
+import { nonNegativeFinite as finite, parseResourceLiveSidecar, readResourceHistoryFile, readResourceLiveFile } from './store.js';
+import { RESOURCE_LIVE_ALLOWANCES, type LaneHistory, type ResourceLiveReading } from './types.js';
 
 /** Pacing keys the world model reads from a sensor row. */
 export interface ResourceLivePaceRow {
@@ -59,10 +57,6 @@ function sensorRow(reading: ResourceLiveReading): UsageSensorReading | null {
     resetAt: reading.reset_at,
   });
   return parsed.success ? parsed.data : null;
-}
-
-function finite(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 /** Project a stored sidecar. A missing or malformed file yields nothing. */

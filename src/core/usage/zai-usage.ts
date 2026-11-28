@@ -10,6 +10,7 @@ import { stat, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { UsageResourceReading } from './resource-usage-types.js';
+import { isFiniteNumber, isUsageRecord as record } from './runway.js';
 
 export const ZAI_USAGE_SOURCE = 'zai-lane-resources';
 
@@ -22,9 +23,6 @@ export interface ZaiUsageDeps {
   /** File mtime in epoch ms, or null when unreadable. */
   mtimeMs?: (path: string) => Promise<number | null>;
 }
-
-const record = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 
 function resetIso(value: unknown): string | null {
   const ms = typeof value === 'string' ? Date.parse(value) : typeof value === 'number' ? value * 1000 : NaN;
@@ -48,7 +46,7 @@ export async function readZaiUsage(deps: ZaiUsageDeps = {}): Promise<UsageResour
   const row = Object.prototype.hasOwnProperty.call(rows, 'zai') ? rows.zai : undefined;
   if (!record(row)) return null;
   const frac = row.used_frac;
-  if (typeof frac !== 'number' || !Number.isFinite(frac) || frac < 0 || mtime === null) return null;
+  if (!isFiniteNumber(frac) || frac < 0 || mtime === null) return null;
   return {
     used: Math.round(Math.min(frac, 1) * 10_000) / 100,
     limit: 100,

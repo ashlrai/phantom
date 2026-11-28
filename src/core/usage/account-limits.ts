@@ -9,8 +9,9 @@
  * and prints as "unknown", never 0.
  */
 import { visibleWindows } from './provider-windows.js';
+import { formatDurationMinutes } from './runway.js';
 
-export const USAGE_LIMITS_SCHEMA = 'usage.limits.v1';
+const USAGE_LIMITS_SCHEMA = 'usage.limits.v1' as const;
 
 type AccountState = 'checking' | 'observed' | 'signed-out' | 'unavailable';
 
@@ -100,7 +101,7 @@ export interface AccountLimitsRow {
 }
 
 export interface AccountLimitsReport {
-  schema: typeof USAGE_LIMITS_SCHEMA;
+  schema: 'usage.limits.v1';
   generatedAt: string;
   sampledAt: string;
   /** Where the windows came from: collector, shared-evidence, baseline or none. */
@@ -146,9 +147,7 @@ const STANDING_WORD: Record<AccountStanding, string> = {
 export function resetCountdown(iso: string | null, nowMs: number): string | null {
   const at = iso === null ? NaN : Date.parse(iso);
   if (!Number.isFinite(at) || at <= nowMs) return null;
-  const minutes = Math.max(1, Math.round((at - nowMs) / 60_000));
-  const d = Math.floor(minutes / 1440), h = Math.floor((minutes % 1440) / 60), m = minutes % 60;
-  return `in ${d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`}`;
+  return `in ${formatDurationMinutes(Math.max(1, Math.round((at - nowMs) / 60_000)))}`;
 }
 
 function windowLine(w: AccountLimitsWindow, nowMs: number): string {

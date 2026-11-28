@@ -31,7 +31,7 @@ export function antigravityPollState(reading: ResourceLiveReading, prior: PollSt
   return { ...poll, reset_checks, interval_s: interval / 1000, next_poll_at: new Date(now + interval).toISOString() };
 }
 
-export function antigravityExhaustedUntil(groups: AntigravityUsageGroup[], now: number): string | null {
+function antigravityExhaustedUntil(groups: AntigravityUsageGroup[], now: number): string | null {
   const groupResets = groups.map(group => {
     const exhausted = group.buckets.filter(bucket => bucket.remaining === 0 && Date.parse(bucket.reset_at) > now);
     return exhausted.map(bucket => bucket.reset_at).sort().at(-1);

@@ -7,6 +7,7 @@
  * storage-state, token, keychain or file access, and the profile path may not be
  * a Codex home. Sign-in is done by the operator in this browser, the normal way.
  */
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { bindingWindow, needsSignin, parseVisibleWindows, type UsageSite } from './sites.js';
@@ -21,15 +22,47 @@ export interface BrowserPage {
 export interface BrowserSession { newPage(): Promise<BrowserPage>; close(): Promise<void> }
 export type BrowserLauncher = (profileDir: string, options: { headless: boolean }) => Promise<BrowserSession>;
 
+export const CODEX_HOME_SEGMENT_RE = /(?:^|\/)\.codex[^/]*(?:\/|$)/;
+
+export function absolutePathOrUndefined(value: string | undefined): string | undefined {
+  return typeof value === 'string' && isAbsolute(value) ? value : undefined;
+}
+
+export function isSafeUsageDir(value: string | undefined): value is string {
+  return typeof value === 'string' && isAbsolute(value) && !CODEX_HOME_SEGMENT_RE.test(value);
+}
+
 export function usageBrowserDir(home = homedir()): string { return join(home, '.ashlr-runs', 'usage-browser'); }
 
 /** The profile must be the usage browser dir (or a child), never a Codex home or other app profile. */
 export function profileDirAllowed(dir: string, home = homedir()): boolean {
   if (!isAbsolute(dir) || /[\0\r\n]/.test(dir)) return false;
   const norm = resolve(dir);
-  if (/(?:^|\/)\.codex[^/]*(?:\/|$)/.test(norm)) return false;
+  if (CODEX_HOME_SEGMENT_RE.test(norm)) return false;
   const root = usageBrowserDir(home);
   return norm === root || norm.startsWith(`${root}/`);
+}
+
+export type OpenUsageBrowserResult =
+  | { ok: true; session: BrowserSession }
+  | { ok: false; reason: 'refused' | 'unavailable' };
+
+/** Validate the usage-browser profile directory, create it privately, and launch a session. */
+export async function openUsageBrowserSession(options: {
+  home?: string;
+  headed: boolean;
+  launch?: BrowserLauncher;
+}): Promise<OpenUsageBrowserResult> {
+  const home = options.home ?? homedir();
+  const dir = usageBrowserDir(home);
+  if (!profileDirAllowed(dir, home)) return { ok: false, reason: 'refused' };
+  try {
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const session = await (options.launch ?? playwrightLauncher)(dir, { headless: !options.headed });
+    return { ok: true, session };
+  } catch {
+    return { ok: false, reason: 'unavailable' };
+  }
 }
 
 export type SiteReading =

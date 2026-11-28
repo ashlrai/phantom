@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { postureEvidence } from '../queue/route-explain.js';
 import { readPublishedDevinWeekly, type DevinWeeklyCapacity } from '../devin/weekly-capacity.js';
-import { parseResourceLiveSidecar, readResourceLiveFile, readResourceHistoryFile } from './resource-live/store.js';
+import { nonNegativeFinite as amount, parseResourceLiveSidecar, readResourceLiveFile, readResourceHistoryFile } from './resource-live/store.js';
 import { projectLaneHistory } from './resource-live/history.js';
 import { planBurnDown } from './resource-live/burn-down.js';
 import { readCustomResources, type CustomResource } from './resource-live/custom.js';
@@ -32,7 +32,6 @@ export interface LaneAllowanceRow {
       evidence?: { observedAt: string; accountId: string; model: string } } | null } | null;
 }
 export interface LaneAllowanceSnapshot { v: 1; asOf: string; lanes: LaneAllowanceRow[] }
-const amount = (n: unknown): number | null => typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null;
 const named = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 const fresh = (at: string | null | undefined, now: number): boolean => {
   const observed = at ? Date.parse(at) : NaN;

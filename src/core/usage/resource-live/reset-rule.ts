@@ -14,10 +14,10 @@
 import type { ResetDraft, ResetDraftKind, ResetRuleState, ResourceLiveReading } from './types.js';
 import { RESOURCE_LIVE_STALE_MS } from './types.js';
 
-export const RESET_THRESHOLD_PCT = 95;
-export const RESET_MIN_HOURS_LEFT = 24;
-export const RESET_WEEK_MS = 7 * 24 * 3_600_000;
-export const RESET_DECISION_SCHEMA = 'resource-live.reset-decision.v1' as const;
+const RESET_THRESHOLD_PCT = 95;
+const RESET_MIN_HOURS_LEFT = 24;
+const RESET_WEEK_MS = 7 * 24 * 3_600_000;
+const RESET_DECISION_SCHEMA = 'resource-live.reset-decision.v1' as const;
 
 export const EMPTY_RESET_STATE: ResetRuleState = { fable: null, weekly: null, last_decision_file: null };
 
@@ -83,7 +83,7 @@ export function evaluateResetRule(
 }
 
 export interface ResetDecision {
-  schema: typeof RESET_DECISION_SCHEMA;
+  schema: 'resource-live.reset-decision.v1';
   id: string;
   created_at: string;
   audience: 'mason-only';

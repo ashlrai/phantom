@@ -5,10 +5,11 @@
  * when readings stop changing). `--show` prints the stored sidecar and reads
  * nothing else.
  */
-import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
-import { playwrightLauncher, profileDirAllowed, usageBrowserDir, type BrowserSession } from '../core/usage/live/browser.js';
+import { join } from 'node:path';
+import {
+  absolutePathOrUndefined, isSafeUsageDir, openUsageBrowserSession, playwrightLauncher, type BrowserSession,
+} from '../core/usage/live/browser.js';
 import { ResourceLiveBusyError, runResourceLiveTick, type ResourceLiveTickResult } from '../core/usage/resource-live/engine.js';
 import type { ResourceLiveSources } from '../core/usage/resource-live/source-types.js';
 import { defaultResourceLiveSources } from '../core/usage/resource-live/sources.js';
@@ -29,8 +30,6 @@ export interface UsageResourceLiveDeps {
   shouldStop?: () => boolean;
 }
 
-const abs = (value: string | undefined): string | undefined => typeof value === 'string' && isAbsolute(value) ? value : undefined;
-
 function printTable(sidecar: Pick<ResourceLiveSidecar, 'readings' | 'burn_down'>): void {
   const rank = new Map(sidecar.burn_down.allowances.map(row => [row.id, row]));
   for (const reading of sidecar.readings) {
@@ -49,7 +48,7 @@ function printTable(sidecar: Pick<ResourceLiveSidecar, 'readings' | 'burn_down'>
 
 export async function cmdUsageResourceLive(args: string[], deps: UsageResourceLiveDeps = {}): Promise<number> {
   const home = deps.home ?? homedir();
-  let runsDir = abs(process.env['ASHLR_RUNS_DIR']) ?? join(home, '.ashlr-runs');
+  let runsDir = absolutePathOrUndefined(process.env['ASHLR_RUNS_DIR']) ?? join(home, '.ashlr-runs');
   let json = false, watch = false, force = false, show = false, browser = false, headed = false;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -62,7 +61,7 @@ export async function cmdUsageResourceLive(args: string[], deps: UsageResourceLi
     else if (arg === '--headed') headed = true;
     else if (arg === '--runs-dir') {
       const value = args[++i];
-      if (!value || !isAbsolute(value) || /(?:^|\/)\.codex[^/]*(?:\/|$)/.test(value)) { console.error(USAGE); return 2; }
+      if (!isSafeUsageDir(value)) { console.error(USAGE); return 2; }
       runsDir = value;
     } else { console.error(USAGE); return 2; }
   }
@@ -80,14 +79,10 @@ export async function cmdUsageResourceLive(args: string[], deps: UsageResourceLi
 
   let session: BrowserSession | null = null;
   if (browser) {
-    const dir = usageBrowserDir(home);
-    if (!profileDirAllowed(dir, home)) { console.error('Usage browser profile path refused.'); return 1; }
-    try {
-      await mkdir(dir, { recursive: true, mode: 0o700 });
-      session = await (deps.launch ?? playwrightLauncher)(dir, { headless: !headed });
-    } catch {
-      console.error('Usage browser is unavailable (Playwright is not installed or the profile could not open). Official sources only.');
-    }
+    const opened = await openUsageBrowserSession({ home, headed, launch: deps.launch });
+    if (opened.ok) session = opened.session;
+    else if (opened.reason === 'refused') { console.error('Usage browser profile path refused.'); return 1; }
+    else console.error('Usage browser is unavailable (Playwright is not installed or the profile could not open). Official sources only.');
   }
   const sources = deps.sources ?? defaultResourceLiveSources({
     ...liveSourceOptions(loadConfigReadOnly()),
