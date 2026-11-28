@@ -620,6 +620,7 @@
 /test/improve-boundary.test.ts @masonwyatt23
 /test/improve-branch-gardener-backlog.test.ts @masonwyatt23
 /test/improve-bus-dead-letter-backlog.test.ts @masonwyatt23
+/test/improve-bus-hop-backlog.test.ts @masonwyatt23
 /test/improve-capacity-history-backlog.test.ts @masonwyatt23
 /test/improve-catalog-refresh-backlog.test.ts @masonwyatt23
 /test/improve-change-requests-backlog.test.ts @masonwyatt23
