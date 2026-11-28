@@ -80,6 +80,9 @@ function initial(mode:ConsumerUpgradeOptions['mode']):ConsumerUpgradeResult {
     app:{state:'unknown',reason:null},stop:{engaged:null,drained:null,reason:null,command:'phm authority stop'},
     daemon:{stop:{command:'phm authority resident stop',performed:false,confirmation:'none'},restart:{command:'phm authority resident start',performed:false,ownerConfirmation:true,touchId:'unknown',reason:null}},steps:[]};
 }
+export function unsupportedConsumerDesktopUpgrade(mode:ConsumerUpgradeOptions['mode']):ConsumerUpgradeResult {
+  return freeze({...initial(mode),reason:'unsupported-platform'});
+}
 async function quiescence(a:Admission,r:ConsumerUpgradeResult,recover=false):Promise<void> {
   try {const s=fs.lstatSync(join(a.deps.home,'.ashlr/KILL'));r.stop.engaged=s.isFile()&&!s.isSymbolicLink();}catch {r.stop.engaged=false;}
   try {await checkConsumerQuiescence(a.helper,a.io,recover);r.stop.drained=true;r.stop.reason=null;delete r.remedyCommand;}
