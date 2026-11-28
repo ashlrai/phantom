@@ -136,6 +136,23 @@ phm node result --job hello-1 --owner acme --json
 phm node status --owner acme --json
 ```
 
+A bare `enqueue` is a connectivity ping: the job carries no instructions.
+To hand the node real work, embed the task text — the prompt `pull` prints
+under `Task:` for the operator (or their agent) to run. `--task-part` carries
+the text (repeat the flag, in order, for long prompts; 16 KiB joined at
+most) and `--task-sha256` proves it arrived intact: `sha256:` plus the
+lowercase hex digest of the exact joined text (`shasum -a 256` on macOS,
+`sha256sum` on Linux). An embedded task requires `--pack codex-file`, and
+`codex-file` requires the embedded task — enqueue refuses the pair split
+either way:
+
+```sh
+TASK='Reply with exactly: phantom-node-ok'
+DIGEST="$(printf %s "$TASK" | shasum -a 256 | cut -d' ' -f1)"
+phm node enqueue --job demo-1 --owner acme --pack codex-file --task-part "$TASK" --task-sha256 "sha256:$DIGEST" --json
+phm node pull --node <nodeId> --session 1
+```
+
 Every command above runs on this computer: the standalone registry is local,
 so producer and node are the same machine and a job enqueued elsewhere never
 reaches this node. To share one queue across computers you control — or to
