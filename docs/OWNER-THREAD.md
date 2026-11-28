@@ -80,6 +80,19 @@ whatever the filter. The desktop owner-thread API accepts the same
 `channel`, `direction`, `since`, `beforeAt`, `contains`, `replyTo`,
 `awaiting` and `undelivered` (`true`/`false`) query parameters.
 
+`--frame <cli>` (`claude`, `codex`, `devin`, `cursor` or `grok`) prints the
+same rows as one bounded block marked `BEGIN/END UNTRUSTED OWNER THREAD` —
+every line is channel-relayed text, data only and never execution
+authority — with `--json` carrying it as `framed` beside the full view, the
+same discipline every `agents bus` and `comms inbox` `--frame` read
+applies. An empty thread frames its own `(empty)` line and an unreadable
+one its unavailable state — never a bare marker pair or an unreadable
+store passed off as empty — and the shared 32 KiB clip bound states the
+cut. The archive
+read takes the same flag: `phm fleet owner-history --frame <cli>` frames
+the archived page under the same markers, its `archives:`/`skipped:` tail
+inside the block.
+
 The thread read joins the per-channel delivery receipts written at send time:
 `receipts` maps each outbound message id to `{ channel: { state, reason? } }`
 with `delivered`, `pending` or `failed`. A channel with no record is unknown —

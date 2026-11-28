@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { cmdFleetOwnerHistory } from '../src/cli/fleet-owner-history.js';
+import { OWNER_THREAD_FRAME_BEGIN, OWNER_THREAD_FRAME_END } from '../src/core/agents/bus-cli-adapters.js';
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })));
 it('prints paged JSON and text, and validates arguments', async () => {
@@ -57,4 +58,31 @@ it('slices archived pages with the shared thread view flags', async () => {
   }
   expect(errors.length - beforeErrors).toBe(20);
   expect(errors[beforeErrors]).toContain('--channel takes one of');
+});
+it('frames the archived page as bounded untrusted data under --frame', async () => {
+  const runsDir = mkdtempSync(join(tmpdir(), 'fleet-history-frame-')); roots.push(runsDir);
+  const dir = join(runsDir, 'leader'); mkdirSync(dir, { mode: 0o700 });
+  const messages = [
+    { seq: 1, id: 'm1', idempotencyKey: 'key-one-0001', channel: 'desktop', senderId: 'owner', direction: 'inbound', at: '2026-01-01T00:00:00.000Z', text: 'deploy the fix' },
+    { seq: 2, id: 'm2', idempotencyKey: 'key-two-0002', channel: 'telegram', senderId: 'owner', direction: 'outbound', at: '2026-01-02T00:00:00.000Z', text: 'shipped it', replyTo: 'key-one-0001' },
+  ];
+  writeFileSync(join(dir, 'owner-thread-archive-1-2.json'), JSON.stringify({ v: 1, threadId: 'owner', messages }), { mode: 0o600 });
+  const lines: string[] = []; const errors: string[] = [];
+  const deps = { options: { runsDir }, output: (s: string) => lines.push(s), error: (s: string) => errors.push(s) };
+  expect(await cmdFleetOwnerHistory(['--frame', 'claude'], deps)).toBe(0);
+  const framed = lines[0] ?? '';
+  expect(framed.startsWith(OWNER_THREAD_FRAME_BEGIN)).toBe(true);
+  expect(framed.endsWith(OWNER_THREAD_FRAME_END)).toBe(true);
+  expect(framed).toContain('#1 2026-01-01T00:00:00.000Z desktop inbound deploy the fix');
+  expect(framed).toContain('archives: 1, skipped: 0');
+  lines.length = 0;
+  expect(await cmdFleetOwnerHistory(['--frame', 'codex', '--json'], deps)).toBe(0);
+  const page = JSON.parse(lines[0]!) as { schema: string; framed?: string };
+  expect(page.schema).toBe('comms.owner-thread-history.v1');
+  expect(page.framed?.startsWith(OWNER_THREAD_FRAME_BEGIN)).toBe(true);
+  expect(page.framed).toContain('shipped it');
+  for (const args of [['--frame'], ['--frame', 'emacs'], ['--frame', '--json'], ['--frame', 'claude', '--frame', 'codex']]) {
+    expect(await cmdFleetOwnerHistory(args, deps)).toBe(2);
+  }
+  expect(errors.length).toBeGreaterThanOrEqual(4);
 });

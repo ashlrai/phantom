@@ -5229,7 +5229,18 @@ citation names reaches a CLI's next turn as marked-untrusted data in
 a single block and an envelope block can never pass for an inbox
 page, a chain or a feed; `--json` carries it as `framed` beside the
 full lookup the same way, and a not-found or unreadable lookup
-answers its own status rather than an invented envelope. Identities
+answers its own status rather than an invented envelope.
+`frameOwnerThread(cli, lines)` renders the owner-thread reads
+(`phm comms thread --frame <cli>` and `phm fleet owner-history
+--frame <cli>`) — the already-formatted `seq at channel direction
+text` rows with their awaiting/undelivered/receipt annotations, or
+the `#seq` archive row plus the `archives: …, skipped: …` tail —
+through the same shared line renderer under BEGIN/END UNTRUSTED
+OWNER THREAD markers, so channel-relayed message text reaches a
+CLI's next turn as marked-untrusted data in a single block; `--json`
+carries it as `framed` beside the full view the same way, an empty
+thread frames its own `(empty)` line and an unreadable one its
+unavailable state — never an invented conversation. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
