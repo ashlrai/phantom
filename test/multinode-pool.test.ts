@@ -219,6 +219,11 @@ describe('SSH routing and device-local provider lanes', () => {
       '/Users/air/.nvm/v24/bin/codex',
       '/Users/air/.volta/bin/codex', '/Users/air/.bun/bin/codex',
       '/Users/air/.local/share/mise/shims/codex', '/Users/air/.asdf/shims/codex',
+      '/Users/air/Library/pnpm/codex', '/Users/air/Library/pnpm/bin/codex',
+      '/Users/air/.local/share/pnpm/codex', '/Users/air/.local/share/pnpm/bin/codex',
+      '/Users/air/.opencode/bin/codex', '/Users/air/bin/codex',
+      '/Users/air/.cargo/bin/codex', '/Users/air/go/bin/codex',
+      '/Users/air/.proto/shims/codex', '/Users/air/.deno/bin/codex',
       '/usr/bin/codex', '/bin/codex', '/snap/bin/codex']);
     expect(resolveProviderBinary('codex', { home: '/Users/air', executable: path => path === '/Users/air/.npm-global/bin/codex' }))
       .toBe('/Users/air/.npm-global/bin/codex');

@@ -24,11 +24,14 @@ export function providerBinaryCandidates(provider: NodeProvider, deps: ProviderB
 }
 
 /** The same allowlist for any plain CLI name (used by the read-only node doctor).
- * The first group covers macOS and user-level installs; the version-manager and
- * Linux directories appended after the Node prefix resolve only when nothing
- * earlier exists, so an existing resolution never changes. They exist so a
- * contributor node on Linux can find the same provider CLIs. PATH is never
- * consulted. */
+ * The first group covers macOS and user-level installs; the version-manager
+ * directories appended after the Node prefix, then the community-CLI install
+ * locations, resolve only when nothing earlier exists, so an existing
+ * resolution never changes. They exist so a contributor node on Linux can
+ * find the same provider CLIs, and so a community agent CLI installed the
+ * documented way — opencode's `~/.opencode/bin`, a `pnpm add -g` global bin,
+ * a cargo/go/deno user bin — is found instead of reported missing. PATH is
+ * never consulted. */
 export function binaryCandidates(name: string, deps: ProviderBinaryDeps = {}): string[] {
   if (!/^[a-z][a-z0-9-]{0,31}$/.test(name)) return [];
   const home = deps.home ?? homedir();
@@ -38,6 +41,13 @@ export function binaryCandidates(name: string, deps: ProviderBinaryDeps = {}): s
     ...(isAbsolute(home)
       ? [join(home, '.volta', 'bin'), join(home, '.bun', 'bin'),
         join(home, '.local', 'share', 'mise', 'shims'), join(home, '.asdf', 'shims')]
+      : []),
+    ...(isAbsolute(home)
+      ? [join(home, 'Library', 'pnpm'), join(home, 'Library', 'pnpm', 'bin'),
+        join(home, '.local', 'share', 'pnpm'), join(home, '.local', 'share', 'pnpm', 'bin'),
+        join(home, '.opencode', 'bin'), join(home, 'bin'),
+        join(home, '.cargo', 'bin'), join(home, 'go', 'bin'),
+        join(home, '.proto', 'shims'), join(home, '.deno', 'bin')]
       : []),
     '/usr/bin', '/bin', '/snap/bin'];
   return [...new Set(dirs.filter(dir => isAbsolute(dir)).map(dir => join(dir, name)))];

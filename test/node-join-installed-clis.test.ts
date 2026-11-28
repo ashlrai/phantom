@@ -67,6 +67,21 @@ describe('installedAgentClis', () => {
   it('reports an empty list when no candidate binary is installed', () => {
     expect(installedAgentClis({ home: '/nonexistent-home', execPath: '/nonexistent/node', executable: () => false })).toEqual([]);
   });
+
+  it('finds community CLIs at the install locations their own installers use', () => {
+    // opencode's install script drops the binary in ~/.opencode/bin and a
+    // `pnpm add -g` CLI lands in pnpm's global bin — outside the original
+    // allowlist, where an installed CLI read as missing.
+    const deps = { home: '/Users/air', execPath: '/nonexistent/node' };
+    expect(installedAgentClis({ ...deps, executable: path => path === '/Users/air/.opencode/bin/opencode' }))
+      .toEqual(['opencode']);
+    expect(installedAgentClis({ ...deps, executable: path => path === '/Users/air/Library/pnpm/bin/gemini' }))
+      .toEqual(['gemini']);
+    expect(installedAgentClis({ ...deps, executable: path => path === '/Users/air/.local/share/pnpm/copilot' }))
+      .toEqual(['copilot']);
+    expect(installedAgentClis({ home: '/home/dev', execPath: '/nonexistent/node',
+      executable: path => path === '/home/dev/.cargo/bin/goose' })).toEqual(['goose']);
+  });
 });
 
 describe('standalone join installed-CLI candidates', () => {

@@ -62,6 +62,15 @@ describe('unverifiedCliCaps', () => {
     })).toEqual(['claude']);
   });
 
+  it('verifies a cap whose CLI sits at its documented install location', () => {
+    // opencode's installer uses ~/.opencode/bin, outside the original
+    // allowlist — an installed CLI must not read as unverified.
+    expect(unverifiedCliCaps(['opencode'], {
+      home: '/Users/air', execPath: '/nonexistent/node',
+      executable: path => path === '/Users/air/.opencode/bin/opencode',
+    })).toEqual([]);
+  });
+
   it('returns an empty list when every named CLI is present or no cap names one', () => {
     expect(unverifiedCliCaps(['codex', 'aider'], {
       home: '/nonexistent-home', execPath: '/nonexistent/node', executable: () => true,
