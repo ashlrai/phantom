@@ -23,7 +23,10 @@ export interface HarnessAdapter {
  * Desktop apps (Claude, Codex, Grok, Devin with capital letters) are operator
  * GUIs, not agent sessions, so they are deliberately absent. The Claude Code
  * native build execs from a versioned path, so its kernel name is the bare
- * version (for example `2.1.321`); nothing else on a Mac is named like that.
+ * version (for example `2.1.321`); the same binary's non-session modes share
+ * that name — `claude --chrome-native-host` is a ~12 MiB Chrome helper, not a
+ * session — so harnessSessions drops a harness root with a browser ancestor
+ * (see spawnedByBrowser below).
  */
 export const HARNESS_ADAPTERS: readonly HarnessAdapter[] = Object.freeze([
   { id: 'codex', kind: 'cloud-cli', names: ['codex'] },
@@ -83,6 +86,36 @@ export interface HarnessSession {
 }
 
 /**
+ * Comm names of standalone web browsers (ucomm, at most 16 bytes). A harness
+ * process spawned beneath one is a browser helper, not an agent session —
+ * `claude --chrome-native-host`, the Claude for Chrome native messaging host,
+ * shares the versioned binary's kernel name (`2.1.126`) with a real session.
+ * argv is never read, so the ancestor chain is the only signal; the list
+ * covers the major browsers and stays best-effort: an unlisted browser keeps
+ * its helper counted, which is the pre-change behavior, never a wrong
+ * exclusion. Agent sessions are launched by terminals, IDEs and dispatchers,
+ * never by a browser — remote IDEs run their processes server-side, so a
+ * local harness process with a browser ancestor is always a helper.
+ */
+const BROWSER_ANCESTOR = /(?:^|[^a-z0-9])(?:google[ _-]?chrome|chrome|chromium|firefox|safari|microsoft[ _-]?edge|msedge|brave(?:[ _-]?browser)?|opera|vivaldi|arc|dia|comet|epiphany|librewolf|waterfox|floorp)(?=$|[^a-z0-9])/i;
+
+/** True when the session root's ancestor chain passes through a browser.
+ * Rows without ppid (the pgrep+footprint fallback) cannot prove ancestry and
+ * keep the session; a missing ancestor row means the same. */
+function spawnedByBrowser(rootPid: number, byPid: ReadonlyMap<number, ProcessRow>): boolean {
+  const seen = new Set<number>([rootPid]);
+  let pid = byPid.get(rootPid)?.ppid ?? null;
+  while (pid !== null && pid > 0 && !seen.has(pid)) {
+    seen.add(pid);
+    const row = byPid.get(pid);
+    if (row === undefined) return false;
+    if (BROWSER_ANCESTOR.test(row.name)) return true;
+    pid = row.ppid;
+  }
+  return false;
+}
+
+/**
  * Group process rows into harness sessions. A root is a harness process with
  * no same-harness ancestor, so a CLI that re-execs itself stays one session.
  * `children` is required when rows lack ppid (the pgrep fallback).
@@ -118,6 +151,7 @@ export function harnessSessions(rows: readonly ProcessRow[], children: ReadonlyM
   const sessions: HarnessSession[] = [];
   for (const [pid, tree] of trees) {
     if (nested.has(pid)) continue;
+    if (spawnedByBrowser(pid, byPid)) continue;
     let mem: number | null = 0, cpu: number | null = 0;
     for (const member of tree) {
       const row = byPid.get(member);
