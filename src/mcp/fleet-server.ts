@@ -17,7 +17,6 @@ import { buildSlackBridgeStatus } from '../core/agents/slack-status.js';
 import { defaultTailnetPeersDeps, readTailnetPeers } from '../core/fleet/tailnet-peers.js';
 import { defaultPoolReachDeps, readPoolReach } from '../core/fleet/pool-reach.js';
 import { readFleetBoard, type FleetBoard } from '../core/fleet/coordination.js';
-import { projectCoordinationClaims } from '../core/fleet/coordination-claims-view.js';
 import { readClaimNoticeView } from '../core/fleet/claim-notice-view.js';
 import { readChannelHealth } from '../core/fleet/channel-health.js';
 import { defaultRuntimeIdentityDeps, readRuntimeIdentity, sanitizeIdentityText } from '../core/fleet/runtime-identity.js';
@@ -59,6 +58,7 @@ import { parseFleetBusStatusArgs, readFleetBusStatus } from './fleet-bus-status.
 import { parseFleetBusClaimsArgs, readFleetBusClaims, type FleetBusClaimsArgs } from './fleet-bus-claims.js';
 import { parseFleetCoordinationReturnsArgs, readFleetCoordinationReturns, type FleetCoordinationReturnsArgs } from './fleet-coordination-returns.js';
 import { parseFleetCoordinationInboxArgs, readFleetCoordinationInbox, type FleetCoordinationInboxArgs } from './fleet-coordination-inbox.js';
+import { parseFleetCoordinationClaimsArgs, readFleetCoordinationClaims, type FleetCoordinationClaimsArgs } from './fleet-coordination-claims.js';
 import { parseFleetBusBoardArgs, readFleetBusBoard, type FleetBusBoardArgs } from './fleet-bus-board.js';
 import {
   FLEET_BUS_DEAD_LETTERS_LIMIT_DEFAULT, FLEET_BUS_DEAD_LETTERS_LIMIT_MAX,
@@ -255,14 +255,6 @@ async function readFleetWorkBoard(input: FleetWorkBoardArgs) {
 const CHANNEL_HEALTH_TIMEOUT_MS = 5_000;
 const SLACK_REPLIES_TIMEOUT_MS = 5_000;
 
-/** Read only the server-owned default ledger; callers cannot select its location. */
-function readFleetCoordinationClaims() {
-  const now = Date.now();
-  let board: FleetBoard | null;
-  try { board = readFleetBoard({ now, reap: false }); } catch { board = null; }
-  return projectCoordinationClaims(board, now);
-}
-
 /** The whole-board read `phm fleet coordination board` serves: every live
  * claim, message and proposal plus the expired-claims count, stamped with the
  * invocation clock. `reap: false` keeps the read from appending an expiry row;
@@ -404,6 +396,7 @@ export interface FleetReaders {
   busClaims?: (input: FleetBusClaimsArgs) => Promise<unknown>;
   coordinationReturns?: (input: FleetCoordinationReturnsArgs) => unknown;
   coordinationInbox?: (input: FleetCoordinationInboxArgs) => unknown;
+  coordinationClaims?: (input: FleetCoordinationClaimsArgs) => unknown;
   busBoard?: (input: FleetBusBoardArgs) => Promise<unknown>;
   busDeadLetters?: (input: FleetBusDeadLettersArgs) => Promise<unknown>;
   seatHandoffs?: () => Promise<unknown>;
@@ -1051,8 +1044,19 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_coordination_claims',
-      description: 'Read-only fresh claims from the host coordination ledger, newest first (at most 50, task capped at 200 characters). Claims are advisory and grant no execution authority. Unknown means ownership is unknown, not absent. Returns no messages, proposals or lease material. Takes no arguments; no caller path, root or working directory is accepted.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      description: 'Read-only fresh claims from the host coordination ledger, newest first (at most 50, task capped at 200 characters) — the same projectCoordinationClaims projection `phm fleet coordination claims` serves, where fleet_coordination_board mixes claims with messages and proposals uncapped and fleet_bus_claims reads the separate bus claim table. `id` keeps one exact claim id, `agent` one exact coordination agent label (a coordination name matched exactly, never resolved through the bus registry), `repo` one owner/name repo compared case-insensitively, `since`/`before` keep claims whose claimedAt stamp falls inside one [since, before) window under the same 15m, 2h, 1d, epoch ms or ISO grammar every coordination read takes — a claim stamped exactly at `before` never matches — and `contains` keeps claims whose id, repo, task or agent carries the needle as a case-insensitive substring. The filters narrow the live-claim set before the newest-50 slice, so a filtered read reaches claims the unfiltered cap hides — "who holds claim X", "what does agent Y hold", "claims on repo Z started this hour" — and matched/omitted keep the bounded page honest the way the sibling returns and inbox reads\' coverage counters do: matched counts every live claim the filters kept, omitted the filtered total minus the returned rows, both null on an unreadable ledger — unknown stays unknown, never an invented zero. Claims are advisory and grant no execution authority; expiredClaims still reports the board\'s expired total since the filters narrow live claims only. Returns no messages, proposals or lease material. Every coordination root stays server-owned — no caller path, root or working directory is accepted.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$', description: 'Keep only the claim with this exact id — the same `phm fleet coordination claims --id` match.' },
+          agent: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$', description: 'Keep only claims one coordination agent label holds — matched exactly, never resolved through the bus registry; the same `--agent` match.' },
+          repo: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$', description: 'Keep only claims on this owner/name repo, compared case-insensitively — the same `--repo` match.' },
+          since: { type: 'string', description: 'Keep claims whose claimedAt stamp is at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `phm fleet coordination claims --since` takes.' },
+          before: { type: 'string', description: 'Keep claims whose claimedAt stamp is strictly before the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with `since` into one [since, before) window, the same grammar `--before` takes.' },
+          contains: { type: 'string', minLength: 1, maxLength: 512, description: 'Case-insensitive substring over each claim\'s id, repo, task and agent — the same `--contains` match.' },
+        },
+        additionalProperties: false,
+      },
       annotations,
     },
     {
@@ -1851,6 +1855,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const workTraceArgs = name === 'fleet_work_trace' ? parseFleetWorkTraceArgs(args) : null;
     const coordinationReturnsArgs = name === 'fleet_coordination_returns' ? parseFleetCoordinationReturnsArgs(args) : null;
     const coordinationInboxArgs = name === 'fleet_coordination_inbox' ? parseFleetCoordinationInboxArgs(args) : null;
+    const coordinationClaimsArgs = name === 'fleet_coordination_claims' ? parseFleetCoordinationClaimsArgs(args) : null;
     const reviewPick = name === 'fleet_review_pick' ? parseFleetReviewPickArgs(args) : null;
     const orderState = name === 'fleet_order_state' ? parseFleetOrderStateArgs(args) : null;
     const history = name === 'fleet_reset_history' ? parseFleetResetHistoryArgs(args) : null;
@@ -1983,6 +1988,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_work_feed' ? workFeedArgs === null :
         name === 'fleet_coordination_returns' ? coordinationReturnsArgs === null :
         name === 'fleet_coordination_inbox' ? coordinationInboxArgs === null :
+        name === 'fleet_coordination_claims' ? coordinationClaimsArgs === null :
         name === 'fleet_reset_history' ? history === null :
         name === 'fleet_bus_hops' ? busHopsArgs === null :
         Object.keys(args).some(key => !limited || key !== 'limit') ||
@@ -1999,7 +2005,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_loop' ? await readers.loop(limit as number)
         : name === 'fleet_bus_hops' ? await (readers.bus ?? readFleetBusHops)(busHopsArgs as FleetBusHopsArgs)
         : name === 'fleet_host_runs' ? await (readers.hostRuns ?? readFleetRunsDirState)()
-        : name === 'fleet_coordination_claims' ? readFleetCoordinationClaims()
+        : name === 'fleet_coordination_claims' ? await (readers.coordinationClaims ?? readFleetCoordinationClaims)(coordinationClaimsArgs as FleetCoordinationClaimsArgs)
         : name === 'fleet_coordination_returns' ? await (readers.coordinationReturns ?? readFleetCoordinationReturns)(coordinationReturnsArgs as FleetCoordinationReturnsArgs)
         : name === 'fleet_coordination_inbox' ? await (readers.coordinationInbox ?? readFleetCoordinationInbox)(coordinationInboxArgs as FleetCoordinationInboxArgs)
         : name === 'fleet_coordination_board' ? readFleetCoordinationBoard()

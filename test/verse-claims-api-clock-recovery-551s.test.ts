@@ -56,7 +56,8 @@ describe('desktop claims clock recovery', () => {
       read: () => ({ ...board, claims: [claim] }), now: () => now,
     }));
     expect(result).toEqual({ v: 1, source: 'coordination-ledger', generatedAt: now.toISOString(),
-      state: 'known', expiredClaims: 2, claims: [{ ...claim, claimedAt: now.toISOString(),
+      state: 'known', expiredClaims: 2, matched: 1, omitted: 0,
+      claims: [{ ...claim, claimedAt: now.toISOString(),
         expiresAt: new Date(claim.expiresAt).toISOString(), expiresInSeconds: 1800 }] });
   });
 
@@ -66,6 +67,7 @@ describe('desktop claims clock recovery', () => {
     }));
     expect(result).toEqual({ v: 1, source: 'coordination-ledger',
       generatedAt: Number.isNaN(at.getTime()) ? 'unknown' : now.toISOString(),
-      state: 'unknown', claims: [], expiredClaims: null, reason: 'coordination ledger: reader failed' });
+      state: 'unknown', claims: [], expiredClaims: null, matched: null, omitted: null,
+      reason: 'coordination ledger: reader failed' });
   });
 });
