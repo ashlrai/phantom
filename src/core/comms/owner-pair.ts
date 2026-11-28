@@ -199,7 +199,12 @@ export async function startOwnerPair(deps: PairDeps, input: { handle?: string; a
   const afterRowId = await deps.bridge.baseline();
   if (afterRowId === null) return { status: 'messages-unreadable' };
   const sent: string[] = [];
-  for (const handle of targets) if (await deps.bridge.send(handle, PAIR_TEXT)) sent.push(handle);
+  for (const handle of targets) {
+    if (input.auto && readPairState(deps.configDir).autoOff) return { status: 'too-soon' };
+    if (await deps.bridge.send(handle, PAIR_TEXT)) sent.push(handle);
+  }
+  // An unpair during the last send must win over this attempt’s persistence.
+  if (input.auto && readPairState(deps.configDir).autoOff) return { status: 'too-soon' };
   if (sent.length === 0) return { status: 'send-failed' };
   writePairState(deps.configDir, { pending: { handles: sent, startedAt: now, expiresAt: now + PAIR_TTL_MS, afterRowId }, lastStartAt: now, autoOff: false });
   return { status: 'pending', handles: sent, since: now };
