@@ -71,6 +71,7 @@ import type { NeedsYouItem } from './workbench-types.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import {
   FLEET_ENGINES,
+  FLEET_PAUSED_REPO_KINDS,
   GATE_ORDER,
   REPO_HOLD_KINDS,
   STALE_STANDING_TICK_REASON,
@@ -83,6 +84,7 @@ import {
   type FleetLiveSnapshotV1,
   type FleetLiveState,
   type FleetLiveSummary,
+  type FleetPausedRepoKind,
   type FleetPhase,
   type FleetRepoRow,
   type FleetRunOutcome,
@@ -654,6 +656,36 @@ function sameRepo(a: string, b: string): boolean {
 function dirLabel(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? path;
+}
+
+/** Same freshness window the lane slots use: a tick older than this is not current truth. */
+const TICK_FRESH_MS = 10 * 60_000;
+const MAX_PAUSED_REPO_ROWS = 64;
+
+/**
+ * The last fresh standing tick's paused repos, verbatim labels and reasons.
+ * `null` = no tick, a stale or future-dated tick, or a record without the
+ * pausedRepos array — unknown is never reported as "nothing paused".
+ */
+export function pausedReposOf(tick: FleetTickStateV1 | null, nowMs: number): FleetLiveSnapshotV1['pausedRepos'] {
+  if (tick === null || !Array.isArray(tick.pausedRepos)) return null;
+  const at = msOf(tick.at);
+  if (!Number.isFinite(at) || nowMs < at || nowMs - at > TICK_FRESH_MS) return null;
+  const rows: { repo: string; reason: string; kind?: FleetPausedRepoKind }[] = [];
+  for (const p of tick.pausedRepos) {
+    if (rows.length >= MAX_PAUSED_REPO_ROWS) break;
+    if (typeof p !== 'object' || p === null) continue;
+    const repo = (p as { repo?: unknown }).repo;
+    const reason = (p as { reason?: unknown }).reason;
+    if (typeof repo !== 'string' || typeof reason !== 'string') continue;
+    const kind = (p as { kind?: unknown }).kind;
+    rows.push({
+      repo: clip(repo, 200),
+      reason: clip(reason, 480),
+      ...(kind !== undefined && FLEET_PAUSED_REPO_KINDS.includes(kind as FleetPausedRepoKind) ? { kind: kind as FleetPausedRepoKind } : {}),
+    });
+  }
+  return rows;
 }
 
 function median(values: readonly number[]): number | null {
@@ -1378,7 +1410,8 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
   }
   if (problems.length > 0) stateReason = `${stateReason ? `${stateReason} ` : ''}Unknown: ${problems.join('; ')}.`;
 
-  const standingTickFresh = tick !== null && tick.standing !== null && nowMs >= msOf(tick.at) && nowMs - msOf(tick.at) <= 10 * 60_000;
+  const tickFresh = tick !== null && nowMs >= msOf(tick.at) && nowMs - msOf(tick.at) <= TICK_FRESH_MS;
+  const standingTickFresh = tickFresh && tick !== null && tick.standing !== null;
   const lanes: FleetLaneState[] = standingTickFresh
     ? tick.lanes.map((lane) => ({ ...lane, busy: busy[lane.lane] ?? 0 }))
     : FLEET_ENGINES.map((lane) => ({
@@ -1453,6 +1486,7 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
     funnel,
     repos,
     mirrors,
+    pausedRepos: pausedReposOf(tick, nowMs),
   };
 
   // ── Needs you (R1) ──────────────────────────────────────────────────────

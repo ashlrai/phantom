@@ -21,6 +21,7 @@ import {
   handleFleetLiveApi,
   needsYouItems,
   needsYouSourceState,
+  pausedReposOf,
   proposalProgressFromLedger,
   resetFleetLiveApiForTest,
   setFleetLiveDepsForTest,
@@ -344,6 +345,57 @@ describe('GET /api/verse/fleet/live — states', () => {
     expect((await buildFleetLiveSnapshot()).snapshot.lanes.find(lane => lane.lane === 'local')?.slots).toBe(2);
     tick.at = iso(-MIN);
     expect((await buildFleetLiveSnapshot()).snapshot.lanes.every(lane => lane.slots === 0 && lane.capReason === STALE_STANDING_TICK_REASON)).toBe(true);
+  });
+});
+
+describe('pausedReposOf — the last fresh standing tick\'s paused repos', () => {
+  const tickWith = (at: string, pausedRepos: unknown): FleetTickStateV1 => ({
+    v: 1, at, capabilityKind: 'resident-standing', dryRun: false, standing: null,
+    lanes: [], presence: { present: null, reason: '', evidenceAt: null }, holdProduction: null,
+    pausedRepos, waitingVerify: null, openPrsByRepo: null, ledgerHead: null, held: [],
+    watch: { available: false, reason: null },
+  } as FleetTickStateV1);
+
+  it('passes fresh entries through with kind, and reports unknown as null', () => {
+    expect(pausedReposOf(null, NOW)).toBeNull();
+    expect(pausedReposOf(tickWith(iso(11 * MIN), []), NOW)).toBeNull();
+    expect(pausedReposOf(tickWith(iso(-MIN), []), NOW)).toBeNull();
+    expect(pausedReposOf(tickWith('not a time', []), NOW)).toBeNull();
+    // A record without the array (pre-field tick.json) is unknown, not "none".
+    expect(pausedReposOf({ ...tickWith(iso(MIN), []), pausedRepos: undefined } as unknown as FleetTickStateV1, NOW)).toBeNull();
+    expect(pausedReposOf(tickWith(iso(MIN), []), NOW)).toEqual([]);
+    expect(pausedReposOf(tickWith(iso(MIN), [
+      { repo: REPO, reason: 'Its mirror is not current (fetch failed).', kind: 'mirror' },
+      { repo: 'ashlrai/other', reason: 'On quarantine: red post-merge', kind: 'hold' },
+      { repo: 'old/record', reason: 'It is not in the grant\'s current rollout stage.' },
+      { repo: 42, reason: 'malformed' },
+      null,
+    ]), NOW)).toEqual([
+      { repo: REPO, reason: 'Its mirror is not current (fetch failed).', kind: 'mirror' },
+      { repo: 'ashlrai/other', reason: 'On quarantine: red post-merge', kind: 'hold' },
+      { repo: 'old/record', reason: 'It is not in the grant\'s current rollout stage.' },
+    ]);
+    // An unrecognized kind is dropped, never passed through.
+    expect(pausedReposOf(tickWith(iso(MIN), [{ repo: 'a/b', reason: 'r', kind: 'bogus' }]), NOW)).toEqual([{ repo: 'a/b', reason: 'r' }]);
+  });
+
+  it('lands on the live snapshot only while the tick is fresh', async () => {
+    policy = policyFixture();
+    alive = true;
+    tick = {
+      v: 1, at: iso(MIN), capabilityKind: 'resident-standing', dryRun: false,
+      standing: { grantId: 'g', stageId: '2a', switch: 'autonomous' },
+      lanes: [], presence: { present: null, reason: '', evidenceAt: null }, holdProduction: null,
+      pausedRepos: [{ repo: REPO, reason: 'Its mirror is not current (fetch failed).', kind: 'mirror' }],
+      waitingVerify: null, openPrsByRepo: null, ledgerHead: null, held: [], watch: { available: false, reason: null },
+    };
+    expect((await buildFleetLiveSnapshot()).snapshot.pausedRepos).toEqual([
+      { repo: REPO, reason: 'Its mirror is not current (fetch failed).', kind: 'mirror' },
+    ]);
+    tick.at = iso(45 * MIN);
+    expect((await buildFleetLiveSnapshot()).snapshot.pausedRepos).toBeNull();
+    tick = null;
+    expect((await buildFleetLiveSnapshot()).snapshot.pausedRepos).toBeNull();
   });
 });
 

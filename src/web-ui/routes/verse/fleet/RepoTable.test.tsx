@@ -6,7 +6,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { SurfaceActions } from '../command/actions.js';
 import { fleetLive } from '../command/fixtures.test-support.js';
-import { mirrorsText, RepoTable } from './RepoTable.js';
+import { mirrorsText, pausedReposText, RepoTable } from './RepoTable.js';
 
 const NOW = Date.parse('2026-09-24T15:00:00Z');
 const actions = { act: () => undefined, busy: false, error: null, clearError: () => undefined, readOnly: true, dialogs: null } as SurfaceActions;
@@ -24,6 +24,19 @@ describe('mirrorsText', () => {
   });
 });
 
+describe('pausedReposText', () => {
+  it('says nothing for an older server or a tick that paused nothing, "unknown" without a fresh tick, and names each pause', () => {
+    expect(pausedReposText(undefined)).toBeNull();
+    expect(pausedReposText([])).toBeNull();
+    expect(pausedReposText(null)).toMatch(/unknown/);
+    expect(pausedReposText([{ repo: 'ashlrai/binshield', reason: 'Its mirror is not current (fetch failed).', kind: 'mirror' }])).toBe(
+      'Paused this tick: ashlrai/binshield — Its mirror is not current (fetch failed).',
+    );
+    const many = Array.from({ length: 6 }, (_, i) => ({ repo: `ashlrai/r${i}`, reason: 'On quarantine: x' }));
+    expect(pausedReposText(many)).toContain('and 2 more');
+  });
+});
+
 describe('RepoTable', () => {
   it.each([false, true])('labels an uncapped repository without a numeric sentinel (compact %s)', (compact) => {
     const live = fleetLive('live', NOW);
@@ -37,6 +50,13 @@ describe('RepoTable', () => {
     const live = { ...fleetLive('live', NOW), mirrors: { count: 2, repos: ['ashlrai/ashlr-hub', 'ashlrai/binshield'] } };
     render(<RepoTable read={{ value: live, available: true, reason: null }} actions={actions} now={NOW} compact={false} />);
     expect(screen.getByText(/Fleet mirrors: 2 working copies \(ashlrai\/ashlr-hub, ashlrai\/binshield\)/)).toBeInTheDocument();
+    expect(screen.getAllByRole('row')).toHaveLength(live.repos.length + 1);
+  });
+
+  it('lists the tick-paused repos under the table with their reasons', () => {
+    const live = { ...fleetLive('live', NOW), pausedRepos: [{ repo: 'ashlrai/binshield', reason: 'Its mirror is not current (fetch failed).', kind: 'mirror' as const }] };
+    render(<RepoTable read={{ value: live, available: true, reason: null }} actions={actions} now={NOW} compact={false} />);
+    expect(screen.getByText(/Paused this tick: ashlrai\/binshield — Its mirror is not current/)).toBeInTheDocument();
     expect(screen.getAllByRole('row')).toHaveLength(live.repos.length + 1);
   });
 });
