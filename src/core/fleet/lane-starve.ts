@@ -94,7 +94,7 @@ function queueRow(line: string): QueueRow | null {
 
 /** Pure: supply and occupancy from a snapshot. Pass report time for a live verdict. */
 export function findStarvedLanes(
-  statusJson: string, readyTsv: string | null, routerQueue?: string | null, now?: number,
+  statusJson: string, readyTsv: string | null, routerQueue?: string | null, now?: number, hold?: string | null,
 ): StarvedLanes {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
@@ -135,6 +135,7 @@ export function findStarvedLanes(
     if (row !== null) attribute(row.id, row.lane);
   }
   const out: StarvedLane[] = [];
+  const operatorHolds = new Set((hold ?? '').split(/\s+/u).filter(Boolean));
   const paused = data.paused === true || (typeof data.paused === 'string' && data.paused.trim().length > 0);
   const admissionClosed = paused || dispatcherAdmissionHeadroom(data.admission, data.last_tick) === 0;
   for (const [lane, value] of Object.entries(data.lanes)) {
@@ -143,7 +144,7 @@ export function findStarvedLanes(
     }
     // A shed lane at its launch ceiling has no free capacity.
     const target = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
-    if (admissionClosed || value.held === true || value.running >= target || value.queued === 0) continue;
+    if (admissionClosed || operatorHolds.has(lane) || value.held === true || value.running >= target || value.queued === 0) continue;
     const { filler, real } = split.get(lane) ?? { filler: 0, real: 0 };
     out.push({
       lane, running: value.running, target, queued: value.queued,

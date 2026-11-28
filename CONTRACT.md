@@ -86,12 +86,14 @@ job IDs deduplicated by the parser. Its optional second argument is the
 queue TSV header, or `null` for a data row. `conflictingPrIds(readyTsvText)`
 reads rebase identifiers from the job ID field, including parked rows.
 
-`findStarvedLanes(statusJson, readyTsv, routerQueue?, now?)`
+`findStarvedLanes(statusJson, readyTsv, routerQueue?, now?, hold?)`
 (`src/core/fleet/lane-starve.ts`) accepts `null` for a missing ready snapshot
 and an optional `router-queue.md` text that resolves spec-less dispatcher
 rows' requirement envelopes. When supplied, `now` (epoch milliseconds) requires
 a parseable `last_tick` within the inclusive 60-second window ending at `now`.
 The live CLI supplies it and exits 2 if the snapshot fails this check.
+Optional `hold` text from the runs root's `HOLD` file names whitespace-separated
+lanes to exclude in addition to holds recorded in the dispatcher snapshot.
 Dispatcher rows count toward the lane the work
 market's hint resolves to — requirements `preferred_lane`, else the lane
 column — while an explicit `null` or empty lane cell is lane-open shared

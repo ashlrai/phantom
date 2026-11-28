@@ -19,7 +19,7 @@ export interface LaneStarveReport {
 const USAGE = `Usage: ashlr fleet lane-starve [--json]
 List lanes running below their launch target (the configured target tightened by the controller's effective_target shed) with work queued, and split each lane's queue/ready.tsv rows into filler and real. Dispatcher rows count toward the lane the work market's hint resolves to; lane-open rows are shared supply reported once. Says when queue/FILLER_HOLD exists. Read-only.
 Parked rows are not runnable work and are not counted.
-Lane alerts are suppressed when the dispatcher is paused or fleet admission is closed.
+Lane alerts honor operator HOLD entries, dispatcher pauses and closed fleet admission.
 Reads ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Exit 1 when any lane is starved.`;
 
 export interface LaneStarveIo {
@@ -55,26 +55,28 @@ export async function cmdFleetLaneStarve(args: string[], io: LaneStarveIo = defa
     return 2;
   }
   const json = args[0] === '--json';
-  const queue = join(process.env.ASHLR_RUNS_DIR || join(homedir(), '.ashlr-runs'), 'queue');
+  const root = process.env.ASHLR_RUNS_DIR || join(homedir(), '.ashlr-runs');
+  const queue = join(root, 'queue');
   let report: LaneStarveReport;
   try {
-    const [status, ready, routerQueue, hold] = await Promise.all([
+    const [status, ready, routerQueue, fillerHold, operatorHold] = await Promise.all([
       io.read(join(queue, 'status.json')),
       io.read(join(queue, 'ready.tsv')),
       io.read(join(queue, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES),
       io.read(join(queue, 'FILLER_HOLD')),
+      io.read(join(root, 'HOLD'), 64 * 1024),
     ]);
     if (status === null) throw new Error('no status');
-    const { lanes, openRows } = findStarvedLanes(status, ready, routerQueue, Date.now());
+    const { lanes, openRows } = findStarvedLanes(status, ready, routerQueue, Date.now(), operatorHold);
     report = {
       schema: FLEET_LANE_STARVE_SCHEMA,
       readOnly: true,
-      filler_hold: hold !== null,
+      filler_hold: fillerHold !== null,
       open_rows: openRows,
       lanes,
     };
   } catch {
-    const error = 'Cannot read current lane status. Expected lane counts and a last_tick at most 60 seconds old in queue/status.json.';
+    const error = 'Cannot read current lane status or queue inputs. Expected lane counts and a last_tick at most 60 seconds old in queue/status.json and a readable HOLD file if present.';
     console.log(json ? JSON.stringify({ schema: FLEET_LANE_STARVE_SCHEMA, readOnly: true, error }) : error);
     return 2;
   }
