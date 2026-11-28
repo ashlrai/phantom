@@ -23,7 +23,10 @@ runs on two nodes.
   and a fencing token that only ever increases. Renew before it expires. If a
   node stalls, the lease lapses and another node can pull the job with a higher
   token; the old holder's renew and complete are then refused. Two nodes racing
-  for one job get exactly one claim. Pass the token to every external effect so
+  for one job get exactly one claim. The leader epoch behind those tokens
+  survives the holder's own heartbeat gaps — only a different node taking
+  leadership rotates it and fences the claims, so a slow beat never kills a
+  healthy claim. Pass the token to every external effect so
   a paused node cannot act after losing the job. Only a claim its session can
   still act on consumes capacity: a lapsed claim is re-routable, and a claim
   fenced by a rejoin or departure frees the node's slot and host budget at

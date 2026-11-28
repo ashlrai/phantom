@@ -175,6 +175,22 @@ export class DriveNodes implements QueueV1 {
     return leader && leader.expiresAt > now && this.liveNode(state, leader, now) ? leader : null;
   }
 
+  /** Leader-epoch continuity across the holder's own heartbeat gaps. The lease
+   * TTL is a handoff window for OTHER sessions: when it lapses but state.leader
+   * still names this exact session and that session's node record is live,
+   * leadership never changed hands — no claim was fenced, so none should be.
+   * Rotating the token here would kill healthy claims on nothing worse than a
+   * slow beat (the documented `beat --watch` cadence sits at the TTL edge).
+   * Only the same live session revives; a different session, a dead one, or an
+   * epoch already replaced by a newer token still yields a fresh election.
+   * Extends the stored lease in place; returns it or null. */
+  private reviveLeader(state: NodesState, session: NodeSession, now: number): LeaderLease | null {
+    const last = state.leader;
+    if (!last || last.expiresAt > now || !sameSession(last, session) || !this.liveNode(state, last, now)) return null;
+    last.expiresAt = now + this.leaderTtl;
+    return last;
+  }
+
   join(nodeId: string, profile?: NodeProfile): NodeSession | null {
     if (!validId(nodeId)) throw new Error('Invalid drive node ID');
     if (profile?.slots !== undefined && !validSlots(profile.slots)) throw new Error('Invalid drive slots (integer 0-64)');
@@ -215,7 +231,8 @@ export class DriveNodes implements QueueV1 {
       if (report?.auth !== undefined) node.auth = report.auth;
       if (report?.hostStats !== undefined) node.hostStats = structuredClone(report.hostStats);
       if (!previous) {
-        state.leader = { ...session, token: nextToken(state), expiresAt: now + this.leaderTtl };
+        state.leader = this.reviveLeader(state, session, now) ??
+          { ...session, token: nextToken(state), expiresAt: now + this.leaderTtl };
       } else if (sameSession(previous, session)) {
         previous.expiresAt = now + this.leaderTtl;
       }
@@ -272,7 +289,7 @@ export class DriveNodes implements QueueV1 {
       const mine = planRoutes(state, now).find(a => a.nodeId === node.nodeId);
       const job = mine && state.jobs.find(j => j.id === mine.jobId);
       if (!job || !routable(job, now)) return null;
-      let leader = this.liveLeader(state, now);
+      let leader = this.liveLeader(state, now) ?? this.reviveLeader(state, worker, now);
       if (!leader) {
         leader = state.leader = { ...worker, token: nextToken(state), expiresAt: now + this.leaderTtl };
       }
@@ -336,7 +353,7 @@ export class DriveNodes implements QueueV1 {
 
   private currentClaim(state: NodesState, claim: JobClaim, now: number): boolean {
     const stored = state.jobs.find(j => j.id === claim.jobId && j.state === 'running')?.claim;
-    const leader = this.liveLeader(state, now);
+    const leader = this.liveLeader(state, now) ?? this.reviveLeader(state, claim, now);
     return !!stored && !!leader && stored.token === claim.token && sameSession(stored, claim) &&
       stored.leaderToken === claim.leaderToken && stored.leaderToken === leader.token &&
       stored.expiresAt > now && this.liveNode(state, stored, now);
@@ -348,7 +365,7 @@ export class DriveNodes implements QueueV1 {
    * Owner scope stays the leader's deliberate choice. */
   claim(leader: LeaderLease, worker: NodeSession, jobId: string): JobClaim | null {
     return this.transaction((state, now) => {
-      const current = this.liveLeader(state, now);
+      const current = this.liveLeader(state, now) ?? this.reviveLeader(state, leader, now);
       if (!current || current.token !== leader.token || !sameSession(current, leader) ||
           !this.liveNode(state, worker, now)) return null;
       const node = state.nodes.find(n => sameSession(n, worker))!;
