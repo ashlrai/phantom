@@ -218,6 +218,37 @@ SwapFree:        1048576 kB
   });
 });
 
+describe('Windows measurement', () => {
+  it('reports no load average on win32, where os.loadavg() is a [0,0,0] stub', async () => {
+    let cpuCalls = 0;
+    const host: MeasureHost = {
+      platform: 'win32', now: () => T0, hostname: () => 'win-box', loadavg: () => [0, 0, 0],
+      totalmem: () => 16 * GIB, freemem: () => 8 * GIB, sleep: async () => {},
+      run: async () => null,
+      cpus: () => {
+        const later = cpuCalls++ > 0;
+        return Array.from({ length: 8 }, () => ({ model: '', speed: 0, times: { user: later ? 50 : 0, nice: 0, sys: 0, irq: 0, idle: later ? 50 : 0 } }));
+      },
+    };
+    const s = await measureNode({ host });
+    expect(s.platform).toBe('win32');
+    expect(s.cpu.load).toBeNull();
+    // CPU counter deltas still measure real busy percent on Windows.
+    expect(s.cpu.busyPercent).toBe(50);
+    expect(s.mem).toEqual({ totalBytes: 16 * GIB, freeBytes: 8 * GIB, freePercent: null, pressureLevel: null });
+    expect(s.swap).toEqual({ usedBytes: null, totalBytes: null, swapoutsTotal: null });
+    expect(s.processSource).toBe('unavailable');
+    expect(s.sessions).toBeNull();
+    const doc = computeNodeCapacity(s);
+    expect(doc.cpu.load_1m).toBeNull();
+    expect(doc.cpu.load_5m).toBeNull();
+    expect(doc.cpu.load_15m).toBeNull();
+    expect(doc.cpu.run_queue_per_core).toBeNull();
+    expect(doc.cpu.headroom_cores).toBeCloseTo(2.8);
+    expect(doc.agents_runnable_now.codex).toBeNull();
+  });
+});
+
 describe('capacity model', () => {
   it('derives headroom above the memguard raise line and per-harness runnable from measured footprints', () => {
     expect(CAPACITY_POLICY.memReserveFreePct).toBe(MEMORY_GUARD.raiseFreePct);
