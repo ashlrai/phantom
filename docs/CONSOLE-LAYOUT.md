@@ -139,6 +139,16 @@ says it may be stale. The same list for agents:
 phm sessions --json
 ```
 
+The Worker log is the session's detail view. It opens with a session header:
+the job id, its state and how recently it wrote output, then each recorded
+fact under its own label (lane, tier, model, repo, when it launched, branch
+and the pull request link). A fact the job detail does not hold reads unknown
+and a job with no pull request reads none recorded; nothing is filled in. Step
+through the running sessions with the previous and next buttons beside the
+Worker picker, or press `[` and `]` anywhere in the pane outside a text field.
+The count between the buttons says where the session sits in the running list
+(oldest first), or that it is no longer listed once it has finished.
+
 Home's **Machines** card is a tile per Mac in the pool, this Mac first. Each
 tile gives the Mac's name, whether it is online, offline or unknown with a
 mark beside the word, and when it was last seen. Below that come its free
