@@ -30,7 +30,7 @@ import { isFleetJobId } from '../fleet/runs-job-detail.js';
 import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { localWriteGate } from './send-gate.js';
-import { coordinationRowBlocks, listCoordination } from './claim-store.js';
+import { coordinationRowBlocks, listCoordination, setWorkStatus } from './claim-store.js';
 import { BUS_V2_TEXT_MAX, WORK_RESULT_OUTCOMES, busBodyKind, busBodyResultOutcome, busBodyThread, contextBodySchema,
   noteBodySchema, wakeBodySchema, workPostBodySchema, workStatusBodySchema,
   type Participant, type WorkJob, type WorkResultOutcome } from './bus-v2-schema.js';
@@ -401,6 +401,27 @@ function workFeed(options: UnifiedBusOptions): BusWorkFeedReadResult {
 }
 
 /**
+ * Mirror an accepted work-feed status move into the shared coordination
+ * table's `statuses[]` rows — the per-job status index `setWorkStatus`
+ * upserts by job id and `claimBoard` reads back beside the live claims. The
+ * bus feed stays the authoritative projection; this row is the coordination
+ * store's own copy so a reader holding only the lease table can see where
+ * each announced job sits without rescanning bus envelopes. Post-accept and
+ * best-effort only: a store fault or an out-of-contract field leaves the row
+ * unrecorded and never fails or rolls back the posted envelope.
+ */
+function recordWorkStatus(row: {
+  jobId: string; owner: string; provider: string; repo: string;
+  claimKeys: readonly string[]; status: string;
+}, options: UnifiedBusOptions): void {
+  try {
+    setWorkStatus({ root: options.root, jobId: row.jobId, owner: row.owner, provider: row.provider,
+      repo: row.repo, claimKeys: [...row.claimKeys], status: row.status,
+      updatedAt: (options.now ?? Date.now)() });
+  } catch { /* the coordination mirror is advisory; the bus post already landed */ }
+}
+
+/**
  * Announce a v2 `work.post`: the job the work feed projects until its TTL ends.
  * The provider defaults to the sender's newest runtime provider because the
  * feed refuses posts it cannot attribute; claim keys and dispatch scope are
@@ -519,6 +540,12 @@ export async function updateWorkStatus(input: WorkStatusInput, options: UnifiedB
     priority: base.priority, ttl: base.ttl, body: body.data,
     ...metadata(sender, 'bus', `work:${body.data.jobId}`),
   }, shouldWake(base.priority, input.wake), options);
+  // Mirror the accepted move into the coordination table's per-job status
+  // index; the feed projection above stays the authority the status came from.
+  if (sent.status === 'posted' || sent.status === 'duplicate') {
+    recordWorkStatus({ jobId: body.data.jobId, owner: job.owner, provider: job.provider,
+      repo: job.repo, claimKeys: job.claimKeys, status: body.data.status }, options);
+  }
   // A terminal status also hints every live claim holder on the job's keys;
   // --no-wake opts out of that fan-out as well as the message's own hint. A
   // fan-out fault leaves holder state unknown — it never fails the posted send.
