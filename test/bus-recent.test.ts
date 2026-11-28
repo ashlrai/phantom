@@ -140,4 +140,29 @@ describe('phm bus recent', () => {
     expect(await cmdBusRecent(['--kind', 'ask', '--kind', 'reply'], () => {}, () => {})).toBe(2);
     expect(await cmdBusRecent(['--from'], () => {}, () => {})).toBe(2);
   });
+
+  it('the CLI --frame prints the digest as a bounded untrusted block and carries it as framed in JSON', async () => {
+    const root = store([[T0, 'leader', 'claude', 'please look at the build'], [T0 + 1_000, 'claude', 'leader', 'on it?']]);
+    const options = { root, now: () => NOW };
+    const out: string[] = [], err: string[] = [];
+    // The human read is the bare framed block.
+    expect(await cmdBusRecent(['--frame', 'claude'], t => out.push(t), t => err.push(t), options)).toBe(0);
+    const block = out.join('\n');
+    expect(block).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+    expect(block).toContain('please look at the build');
+    expect(block).toContain('END UNTRUSTED AGENT BUS TIMELINE');
+    expect(block).not.toContain('"schema"');
+    // --json carries the block as `framed` beside the full bus.recent.v1 projection.
+    const json: string[] = [];
+    expect(await cmdBusRecent(['--frame', 'grok', '--json'], t => json.push(t), t => err.push(t), options)).toBe(0);
+    const parsed = JSON.parse(json.join('\n')) as { schema: string; framed: string };
+    expect(parsed.schema).toBe('bus.recent.v1');
+    expect(parsed.framed).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+    expect(parsed.framed).toContain('please look at the build');
+    // A bad cli or a repeated/missing value is a usage error before any store read.
+    expect(await cmdBusRecent(['--frame', 'gemini'], () => {}, t => err.push(t), options)).toBe(2);
+    expect(await cmdBusRecent(['--frame', 'claude', '--frame', 'grok'], () => {}, t => err.push(t), options)).toBe(2);
+    expect(await cmdBusRecent(['--frame'], () => {}, t => err.push(t), options)).toBe(2);
+    expect(await cmdBusRecent(['--frame', '--json'], () => {}, t => err.push(t), options)).toBe(2);
+  });
 });
