@@ -2587,4 +2587,16 @@ describe('phm agents bus (unified)', () => {
       expect(help).toMatch(new RegExp(`ashlr agents conversations [^\\n]*${flag.replace(/[|<>]/g, '\\$&')}`));
     }
   });
+
+  it('answers --help and -h with the contract help on the read-only contract paths', async () => {
+    // mesh, edges, bus contract and bus channels are read-only; a help flag
+    // anywhere must print the contract help (exit 0) instead of the strict
+    // parser's usage refusal — the same contract every other agents verb keeps.
+    for (const argv of [['mesh', '--help'], ['mesh', 'status', '-h'], ['edges', '--help'], ['edges', '-h'],
+      ['bus', '--help'], ['bus', '-h'], ['bus', 'contract', '--help'], ['bus', 'channels', 'list', '-h']]) {
+      const out: string[] = [];
+      expect(await runAgentsCli(argv, t => out.push(t), () => {}), argv.join(' ')).toBe(0);
+      expect(out.join('\n'), argv.join(' ')).toContain('ashlr agents list|show <id>');
+    }
+  });
 });

@@ -45,6 +45,15 @@ function fixture(remainingPaths = source.remainingPaths) {
   return { run, state, inspected, liveSource, liveReplacement, calls, onSearch(fn: () => void) { afterSearch = fn; }, get writes() { return writes; }, get body() { return body; }, get report() { return JSON.parse(output); } };
 }
 describe('fleet merge-recover', () => {
+  it.each(['--help', '-h'])('answers %s with usage and exit 0 before any read', async flag => {
+    // The verb is completable, so the help-safety sweep runs it with both
+    // flags; -h used to fall into the strict parser's exit-2 refusal.
+    const output: string[] = [];
+    const gh: CloudGh = async () => { throw new Error('help must not call gh'); };
+    expect(await cmdFleetMergeRecover([flag], { gh, inspect: async () => { throw new Error('help must not inspect'); }, output: t => output.push(t) })).toBe(0);
+    expect(output.join('\n')).toContain('Usage: phm fleet merge-recover');
+  });
+
   it.each([
     { mergeable: 'CONFLICTING', mergeStateStatus: 'UNKNOWN' },
     { mergeable: 'CONFLICTING', mergeStateStatus: 'CLEAN' },

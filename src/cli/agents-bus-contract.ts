@@ -41,6 +41,9 @@ export async function runAgentsCli(
   if (args[0] === 'bus' && AGENTS_BUS_UNIFIED_VERBS.has(args.find((arg, i) => i > 0 && arg !== '--json') ?? '')) {
     return runAgentsBusUnified(args.slice(1), out, err);
   }
+  // The contract paths below are read-only; a help flag anywhere prints the
+  // contract help instead of falling into the strict parser's usage refusal.
+  if (args.includes('--help') || args.includes('-h')) { out(HELP); return 0; }
   const json = args.includes('--json');
   if (args.filter(arg => arg === '--json').length > 1) {
     err(json ? JSON.stringify({ error: 'invalid-argument' }) : HELP);
