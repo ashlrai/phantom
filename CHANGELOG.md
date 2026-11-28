@@ -16,6 +16,37 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.86](https://github.com/ashlrai/phantom/compare/v3.30.85...v3.30.86) (2026-11-28)
+
+
+### Features
+
+* **prs:** batch offline three-way evidence by exact head ([#10744](https://github.com/ashlrai/phantom/issues/10744)) ([a4fbdbb](https://github.com/ashlrai/phantom/commit/a4fbdbbf38b676763b4425b893c91ae5f52c3381))
+
+
+### Fixes
+
+* **ci:** seed bus status fixture within the byte ceiling ([#10748](https://github.com/ashlrai/phantom/issues/10748)) ([d1ed1fe](https://github.com/ashlrai/phantom/commit/d1ed1fefb1e437a26986b3a85097fabb58b29d6a))
+* **desktop:** report unsupported managed install platforms ([#10759](https://github.com/ashlrai/phantom/issues/10759)) ([bd60dc3](https://github.com/ashlrai/phantom/commit/bd60dc393cbaa3d94c1cb3cb1701d79af82245d6))
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795848517-N17:** ([#10755](https://github.com/ashlrai/phantom/issues/10755)) ([9d81468](https://github.com/ashlrai/phantom/commit/9d81468b6f1fec68412ce72dd9c2f3e22de4e3e4))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795849717-N17:** ([#10764](https://github.com/ashlrai/phantom/issues/10764)) ([b754954](https://github.com/ashlrai/phantom/commit/b754954405c98b0fd3bea7856c4d5188372fed3a))
+* **RQ-DEVINCLOUD-RQ-DVL-CXFLEET-1795754093-N17:** ([#10246](https://github.com/ashlrai/phantom/issues/10246)) ([34fb8b1](https://github.com/ashlrai/phantom/commit/34fb8b14f1f7bea159274cbe7045c10edb4798ce))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795849058-N17:** ([#10756](https://github.com/ashlrai/phantom/issues/10756)) ([1ebadea](https://github.com/ashlrai/phantom/commit/1ebadea3956ebe233fa3e9d0bc4056d949a5ac12))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795849775-N17:** ([#10762](https://github.com/ashlrai/phantom/issues/10762)) ([1a9b50c](https://github.com/ashlrai/phantom/commit/1a9b50c5fea6d960154dbd4bbe599eabd87008ac))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795850075-N17:** ([#10765](https://github.com/ashlrai/phantom/issues/10765)) ([73ced0a](https://github.com/ashlrai/phantom/commit/73ced0ae70023b637ed935ddaf25cef121c00992))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795848414-N17:** ([#10754](https://github.com/ashlrai/phantom/issues/10754)) ([a3ff8fe](https://github.com/ashlrai/phantom/commit/a3ff8fe3239a1836e2c602096caf19c79caf7e56))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795848618-N17:** ([#10758](https://github.com/ashlrai/phantom/issues/10758)) ([12fe811](https://github.com/ashlrai/phantom/commit/12fe8110f15bde74f54b8825936164fb6ce337c2))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795849566-N17:** ([#10770](https://github.com/ashlrai/phantom/issues/10770)) ([f90ffcf](https://github.com/ashlrai/phantom/commit/f90ffcf61a8922360259605ea33ffa798623a470))
+
+
+### Documentation
+
+* show Phantom platform support and contribution paths up front ([#10752](https://github.com/ashlrai/phantom/issues/10752)) ([0fa3eb9](https://github.com/ashlrai/phantom/commit/0fa3eb9121b4e309cb3edb9079e85ff4b802e379))
+
 ## [Unreleased]
 
 ### Since v3.30.40
