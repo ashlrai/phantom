@@ -546,6 +546,58 @@ export interface BusWorkMineOptions {
    * and never a widened one. Every section's count stays the filtered
    * total, never the unfiltered one. */
   thread?: string;
+  /** Keep only pending items that ARE the two-way exchange the agent and
+   * one peer name — the same pairwise rule `agents bus inbox --with`,
+   * `agents conversations --with` and `phm messages --with` apply: an
+   * item lists only when its exchange endpoints provably pair the agent's
+   * own labels with the peer's — either direction — and an item naming no
+   * provable pair never lists, the same "unknown stays out" rule
+   * `priority`/`channel`/`from` apply. `inbox` forwards the value to
+   * `readAgentInbox`'s `with` (mail addressed to the agent's identity
+   * whose sender matches the peer — channel posts and
+   * channel-addressed handoffs carry a `group:` room address, never the
+   * peer, so they cannot match), `wakes` forwards it to
+   * `readAgentWakes`' `filter.with` (the hint's own `to`/`from`
+   * endpoints — an agent-identity `to` and a peer `from`, decided inside
+   * the queue-tail match), and the three thread sections pass `agent`
+   * and the value into the one shared `readAgentConversations` query's
+   * `agent`/`with` (a thread survives on any member message pairing the
+   * two, either direction — the same whole-thread member match
+   * `agents conversations --with` applies). `next`/`handoffs`/`mailbox`
+   * keep envelopes whose `to` is an agent-identity label and whose `from`
+   * matches the peer — a channel-addressed assignment's `group:` `to` is
+   * a room, never the peer — `deadLetters` keeps reports whose ORIGINAL
+   * `to`/`from` pair the same way (a letter naming no provable original
+   * sender never lists), `claims` keep only message claims whose
+   * resolved leased envelope's endpoints pair the two either direction —
+   * a claim naming no resolved message (a scope-key claim, an
+   * unresolvable or unreadable lease) names no provable exchange and
+   * never lists — `jobs`/`announced` keep feed jobs whose announcement
+   * `owner`/`to` labels pair the two either direction (the announcer is
+   * the `work.post` sender; a job announced into a `group:` room or by a
+   * third party never pairs), `workBoard` keeps requests whose `from`/`to`
+   * endpoints pair the two either direction — a request the agent only
+   * owns, or meets through a third party or a room, never lists — and
+   * `coordination` keeps ledger messages and return intents whose
+   * recorded `from`/`to` labels pair the two either direction under the
+   * section's own exact-label rule (never registry-resolved), while
+   * `proposals` — which record no sender — come back honestly empty the
+   * same way they do under `from`. `board` deliveries pair through their
+   * recorded `sender`/`recipient` — every listed delivery's recipient is
+   * already one of the agent's own labels, so the exchange reduces to the
+   * sender matching the peer, the same `agentRefAddressMatcher` rule —
+   * while the section's tasks and thread rollups record no endpoints and
+   * drop under the positive filter exactly like they do under `from`.
+   * `sessions` checkpoints, `channels` memberships and `seats` handoff
+   * records carry no exchange endpoint pair the digest could prove — a
+   * seat record names held work, never a peer — so those sections stay
+   * unfiltered, the same rule `priority`/`channel` apply to sections
+   * with no per-item band or room. The value takes the same printable-label bound every bus
+   * `--with`/`--from` read validates; a peer nothing on the bus carries
+   * is an honest empty match, never an error and never a widened one.
+   * Every section's count stays the filtered total, never the
+   * unfiltered one. */
+  with?: string;
   /** Injectable clock, frozen once so every section reads the same instant. */
   now?: () => number;
 }
@@ -1180,8 +1232,12 @@ export interface BusWorkMineCoordinationClass<T> {
  * at `WORK_MINE_COORDINATION_MAX` newest-first with `matched` the filtered
  * total and `truncated` definitive. `options.job` empties every class —
  * ledger records carry no job citation the digest could prove; `contains`,
- * `since`/`before` and the `from`/`excludeFrom` exact sender-label match
- * narrow the records, every other filter leaves the section whole.
+ * `since`/`before`, the `from`/`excludeFrom` exact sender-label match and
+ * the `with` exact pairwise exchange match narrow the records — messages
+ * and return intents pair their recorded `from`/`to` against the agent's
+ * label set and the peer value verbatim, proposals record no sender and
+ * never match under a positive sender filter — every other filter leaves
+ * the section whole.
  */
 export type BusWorkMineCoordination =
   | { status: 'ok'; source: 'missing' | 'available';
@@ -1266,7 +1322,11 @@ export interface BusWorkMineWorkBoardItem {
  * `before` bound `receivedAt` on the `[since, before)` window,
  * `channel` keeps requests whose `to` carries `group:<name>:`,
  * `from`/`excludeFrom` match the request's `from` label (an item naming
- * no provable `from` never lists under either), `id` keeps the request
+ * no provable `from` never lists under either), `with` keeps requests
+ * whose `from`/`to` endpoints pair an agent-identity label with the
+ * peer's in either direction under the same `agentRefAddressMatcher`
+ * rule — a request the agent only owns, or meets through a third party
+ * or a room, never lists — `id` keeps the request
  * whose envelope id equals the value, and `priority`/`bodyKind`/`result`/
  * `thread` leave the section whole — the board projection carries no
  * per-item band, body kind, wire result outcome or thread label.
@@ -1309,6 +1369,8 @@ export type BusWorkMineResult =
       result?: WorkResultOutcome;
       /** The thread-label filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
       thread?: string;
+      /** The exchange-peer filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
+      with?: string;
       claims: BusWorkMineClaims; jobs: BusWorkMineJobs; announced: BusWorkMineAnnounced;
       next: BusWorkMineNext;
       handoffs: BusWorkMineHandoffs; deadLetters: BusWorkMineDeadLetters;
@@ -1450,7 +1512,7 @@ function busWorkFeedJobCitesResultOutcome(job: BusWorkFeedJob, outcome: WorkResu
 function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined,
   jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number, channelPrefix?: string,
   from?: string, excludeFrom?: string, envelopeId?: string, bodyKind?: string,
-  resultOutcome?: WorkResultOutcome, topic?: string): BusWorkMineJobs {
+  resultOutcome?: WorkResultOutcome, topic?: string, withPeer?: string): BusWorkMineJobs {
   if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
     ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
@@ -1462,6 +1524,17 @@ function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | 
   // or unreadable registry keeps exact-label matching and never widens.
   const fromOwner = from === undefined ? undefined : busWorkFeedOwnerMatcher(from, { root });
   const excludeOwner = excludeFrom === undefined ? undefined : busWorkFeedOwnerMatcher(excludeFrom, { root });
+  // `with` keeps only the exchange the agent and one peer name: the
+  // announcement's `owner` (the work.post sender) and `to` labels must
+  // pair an agent label with the peer's, in either direction — the same
+  // `agentRefAddressMatcher` identity-label rule every bus `--with` read
+  // applies through the feed's own matcher, so a job announced into a
+  // `group:` room (a `to` that is no agent label) or by a third party
+  // never pairs.
+  const agentLabel = busWorkFeedOwnerMatcher(agent, { root });
+  const peerLabel = withPeer === undefined ? undefined : busWorkFeedOwnerMatcher(withPeer, { root });
+  const exchange = (owner: string, to: string) => peerLabel !== undefined &&
+    ((agentLabel(owner) && peerLabel(to)) || (peerLabel(owner) && agentLabel(to)));
   const open = feed.jobs
     .filter(job => BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0 &&
       (jobId === undefined || job.id === jobId) &&
@@ -1472,6 +1545,7 @@ function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | 
       (topic === undefined || groupAddressTopicOf(job.to) === topic) &&
       (fromOwner === undefined || fromOwner(job.owner)) &&
       (excludeOwner === undefined || !excludeOwner(job.owner)) &&
+      (peerLabel === undefined || exchange(job.owner, job.to)) &&
       (envelopeId === undefined || busWorkFeedJobCitesEnvelope(job, envelopeId)) &&
       (bodyKind === undefined || busWorkFeedJobCitesBodyKind(job, bodyKind)) &&
       (resultOutcome === undefined || busWorkFeedJobCitesResultOutcome(job, resultOutcome)))
@@ -1516,7 +1590,7 @@ const ANNOUNCED_DONE: ReadonlySet<BusWorkFeedJob['status']> = new Set(['done', '
 function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined,
   jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number, channelPrefix?: string,
   from?: string, excludeFrom?: string, envelopeId?: string, bodyKind?: string,
-  resultOutcome?: WorkResultOutcome, topic?: string): BusWorkMineAnnounced {
+  resultOutcome?: WorkResultOutcome, topic?: string, withPeer?: string): BusWorkMineAnnounced {
   if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
     ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
@@ -1527,6 +1601,14 @@ function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: stri
   // `busWorkFeedOwnerMatcher` label rule, never widened on unknown state.
   const fromOwner = from === undefined ? undefined : busWorkFeedOwnerMatcher(from, { root });
   const excludeOwner = excludeFrom === undefined ? undefined : busWorkFeedOwnerMatcher(excludeFrom, { root });
+  // `with` keeps only the exchange the agent and one peer name: every
+  // listed job is already the agent's own announcement (`ownerMatch`), so
+  // the pairwise verdict reduces to the announcement's `to` matching the
+  // peer's labels — the same `agentRefAddressMatcher` identity-label rule
+  // every bus `--with` read applies through the feed's own matcher, so an
+  // announcement into a `group:` room or naming no peer label never
+  // pairs.
+  const peerLabel = withPeer === undefined ? undefined : busWorkFeedOwnerMatcher(withPeer, { root });
   const { coverage, heldByJob, holdsByJob } = feedHoldIndex(feed);
   const live = feed.jobs
     .filter(job => !ANNOUNCED_DONE.has(job.status) && ownerMatch(job.owner) &&
@@ -1538,6 +1620,7 @@ function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: stri
       (topic === undefined || groupAddressTopicOf(job.to) === topic) &&
       (fromOwner === undefined || fromOwner(job.owner)) &&
       (excludeOwner === undefined || !excludeOwner(job.owner)) &&
+      (peerLabel === undefined || peerLabel(job.to)) &&
       (envelopeId === undefined || busWorkFeedJobCitesEnvelope(job, envelopeId)) &&
       (bodyKind === undefined || busWorkFeedJobCitesBodyKind(job, bodyKind)) &&
       (resultOutcome === undefined || busWorkFeedJobCitesResultOutcome(job, resultOutcome)))
@@ -1577,6 +1660,7 @@ function workMineInboxFilters(options: BusWorkMineOptions, contains?: string) {
     ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
     ...(options.result === undefined ? {} : { result: options.result }),
     ...(options.thread === undefined ? {} : { thread: options.thread }),
+    ...(options.with === undefined ? {} : { with: options.with }),
     ...(contains === undefined ? {} : { contains }),
   };
 }
@@ -1645,9 +1729,15 @@ function mailboxSection(agent: string, identity: AgentIdentity | undefined,
   // exact-label fallback on an unresolvable ref or unreadable registry.
   const fromMatch = options.from === undefined ? undefined : agentRefAddressMatcher(options.from, registry);
   const excludeFromMatch = options.excludeFrom === undefined ? undefined : agentRefAddressMatcher(options.excludeFrom, registry);
+  // `with` keeps only the exchange the agent and one peer name: the
+  // envelope's `to` is already one of the agent's own labels by
+  // `pendingFor` construction, so the pairwise verdict reduces to the
+  // `from` matching the peer — the same identity-label rule every bus
+  // `--with`/`--from` read applies, never widened on unknown state.
+  const withPeer = options.with === undefined ? undefined : agentRefAddressMatcher(options.with, registry);
   const match = job === undefined && contains === undefined && since === undefined && before === undefined &&
       priority === undefined && channelPrefix === undefined && options.topic === undefined &&
-      fromMatch === undefined && excludeFromMatch === undefined &&
+      fromMatch === undefined && excludeFromMatch === undefined && withPeer === undefined &&
       options.id === undefined && options.inReplyTo === undefined && options.bodyKind === undefined &&
       options.result === undefined && options.thread === undefined ? undefined
     : (message: BusMailboxPendingMessage) =>
@@ -1659,6 +1749,7 @@ function mailboxSection(agent: string, identity: AgentIdentity | undefined,
       (options.topic === undefined || groupAddressTopicOf(message.envelope.to) === options.topic) &&
       (fromMatch === undefined || fromMatch(message.envelope.from)) &&
       (excludeFromMatch === undefined || !excludeFromMatch(message.envelope.from)) &&
+      (withPeer === undefined || withPeer(message.envelope.from)) &&
       (options.id === undefined || message.envelope.id === options.id) &&
       (options.inReplyTo === undefined || busBodyInReplyToMatch(message.envelope.body, options.inReplyTo)) &&
       (options.bodyKind === undefined || busBodyKind(message.envelope.body) === options.bodyKind) &&
@@ -1735,16 +1826,25 @@ function boardSection(agent: string, identity: AgentIdentity | undefined,
   }
   try {
     const labels = identity === undefined ? [agent] : agentLabels(identity);
-    // The board's deliveries carry a `sender` peer label: `from` keeps only
-    // posts whose sender the `agentRefAddressMatcher` accepts and
-    // `excludeFrom` drops posts whose sender it accepts for the excluded
-    // ref — the same identity-label rule every bus `--from`/`--exclude-from`
-    // read applies, degrading to exact-label matching on an unresolvable
-    // ref or unreadable registry. Tasks record no author, so they never
-    // match under `from` and stay listed under `excludeFrom` — nothing
-    // proves a task came from the excluded sender.
-    const sender = options.from === undefined && options.excludeFrom === undefined ? undefined : {
-      ...(options.from === undefined ? {} : { from: agentRefAddressMatcher(options.from, registry) }),
+    // The board's deliveries carry a `sender` peer label and a `recipient`
+    // that is always one of the agent's own labels (`labels.has` inside the
+    // digest), so the exchange-peer filter reduces to the sender matching
+    // the peer — composed into the same `from` slot `options.from` fills,
+    // include-then-exclude order preserved. `from`/`excludeFrom`/`with`
+    // keep only posts whose `sender` the `agentRefAddressMatcher` accepts
+    // — the same identity-label rule every bus `--from`/`--exclude-from`/
+    // `--with` read applies, degrading to exact-label matching on an
+    // unresolvable ref or unreadable registry. Tasks record no author and
+    // thread rollups keep no endpoints, so under any positive sender
+    // filter they never match — unknown stays out — while under
+    // `excludeFrom` alone they stay listed: nothing proves a task came
+    // from the excluded sender.
+    const fromMatch = options.from === undefined ? undefined : agentRefAddressMatcher(options.from, registry);
+    const withMatch = options.with === undefined ? undefined : agentRefAddressMatcher(options.with, registry);
+    const senderFrom = fromMatch === undefined && withMatch === undefined ? undefined
+      : (value: string) => (fromMatch === undefined || fromMatch(value)) && (withMatch === undefined || withMatch(value));
+    const sender = senderFrom === undefined && options.excludeFrom === undefined ? undefined : {
+      ...(senderFrom === undefined ? {} : { from: senderFrom }),
       ...(options.excludeFrom === undefined ? {} : { excludeFrom: agentRefAddressMatcher(options.excludeFrom, registry) }),
     };
     const digest = new BusBoard({ root: boardRoot, fleet, cfg })
@@ -1875,6 +1975,19 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
   // excluded matches nothing, the same order the inbox read applies.
   const fromMatch = options.from === undefined ? undefined : agentRefAddressMatcher(options.from, registry);
   const excludeFromMatch = options.excludeFrom === undefined ? undefined : agentRefAddressMatcher(options.excludeFrom, registry);
+  // `with` keeps only the exchange the agent and one peer name — the same
+  // pairwise rule `inbox --with`/`conversations --with` apply, decided on
+  // each envelope's own `to`/`from`: one endpoint must be an
+  // agent-identity label (`agentAddress` — a member-channel `group:`
+  // address is a room, never the agent, so channel-addressed assignments
+  // drop) and the other must match the peer's labels (`withPeer`), in
+  // either direction. An unresolvable ref keeps exact-label matching on
+  // both sides and unknown identity state never widens.
+  const withPeer = options.with === undefined ? undefined : agentRefAddressMatcher(options.with, registry);
+  const agentAddress = agentRefAddressMatcher(agent, registry);
+  const withExchange = (to: string, from: string) =>
+    withPeer !== undefined &&
+    ((agentAddress(to) && withPeer(from)) || (withPeer(to) && agentAddress(from)));
   const nextCandidates: NextCandidate[] = [];
   const handoffCandidates: HandoffCandidate[] = [];
   const deadLetterCandidates: DeadLetterCandidate[] = [];
@@ -1944,6 +2057,12 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
       if (topic !== undefined && groupAddressTopicOf(envelope.to) !== topic) continue;
       if (fromMatch !== undefined && !fromMatch(envelope.from)) continue;
       if (excludeFromMatch !== undefined && excludeFromMatch(envelope.from)) continue;
+      // The pairwise exchange rule every bus `--with` read shares: the
+      // envelope's own `to`/`from` must pair an agent-identity label with
+      // the peer's — a `group:` room address on either side is never the
+      // agent or the peer, so channel-addressed work drops here exactly
+      // like it does under `inbox --with`.
+      if (withPeer !== undefined && !withExchange(envelope.to, envelope.from)) continue;
       // An id filter keeps only the envelope whose own wire id equals the
       // value — the same exact-envelope match `agents bus inbox --id`
       // applies — and an in-reply-to filter keeps only envelopes whose
@@ -2089,6 +2208,10 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
     if (topic !== undefined && groupAddressTopicOf(candidate.to) !== topic) return false;
     if (fromMatch !== undefined && (report.from === null || !fromMatch(report.from))) return false;
     if (excludeFromMatch !== undefined && (report.from === null || excludeFromMatch(report.from))) return false;
+    // The pairwise exchange rule on the ORIGINAL routing labels — the
+    // same evidence the sender filters read; a letter naming no provable
+    // original sender never lists, the same "unknown stays out" rule.
+    if (withPeer !== undefined && (report.from === null || !withExchange(candidate.to, report.from))) return false;
     if (options.id !== undefined && candidate.id !== options.id && report.id !== options.id) return false;
     if (options.bodyKind !== undefined && report.kind !== options.bodyKind) return false;
     return true;
@@ -2556,7 +2679,30 @@ function claimContainsMatch(claim: BusWorkMineClaim, needle: string): boolean {
  * bodies keep no thread label the board projection exposes, session
  * checkpoints
  * keep no retained envelope body and seat handoff
- * records keep no per-record body — and stay unfiltered. Counts
+ * records keep no per-record body — and stay unfiltered. `options.with`
+ * applies the pairwise exchange rule every bus read's `--with` shares —
+ * an item lists only when its exchange endpoints provably pair an
+ * agent-identity label with the peer's, either direction, under the same
+ * `agentRefAddressMatcher` identity-label rule — across the sections
+ * whose items carry provable endpoints: inbox forwards the value to
+ * `readAgentInbox`'s own `with` (the member-channel `toLabel` rule
+ * included), wakes to `readAgentWakes`' `filter.with` (the hint's own
+ * queue-row `to`/`from`), the three thread sections pass `agent`+`with`
+ * into the one shared conversations query (a thread survives on any
+ * member message pairing the two), next/handoffs/mailbox keep envelopes
+ * whose `to`/`from` pair the two (a `group:` room address is never the
+ * agent or the peer), dead letters pair the ORIGINAL routing labels the
+ * sender filters already read, claims keep only message claims whose
+ * resolved leased envelope pairs the two either direction — a claim
+ * naming no resolved message never lists — jobs/announced keep feed
+ * announcements whose `owner`/`to` labels pair the two (the announcer is
+ * the `work.post` sender), work-board requests pair their `from`/`to`
+ * labels the same way, board deliveries reduce to the sender matching
+ * the peer (every listed delivery's recipient is already an agent
+ * label), and coordination pairs recorded ledger labels verbatim —
+ * messages and return intents either direction, proposals honestly
+ * empty. `sessions`, `channels` and `seats` carry no exchange endpoint
+ * pair and stay unfiltered. Counts
  * stay filtered totals; a section that cannot prove the relation reports
  * its own read state, never a padded match.
  */
@@ -2631,6 +2777,11 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   if (options.thread !== undefined && (typeof options.thread !== 'string' || !AGENT_REF.test(options.thread))) {
     return { status: 'invalid', reason: 'invalid-thread' };
   }
+  // The same printable-label bound every bus `--with`/`--from` read
+  // validates: a peer ref is 1-128 visible ASCII characters.
+  if (options.with !== undefined && (typeof options.with !== 'string' || !AGENT_REF.test(options.with))) {
+    return { status: 'invalid', reason: 'invalid-with' };
+  }
   const sinceMs = options.since;
   const beforeMs = options.before;
   const channelPrefix = options.channel === undefined ? undefined : `group:${options.channel}:`;
@@ -2650,9 +2801,9 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
 
   const feed = readBusWorkFeed({ root: options.root, now: () => nowMs, claims: true });
   const jobs = jobsSection(feed, agent, options.root, options.job, contains, sinceMs, beforeMs, channelPrefix,
-    options.from, options.excludeFrom, options.id, options.bodyKind, options.result, options.topic);
+    options.from, options.excludeFrom, options.id, options.bodyKind, options.result, options.topic, options.with);
   const announced = announcedSection(feed, agent, options.root, options.job, contains, sinceMs, beforeMs, channelPrefix,
-    options.from, options.excludeFrom, options.id, options.bodyKind, options.result, options.topic);
+    options.from, options.excludeFrom, options.id, options.bodyKind, options.result, options.topic, options.with);
   const { next, handoffs, deadLetters } = pendingWorkSections(agent, options, nowMs, registry, contains);
   // One conversations read backs all three thread views: waits the agent
   // owes, its own unanswered asks and blocked threads it is a party to.
@@ -2675,7 +2826,13 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }),
       ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
       ...(options.result === undefined ? {} : { result: options.result }),
-      ...(options.thread === undefined ? {} : { thread: options.thread }) },
+      ...(options.thread === undefined ? {} : { thread: options.thread }),
+      // `with` narrows `agent` in the shared read's own pairwise rule —
+      // the same `agent`/`with` query `agents conversations --agent --with`
+      // serves — so all three thread sections stay consistent at the
+      // frozen instant; `agent` rides along only under `with` because the
+      // pairwise verdict needs both endpoints named.
+      ...(options.with === undefined ? {} : { agent, with: options.with }) },
     { root: options.root, now: () => nowMs });
   const scope = conversationScope(agent, registry, identity);
   const threads = threadsSection(conversations, scope, channelPrefix, options.topic);
@@ -2837,6 +2994,24 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       claims.claims = claims.claims.filter(claim =>
         claim.message?.status === 'resolved' && claim.message.thread === options.thread);
     }
+    if (options.with !== undefined) {
+      // A claim lists under an exchange-peer filter only when its leased
+      // envelope's endpoints provably pair the agent and the peer — the
+      // resolved message's own `to`/`from` through the same
+      // `agentRefAddressMatcher` identity-label rule every bus `--with`
+      // read applies, in either direction (a claim can lease mail the
+      // agent sent as well as mail addressed to it). A claim naming no
+      // resolved message — a scope-key claim, an unresolvable or
+      // unreadable lease — names no provable exchange and never lists,
+      // the same "unknown stays out" rule the band and room filters
+      // apply.
+      const agentAddress = agentRefAddressMatcher(agent, registry);
+      const withPeer = agentRefAddressMatcher(options.with, registry);
+      claims.claims = claims.claims.filter(claim =>
+        claim.message?.status === 'resolved' &&
+        ((agentAddress(claim.message.to) && withPeer(claim.message.from)) ||
+          (withPeer(claim.message.to) && agentAddress(claim.message.from))));
+    }
   }
 
   const page = readAgentWakes(agent, sinceMs,
@@ -2853,6 +3028,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
       ...(options.result === undefined ? {} : { result: options.result }),
       ...(options.thread === undefined ? {} : { thread: options.thread }),
+      ...(options.with === undefined ? {} : { with: options.with }),
       ...(beforeMs === undefined ? {} : { before: beforeMs }) });
   const wakes: BusWorkMineWakes = page.status === 'ok'
     ? { status: 'ok' as const, agent: page.agent, scope: page.scope,
@@ -2904,6 +3080,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
     ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
     ...(options.result === undefined ? {} : { result: options.result }),
     ...(options.thread === undefined ? {} : { thread: options.thread }),
+    ...(options.with === undefined ? {} : { with: options.with }),
     claims, jobs, announced, next, handoffs, deadLetters, threads, awaiting, blocked, wakes, inbox, mailbox, board,
     workBoard, sessions, coordination, channels };
 }
@@ -3008,7 +3185,13 @@ function coordinationSearchText(value: string): string {
  * window, and `from`/`excludeFrom` match the recorded sender label —
  * message `from` and return `agent` — exactly, proposals carrying no
  * sender dropping out under `from` and staying listed under `excludeFrom`,
- * the same rule `phm fleet coordination inbox --from` applies. Every other
+ * the same rule `phm fleet coordination inbox --from` applies. `with`
+ * keeps only the exchange the agent and one peer name: messages and
+ * return intents pair their recorded `from`/`to` labels against the
+ * agent's label set and the peer value verbatim — either direction —
+ * under the same never-registry-resolved rule, while proposals record
+ * no sender and come back honestly empty, the same class rule `from`
+ * already applies. Every other
  * filter leaves the section whole: a ledger record carries no envelope,
  * band, room, wire id, body citation, body kind, result or thread label
  * the digest could prove, the same "unknown stays unfiltered" rule
@@ -3039,6 +3222,17 @@ function coordinationSection(agent: string, identity: AgentIdentity | undefined,
   if (pending.state !== 'known') return { status: 'unavailable', reason: 'coordination-ledger-unreadable' };
   if (options.job !== undefined) return empty('available');
   const labels = new Set(identity === undefined ? [agent] : agentLabels(identity));
+  // `with` pairs the recorded ledger labels exactly — the same
+  // never-registry-resolved rule `from`/`excludeFrom` apply here: the
+  // peer value is a coordination label matched verbatim, and the agent
+  // side is the section's own label set. Messages and return intents
+  // carry `from`/`to` endpoints that can pair the two either direction;
+  // proposals record no sender, so none can prove the peer exchange and
+  // the class comes back honestly empty the same way it does under
+  // `from`.
+  const withPeer = options.with;
+  const exchange = (from: string, to: string) =>
+    (labels.has(from) && to === withPeer) || (from === withPeer && labels.has(to));
   const windowed = (at: number): boolean =>
     (sinceMs === undefined || at >= sinceMs) && (beforeMs === undefined || at < beforeMs);
   const from = options.from;
@@ -3063,6 +3257,7 @@ function coordinationSection(agent: string, identity: AgentIdentity | undefined,
     .filter(message => message.to === 'all' || labels.has(message.to))
     .filter(message => from === undefined || message.from === from)
     .filter(message => excludeFrom === undefined || message.from !== excludeFrom)
+    .filter(message => withPeer === undefined || exchange(message.from, message.to))
     .filter(message => windowed(message.at))
     .sort((a, b) => b.at - a.at)
     .map(messageItem)
@@ -3070,6 +3265,10 @@ function coordinationSection(agent: string, identity: AgentIdentity | undefined,
   const proposals = pending.proposals
     .filter(proposal => labels.has(proposal.to))
     .filter(() => from === undefined)
+    // A proposal records no sender, so no `with` exchange can ever be
+    // proven for one — the class comes back honestly empty under the
+    // peer filter, the same rule `from` already applies.
+    .filter(() => withPeer === undefined)
     .filter(proposal => windowed(proposal.at))
     .sort((a, b) => b.at - a.at)
     .map((proposal: FleetAssignment): BusWorkMineCoordinationProposal => ({
@@ -3082,6 +3281,10 @@ function coordinationSection(agent: string, identity: AgentIdentity | undefined,
     .filter(ret => labels.has(ret.agent))
     .filter(ret => from === undefined || ret.agent === from)
     .filter(ret => excludeFrom === undefined || ret.agent !== excludeFrom)
+    // The return intent's exchange evidence is its receipt's recorded
+    // `from`/`to` — the same pairwise rule messages apply, decided on the
+    // exact labels the ledger wrote, never widened on unknown state.
+    .filter(ret => withPeer === undefined || exchange(ret.message.from, ret.message.to))
     .filter(ret => windowed(ret.at))
     .sort((a, b) => b.at - a.at)
     .map((ret: FleetPendingReturn): BusWorkMineCoordinationReturn => ({
@@ -3162,6 +3365,19 @@ function workBoardSection(agent: string, identity: AgentIdentity | undefined,
   const channelPrefix = options.channel === undefined ? undefined : `group:${options.channel}:`;
   const fromMatch = options.from === undefined ? undefined : agentRefAddressMatcher(options.from, registry);
   const excludeFromMatch = options.excludeFrom === undefined ? undefined : agentRefAddressMatcher(options.excludeFrom, registry);
+  // `with` keeps only the exchange the agent and one peer name: the
+  // request's `from`/`to` endpoints must pair an agent-identity label
+  // with the peer's, in either direction — the same
+  // `agentRefAddressMatcher` rule every bus `--with` read applies. A
+  // request the agent only meets through a third party or a room — the
+  // `owner` role alone — names no agent↔peer endpoint pair and never
+  // lists; a request naming no provable `from` or `to` never lists
+  // either, the same "unknown stays out" rule the sender filters apply.
+  const agentAddress = agentRefAddressMatcher(agent, registry);
+  const withPeer = options.with === undefined ? undefined : agentRefAddressMatcher(options.with, registry);
+  const exchange = (from: string | null, to: string | null) => withPeer !== undefined &&
+    from !== null && to !== null &&
+    ((agentAddress(from) && withPeer(to)) || (withPeer(from) && agentAddress(to)));
   const candidates = board.items.flatMap((item): { item: WorkBoardItem; roles: BusWorkMineWorkBoardRole[] }[] => {
     if (!WORK_BOARD_PENDING_STATES.has(item.state)) return [];
     const from = item.from ?? null, to = item.to ?? null;
@@ -3170,6 +3386,7 @@ function workBoardSection(agent: string, identity: AgentIdentity | undefined,
     if (from !== null && scope.isSelf(from)) roles.push('sent');
     if (item.owner !== null && scope.denotes(item.owner)) roles.push('owner');
     if (roles.length === 0) return [];
+    if (withPeer !== undefined && !exchange(from, to)) return [];
     if (sinceMs !== undefined || beforeMs !== undefined) {
       const at = Date.parse(item.receivedAt);
       if (!Number.isFinite(at)) return [];
@@ -3246,7 +3463,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
     (result.inReplyTo === undefined ? '' : ` in-reply-to=${result.inReplyTo}`) +
     (result.bodyKind === undefined ? '' : ` body-kind=${result.bodyKind}`) +
     (result.result === undefined ? '' : ` result=${result.result}`) +
-    (result.thread === undefined ? '' : ` thread=${result.thread}`));
+    (result.thread === undefined ? '' : ` thread=${result.thread}`) +
+    (result.with === undefined ? '' : ` with=${result.with}`));
 
   const claims = result.claims;
   if (claims.status !== 'ok') {

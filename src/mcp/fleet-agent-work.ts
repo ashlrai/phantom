@@ -31,8 +31,8 @@
  * `agent` is required and resolves through the server-owned identity
  * registry with the same handle/`agent:`/stable-id/alias refs
  * `resolveAgent` accepts; `job`, `since`, `before`, `contains`,
- * `priority`, `channel`, `topic`, `from`, `excludeFrom`, `id`, `inReplyTo`,
- * `bodyKind`, `result` and `thread` apply the same rules the
+ * `priority`, `channel`, `topic`, `from`, `excludeFrom`, `with`, `id`,
+ * `inReplyTo`, `bodyKind`, `result` and `thread` apply the same rules the
  * `phm agents bus work mine` flags share and are validated before any
  * store read. Read-only: no caller
  * root, path or cwd is
@@ -53,7 +53,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent` and `job` share — the same bound every bus read applies. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'before', 'priority', 'channel', 'topic', 'from', 'excludeFrom', 'id', 'inReplyTo', 'bodyKind', 'result', 'thread']);
+const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'before', 'priority', 'channel', 'topic', 'from', 'excludeFrom', 'with', 'id', 'inReplyTo', 'bodyKind', 'result', 'thread']);
 
 export interface FleetAgentWorkArgs {
   /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. */
@@ -76,6 +76,8 @@ export interface FleetAgentWorkArgs {
   from?: string;
   /** Keep only pending items NOT provably sent by this agent ref — the same `--exclude-from` rule every bus read shares. */
   excludeFrom?: string;
+  /** Keep only pending items that ARE the two-way exchange this agent and one peer name — the same `--with` rule every bus read shares. */
+  with?: string;
   /** Keep only pending items that ARE the retained envelope this wire id names — the same `--id` rule every bus read shares. */
   id?: string;
   /** Keep only pending items whose body cites this envelope id through its own `inReplyTo` field — the same `--in-reply-to` rule every bus read shares. */
@@ -99,9 +101,9 @@ export interface FleetAgentWorkArgs {
  * `priority` one exact P0..P3 band, `channel` and `topic` the strict
  * channel-name grammar every bus `--channel`/`--topic` read validates —
  * the topic value being the segment a `group:<room>:<topic>` label
- * carries — `from`/`excludeFrom`/`id`/
+ * carries — `from`/`excludeFrom`/`with`/`id`/
  * `inReplyTo`/`bodyKind`/`thread` the same printable-label bound every bus
- * `--from`/`--exclude-from`/`--id`/`--in-reply-to`/`--body-kind`/`--thread` read
+ * `--from`/`--exclude-from`/`--with`/`--id`/`--in-reply-to`/`--body-kind`/`--thread` read
  * validates, and `result` one exact `WORK_RESULT_OUTCOMES` code — the
  * same vocabulary `phm agents bus work mine --result` and every other
  * bus read's `--result` flag shares. Unknown
@@ -157,7 +159,7 @@ export function parseFleetAgentWorkArgs(args: Record<string, unknown>): FleetAge
     if (typeof topic !== 'string' || !agentChannelNameSchema.safeParse(topic).success) return null;
     parsed.topic = topic;
   }
-  for (const key of ['from', 'excludeFrom', 'id', 'inReplyTo', 'bodyKind', 'thread'] as const) {
+  for (const key of ['from', 'excludeFrom', 'with', 'id', 'inReplyTo', 'bodyKind', 'thread'] as const) {
     const value = args[key];
     if (value !== undefined) {
       if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
@@ -196,6 +198,7 @@ export async function readFleetAgentWork(
     ...(args.topic === undefined ? {} : { topic: args.topic }),
     ...(args.from === undefined ? {} : { from: args.from }),
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
+    ...(args.with === undefined ? {} : { with: args.with }),
     ...(args.id === undefined ? {} : { id: args.id }),
     ...(args.inReplyTo === undefined ? {} : { inReplyTo: args.inReplyTo }),
     ...(args.bodyKind === undefined ? {} : { bodyKind: args.bodyKind }),
