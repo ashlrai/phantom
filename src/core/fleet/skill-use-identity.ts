@@ -1,7 +1,7 @@
-/** Strong, replay-idempotent identities for observe-only skill selections. */
+/** Strong, replay-idempotent identities for skill selection and injection events. */
 
 import { createHash } from 'node:crypto';
-import type { RouteSnapshot, SkillUseEvent } from '../types.js';
+import type { RouteSnapshot, SkillUseEvent, SkillUseMode, SkillUseStage } from '../types.js';
 import { routeSnapshot } from '../learning/causal.js';
 import { SKILL_RETRIEVAL_POLICY_VERSION, type ShadowSkillSummary } from './skill-retrieval.js';
 
@@ -20,6 +20,11 @@ export interface BuildShadowSkillUseEventInput {
   selectedAt: string;
   skill: Pick<ShadowSkillSummary, 'skillId' | 'revision' | 'contentHash' | 'rank' | 'score'>;
   route: Pick<RouteSnapshot, 'backend' | 'tier' | 'model'>;
+}
+
+export interface BuildSkillUseEventInput extends BuildShadowSkillUseEventInput {
+  mode: SkillUseMode;
+  stage: SkillUseStage;
 }
 
 function safeId(value: unknown): string | undefined {
@@ -48,8 +53,8 @@ function validSelectedAt(value: string): string | null {
   return new Date(ms).toISOString();
 }
 
-export function buildShadowSkillUseEvent(
-  input: BuildShadowSkillUseEventInput,
+export function buildSkillUseEvent(
+  input: BuildSkillUseEventInput,
 ): SkillUseEvent | null {
   try {
     const identity = strongIdentity(input.identity);
@@ -75,7 +80,8 @@ export function buildShadowSkillUseEvent(
       input.skill.revision,
       input.skill.contentHash,
       policyVersion,
-      'selected',
+      input.mode,
+      input.stage,
       selectedAt,
     ])).digest('hex').slice(0, 32)}`;
     const snapshot = routeSnapshot({
@@ -84,7 +90,7 @@ export function buildShadowSkillUseEvent(
       model: input.route.model,
       selectedSkillIds: [skillId],
       skillPolicyVersion: policyVersion,
-      skillMode: 'shadow',
+      skillMode: input.mode,
     });
     return {
       schemaVersion: 1,
@@ -95,8 +101,8 @@ export function buildShadowSkillUseEvent(
       contentHash: input.skill.contentHash,
       selectedAt,
       skillPolicyVersion: policyVersion,
-      mode: 'shadow',
-      stage: 'selected',
+      mode: input.mode,
+      stage: input.stage,
       outcome: 'unknown',
       rank: input.skill.rank,
       score: input.skill.score,
@@ -108,4 +114,10 @@ export function buildShadowSkillUseEvent(
   } catch {
     return null;
   }
+}
+
+export function buildShadowSkillUseEvent(
+  input: BuildShadowSkillUseEventInput,
+): SkillUseEvent | null {
+  return buildSkillUseEvent({ ...input, mode: 'shadow', stage: 'selected' });
 }
