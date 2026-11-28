@@ -645,7 +645,8 @@ The Leader board's `queueDepthByTier` counts READY work across the fleet,
 including rows with an empty lane column or an explicit
 `"preferred_lane": null` in the requirements. The first valid READY row in
 file order supplies each job's tier, whether it has a lane hint or is open.
-Open jobs have no per-lane attribution.
+Open jobs have no per-lane attribution. The board trims and lowercases tier
+labels for display and groups missing or unsupported values under `unknown`.
 
 The Leader board estimates the number of conflicting PRs from rebase job IDs
 in `ready.tsv`. It includes parked rebase jobs, expands batches into their
