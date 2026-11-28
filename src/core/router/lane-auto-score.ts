@@ -51,9 +51,3 @@ export function indexLaneAutoScores(outcomes: readonly Observation[]) {
     };
   };
 }
-
-export function rankLaneAutoScores(left: LaneAutoScore, right: LaneAutoScore): number {
-  return (right.heldMergeRate ?? -1) - (left.heldMergeRate ?? -1)
-    || (right.firstPassCiRate ?? -1) - (left.firstPassCiRate ?? -1)
-    || (left.usdPerHeldMerge !== null && right.usdPerHeldMerge !== null ? left.usdPerHeldMerge - right.usdPerHeldMerge : 0);
-}

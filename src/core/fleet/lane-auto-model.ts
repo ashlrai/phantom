@@ -4,7 +4,7 @@ import { checkModelsAgainstDocs, loadVerifiedRegistry, MODEL_ALIASES, readDocsRe
 import { readLaneModelConfig, resolveLaneModel } from './lane-models.js';
 import type { FleetEngine } from './fleet-types.js';
 import { readRouterOutcomes } from '../router/outcomes.js';
-import { indexLaneAutoScores, LANE_AUTO_MIN_SAMPLES, rankLaneAutoScores, type LaneAutoScore } from '../router/lane-auto-score.js';
+import { indexLaneAutoScores, LANE_AUTO_MIN_SAMPLES, type LaneAutoScore } from '../router/lane-auto-score.js';
 import { catalogFor, DEFAULT_CLAUDE_MODEL_ID, DEFAULT_LOCAL_MODEL_TAG, GROK_CLI_DEFAULT_MODEL, GROK_CLI_FAST_MODEL, type ModelRoutingTier } from '../run/model-catalog.js';
 import { codexModelForTier } from '../run/learned-router.js';
 import { subscriptionOnlyCurrent } from '../routing/subscription-only.js';
@@ -95,12 +95,15 @@ export function chooseLaneAuto(
   }), evidence.docs);
   const blocked = new Set(docs.models.filter(row => row.verdict === 'deprecated' || row.verdict === 'retired').map(row => row.id));
   receipt.candidates = eligible.filter(id => !blocked.has(id)).sort().map(score);
-  const quality = (row: LaneAutoScore) => ({ ...row, usdPerHeldMerge: null });
-  const ranked = receipt.candidates.filter(row => row.samples >= LANE_AUTO_MIN_SAMPLES)
-    .sort((left, right) => rankLaneAutoScores(quality(left), quality(right)));
-  const tied = ranked.filter(row => rankLaneAutoScores(quality(ranked[0]!), quality(row)) === 0);
+  const ranked = receipt.candidates.filter(row => row.samples >= LANE_AUTO_MIN_SAMPLES && row.heldMergeRate !== null);
+  const bestHeldRate = Math.max(...ranked.map(row => row.heldMergeRate!));
+  let tied = ranked.filter(row => row.heldMergeRate === bestHeldRate);
+  if (tied.every(row => row.firstPassCiRate !== null)) {
+    const bestCiRate = Math.max(...tied.map(row => row.firstPassCiRate!));
+    tied = tied.filter(row => row.firstPassCiRate === bestCiRate);
+  }
   const knownCost = tied.every(row => row.usdPerHeldMerge !== null);
-  tied.sort((left, right) => (knownCost ? rankLaneAutoScores(left, right) : 0)
+  tied.sort((left, right) => (knownCost ? left.usdPerHeldMerge! - right.usdPerHeldMerge! : 0)
     || Number(right.model === prior) - Number(left.model === prior) || left.model.localeCompare(right.model));
   const picked = tied[0]?.model ?? (receipt.candidates.some(row => row.model === prior) ? prior : null);
   return { ...receipt, model: picked, reason: ranked.length ? 'scored' : picked ? 'threshold-fallback' : 'held' };

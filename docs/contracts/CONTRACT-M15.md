@@ -171,8 +171,10 @@ lane model map. `executionForSeat` and the resident `TickRouteDecision`
 can include an additive `autoModel` receipt (`route.lane-auto.v1`), also
 written on the resident dispatch journal row. The receipt records lane,
 tier, matching key, concrete model (or null on hold), minimum samples,
-candidate outcomes, and chosen reason. It is historical evidence, not
-permission to launch; `seatAllows` rechecks the selected model and
+candidate outcomes, and chosen reason. The chooser ranks by held-merge
+rate, then uses first-pass CI and USD per held merge as tie-breakers only
+when every candidate still tied has the corresponding rate. For launch,
+`seatAllows` rechecks the selected model and
 current account billing boundary. The optional `onRecordedWorkClasses`
 callback on `readRouterOutcomes` receives the work-market class by exact
 job ID without changing the outcome report.

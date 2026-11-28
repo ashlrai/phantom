@@ -209,8 +209,10 @@ describe('resident lane auto', () => {
     observedAt: NOW_ISO, expiresAt: new Date(NOW + 60_000).toISOString(),
   } };
   const task = item({ tags: ['tier:work'] });
-  const row = (model: string) => ({ lane: 'codex-personal', tier: 'work', work_class: 'feature',
-    model, merged: true, reverted: false, ci_first_pass: true, cost_usd: 1 });
+  const row = (model: string): Parameters<typeof indexLaneAutoScores>[0][number] => ({
+    lane: 'codex-personal', tier: 'work', work_class: 'feature',
+    model, merged: true, reverted: false, ci_first_pass: true, cost_usd: 1,
+  });
   const evidence = (rows = [row(alternative)], over: Partial<LaneAutoEvidence> = {}): LaneAutoEvidence => ({
     models: new Map([['codex', 'auto']]), registry: [], docs: [], score: indexLaneAutoScores(rows), workClassFor: () => 'feature',
     nativeModels: () => new Set([prior, alternative, 'claude-opus-5-5']), ...over,
@@ -244,6 +246,18 @@ describe('resident lane auto', () => {
     expect(pick(evidence(rows))).toMatchObject({ model: prior, autoModel: { candidates: [
       { model: alternative, usdPerHeldMerge: null }, { model: prior },
     ] } });
+  });
+
+  it('breaks held-merge ties on CI only when every tied model has a recorded rate', () => {
+    const rows = (ci: boolean | null, cost: number) => [
+      ...Array.from({ length: 5 }, () => ({ ...row(prior), ci_first_pass: ci })),
+      ...Array.from({ length: 5 }, () => ({ ...row(alternative), ci_first_pass: true, cost_usd: cost })),
+    ];
+    expect(pick(evidence(rows(null, 1)))).toMatchObject({ model: prior, autoModel: { candidates: [
+      { model: alternative, firstPassCiRate: 1 }, { model: prior, firstPassCiRate: null },
+    ] } });
+    expect(pick(evidence(rows(null, 0.5)))?.model).toBe(alternative);
+    expect(pick(evidence(rows(false, 2)))?.model).toBe(alternative);
   });
 
   it.each([
