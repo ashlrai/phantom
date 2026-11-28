@@ -1423,6 +1423,24 @@
  *     since the study question — which conventions held merges share
  *     that contributor guidance does not yet name — lives in this
  *     repository's machinery;
+ *   - the same journal's recurring oversized merges per repository:
+ *     the fleet.outside-pr-outcome.v1 rows' `diff` field — gh's
+ *     recorded merge size (additions/deletions/changedFiles frozen at
+ *     merge) — folded per repository so outside merges that keep
+ *     landing too large for one confident review pass become work
+ *     (outsidePrDiffBacklogItems below). Until now the field's only
+ *     readers were the sibling prompts' context tallies and the
+ *     router-weight report's advisory community-seat section. A repo
+ *     cell emits only at three oversized merges inside the same
+ *     30-day window AND only when oversized merges are at least half
+ *     of the repo's diff-evidenced merges — the share bar the
+ *     raw-count siblings do not need, since a large diff is a pattern
+ *     only when the repo's outside merges are routinely oversized;
+ *     null diff records (pre-fields rows, malformed records) never
+ *     count, the newest scan row's degraded reads are quoted as
+ *     coverage, truncated tails are stated as lower bounds, and items
+ *     self-target each outside PR's own repository since the
+ *     PR-size/review-path fix lives where the merges land;
  *   - the work market's repo-share journal's recurring adverse
  *     freshness verdicts: the per-repo `repo_share` rows dispatchd's
  *     market_metric appends to metrics/work-market.jsonl whenever the
@@ -2423,6 +2441,7 @@ import { outsidePrAgentBacklogItems } from './outside-pr-agent-backlog.js';
 import { outsidePrCiBacklogItems } from './outside-pr-ci-backlog.js';
 import { outsidePrReviewBacklogItems } from './outside-pr-review-backlog.js';
 import { outsidePrHeldBacklogItems } from './outside-pr-held-backlog.js';
+import { outsidePrDiffBacklogItems } from './outside-pr-diff-backlog.js';
 import { repoShareBacklogItems } from './repo-share-backlog.js';
 import { reasoningInsightBacklogItems } from './reasoning-insight-backlog.js';
 import { fleetGapBacklogItems } from './fleet-gap-backlog.js';
@@ -4343,6 +4362,27 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // share that contributor guidance does not yet name — lives in this
   // repository's machinery.
   await feed('outsidePrHeldBacklogItems', () => outsidePrHeldBacklogItems({ repo }));
+
+  // Outside-PR merge-size journal: the same
+  // metrics/outside-pr-outcomes.jsonl rows folded per repository on
+  // their journaled `diff` field — gh's recorded additions/deletions/
+  // changedFiles triple frozen at merge, where a merge is "oversized"
+  // when either leg reaches its bound (OUTSIDE_PR_DIFF_LINES changed
+  // lines or OUTSIDE_PR_DIFF_FILES files). Until now the field's only
+  // readers were the sibling prompts' context tallies and the
+  // router-weight report's advisory community-seat section, so a repo
+  // whose outside merges kept landing too large for one confident
+  // review pass never became work. A repo cell emits only at the same
+  // recurring bar of oversized merges inside the window AND only when
+  // oversized merges are at least half of the repo's diff-evidenced
+  // merges — the share bar a raw adverse count does not need, since a
+  // large diff is a pattern only when outside merges are routinely
+  // oversized; null diff records never count toward either side,
+  // degraded scan coverage is quoted, truncated tails are stated as
+  // lower bounds, and items self-target the outside PRs' own
+  // repository — the PR-size/review-path fix lives where the merges
+  // land.
+  await feed('outsidePrDiffBacklogItems', () => outsidePrDiffBacklogItems());
 
   // Work-market share journal: the same journal's change-triggered
   // `repo_share` rows folded per (repo, code) cell for the three adverse

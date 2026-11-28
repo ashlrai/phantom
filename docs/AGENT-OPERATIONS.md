@@ -1282,6 +1282,15 @@ conventions its held merges share that contributor guidance does not
 yet name; dependency-automation slugs are excluded as non-study
 subjects. See
 [core/improve/outside-pr-held-backlog.ts](../src/core/improve/outside-pr-held-backlog.ts).
+Each row's `diff` field — gh's recorded merge size (`additions`,
+`deletions` and `changedFiles` frozen at merge) — is folded per
+repository as well, so outside merges that keep landing oversized (a
+changed-lines or changed-files bound either leg can reach) become
+self-targeted backlog items once they recur and are at least half of
+the repo's diff-evidenced merges — the share bar a raw adverse count
+does not need, since a large diff is a pattern only when outside merges
+are routinely oversized; see
+[core/improve/outside-pr-diff-backlog.ts](../src/core/improve/outside-pr-diff-backlog.ts).
 
 `phm fleet pr-hygiene [--repo <owner/name>] [--stale-days <n>] [--limit <n>] [--json]`
 audits one repo's open PRs and emits the `fleet.pr-hygiene.v1` triage report
