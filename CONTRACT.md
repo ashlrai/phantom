@@ -2671,9 +2671,13 @@ See [node admission](docs/NODES.md#small-mac-enrollment-and-admission).
 ## Node provider binaries and runner errors
 
 `src/core/drive/nodes/provider-binary.ts` exports `NODE_PROVIDERS`,
-`isNodeProvider`, `providerBinaryCandidates(provider, deps?)` and
+`isNodeProvider`, `providerBinaryCandidates(provider, deps?)`,
+`binaryCandidates(name, deps?)`, `executableFile(path)`,
 `resolveProviderBinary(provider, deps?) => string | null`, the single absolute
-allowlist resolver (no `PATH` lookup). The allowlist covers macOS and
+allowlist resolver (no `PATH` lookup), plus `COMMUNITY_CLI_CANDIDATES` and
+`installedAgentClis(deps?) => string[]`, the bare join's installed-community-CLI
+probe (file presence at the same allowlist only — no execution, sign-in check or
+credential read). The allowlist covers macOS and
 user-level locations first, then version-manager shims and Linux system
 locations (`/usr/bin`, `/bin`, `/snap/bin`); appended locations only resolve
 when nothing earlier exists. `worker.ts` adds

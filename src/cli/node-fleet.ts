@@ -33,6 +33,12 @@ export interface NodeFleetDeps {
    * An explicit --caps skips the lane probe — though a --caps that advertises
    * gh still pays the one gh login check the reply reports as ghAuth. */
   providerLanes?: () => string[];
+  /** Test seam for the bare join's installed-agent-CLI probe (file presence at
+   * allowlisted paths only — no execution, no sign-in check, no credential
+   * reads); defaults to this machine's real probe. When providerLanes is
+   * injected the machine probe is stubbed, so this defaults to an empty list
+   * unless injected too. */
+  installedClis?: () => string[];
 }
 
 
@@ -175,6 +181,17 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
       lines.push(auto.length
         ? `Caps auto-detected from this machine's sign-ins: ${auto.join(', ')}. Pass --caps to advertise a different set.`
         : 'No codex, claude or gh sign-ins detected on this machine — the join advertises no sign-in lanes. Sign in to one and join again, or pass --caps to advertise lanes yourself — it accepts any capability name, and auto-detect probes only the codex, claude and gh sign-ins.');
+    }
+    // The bare join's installed-CLI probe names the community agent CLIs the
+    // sign-in probe does not cover, so a member whose tools are aider, gemini
+    // or the other measured harnesses sees concrete --caps names instead of a
+    // dead end. File presence only — "installed" never claims a sign-in, and
+    // --caps replaces the whole advertisement, so the example keeps the
+    // sign-in lanes the auto-detect already found.
+    const installed = out['installedClis'] as string[] | undefined;
+    if (installed !== undefined && installed.length > 0) {
+      const all = [...new Set([...(auto ?? []), ...installed])].sort();
+      lines.push(`Agent CLIs installed on this machine that --caps can advertise: ${installed.join(', ')}. Installed is not signed in — each CLI still needs its own login. --caps replaces the whole set, so to keep the sign-in lanes too: --caps ${all.join(',')}`);
     }
     // gh is advertised but this machine's login is not verified ok: name the
     // state and the fix at join — where `gh auth login` is still cheap —
@@ -408,10 +425,11 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
     const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome, ashlrHomePath }, { canonicalPath, privateDirectory }, { join },
-      { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }, { probeLocalLanePlan }] = await Promise.all([
+      { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }, { probeLocalLanePlan }, { installedAgentClis }] = await Promise.all([
       import('../core/drive/nodes/index.js'), import('../core/drive/nodes/auth-probe.js'),
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path'),
-      import('../core/drive/nodes/phm-version.js'), import('../core/drive/nodes/local-model-caps.js')]);
+      import('../core/drive/nodes/phm-version.js'), import('../core/drive/nodes/local-model-caps.js'),
+      import('../core/drive/nodes/provider-binary.js')]);
     nodesDirLabel = ashlrHomePath('nodes');
     const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
     const drive = new DriveNodes(store, deps.now ? { now: deps.now } : {});
@@ -421,6 +439,9 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     // The sign-in lanes a bare join advertised, named in the reply so the caps
     // list never reads as a choice the operator made.
     let autoCaps: string[] | undefined;
+    // The community agent CLIs installed on this machine that the sign-in
+    // probe does not cover, named in the reply as --caps candidates.
+    let installedClis: string[] | undefined;
     // The gh login verdict the bare join's sign-in probe already paid for;
     // the reply reuses it instead of probing twice. An explicit --caps — or
     // an injected providerLanes seam — leaves it unset, and the reply probes
@@ -454,6 +475,13 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
         autoCaps = lanes;
         joinGhAuth = detected.ghAuth;
         if (lanes.length > 0) flags.set('--caps', lanes.join(','));
+        // The sign-in probe covers only codex, claude and gh; a community node
+        // whose agent CLIs are aider, gemini or the other measured harnesses
+        // would otherwise join with no lanes and no hint that --caps takes any
+        // capability name. Name the installed CLIs as candidates — file
+        // presence only, so "installed" never claims "signed in".
+        installedClis = deps.installedClis !== undefined ? deps.installedClis()
+          : deps.providerLanes !== undefined ? [] : installedAgentClis();
       } else {
         // An explicit --caps that names nothing is a scripting accident
         // (`--caps "$EMPTY"`), not a deliberate empty advertisement: silently
@@ -522,7 +550,14 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // that boundary in the reply instead of letting a first-time node
       // assume it joined a shared fleet.
       out['registry'] = 'local';
-      if (autoCaps !== undefined) out['autoCaps'] = autoCaps;
+      if (autoCaps !== undefined) {
+        out['autoCaps'] = autoCaps;
+        // Installed CLIs ride only when the probe found some: an empty list
+        // would claim "probed, found none" where the field's absence already
+        // says the bare-join machine probe was stubbed or found nothing worth
+        // naming.
+        if (installedClis !== undefined && installedClis.length > 0) out['installedClis'] = installedClis;
+      }
       // The node joined without its lane caps; name the broken file so the
       // first-run output says why instead of looking never-configured.
       if (localLaneError !== null) {
