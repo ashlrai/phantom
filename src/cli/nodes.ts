@@ -39,10 +39,12 @@ which lane CLIs (claude, codex, devin, gemini, local model) are installed and
 signed in, which ashlrai repo clones exist and free disk, with one fix line per gap.
 Other computers show unknown where they cannot be checked yet.
 offload: opt-in, off by default. When this computer would hold a launch (over load
-or memory held) and another computer passes doctor with a free slot, a ready job is
-chosen for that computer and one event records why. Running jobs never move, a
-computer never gets more jobs than its free slots, and with no ready computer the
-job keeps waiting here. --dry-run only shows what would move. on|off flips the setting.
+or memory held) and another computer is ready for the lane — a live heartbeat,
+the advertised cap and no known doctor gap — a ready job the node router could
+claim is chosen for that computer and one event records why. Running jobs never
+move, a computer never gets more jobs than its free slots, and with no ready
+computer the job keeps waiting here. --dry-run only shows what would move.
+on|off flips the setting.
 Read only: it changes no network, security or pool setting.`;
 
 const unknownOr = <T>(value: T | 'unknown', show: (known: T) => string): string => (value === 'unknown' ? 'unknown' : show(value));

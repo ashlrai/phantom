@@ -46,7 +46,8 @@ export const NODE_BRIDGE_CALL_MS = 12_000;
 export const NODE_BRIDGE_PASS_BUDGET_MS = 25_000;
 
 const JID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const HOST_BOUND = ['RQ-FIX-MAIN-', 'RQ-REL-', 'RQ-DESK-', 'RQ-BATCH-'];
+/** Ready-row prefixes bound to this host: the bridge never offers them to a node, and the offload plan mirrors that. */
+export const NODE_BRIDGE_HOST_BOUND = ['RQ-FIX-MAIN-', 'RQ-REL-', 'RQ-DESK-', 'RQ-BATCH-'];
 const DATA_CLASSES: Record<string, number> = { public: 0, internal: 1, confidential: 2, restricted: 3 };
 /** work_market.py's clearance for a remote built-in executor. */
 const REMOTE_CLEARANCE = 'internal';
@@ -254,7 +255,7 @@ export function planNodeBridge(input: BridgeRouterView & {
     if (row.invalid) reasons.push(row.invalid);
     else {
       if (seen.has(row.job)) reasons.push('duplicate_row');
-      if (HOST_BOUND.some(p => row.job.startsWith(p))) reasons.push('host_bound_job');
+      if (NODE_BRIDGE_HOST_BOUND.some(p => row.job.startsWith(p))) reasons.push('host_bound_job');
       if (input.claimed(row.job)) reasons.push('local_claim_present');
       if (spec['exclusive'] === true) reasons.push('exclusive');
       if (LOCAL_LANES.has(lane) || LOCAL_LANES.has(row.lane)) reasons.push('local_execution_required');

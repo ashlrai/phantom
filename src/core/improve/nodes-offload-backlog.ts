@@ -359,7 +359,7 @@ function offloadPrompt(cell: NodesOffloadCell): string {
   return [
     `Phantom's opt-in node offload keeps moving ready jobs off this computer — ${cell.count} distinct job(s) recorded moving to peer computers on ${cell.days} separate UTC day(s) inside the window, each time because ${lead.held}.`,
     '',
-    `Every recorded move is a launch this host's guard held while a peer passed \`phm nodes doctor\` with a free slot for the lane.${laneText(cell)}${nodeText(cell)}${jobsText(cell)}${seenText(cell)}${boundText(cell)}`,
+    `Every recorded move is a launch this host's guard held while a peer was ready for the lane — a live heartbeat, the advertised cap and no known doctor gap — with a free slot.${laneText(cell)}${nodeText(cell)}${jobsText(cell)}${seenText(cell)}${boundText(cell)}`,
     '',
     EVIDENCE,
     '',
