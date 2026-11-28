@@ -2718,8 +2718,14 @@ deps?) => string[]`, the explicit `--caps` honesty check naming advertised
 caps whose agent CLI has no binary at the allowlist. The allowlist covers macOS and
 user-level locations first, then version-manager shims and Linux system
 locations (`/usr/bin`, `/bin`, `/snap/bin`); appended locations only resolve
-when nothing earlier exists. `worker.ts` adds
+when nothing earlier exists. `provider-binary.ts` also exports
+`PROVIDER_LOGIN_COMMANDS`, the login command each sign-in-probed provider's
+own CLI documents. `worker.ts` adds
 `probeProviderBinaries(run?, deps?) => ProviderBinaries`,
+`probeProviderStates(run?, deps?) => ProviderProbe[]` — the same exit-code-only
+sign-in probe kept per provider (`signIn` `ok`/`failed`/`unknown`/`absent`,
+`binary` the resolved path or null) so the bare `phm node join` reply can name
+an installed CLI whose sign-in check did not pass —
 `classifyRunnerReply(code, fenced, stdout)`, `PACK_FAILURE_LIMIT` (2), and an
 optional third `binaryDeps` argument to `probeNodeLanes`. `NodeRunnerRequest` gains
 optional `providerBinaries`; `NodeRunnerDeps` gains `resolveBinary`.

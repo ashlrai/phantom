@@ -41,7 +41,12 @@ the way a pool worker does (exit codes only; no credential is read or sent),
 then advertises those lanes plus any local-model caps. The join reply names
 the detected set under `autoCaps` in `--json` and in a plain-words line in
 text mode; a probe that finds no sign-ins reports `autoCaps: []` and says so,
-since the node then advertises no sign-in lanes. Sign in to a provider CLI
+since the node then advertises no sign-in lanes. A provider CLI that is
+installed but not signed in never reaches `autoCaps`, so the reply names it
+under `providerSignIn` in `--json` (`signed-out` when the CLI's own status
+check refuses, `unknown` when the check could not complete) and in a
+plain-words line with the provider's login command — the most common
+first-run gap is a CLI installed but never logged in. Sign in to a provider CLI
 or `gh` and join again, or pass `--caps` to choose the advertisement
 yourself — an explicit list replaces the sign-in detection entirely
 (local-model and version caps still merge in), and a `--caps` that names no

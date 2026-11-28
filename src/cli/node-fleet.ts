@@ -1,7 +1,8 @@
 /** `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave`: thin handlers over DriveNodes. */
 import { hostname } from 'node:os';
 import type { DriveNodes, NodesStore } from '../core/drive/nodes/index.js';
-import type { ProviderBinaryDeps } from '../core/drive/nodes/provider-binary.js';
+import { PROVIDER_LOGIN_COMMANDS, type ProviderBinaryDeps } from '../core/drive/nodes/provider-binary.js';
+import type { ProviderProbe } from '../core/drive/nodes/worker.js';
 import { UsageError, joinHintCommand, knownOwnerScopes, nodeFleetListItems, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
 import { validId, type NodeAuth } from '../core/drive/nodes/state.js';
 import type { SelfUpdatePlan } from '../core/drive/nodes/phm-version.js';
@@ -35,6 +36,12 @@ export interface NodeFleetDeps {
    * An explicit --caps skips the lane probe — though a --caps that advertises
    * gh still pays the one gh login check the reply reports as ghAuth. */
   providerLanes?: () => string[];
+  /** Test seam for the bare join's per-provider sign-in detail — the verdicts
+   * behind the lane probe that name an installed CLI whose sign-in check did
+   * not pass; defaults to this machine's real probe. Consulted only on a bare
+   * join; an injected providerLanes without this seam reports no detail, the
+   * same "machine probe stubbed" boundary installedClis follows. */
+  providerStates?: () => ProviderProbe[];
   /** Test seam for the bare join's installed-agent-CLI probe (file presence at
    * allowlisted paths only — no execution, no sign-in check, no credential
    * reads); defaults to this machine's real probe. When providerLanes is
@@ -129,11 +136,15 @@ function planEmptyNote(nodes: DriveNodes, owner: string | undefined): string {
  * the local gh login check passes. Sign-in state is read on this machine only —
  * no credential, token or auth file leaves it. The gh check's own verdict
  * rides along so the join reply can name this machine's login state without
- * paying for a second probe. */
-async function joinSignInLanes(probeAuth: () => NodeAuth): Promise<{ lanes: string[]; ghAuth: NodeAuth }> {
-  const { probeProviderBinaries } = await import('../core/drive/nodes/worker.js');
+ * paying for a second probe. The per-provider verdicts ride along too: a CLI
+ * installed but not signed in never reaches `lanes`, and the reply names it
+ * with its login fix instead of letting "no sign-ins" read as "nothing
+ * installed". */
+async function joinSignInLanes(probeAuth: () => NodeAuth, states?: () => ProviderProbe[]): Promise<{ lanes: string[]; ghAuth: NodeAuth; providers: ProviderProbe[] }> {
+  const { probeProviderStates } = await import('../core/drive/nodes/worker.js');
   const ghAuth = probeAuth();
-  return { lanes: [...Object.keys(probeProviderBinaries()), ...(ghAuth === 'ok' ? ['gh'] : [])].sort(), ghAuth };
+  const providers = (states ?? probeProviderStates)();
+  return { lanes: [...providers.filter(p => p.signIn === 'ok').map(p => p.provider), ...(ghAuth === 'ok' ? ['gh'] : [])].sort(), ghAuth, providers };
 }
 
 /** nodeId -> advertised agent-CLI caps with no binary on this machine, from one
@@ -230,6 +241,22 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
       const all = [...new Set([...(auto ?? []), ...installed])].sort();
       const keep = auto !== undefined && auto.length > 0;
       lines.push(`Agent CLIs installed on this machine that --caps can advertise: ${installed.join(', ')}. Installed is not signed in — each CLI still needs its own login. --caps replaces the whole set, so ${keep ? 'to keep the sign-in lanes too' : 'to advertise them'}: --caps ${all.join(',')}`);
+    }
+    // A provider CLI installed but not signed in never reached autoCaps — the
+    // probe dropped it silently, so name it with its verdict and login fix:
+    // the most common first-run gap is a CLI installed but never logged in,
+    // and "no sign-ins detected" alone would read as "nothing installed".
+    // 'signed-out' is the CLI's own refusal; 'unknown' is a check that could
+    // not complete — never a verdict. Either way a re-join is the fix, since
+    // caps are advertised at join time only.
+    const providerSignIn = out['providerSignIn'] as Record<string, string> | undefined;
+    if (providerSignIn !== undefined) {
+      for (const [provider, verdict] of Object.entries(providerSignIn)) {
+        const login = PROVIDER_LOGIN_COMMANDS[provider as keyof typeof PROVIDER_LOGIN_COMMANDS] ?? `${provider} login`;
+        lines.push(verdict === 'signed-out'
+          ? `${provider} is installed but not signed in — run \`${login}\` here, then join again so its lane is advertised.`
+          : `${provider} is installed but its sign-in check could not complete — its lane is not advertised; if it is signed out run \`${login}\` and join again.`);
+      }
     }
     // gh is advertised but this machine's login is not verified ok: name the
     // state and the fix at join — where `gh auth login` is still cheap —
@@ -499,6 +526,11 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     // The community agent CLIs installed on this machine that the sign-in
     // probe does not cover, named in the reply as --caps candidates.
     let installedClis: string[] | undefined;
+    // The per-provider sign-in verdicts the bare join's probe already paid
+    // for, kept for the reply: a CLI installed but not signed in never
+    // reaches autoCaps, and naming it with its login fix beats letting "no
+    // sign-ins detected" read as "nothing installed".
+    let providerProbes: ProviderProbe[] | undefined;
     // The gh login verdict the bare join's sign-in probe already paid for;
     // joinAuth reuses it for the record and the reply instead of probing
     // twice. An explicit --caps — or an injected providerLanes seam — leaves
@@ -527,10 +559,11 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // claude or gh here and the join advertises that lane. An explicit
       // --caps stays the complete manual advertisement and skips the probe.
       if (!flags.has('--caps')) {
-        const detected: { lanes: string[]; ghAuth?: NodeAuth } = deps.providerLanes !== undefined
-          ? { lanes: deps.providerLanes() }
-          : await joinSignInLanes(deps.probeAuth ?? probeLocalAuth);
+        const detected: { lanes: string[]; ghAuth?: NodeAuth; providers?: ProviderProbe[] } = deps.providerLanes !== undefined
+          ? { lanes: deps.providerLanes(), providers: deps.providerStates?.() }
+          : await joinSignInLanes(deps.probeAuth ?? probeLocalAuth, deps.providerStates);
         const lanes = [...new Set(detected.lanes)].sort();
+        providerProbes = detected.providers;
         // The probe outcome rides the reply even when empty: autoCaps: [] says
         // "probed, found no sign-ins" where an absent key means the operator
         // passed --caps and no probe ran — the same distinction the pool
@@ -637,6 +670,17 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
         // says the bare-join machine probe was stubbed or found nothing worth
         // naming.
         if (installedClis !== undefined && installedClis.length > 0) out['installedClis'] = installedClis;
+        // A provider CLI that is installed but whose sign-in check did not
+        // pass never reached autoCaps — the lane probe dropped it silently, so
+        // "no sign-ins detected" would read as "nothing installed". Name each
+        // one with its verdict: 'signed-out' is the CLI's own refusal (its
+        // login command fixes it, then join again), 'unknown' is a check that
+        // could not complete — never a verdict. Providers with no allowlisted
+        // binary stay unlisted; the autoCaps/installedClis lines already cover
+        // "nothing installed", and 'ok' providers are the autoCaps themselves.
+        const signIn = providerProbes?.filter(p => p.signIn === 'failed' || p.signIn === 'unknown')
+          .map(p => [p.provider, p.signIn === 'failed' ? 'signed-out' : 'unknown'] as const);
+        if (signIn !== undefined && signIn.length > 0) out['providerSignIn'] = Object.fromEntries(signIn);
       }
       // The node joined without its lane caps; name the broken file so the
       // first-run output says why instead of looking never-configured.
