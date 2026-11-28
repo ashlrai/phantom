@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { recordLeaderBoard } from '../src/core/fleet/leader-board.js';
+import { leaderBoardPath, recordLeaderBoard } from '../src/core/fleet/leader-board.js';
 import { fleetBoardResponse, readFleetBoard } from '../src/core/fleet/leader-journal.js';
 
 const NOW_MS = Date.parse('2026-11-13T12:00:00Z');
@@ -76,6 +76,42 @@ it('keeps a bounded conflict trend, then reports unknown when ready.tsv disappea
   const read = await readFleetBoard({ runsDir: root });
   expect(read.status).toBe('ok');
   expect(read.board?.conflictingPrs.count).toBeNull();
+});
+
+it('compares distinct conflict observations in timestamp order after a clock rollback', async () => {
+  await seed();
+  const result = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  expect(result.wrote).toBe(true);
+  if (!result.wrote) return;
+  result.board.conflictingPrs.history = [
+    { at: minutesAgo(5), count: 0 },
+    { at: minutesAgo(20), count: 6 },
+    { at: minutesAgo(5), count: 3 },
+    { at: minutesAgo(0), count: 50 },
+    { at: minutesAgo(-10), count: 100 },
+  ];
+  await writeFile(leaderBoardPath(root), JSON.stringify(result.board));
+
+  const next = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  expect(next.wrote && next.board.conflictingPrs).toEqual({
+    count: 2, delta: -1, trend: 'falling',
+    history: [
+      { at: minutesAgo(20), count: 6 },
+      { at: minutesAgo(5), count: 3 },
+      { at: minutesAgo(0), count: 2 },
+    ],
+  });
+});
+
+it('keeps the trend unknown when the only prior sample is from the same tick', async () => {
+  await seed();
+  expect((await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS })).wrote).toBe(true);
+  await writeFile(join(queueDir, 'ready.tsv'), '');
+  const next = await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS });
+  expect(next.wrote && next.board.conflictingPrs).toEqual({
+    count: 0, delta: null, trend: 'unknown',
+    history: [{ at: minutesAgo(0), count: 0 }],
+  });
 });
 
 it('counts lane-open work by tier without attributing it to a lane', async () => {
