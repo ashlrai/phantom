@@ -210,8 +210,15 @@ export class DriveNodes implements QueueV1 {
       node.heartbeatAt = now;
       node.expiresAt = now + this.nodeTtl;
       if (report?.usage !== undefined) node.usage = report.usage;
-      if (report?.slots !== undefined) node.slots = report.slots;
-      if (report?.capacity !== undefined) { node.capacity = structuredClone(report.capacity); node.slots = report.capacity.slots; }
+      const capacity = report?.capacity;
+      if (capacity === undefined) {
+        if (report?.slots !== undefined) node.slots = report.slots;
+      } else if (!node.capacity || node.capacity.sampledAtMs > now || capacity.sampledAtMs >= node.capacity.sampledAtMs) {
+        // A delayed report cannot undo a newer hold or slot budget. A future
+        // sample is already unusable and must not prevent a clock correction.
+        node.capacity = structuredClone(capacity);
+        node.slots = capacity.slots;
+      }
       if (report?.auth !== undefined) node.auth = report.auth;
       if (report?.hostStats !== undefined) node.hostStats = structuredClone(report.hostStats);
       if (!previous) {
