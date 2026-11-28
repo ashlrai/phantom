@@ -31,7 +31,9 @@ const stamped = (v: unknown): v is string => text(v) && !Number.isNaN(Date.parse
 
 export function classifyWorkItem(e: WorkItemEvidence, nowIso: string): WorkItemClassification {
   const now = Date.parse(nowIso);
-  const current = (at: unknown): at is string => stamped(at) && Date.parse(at) - now <= FUTURE_SKEW_MS;
+  const received = stamped(e.receivedAt) ? Date.parse(e.receivedAt) : NaN;
+  const afterReceipt = (at: string): boolean => Number.isNaN(received) || Date.parse(at) >= received;
+  const current = (at: unknown): at is string => stamped(at) && afterReceipt(at) && Date.parse(at) - now <= FUTURE_SKEW_MS;
   const v = e.verified;
   if (v && text(v.source) && current(v.at)
     && ((typeof v.pr === 'number' && Number.isInteger(v.pr) && v.pr > 0 && text(v.head)) || text(v.tests) || text(v.artifact))) {
@@ -44,14 +46,15 @@ export function classifyWorkItem(e: WorkItemEvidence, nowIso: string): WorkItemC
   const r = e.runningEvidence;
   const hasRunning = !!r && text(r.source) && stamped(r.at);
   const age = hasRunning ? now - Date.parse(r.at) : NaN;
-  if (text(e.owner) && text(e.claimReceipt) && hasRunning && age <= RUNNING_FRESH_MS && age >= -FUTURE_SKEW_MS) {
+  if (text(e.owner) && text(e.claimReceipt) && hasRunning && afterReceipt(r.at) && age <= RUNNING_FRESH_MS && age >= -FUTURE_SKEW_MS) {
     return { state: 'RUNNING', asOf: r.at, source: r.source, missing: [] };
   }
 
   const missing: string[] = [];
   if (!text(e.owner)) missing.push('named owner');
   if (!text(e.claimReceipt)) missing.push('durable claim receipt');
-  const stale = hasRunning && (age > RUNNING_FRESH_MS || age < -FUTURE_SKEW_MS) ? ['fresh running evidence'] : [];
+  const stale = hasRunning && !afterReceipt(r.at) ? ['running evidence at or after request']
+    : hasRunning && (age > RUNNING_FRESH_MS || age < -FUTURE_SKEW_MS) ? ['fresh running evidence'] : [];
   const asOf = stamped(e.receivedAt) ? e.receivedAt : 'unknown';
   if (missing.length === 0) return { state: 'ASSIGNED', asOf, source: `claim:${e.claimReceipt}`, missing: stale };
   return { state: 'RECEIVED', asOf, source: asOf === 'unknown' ? 'unknown' : 'receivedAt', missing: [...missing, ...stale] };
