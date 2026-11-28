@@ -40,6 +40,26 @@
  * autoDiscover queue them exactly like the sibling trajectory-gap and
  * skill-outcome sources beside them.
  *
+ * The same fold also exposes a third verdict that is not a degradation
+ * at all: a HEALTHY corpus whose retrieval fold records eligible=0 while
+ * card rows exist. That is the learned-skills pipeline's deliberate
+ * dormancy, not corruption — POST_MERGE_CREDIT_OPERATIONAL_RELEASE
+ * (src/core/fleet/post-merge-credit.ts) keeps
+ * evaluatePostMergeCreditRelease returning
+ * 'report-only-operational-release-disabled' for every proposal, so
+ * learnFromApplied never mints a 'verified'/'verified-proposal' card;
+ * parseCard (src/core/fleet/skill-retrieval.ts) hardcodes
+ * creditReleased=false because generic attestations cannot prove
+ * post-merge credit release, and isEligibleCard requires it, so
+ * selectVerifiedSkills always returns the dormant empty selection and
+ * observeShadowSkills records no skill-use events. The only rows the
+ * corpus can hold are the unattested candidate drafts skill-nudge.ts
+ * appends — learned skills distilled from merged-PR outcomes are never
+ * consumed by routing or dispatch, and every outcome feed that
+ * conditions on skill-use events stays silent for the same reason. The
+ * 'unselectable' cell reports that recorded verdict so the hold is
+ * visible as work instead of only as silence.
+ *
  * Honesty rules, same as every other backlog source:
  *  - Read-only. The corpus read is the same complete bounded read
  *    readSkillCardCorpus performs (snapshot-verified, fail-closed);
@@ -72,12 +92,22 @@
  *    recorded sourceState/sourcePresent and the bounded event count.
  *    'none'/'present' never emit: an empty window or a clean read is
  *    not evidence.
+ *  - The 'unselectable' cell emits only inside the healthy-corpus
+ *    branch, on the recorded verdict that the corpus holds card rows
+ *    while inspectVerifiedSkillCorpus's eligible count is zero —
+ *    retrieval can never select anything the pipeline wrote. It
+ *    quotes only recorded numbers: the row count, a newest-revision
+ *    status/source tally over the returned cards, the inspection's
+ *    own considered/current/eligible/conflicting counters and the
+ *    use-event read's state. An empty healthy corpus records no
+ *    learned-skill rows and never emits; the cell disappears on its
+ *    own once any card becomes eligible.
  *  - Fleet machinery only. The skill ledgers describe this install's
  *    learned memory, so items emit only for the fleet's own
  *    repository (ashlrai/phantom or its bare phantom shorthand).
  *  - Dedup is downstream. The item id hashes only the cell identity
- *    (cards / cards-conflict / uses — never the counters or
- *    timestamps), so a refresh re-derives the same id and
+ *    (cards / cards-conflict / unselectable / uses — never the
+ *    counters or timestamps), so a refresh re-derives the same id and
  *    appendUserBacklogItems adds only what is new; shifted counts do
  *    not spawn twin items, and a ledger that recovers simply stops
  *    re-adding.
@@ -92,15 +122,19 @@ import { createHash } from 'node:crypto';
 import { trajectoryWindowMaxFiles } from '../autonomy/trajectory-records.js';
 import { CLOUD_REPO_PATTERN } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
+import type { SkillCard } from '../types.js';
 import {
   readSkillCardCorpus,
   readSkillUseEventsWithDiagnostics,
   type SkillCardCorpusReadResult,
   type SkillUseEventReadResult,
 } from '../fleet/skill-records.js';
-import { inspectVerifiedSkillCorpus } from '../fleet/skill-retrieval.js';
+import {
+  inspectVerifiedSkillCorpus,
+  type VerifiedSkillCorpusInspection,
+} from '../fleet/skill-retrieval.js';
 
-/** Items one call may emit; the cell set is bounded at three. */
+/** Items one call may emit; the cell set is bounded at four. */
 export const SKILL_EVIDENCE_MAX_ITEMS = 8;
 const SKILL_EVIDENCE_ITEM_HARD_MAX = 25;
 /**
@@ -145,6 +179,34 @@ const CORPUS_EVIDENCE = 'The evidence is the skill-card corpus read itself: read
 
 const USES_EVIDENCE = 'The evidence is the skill-use event read itself: readSkillUseEventsWithDiagnostics (src/core/fleet/skill-records.ts) performs the bounded windowed read of ~/.ashlr/skills/uses dated jsonl partitions — the same gate readSkillTrajectoryOutcomes (src/core/fleet/skill-outcomes.ts) applies before publishing trajectoryLearning.skillOutcomes, with the same sinceMs/limit/maxFiles derivation — and `phm fleet status --json` exposes the same sourceState/eventState through its learningMetrics skill-use source.';
 
+/**
+ * Recorded card composition at each skill's newest revision, as a
+ * compact "status/source count" tally (e.g. "candidate/imported 4,
+ * verified/verified-proposal 1"). A skill whose newest revision was
+ * recorded with more than one status/source pair counts once as
+ * 'mixed'. Pure over the cards the healthy corpus read returned.
+ */
+function newestRevisionStatusTally(cards: readonly SkillCard[]): string {
+  const newest = new Map<string, { revision: number; pairs: Set<string> }>();
+  for (const card of cards) {
+    const entry = newest.get(card.skillId);
+    if (!entry || card.revision > entry.revision) {
+      newest.set(card.skillId, { revision: card.revision, pairs: new Set([`${card.status}/${card.source}`]) });
+    } else if (card.revision === entry.revision) {
+      entry.pairs.add(`${card.status}/${card.source}`);
+    }
+  }
+  const tally = new Map<string, number>();
+  for (const { pairs } of newest.values()) {
+    const key = pairs.size === 1 ? [...pairs][0]! : 'mixed';
+    tally.set(key, (tally.get(key) ?? 0) + 1);
+  }
+  return [...tally.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([pair, count]) => `${pair} ${count}`)
+    .join(', ');
+}
+
 interface Cell {
   key: string;
   title: string;
@@ -188,6 +250,28 @@ function cardsConflictCell(conflicting: number, considered: number, eligible: nu
   };
 }
 
+function unselectableCell(
+  corpus: SkillCardCorpusReadResult,
+  inspection: VerifiedSkillCorpusInspection,
+  useEvents: SkillUseEventReadResult,
+): Cell {
+  const recorded = corpus.cards.length;
+  const tally = newestRevisionStatusTally(corpus.cards);
+  return {
+    key: 'unselectable',
+    title: `Learned-skill pipeline dormant: ${recorded} recorded card(s), ${inspection.eligible} retrieval-eligible`,
+    prompt: [
+      `Phantom's learned-skill card corpus read healthy and holds ${recorded} recorded card row(s) — newest-revision status/source tally: ${tally === '' ? 'none' : tally} — but the retrieval fold records considered=${inspection.considered}, current=${inspection.current}, eligible=${inspection.eligible}, conflicting=${inspection.conflicting}: not one recorded card can be selected. (considered/current count only attested rows — parseCard requires verifyAttestedSkillCard — so unattested drafts never reach them.)`,
+      '',
+      `Three deliberate gates produce exactly this verdict. Upstream, learnFromApplied (src/core/fleet/skill-library.ts) mints 'verified'/'verified-proposal' cards only when verifiedSkillInput's evaluatePostMergeCreditRelease returns eligible+label — and evaluatePostMergeCreditRelease (src/core/fleet/post-merge-credit.ts) returns 'report-only-operational-release-disabled' for every proposal while POST_MERGE_CREDIT_OPERATIONAL_RELEASE stays false, so no verified-proposal card is ever written; the only rows the corpus can hold are the unattested candidate drafts skill-nudge.ts appends (status 'candidate', source 'imported'). Downstream, parseCard (src/core/fleet/skill-retrieval.ts) hardcodes creditReleased=false — generic attestations cannot prove post-merge credit release until a distinct proof domain and verifier exist — and isEligibleCard requires it, so selectVerifiedSkills always returns the dormant empty selection; observeShadowSkills (src/core/fleet/skill-shadow-observer.ts) accepts only that dormant selection and records no skill-use events (the bounded use-event read saw ${useEvents.events.length} event(s), eventState '${useEvents.eventState}').`,
+      '',
+      `The consequence is a fully dormant observe loop: ~/.ashlr/skills/uses stays empty, readSkillTrajectoryOutcomes (src/core/fleet/skill-outcomes.ts) publishes no trajectoryLearning.skillOutcomes, \`phm skills list --outcomes\` shows no tallies and skillOutcomeBacklogItems stays silent — skills distilled from merged-PR outcomes are never consumed by routing or dispatch, and the trajectory join's skill-observation cells see an empty event stream for the same reason.`,
+      '',
+      `Find out whether the hold is still deliberate: post-merge-credit.ts's module doc names the remaining release proofs (denominator-complete cohorts, monotonic rollback anchor, authenticated release record) POST_MERGE_CREDIT_OPERATIONAL_RELEASE waits on, and parseCard's comment names the distinct proof domain and verifier creditReleased awaits — if those proofs exist or a narrower honest intermediate is warranted (e.g. selection receipts that carry no credit claim), implement it in this repository's src/. Flipping the release flag without the proofs, or hand-editing the host-signed card ledger, is not the fix — report no-change and name the evidence. ` + NO_CHANGE,
+    ].join('\n'),
+  };
+}
+
 function usesCell(useEvents: SkillUseEventReadResult, windowHours: number): Cell {
   return {
     key: 'uses',
@@ -217,11 +301,12 @@ function cellItem(cell: Cell, repo: string): CloudBacklogItem {
 }
 
 /**
- * Backlog items for learned-skill evidence-ledger degradation: the card
+ * Backlog items for learned-skill evidence-ledger verdicts: the card
  * corpus's own read verdict, conflicting current revisions inside a
- * healthy corpus, and the use-event ledger's degraded bounded read.
- * Total: another repository, an injected or real read failure, or all
- * sources healthy yields no items rather than throwing into discovery.
+ * healthy corpus, the healthy-corpus zero-eligibility dormancy verdict,
+ * and the use-event ledger's degraded bounded read. Total: another
+ * repository, an injected or real read failure, or all sources healthy
+ * yields no items rather than throwing into discovery.
  */
 export async function skillEvidenceBacklogItems(opts: SkillEvidenceItemsOptions): Promise<CloudBacklogItem[]> {
   try {
@@ -244,6 +329,9 @@ export async function skillEvidenceBacklogItems(opts: SkillEvidenceItemsOptions)
       const inspection = inspectVerifiedSkillCorpus(corpus.cards);
       if (inspection.conflicting > 0) {
         cells.push(cardsConflictCell(inspection.conflicting, inspection.considered, inspection.eligible));
+      }
+      if (corpus.cards.length > 0 && inspection.eligible === 0) {
+        cells.push(unselectableCell(corpus, inspection, useEvents));
       }
     }
     if (useEvents.eventState === 'degraded') cells.push(usesCell(useEvents, windowHours));

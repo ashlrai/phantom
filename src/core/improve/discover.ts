@@ -1486,10 +1486,14 @@
  *     stated as lower bounds or proven coverage edges, and items emit
  *     only for the fleet's own repository since the evidence describes
  *     this install's dispatcher and carries no repository column;
- *   - the learned-skill evidence ledgers' own degradation verdicts:
- *     the signed skill-card corpus read's sourceState
- *     (readSkillCardCorpus over ~/.ashlr/skills/cards) and its
- *     conflicting current revisions, plus the skill-use event read's
+ *   - the learned-skill evidence ledgers' own verdicts: the signed
+ *     skill-card corpus read's sourceState
+ *     (readSkillCardCorpus over ~/.ashlr/skills/cards), its
+ *     conflicting current revisions, and its healthy-corpus
+ *     zero-eligibility dormancy (card rows recorded while
+ *     inspectVerifiedSkillCorpus's eligible count stays 0 — the
+ *     post-merge credit release hold means retrieval can never select
+ *     what the pipeline wrote), plus the skill-use event read's
  *     eventState (readSkillUseEventsWithDiagnostics over
  *     ~/.ashlr/skills/uses — the same gate
  *     readSkillTrajectoryOutcomes applies before publishing
@@ -1497,12 +1501,14 @@
  *     below). Until now a degraded corpus emptied the verified
  *     selection set and a degraded use-event ledger shrank the
  *     trajectory join's event set before the failed-join cells could
- *     count it — diagnostics that only ever reached `phm fleet
- *     status`, `phm skills list` and the withheld outcome feeds,
- *     reports someone had to run and read. Cells are the readers'
- *     own recorded verdicts; 'missing' and clean reads never emit,
- *     and only the fleet's own repository inherits the items since
- *     the ledgers describe this install's learned memory;
+ *     count it, and the deliberate release hold kept the whole
+ *     observe loop silent — diagnostics that only ever reached
+ *     `phm fleet status`, `phm skills list` and the withheld outcome
+ *     feeds, reports someone had to run and read. Cells are the
+ *     readers' own recorded verdicts; 'missing' and clean reads never
+ *     emit, an empty healthy corpus records no dormancy, and only the
+ *     fleet's own repository inherits the items since the ledgers
+ *     describe this install's learned memory;
  *   - the needs-you auto-resolve audit's recurring failed attempts:
  *     the {item, action, at, reason, result?, error?} records
  *     resolveAutoNeedsYou appends to needs-you-auto.jsonl directly
@@ -2743,12 +2749,16 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // skillOutcomeBacklogItems enforces. Until now a degraded corpus
   // emptied the verified selection set silently and a degraded
   // use-event ledger shrank the trajectory join's event set before the
-  // failed-join cells could ever count it — reports someone had to run
-  // and read, never work. Cells are the readers' own recorded verdicts
-  // (sourceState 'degraded', conflicting revisions inside a healthy
-  // corpus, eventState 'degraded'), 'missing' and clean reads never
-  // emit, and only the fleet's own repository inherits the items
-  // since the ledgers describe this install's learned memory.
+  // failed-join cells could ever count it, and the deliberate
+  // post-merge credit release hold kept a populated corpus at
+  // eligible=0 — reports someone had to run and read, never work.
+  // Cells are the readers' own recorded verdicts (sourceState
+  // 'degraded', conflicting revisions inside a healthy corpus,
+  // card rows recorded while eligible stays 0, eventState
+  // 'degraded'), 'missing' and clean reads never emit, an empty
+  // healthy corpus records no dormancy, and only the fleet's own
+  // repository inherits the items since the ledgers describe this
+  // install's learned memory.
   await feed('skillEvidenceBacklogItems', () => skillEvidenceBacklogItems({ repo }));
 
   // Precheck-skip ledger: the dispatcher's own DONE-NOOP record —
