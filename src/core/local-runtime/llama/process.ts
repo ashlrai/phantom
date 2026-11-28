@@ -33,6 +33,23 @@ const TERMINATE_POLL_MS = 100;
 /** Bound on the descendant walk, so a pathological `pgrep` cannot loop. */
 const MAX_TREE_DEPTH = 4;
 
+/** True when `pid` is a valid non-init pid that exists in the process table. */
+function pidExists(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    // EPERM means the process exists but belongs to another user.
+    return (err as NodeJS.ErrnoException)?.code === 'EPERM';
+  }
+}
+
+/** Unknown state reads as *not* a zombie so an unreadable process is treated as alive. */
+function isZombieState(out: string | null): boolean {
+  return out !== null && out.trim().startsWith('Z');
+}
+
 /**
  * Is `pid` a live process?
  *
@@ -41,28 +58,7 @@ const MAX_TREE_DEPTH = 4;
  * crashed server look alive forever, so its port would never be reclaimed.
  */
 export function processAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 1) return false;
-  let exists: boolean;
-  try {
-    process.kill(pid, 0);
-    exists = true;
-  } catch (err: unknown) {
-    // EPERM means the process exists but belongs to another user.
-    exists = (err as NodeJS.ErrnoException)?.code === 'EPERM';
-  }
-  return exists && !processIsZombie(pid);
-}
-
-/**
- * Has `pid` exited without being reaped?
- *
- * Unknown state reads as *not* a zombie, so an unreadable process is treated
- * as alive and nothing is killed on a guess.
- */
-function processIsZombie(pid: number): boolean {
-  const out = runPs(['-p', String(pid), '-o', 'state=']);
-  if (out === null) return false;
-  return out.trim().startsWith('Z');
+  return pidExists(pid) && !isZombieState(runPs(['-p', String(pid), '-o', 'state=']));
 }
 
 const PS_TIMEOUT_MS = 5_000;
@@ -115,27 +111,13 @@ function runPsAsync(args: string[]): Promise<string | null> {
   });
 }
 
-/** Async {@link processIsZombie}; same unknown-reads-as-not-zombie rule. */
-async function processIsZombieAsync(pid: number): Promise<boolean> {
-  const out = await runPsAsync(['-p', String(pid), '-o', 'state=']);
-  if (out === null) return false;
-  return out.trim().startsWith('Z');
-}
-
 /**
  * Async {@link processAlive}: identical semantics (zombie = dead, EPERM =
  * exists), with the zombie probe off the event loop.
  */
 export async function processAliveAsync(pid: number): Promise<boolean> {
-  if (!Number.isInteger(pid) || pid <= 1) return false;
-  let exists: boolean;
-  try {
-    process.kill(pid, 0);
-    exists = true;
-  } catch (err: unknown) {
-    exists = (err as NodeJS.ErrnoException)?.code === 'EPERM';
-  }
-  return exists && !(await processIsZombieAsync(pid));
+  if (!pidExists(pid)) return false;
+  return !isZombieState(await runPsAsync(['-p', String(pid), '-o', 'state=']));
 }
 
 /**
@@ -428,6 +410,19 @@ function signal(pid: number, sig: NodeJS.Signals): void {
   }
 }
 
+async function waitForTreeExit(
+  pid: number,
+  descendants: readonly number[],
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (Date.now() < deadline) {
+    if (!processAlive(pid) && !descendants.some((child) => processAlive(child))) return true;
+    await sleep(TERMINATE_POLL_MS);
+  }
+  return false;
+}
+
 /**
  * Stop `pid` and its descendants, giving them a chance to shut down cleanly.
  *
@@ -449,24 +444,13 @@ export async function terminateTree(
 
   for (const child of descendants) signal(child, 'SIGTERM');
   signal(pid, 'SIGTERM');
-
-  const deadline = Date.now() + Math.max(0, graceMs);
-  while (Date.now() < deadline) {
-    const alive = processAlive(pid) || descendants.some((child) => processAlive(child));
-    if (!alive) return true;
-    await sleep(TERMINATE_POLL_MS);
-  }
+  if (await waitForTreeExit(pid, descendants, graceMs)) return true;
 
   for (const child of descendants) signal(child, 'SIGKILL');
   signal(pid, 'SIGKILL');
 
   // Give the kernel a moment to reap before reporting the outcome honestly.
-  const hardDeadline = Date.now() + 2_000;
-  while (Date.now() < hardDeadline) {
-    const alive = processAlive(pid) || descendants.some((child) => processAlive(child));
-    if (!alive) return true;
-    await sleep(TERMINATE_POLL_MS);
-  }
+  if (await waitForTreeExit(pid, descendants, 2_000)) return true;
   return !processAlive(pid);
 }
 

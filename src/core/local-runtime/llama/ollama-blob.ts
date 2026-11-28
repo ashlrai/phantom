@@ -67,6 +67,10 @@ export interface UnresolvedOllamaBlob {
 
 export type OllamaBlobResolution = ResolvedOllamaBlob | UnresolvedOllamaBlob;
 
+function formatCanonicalOllamaRef(namespace: string, name: string, tag: string): string {
+  return namespace === 'library' ? `${name}:${tag}` : `${namespace}/${name}:${tag}`;
+}
+
 /**
  * Parse `qwen3.8:27b-ctx64k`, `library/qwen3.8:27b-ctx64k` or a fully
  * qualified `registry.ollama.ai/library/qwen3.8:27b-ctx64k`.
@@ -108,12 +112,12 @@ export function parseOllamaModelRef(raw: string): OllamaModelRef | null {
     if (!SAFE_SEGMENT.test(segment)) return null;
   }
 
-  const canonical = namespace === 'library' ? `${name}:${tag}` : `${namespace}/${name}:${tag}`;
+  const canonical = formatCanonicalOllamaRef(namespace, name, tag);
   return { registry, namespace, name, tag, canonical };
 }
 
 /** Absolute path of the manifest file for a parsed reference. */
-export function ollamaManifestPath(ref: OllamaModelRef, root = ollamaModelsRoot()): string {
+function ollamaManifestPath(ref: OllamaModelRef, root = ollamaModelsRoot()): string {
   return join(root, 'manifests', ref.registry, ref.namespace, ref.name, ref.tag);
 }
 
@@ -199,7 +203,7 @@ export function resolveOllamaRefForBlobPath(
         const stat = statSync(full);
         // A manifest is small JSON; anything large is not one and reading it
         // would be the kind of unbounded work a status probe must not do.
-        if (stat.size > 256 * 1024) continue;
+        if (stat.size > MAX_MANIFEST_BYTES) continue;
         const layer = selectModelLayer(JSON.parse(readFileSync(full, 'utf8')));
         if (layer === null) continue;
         if (layer.digest.toLowerCase() !== wanted) continue;
@@ -212,7 +216,7 @@ export function resolveOllamaRefForBlobPath(
       const tag = parts[parts.length - 1] as string;
       const name = parts[parts.length - 2] as string;
       const namespace = parts[parts.length - 3] as string;
-      return namespace === 'library' ? `${name}:${tag}` : `${namespace}/${name}:${tag}`;
+      return formatCanonicalOllamaRef(namespace, name, tag);
     }
     return null;
   };
