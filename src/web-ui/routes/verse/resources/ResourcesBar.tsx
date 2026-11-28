@@ -89,6 +89,8 @@ export interface BarRow {
   display?: ResourceDisplayView;
   /** The binding window's reserve and time gone, only from a current reading; absent = neither is known. */
   window?: { kept: number | null; elapsed: number | null; pace: string | null };
+  /** Exact future deadline of the binding window, only with current quota evidence. */
+  currentReset?: { at: string; windowLabel: string; text: string };
   /** Spoken + hover summary. */
   summary: string;
   detail: string[];
@@ -215,6 +217,11 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
     const measured = row.windows.filter(window => window.usedPercent !== null || window.limitReached);
     const binding = measured.find(window => window.binding) ?? (measured.length === 0 ? null
       : measured.reduce((a, b) => (b.usedPercent ?? 100) > (a.usedPercent ?? 100) ? b : a));
+    const resetAt = display.usage.current ? binding?.resetsAt : null;
+    const resetMs = resetAt ? Date.parse(resetAt) : NaN;
+    const resetText = resetAt && resetMs > opts.now && new Date(resetMs).toISOString() === resetAt
+      ? formatResetInstant(resetAt, opts.now) : null;
+    const currentReset = resetAt && binding && resetText ? { at: resetAt, windowLabel: binding.label, text: resetText } : null;
     const subscriptionUsed = binding?.usedPercent;
     const subscriptionValue = subscriptionUsed !== null && subscriptionUsed !== undefined
       ? `${usedPercentText(subscriptionUsed)} used${binding?.limitReached && subscriptionUsed < 100 ? ' · limit reached' : ''}`
@@ -252,6 +259,7 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
       level: left === null && level === 'ok' ? 'unknown' : level,
       value,
       ...(pace || kept !== null ? { window: { kept, elapsed: pace?.elapsedPct ?? null, pace: paceText } } : {}),
+      ...(currentReset ? { currentReset } : {}),
       ...(creditLabel === undefined ? {} : { creditLabel, creditHeld }),
         ...(exactCreditBalance === undefined ? {} : { exactCreditBalance }),
       summary: `${row.label}${surfaceLabel}: ${status.label}${status.detail ? ` · ${status.detail}` : ''}${row.engine === 'codex' ? ` · subscription ${value}` : ''}${creditSummary}${creditValue !== null ? ` · estimated credit value ${creditValue}` : ''}`,
@@ -432,7 +440,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
             data-account-row
             data-usage-state={row.display?.usage.state}
             data-usage-observed-at={row.display?.usage.observedAt ?? undefined}
-            aria-describedby={expanded && row.display ? `usage-stamp-${row.key}` : undefined}
+            aria-describedby={expanded && row.display ? `usage-stamp-${row.key}${row.currentReset ? ` quota-reset-${row.key}` : ''}` : undefined}
             aria-label={`${row.summary}. Open Resources`}
             title={nativeCreditBalanceTitle(row.exactCreditBalance) ?? undefined}
             onClick={() => openResources()}
@@ -449,6 +457,10 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
                 </span>
                 {row.display ? <span id={`usage-stamp-${row.key}`} className={styles.usageStamp}>{row.display.usage.label}
                   {row.display.usage.observedAt ? <> · <time dateTime={row.display.usage.observedAt} title={row.display.usage.observedAt}>{readingAge(row.display.usage.observedAt)}</time></> : <> · {readingAge(null)}</>}</span> : null}
+                {row.currentReset ? <span id={`quota-reset-${row.key}`} className={styles.usageStamp}>
+                  {row.currentReset.windowLabel.charAt(0).toUpperCase()}{row.currentReset.windowLabel.slice(1)}{' '}
+                  <time data-quota-reset dateTime={row.currentReset.at} title={row.currentReset.at}>{row.currentReset.text}</time>
+                </span> : null}
                 {row.creditLabel ? <span className={styles.credits}>
                   <span title={row.creditLabel.startsWith('Credits:') ? `${row.creditLabel}. Current credit balance is unknown.` : row.creditLabel}>{row.creditLabel}</span>
                   {row.creditHeld ? <span className={styles.creditHold}>Held</span> : null}
