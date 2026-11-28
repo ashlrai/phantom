@@ -2650,7 +2650,7 @@ describe('phm agents bus (unified)', () => {
     // The reference must carry the whole filter set each delegated read
     // accepts — a flag the dispatcher runs but the help omits is a read an
     // agent never discovers.
-    for (const flag of ['--topic <topic>', '--priority <P0|P1|P2|P3>']) {
+    for (const flag of ['--topic <topic>', '--priority <P0|P1|P2|P3>', '--frame <cli>']) {
       expect(help).toMatch(new RegExp(`ashlr agents chat [^\\n]*${flag.replace(/[|<>]/g, '\\$&')}`));
     }
     for (const flag of ['--topic <topic>', '--id <id>', '--result <reserved|admitted|complete|failed>']) {
