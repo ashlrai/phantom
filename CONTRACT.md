@@ -2706,7 +2706,11 @@ See [node admission](docs/NODES.md#small-mac-enrollment-and-admission).
 `isNodeProvider`, `providerBinaryCandidates(provider, deps?)`,
 `binaryCandidates(name, deps?)`, `executableFile(path)`,
 `resolveProviderBinary(provider, deps?) => string | null`, the single absolute
-allowlist resolver (no `PATH` lookup), plus `COMMUNITY_CLI_CANDIDATES` and
+allowlist resolver (no `PATH` lookup), `providerSessionEnv() => NodeJS.ProcessEnv`,
+the scrubbed session environment provider-CLI probes and node-runner spawns
+receive (allowlisted identity/locale/temp/CLI-home names only, `HOME` pinned to
+the resolved home, `USER`/`LOGNAME` falling back to the OS account), plus
+`COMMUNITY_CLI_CANDIDATES` and
 `installedAgentClis(deps?) => string[]`, the bare join's installed-community-CLI
 probe (file presence at the same allowlist only — no execution, sign-in check or
 credential read). The allowlist covers macOS and

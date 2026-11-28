@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LocalNodesStore } from '../src/core/drive/nodes/local-store.js';
 import { describe, expect, it, vi } from 'vitest';
@@ -8,7 +8,7 @@ import { executePool, initializePool, PRIMARY_TIMEOUT_MS, type PoolRole } from '
 import { callPool, configurePool, serveNodeRpc, type NodeRpcRequest, type PoolConfig } from '../src/core/drive/nodes/pool-host.js';
 import { callNodeSsh, sshApprovalStep, validSshHost } from '../src/core/drive/nodes/ssh.js';
 import { probeNodeLanes, probeProviderBinaries } from '../src/core/drive/nodes/worker.js';
-import { providerBinaryCandidates, resolveProviderBinary } from '../src/core/drive/nodes/provider-binary.js';
+import { providerBinaryCandidates, providerSessionEnv, resolveProviderBinary } from '../src/core/drive/nodes/provider-binary.js';
 import type { spawnSync } from 'node:child_process';
 
 class MemoryStore implements NodesStore {
@@ -201,6 +201,47 @@ describe('SSH routing and device-local provider lanes', () => {
     const run = vi.fn((command: string) => ({ status: command === '/opt/homebrew/bin/codex' ? 0 : 1 })) as unknown as typeof spawnSync;
     expect(probeNodeLanes(run, {}, { home: '/Users/air', executable: () => true })).toEqual(['codex']);
     for (const call of vi.mocked(run).mock.calls) expect(call[2]).toMatchObject({ stdio: 'ignore', timeout: 5000, shell: false });
+  });
+  it('probes provider sign-in with the session env claude needs and never secrets', () => {
+    const run = vi.fn(() => ({ status: 0 })) as unknown as typeof spawnSync;
+    const saved: Record<string, string | undefined> = {};
+    for (const key of ['USER', 'LOGNAME', 'GH_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CONFIG_DIR', 'HOME'])
+      saved[key] = process.env[key];
+    process.env['USER'] = 'probe-user';
+    process.env['LOGNAME'] = 'probe-user';
+    process.env['GH_TOKEN'] = 'FAKE_SECRET_VALUE';
+    process.env['ANTHROPIC_API_KEY'] = 'FAKE_SECRET_VALUE';
+    process.env['CLAUDE_CONFIG_DIR'] = '/fake/claude-config';
+    try {
+      probeProviderBinaries(run, { home: '/Users/air', execPath: '/x/bin/node', executable: () => true });
+      const env = vi.mocked(run).mock.calls[0]![2]!.env as NodeJS.ProcessEnv;
+      expect(env['USER']).toBe('probe-user');
+      expect(env['LOGNAME']).toBe('probe-user');
+      expect(env['HOME']).toBe(homedir());
+      expect(env['CLAUDE_CONFIG_DIR']).toBe('/fake/claude-config');
+      expect(env['GH_TOKEN']).toBeUndefined();
+      expect(env['ANTHROPIC_API_KEY']).toBeUndefined();
+      expect(env['GIT_TERMINAL_PROMPT']).toBe('0');
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    }
+  });
+  it('fills USER and LOGNAME from the OS account when the environment lacks them', () => {
+    const savedUser = process.env['USER'];
+    const savedLogname = process.env['LOGNAME'];
+    delete process.env['USER'];
+    delete process.env['LOGNAME'];
+    try {
+      const env = providerSessionEnv();
+      expect(typeof env['USER']).toBe('string');
+      expect(env['USER']).not.toBe('');
+      expect(env['LOGNAME']).toBe(env['USER']);
+    } finally {
+      if (savedUser === undefined) delete process.env['USER']; else process.env['USER'] = savedUser;
+      if (savedLogname === undefined) delete process.env['LOGNAME']; else process.env['LOGNAME'] = savedLogname;
+    }
   });
   it('omits codex when no allowlisted absolute binary exists, even if a PATH lookup would sign in', () => {
     const run = vi.fn(() => ({ status: 0 })) as unknown as typeof spawnSync;

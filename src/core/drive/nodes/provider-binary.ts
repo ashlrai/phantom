@@ -1,6 +1,7 @@
 import { accessSync, constants, statSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
+import { scrubAdapterEnv } from '../../providers/coding-cli/env.js';
 
 /** Provider lanes a node may advertise from a native CLI sign-in. */
 export const NODE_PROVIDERS = ['codex', 'claude'] as const;
@@ -57,6 +58,30 @@ export function executableFile(path: string): boolean {
 export function resolveProviderBinary(provider: NodeProvider, deps: ProviderBinaryDeps = {}): string | null {
   const executable = deps.executable ?? executableFile;
   return providerBinaryCandidates(provider, deps).find(path => executable(path)) ?? null;
+}
+
+/**
+ * Environment for this machine's provider-CLI probes and node-runner spawns:
+ * the coding-CLI adapter's allowlisted session env — identity, locale, temp
+ * and CLI-home variables with every secret-shaped name dropped — plus this
+ * machine's resolved home. A bare {PATH, HOME} env left claude's auth lookup
+ * without USER and reported a signed-in machine as logged out, so the claude
+ * lane was never advertised; USER/LOGNAME fall back to the OS account when
+ * the environment lacks them (a launchd context). CODEX_HOME,
+ * CLAUDE_CONFIG_DIR and the XDG dirs ride along so a CLI configured outside
+ * its default dot-dir still finds its login.
+ */
+export function providerSessionEnv(): NodeJS.ProcessEnv {
+  const env = scrubAdapterEnv(process.env);
+  env.HOME = homedir();
+  if (env.USER === undefined || env.LOGNAME === undefined) {
+    try {
+      const info = userInfo();
+      if (env.USER === undefined) env.USER = info.username;
+      if (env.LOGNAME === undefined) env.LOGNAME = info.username;
+    } catch { /* no passwd entry: the environment's own vars still apply */ }
+  }
+  return env;
 }
 
 /**

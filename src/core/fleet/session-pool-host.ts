@@ -8,6 +8,7 @@ import { checkDriveExecutable } from '../drive/script-bridge.js';
 import { readNodeCapacity } from '../drive/nodes/capacity.js';
 import { callPool, readPoolConfig } from '../drive/nodes/pool-host.js';
 import { nodeStopped, probeNodeLanes } from '../drive/nodes/worker.js';
+import { providerSessionEnv } from '../drive/nodes/provider-binary.js';
 import { validId } from '../drive/nodes/state.js';
 import type { JobClaim, Pulled } from '../drive/nodes/index.js';
 import { privateDirectory } from '../universe/artifacts.js';
@@ -16,7 +17,7 @@ import { runSessionPool, sessionPoolPolicy, type SessionExecutor, type SessionPo
 /** One process per context; newline-delimited requests/results, one outstanding task. */
 export function openSessionRunner(runner: string): SessionExecutor {
   const child = spawn(runner, ['session'], { detached: true, shell: false,
-    env: { PATH: process.env['PATH'], HOME: homedir() }, stdio: ['pipe', 'pipe', 'ignore'] });
+    env: providerSessionEnv(), stdio: ['pipe', 'pipe', 'ignore'] });
   let dead = false, buffer = Buffer.alloc(0);
   let pending: { task: Pulled; resolve: (ref: string) => void; reject: (error: Error) => void } | undefined;
   const close = () => {
