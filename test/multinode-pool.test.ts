@@ -32,6 +32,29 @@ function fixture() {
 const worker: PoolConfig = { role: 'worker', node: 'worker', owner: 'mason', primary: 'main-mac', backup: 'backup-mac' };
 
 describe('multi-Mac durable fencing witness', () => {
+  it('balances equal-throughput workers without exceeding their shared host budget', () => {
+    const f = fixture();
+    const capacity = JSON.stringify({ hostId: 'mac', sampledAtMs: 1000, ramBytes: 8 * 1024 ** 3, slots: 2, held: null });
+    const join = (node: string) => {
+      const session = f.run('primary', 'join', ['--node', node]).result['session'];
+      const identity = ['--node', node, '--session', String(session)];
+      f.run('primary', 'beat', [...identity, '--capacity', capacity, '--usage', '100']);
+      return identity;
+    };
+    const a = join('worker-a');
+    const b = join('worker-b');
+    for (const job of ['first', 'second', 'third']) f.run('primary', 'enqueue', ['--job', job]);
+
+    expect(f.run('primary', 'plan').result['routes']).toMatchObject([
+      { jobId: 'first', nodeId: 'worker-a' },
+      { jobId: 'second', nodeId: 'worker-b' },
+      { jobId: 'third', nodeId: null },
+    ]);
+    expect(f.run('primary', 'pull', a).result).toMatchObject({ job: { id: 'first' } });
+    expect(f.run('primary', 'pull', b).result).toMatchObject({ job: { id: 'second' } });
+    expect(f.run('primary', 'pull', a).result).toMatchObject({ pulled: false });
+  });
+
   it('holds backup admission until exactly fifteen minutes without a primary heartbeat', () => {
     const f = fixture();
     f.advance(PRIMARY_TIMEOUT_MS - 1);
