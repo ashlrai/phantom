@@ -2232,6 +2232,19 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   const items: CloudBacklogItem[] = [];
   const errors: string[] = [];
 
+  // Each evidence feed is isolated: one corrupt journal or feed bug lands in
+  // `errors` while the other sources still contribute items. Without this a
+  // single bad read rejects the whole pass — and because autoDiscover stamps
+  // its interval before discovering, one throwing feed would starve the
+  // self-improvement loop until the next scheduled refresh.
+  const feed = async (name: string, read: () => Promise<CloudBacklogItem[]>): Promise<void> => {
+    try {
+      items.push(...await read());
+    } catch (err) {
+      errors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   const red = await pollRedBranch(gh, { kind: 'ci-red', branch: null, pollMinutes: 60 }, repo, { branch: null, etag: null });
   if (red.error) errors.push(`default branch checks: ${red.error}`);
   for (const ev of red.events) {
@@ -2268,33 +2281,33 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // surfaced in `phm fleet outcomes`, a report someone had to run and
   // read. Read-only and bounded; the operator backlog dedupes by the
   // stable fleet-learn-improve-<hash> id, so refreshes add only new cells.
-  items.push(...await fleetLearningBacklogItems({ repo }));
+  await feed('fleetLearningBacklogItems', () => fleetLearningBacklogItems({ repo }));
 
   // Nightly retro proposals: the local miner's recurring-failure findings
   // become backlog items too — until now they only surfaced in
   // `phm improve nightly`, a report someone had to run and read.
-  items.push(...await nightlyLearningBacklogItems({ repo }));
+  await feed('nightlyLearningBacklogItems', () => nightlyLearningBacklogItems({ repo }));
 
   // Fleet policy suggestions: the outcome metrics' measured empty-lane
   // flags and within-tier routing hints become backlog items too — until
   // now they only surfaced in `phm fleet metrics suggest|weekly`, a report
   // someone had to run and read. Same bounded jobs-ledger read and the
   // same healthy-only evidence bar as that report.
-  items.push(...await fleetPolicyBacklogItems({ repo }));
+  await feed('fleetPolicyBacklogItems', () => fleetPolicyBacklogItems({ repo }));
 
   // Local-gate ledger: the pre-merge gate's recurring per-step failures
   // become backlog items too — until now they only surfaced in
   // `phm fleet vitals`, a report someone had to run and read. Same
   // healthy-only evidence bar: a missing, unreadable or partially corrupt
   // ledger yields no items.
-  items.push(...await localGateBacklogItems({ repo }));
+  await feed('localGateBacklogItems', () => localGateBacklogItems({ repo }));
 
   // Chief-of-staff reconcile ledger: manual resolutions of reply sends that
   // ended 'uncertain' or stale 'sending' become backlog items too — until
   // now they only surfaced in `phm fleet cos status`, a point-in-time
   // lookup someone had to run and read. Same healthy-only evidence bar:
   // a missing, unreadable or partially corrupt ledger yields no items.
-  items.push(...await cosReconcileBacklogItems({ repo }));
+  await feed('cosReconcileBacklogItems', () => cosReconcileBacklogItems({ repo }));
 
   // Pass^k eval alerts: the nightly golden-set eval's recorded regressions
   // become backlog items too — until now they only surfaced in
@@ -2302,14 +2315,14 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // identity emits while the newest persisted report still shows the
   // regression or the journal shows it recurring across eval reports;
   // same healthy-only evidence bar and the same fleet-repo gate.
-  items.push(...await passkAlertBacklogItems({ repo }));
+  await feed('passkAlertBacklogItems', () => passkAlertBacklogItems({ repo }));
 
   // Fleet friction fold: the dispatch→merge drag categories `phm friction`
   // scores become backlog items too — until now they only surfaced in that
   // report, which someone had to run and read. Same bounded runs-dir reads;
   // an item emits only while its own 7-day signal fires and no operator
   // note suppresses it, and only for the fleet's own repository.
-  items.push(...await frictionBacklogItems({ repo }));
+  await feed('frictionBacklogItems', () => frictionBacklogItems({ repo }));
 
   // Daemon tick ledger: the resident daemon's own phase ledgers and tick
   // reasons — recurring degraded, timed-out, abandoned, budget-starved or
@@ -2321,7 +2334,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // became work. Same bounded no-follow state read; an item emits only
   // while its phase or reason recurs inside the 7-day window and only for
   // the fleet's own repository.
-  items.push(...await tickHealthBacklogItems({ repo }));
+  await feed('tickHealthBacklogItems', () => tickHealthBacklogItems({ repo }));
 
   // Post-merge credit release funnel: the per-reason skip tallies and
   // source-completeness verdicts the producer-maintenance sweep records on
@@ -2335,7 +2348,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // read; an item emits only while its reason or cell recurs across
   // in-window sweep passes, designed holds never emit, and only the
   // fleet's own repository inherits the items.
-  items.push(...await creditReleaseBacklogItems({ repo }));
+  await feed('creditReleaseBacklogItems', () => creditReleaseBacklogItems({ repo }));
 
   // Cross-review journal: the recurring reject reasons and review failures
   // the cross-model review audit log records become backlog items too —
@@ -2343,7 +2356,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // tallies and the audit log itself. Same bounded tail read and the same
   // recorded-evidence bar: a cell emits only after enough in-window rows
   // span enough distinct pull requests, matched to the target repository.
-  items.push(...await crossReviewBacklogItems({ repo }));
+  await feed('crossReviewBacklogItems', () => crossReviewBacklogItems({ repo }));
 
   // Empty-job tag ledger: the recorded empty-tag vocabulary's recurring
   // actionable buckets — 'blocked' and 'unknown' tags plus finishes with
@@ -2352,7 +2365,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the router's outcome fold, none of which queue work. Same bounded
   // ledger reads; a missing jobs ledger or an unjoinable tags ledger
   // yields no items, and only the fleet's own repository inherits them.
-  items.push(...await emptyTagBacklogItems({ repo }));
+  await feed('emptyTagBacklogItems', () => emptyTagBacklogItems({ repo }));
 
   // Post-merge observation ledger: the signed adverse outcomes the
   // outcome-watcher and post-merge-stability passes record — merges that
@@ -2364,7 +2377,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // recurring adverse bar inside the report window, lane/tier cells only
   // for the fleet's own repository, and repo cells only when the fold's
   // recorded repo name matches the target.
-  items.push(...await postMergeBacklogItems({ repo }));
+  await feed('postMergeBacklogItems', () => postMergeBacklogItems({ repo }));
 
   // CI rerun journal: the resident ci-rerun pass's recorded fail verdicts
   // — probable-flake classifications whose reruns keep concluding failure —
@@ -2376,7 +2389,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // rerun loop that cannot fire at all — never became work. Same bounded
   // journal tail read; a group emits only at the recurring bar inside the
   // journal's own 7-day window and only for the repository the rows name.
-  items.push(...await ciRerunBacklogItems({ repo }));
+  await feed('ciRerunBacklogItems', () => ciRerunBacklogItems({ repo }));
 
   // Lost launches: the `phm jobs lost` report's corroborated losses —
   // launches whose .launch first line records the launcher dying, or
@@ -2388,7 +2401,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the dispatcher still counts as running, so a long job never queues
   // work; a (lane, class) cell emits only at the recurring bar inside the
   // window and only for the fleet's own repository.
-  items.push(...await lostLaunchBacklogItems({ repo }));
+  await feed('lostLaunchBacklogItems', () => lostLaunchBacklogItems({ repo }));
 
   // Claude-recovery ledger: the dispatcher's own auto-recovery record —
   // the claude_recovery rows it appends to metrics/jobs.jsonl when
@@ -2401,7 +2414,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // parent jobs inside the window, truncated tails are stated as lower
   // bounds, and only the fleet's own repository inherits the items
   // since the recovery machinery is this install's dispatcher.
-  items.push(...await claudeRecoveryBacklogItems({ repo }));
+  await feed('claudeRecoveryBacklogItems', () => claudeRecoveryBacklogItems({ repo }));
 
   // Swapout-rate ledger: the daemon's per-sample host memory readings —
   // recurring recorded-pressure hours and recurring hours where the
@@ -2412,7 +2425,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // guard's explicitly unmeasured constants. Same bounded tail read and
   // the writer's own row validation; an item emits only at the recurring
   // bar inside the window and only for the fleet's own repository.
-  items.push(...await memoryBacklogItems({ repo }));
+  await feed('memoryBacklogItems', () => memoryBacklogItems({ repo }));
 
   // Host disk samples: the self-tick's per-5-minute free-disk readings
   // and the contrib sampler's history, folded through the same
@@ -2427,7 +2440,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // whole-file reads and the production verdicts; an item emits only
   // at the recurring bar inside the window and only for the fleet's
   // own repository.
-  items.push(...await diskBacklogItems({ repo }));
+  await feed('diskBacklogItems', () => diskBacklogItems({ repo }));
 
   // Fleet-controller ledger: the dispatcher's own per-tick control
   // record — recurring fail-closed readings, applied shed levels and
@@ -2438,7 +2451,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // `phm fleet status`, reports someone had to run and read. Same
   // bounded generation reads; an item emits only at the recurring bar
   // inside the window and only for the fleet's own repository.
-  items.push(...await controllerBacklogItems({ repo }));
+  await feed('controllerBacklogItems', () => controllerBacklogItems({ repo }));
 
   // Trajectory skill outcomes: the learned-skill corpus's per-revision
   // selection tallies and deterministic post-merge realized verdicts —
@@ -2451,7 +2464,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // healthy-only corpus bar; a row emits only at the recurring adverse
   // bar inside the window, only while its exact revision is still the
   // live card, and only for the fleet's own repository.
-  items.push(...await skillOutcomeBacklogItems({ repo }));
+  await feed('skillOutcomeBacklogItems', () => skillOutcomeBacklogItems({ repo }));
 
   // Trajectory evidence capture: the same bounded trajectory projection
   // the skill-outcome feed reads also publishes which evidence
@@ -2464,7 +2477,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // signal stands on. Same bounded read; a cell emits only at the
   // recurring bars inside the window and only for the fleet's own
   // repository.
-  items.push(...await trajectoryGapBacklogItems({ repo }));
+  await feed('trajectoryGapBacklogItems', () => trajectoryGapBacklogItems({ repo }));
 
   // Learned-skill evidence ledgers: the signed skill-card corpus's own
   // read verdict and current-revision conflicts, plus the skill-use
@@ -2481,7 +2494,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // corpus, eventState 'degraded'), 'missing' and clean reads never
   // emit, and only the fleet's own repository inherits the items
   // since the ledgers describe this install's learned memory.
-  items.push(...await skillEvidenceBacklogItems({ repo }));
+  await feed('skillEvidenceBacklogItems', () => skillEvidenceBacklogItems({ repo }));
 
   // Precheck-skip ledger: the dispatcher's own DONE-NOOP record —
   // recurring (code, reason) skip groups across distinct jobs and job
@@ -2492,7 +2505,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // to run and read. Same bounded tail read and the queue projection's
   // own row validation; an item emits only at the recurring bar inside
   // the window and only for the fleet's own repository.
-  items.push(...await precheckSkipBacklogItems({ repo }));
+  await feed('precheckSkipBacklogItems', () => precheckSkipBacklogItems({ repo }));
 
   // Jobs-ledger precheck_parked defers: the rows the dispatcher's claim
   // loop appends each time a queued job's empty-run precheck returns
@@ -2507,7 +2520,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // emitting only at the recurring bars inside the 7-day window and
   // only for the fleet's own repository since the park decision is
   // this install's dispatcher.
-  items.push(...await precheckParkBacklogItems({ repo }));
+  await feed('precheckParkBacklogItems', () => precheckParkBacklogItems({ repo }));
 
   // Producer yield: the jobs.yield-by.v1 scoreboard's recurring no-land
   // sources — launches attributed to each producer (leader bets, Core
@@ -2521,7 +2534,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // emits only at the fleet's judging and recurring bars inside the
   // window, 'other'/'unknown' never emit, and only the fleet's own
   // repository inherits the evidence.
-  items.push(...await sourceYieldBacklogItems({ repo }));
+  await feed('sourceYieldBacklogItems', () => sourceYieldBacklogItems({ repo }));
 
   // InferenceGateway shadow journal: the observe-only gateway-vs-legacy
   // comparison rows the daemon appends to fabric/gateway-shadow-<day>.jsonl
@@ -2540,7 +2553,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // mean something, the verdict items only once the whole journal holds
   // the contract's own 200-decision bar, and only for the fleet's own
   // repository.
-  items.push(...await gatewayShadowBacklogItems({ repo }));
+  await feed('gatewayShadowBacklogItems', () => gatewayShadowBacklogItems({ repo }));
 
   // Shadow seat-decision journal: the seat router's own comparison log —
   // ~/.ashlr/routing/decisions.jsonl (+ rotated .1) records each
@@ -2553,7 +2566,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // work. Same checked bounded tail reads of both retained generations;
   // a (kind, source, task, pair) cell emits only at the recurring bar
   // inside the window and only for the fleet's own repository.
-  items.push(...await seatShadowBacklogItems({ repo }));
+  await feed('seatShadowBacklogItems', () => seatShadowBacklogItems({ repo }));
 
   // Fleet recheck verdict history: the self-tick recheck-record step's
   // retained per-pass verdicts — recurring overall UNKNOWN/BLOCKED
@@ -2566,7 +2579,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // and the writer's own row contract; a cell emits only at the
   // recurring bar inside the window and only for the fleet's own
   // repository.
-  items.push(...await recheckBacklogItems({ repo }));
+  await feed('recheckBacklogItems', () => recheckBacklogItems({ repo }));
 
   // Stuck-job reaper ledgers: the stray-stop reaper's own audit trail —
   // ghost-close rows in queue/stuck-jobs.jsonl (a run marker that outlived
@@ -2581,7 +2594,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // attribution joins metrics/jobs.jsonl as enrichment that degrades to
   // 'unknown' rather than suppressing the reaper evidence, and only the
   // fleet's own repository inherits the items.
-  items.push(...await stuckJobBacklogItems({ repo }));
+  await feed('stuckJobBacklogItems', () => stuckJobBacklogItems({ repo }));
 
   // Stray-stop ledger: the stray-stop reaper's own audit trail — one
   // {at, lane, job, pid, result} row per SIGTERM (or already-gone pid)
@@ -2594,7 +2607,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // jobs inside the window, repo attribution joins metrics/jobs.jsonl
   // as enrichment, truncated tails are stated as lower bounds, and only
   // the fleet's own repository inherits the items.
-  items.push(...await strayStopBacklogItems({ repo }));
+  await feed('strayStopBacklogItems', () => strayStopBacklogItems({ repo }));
 
   // Dispatchd guard anomaly ledger: the live dispatcher's own alert
   // trail — one {ts, job, kind, detail} row per guard alert appended
@@ -2618,7 +2631,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // truncated tails are stated as lower bounds, and only the fleet's
   // own repository inherits the items since the journal describes
   // this install's dispatcher.
-  items.push(...await anomaliesBacklogItems({ repo }));
+  await feed('anomaliesBacklogItems', () => anomaliesBacklogItems({ repo }));
 
   // Cloud lesson holdout trial: the randomized served-vs-holdout landing
   // comparison lessonTrial computes over the cloud task files and revert
@@ -2630,7 +2643,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // interval excluding zero on the negative side — and per-note rows only
   // while the note is still approved; a withheld trial or note read
   // emits nothing.
-  items.push(...await lessonTrialBacklogItems({ repo }));
+  await feed('lessonTrialBacklogItems', () => lessonTrialBacklogItems({ repo }));
 
   // Work-market journal: the dispatcher's own per-tick market record —
   // recurring unfed lanes (free target slots while runnable rows wait
@@ -2649,7 +2662,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // yields nothing, truncated tails are stated as lower bounds, and
   // only the fleet's own repository inherits the items since the
   // journal describes this install's dispatcher and lanes.
-  items.push(...await unfedBacklogItems({ repo }));
+  await feed('unfedBacklogItems', () => unfedBacklogItems({ repo }));
 
   // Work-market posture journal: the same journal's per-tick `posture`
   // events — each lane's posture_reason/cost_class_reason verdicts —
@@ -2667,7 +2680,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // never emit, truncated tails are stated as lower bounds, and only
   // the fleet's own repository inherits the items since the market
   // view describes this install's dispatcher and lanes.
-  items.push(...await marketPostureBacklogItems({ repo }));
+  await feed('marketPostureBacklogItems', () => marketPostureBacklogItems({ repo }));
 
   // Pre-launch dupcheck gate precision: the queue.dupcheck-event.v1
   // ledger's recurring missed duplicates — let-through jobs that still
@@ -2679,7 +2692,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // reader's own per-job fold; a cell emits only at the Ideas list's
   // recurring bars inside the 7-day window, and only for the fleet's
   // own repository since the ledger carries no repository column.
-  items.push(...await dupcheckGateBacklogItems({ repo }));
+  await feed('dupcheckGateBacklogItems', () => dupcheckGateBacklogItems({ repo }));
 
   // Improve outcome ledger: the self-improvement loop's own scorecard —
   // registered proposals that never get measured, metric runners that keep
@@ -2697,7 +2710,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // its grace — a missing ledger reads as empty while a broken chain
   // yields nothing, and only the fleet's own repository inherits the
   // items since the verbs and scheduler sync are this repo's machinery.
-  items.push(...await proposalOutcomeBacklogItems({ repo }));
+  await feed('proposalOutcomeBacklogItems', () => proposalOutcomeBacklogItems({ repo }));
 
   // Typed-routing decision journal: the dispatcher's per-tick advisory
   // `phm route decide` samples — recurring 'unavailable' records (the
@@ -2711,7 +2724,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // contract; a cell emits only at the recurring bars inside the
   // 7-day window, and only for the fleet's own repository since the
   // journal describes this install's dispatcher.
-  items.push(...await typedRouteBacklogItems({ repo }));
+  await feed('typedRouteBacklogItems', () => typedRouteBacklogItems({ repo }));
 
   // Branch-gardener audit journal: the launchd gardener's per-repo result
   // rows — branches whose flag observations persist across audits spanning
@@ -2723,7 +2736,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // bucket emits only at its recurring bar inside the 7-day window, repo
   // matching is exact owner/name, and a missing or unreadable journal
   // yields nothing.
-  items.push(...await branchGardenerBacklogItems({ repo }));
+  await feed('branchGardenerBacklogItems', () => branchGardenerBacklogItems({ repo }));
 
   // Reward-signal ledger: the daemon's reward-sync job folds resolved
   // jobs-ledger outcomes into $ASHLR_HOME/metrics/reward-signals.jsonl —
@@ -2735,7 +2748,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the recurring bars inside the 7-day window, and only for the
   // fleet's own repository since the ledger is this install's dispatch
   // record.
-  items.push(...await rewardBacklogItems({ repo }));
+  await feed('rewardBacklogItems', () => rewardBacklogItems({ repo }));
 
   // Job-control steering ledger: the fleet.job.control.v1 requests `phm
   // job <action>`, POST /api/verse/fleet/runs/control and the desktop job
@@ -2750,7 +2763,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inside the 7-day window — enough unacknowledged requests across
   // enough distinct jobs and UTC days — and only for the fleet's own
   // repository since the ledger is this install's steering record.
-  items.push(...await jobControlBacklogItems({ repo }));
+  await feed('jobControlBacklogItems', () => jobControlBacklogItems({ repo }));
 
   // Jobs-ledger usage capture: the usage_missing labels dispatchd's
   // job_usage() writes on every finish row — recurring per-label cells
@@ -2768,7 +2781,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // tails stated as lower bounds, and only the fleet's own repository
   // inherits the items since the capture paths are this install's
   // dispatcher and lanes.
-  items.push(...await usageGapBacklogItems({ repo }));
+  await feed('usageGapBacklogItems', () => usageGapBacklogItems({ repo }));
 
   // Fleet runtime journal: the standing fleet's own dispatch journal —
   // fleet/runtime/runs.jsonl under the ASHLR home — records every
@@ -2792,7 +2805,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the 7-day window, truncated tails stated as lower bounds, and only
   // the fleet's own repository inherits the items since the journal is
   // this install's dispatch record.
-  items.push(...await runtimeJournalBacklogItems({ repo }));
+  await feed('runtimeJournalBacklogItems', () => runtimeJournalBacklogItems({ repo }));
 
   // Queue generation journal: the queue.generation-event.v1 decisions
   // planAutofill's trace records and the autofill runner and supply-floor
@@ -2810,7 +2823,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // missing or unreadable ledger yields nothing, truncated tails read
   // as lower bounds, and only the fleet's own repository inherits the
   // items since the journal carries no repository column.
-  items.push(...await generatorYieldBacklogItems({ repo }));
+  await feed('generatorYieldBacklogItems', () => generatorYieldBacklogItems({ repo }));
 
   // Incident-gate decision ledger: the fleet's own incident response —
   // `ashlr fleet incident-gate --apply` mines metrics/jobs.jsonl and
@@ -2832,7 +2845,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // lane-error rows only for the fleet's own repository while
   // repo-scoped rows match the discovery target's owner/repo exactly,
   // and a missing or unreadable ledger yields nothing.
-  items.push(...await incidentGateBacklogItems({ repo }));
+  await feed('incidentGateBacklogItems', () => incidentGateBacklogItems({ repo }));
 
   // Jev decision ledger: the decide() layer's own per-decision records —
   // decision kinds whose recorded fallbacks keep dominating inside the
@@ -2851,7 +2864,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // estimated cost stays unknown rather than zero when calls were
   // unpriced, and only the fleet's own repository inherits the items
   // since every decide() call site is this install's own code.
-  items.push(...await jevBacklogItems({ repo }));
+  await feed('jevBacklogItems', () => jevBacklogItems({ repo }));
 
   // Worktree-reap journal: the scheduled reap's own removal-attempt
   // audit — recurring failed git removals, unsafe-path refusals and
@@ -2870,7 +2883,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // tails are stated as lower bounds, and only the fleet's own
   // repository inherits the items since the reap is this install's
   // machinery.
-  items.push(...await worktreeReapBacklogItems({ repo }));
+  await feed('worktreeReapBacklogItems', () => worktreeReapBacklogItems({ repo }));
 
   // Gap-proposal journal: the self-supply proposer's own record of what
   // it queued — gap ids `phm jobs gaps --propose` keeps re-writing to
@@ -2887,7 +2900,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // zero-filling it, truncated tails are stated as lower bounds, and
   // only the fleet's own repository inherits the items since the
   // proposer and its dedupe are this install's machinery.
-  items.push(...await gapProposalBacklogItems({ repo }));
+  await feed('gapProposalBacklogItems', () => gapProposalBacklogItems({ repo }));
 
   // Merge-bottleneck recut-loop journals: the standing recut loop's own
   // records — PR numbers it keeps publishing recut jobs for across
@@ -2910,7 +2923,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // tails are stated as lower bounds, and only the fleet's own
   // repository inherits the items since the loop is hardcoded to this
   // install's repository.
-  items.push(...await recutLoopBacklogItems({ repo }));
+  await feed('recutLoopBacklogItems', () => recutLoopBacklogItems({ repo }));
 
   // Judge-trace ledger: the inbox merge path's own verdict record —
   // per judge engine, the 'ship' verdicts whose qualified realized
@@ -2928,7 +2941,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // only since their outcomes record validated caution, and only the
   // fleet's own repository inherits the items since every
   // judgeProposal call site is this install's merge path.
-  items.push(...await judgeBacklogItems({ repo }));
+  await feed('judgeBacklogItems', () => judgeBacklogItems({ repo }));
 
   // Fleet decisions ledger: the merge machinery's own lifecycle record —
   // per (failure kind, engine), the 'judged' rows whose
@@ -2948,7 +2961,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // source item alone rather than folding partial evidence, and only
   // the fleet's own repository inherits the items since the ledger
   // carries no repository column.
-  items.push(...await decisionsBacklogItems({ repo }));
+  await feed('decisionsBacklogItems', () => decisionsBacklogItems({ repo }));
   // The Devin autoland journal (devin/autoland.jsonl under the Ashlr
   // home) is the only record of what the resident daemon's
   // ten-minute autoland timer and manual apply passes decided per
@@ -2969,7 +2982,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // lower-bound flagged, and only the fleet's own repository inherits
   // the items since the journal carries no repository column — every
   // pass scans this install's connected Devin org.
-  items.push(...await autolandBacklogItems({ repo }));
+  await feed('autolandBacklogItems', () => autolandBacklogItems({ repo }));
 
   // Host-load journal: the self-tick's own blocked-launch attribution —
   // the host.load.history.v1 rows takeLoadSnapshot appends to
@@ -2991,7 +3004,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // truncated tail folds lower-bound flagged, and only the fleet's own
   // repository inherits the items since the journal describes this
   // install's host and carries no repository column.
-  items.push(...await loadBacklogItems({ repo }));
+  await feed('loadBacklogItems', () => loadBacklogItems({ repo }));
 
   // PR-autopilot outcomes journal: the `phm autopilot` tick record —
   // recurring per-PR 'stop' escalations (the diagnose plan concluding a
@@ -3007,7 +3020,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // distinct UTC days inside the window, repo matching is the row's own
   // recorded owner/name, truncated tails are stated as lower bounds,
   // and every journal string is scrubbed before it reaches a prompt.
-  items.push(...await autopilotBacklogItems({ repo }));
+  await feed('autopilotBacklogItems', () => autopilotBacklogItems({ repo }));
 
   // Self-tick run-record journal: the fleet.self-tick-record.v1 lines
   // appendSelfTickLine writes to queue/self-tick.jsonl on every
@@ -3024,7 +3037,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // tail folds lower-bound flagged, and only the fleet's own
   // repository inherits the items since the journal describes this
   // install's machinery and carries no repository column.
-  items.push(...await selfTickBacklogItems({ repo }));
+  await feed('selfTickBacklogItems', () => selfTickBacklogItems({ repo }));
 
   // Autonomous-action audit journal recurring adverse outcomes — the
   // {ts, action, repo, sandboxId, summary, result} rows audit() appends
@@ -3041,7 +3054,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // folds lower-bound flagged, and only the fleet's own repository
   // inherits the items since the journal describes this install's
   // machinery and carries no repository column.
-  items.push(...await auditBacklogItems({ repo }));
+  await feed('auditBacklogItems', () => auditBacklogItems({ repo }));
 
   // Desktop render-crash journal: the console's own error boundaries
   // report every caught render crash through POST
@@ -3060,7 +3073,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // truncated tail folds lower-bound flagged, and only the fleet's own
   // repository inherits the items since the journal describes this
   // install's console and carries no repository column.
-  items.push(...await desktopErrorBacklogItems({ repo }));
+  await feed('desktopErrorBacklogItems', () => desktopErrorBacklogItems({ repo }));
 
   // Repair-handoff journals: the daemon tick's own record of every
   // repair child it mints — parent proposals that finished
@@ -3082,7 +3095,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // conservatively unmatched rather than misattributed — truncated
   // tails are stated as lower bounds, and every journal string is
   // scrubbed before it reaches a prompt.
-  items.push(...await repairHandoffBacklogItems({ repo }));
+  await feed('repairHandoffBacklogItems', () => repairHandoffBacklogItems({ repo }));
 
   // Dispatch-production ledger: the daemon appends one sanitized event
   // per dispatched work item's production outcome to
@@ -3104,7 +3117,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // bounds, and only closed vocabularies and aggregate counts ever
   // reach a prompt — item ids, attempt ids, machine ids and the repo
   // path itself are counted or hashed, never emitted.
-  items.push(...await dispatchProductionBacklogItems({ repo }));
+  await feed('dispatchProductionBacklogItems', () => dispatchProductionBacklogItems({ repo }));
 
   // Router catalog refresh report series: each `phm router catalog
   // refresh` run — the weekly catalogSchedule unit plus manual runs —
@@ -3128,7 +3141,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // unreadable dir or read yields nothing, and only the fleet's own
   // repository inherits the items since the reports describe this
   // install's router catalog and carry no repository column.
-  items.push(...await catalogRefreshBacklogItems({ repo }));
+  await feed('catalogRefreshBacklogItems', () => catalogRefreshBacklogItems({ repo }));
 
   // Automations firing journal: the engine's own audit of every firing
   // transition — intake queues, queue-overflow trims, 7-day expiry
@@ -3148,7 +3161,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // attribution is the row's owner/name matched case-insensitively to
   // the target, truncated tails are stated as lower bounds, and every
   // journal string is scrubbed before it reaches a prompt.
-  items.push(...await automationBacklogItems({ repo }));
+  await feed('automationBacklogItems', () => automationBacklogItems({ repo }));
 
   // MCP gateway activity journal: the per-call audit rows the gateway's
   // audit() appends to <account home>/gateway/activity.jsonl on every
@@ -3172,7 +3185,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // scrubbed before it reaches a prompt, and only the fleet's own
   // repository inherits the items since the journal describes this
   // install's gateway and carries no repository column.
-  items.push(...await gatewayActivityBacklogItems({ repo }));
+  await feed('gatewayActivityBacklogItems', () => gatewayActivityBacklogItems({ repo }));
 
   // Desktop friction-flag journal: the console's Improve this screen / Just flag it action
   // appends one row per deliberate authenticated user report to
@@ -3188,7 +3201,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fence, truncated tails are stated as lower bounds, and only the
   // fleet's own repository inherits the items since the journal
   // describes this install's console and carries no repository column.
-  items.push(...await frictionFlagBacklogItems({ repo }));
+  await feed('frictionFlagBacklogItems', () => frictionFlagBacklogItems({ repo }));
 
   // Desktop change-request journal: the console's Improve this screen request
   // box appends one status row per accepted typed request to
@@ -3208,7 +3221,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // than failing, malformed lines are counted, and only the fleet's own
   // repository inherits the items since the journal describes this
   // install's console and carries no repository column.
-  items.push(...await changeRequestsBacklogItems({ repo }));
+  await feed('changeRequestsBacklogItems', () => changeRequestsBacklogItems({ repo }));
 
   // Scheduled-routine attempt journal: the `phm routines` scheduler's own
   // per-attempt record — runs.jsonl under the Ashlr home's routines
@@ -3232,7 +3245,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // truncated tails are stated as lower bounds, and only the fleet's
   // own repository inherits the items since the journal describes
   // this install's schedules and carries no repository column.
-  items.push(...await routineBacklogItems({ repo }));
+  await feed('routineBacklogItems', () => routineBacklogItems({ repo }));
 
   // Eng Ops autofix ledgers: every `phm autofix` pass appends one
   // LedgerLine per non-skipped action outcome to
@@ -3262,7 +3275,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // scrubbed before they reach a prompt, and only the fleet's own
   // repository inherits the items since the ledgers describe this
   // install's machinery and carry no repository column.
-  items.push(...await autofixBacklogItems({ repo }));
+  await feed('autofixBacklogItems', () => autofixBacklogItems({ repo }));
   // The launchd run-sample journal's only reader until now was the
   // autofix pass itself — collect.ts's readJournal feeds the
   // assessCrashRate samples that decide the live disable, so a job
@@ -3276,7 +3289,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // scrubbed before they reach a prompt, and only the fleet's own
   // repository inherits the items since the journal describes this
   // install's launchd machinery and carries no repository column.
-  items.push(...await launchdRunsBacklogItems({ repo }));
+  await feed('launchdRunsBacklogItems', () => launchdRunsBacklogItems({ repo }));
   // The bridge source-heal journal's only reader until now was
   // `phm doctor worktree` — the newest five lines for a person — so a
   // fleet source checkout whose self-heal kept failing, skipping or
@@ -3287,7 +3300,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository, an event kind emits only at the recurring bar inside
   // the window, and only the fleet's own repository inherits the
   // items since the journal describes this install's worktree bridge.
-  items.push(...await bridgeHealBacklogItems({ repo }));
+  await feed('bridgeHealBacklogItems', () => bridgeHealBacklogItems({ repo }));
   // The Claude rate-limit journal's only reader until now was the
   // resource monitor's live snapshot — the newest unexpired event per
   // window type, a point-in-time verdict that resets every poll — so
@@ -3304,7 +3317,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // are stated as lower bounds, and only the fleet's own repository
   // inherits the items since the journal describes this install's
   // Claude runs and carries no repository column.
-  items.push(...await rateLimitBacklogItems({ repo }));
+  await feed('rateLimitBacklogItems', () => rateLimitBacklogItems({ repo }));
   // NEEDS-MASON answers ledger (asks-ledger.jsonl beside NEEDS-MASON.md):
   // every Mason answer and every sensor self-answer lands as one
   // asks.ledger.v1 row, and until now the ledger's only readers were the
@@ -3316,7 +3329,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // scrubbed before they reach a prompt, and only the fleet's own
   // repository inheriting the items since the ledger describes this
   // install's ask traffic and carries no repository column.
-  items.push(...await asksLedgerBacklogItems({ repo }));
+  await feed('asksLedgerBacklogItems', () => asksLedgerBacklogItems({ repo }));
 
   // Queue-visit journal: the daemon's visit-sync off-tick job folds
   // metrics/jobs.jsonl and the live READY rows into per-attempt station
@@ -3334,7 +3347,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // truncated tails are stated as lower bounds, and only the fleet's
   // own repository inherits the items since the journal describes this
   // install's dispatch pipeline and carries no repository column.
-  items.push(...await queueVisitBacklogItems({ repo }));
+  await feed('queueVisitBacklogItems', () => queueVisitBacklogItems({ repo }));
 
   // Devin PR-review journal (pr-reviews.jsonl under <ashlr
   // home>/devin): every `ashlr devin review` and every merge-autopilot
@@ -3352,7 +3365,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // rows across distinct UTC days AND distinct pull requests inside
   // the 7-day window, truncated tails are stated as lower bounds, and
   // journal strings are scrubbed before they reach a prompt.
-  items.push(...await devinReviewBacklogItems({ repo }));
+  await feed('devinReviewBacklogItems', () => devinReviewBacklogItems({ repo }));
 
   // Custody spawns ledger: the fleet custody ledger's own audit trail —
   // one {schema, at, wrapped, engine, preflight_exit, reason?} row per
@@ -3369,7 +3382,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // bounds, and only the fleet's own repository inherits the items
   // since the ledger describes this install's spawn machinery and
   // carries no repository column.
-  items.push(...await custodyBacklogItems({ repo }));
+  await feed('custodyBacklogItems', () => custodyBacklogItems({ repo }));
 
   // Launch-cost probe journal (metrics/launch-cost.jsonl under the runs
   // dir): the fleet.launch-cost.v1 rows contrib/mac/launch_cost.py
@@ -3392,7 +3405,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the window's first dated row, truncated tails are stated as lower
   // bounds, and only the fleet's own repository inherits the items
   // since the probe is this install's launch machinery.
-  items.push(...await launchCostBacklogItems({ repo }));
+  await feed('launchCostBacklogItems', () => launchCostBacklogItems({ repo }));
 
   // Knowledge-note trajectory outcomes: the per-note tallies
   // readKnowledgeNoteOutcomes folds from the knowledge-runs ledger —
@@ -3407,7 +3420,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // approved, a withheld projection or failed knowledge read emits
   // nothing, and only the fleet's own repository inherits the items
   // since the ledger describes this install's injection machinery.
-  items.push(...await knowledgeOutcomeBacklogItems({ repo }));
+  await feed('knowledgeOutcomeBacklogItems', () => knowledgeOutcomeBacklogItems({ repo }));
 
   // Approved-knowledge consumption gap: the same learn store's approved
   // corpus (readKnowledge) joined to the injection hits log
@@ -3425,7 +3438,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // withhold rather than guess, and only the fleet's own repository
   // inherits the items since the store describes this install's lesson
   // machinery.
-  items.push(...await knowledgeServeBacklogItems({ repo }));
+  await feed('knowledgeServeBacklogItems', () => knowledgeServeBacklogItems({ repo }));
 
   // Playbook-version trajectory outcome tallies: the per-version
   // {merged, refused, reverted, failed, total} buckets
@@ -3447,7 +3460,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // are stated as lower bounds, and only the fleet's own repository
   // inherits the items since the store describes this install's
   // procedure memory.
-  items.push(...await playbookOutcomeBacklogItems({ repo }));
+  await feed('playbookOutcomeBacklogItems', () => playbookOutcomeBacklogItems({ repo }));
 
   // Learn eval-gate decision journal (learn/eval-gate.jsonl under the
   // learn home): the {at, candidateId, kind, status, reason, pairs}
@@ -3465,7 +3478,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the fleet's own repository inherits the items since the journal
   // carries no repo column — every promoteWithEval call site is this
   // install's learning pipeline.
-  items.push(...await evalGateBacklogItems({ repo }));
+  await feed('evalGateBacklogItems', () => evalGateBacklogItems({ repo }));
 
   // Landed-close attempt journal (queue/landed-closes.jsonl under the
   // runs dir): the {at, pr, head, outcome, reason?} rows `fleet
@@ -3480,7 +3493,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // distinct UTC days inside the 7-day window, truncated tails are
   // stated as lower bounds, and only the fleet's own repository
   // inherits the items since the journal carries no repo column.
-  items.push(...await landedCloseBacklogItems({ repo }));
+  await feed('landedCloseBacklogItems', () => landedCloseBacklogItems({ repo }));
 
   // Superseded-close attempt journal (queue/superseded-closes.jsonl
   // under the runs dir): the {at, pr, supersededBy, ok, error?} rows
@@ -3501,7 +3514,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // context, error text is scrubbed and capped, truncated tails are
   // stated as lower bounds, and only the fleet's own repository
   // inherits the items since the journal carries no repo column.
-  items.push(...await supersededCloseBacklogItems({ repo }));
+  await feed('supersededCloseBacklogItems', () => supersededCloseBacklogItems({ repo }));
 
   // Live fleet-config audit journal (queue/live-config-audit.jsonl under
   // the runs dir): the {v, at, op, key, from, to, by, reason}
@@ -3519,7 +3532,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // reason text is never emitted, and only the fleet's own repository
   // inherits the items since the journal describes this install's
   // config and carries no repo column.
-  items.push(...await liveConfigBacklogItems({ repo }));
+  await feed('liveConfigBacklogItems', () => liveConfigBacklogItems({ repo }));
 
   // Leader-reply send ledger: the {at, hash, status} rows
   // sendLeaderReplies appends to <runs>/imessage/leader-sent.jsonl on
@@ -3540,7 +3553,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // never emitted, truncated tails are stated as lower bounds, and only
   // the fleet's own repository inherits the items since the ledger
   // describes this install's comms and carries no repo column.
-  items.push(...await leaderRepliesBacklogItems({ repo }));
+  await feed('leaderRepliesBacklogItems', () => leaderRepliesBacklogItems({ repo }));
 
   // Agent-invocation diagnostics journal (<runRef>.jsonl files under the
   // agent-logs directory of the Ashlr home): the fixed-schema rows
@@ -3560,7 +3573,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // files are not folded, and only the fleet's own repository inherits
   // the items since the journal describes this install's engine
   // invocations and carries no repo column.
-  items.push(...await agentDiagnosticsBacklogItems({ repo }));
+  await feed('agentDiagnosticsBacklogItems', () => agentDiagnosticsBacklogItems({ repo }));
 
   // Owner-thread delivery ledger (<runs>/leader/delivery-receipts.jsonl):
   // the {messageId, channel, state, reason?, at} rows recordDelivery
@@ -3580,7 +3593,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // emit, undated legacy rows stay context, and only the fleet's own
   // repository inherits the items since the ledger describes this
   // install's comms and carries no repo column.
-  items.push(...await deliveryReceiptsBacklogItems({ repo }));
+  await feed('deliveryReceiptsBacklogItems', () => deliveryReceiptsBacklogItems({ repo }));
 
   // Post-run publish journal (dispatchd.log's `POSTRUN_PR <action>
   // <job>` lines and dispatchd's `postrun_pr err` spawn failures under
@@ -3609,7 +3622,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // is scrubbed and capped, and only the fleet's own repository
   // inherits the items since the journal describes this install's
   // dispatch machinery and carries no repo column.
-  items.push(...await postrunBacklogItems({ repo }));
+  await feed('postrunBacklogItems', () => postrunBacklogItems({ repo }));
 
   // Usage-live alert journal (<runs>/bus/usage-live-alerts.jsonl):
   // runLiveUsageTick appends one UsageAlert row per fired alert on
@@ -3629,7 +3642,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // and only the fleet's own repository inherits the items since the
   // journal describes this install's usage subscriptions and carries
   // no repo column.
-  items.push(...await usageLiveAlertsBacklogItems({ repo }));
+  await feed('usageLiveAlertsBacklogItems', () => usageLiveAlertsBacklogItems({ repo }));
 
   // Usage-signal journal: the UsageReading rows writeUsageSignal
   // appends to <runs>/queue/usage-readings.log — corruption the
@@ -3643,7 +3656,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // (distinct signal instants for limit signals) across distinct UTC
   // days inside the 7-day window, only contract-valid rows feed the
   // per-pool axes, and truncated tails are stated as lower bounds.
-  items.push(...await usageReadingsBacklogItems({ repo }));
+  await feed('usageReadingsBacklogItems', () => usageReadingsBacklogItems({ repo }));
 
   // Harness lifecycle ledger: the authority ledger's harness:experiment
   // terminal rows and harness:rolled-back transitions — the
@@ -3663,7 +3676,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // days inside the 7-day window, actor values are counted never
   // emitted, reason text is never folded, and only the fleet's own
   // repository inherits the items since the rows carry no repo column.
-  items.push(...await harnessBacklogItems({ repo }));
+  await feed('harnessBacklogItems', () => harnessBacklogItems({ repo }));
 
   // Spawn-proposal journal: the {v, at, parent, owner, proposed,
   // applied, duplicates} rows QueueStore.propose appends to
@@ -3685,7 +3698,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // stated as lower bounds, and only the fleet's own repository
   // inherits the items since the journal describes this install's
   // queue and carries no repo column.
-  items.push(...await spawnProposalsBacklogItems({ repo }));
+  await feed('spawnProposalsBacklogItems', () => spawnProposalsBacklogItems({ repo }));
 
   // Bet-audit lost orders: the leader's BET/FIXUP order lines in
   // supervisor/out.*.txt that never appear as - READY/- CLAIMED lines
@@ -3698,7 +3711,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // would read lost) or the queue read is degraded (hidden READY lines
   // fabricate losses); a repo cell emits only at the recurring bar
   // inside the window and only for the fleet's own repository.
-  items.push(...await betAuditBacklogItems({ repo }));
+  await feed('betAuditBacklogItems', () => betAuditBacklogItems({ repo }));
 
   // Bets-lane scorer outcomes: the kept/killed/hold decisions `phm bets
   // score` appends to metrics/bets.jsonl for every launched hypothesis.
@@ -3712,7 +3725,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // counts as recorded floors, and only the fleet's own repository
   // inherits the items since the ledger describes this install's
   // experiment lane and carries no repo column.
-  items.push(...await betOutcomeBacklogItems({ repo }));
+  await feed('betOutcomeBacklogItems', () => betOutcomeBacklogItems({ repo }));
 
   // Slack bridge observation journal: the {at, decision, reason?, bus?,
   // channelId?, ...} rows recordSlackObservation appends to
@@ -3733,7 +3746,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // and only the fleet's own repository inherits the items since the
   // journal describes this install's bridge config and carries no repo
   // column.
-  items.push(...await slackBridgeBacklogItems({ repo }));
+  await feed('slackBridgeBacklogItems', () => slackBridgeBacklogItems({ repo }));
 
   // Slack bridge OUTBOUND journal: the send-side sibling of the inbound
   // fold above. recordSlackOutbound (src/core/agents/slack-outbound.ts)
@@ -3754,7 +3767,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // recorded floors, and only the fleet's own repository inherits the
   // items since the journal describes this install's bridge and
   // carries no repo column.
-  items.push(...await slackOutboundBacklogItems({ repo }));
+  await feed('slackOutboundBacklogItems', () => slackOutboundBacklogItems({ repo }));
 
   // Selector pick outcomes: the funded picks `phm select` journals to
   // selector/picks.jsonl — each carrying the predictedValue and
@@ -3769,7 +3782,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // coverage back to the funding time and other in-window launches —
   // anything less folds to 'unknown'. The jobs ledger is required
   // evidence here, not enrichment: withheld, the source stays quiet.
-  items.push(...await selectorPicksBacklogItems({ repo }));
+  await feed('selectorPicksBacklogItems', () => selectorPicksBacklogItems({ repo }));
 
   // Pick-grader health: whether the grading pass itself lands grades.
   // selectorPicksBacklogItems folds what funded picks' jobs did; this
@@ -3788,7 +3801,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // through the grades tail's own coverage bound, truncated tails fold
   // as stated lower bounds, and only the fleet's own repository
   // inherits the items since the journals are this install's machinery.
-  items.push(...await pickGradeBacklogItems({ repo }));
+  await feed('pickGradeBacklogItems', () => pickGradeBacklogItems({ repo }));
 
   // Efficiency baseline ranked bottleneck cells: the top-N `ranked`
   // measured-cost items each hourly ashlr.efficiency-hourly/v1 row of
@@ -3801,7 +3814,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // truncated tails fold lower-bound flagged, and only the fleet's own
   // repository inherits the items since the journal describes this
   // install's machinery and carries no repository column.
-  items.push(...await efficiencyBacklogItems({ repo }));
+  await feed('efficiencyBacklogItems', () => efficiencyBacklogItems({ repo }));
 
   // Devin landings ledger publish and auto-merge outcomes: the
   // {v:1, kind:'devin-land', …, result, pr, autoMerge} rows
@@ -3820,7 +3833,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the journal describes this install's
   // land path — the row's repo names the publish target, quoted
   // inside the cells.
-  items.push(...await landingsBacklogItems({ repo }));
+  await feed('landingsBacklogItems', () => landingsBacklogItems({ repo }));
 
   // Jobs-ledger Git-operation observations: the git_operation rows
   // observeGit/observeGitSync/observeGitAsync (src/core/fleet/
@@ -3837,7 +3850,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // truncated tails are stated as lower bounds, and only the fleet's
   // own repository inherits the items since the rows carry no repo
   // column.
-  items.push(...await gitContentionBacklogItems({ repo }));
+  await feed('gitContentionBacklogItems', () => gitContentionBacklogItems({ repo }));
 
   // Jobs-ledger per-phase latency: the phases/top_wastes section of
   // `phm fleet job-latency` — queue_wait, checkout, model, worker,
@@ -3851,7 +3864,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // lower bounds, and only the fleet's own repository inherits the
   // items since the phases describe this install's dispatch, checkout,
   // model, publish, CI and merge path and carry no repo column.
-  items.push(...await jobLatencyBacklogItems({ repo }));
+  await feed('jobLatencyBacklogItems', () => jobLatencyBacklogItems({ repo }));
 
   // Job-reissue audit ledger: the {at, from, to, lane, tier, file} rows
   // reissueJob appends to queue/job-reissues.jsonl under the fleet runs
@@ -3866,7 +3879,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // are stated as lower bounds, and only the fleet's own repository
   // inherits the items since the ledger is this install's rescue
   // record and carries no repository column.
-  items.push(...await jobReissueBacklogItems({ repo }));
+  await feed('jobReissueBacklogItems', () => jobReissueBacklogItems({ repo }));
 
   // Route shadow journal: the advisory route.shadow.v1 records
   // `phm route shadow eval --record` appends to
@@ -3883,7 +3896,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // recurring on disagreements and days, truncated tails are stated
   // as lower bounds, and only the fleet's own repository inherits the
   // items since the journal describes this install's routing.
-  items.push(...await shadowRouteBacklogItems({ repo }));
+  await feed('shadowRouteBacklogItems', () => shadowRouteBacklogItems({ repo }));
 
   // Community feedback submissions: the admission rows
   // recordFeedbackQueued appends to feedback/feedback-queued.jsonl for
@@ -3900,7 +3913,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // stated as lower bounds, and only the fleet's own repository
   // inherits the items since the journals describe this install's
   // intake machinery.
-  items.push(...await feedbackSubmissionsBacklogItems({ repo }));
+  await feed('feedbackSubmissionsBacklogItems', () => feedbackSubmissionsBacklogItems({ repo }));
 
   // Outside-PR outcome journal: the fleet.outside-pr-outcome.v1 rows
   // syncOutsidePrOutcomes appends to metrics/outside-pr-outcomes.jsonl
@@ -3914,7 +3927,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // degraded scan coverage is quoted, truncated tails are stated as
   // lower bounds, and items self-target the outside PRs' own
   // repository — the fix lives where the merges land.
-  items.push(...await outsidePrBacklogItems());
+  await feed('outsidePrBacklogItems', () => outsidePrBacklogItems());
 
   // Outside-PR agent-attribution journal: the same
   // metrics/outside-pr-outcomes.jsonl rows folded per recorded agent
@@ -3933,7 +3946,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // emit only for the fleet's own repository since the agent-level
   // question — intake guidance and attribution conventions — lives in
   // this repository's machinery.
-  items.push(...await outsidePrAgentBacklogItems({ repo }));
+  await feed('outsidePrAgentBacklogItems', () => outsidePrAgentBacklogItems({ repo }));
 
   // Outside-PR CI-verdict journal: the same
   // metrics/outside-pr-outcomes.jsonl rows folded per repository on
@@ -3949,7 +3962,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // denominator, degraded scan coverage is quoted, truncated tails are
   // stated as lower bounds, and items self-target the outside PRs' own
   // repository — the fix lives where the merges land.
-  items.push(...await outsidePrCiBacklogItems());
+  await feed('outsidePrCiBacklogItems', () => outsidePrCiBacklogItems());
 
   // Outside-PR review-coverage journal: the same
   // metrics/outside-pr-outcomes.jsonl rows folded per repository on
@@ -3967,7 +3980,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // context, degraded scan coverage is quoted, truncated tails are
   // stated as lower bounds, and items self-target the outside PRs'
   // own repository — the review-path fix lives where the merges land.
-  items.push(...await outsidePrReviewBacklogItems());
+  await feed('outsidePrReviewBacklogItems', () => outsidePrReviewBacklogItems());
 
   // Work-market share journal: the same journal's change-triggered
   // `repo_share` rows folded per (repo, code) cell for the three adverse
@@ -3982,7 +3995,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // designed and owner-state codes never emit, truncated tails are
   // stated as lower bounds, and items self-target the repository the
   // verdict belongs to — the fix lands where the drift lives.
-  items.push(...await repoShareBacklogItems());
+  await feed('repoShareBacklogItems', () => repoShareBacklogItems());
 
   // Work-market reroute journal: the same journal's `queue_reroute`
   // receipts — routeExpiringCapacity's READY-row re-hints toward
@@ -3995,7 +4008,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // emit only at the recurring bars across distinct UTC days, truncated
   // tails are stated as lower bounds, and items emit only for the
   // fleet's own repository since the receipts carry no repo column.
-  items.push(...await queueRerouteBacklogItems({ repo }));
+  await feed('queueRerouteBacklogItems', () => queueRerouteBacklogItems({ repo }));
 
   // Reasoning-insight digest: the per-(kind, repo, engine, signature)
   // insight clusters DigestBuilder folds the reasoning store's
@@ -4016,7 +4029,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // only the fleet's own repository inherits the items since the
   // insights describe this install's agent behavior and the fix
   // surface (extractors, adapters, prompts, harness) lives here.
-  items.push(...await reasoningInsightBacklogItems({ repo }));
+  await feed('reasoningInsightBacklogItems', () => reasoningInsightBacklogItems({ repo }));
 
   // Fleet gap fold: the fleet.gaps.v1 report `phm fleet gaps` prints —
   // every stretch of GAP_MIN_MINUTES+ minutes with no PLANNER_TICK or
@@ -4033,7 +4046,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // coverage degrades to no-tick gaps only, and only the fleet's own
   // repository inherits the items since the evidence describes this
   // install's dispatcher and carries no repository column.
-  items.push(...await fleetGapBacklogItems({ repo }));
+  await feed('fleetGapBacklogItems', () => fleetGapBacklogItems({ repo }));
 
   // Needs-you auto-resolve audit (<runs>/needs-you-auto.jsonl): the
   // {item, action, at, reason, result?, error?} records
@@ -4052,7 +4065,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // as lower bounds, and only the fleet's own repository inherits
   // the items since the ledger describes this install's needs-you
   // machinery and carries no repo column.
-  items.push(...await needsYouAutoBacklogItems({ repo }));
+  await feed('needsYouAutoBacklogItems', () => needsYouAutoBacklogItems({ repo }));
 
   // Comms request store: every question, approval and report the fleet
   // raises for Mason is a CommsRequest row in
@@ -4074,7 +4087,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet's own repository inheriting the items since the store
   // describes this install's comms traffic and carries no repository
   // column.
-  items.push(...await commsRequestsBacklogItems({ repo }));
+  await feed('commsRequestsBacklogItems', () => commsRequestsBacklogItems({ repo }));
 
   // Main-guardian repair ledgers: the ops-side guardian loop's
   // FIXUP-MAIN enqueue rows (guardian.jsonl) joined to the finish rows
@@ -4091,7 +4104,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // cell emits only at the recurring bars of distinct jobs across
   // distinct UTC days, truncated tails are stated as lower bounds, and
   // only enqueues naming this repository inherit the items.
-  items.push(...await guardianRepairBacklogItems({ repo }));
+  await feed('guardianRepairBacklogItems', () => guardianRepairBacklogItems({ repo }));
 
   // Seat-router shadow decision journal — evidence-quality cells: every
   // shadow-mode routeSeat evaluation recordShadowDecision appends to
@@ -4113,7 +4126,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the fleet's own repository inheriting the items since the journal
   // describes this install's seat routing and carries no repository
   // column.
-  items.push(...await seatShadowEvidenceBacklogItems({ repo }));
+  await feed('seatShadowEvidenceBacklogItems', () => seatShadowEvidenceBacklogItems({ repo }));
 
   // Backoff-skip receipts: the jobs ledger's autobackoff_skip and
   // authbackoff_skip rows — dispatchd's wall scanners matched a
@@ -4131,7 +4144,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // are stated as lower bounds, and only the fleet's own repository
   // inherits the items since jobs.jsonl describes this install's
   // dispatch machinery.
-  items.push(...await backoffSkipBacklogItems({ repo }));
+  await feed('backoffSkipBacklogItems', () => backoffSkipBacklogItems({ repo }));
 
   // iMessage teammate inbox: every allowlisted non-Mason iMessage text
   // that is not a fleet task peer lands in
@@ -4153,7 +4166,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet's own repository inherits the items since the inbox
   // describes this install's comms machinery and carries no
   // repository column.
-  items.push(...await teammateInboxBacklogItems({ repo }));
+  await feed('teammateInboxBacklogItems', () => teammateInboxBacklogItems({ repo }));
 
   // GenAI telemetry span journal: every completed run and swarm task
   // carrying usage appends one metadata-only GenAiSpan per task to
@@ -4172,7 +4185,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // only over adverse spans with cost-unknown rows counted
   // separately, and only the fleet's own repository inherits the
   // items since the journal carries no repository column.
-  items.push(...await telemetrySpanBacklogItems({ repo }));
+  await feed('telemetrySpanBacklogItems', () => telemetrySpanBacklogItems({ repo }));
 
   // Fleet coordination claim churn: the advisory claim ledger
   // (fleet/coordination.jsonl, written by src/core/fleet/
@@ -4191,7 +4204,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // rows without owner or reason stay out, and only the fleet's own
   // repository inherits the items since the churn is this install's
   // claim machinery, not any one target repo's.
-  items.push(...await coordinationBacklogItems({ repo }));
+  await feed('coordinationBacklogItems', () => coordinationBacklogItems({ repo }));
 
   // Fleet disk-sweep journal: every `phm fleet disk-sweep --log` run a
   // host timer makes appends one {generatedAt, apply, freeGb, swept,
@@ -4211,7 +4224,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // as lower bounds, and only the fleet's own repository inherits the
   // items since the journal describes this install's machinery and
   // carries no repository column.
-  items.push(...await diskSweepBacklogItems({ repo }));
+  await feed('diskSweepBacklogItems', () => diskSweepBacklogItems({ repo }));
 
   // Usage-reset release audit journal (queue/reset-releases.jsonl under
   // the runs dir): the {v, at, by, reason, lane, state, usedPct,
@@ -4230,7 +4243,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet's own 3 h usage-runway stale bound — truncated tails are
   // stated as lower bounds, and only the fleet's own repository
   // inherits the items since the journal carries no repo column.
-  items.push(...await resetReleaseBacklogItems({ repo }));
+  await feed('resetReleaseBacklogItems', () => resetReleaseBacklogItems({ repo }));
 
   // Nodes-offload decision journal (nodes-offload-events.jsonl under
   // the Phantom home): the phantom.nodes-offload-event.v1 rows
@@ -4246,7 +4259,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the 7-day window, truncated tails are stated as lower bounds, and
   // only the fleet's own repository inherits the items since the
   // journal carries no repo column.
-  items.push(...await nodesOffloadBacklogItems({ repo }));
+  await feed('nodesOffloadBacklogItems', () => nodesOffloadBacklogItems({ repo }));
   // The nightly retro's review-block journal
   // (~/.ashlr/learn/retro-input/review-blocks.jsonl): the {v:1, id,
   // jobId, repo, kind:'review-block', updatedAt, body} rows
@@ -4263,7 +4276,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // UTC days inside the 7-day window, truncated tails stated as
   // lower bounds, and each item self-targets the repository its
   // blocked PRs named.
-  items.push(...await reviewBlocksBacklogItems());
+  await feed('reviewBlocksBacklogItems', () => reviewBlocksBacklogItems());
 
   // Seat capacity-history journal (~/.ashlr/routing/
   // capacity-history.jsonl): the per-seat window-usage rows the two
@@ -4284,7 +4297,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // bounds, and only the fleet's own repository inherits the items
   // since the journal describes this install's seats and carries no
   // repository column.
-  items.push(...await capacityHistoryBacklogItems({ repo }));
+  await feed('capacityHistoryBacklogItems', () => capacityHistoryBacklogItems({ repo }));
 
   // Improve outcome ledger (improve/outcomes.jsonl under the Phantom
   // home): the digest-chained registered/pr/measured/promotion/
@@ -4303,7 +4316,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // undated rows counted and never guessed, and items emit only for
   // the fleet's own repository since the machinery axes carry no
   // target-repo dimension.
-  items.push(...await outcomeLedgerBacklogItems({ repo }));
+  await feed('outcomeLedgerBacklogItems', () => outcomeLedgerBacklogItems({ repo }));
 
   // Lane-capacity audit journal (<runs>/queue/lane-target-changes.log):
   // the guarded slots.json writers' append-only audit trail —
@@ -4328,7 +4341,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet's own repository inherits the items since the journal
   // describes this install's lane configuration and carries no repo
   // column.
-  items.push(...await laneTargetChangesBacklogItems({ repo }));
+  await feed('laneTargetChangesBacklogItems', () => laneTargetChangesBacklogItems({ repo }));
 
   // Comms-agent run journal (comms-agent/runs.jsonl under the runs
   // root): the comms-agent.run.v1 records runCommsAgent appends per
@@ -4347,7 +4360,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // handles), truncated tails are stated as lower bounds, and only
   // the fleet's own repository inherits the items since the journal
   // carries no repo column.
-  items.push(...await commsRunBacklogItems({ repo }));
+  await feed('commsRunBacklogItems', () => commsRunBacklogItems({ repo }));
 
   // Amplify advisory journal (metrics/amplify.jsonl under the runs
   // root): the amplify.tick.v1 records amplifyTick appends per
@@ -4364,7 +4377,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // truncated tails are stated as lower bounds, and only the
   // fleet's own repository inherits the items since the journal
   // describes this install's capacity evidence.
-  items.push(...await amplifyBacklogItems({ repo }));
+  await feed('amplifyBacklogItems', () => amplifyBacklogItems({ repo }));
 
   // Cruise shadow-controller journal (metrics/cruise-shadow.jsonl
   // under the runs root): the ashlr.cruise.shadow.v1 samples the
@@ -4384,7 +4397,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // are stated as lower bounds, and only the fleet's own
   // repository inherits the items since the journal describes this
   // install's host and carries no repo column.
-  items.push(...await cruiseShadowBacklogItems({ repo }));
+  await feed('cruiseShadowBacklogItems', () => cruiseShadowBacklogItems({ repo }));
 
   // Cruise watchdog runaway-daemon journal (metrics/cruise-alerts.jsonl
   // under the runs root): the same ops-side cruise package's other
@@ -4402,7 +4415,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // as lower bounds, and only the fleet's own repository inherits
   // the items since the journal describes this install's host and
   // carries no repo column.
-  items.push(...await cruiseAlertsBacklogItems({ repo }));
+  await feed('cruiseAlertsBacklogItems', () => cruiseAlertsBacklogItems({ repo }));
 
   // Engineering Ops growth export series: the growth-pulls-hourly,
   // growth-cost-hourly and growth-releases files plus the
@@ -4418,7 +4431,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // needs usable readings on both sides of the recent split; and only
   // the fleet's own repository inherits the items since the exports
   // describe this install's fleet.
-  items.push(...await growthBacklogItems({ repo }));
+  await feed('growthBacklogItems', () => growthBacklogItems({ repo }));
 
   // Batch-session north-star journal (<runs>/metrics/northstar.jsonl):
   // the ashlr.northstar.v1 before/after rows `batch_sessions.py
@@ -4437,7 +4450,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // an hour, truncated tails are stated as lower bounds, and only the
   // fleet's own repository inherits the items since the journal
   // describes this install's batch-session experiment.
-  items.push(...await northstarBacklogItems({ repo }));
+  await feed('northstarBacklogItems', () => northstarBacklogItems({ repo }));
 
   // Fleet-hop telemetry spool (~/.ashlr/telemetry/fleet-hop-spool.jsonl):
   // the queue.v1 fleet_hop outbox emitFleetHop appends to whenever the
@@ -4457,7 +4470,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // bounds with the file's byte size, and only the fleet's own
   // repository inherits the item since the spool describes this
   // install's telemetry pipe.
-  items.push(...await fleetHopSpoolBacklogItems({ repo }));
+  await feed('fleetHopSpoolBacklogItems', () => fleetHopSpoolBacklogItems({ repo }));
 
   // Bot-seat handoff journal (~/.phantom/bots/handoffs.jsonl): the
   // phantom-bot-handoff.v1 rows applySeatHandoff(s) appends when
@@ -4477,7 +4490,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // stated as lower bounds, and only the fleet's own repository
   // inherits the items since the journal describes this install's bot
   // seats and carries no repo column.
-  items.push(...await botHandoffBacklogItems({ repo }));
+  await feed('botHandoffBacklogItems', () => botHandoffBacklogItems({ repo }));
 
   // Self-update install journal (~/.ashlr-runs/installs.log): the
   // release-directory updater's per-attempt audit lines, appended by
@@ -4489,7 +4502,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // than distinct UTC days; truncated tails are stated as lower bounds
   // and only the fleet's own repository inherits the items since the
   // journal describes this install's updater.
-  items.push(...await installsBacklogItems({ repo }));
+  await feed('installsBacklogItems', () => installsBacklogItems({ repo }));
 
   // Fleet runs-history journal ($ASHLR_HOME/fleet/runs-history.jsonl):
   // the RunsSample rows sampleIfDue appends on every read of
@@ -4512,7 +4525,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // counts), and only the fleet's own repository inherits the items
   // since the journal describes this install's lanes and carries no
   // repo column.
-  items.push(...await runsHistoryBacklogItems({ repo }));
+  await feed('runsHistoryBacklogItems', () => runsHistoryBacklogItems({ repo }));
 
   // Resolution-witness ledger (~/.ashlr/fleet/resolution-witnesses.jsonl):
   // the advisory ResolutionWitness rows the daemon's resolution observer
@@ -4528,7 +4541,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // bounds, and only the fleet's own repository inherits the items
   // since the ledger describes this install's scanners and carries no
   // repo column of its own.
-  items.push(...await resolutionWitnessBacklogItems({ repo }));
+  await feed('resolutionWitnessBacklogItems', () => resolutionWitnessBacklogItems({ repo }));
 
   // Incident pipeline ledger (<runs>/incidents/incidents.v1.json): the
   // incident.v1 state document ingestSignal and sendReceipts rewrite
@@ -4544,7 +4557,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the seven-day lastSeen window plus skew tolerance, repo matching
   // is exact owner/repo or the bare-name form of the target, and the
   // install-wide drift cell lands only on the fleet's own repository.
-  items.push(...await incidentLedgerBacklogItems({ repo }));
+  await feed('incidentLedgerBacklogItems', () => incidentLedgerBacklogItems({ repo }));
 
   // Engineering Ops job-cost-model journal (<runs>/metrics/
   // job-cost-model.jsonl): the ashlr.job-cost-model/v1 per-run cost
@@ -4563,7 +4576,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // stated as lower bounds, and only the fleet's own repository
   // inherits the items since the journal describes this install's
   // lanes and carries no repo column.
-  items.push(...await jobCostBacklogItems({ repo }));
+  await feed('jobCostBacklogItems', () => jobCostBacklogItems({ repo }));
 
   // Daemon work-queue worked ledger (~/.ashlr/fleet/worked.json): the
   // per-item outcome events recordOutcome appends for every selected
@@ -4580,7 +4593,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // one item naming its reasons, and only the fleet's own repository
   // inherits the item since the ledger describes this install's work
   // queue.
-  items.push(...await workedLedgerBacklogItems({ repo }));
+  await feed('workedLedgerBacklogItems', () => workedLedgerBacklogItems({ repo }));
 
   // The fleet bottleneck analyzer's hourly pipeline journal: stage
   // latency percentiles and pending backlogs, merge-drop attribution
@@ -4602,7 +4615,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // line replays count once, truncated tails are stated as lower
   // bounds, est_merges_lost stays labelled inference, and only the
   // fleet's own repository inherits the items.
-  items.push(...await bottleneckBacklogItems({ repo }));
+  await feed('bottleneckBacklogItems', () => bottleneckBacklogItems({ repo }));
 
   // Multi-model chat outcome journal (~/.ashlr/verse/multimodel/
   // outcomes.jsonl): the SeatOutcome rows the Verse sidecar appends per
@@ -4617,7 +4630,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // only the fleet's own repository inherits the items since the
   // journal describes this install's interactive seats and carries
   // no repo column.
-  items.push(...await multimodelOutcomesBacklogItems({ repo }));
+  await feed('multimodelOutcomesBacklogItems', () => multimodelOutcomesBacklogItems({ repo }));
 
   // PR-leverage delta journal (<runsDir>/metrics/pr-delta.jsonl): the
   // fleet.delta.v1 rows `phm fleet pr-leverage --record-delta` appends
@@ -4634,7 +4647,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // are stated as lower bounds, and only the fleet's own repository
   // inherits the item since the delta describes this install's merge
   // pipeline.
-  items.push(...await prDeltaBacklogItems({ repo }));
+  await feed('prDeltaBacklogItems', () => prDeltaBacklogItems({ repo }));
   return { items, errors };
 }
 
