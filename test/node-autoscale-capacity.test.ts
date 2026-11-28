@@ -731,4 +731,26 @@ describe('phm node capacity / route CLI', () => {
       expect(JSON.parse(lines[0]!).error.message).toContain('--node was given more than once');
     } finally { console.log = log; }
   });
+
+  it('prints text-mode capacity at display precision and keeps unknown unknown', async () => {
+    const { nodeCapacityText } = await import('../src/cli/node-capacity.js');
+    // A previous sample 90 s back makes swapouts/min a repeating decimal, and
+    // load/headroom carry the raw floats a live measurement produces; text
+    // mode rounds for reading while the document keeps every digit.
+    const prev = computeNodeCapacity(snap({ measuredAtMs: T0 - 90_000,
+      swap: { usedBytes: 7 * GIB, totalBytes: 8 * GIB, swapoutsTotal: 993 } }));
+    const doc = computeNodeCapacity(snap({
+      cpu: { cores: 8, load: [5.20068359375, 4.87654321, 4.1], busyPercent: 26.26407470760234 },
+      swap: { usedBytes: 7 * GIB, totalBytes: 8 * GIB, swapoutsTotal: 1_000 },
+    }), prev);
+    const text = nodeCapacityText(doc);
+    expect(text).toContain('cpu: 8 cores, busy 26.3%, load 5.20, headroom 4.70 cores');
+    expect(text).toContain('swap: used 7.0 GiB, swapouts/min 4.67');
+    // The document itself is untouched: --json and --out keep full precision.
+    expect(doc.cpu.load_1m).toBe(5.20068359375);
+    expect(doc.cpu.headroom_cores).toBeCloseTo(4.698874023391813);
+    expect(doc.swap.swapouts_per_min).toBeCloseTo(14 / 3);
+    const unmeasured = nodeCapacityText(computeNodeCapacity(snap({ cpu: { cores: 8, load: null, busyPercent: null } })));
+    expect(unmeasured).toContain('load unknown, headroom unknown cores');
+  });
 });
