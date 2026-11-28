@@ -2,7 +2,7 @@ import type { MapFilter } from '../core/fleet/map-filter.js';
 
 /** `phm map [--json]`: the whole fleet as one graph. Thin: core/fleet/live-map.ts builds it. `phm map edges`: core/fleet/map-edges.ts. */
 export const MAP_USAGE = `Usage: phm map [--json] [--lane <lane>] [--repo <repo>] [--state <running|waiting|done|failed|unknown>]
-       phm map edges [--json] [--since <10m|2h|1d|ISO> | --minutes <n>] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>]
+       phm map edges [--json] [--since <10m|2h|1d|ISO> | --minutes <n>] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--frame <cli>]
        phm map replay [--json] [--since <6h|90m|1d|ISO>] [--step <5m|1h>]
 
 The whole fleet on one map: the leader, each lane, its running jobs, every
@@ -38,6 +38,13 @@ inReplyTo field; --id keeps only the envelope whose own wire id equals it;
 reserved, admitted, complete or failed — with the same matching rules and
 identity resolution \`phm messages --help\` describes, so the lines answer
 the same filtered question every other bus read does.
+--frame <cli> prints the same read as one bounded block marked untrusted
+under BEGIN/END UNTRUSTED AGENT BUS TIMELINE markers — the same frame
+\`phm messages --frame\` produces, since the edge lines carry the same
+agent-authored summaries — with --json carrying it as framed beside the
+full fleet.map-edges.v1 projection and the cut stated when the 32 KiB
+bound clips the page; an unreadable bus frames its own unknown line,
+never an invented edge list.
 --json prints fleet.map-edges.v1. Exit 0 read, 1 bus unreadable, 2 bad usage.
 
 map replay shows the fleet as it was, one frame per step (default: the last 6
@@ -57,10 +64,11 @@ const MAP_EDGE_FILTER_FLAGS: Record<string, string> = {
 
 async function cmdMapEdges(args: string[]): Promise<number> {
   const { parseAgentMessagesQuery, parseSince } = await import('../core/fleet/agent-messages.js');
-  let json = false, since: string | undefined, minutes: string | undefined, before: string | undefined;
+  let json = false, since: string | undefined, minutes: string | undefined, before: string | undefined, frame: string | undefined;
   const filters: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json' && !json) json = true;
+    else if (args[i] === '--frame' && frame === undefined && args[i + 1] !== undefined && !args[i + 1]!.startsWith('--')) frame = args[++i];
     else if (args[i] === '--since' && since === undefined && args[i + 1] !== undefined) since = args[++i];
     else if (args[i] === '--minutes' && minutes === undefined && args[i + 1] !== undefined) {
       const value = args[++i]!;
@@ -86,9 +94,17 @@ async function cmdMapEdges(args: string[]): Promise<number> {
   const parsed = parseAgentMessagesQuery(filters);
   if (!parsed.ok) { console.error(parsed.error); return 2; }
   const { formatMapEdgesText, readMapEdges } = await import('../core/fleet/map-edges.js');
+  const { getBusCliAdapter, frameAgentMessages } = await import('../core/agents/bus-cli-adapters.js');
+  const adapter = frame === undefined ? undefined : getBusCliAdapter(frame);
+  if (frame !== undefined && adapter === undefined) { console.error(MAP_USAGE); return 2; }
   const result = readMapEdges(minutes === undefined ? since : `${minutes}m`, { before, filters: parsed.query });
   if (!result) { console.error('--since takes 10m, 2h, 1d, epoch ms or an ISO time.'); return 2; }
-  console.log(json ? JSON.stringify(result, null, 2) : formatMapEdgesText(result));
+  if (adapter !== undefined) {
+    const framed = frameAgentMessages(adapter.cli, formatMapEdgesText(result).split('\n'));
+    console.log(json ? JSON.stringify({ ...result, framed }, null, 2) : framed);
+  } else {
+    console.log(json ? JSON.stringify(result, null, 2) : formatMapEdgesText(result));
+  }
   return result.source === 'unavailable' ? 1 : 0;
 }
 

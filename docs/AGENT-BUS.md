@@ -213,13 +213,15 @@ claims, acks, replies or renews TTL.
 
 The fleet-wide catch-up reads carry the same bounded untrusted-data frame
 every `agents bus` read produces. `phm messages --frame <cli>`,
-`phm agents messages --frame <cli>`, `phm bus recent --frame <cli>` and
-`phm fleet map messages --frame <cli>` — the `phm fleet messages` alias
+`phm agents messages --frame <cli>`, `phm bus recent --frame <cli>`,
+`phm map edges --frame <cli>` and `phm fleet map messages --frame <cli>`
+— the `phm fleet messages` alias
 frames the same read — print the agent timeline as one block marked
 untrusted under BEGIN/END UNTRUSTED AGENT BUS TIMELINE markers, each
 wrapping the lines its own formatter renders (the head, scrubbed row per
 message and damaged-record tail the fuller reads print, the digest's
-plain rows, the honest unknown or empty state line);
+plain rows, the edge aggregate's per-pair lines and role rollup, the
+honest unknown or empty state line);
 `phm agents conversations --frame <cli>` prints the thread rollup the
 same way under BEGIN/END UNTRUSTED AGENT BUS CONVERSATIONS markers. Each
 read's own markers keep a timeline or conversations block from passing

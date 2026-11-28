@@ -183,6 +183,48 @@ describe('phm map edges', () => {
     expect(await cmdMap(['edges', '--json', '--kind', 'ask', '--contains', 'build'])).toBe(0);
     expect(JSON.parse(log.mock.calls[4]![0] as string)).toMatchObject({ schema: 'fleet.map-edges.v1', version: 1, source: 'missing', edges: [] });
   });
+
+  it('the CLI --frame prints the edge lines as a bounded untrusted block and carries it as framed in JSON', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {}), err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const home = mkdtempSync(join(tmpdir(), 'map-edges-frame-'));
+    roots.push(home);
+    const previous = process.env.ASHLR_HOME;
+    process.env.ASHLR_HOME = home;
+    try {
+      const at = Date.now() - 60_000;
+      const post = (id: string, from: string, to: string, text: string, ms: number) =>
+        expect(appendBusInbox({ id, from, to, priority: 'P2', ttl: 86_400_000, body: { text } },
+          { root: join(home, 'fleet'), now: () => ms }).status).toBe('posted');
+      post('f1', 'leader', 'claude', 'please look at the build', at);
+      post('f2', 'claude', 'leader', 'on it?', at + 1_000);
+      // The human read is the bare framed block: the edge aggregate's own lines inside the markers.
+      expect(await cmdMap(['edges', '--frame', 'claude'])).toBe(0);
+      const block = log.mock.lastCall![0] as string;
+      expect(block).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+      expect(block).toContain('leader (leader) -> claude (lane): 1, last');
+      expect(block).toContain('"please look at the build"');
+      expect(block).toContain('END UNTRUSTED AGENT BUS TIMELINE');
+      expect(block).not.toContain('"schema"');
+      // --json carries the block as `framed` beside the full fleet.map-edges.v1 projection.
+      expect(await cmdMap(['edges', '--frame', 'grok', '--json'])).toBe(0);
+      const parsed = JSON.parse(log.mock.lastCall![0] as string) as { schema: string; framed: string };
+      expect(parsed.schema).toBe('fleet.map-edges.v1');
+      expect(parsed.framed).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+      expect(parsed.framed).toContain('on it?');
+      // The filters compose with the frame: the block shows the filtered edge set.
+      expect(await cmdMap(['edges', '--frame', 'devin', '--kind', 'ask', '--json'])).toBe(0);
+      const filtered = JSON.parse(log.mock.lastCall![0] as string) as { framed: string };
+      expect(filtered.framed).toContain('on it?');
+      expect(filtered.framed).not.toContain('please look at the build');
+      // A bad cli or a repeated/missing value is a usage error.
+      for (const args of [['edges', '--frame', 'gemini'], ['edges', '--frame', 'claude', '--frame', 'grok'], ['edges', '--frame'], ['edges', '--frame', '--json']]) {
+        expect(await cmdMap(args)).toBe(2);
+      }
+      expect(err).toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.ASHLR_HOME; else process.env.ASHLR_HOME = previous;
+    }
+  });
 });
 
 describe('GET /api/verse/fleet/control/map-edges', () => {
