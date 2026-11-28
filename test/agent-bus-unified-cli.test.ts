@@ -489,6 +489,37 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('find me');
   });
 
+  it('frames one resolved envelope as untrusted data', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'frame this receipt', '--id', 'sf-1'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // --frame prints the same resolution — receipt row, scrubbed summary and
+    // evidence — as one bounded block under its own markers; --json carries
+    // it on `framed` beside the full lookup.
+    const framed = await run(['show', 'sf-1', '--frame', 'claude']);
+    expect(framed.code).toBe(0);
+    expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS ENVELOPE');
+    expect(framed.json.framed).toContain('sf-1');
+    expect(framed.json.framed).toContain('frame this receipt');
+    expect(framed.json.framed).toContain('agent:nova');
+    expect(framed.json.framed).toContain('END UNTRUSTED AGENT BUS ENVELOPE');
+    expect(framed.json.framed).not.toContain('BEGIN UNTRUSTED AGENT BUS THREAD');
+    expect(framed.json.framed).not.toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const framedText: string[] = [];
+    expect(await runAgentsBusUnified(['show', 'sf-1', '--frame', 'grok', '--root', root],
+      t => framedText.push(t), () => {}, {})).toBe(0);
+    expect(framedText.join('\n')).toContain('BEGIN UNTRUSTED AGENT BUS ENVELOPE');
+    expect(framedText.join('\n')).toContain('frame this receipt');
+    expect(framedText.join('\n')).not.toContain('"status"');
+    // A bad cli name is a usage error; a proven miss answers its own
+    // not-found status rather than an invented envelope frame.
+    expect(await run(['show', 'sf-1', '--frame', 'gemini'])).toMatchObject({ code: 2 });
+    expect(await run(['show', 'sf-404', '--frame', 'claude'])).toMatchObject({ code: 1, json: { status: 'not-found', id: 'sf-404' } });
+  });
+
   it('reads the reply chain rooted at one envelope id', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

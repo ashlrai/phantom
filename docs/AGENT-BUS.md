@@ -942,7 +942,17 @@ citation (`to` holder label, `statusId`, `jobId`, `status`, optional
 `detail`). A hint with no retained row or no reproducing receipt reports
 `not-found`, an unreadable wake queue `unavailable` — never a guessed
 receipt. Envelope ids are caller-chosen printable tokens, so a real
-receipt always wins over hint interpretation. `fleet_bus_show` (the
+receipt always wins over hint interpretation. On the unified surface,
+`agents bus show <id> --frame <cli>` prints the same resolution — the
+receipt row, scrubbed body summary and held/holder/job/wake-hint
+evidence — as one bounded block marked untrusted under
+BEGIN/END UNTRUSTED AGENT BUS ENVELOPE markers, the same scrub,
+flattening and 32 KiB clip bound the inbox, channel-read, wakes,
+`work mine`, `work feed`, thread, claims and dead-letters frames apply
+with the cut stated, so a host can hand the envelope a citation names
+to a CLI's next turn as data in a single block; `--json` carries it as
+`framed` beside the full lookup, and a not-found or unreadable lookup
+answers its own status rather than an invented envelope. `fleet_bus_show` (the
 isolated fleet MCP tool) serves the same read with `id` as its only
 argument — the same printable routing-label rule — so an MCP-connected
 agent resolves the `post=`/`status=`/`receipt=`/handoff and wake-hint

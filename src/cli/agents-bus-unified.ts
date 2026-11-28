@@ -11,7 +11,7 @@ import {
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, busWorkJobDispatch, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
-import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusClaims, frameBusDeadLetters, frameBusInbox, frameBusThread, frameBusWakes, frameBusWorkFeed, frameBusWorkMine, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
+import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusClaims, frameBusDeadLetters, frameBusInbox, frameBusShow, frameBusThread, frameBusWakes, frameBusWorkFeed, frameBusWorkMine, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, claimNextBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   waitClaimNextBusWorkJob,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope,
@@ -54,7 +54,7 @@ ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread
 ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> [--interval-ms <100..60000>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--topic <topic>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] --json
 ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--frame <cli>]
 ashlr agents bus dead-letters [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--priority P0..P3] [--id <id>] [--reason <${BUS_DEAD_LETTER_REASONS.join('|')}>] [--from <agent>] [--exclude-from <agent>] [--to <agent>] [--channel <name>] [--topic <topic>] [--body-kind <kind>] [--limit <1-100>] [--frame <cli>]
-ashlr agents bus show <id>
+ashlr agents bus show <id> [--frame <cli>]
 ashlr agents bus thread <id> [--to <ref>] [--from <ref>] [--exclude-from <ref>] [--channel <name>] [--topic <topic>] [--job <id>] [--priority P0..P3] [--thread <t>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--frame <cli>]
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
@@ -290,7 +290,16 @@ cannot answer — so the citation resolves to where the job stands in one
 read. A claim-holder wh-… hint id resolves through the wake
 queue to the live terminal work.status receipt that cites it, returned
 with its wakeHint citation; a hint no live receipt reproduces reports
-not-found.
+not-found. --frame <cli> prints the same resolution — the receipt row,
+scrubbed body summary and held/holder/job/wake-hint evidence — as one
+bounded block marked untrusted under BEGIN/END UNTRUSTED AGENT BUS
+ENVELOPE markers, the same scrub, flattening and 32 KiB clip bound the
+inbox, channel-read, wakes, work-mine, work-feed, thread, claims and
+dead-letters frames apply with the cut stated, so a host can hand the
+envelope a citation names to a CLI's next turn as data in a single
+block; --json carries it as framed beside the full lookup, and a
+not-found or unreadable lookup answers its own status rather than an
+invented envelope.
 thread
 reads the reply chain rooted at one retained envelope id — the same
 readBusThread projection fleet bus-thread and fleet_bus_thread serve,
@@ -1332,6 +1341,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'show') {
       noExtra(2);
       if (sub === undefined) throw new UsageError('A message id is required.');
+      const frame = one('--frame');
+      if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
       const result = readBusEnvelopeById(sub, options);
       if (result.status !== 'ok') {
         if (result.status === 'not-found') {
@@ -1341,7 +1352,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         return finish(result, '');
       }
       const m = result.message;
-      out(json ? JSON.stringify(result) : [
+      const lines = [
         `${m.cursor} ${m.envelope.priority} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from} -> ${m.envelope.to}`,
         `  ${busBodyFallbackSummary(m.envelope.body)}`,
         ...(result.held === undefined ? [] : [`  held=${result.held === null ? 'unknown' : result.held ? 'yes' : 'no'}` +
@@ -1349,7 +1360,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         ...(result.wakeHint === undefined ? [] : [`  via claim-holder wake hint ${result.id}` +
           ` to=${result.wakeHint.to} job=${result.wakeHint.jobId} status=${result.wakeHint.status}`]),
         ...(result.job === undefined ? [] : [showJobLine(result.job)]),
-      ].join('\n'));
+      ];
+      const framed = frame === undefined ? undefined : frameBusShow(frame as BusCli, lines);
+      out(json ? JSON.stringify(framed === undefined ? result : { ...result, framed })
+        : framed ?? lines.join('\n'));
       return 0;
     }
     if (verb === 'thread') {
