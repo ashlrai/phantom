@@ -129,7 +129,18 @@ function normPath(path: string): string {
 function pathsOverlap(teamPath: string, glob: string): boolean {
   const left = normPath(teamPath);
   const right = normPath(glob);
-  if (!left || !right || left.split('/').includes('..') || right.split('/').includes('..')) return false;
+  // A team path canonicalizing to nothing is the repo root: claimsOverlap's
+  // `pa === ''` rule scopes it across the whole repo, so it overlaps every
+  // path glob — returning false here let a live team lease on `.`/`/` slip
+  // past every `path:` conflict.
+  if (!left) return true;
+  // A bus glob canonicalizing to nothing names only the root entry `.`,
+  // which no concrete team prefix covers.
+  if (!right) return false;
+  // `..` segments cannot be resolved against the bus side — claim keys
+  // reject them — so coverage is unprovable; err toward a conflict, never
+  // a miss.
+  if (left.split('/').includes('..') || right.split('/').includes('..')) return true;
   // `globMatches` wildcards are `*`/`?` only — `[`, `{` and friends are
   // literal characters, so a team path like `src/[id]` is still a concrete
   // prefix claim and must keep its `/**` subtree coverage below. With no
