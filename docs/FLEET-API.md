@@ -594,14 +594,17 @@ reduced motion; phones always get the 2D rows. No 3D library is used.
 
 #### Map edges
 
-`phm map edges [--json] [--since 10m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>]` lists who
+`phm map edges [--json] [--since 10m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--frame <cli>]` lists who
 messaged whom, read from the
 same agent bus as `phm messages`. `--json` prints `fleet.map-edges.v1`
 (`version` 1), and `GET /api/verse/fleet/control/map-edges[?since=10m&before=1h&kind=ask]` serves
 the same read with a current read session. The default window is the last 15
 minutes, the same as the map. `--before` keeps only messages received strictly
 before its cutoff, so `--since` and `--before` read one closed
-`[since, before)` window.
+`[since, before)` window. `--frame <cli>` prints the same read as one bounded
+block marked untrusted under BEGIN/END UNTRUSTED AGENT BUS TIMELINE markers —
+the same frame `phm messages --frame` produces — with `--json` carrying it as
+`framed` beside the full `fleet.map-edges.v1` projection.
 
 Every other flag is the `phm messages` filter vocabulary `phm agents messages`
 forwards — the matching rules `phm messages --help` describes — so "who
