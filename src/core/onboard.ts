@@ -124,56 +124,69 @@ async function stepEditors(opts: { wire: boolean }): Promise<OnboardStep> {
 }
 
 /**
- * Step 4: ensure the ashlr → ~/.local/bin/ashlr symlink.
+ * Step 4: ensure the phm + ashlr commands are linked into ~/.local/bin.
  *
- * Safe ensure: create only when (a) the symlink is missing AND (b) the source
- * bin/ashlr file can be resolved from this module's location.  Never modifies
- * shell profiles.  If source cannot be resolved → manual guidance.
+ * bin/ashlr is a name-agnostic shim, so one source file backs both installed
+ * names — `phm` is canonical, `ashlr` the compatible alias (install.sh links
+ * both the same way). Safe ensure: create only when a name is missing AND the
+ * source bin/ashlr file can be resolved from this module's location. Never
+ * modifies shell profiles. If the source cannot be resolved → manual guidance.
  */
 async function stepSymlink(): Promise<OnboardStep> {
   const localBin = join(homedir(), '.local', 'bin');
-  const symlinkDest = join(localBin, 'ashlr');
+  const names = ['phm', 'ashlr'] as const;
 
-  try {
-    // Check if already present and correct.
-    if (existsSync(symlinkDest)) {
-      let target: string;
+  // Resolve the shared bin source once, walking up from src/core to the
+  // project root (ESM has no __dirname).
+  const thisFile = fileURLToPath(import.meta.url);
+  const projectRoot = resolve(dirname(thisFile), '..', '..');
+  const binSrc = join(projectRoot, 'bin', 'ashlr');
+  const binResolvable = existsSync(binSrc);
+
+  const bits: string[] = [];
+  const missing: string[] = [];
+  let failed: string | undefined;
+
+  for (const name of names) {
+    const dest = join(localBin, name);
+    if (existsSync(dest)) {
+      // Present already — a real file (e.g. an npm bin) or a symlink. Report
+      // the link target when there is one; either way it is not ours to fix.
       try {
-        target = readlinkSync(symlinkDest);
+        bits.push(`${name} → ${readlinkSync(dest)}`);
       } catch {
-        // Not a symlink (could be a real file installed by npm) — that's fine.
-        return step('symlink', 'ok', `ashlr present at ${symlinkDest}`);
+        bits.push(`${name} present`);
       }
-      return step('symlink', 'ok', `Symlink present: ${symlinkDest} → ${target}`);
+      continue;
     }
-
-    // Attempt to resolve the bin/ashlr source from this module's directory tree.
-    // __dirname equivalent for ESM: walk up from src/core → project root → bin/ashlr.
-    const thisFile = fileURLToPath(import.meta.url);
-    // src/core/onboard.ts → src/core → src → project root
-    const projectRoot = resolve(dirname(thisFile), '..', '..');
-    const binSrc = join(projectRoot, 'bin', 'ashlr');
-
-    if (!existsSync(binSrc)) {
-      return step(
-        'symlink',
-        'manual',
-        `ashlr not yet in ~/.local/bin. Run: ./install.sh  (from the ashlr-hub repo)`,
-      );
+    if (!binResolvable) {
+      missing.push(name);
+      continue;
     }
+    try {
+      mkdirSync(localBin, { recursive: true });
+      symlinkSync(binSrc, dest);
+      bits.push(`${name} → ${binSrc}`);
+    } catch (err) {
+      failed = `${name}: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
 
-    // Create ~/.local/bin if absent, then create the symlink.
-    mkdirSync(localBin, { recursive: true });
-    symlinkSync(binSrc, symlinkDest);
-    return step('symlink', 'ok', `Created symlink: ${symlinkDest} → ${binSrc}`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+  if (failed !== undefined) {
     return step(
       'symlink',
       'manual',
-      `Could not ensure symlink: ${msg}. Run: ./install.sh  (from the ashlr-hub repo)`,
+      `Could not link ${failed}. Run: ./install.sh  (from a clone of github.com/ashlrai/phantom)`,
     );
   }
+  if (missing.length > 0) {
+    return step(
+      'symlink',
+      'manual',
+      `${missing.join(' and ')} not on PATH in ${localBin}. Run: ./install.sh  (from a clone of github.com/ashlrai/phantom)`,
+    );
+  }
+  return step('symlink', 'ok', bits.join('; '));
 }
 
 /**
@@ -719,7 +732,7 @@ export async function onboard(
     nextSteps.push('Wire your editor: ashlr init --wire');
   }
   if (symlinkStep.status === 'manual') {
-    nextSteps.push('Install the CLI symlink: ./install.sh  (from the ashlr-hub repo)');
+    nextSteps.push('Install the CLI on PATH: ./install.sh  (from a clone of github.com/ashlrai/phantom)');
   }
   // Surface doctor guidance for any remaining issues (blocking or advisory) —
   // doctorStep is 'manual' on a blocking fail and 'detected' when there are

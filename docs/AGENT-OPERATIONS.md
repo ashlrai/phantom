@@ -317,7 +317,8 @@ phm verse             # console at http://127.0.0.1:7777/verse/
   A missing Locus or local model is a warning, not a failure. The MCP fix lines
   name `phm mcp install claude` and `phm mcp ecosystem --write`.
 - `phm init [--wire] [--yes] [--json]` is idempotent onboarding. It writes the
-  config, creates `~/.ashlr/genome`, symlinks `ashlr` into `~/.local/bin`, and
+  config, creates `~/.ashlr/genome`, symlinks `phm` and `ashlr` into
+  `~/.local/bin`, and
   with `--wire` registers the MCP gateway in detected editors. `phm init --help`
   prints help and writes nothing. With `--json`, the `ready` field matches the
   exit code. A new `config.json` carries only generic defaults (one tidy keeper,
