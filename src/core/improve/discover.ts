@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. One hundred thirty-four sources, all of which Phantom
+ * evidence instead of a hand-kept list. One hundred thirty-five sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -1941,6 +1941,40 @@
  *     emits one item naming its reasons, and items emit only for the
  *     fleet's own repository since the ledger describes this
  *     install's work queue and carries no repo column;
+ *   - the fleet bottleneck analyzer's hourly pipeline journal:
+ *     the ashlr.bottleneck-hourly/v1 rows bottleneck_hourly.py
+ *     (launchd ai.ashlr.bottleneck-hourly, fleet machinery outside
+ *     this repository) appends to
+ *     <runs>/ledger/bottleneck-hourly.jsonl — pipeline stage latency
+ *     percentiles and pending backlogs, per-repo merge rates and
+ *     open-PR counts, merge-drop attribution (auto-merge PR states,
+ *     required-check rollups on PR heads, merge-queue waits, per-lane
+ *     supply stalls), burn pace, reaper tallies, the row's errors
+ *     object and eo_ping warranted/stale relay state
+ *     (bottleneckBacklogItems below). Until now the journal's only
+ *     consumers were the writer's own EO ping file and bus
+ *     RQ/INCIDENT filings — no repository code folded it into work,
+ *     so recurring analyzer blackouts, lane stalls, required-check
+ *     blocks, release-pipeline pending backlogs and unrelayed
+ *     regression alerts never became backlog items. An
+ *     analyzer-errors cell emits per errors key at six rows across
+ *     two UTC days; a lane-stall cell emits per lane at eight
+ *     stalled lane_supply rows across two days (queued work, not
+ *     held/off, zero running in >=80% of sampled minutes);
+ *     a check-block cell emits per (repo, check) at six rows where
+ *     failing + missing conclusions held >=20 open auto-merge PR
+ *     heads across two days (pending conclusions stay context,
+ *     never counted); a release-pending cell emits per stage at six
+ *     rows carrying n_pending >=200 with pending_age_p95 >=4 days
+ *     across two days; an eo-ping-stale cell emits at 24 stale rows
+ *     across two days; a corrupt-lines cell emits at three contract
+ *     failures inside the retained tail. Rows re-validate under the
+ *     writer's schema-plus-timestamp frame with every evidence
+ *     block optional (the writer's schema grew over time), exact
+ *     line replays dedupe, truncated tails are stated as lower
+ *     bounds, est_merges_lost stays labelled inference, stall and
+ *     check coverage is stated against merge-drop rows, and items
+ *     emit only for the fleet's own repository;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2107,6 +2141,7 @@ import { resolutionWitnessBacklogItems } from './resolution-witness-backlog.js';
 import { incidentLedgerBacklogItems } from './incident-ledger-backlog.js';
 import { jobCostBacklogItems } from './job-cost-backlog.js';
 import { workedLedgerBacklogItems } from './worked-ledger-backlog.js';
+import { bottleneckBacklogItems } from './bottleneck-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4430,6 +4465,28 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the item since the ledger describes this install's work
   // queue.
   items.push(...await workedLedgerBacklogItems({ repo }));
+
+  // The fleet bottleneck analyzer's hourly pipeline journal: stage
+  // latency percentiles and pending backlogs, merge-drop attribution
+  // (auto-merge PR states, required-check rollups, per-lane supply
+  // stalls), analyzer errors and eo_ping relay state
+  // (bottleneckBacklogItems below). Until now the journal had no
+  // repository reader at all — its only consumers were the writer's
+  // own EO ping file and bus RQ/INCIDENT filings — so recurring
+  // analyzer blackouts, lane stalls, required-check blocks,
+  // release-pipeline pending backlogs and unrelayed regression alerts
+  // never became work. Cells: analyzer-errors per errors key at six
+  // rows across two UTC days; lane-stall per lane at eight stalled
+  // rows across two days; check-block per (repo, check) at six rows
+  // with >=20 hard-blocked auto-merge PR heads across two days;
+  // release-pending per stage at six rows over the pending bars
+  // across two days; eo-ping-stale at 24 stale rows across two days;
+  // corrupt-lines at three contract failures. Evidence blocks stay
+  // optional under the writer's schema-plus-timestamp frame, exact
+  // line replays count once, truncated tails are stated as lower
+  // bounds, est_merges_lost stays labelled inference, and only the
+  // fleet's own repository inherits the items.
+  items.push(...await bottleneckBacklogItems({ repo }));
   return { items, errors };
 }
 

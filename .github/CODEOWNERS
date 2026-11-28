@@ -612,6 +612,7 @@
 /test/improve-bet-audit-backlog.test.ts @masonwyatt23
 /test/improve-bet-outcome-backlog.test.ts @masonwyatt23
 /test/improve-bot-handoff-backlog.test.ts @masonwyatt23
+/test/improve-bottleneck-backlog.test.ts @masonwyatt23
 /test/improve-boundary.test.ts @masonwyatt23
 /test/improve-branch-gardener-backlog.test.ts @masonwyatt23
 /test/improve-capacity-history-backlog.test.ts @masonwyatt23
