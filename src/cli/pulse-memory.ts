@@ -1,5 +1,5 @@
 /** Explicit runner-export ingestion; importing this module has no side effects. */
-import { open } from 'node:fs/promises';
+import { readBoundedRegularFile } from '../core/observability/hop-events.js';
 import { buildMemoryBenchmark, memoryBenchmarkSpans, memoryReportLine } from '../core/observability/memory-benchmark.js';
 
 const HELP = `phm pulse memory --samples <file> [--json] [--send]
@@ -23,21 +23,7 @@ export async function cmdPulseMemory(args: string[]): Promise<number> {
   }
   if (!file) { console.error(HELP); return 2; }
   try {
-    const handle = await open(file, 'r');
-    let input: unknown;
-    try {
-      if (!(await handle.stat()).isFile()) throw new Error('Expected regular file');
-      // Bound the actual read, including files growing after stat().
-      const bytes = Buffer.alloc(MAX_BYTES + 1);
-      let length = 0;
-      while (length < bytes.length) {
-        const { bytesRead } = await handle.read(bytes, length, bytes.length - length, null);
-        if (bytesRead === 0) break;
-        length += bytesRead;
-      }
-      if (length > MAX_BYTES) throw new Error('Sample file too large');
-      input = JSON.parse(bytes.toString('utf8', 0, length));
-    } finally { await handle.close(); }
+    const input: unknown = JSON.parse(await readBoundedRegularFile(file, MAX_BYTES));
     const report = buildMemoryBenchmark(input);
     let delivery: import('../core/types.js').TelemetryEmitResult | undefined;
     if (send) {

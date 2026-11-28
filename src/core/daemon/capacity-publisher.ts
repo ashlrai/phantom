@@ -98,6 +98,8 @@ export type PublisherState =
   | 'fresh'
   | 'published'
   | 'published-shared'
+  /** This node has no account configuration at all — a first-run state, not a lease conflict. */
+  | 'unconfigured'
   | 'lease-held-elsewhere'
   | 'sample-timeout'
   | 'failed';
@@ -202,6 +204,12 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
     }
     try {
       const collectorStatus = collector.status();
+      // An unconfigured node is a first-run state, not a lease conflict: name
+      // it so `phm capacity publish` never tells a new contributor another
+      // process holds a lease that does not exist.
+      if (collectorStatus.mode === 'unconfigured') {
+        return set('unconfigured', 'local accounts are unconfigured; configure this node’s accounts root and CLI sign-in, then retry phm capacity publish');
+      }
       if (collectorStatus.mode !== 'owned') {
         // Without the lease this process is not the NATIVE writer, and it never
         // samples. But reaching here already means no other publisher kept the
@@ -230,9 +238,7 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
         }
         return set(
           'lease-held-elsewhere',
-          collectorStatus.mode === 'unconfigured'
-            ? 'local accounts are unconfigured; configure this node’s accounts root and CLI sign-in, then retry phm capacity publish'
-            : 'the native account-metadata lease is unavailable; close the other local account collector or start its publisher, then retry phm capacity publish',
+          'the native account-metadata lease is unavailable; close the other local account collector or start its publisher, then retry phm capacity publish',
         );
       }
       if (!(await waitForFirstSample(collector))) {
@@ -302,7 +308,7 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
         await refreshResourceLive();
         // Status readers may request another cycle immediately after failure.
         // Keep unavailable leases and failed probes idle between timer checks.
-        retryAt = ['failed', 'sample-timeout', 'lease-held-elsewhere'].includes(result.state)
+        retryAt = ['failed', 'sample-timeout', 'unconfigured', 'lease-held-elsewhere'].includes(result.state)
           ? deps.nowMs() + CHECK_EVERY_MS
           : 0;
         // Log transitions only (a steady dormant/fresh state is not news).

@@ -29,7 +29,7 @@ it('gives unknown age and not-stuck for a lane without events', () => {
   expect(idleLaneAges([red('a')], [ev('b', ago(1)), ev('a', 'nope')], NOW)[0]).toEqual({ ...red('a'), lastEventAt: null, quietMin: null, stuck: false });
 });
 
-const STATUS = JSON.stringify({ lanes: {
+const STATUS = JSON.stringify({ last_tick: ago(0), lanes: {
   a: { running: 0, target: 4, queued: 17, held: false },
   b: { running: 0, target: 3, queued: 26, held: false },
   h: { running: 0, target: 2, queued: 3, held: true },
@@ -76,6 +76,7 @@ it.each([
   ['missing', new Error('ENOENT')],
   ['empty', ''],
 ])('keeps exit code and lane list when the ledger is %s', async (_name, ledger) => {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW);
   const output = logs();
   expect(await cmdFleetIdleLanes(['--json'], readerFor(ledger))).toBe(1);
   expect(JSON.parse(output.mock.calls[0]![0]).lanes).toEqual([
@@ -85,6 +86,7 @@ it.each([
   ]);
 });
 it('reads both fleet journals and documents the stuck mark in help', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW);
   const output = logs();
   const reader = readerFor('');
   await cmdFleetIdleLanes([], reader);

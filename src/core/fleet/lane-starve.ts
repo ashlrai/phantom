@@ -23,14 +23,13 @@
  * Each job contributes supply once, using its first valid row.
  */
 import { KNOWN_STATUSES } from './lane-console.js';
-import { dispatcherAdmissionHeadroom, laneLaunchTarget } from './lane-launch-target.js';
+import { dispatcherAdmissionHeadroom, laneLaunchTarget, requireFreshDispatcherTick } from './lane-launch-target.js';
 import { readyMarketLine } from './unfed-market.js';
 
 /** Filler ids end in A, six or more digits, then Q8. */
 export const FILLER_ID = /A\d{6,}Q8$/;
 
 const PARKED = /^PARKED/i;
-const DISPATCHER_MAX_AGE_MS = 60_000;
 
 export interface StarvedLane {
   lane: string;
@@ -98,12 +97,7 @@ export function findStarvedLanes(
 ): StarvedLanes {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
-  if (now !== undefined) {
-    const tick = typeof data.last_tick === 'string' ? Date.parse(data.last_tick) : NaN;
-    if (!Number.isFinite(tick) || tick > now || now - tick > DISPATCHER_MAX_AGE_MS) {
-      throw new Error('unusable dispatcher tick');
-    }
-  }
+  if (now !== undefined) requireFreshDispatcherTick(data.last_tick, now);
   const split = new Map<string, { filler: number; real: number }>();
   const countedJobs = new Set<string>();
   let open = 0;

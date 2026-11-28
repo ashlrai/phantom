@@ -5,7 +5,10 @@
 import { join } from 'node:path';
 
 import { scrubSecrets } from '../util/scrub-secrets.js';
-import { LEDGER_NAME, type AutofixHost, type FixResult, type FixerId, type LedgerLine } from './types.js';
+import {
+  LEDGER_NAME, isAutofixRecord, isFixResult, isFixerId,
+  type AutofixHost, type ExecResult, type FixResult, type FixerId, type LedgerLine,
+} from './types.js';
 
 const FORBIDDEN = [
   /(?:^|\/)\.codex(?:\/|$)/,
@@ -17,9 +20,15 @@ const FORBIDDEN = [
 
 const FORBIDDEN_EXEC_BIN = /^(kill|pkill|killall)$/;
 
+export const REFUSED_EXEC: Readonly<ExecResult> = Object.freeze({ code: 1, stdout: '', stderr: 'refused' });
+
 export function forbiddenPath(path: string): boolean {
   const norm = path.replace(/\\/g, '/');
   return FORBIDDEN.some((re) => re.test(norm));
+}
+
+export function assertAllowedPath(path: string): void {
+  if (forbiddenPath(path)) throw new Error('refused path');
 }
 
 /** Refuse empty commands, forbidden paths, or process-killing binaries. */
@@ -29,6 +38,38 @@ export function isForbiddenExecArgv(argv: readonly string[]): boolean {
 
 export function ledgerPath(runsDir: string): string {
   return join(runsDir, 'ledger', LEDGER_NAME);
+}
+
+export function launchdRunsLedgerPath(runsDir: string): string {
+  return join(runsDir, 'ledger', 'launchd-runs.jsonl');
+}
+
+export function securityReportsDir(runsDir: string): string {
+  return join(runsDir, 'ledger', 'autofix-security');
+}
+
+export function safeReportToken(value: string, max?: number): string {
+  const safe = value.replace(/[^A-Za-z0-9._-]/g, '_');
+  return max === undefined ? safe : safe.slice(0, max);
+}
+
+export function parseJsonlRecords<T>(
+  text: string | null,
+  parseEntry: (value: unknown) => T | null,
+): T[] {
+  if (!text) return [];
+  const rows: T[] = [];
+  for (const raw of text.split('\n')) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    try {
+      const row = parseEntry(JSON.parse(trimmed));
+      if (row !== null) rows.push(row);
+    } catch {
+      /* A corrupt line does not grant a second action. */
+    }
+  }
+  return rows;
 }
 
 export function ledgerLine(
@@ -45,10 +86,9 @@ export function ledgerLine(
 
 function sortValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortValue);
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
+  if (isAutofixRecord(value)) {
     const out: Record<string, unknown> = {};
-    for (const key of Object.keys(record).sort()) out[key] = sortValue(record[key]);
+    for (const key of Object.keys(value).sort()) out[key] = sortValue(value[key]);
     return out;
   }
   return value;
@@ -59,30 +99,21 @@ function stable(value: unknown): string {
 }
 
 export function readLedger(text: string | null): LedgerLine[] {
-  if (!text) return [];
-  const lines: LedgerLine[] = [];
-  for (const raw of text.split('\n')) {
-    if (!raw.trim()) continue;
-    try {
-      const parsed = JSON.parse(raw) as Partial<LedgerLine>;
-      if (typeof parsed.fixer === 'string' && typeof parsed.target === 'string'
-        && typeof parsed.action === 'string' && typeof parsed.result === 'string'
-        && typeof parsed.ts === 'string') {
-        lines.push({
-          ts: parsed.ts,
-          fixer: parsed.fixer as FixerId,
-          target: parsed.target,
-          action: parsed.action,
-          before: parsed.before,
-          after: parsed.after,
-          result: parsed.result as FixResult,
-        });
-      }
-    } catch {
-      /* A corrupt line does not grant a second action. */
-    }
-  }
-  return lines;
+  return parseJsonlRecords(text, (parsed): LedgerLine | null => {
+    if (!isAutofixRecord(parsed)) return null;
+    if (!isFixerId(parsed.fixer) || typeof parsed.target !== 'string'
+      || typeof parsed.action !== 'string' || !isFixResult(parsed.result)
+      || typeof parsed.ts !== 'string') return null;
+    return {
+      ts: parsed.ts,
+      fixer: parsed.fixer,
+      target: parsed.target,
+      action: parsed.action,
+      before: parsed.before,
+      after: parsed.after,
+      result: parsed.result,
+    };
+  });
 }
 
 const TERMINAL: ReadonlySet<FixResult> = new Set([
@@ -104,6 +135,25 @@ function alreadyRecorded(lines: readonly LedgerLine[], line: Pick<LedgerLine, 'f
 export function skipIfRecorded(lines: readonly LedgerLine[], line: LedgerLine): LedgerLine | null {
   const prior = alreadyRecorded(lines, line);
   return prior ? ledgerLine(line.ts, line.fixer, line.target, line.action, line.before, prior.after, 'skipped') : null;
+}
+
+/** Handle the shared dry-run and idempotency gate before executing a mutating autofix action. */
+export function planOrSkip(
+  ctx: { dryRun: boolean; ledger: readonly LedgerLine[] },
+  ts: string,
+  fixer: FixerId,
+  target: string,
+  action: string,
+  before: unknown,
+  after: unknown,
+): { done: true; line: LedgerLine } | { done: false; planned: LedgerLine } {
+  if (ctx.dryRun) {
+    return { done: true, line: ledgerLine(ts, fixer, target, action, before, after, 'dry-run') };
+  }
+  const planned = ledgerLine(ts, fixer, target, action, before, after, 'applied');
+  const skipped = skipIfRecorded(ctx.ledger, planned);
+  if (skipped) return { done: true, line: skipped };
+  return { done: false, planned };
 }
 
 export function appendLedger(host: AutofixHost, line: LedgerLine): void {

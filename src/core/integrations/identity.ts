@@ -13,6 +13,7 @@
 
 import { spawnSync } from 'node:child_process';
 import type { Identity } from '../types.js';
+import { asIntegrationRecord, parseJsonRecord, unwrapJsonArray } from './dep-parser.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -84,8 +85,8 @@ function parseCloudStatus(raw: string): { loggedIn: boolean; user: string | null
 
   // ── JSON path ─────────────────────────────────────────────────────────────
   if (trimmed.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const parsed = parseJsonRecord(trimmed);
+    if (parsed) {
       // Recognised shapes:
       //   { "loggedIn": true, "user": "alice" }
       //   { "authenticated": true, "email": "alice@example.com" }
@@ -98,11 +99,9 @@ function parseCloudStatus(raw: string): { loggedIn: boolean; user: string | null
             : null;
 
       if (loggedIn !== null) {
-        const user = extractUserFromJson(parsed);
+        const user = extractJsonStringField(parsed, ['user', 'email', 'username', 'handle', 'id'], ['account', 'profile', 'identity']);
         return { loggedIn, user };
       }
-    } catch {
-      // Fall through to text heuristic.
     }
   }
 
@@ -129,27 +128,22 @@ function parseCloudStatus(raw: string): { loggedIn: boolean; user: string | null
 }
 
 /**
- * Extract a user identifier from a JSON object.
- * Only reads fields whose names clearly carry an account handle/email/id.
- * Returns null when none is found.
+ * Extract the first non-empty string field from `obj` (top-level first, then
+ * inside named nested container objects). Returns null when none is found.
  */
-function extractUserFromJson(obj: Record<string, unknown>): string | null {
-  // Direct top-level fields
-  for (const key of ['user', 'email', 'username', 'handle', 'id']) {
-    if (typeof obj[key] === 'string' && (obj[key] as string).length > 0) {
-      return obj[key] as string;
-    }
+function extractJsonStringField(
+  obj: Record<string, unknown>,
+  keys: readonly string[],
+  containerKeys: readonly string[],
+): string | null {
+  for (const key of keys) {
+    if (typeof obj[key] === 'string' && obj[key].length > 0) return obj[key];
   }
-  // Nested account/profile object
-  for (const containerKey of ['account', 'profile', 'identity']) {
-    const container = obj[containerKey];
-    if (container !== null && typeof container === 'object') {
-      const inner = container as Record<string, unknown>;
-      for (const key of ['user', 'email', 'username', 'handle', 'id']) {
-        if (typeof inner[key] === 'string' && (inner[key] as string).length > 0) {
-          return inner[key] as string;
-        }
-      }
+  for (const containerKey of containerKeys) {
+    const inner = asIntegrationRecord(obj[containerKey]);
+    if (!inner) continue;
+    for (const key of keys) {
+      if (typeof inner[key] === 'string' && inner[key].length > 0) return inner[key];
     }
   }
   return null;
@@ -200,33 +194,20 @@ function parseTeamName(raw: string): string | null {
   const looksJson = trimmed.startsWith('[') || trimmed.startsWith('{');
   if (looksJson) {
     try {
-      let parsed: unknown = JSON.parse(trimmed);
-      // Unwrap { "teams": [...] }
-      if (
-        parsed !== null &&
-        typeof parsed === 'object' &&
-        !Array.isArray(parsed)
-      ) {
-        const obj = parsed as Record<string, unknown>;
-        if (Array.isArray(obj['teams'])) parsed = obj['teams'];
-      }
-
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      const items = unwrapJsonArray(JSON.parse(trimmed) as unknown, ['teams']);
+      if (items && items.length > 0) {
         // Prefer an entry explicitly marked active.
-        for (const item of parsed) {
-          if (item !== null && typeof item === 'object') {
-            const t = item as Record<string, unknown>;
-            if (t['active'] === true && typeof t['name'] === 'string') {
-              return t['name'] as string;
-            }
+        for (const item of items) {
+          const t = asIntegrationRecord(item);
+          if (t && t['active'] === true && typeof t['name'] === 'string') {
+            return t['name'];
           }
         }
         // Fall back to the first entry.
-        const first = parsed[0];
-        if (first !== null && typeof first === 'object') {
-          const t = first as Record<string, unknown>;
-          if (typeof t['name'] === 'string') return t['name'] as string;
-          if (typeof t['slug'] === 'string') return t['slug'] as string;
+        const first = asIntegrationRecord(items[0]);
+        if (first) {
+          if (typeof first['name'] === 'string') return first['name'];
+          if (typeof first['slug'] === 'string') return first['slug'];
         }
       }
     } catch {
@@ -256,7 +237,7 @@ function parseTeamName(raw: string): string | null {
     if (lc.startsWith('error') || lc.startsWith('!')) continue;
 
     const token = line.split(/\s+/)[0];
-    if (!token || token.length === 0) continue;
+    if (!token) continue;
 
     if (firstCandidate === null) firstCandidate = token;
     if (lc.includes('active')) return token;
@@ -275,29 +256,10 @@ function parseTeamName(raw: string): string | null {
 function parseTier(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed.startsWith('{')) return null;
-  try {
-    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-    for (const key of ['tier', 'plan', 'subscription']) {
-      if (typeof parsed[key] === 'string' && (parsed[key] as string).length > 0) {
-        return parsed[key] as string;
-      }
-    }
-    // Nested: { "account": { "tier": "pro" } }
-    for (const containerKey of ['account', 'profile']) {
-      const container = parsed[containerKey];
-      if (container !== null && typeof container === 'object') {
-        const inner = container as Record<string, unknown>;
-        for (const key of ['tier', 'plan', 'subscription']) {
-          if (typeof inner[key] === 'string' && (inner[key] as string).length > 0) {
-            return inner[key] as string;
-          }
-        }
-      }
-    }
-  } catch {
-    // Not JSON or parse failed — no tier.
-  }
-  return null;
+  const parsed = parseJsonRecord(trimmed);
+  return parsed
+    ? extractJsonStringField(parsed, ['tier', 'plan', 'subscription'], ['account', 'profile'])
+    : null;
 }
 
 // ---------------------------------------------------------------------------

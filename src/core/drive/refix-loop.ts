@@ -21,12 +21,14 @@
  * host adapter (scripts/refix-loop.mjs) stays thin.
  */
 
+import { asDriveRecord, isNonNegativeSafeInt } from './pool-routing.js';
+
 export const REFIX_CYCLE_CAP = 20;
 export const REFIX_PR_WINDOW_CAP = 3;
 export const REFIX_RETRY_MS = 15 * 60 * 1000;
 export const REFIX_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const FLEET_AUTHOR = 'ashlr-fleet[bot]';
-export const SECURITY_PIN = 'Security pin required';
+const SECURITY_PIN = 'Security pin required';
 
 /** The seven approved GS_REPOS; no discovery or expansion. */
 export const REFIX_REPOS = [
@@ -94,7 +96,19 @@ export interface RefixSummary {
   maxWaitMs: number;
 }
 
-const shortName = (repo: string): string => repo.split('/').pop() ?? repo;
+// ---------------------------------------------------------------------------
+// Shared PR-loop and durable-state helpers (reused by queuegen & merge-queue-loop)
+// ---------------------------------------------------------------------------
+
+/** Short repository name (`org/repo` -> `repo`). */
+export function repoShortName(repo: string): string {
+  return repo.split('/').pop() ?? repo;
+}
+
+/** Canonical short PR tag (`org/repo`, 42 -> `repo#42`). */
+export function prShortTag(repo: string, prNumber: number): string {
+  return `${repoShortName(repo)}#${prNumber}`;
+}
 
 /** `.github` segment, publish.sh basename, or a segment containing the token. */
 export function securityPinnedPath(path: string): boolean {
@@ -105,56 +119,108 @@ export function securityPinnedPath(path: string): boolean {
   });
 }
 
-function emptyState(): RefixState {
-  return { v: 1, appended: {}, giveup: {}, waiting: {}, updates: {} };
+/** Fail closed when the file list was truncated or touches any security-pinned path. */
+export function isPrSecurityPinned(pr: { files: readonly string[]; filesTruncated: boolean }): boolean {
+  return pr.filesTruncated || pr.files.some(securityPinnedPath);
+}
+
+/** Tolerant read of `{ [key]: safeInt }` durable state maps. */
+export function normalizeTimestampMap(raw: unknown, opts?: { nonNegative?: boolean }): Record<string, number> {
+  const out: Record<string, number> = {};
+  const nonNegative = opts?.nonNegative === true;
+  for (const [key, at] of Object.entries(asDriveRecord(raw))) {
+    if (nonNegative) {
+      if (isNonNegativeSafeInt(at)) out[key] = at;
+    } else if (typeof at === 'number' && Number.isSafeInteger(at)) {
+      out[key] = at;
+    }
+  }
+  return out;
+}
+
+/** Tolerant read of `{ [key]: { pr, at } }` durable state maps. */
+function normalizePrTimestampMap(raw: unknown): Record<string, { pr: string; at: number }> {
+  const out: Record<string, { pr: string; at: number }> = {};
+  for (const [key, entry] of Object.entries(asDriveRecord(raw))) {
+    const e = asDriveRecord(entry);
+    if (typeof e['pr'] === 'string' && typeof e['at'] === 'number' && Number.isSafeInteger(e['at'])) {
+      out[key] = { pr: e['pr'], at: e['at'] };
+    }
+  }
+  return out;
+}
+
+/** Bound a durable state map by evicting oldest-timestamp entries first. */
+export function pruneOldestEntries<T>(
+  map: Record<string, T>,
+  getTimestamp: (entry: T) => number,
+  cap = 8_192,
+): void {
+  const keys = Object.keys(map);
+  if (keys.length <= cap) return;
+  keys.sort((a, b) => getTimestamp(map[a]!) - getTimestamp(map[b]!))
+    .slice(0, keys.length - cap)
+    .forEach((key) => delete map[key]);
+}
+
+/** Delete entries whose recorded timestamp is at least `windowMs` old. */
+export function pruneExpiredEntries<T>(
+  map: Record<string, T>,
+  getTimestamp: (entry: T) => number,
+  now: number,
+  windowMs: number,
+): void {
+  for (const [key, entry] of Object.entries(map)) {
+    if (now - getTimestamp(entry) >= windowMs) delete map[key];
+  }
+}
+
+/** Delete map entries for `prefix` that are no longer in `present`. */
+export function pruneAbsentPrefixKeys(
+  map: Record<string, unknown> | undefined,
+  prefix: string,
+  present: ReadonlySet<string>,
+): void {
+  if (!map) return;
+  for (const key of Object.keys(map)) {
+    if (key.startsWith(prefix) && !present.has(key)) delete map[key];
+  }
+}
+
+/** Rolling per-PR retry budget: bounded attempts in window and minimum cooldown between calls. */
+export function prRetryBudgetAllows(
+  attempts: ReadonlyArray<{ at: number }>,
+  now: number,
+  windowCap: number,
+  retryMs: number,
+): boolean {
+  return attempts.length < windowCap && !attempts.some((entry) => now - entry.at < retryMs);
 }
 
 export function normalizeState(value: unknown): RefixState {
-  const state = emptyState();
-  const row = (value ?? {}) as Record<string, unknown>;
-  for (const [key, entry] of Object.entries((row['appended'] ?? {}) as Record<string, unknown>)) {
-    const e = (entry ?? {}) as Record<string, unknown>;
-    if (typeof e['pr'] === 'string' && Number.isSafeInteger(e['at'])) {
-      state.appended[key] = { pr: e['pr'], at: e['at'] as number };
-    }
-  }
-  const updates = (row['updates'] ?? {}) as Record<string, unknown>;
-  for (const [key, entry] of Object.entries(updates)) {
-    const e = (entry ?? {}) as Record<string, unknown>;
-    if (typeof e['pr'] === 'string' && Number.isSafeInteger(e['at'])) {
-      state.updates![key] = { pr: e['pr'], at: e['at'] as number };
-    }
-  }
-  for (const [key, at] of Object.entries((row['waiting'] ?? {}) as Record<string, unknown>)) {
-    if (Number.isSafeInteger(at) && (at as number) >= 0) state.waiting![key] = at as number;
-  }
-  for (const [key, at] of Object.entries((row['giveup'] ?? {}) as Record<string, unknown>)) {
-    if (Number.isSafeInteger(at)) state.giveup[key] = at as number;
-  }
-  return state;
+  const row = asDriveRecord(value);
+  return {
+    v: 1,
+    appended: normalizePrTimestampMap(row['appended']),
+    updates: normalizePrTimestampMap(row['updates']),
+    waiting: normalizeTimestampMap(row['waiting'], { nonNegative: true }),
+    giveup: normalizeTimestampMap(row['giveup']),
+  };
 }
 
 /** Bound durable state; oldest entries are evicted first. */
 function prune(state: RefixState, cap = 8_192): void {
-  const keys = Object.keys(state.appended);
-  if (keys.length > cap) {
-    keys.sort((a, b) => state.appended[a]!.at - state.appended[b]!.at)
-      .slice(0, keys.length - cap).forEach((k) => delete state.appended[k]);
-  }
-  const given = Object.keys(state.giveup);
-  if (given.length > cap) {
-    given.sort((a, b) => state.giveup[a]! - state.giveup[b]!)
-      .slice(0, given.length - cap).forEach((k) => delete state.giveup[k]);
-  }
+  pruneOldestEntries(state.appended, (entry) => entry.at, cap);
+  pruneOldestEntries(state.giveup, (at) => at, cap);
 }
 
 /** Queue id shared by every producer of a fix-forward line for one PR head. */
 export function drainKey(repo: string, number: number, headSha: string): string {
-  return `RQ-DRAIN-${shortName(repo)}-${number}-${headSha.slice(0, 7)}`;
+  return `RQ-DRAIN-${repoShortName(repo)}-${number}-${headSha.slice(0, 7)}`;
 }
 
 export function drainRow(repo: string, pr: RefixPr, key: string, reason: string, pinned: boolean): string {
-  const short = shortName(repo);
+  const short = repoShortName(repo);
   const url = `https://github.com/${repo}/pull/${pr.number}`;
   const prompt = [
     ...(pinned ? [SECURITY_PIN] : []),
@@ -198,11 +264,9 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
   const waiting = state.waiting!;
   const updates = state.updates!;
   // Expired reservations no longer affect the rolling retry budget.
-  for (const [key, entry] of Object.entries(updates)) {
-    if (now - entry.at >= windowMs) delete updates[key];
-  }
+  pruneExpiredEntries(updates, (entry) => entry.at, now, windowMs);
   const eligible = (repo: string, pr: RefixPr): boolean =>
-    !hold.has(`${shortName(repo)}#${pr.number}`) && authors.includes(pr.author);
+    !hold.has(prShortTag(repo, pr.number)) && authors.includes(pr.author);
   const drains24h = (prTag: string): number =>
     Object.values(state.appended).filter((e) => e.pr === prTag && now - e.at < windowMs).length;
   try {
@@ -214,13 +278,11 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
         io.log(`REFIX_GH_ERROR list ${repo}`);
         throw error;
       }
-      const present = new Set(prs.map((pr) => `${shortName(repo)}#${pr.number}`));
-      for (const tag of Object.keys(waiting)) {
-        if (tag.startsWith(`${shortName(repo)}#`) && !present.has(tag)) delete waiting[tag];
-      }
+      const present = new Set(prs.map((pr) => prShortTag(repo, pr.number)));
+      pruneAbsentPrefixKeys(waiting, `${repoShortName(repo)}#`, present);
       const seen = new Set<string>();
       for (const pr of prs) {
-        const tag = `${shortName(repo)}#${pr.number}`;
+        const tag = prShortTag(repo, pr.number);
         if (!eligible(repo, pr)) continue;
         if (pr.inMergeQueue || ['BEHIND', 'DIRTY'].includes(pr.mergeState)) {
           waiting[tag] ??= now;
@@ -232,7 +294,7 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
         seen.add(tag);
         if (pr.mergeState !== 'BEHIND' || pr.inMergeQueue) continue;
         const attempts = Object.values(updates).filter((e) => e.pr === tag);
-        if (attempts.length >= prWindowCap || attempts.some((e) => now - e.at < REFIX_RETRY_MS)) continue;
+        if (!prRetryBudgetAllows(attempts, now, prWindowCap, REFIX_RETRY_MS)) continue;
         if (summary.updated >= cycleCap) { summary.capped = true; continue; }
         // Write ahead: a crash or ambiguous gh failure must not create a tight retry loop.
         updates[`${tag}:${now}`] = { pr: tag, at: now };
@@ -251,7 +313,7 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
         const key = drainKey(repo, pr.number, pr.headSha);
         if (queueIds.has(key) || key in state.appended || key in state.giveup) continue;
         if (summary.drains >= cycleCap) { summary.capped = true; continue; }
-        const prTag = `${shortName(repo)}#${pr.number}`;
+        const prTag = prShortTag(repo, pr.number);
         if (drains24h(prTag) >= prWindowCap) {
           state.giveup[key] = now;
           summary.giveups++;
@@ -268,7 +330,7 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
           }
         }
         if (!drain) continue;
-        const pinned = pr.filesTruncated || pr.files.some(securityPinnedPath);
+        const pinned = isPrSecurityPinned(pr);
         io.appendQueueLine(drainRow(repo, pr, key,
           pr.mergeState === 'DIRTY' ? 'merge conflict (DIRTY)' : 'required check red', pinned));
         state.appended[key] = { pr: prTag, at: now };

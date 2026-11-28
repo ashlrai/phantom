@@ -1,7 +1,11 @@
 /** `phm nodes doctor`: fake probe adapter, injected tailnet and registry. No real machine, home or CLI is touched. */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdNodes } from '../src/cli/nodes.js';
-import { NODES_DOCTOR_SCHEMA, readNodesDoctor, type NodeProbe, type NodeProbeReply } from '../src/core/fleet/nodes-doctor.js';
+import { NODES_DOCTOR_SCHEMA, localProbe, readNodesDoctor, type NodeProbe, type NodeProbeReply } from '../src/core/fleet/nodes-doctor.js';
 import type { NodesRegistry, NodesViewDeps } from '../src/core/fleet/nodes-view.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z');
@@ -169,6 +173,62 @@ describe('readNodesDoctor', () => {
   it('a throwing adapter is unknown, not a crash', async () => {
     const report = await readNodesDoctor({ view: deps([]), probe: async () => { throw new Error('boom'); } });
     expect(report.nodes[0]!.repos).toBe('unknown');
+  });
+
+  it('an unknown lane check prints the probe reason when one is given', async () => {
+    // A probe that found the binary but could not complete its check says why;
+    // the generic "no sign-in check" wording is only the fallback.
+    const reason = 'claude is installed but did not answer `--version`';
+    const report = await readNodesDoctor({ view: deps([['studio-mac', true]]),
+      probe: fake({ 'home-mac': healthy(), 'studio-mac': healthy({ claude: { installed: true, signedIn: 'unknown', reason } }) }) });
+    const claude = report.nodes.find(n => n.name === 'studio-mac')!.lanes.find(l => l.lane === 'claude')!;
+    expect(claude).toMatchObject({ status: 'unknown', reason });
+    expect(report.nodes.find(n => n.name === 'studio-mac')!.unknowns).toContain(`studio-mac: ${reason}`);
+  });
+});
+
+describe('localProbe lane verdicts', () => {
+  // Fake binaries under a scratch home; system allowlist dirs may also hold a
+  // lane binary, but the stubbed runner answers every path the same, so the
+  // verdicts below never depend on which host paths exist.
+  let home: string;
+  const touch = (name: string) => {
+    mkdirSync(join(home, '.local', 'bin'), { recursive: true });
+    writeFileSync(join(home, '.local', 'bin', name), '#!/bin/sh\n', { mode: 0o755 });
+  };
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'nodes-doctor-'));
+    touch('claude');
+    touch('gemini');
+  });
+  afterEach(() => { rmSync(home, { recursive: true, force: true }); });
+
+  const timedOut = { status: null, error: Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }) };
+  const runFn = (handler: (args: string[]) => { status: number | null; error?: Error }) =>
+    vi.fn((_binary: string, args: string[]) => handler(args)) as unknown as typeof spawnSync;
+
+  it('a binary that exists but cannot answer --version is unknown, never "not installed"', () => {
+    const reply = localProbe(runFn(() => timedOut), home);
+    expect(reply.lanes['claude']).toMatchObject({ installed: true, signedIn: 'unknown' });
+    expect(reply.lanes['claude']!.reason).toContain('`--version`');
+  });
+
+  it('a sign-in check that cannot run is unknown, never "signed out"', () => {
+    const reply = localProbe(runFn(args => args[0] === '--version' ? { status: 0 } : timedOut), home);
+    expect(reply.lanes['claude']).toMatchObject({ installed: true, signedIn: 'unknown' });
+    expect(reply.lanes['claude']!.reason).toContain('sign-in check');
+  });
+
+  it('a nonzero sign-in exit is still a definitive signed-out', () => {
+    const reply = localProbe(runFn(args => ({ status: args[0] === '--version' ? 0 : 1 })), home);
+    expect(reply.lanes['claude']).toMatchObject({ installed: true, signedIn: false });
+    expect(reply.lanes['claude']!.reason).toBeUndefined();
+  });
+
+  it('a lane with no sign-in command stays unknown without a probe reason', () => {
+    const reply = localProbe(runFn(() => ({ status: 0 })), home);
+    expect(reply.lanes['gemini']).toMatchObject({ installed: true, signedIn: 'unknown' });
+    expect(reply.lanes['gemini']!.reason).toBeUndefined();
   });
 });
 

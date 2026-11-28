@@ -7,7 +7,7 @@
 import { join } from 'node:path';
 
 import { fixOutsideLoad, fixReleaseStuckDraft, fixStuckLane, pinnedDrift, reportPinnedHandEdit } from './fixers.js';
-import { appendLedger, ledgerPath, readLedger } from './guard.js';
+import { appendLedger, ledgerLine, ledgerPath, readLedger } from './guard.js';
 import {
   formatIncidentLine, holdReportPath, incidentDir, incidentsLedgerPath, jobForLabel,
   laneFromKey, launchdLabelFromKey, parseIncidentFilename, readIncidentStatuses,
@@ -15,7 +15,7 @@ import {
 } from './incidents.js';
 import { fixLaunchdCrashloop, launchAgentsDir, newestRollbackMtime, type FixContext } from './launchd.js';
 import {
-  DEFAULT_STUCK_MIN, FIXER_IDS,
+  DEFAULT_STUCK_MIN,
   type AutofixHost, type AutofixSnapshot, type FixerId, type IncidentStatusLine, type LaneView, type LedgerLine,
 } from './types.js';
 
@@ -97,11 +97,11 @@ export async function runAutofix(opts: RunAutofixOptions): Promise<RunAutofixRes
     if (parsed.fixer === 'autorun-hold') {
       const path = holdReportPath(opts.host.runsDir(), parsed.key);
       if (!opts.dryRun) opts.host.writeFile(path, securityReportForHold(parsed.key, ts));
-      push({
-        ts, fixer: 'pinned-hand-edit', target: parsed.key, action: 'security-report',
-        before: { key: parsed.key }, after: { detectOnly: true, report: opts.dryRun ? null : path },
-        result: opts.dryRun ? 'dry-run' : 'detect-only',
-      });
+      push(ledgerLine(
+        ts, 'pinned-hand-edit', parsed.key, 'security-report',
+        { key: parsed.key }, { detectOnly: true, report: opts.dryRun ? null : path },
+        opts.dryRun ? 'dry-run' : 'detect-only',
+      ));
       record({ key: parsed.key, status: 'refused', reason: 'detect-only-security', ts });
       continue;
     }
@@ -130,22 +130,16 @@ function runRelease(key: string, opts: RunAutofixOptions, ctx: FixContext, push:
   const tag = tagFromIncidentKey(key);
   const ts = opts.host.now().toISOString();
   if (!tag) {
-    push({ ts, fixer: 'release-stuck-draft', target: key, action: 'refuse-no-tag', before: { key }, after: {}, result: 'refused' });
+    push(ledgerLine(ts, 'release-stuck-draft', key, 'refuse-no-tag', { key }, {}, 'refused'));
     return;
   }
   if (supersededReason(key, opts.snapshot.releases)) {
-    push({
-      ts, fixer: 'release-stuck-draft', target: tag, action: 'superseded',
-      before: { tag }, after: { publishedNewer: true }, result: 'skipped',
-    });
+    push(ledgerLine(ts, 'release-stuck-draft', tag, 'superseded', { tag }, { publishedNewer: true }, 'skipped'));
     return;
   }
   const release = opts.snapshot.releases.find((item) => item.tag === tag && item.draft && item.assetCount === 0);
   if (!release || !opts.snapshot.attestShas.includes(release.sha)) {
-    push({
-      ts, fixer: 'release-stuck-draft', target: tag, action: 'refuse-attest',
-      before: { tag }, after: {}, result: 'refused',
-    });
+    push(ledgerLine(ts, 'release-stuck-draft', tag, 'refuse-attest', { tag }, {}, 'refused'));
     return;
   }
   push(fixReleaseStuckDraft(release, opts.snapshot.autorunLog, ctx));
@@ -155,14 +149,14 @@ function runLaunchd(key: string, opts: RunAutofixOptions, ctx: FixContext, push:
   const label = launchdLabelFromKey(key);
   const ts = opts.host.now().toISOString();
   if (!label) {
-    push({ ts, fixer: 'launchd-crashloop', target: key, action: 'refuse-label', before: { key }, after: {}, result: 'refused' });
+    push(ledgerLine(ts, 'launchd-crashloop', key, 'refuse-label', { key }, {}, 'refused'));
     return;
   }
   const plist = join(launchAgentsDir(opts.host), `${label}.plist`);
   const job = jobForLabel(opts.snapshot, label, opts.host.statMtime(plist), newestRollbackMtime(opts.host, label));
   const line = fixLaunchdCrashloop(job, ctx);
   if (line === null) {
-    push({ ts, fixer: 'launchd-crashloop', target: label, action: 'refuse-stale-runs', before: { label }, after: { disabled: job.disabled }, result: 'refused_stale' });
+    push(ledgerLine(ts, 'launchd-crashloop', label, 'refuse-stale-runs', { label }, { disabled: job.disabled }, 'refused_stale'));
     return;
   }
   push(line);
@@ -172,19 +166,16 @@ async function runLane(key: string, opts: RunAutofixOptions, ctx: FixContext, pu
   const lane = laneFromKey(key);
   const ts = opts.host.now().toISOString();
   if (!lane) {
-    push({ ts, fixer: 'stuck-lane', target: key, action: 'refuse-lane', before: { key }, after: {}, result: 'refused' });
+    push(ledgerLine(ts, 'stuck-lane', key, 'refuse-lane', { key }, {}, 'refused'));
     return;
   }
   const target = slotsTarget(opts.snapshot, opts.host.readText(join(opts.host.runsDir(), 'queue', 'slots.json')), lane);
   if (target === 0) {
-    push({
-      ts, fixer: 'stuck-lane', target: lane, action: 'lane-target-off',
-      before: { lane, target: 0 }, after: { restarted: false }, result: 'skipped',
-    });
+    push(ledgerLine(ts, 'stuck-lane', lane, 'lane-target-off', { lane, target: 0 }, { restarted: false }, 'skipped'));
     return;
   }
   if (target === null) {
-    push({ ts, fixer: 'stuck-lane', target: lane, action: 'refuse-slots', before: { lane }, after: {}, result: 'refused' });
+    push(ledgerLine(ts, 'stuck-lane', lane, 'refuse-slots', { lane }, {}, 'refused'));
     return;
   }
   const view: LaneView = opts.snapshot.lanes.find((item) => item.lane === lane) ?? {
@@ -196,18 +187,13 @@ async function runLane(key: string, opts: RunAutofixOptions, ctx: FixContext, pu
 function runLoad(opts: RunAutofixOptions, ctx: FixContext, push: (line: LedgerLine | LedgerLine[] | null) => void): void {
   const ts = opts.host.now().toISOString();
   if (opts.snapshot.load1 === null || opts.snapshot.ncpu === null) {
-    push({ ts, fixer: 'outside-load', target: 'load', action: 'refuse-unmeasured', before: {}, after: {}, result: 'refused' });
+    push(ledgerLine(ts, 'outside-load', 'load', 'refuse-unmeasured', {}, {}, 'refused'));
     return;
   }
   const acted = fixOutsideLoad(opts.snapshot.load1, opts.snapshot.ncpu, opts.snapshot.loadPerCpu, opts.snapshot.processes, ctx);
   if (acted.length === 0) {
-    push({ ts, fixer: 'outside-load', target: 'load', action: 'refuse-below-target', before: { load1: opts.snapshot.load1 }, after: {}, result: 'refused' });
+    push(ledgerLine(ts, 'outside-load', 'load', 'refuse-below-target', { load1: opts.snapshot.load1 }, {}, 'refused'));
     return;
   }
   push(acted);
-}
-
-export function fixerId(value: string): FixerId | null {
-  if ((FIXER_IDS as readonly string[]).includes(value) || value === 'pinned-hand-edit') return value as FixerId;
-  return null;
 }

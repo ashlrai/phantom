@@ -1,4 +1,4 @@
-import { dispatcherAdmissionHeadroom, laneLaunchTarget } from './lane-launch-target.js';
+import { dispatcherAdmissionHeadroom, laneLaunchTarget, requireFreshDispatcherTick } from './lane-launch-target.js';
 
 export interface IdleLane {
   lane: string;
@@ -17,11 +17,12 @@ function maybeCount(value: unknown): number | null {
 }
 
 /** Parse dispatcher observations without I/O. */
-export function parseIdleLanes(statusJson: string): IdleLane[] {
+export function parseIdleLanes(statusJson: string, nowMs?: number): IdleLane[] {
   const data: unknown = JSON.parse(statusJson);
   const isRecord = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null && !Array.isArray(value);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
+  if (nowMs !== undefined) requireFreshDispatcherTick(data.last_tick, nowMs);
   const paused = data.paused === true || (typeof data.paused === 'string' && data.paused.trim().length > 0);
   const admissionClosed = paused || dispatcherAdmissionHeadroom(data.admission, data.last_tick) === 0;
   const lanes: IdleLane[] = [];

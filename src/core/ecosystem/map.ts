@@ -18,10 +18,8 @@
  *     Returns '' when the map is absent. Never throws.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import type { StrategicTier } from './focus.js';
+import { readFileSync } from 'node:fs';
+import { resolveRepoDocPath, type StrategicTier } from './focus.js';
 
 export { STRATEGIC_TIER_RANK as ECOSYSTEM_TIER_RANK } from './focus.js';
 
@@ -37,52 +35,35 @@ export const ECOSYSTEM_CHANGELOG_REPOSITORIES: readonly EcosystemChangelogReposi
 ].map((name) => ({ repository: `ashlrai/${name}`, directory: name, tier: 'core-fleet' }));
 
 // ---------------------------------------------------------------------------
-// Repo-root resolution
+// Cached doc loaders (one read per process, never throws)
 // ---------------------------------------------------------------------------
 
-/**
- * Walk up from `startDir` looking for the nearest directory that contains
- * package.json. Returns that directory, or null if we reach the filesystem
- * root without finding one.
- */
-function findRepoRoot(startDir: string): string | null {
-  let dir = resolve(startDir);
-  const root = resolve('/');
-  while (dir !== root) {
-    if (existsSync(join(dir, 'package.json'))) return dir;
-    const parent = resolve(dir, '..');
-    if (parent === dir) break; // at root
-    dir = parent;
-  }
-  // check root itself
-  if (existsSync(join(root, 'package.json'))) return root;
-  return null;
+function createDocCache(filename: string): { load: () => string | null; reset: () => void } {
+  let _cache: string | null | undefined; // undefined = not-yet-loaded; null = absent
+  return {
+    load(): string | null {
+      if (_cache !== undefined) return _cache;
+      try {
+        const docPath = resolveRepoDocPath(import.meta.url, 'docs', filename);
+        if (!docPath) {
+          _cache = null;
+          return null;
+        }
+        _cache = readFileSync(docPath, 'utf8');
+        return _cache;
+      } catch {
+        _cache = null;
+        return null;
+      }
+    },
+    reset(): void {
+      _cache = undefined;
+    },
+  };
 }
 
-// __dirname equivalent in ESM
-const _thisDir = (() => {
-  try {
-    return dirname(fileURLToPath(import.meta.url));
-  } catch {
-    return process.cwd();
-  }
-})();
-
-function ecosystemMapPath(): string | null {
-  try {
-    const repoRoot = findRepoRoot(_thisDir) ?? process.cwd();
-    const candidate = join(repoRoot, 'docs', 'ECOSYSTEM-MAP.md');
-    return existsSync(candidate) ? candidate : null;
-  } catch {
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Cache
-// ---------------------------------------------------------------------------
-
-let _cache: string | null | undefined; // undefined = not-yet-loaded; null = absent
+const mapDocCache = createDocCache('ECOSYSTEM-MAP.md');
+const northStarDocCache = createDocCache('NORTH-STAR.md');
 
 /**
  * Load docs/ECOSYSTEM-MAP.md from the repo root.
@@ -90,24 +71,12 @@ let _cache: string | null | undefined; // undefined = not-yet-loaded; null = abs
  * Caches the result for the lifetime of the process. Never throws.
  */
 export function loadEcosystemMap(): string | null {
-  if (_cache !== undefined) return _cache;
-  try {
-    const mapPath = ecosystemMapPath();
-    if (!mapPath) {
-      _cache = null;
-      return null;
-    }
-    _cache = readFileSync(mapPath, 'utf8');
-    return _cache;
-  } catch {
-    _cache = null;
-    return null;
-  }
+  return mapDocCache.load();
 }
 
 /** Reset the in-process cache. Only needed in tests. */
 export function _resetEcosystemMapCache(): void {
-  _cache = undefined;
+  mapDocCache.reset();
 }
 
 // ---------------------------------------------------------------------------
@@ -115,39 +84,18 @@ export function _resetEcosystemMapCache(): void {
 // token-bounded summary of the 3 pillars + grand directives for prompt injection.
 // ---------------------------------------------------------------------------
 
-let _northStarCache: string | null | undefined; // undefined=unloaded; null=absent
-
-function northStarDocPath(): string | null {
-  try {
-    const repoRoot = findRepoRoot(_thisDir) ?? process.cwd();
-    const candidate = join(repoRoot, 'docs', 'NORTH-STAR.md');
-    return existsSync(candidate) ? candidate : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Load docs/NORTH-STAR.md from the repo root.
  * Returns the file contents as a string, or null if absent/unreadable.
  * Caches the result for the lifetime of the process. Never throws.
  */
 export function loadNorthStarDoc(): string | null {
-  if (_northStarCache !== undefined) return _northStarCache;
-  try {
-    const p = northStarDocPath();
-    if (!p) { _northStarCache = null; return null; }
-    _northStarCache = readFileSync(p, 'utf8');
-    return _northStarCache;
-  } catch {
-    _northStarCache = null;
-    return null;
-  }
+  return northStarDocCache.load();
 }
 
 /** Reset the north-star cache. Only needed in tests. */
 export function _resetNorthStarDocCache(): void {
-  _northStarCache = undefined;
+  northStarDocCache.reset();
 }
 
 /**
@@ -260,13 +208,9 @@ export function ecosystemSummary(maxChars: number = DEFAULT_MAX_CHARS): string {
         compositionLines.push(line);
         continue;
       }
-      if (/^##\s/.test(trimmed) && inCompositionSection) {
-        // New top-level section after composition bets — stop collecting
-        inCompositionSection = false;
-        continue;
-      }
       if (/^##\s/.test(trimmed)) {
         inReposSection = false;
+        inCompositionSection = false;
         continue;
       }
 

@@ -33,7 +33,7 @@ export async function readFleetVerdict(opts: FleetVerdictOptions = {}): Promise<
   const [leader, login, status] = await Promise.all([
     readFleetLeaderHealth({ readEvents: reader, now: opts.now }), readLoginHealth(reader),
     (async (): Promise<unknown> => {
-      try { return JSON.parse(await reader(join(homedir(), '.ashlr-runs', 'queue', 'status.json'))); }
+      try { return JSON.parse(await reader(join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'status.json'))); }
       catch { return null; }
     })(),
   ]);

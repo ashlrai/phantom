@@ -1,6 +1,6 @@
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 import { groupAddressTopicOf, isGroupPresenceBody } from './bus-group.js';
-import { agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
+import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
 
 export interface FleetEdgeEndpoint { address: string; provider: string | null }
 export interface FleetEdge { from: FleetEdgeEndpoint; to: FleetEdgeEndpoint; messages: number; messagesLastHour: number; lastAt: number }
@@ -148,6 +148,66 @@ function fleetEdgeAddressFilter(options: FleetEdgesOptions): FleetEdgeAddressFil
     ...(options.from === undefined ? {} : { from: agentRefAddressMatcher(options.from, registry) }),
     ...(options.to === undefined ? {} : { to: agentRefAddressMatcher(options.to, registry) }),
   };
+}
+
+/** The query keys the edges link read accepts — the same five filters the
+ * `phm fleet edges` flags and the `fleet_agent_edges` MCP arguments carry. */
+export const FLEET_EDGES_QUERY_PARAMS = ['windowMinutes', 'from', 'to', 'channel', 'topic'] as const;
+
+/** String-valued query input — one entry per `FLEET_EDGES_QUERY_PARAMS` key. */
+export interface FleetEdgesQueryInput {
+  windowMinutes?: string;
+  from?: string;
+  to?: string;
+  channel?: string;
+  topic?: string;
+}
+
+export type FleetEdgesQuery =
+  | { ok: true; options: FleetEdgesOptions }
+  | { ok: false; error: string };
+
+/** Printable ASCII routing labels, the same bound the edges CLIs' --from/--to enforce. */
+const EDGE_QUERY_LABEL = /^[\x21-\x7e]{1,128}(?![\s\S])/;
+
+/**
+ * Validate one edges query into the `FleetEdgesOptions` the read applies —
+ * the same value rules `phm fleet edges` enforces on its flags and
+ * `fleet_agent_edges` re-validates on every call: `windowMinutes` is a whole
+ * number of minutes inside the projection's own 1..1440 bound, `from` and
+ * `to` stay printable routing labels, and `channel`/`topic` take the strict
+ * channel-name grammar every other bus read's room filters enforce. A
+ * malformed value is a usage error, never a silently empty edge list.
+ */
+export function parseFleetEdgesQuery(input: FleetEdgesQueryInput): FleetEdgesQuery {
+  const options: FleetEdgesOptions = {};
+  if (input.windowMinutes !== undefined) {
+    if (!/^[0-9]+$/.test(input.windowMinutes)) {
+      return { ok: false, error: 'windowMinutes takes an integer from 1 to 1440.' };
+    }
+    const minutes = Number(input.windowMinutes);
+    if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440) {
+      return { ok: false, error: 'windowMinutes takes an integer from 1 to 1440.' };
+    }
+    options.windowMinutes = minutes;
+  }
+  for (const key of ['from', 'to'] as const) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (!EDGE_QUERY_LABEL.test(value)) {
+      return { ok: false, error: `${key} takes a printable routing label of 1-128 characters.` };
+    }
+    options[key] = value;
+  }
+  for (const key of ['channel', 'topic'] as const) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (!agentChannelNameSchema.safeParse(value).success) {
+      return { ok: false, error: `${key} takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).` };
+    }
+    options[key] = value;
+  }
+  return { ok: true, options };
 }
 
 export function readFleetEdges(options: FleetEdgesOptions = {}): FleetEdges {

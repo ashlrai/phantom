@@ -125,4 +125,44 @@ describe('fleet parked queue', () => {
       expect(result.skipsLast24h).toBe(1);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
+  it('counts each parked job once at its first parked row', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fleet-queue-'));
+    try {
+      await mkdir(join(dir, 'queue'));
+      await writeFile(join(dir, 'queue/ready.tsv'), [
+        'PARKED-DEP.devin\tJOB-DUP\tdevin\twork\tphantom\tprompt.md',
+        'PARKED-DEP.devin\tJOB-DUP\tdevin\twork\tphantom\tprompt.md',
+        'PARKED-HOLD.devin\tJOB-DUP\tdevin\twork\tphantom\tprompt.md',
+        'JOB-LC\tphantom\tPARKED-DEP.devin\twork\tprompt.md',
+        'READY\tJOB-READY\tdevin\tmid\tphantom',
+      ].join('\n'));
+      const result = await readFleetQueue({ runsDir: dir, now: () => now });
+      expect(result.ready).toBe(1);
+      expect(result.parked).toBe(2);
+      expect(result.total).toBe(3);
+      expect(result.byLane).toEqual([
+        { lane: 'devin', ready: 1, parked: 2, phantom: 1, other: 0, otherRepos: [] },
+      ]);
+      expect(result.groups).toEqual([
+        { reason: 'DEP', lane: 'devin', count: 2, jobs: ['JOB-DUP', 'JOB-LC'] },
+      ]);
+      expect(result.health?.counts.parked).toBe(2);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  it('honors ASHLR_RUNS_DIR when no runsDir is passed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fleet-queue-env-'));
+    const previous = process.env.ASHLR_RUNS_DIR;
+    try {
+      await mkdir(join(dir, 'queue'));
+      await writeFile(join(dir, 'queue/ready.tsv'), ['status\tid\tlane', 'PARKED-BYHAND.codex-local\tJOB-ENV\tcodex-local'].join('\n'));
+      await writeFile(join(dir, 'queue/precheck-skips.tsv'), '');
+      process.env.ASHLR_RUNS_DIR = dir;
+      const result = await readFleetQueue({ now: () => now });
+      expect(result.sources.ready).toBe('healthy');
+      expect(result.groups).toEqual([{ reason: 'BYHAND', lane: 'codex-local', count: 1, jobs: ['JOB-ENV'] }]);
+    } finally {
+      if (previous === undefined) delete process.env.ASHLR_RUNS_DIR; else process.env.ASHLR_RUNS_DIR = previous;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -10,6 +10,9 @@ import {
   ROLLOVER_CANONICAL_EPOCH_BOUNDS,
   canonicalEpochBytes,
   canonicalEpochClone,
+  canonicalEpochDomainBytes,
+  canonicalEpochJson,
+  canonicalEpochJsonDigest,
   decodeEpochBase64url,
   deepFreezeEpochValue,
   epochPlainRecord,
@@ -17,6 +20,9 @@ import {
   exactDenseEpochArray,
   exactEpochBytes,
   exactEpochKeys,
+  exactOwnDataKeys,
+  immutablePlainDataSnapshot,
+  isPlainDataGraph,
   isPrivateEpochDirectory,
   isPrivateEpochFile,
   isValidEpoch,
@@ -25,6 +31,8 @@ import {
   isValidPrefixedEpochDigest,
   isValidRawEpochDigest,
   matchesEpochAuthority,
+  nonProxyPlainRecord,
+  ownDataPropertyValue,
   rawEpochDigest,
   sameEpochDigest,
   sameEpochFileIdentity,
@@ -63,6 +71,7 @@ describe('agent-os-epoch-shared helpers', () => {
     expect(epochPlainRecord({ [Symbol('k')]: 1 })).toBeNull();
 
     expect(exactEpochKeys({ b: 2, a: 1 }, ['a', 'b'])).toBe(true);
+    expect(exactEpochKeys({ b: 2, a: 1 }, new Set(['a', 'b']))).toBe(true);
     expect(exactEpochKeys({ a: 1 }, ['a', 'b'])).toBe(false);
     expect(exactEpochKeys({ a: 1, b: 2, c: 3 }, ['a', 'b'])).toBe(false);
 
@@ -179,6 +188,60 @@ describe('agent-os-epoch-shared helpers', () => {
     expect(isValidAgentOsMonotonicAnchorCasResultV1({ state: 'indeterminate' })).toBe(true);
     expect(isValidAgentOsMonotonicAnchorCasResultV1({ state: 'advanced', canonicalHeadBytes: null })).toBe(false);
     expect(isValidAgentOsMonotonicAnchorCasResultV1({ state: 'unknown' })).toBe(false);
+  });
+
+  it('validates non-proxy plain records, own data keys/values, plain data graphs, and canonical JSON digests', () => {
+    const proxied = new Proxy({ a: 1 }, {});
+    const nullProto = Object.assign(Object.create(null), { a: 1 });
+    expect(nonProxyPlainRecord({ a: 1 })).toEqual({ a: 1 });
+    expect(nonProxyPlainRecord(nullProto)).toBe(nullProto);
+    expect(nonProxyPlainRecord(proxied)).toBeNull();
+    expect(nonProxyPlainRecord([])).toBeNull();
+    expect(nonProxyPlainRecord(new Date())).toBeNull();
+
+    expect(exactOwnDataKeys({ b: 2, a: 1 }, ['a', 'b'])).toBe(true);
+    expect(exactOwnDataKeys({ a: 1, [Symbol('s')]: 2 }, ['a'])).toBe(false);
+    expect(exactOwnDataKeys({ get a() { return 1; } }, ['a'])).toBe(false);
+
+    let getterCalls = 0;
+    const withGetter = Object.defineProperty({ ok: 42 }, 'trap', {
+      enumerable: true,
+      get: () => { getterCalls += 1; return 'boom'; },
+    });
+    const inherited = Object.create({ parent: 'nope' }) as Record<string, unknown>;
+    expect(ownDataPropertyValue(withGetter, 'ok')).toBe(42);
+    expect(ownDataPropertyValue(withGetter, 'trap')).toBeUndefined();
+    expect(getterCalls).toBe(0);
+    expect(ownDataPropertyValue(inherited, 'parent')).toBeUndefined();
+    expect(ownDataPropertyValue(proxied, 'a')).toBeUndefined();
+    expect(ownDataPropertyValue(null, 'a')).toBeUndefined();
+
+    const source = { nested: { list: [1, 2], flag: true } };
+    const frozen = immutablePlainDataSnapshot(source);
+    expect(frozen).toEqual(source);
+    expect(Object.isFrozen(frozen)).toBe(true);
+    expect(Object.isFrozen(frozen?.nested)).toBe(true);
+    source.nested.list.push(99);
+    expect(frozen?.nested.list).toEqual([1, 2]);
+
+    expect(isPlainDataGraph({ ok: 1.5 })).toBe(false);
+    expect(isPlainDataGraph(proxied)).toBe(false);
+    expect(immutablePlainDataSnapshot(proxied, { rejectProxy: false })).toBeNull();
+    expect(isPlainDataGraph(withGetter)).toBe(false);
+    expect(isPlainDataGraph({ [Symbol('k')]: 1 })).toBe(false);
+    expect(isPlainDataGraph({ list: [1] }, { allowArrays: false })).toBe(false);
+    expect(isPlainDataGraph({ list: [1, 2, 3] }, { maxArrayLength: 2 })).toBe(false);
+    expect(isPlainDataGraph({ a: { b: { c: 1 } } }, { maxDepth: 1 })).toBe(false);
+    const shared = { x: 1 };
+    expect(isPlainDataGraph({ left: shared, right: shared })).toBe(false);
+    expect(immutablePlainDataSnapshot(withGetter)).toBeNull();
+
+    const json = canonicalEpochJson({ z: 1, a: [{ d: true, c: null }] });
+    expect(json).toBe('{"a":[{"c":null,"d":true}],"z":1}');
+    expect(canonicalEpochDomainBytes('dom\0', { b: 2, a: 1 }).toString('utf8')).toBe('dom\0{"a":1,"b":2}');
+    expect(canonicalEpochJsonDigest('dom\0', { b: 2, a: 1 })).toBe(
+      rawEpochDigest('dom\0', Buffer.from('{"a":1,"b":2}', 'utf8')),
+    );
   });
 
   it('keeps agent-os-epoch-shared pure with zero filesystem or network imports', () => {

@@ -6,9 +6,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { isDispatchdBinary, isSandboxProfileName, sha256Hex } from './fixers.js';
+import { launchdRunsLedgerPath, parseJsonlRecords } from './guard.js';
 import { launchAgentsDir, newestRollbackMtime } from './launchd.js';
 import {
-  LOAD_PER_CPU, PINNED_NAMES, RESIDENT_LABEL, SHA_RE,
+  LAUNCHD_LABEL_RE, LOAD_PER_CPU, PINNED_NAMES, SHA_RE, defaultLaunchdJob, isAutofixRecord,
   type AutofixHost, type AutofixSnapshot, type LaunchdJob, type Proc, type ReleaseDraft, type RunsSample,
 } from './types.js';
 
@@ -42,9 +43,8 @@ function parseReleases(text: string): ReleaseDraft[] {
   try { parsed = JSON.parse(text); } catch { return []; }
   if (!Array.isArray(parsed)) return [];
   const drafts: ReleaseDraft[] = [];
-  for (const row of parsed) {
-    if (!row || typeof row !== 'object') continue;
-    const release = row as Record<string, unknown>;
+  for (const release of parsed) {
+    if (!isAutofixRecord(release)) continue;
     const tag = release.tag_name;
     const sha = release.target_commitish;
     const created = typeof release.created_at === 'string' ? Date.parse(release.created_at) : Number.NaN;
@@ -58,12 +58,11 @@ function parseReleases(text: string): ReleaseDraft[] {
 function parseAttestShas(text: string): string[] {
   let parsed: unknown;
   try { parsed = JSON.parse(text); } catch { return []; }
-  const runs = parsed && typeof parsed === 'object' ? (parsed as { workflow_runs?: unknown }).workflow_runs : null;
+  const runs = isAutofixRecord(parsed) ? parsed.workflow_runs : null;
   if (!Array.isArray(runs)) return [];
   const shas: string[] = [];
-  for (const row of runs) {
-    if (!row || typeof row !== 'object') continue;
-    const run = row as Record<string, unknown>;
+  for (const run of runs) {
+    if (!isAutofixRecord(run)) continue;
     if (run.conclusion === 'success' && typeof run.head_sha === 'string' && SHA_RE.test(run.head_sha)) shas.push(run.head_sha);
   }
   return shas;
@@ -74,7 +73,7 @@ function parseLaunchctlList(text: string): string[] {
   for (const line of text.split('\n')) {
     const fields = line.trim().split(/\s+/);
     const label = fields[fields.length - 1];
-    if (!label || label === 'Label' || !/^[A-Za-z0-9][A-Za-z0-9._-]+$/.test(label)) continue;
+    if (!label || label === 'Label' || !LAUNCHD_LABEL_RE.test(label)) continue;
     labels.push(label);
   }
   return labels;
@@ -83,44 +82,41 @@ function parseLaunchctlList(text: string): string[] {
 function collectLaunchd(host: AutofixHost): LaunchdJob[] {
   const listed = execText(host, ['launchctl', 'list']);
   if (listed === null) return [];
-  const journal = readJournal(host.readText(join(host.runsDir(), 'ledger', 'launchd-runs.jsonl')));
+  const journal = readJournal(host.readText(launchdRunsLedgerPath(host.runsDir())));
   const dir = launchAgentsDir(host);
   const names = host.listDir(dir);
   const jobs: LaunchdJob[] = [];
   for (const label of parseLaunchctlList(listed)) {
     if (!label.startsWith('ai.ashlr.') && !label.startsWith('com.ashlr.')) continue;
-    jobs.push({
+    jobs.push(defaultLaunchdJob(
       label,
-      domain: 'gui',
-      disabled: false,
-      samples: journal.get(label) ?? [],
-      logTail: '',
-      plistMtimeMs: host.statMtime(join(dir, `${label}.plist`)),
-      rollbackMtimeMs: newestRollbackMtime(host, label, names),
-      authorityGoverned: label === RESIDENT_LABEL,
-    });
+      host.statMtime(join(dir, `${label}.plist`)),
+      newestRollbackMtime(host, label, names),
+      journal.get(label) ?? [],
+    ));
   }
   return jobs;
 }
 
 function readJournal(text: string | null): Map<string, RunsSample[]> {
   const out = new Map<string, RunsSample[]>();
-  if (!text) return out;
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const row = JSON.parse(line) as Partial<RunsSample & { label?: string }>;
-      if (typeof row.label !== 'string' || typeof row.atMs !== 'number' || typeof row.runs !== 'number') continue;
-      const sample: RunsSample = {
+  const rows = parseJsonlRecords(text, (row): { label: string; sample: RunsSample } | null => {
+    if (!isAutofixRecord(row) || typeof row.label !== 'string'
+      || typeof row.atMs !== 'number' || typeof row.runs !== 'number') return null;
+    return {
+      label: row.label,
+      sample: {
         atMs: row.atMs,
         runs: row.runs,
         lastExitCode: typeof row.lastExitCode === 'number' ? row.lastExitCode : null,
         pid: typeof row.pid === 'number' ? row.pid : null,
-      };
-      const list = out.get(row.label) ?? [];
-      list.push(sample);
-      out.set(row.label, list);
-    } catch { /* skip */ }
+      },
+    };
+  });
+  for (const { label, sample } of rows) {
+    const list = out.get(label) ?? [];
+    list.push(sample);
+    out.set(label, list);
   }
   return out;
 }

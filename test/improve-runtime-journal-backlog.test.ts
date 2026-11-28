@@ -55,6 +55,7 @@ function dispatchRow(spec: {
   skipReason?: string | null;
   hold?: { kind: 'park' | 'split'; reason?: string; nextEligibleAt?: string | null } | null;
   seat?: Record<string, unknown>[] | null;
+  autoModel?: unknown;
   extra?: Record<string, unknown>;
 }): string {
   const repo = spec.repo === undefined ? 'ashlrai/phantom' : spec.repo;
@@ -78,8 +79,35 @@ function dispatchRow(spec: {
     spentUsd: 0,
     seatDecision: spec.seat === undefined || spec.seat === null ? null : seatDecision(spec.seat),
     hold: spec.hold ?? null,
+    ...(spec.autoModel ? { autoModel: spec.autoModel } : {}),
     ...spec.extra,
   });
+}
+
+/** A route.lane-auto.v1 receipt in the writer's shape (chooseLaneAuto's LaneAutoReceipt). */
+function autoReceipt(spec: {
+  verdict?: 'scored' | 'threshold-fallback' | 'held';
+  lane?: string;
+  tier?: string;
+  via?: string;
+  model?: string | null;
+  candidates?: { model: string; samples: number }[];
+  minimumSamples?: number;
+} = {}): Record<string, unknown> {
+  const verdict = spec.verdict ?? 'held';
+  return {
+    schema: 'route.lane-auto.v1',
+    lane: spec.lane ?? 'codex',
+    tier: spec.tier ?? 'work',
+    via: spec.via ?? 'codex.work',
+    model: spec.model === undefined ? (verdict === 'held' ? null : 'prior-default') : spec.model,
+    reason: verdict,
+    minimumSamples: spec.minimumSamples ?? 5,
+    candidates: (spec.candidates ?? []).map((c) => ({
+      model: c.model, samples: c.samples,
+      heldMergeRate: null, firstPassCiRate: null, usdPerHeldMerge: null,
+    })),
+  };
 }
 
 /** A landing row — the journal's other record kind; never dispatch evidence. */
@@ -167,6 +195,43 @@ function skipSeries(code: string, days: number, perDay: number, opts: { prefix?:
         dispatched: false,
         skipReason: code,
         backend: opts.backend === undefined ? 'claude' : opts.backend,
+      }));
+    }
+  }
+  return rows;
+}
+
+/** Recurring lane-auto verdict rows on one (lane, tier, via). Held rows park like the writer's heldAuto path but carry no seatDecision, so they never join hold cells. */
+function autoSeries(spec: {
+  verdict: 'scored' | 'threshold-fallback' | 'held';
+  lane?: string;
+  tier?: string;
+  via?: string;
+  model?: string | null;
+  candidates?: { model: string; samples: number }[];
+  days: number;
+  perDay: number;
+  prefix?: string;
+  repo?: string;
+  source?: string;
+}): string[] {
+  const rows: string[] = [];
+  let n = 0;
+  for (let d = 0; d < spec.days; d++) {
+    for (let i = 0; i < spec.perDay; i++) {
+      const held = spec.verdict === 'held';
+      rows.push(dispatchRow({
+        itemId: `${spec.prefix ?? 'RQ-A'}${n++}`,
+        atMs: NOW_MS - d * DAY - i * HOUR - HOUR,
+        repo: spec.repo,
+        source: spec.source,
+        dispatched: !held,
+        backend: 'codex',
+        hold: held ? { kind: 'park', reason: 'Lane auto has no admitted subscription or local model for this tier.', nextEligibleAt: null } : null,
+        autoModel: autoReceipt({
+          verdict: spec.verdict, lane: spec.lane, tier: spec.tier, via: spec.via,
+          model: spec.model, candidates: spec.candidates,
+        }),
       }));
     }
   }
@@ -357,6 +422,86 @@ describe('foldRuntimeJournal', () => {
     const reversed = foldRuntimeJournal([current.join('\n'), previous.join('\n')], NOW_MS, RUNTIME_JOURNAL_WINDOW_HOURS);
     expect(reversed.exclusions.get('seat-oldsigned-out')!.items.size).toBe(4);
   });
+
+  it('folds lane-auto held and fallback verdicts per (lane, tier, via); scored is context only', () => {
+    const rows = [
+      // Gated held verdicts: zero candidates on every receipt.
+      ...autoSeries({ verdict: 'held', candidates: [], days: 2, perDay: 2, prefix: 'RQ-H' }),
+      // Evaluated held verdicts: candidates existed, still no pick.
+      ...autoSeries({
+        verdict: 'held', lane: 'claude-cli', tier: 'fast', via: 'claude-cli.fast',
+        candidates: [{ model: 'claude-a', samples: 2 }, { model: 'claude-b', samples: 1 }],
+        days: 2, perDay: 1, prefix: 'RQ-E',
+      }),
+      // Fallback verdicts: the prior default kept serving below the bar.
+      ...autoSeries({
+        verdict: 'threshold-fallback', model: 'codex-prior',
+        candidates: [{ model: 'codex-prior', samples: 3 }, { model: 'codex-alt', samples: 4 }],
+        days: 2, perDay: 2, prefix: 'RQ-F',
+      }),
+      // Scored verdicts on the same (lane, tier, via) as the fallback cell — context only.
+      ...autoSeries({
+        verdict: 'scored', model: 'codex-prior',
+        candidates: [{ model: 'codex-prior', samples: 9 }],
+        days: 1, perDay: 2, prefix: 'RQ-S',
+      }),
+      // A different via on the same lane/tier — a separate cell identity.
+      ...autoSeries({ verdict: 'held', via: 'codex', candidates: [], days: 1, perDay: 1, prefix: 'RQ-V' }),
+    ];
+    const fold = foldRows(rows);
+    expect(fold.rows).toBe(13);
+    const held = fold.laneAutos.get('codexworkcodex.work')!;
+    expect(held.held!.items.size).toBe(4);
+    expect(held.held!.rows).toBe(4);
+    expect(held.held!.days.size).toBe(2);
+    expect(held.held!.gatedRows).toBe(4);
+    expect(held.held!.evaluatedRows).toBe(0);
+    expect(held.held!.maxSamples).toBe(0);
+    expect(held.fallback!.items.size).toBe(4);
+    expect(held.fallback!.evaluatedRows).toBe(4);
+    expect(held.fallback!.gatedRows).toBe(0);
+    expect(held.fallback!.maxSamples).toBe(4);
+    expect(held.fallback!.pickedModels.get('codex-prior')).toBe(4);
+    expect(held.scoredRows).toBe(2);
+    const claude = fold.laneAutos.get('claude-clifastclaude-cli.fast')!;
+    expect(claude.held!.items.size).toBe(2);
+    expect(claude.held!.gatedRows).toBe(0);
+    expect(claude.held!.evaluatedRows).toBe(2);
+    expect(claude.held!.maxSamples).toBe(2);
+    expect(claude.fallback).toBeNull();
+    // The bare-lane via is its own group; one row never reaches the bars but the fold still records it.
+    const bare = fold.laneAutos.get('codexworkcodex')!;
+    expect(bare.via).toBe('codex');
+    expect(bare.held!.items.size).toBe(1);
+  });
+
+  it('skips malformed autoModel receipts without guessing', () => {
+    const good = autoReceipt({ verdict: 'held', candidates: [] });
+    const malformed: unknown[] = [
+      { ...good, schema: 'route.lane-auto.v2' },
+      { ...good, lane: 'not-a-lane' },
+      { ...good, tier: 'bogus' },
+      { ...good, via: 'Bad Via!' },
+      { ...good, reason: 'maybe' },
+      { ...good, minimumSamples: 'five' },
+      { ...good, candidates: 'none' },
+      'route.lane-auto.v1',
+    ];
+    const rows: string[] = [];
+    let n = 0;
+    for (const bad of malformed) {
+      for (const [d, h] of [[0, 1], [1, 2], [2, 3]] as const) {
+        rows.push(dispatchRow({
+          itemId: `RQ-M${n++}`, atMs: NOW_MS - d * DAY - h * HOUR, dispatched: false,
+          hold: { kind: 'park', reason: 'held', nextEligibleAt: null },
+          autoModel: bad,
+        }));
+      }
+    }
+    const fold = foldRows(rows);
+    expect(fold.rows).toBe(24);
+    expect(fold.laneAutos.size).toBe(0);
+  });
 });
 
 describe('runtimeJournalCells', () => {
@@ -424,6 +569,64 @@ describe('runtimeJournalCells', () => {
     const cells = runtimeJournalCells(foldRows(rows));
     expect(cells.map((c) => c.kind)).toEqual(['seat-exclusion', 'park-hold', 'split-hold', 'skip-code']);
   });
+
+  it('emits lane-auto held and fallback cells at the bars with verdict evidence', () => {
+    const rows = [
+      ...autoSeries({ verdict: 'held', candidates: [], days: 2, perDay: 2, prefix: 'RQ-H' }),
+      ...autoSeries({
+        verdict: 'threshold-fallback', model: 'codex-prior',
+        candidates: [{ model: 'codex-prior', samples: 3 }, { model: 'codex-alt', samples: 4 }],
+        days: 2, perDay: 2, prefix: 'RQ-F',
+      }),
+      // Scored rows on the same key only raise the context count.
+      ...autoSeries({
+        verdict: 'scored', model: 'codex-prior',
+        candidates: [{ model: 'codex-prior', samples: 9 }],
+        days: 1, perDay: 3, prefix: 'RQ-S',
+      }),
+    ];
+    const cells = runtimeJournalCells(foldRows(rows));
+    expect(cells.map((c) => c.kind)).toEqual(['lane-auto-held', 'lane-auto-fallback']);
+    const held = cells[0]!;
+    if (held.kind !== 'lane-auto-held') throw new Error('unreachable');
+    expect(held.lane).toBe('codex');
+    expect(held.tier).toBe('work');
+    expect(held.via).toBe('codex.work');
+    expect(held.verdict).toBe('held');
+    expect(held.items).toBe(4);
+    expect(held.rows).toBe(4);
+    expect(held.days).toHaveLength(2);
+    expect(held.gatedRows).toBe(4);
+    expect(held.evaluatedRows).toBe(0);
+    expect(held.maxSamples).toBe(0);
+    expect(held.pickedModels).toBeNull();
+    expect(held.scoredRows).toBe(3);
+    expect(held.examples.length).toBeGreaterThan(0);
+    const fallback = cells[1]!;
+    if (fallback.kind !== 'lane-auto-fallback') throw new Error('unreachable');
+    expect(fallback.verdict).toBe('threshold-fallback');
+    expect(fallback.items).toBe(4);
+    expect(fallback.evaluatedRows).toBe(4);
+    expect(fallback.gatedRows).toBe(0);
+    expect(fallback.maxSamples).toBe(4);
+    expect(fallback.pickedModels).toEqual([{ text: 'codex-prior', count: 4 }]);
+    expect(fallback.scoredRows).toBe(3);
+  });
+
+  it('orders lane-auto cells after seat-exclusions and before holds and skips', () => {
+    const rows = [
+      ...skipSeries('zzz-skip', 2, 2, { prefix: 'RQ-K' }),
+      ...splitSeries('ashlrai/phantom', 2, 2, { prefix: 'RQ-S' }),
+      ...parkSeries('ashlrai/phantom', 2, 2, { prefix: 'RQ-P' }),
+      ...exclusionSeries('seat-z', 'other', 2, 2, { prefix: 'RQ-E' }),
+      ...autoSeries({ verdict: 'held', candidates: [], days: 2, perDay: 2, prefix: 'RQ-A' }),
+      ...autoSeries({ verdict: 'threshold-fallback', days: 2, perDay: 2, prefix: 'RQ-B' }),
+    ];
+    const cells = runtimeJournalCells(foldRows(rows));
+    expect(cells.map((c) => c.kind)).toEqual([
+      'seat-exclusion', 'lane-auto-held', 'lane-auto-fallback', 'park-hold', 'split-hold', 'skip-code',
+    ]);
+  });
 });
 
 describe('runtimeJournalBacklogItems', () => {
@@ -481,6 +684,39 @@ describe('runtimeJournalBacklogItems', () => {
     expect(park!.prompt).toContain('seatDecision');
     expect(skip!.title).toContain('repair-authority-unavailable');
     expect(skip!.prompt).toContain('skipReason');
+  });
+
+  it('emits lane-auto items with grounded prompts', async () => {
+    const rows = [
+      ...autoSeries({ verdict: 'held', candidates: [], days: 3, perDay: 1, prefix: 'RQ-H' }),
+      ...autoSeries({
+        verdict: 'threshold-fallback', model: 'codex-prior',
+        candidates: [{ model: 'codex-prior', samples: 3 }, { model: 'codex-alt', samples: 4 }],
+        days: 2, perDay: 2, prefix: 'RQ-F',
+      }),
+    ];
+    const path = await journal('runs-auto', rows);
+    const items = await runtimeJournalBacklogItems({ repo: 'ashlrai/phantom', journalPath: path, now: NOW });
+    expect(items).toHaveLength(2);
+    expect(items.map((i) => i.area)).toEqual(['runtime-lane-auto-held', 'runtime-lane-auto-fallback']);
+    const [held, fallback] = items;
+    expect(held!.title).toContain('codex/work');
+    expect(held!.title).toContain('codex.work');
+    expect(held!.prompt).toContain('autoModel');
+    expect(held!.prompt).toContain('route.lane-auto.v1');
+    expect(held!.prompt).toContain('zero candidates');
+    expect(held!.prompt).toContain('no-change');
+    expect(fallback!.title).toContain('falling back');
+    expect(fallback!.prompt).toContain('threshold-fallback');
+    expect(fallback!.prompt).toContain('codex-prior');
+    expect(fallback!.prompt).toContain('4 sample');
+    expect(fallback!.prompt).toContain('no-change');
+    for (const item of items) {
+      expect(item.id).toMatch(/^runtime-journal-[0-9a-f]{16}$/);
+      expect(item).toMatchObject({ priority: 3, repo: 'ashlrai/phantom' });
+      expect(validBacklogItem(item)).not.toBeNull();
+      expect(item.prompt).toContain('runs.jsonl');
+    }
   });
 
   it('emits nothing for missing, unreadable, foreign-repo or below-bar evidence', async () => {
@@ -568,6 +804,11 @@ describe('runtimeJournalBacklogItems', () => {
       dispatchRow({ itemId: 'RQ-J2', ts: iso(at(1)), dispatched: true, backend: 'claude', seat: [exclusion('seat-live', ['unknown-usage'])] }),
       dispatchRow({ itemId: 'RQ-J3', ts: iso(at(2)), dispatched: true, backend: 'claude', seat: [exclusion('seat-live', ['unknown-usage'])] }),
       dispatchRow({ itemId: 'RQ-J4', ts: iso(at(0, 1)), dispatched: true, backend: 'claude', seat: [exclusion('seat-live', ['unknown-usage'])] }),
+      // Lane-auto held verdicts across the same days — a second cell kind through discovery.
+      dispatchRow({ itemId: 'RQ-A1', ts: iso(at(0)), dispatched: false, backend: 'codex', hold: { kind: 'park', reason: 'held', nextEligibleAt: null }, autoModel: autoReceipt({ verdict: 'held', candidates: [] }) }),
+      dispatchRow({ itemId: 'RQ-A2', ts: iso(at(1)), dispatched: false, backend: 'codex', hold: { kind: 'park', reason: 'held', nextEligibleAt: null }, autoModel: autoReceipt({ verdict: 'held', candidates: [] }) }),
+      dispatchRow({ itemId: 'RQ-A3', ts: iso(at(2)), dispatched: false, backend: 'codex', hold: { kind: 'park', reason: 'held', nextEligibleAt: null }, autoModel: autoReceipt({ verdict: 'held', candidates: [] }) }),
+      dispatchRow({ itemId: 'RQ-A4', ts: iso(at(0, 2)), dispatched: false, backend: 'codex', hold: { kind: 'park', reason: 'held', nextEligibleAt: null }, autoModel: autoReceipt({ verdict: 'held', candidates: [] }) }),
     ].join('\n') + '\n');
     const greenGh = async (args: string[]) => {
       const p = args[4] ?? '';
@@ -576,13 +817,14 @@ describe('runtimeJournalBacklogItems', () => {
     };
     const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
     const journalItems = first.items.filter((i) => i.id.startsWith('runtime-journal-'));
-    expect(journalItems).toHaveLength(1);
-    expect(journalItems[0]!.area).toBe('runtime-seat-exclusion');
+    expect(journalItems).toHaveLength(2);
+    expect(journalItems.map((i) => i.area)).toEqual(['runtime-seat-exclusion', 'runtime-lane-auto-held']);
     expect(journalItems[0]!.title).toContain('seat-live');
+    expect(journalItems[1]!.title).toContain('codex/work');
     expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(journalItems)).toBe(1);
+    expect(appendUserBacklogItems(journalItems)).toBe(2);
     const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
     expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('runtime-journal-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('runtime-journal-'))).toHaveLength(1);
+    expect(readUserBacklogItems().filter((i) => i.id.startsWith('runtime-journal-'))).toHaveLength(2);
   });
 });

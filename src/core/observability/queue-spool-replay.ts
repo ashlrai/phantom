@@ -4,6 +4,7 @@ import { open, type FileHandle } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { fsyncDirectory } from '../util/durability.js';
+import { isObservabilityRecord, uuidV5Url } from './hop-events.js';
 
 /** The producer's decoder must select metadata only; raw spool rows never leave disk. */
 export interface QueueReplayEvent {
@@ -45,20 +46,14 @@ function digest(value: string): string {
 /** RFC 4122 UUIDv5: stable across restarts, including non-UUID producer event ids. */
 function eventUuid(id: string): string {
   if (/^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(id)) return id.toLowerCase();
-  const namespace = Buffer.from('6ba7b8119dad11d180b400c04fd430c8', 'hex');
-  const bytes = createHash('sha1').update(namespace).update(`https://phm.dev/queue.v1/${id}`).digest().subarray(0, 16);
-  bytes[6] = (bytes[6] & 0x0f) | 0x50;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  return uuidV5Url(`https://phm.dev/queue.v1/${id}`);
 }
 
 function captureEvent(event: QueueReplayEvent): string {
   if (!event || typeof event.id !== 'string' || !event.id.trim() || event.id.length > 512 ||
     typeof event.distinctId !== 'string' || !event.distinctId.trim() || event.distinctId.length > 200 ||
     typeof event.timestamp !== 'string' || !/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(event.timestamp) ||
-    !Number.isFinite(Date.parse(event.timestamp)) || !event.properties || typeof event.properties !== 'object' ||
-    Array.isArray(event.properties)) throw new Error('Invalid event');
+    !Number.isFinite(Date.parse(event.timestamp)) || !isObservabilityRecord(event.properties)) throw new Error('Invalid event');
   const entries = Object.entries(event.properties).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
   if (entries.some(([key, value]) => key.length > 200 ||
     !(value === null || typeof value === 'boolean' || typeof value === 'string' ||

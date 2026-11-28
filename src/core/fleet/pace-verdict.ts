@@ -154,6 +154,6 @@ function poolEvidence(p: PaceInput, now: number): Partial<PaceVerdict> | null {
     state: 'ahead', emptyAt: new Date(now).toISOString(), verdict: 'spent', safeBurnPerHour: 0, hoursToEmpty: 0, line: `${p.id}: spent until ${p.resetAt}`,
   };
   if (p.headroom) return { state: (p.headroom.slots ?? 0) > 0 ? 'behind' : 'unknown', verdict: p.headroom.slots === null ? 'unknown' : 'free', headroom: p.headroom, source: p.id === 'codex-local' ? 'local RAM/CPU and queue/status.json' : 'queue/status.json lane slots',
-    line: `${p.id}: free${p.id === 'codex-local' ? ': local RAM/CPU' : ''}; slot headroom is not billing eligibility; ${p.headroom.slots ?? 'unknown'} slots available${p.headroom.ramBytes === undefined ? '' : `; ${p.headroom.ramBytes} RAM bytes, ${p.headroom.cpuCores?.toFixed(1)} CPU cores available`}` };
+    line: `${p.id}: free${p.id === 'codex-local' ? ': local RAM/CPU' : ''}; slot headroom is not billing eligibility; ${p.headroom.slots ?? 'unknown'} slots available${p.headroom.ramBytes === undefined ? '' : `; ${p.headroom.ramBytes} RAM bytes`}${p.headroom.cpuCores === undefined ? '' : `, ${p.headroom.cpuCores.toFixed(1)} CPU cores available`}` };
   return null;
 }

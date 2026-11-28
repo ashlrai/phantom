@@ -15,11 +15,14 @@
  *   - Endpoint is shown as a boolean; value only printed in status (non-secret
  *     URL, shown as configured endpoint for user awareness, never the PAT).
  *   - Synthetic test span contains METADATA ONLY (zeroed tokens, no content).
- *
- * Lazy imports — degrades gracefully if M19 modules not yet built.
  */
 
 import type { AshlrConfig, TelemetryEmitResult, GovernanceStatus, GenAiSpan } from '../core/types.js';
+import {
+  isObservabilityRecord,
+  parseStrictUtcIsoMs,
+  readBoundedRegularFile,
+} from '../core/observability/hop-events.js';
 import { ansi as C, makeColors, isTty, pad } from './ui.js';
 
 const { bold, dim, green, yellow, red, cyan, gray } = makeColors(isTty());
@@ -88,61 +91,6 @@ export async function cmdRoutingObservation(json: boolean): Promise<number> {
     console.log('Use --json for timestamps, coverage and recorded outcome counts.');
   }
   return taskFit.state === 'unavailable' || feedback.state === 'unavailable' ? 1 : 0;
-}
-
-// ---------------------------------------------------------------------------
-// Lazy imports — M19 modules
-// ---------------------------------------------------------------------------
-
-type TelemetrySink  = { emit(spans: GenAiSpan[]): Promise<TelemetryEmitResult> };
-type GetSinkFn      = (cfg: AshlrConfig) => TelemetrySink;
-type PatAvailableFn = (cfg: AshlrConfig) => boolean;
-type LocalDirFn     = () => string;
-type EvalGovFn      = (cfg: AshlrConfig) => GovernanceStatus;
-
-let _getSink:      GetSinkFn      | null | undefined = undefined;
-let _patAvailable: PatAvailableFn | null | undefined = undefined;
-let _localDir:     LocalDirFn     | null | undefined = undefined;
-let _evalGov:      EvalGovFn      | null | undefined = undefined;
-
-async function loadSink(): Promise<{ getSink: GetSinkFn; patAvailable: PatAvailableFn; localTelemetryDir: LocalDirFn } | null> {
-  if (_getSink === undefined) {
-    try {
-      const mod = await import('../core/observability/telemetry-sink.js') as {
-        getSink: GetSinkFn;
-        patAvailable: PatAvailableFn;
-        localTelemetryDir: LocalDirFn;
-      };
-      _getSink      = mod.getSink;
-      _patAvailable = mod.patAvailable;
-      _localDir     = mod.localTelemetryDir;
-    } catch {
-      _getSink      = null;
-      _patAvailable = null;
-      _localDir     = null;
-    }
-  }
-  if (_getSink && _patAvailable && _localDir) {
-    return { getSink: _getSink, patAvailable: _patAvailable, localTelemetryDir: _localDir };
-  }
-  return null;
-}
-
-async function loadEvalGovernance(): Promise<EvalGovFn | null> {
-  if (_evalGov === undefined) {
-    try {
-      const mod = await import('../core/observability/governance.js') as { evalGovernance: EvalGovFn };
-      _evalGov = mod.evalGovernance;
-    } catch {
-      _evalGov = null;
-    }
-  }
-  return _evalGov ?? null;
-}
-
-async function loadConfig(): Promise<AshlrConfig> {
-  const mod = await import('../core/config.js') as { loadConfig: () => AshlrConfig };
-  return mod.loadConfig();
 }
 
 // ---------------------------------------------------------------------------
@@ -260,10 +208,16 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
 
   if (parsed.sub === 'routing') return cmdRoutingObservation(parsed.json);
 
-  // Load config
+  // Load config and M19 telemetry modules lazily on status/test paths.
+  const [{ loadConfig }, sinkMod, { evalGovernance }] = await Promise.all([
+    import('../core/config.js'),
+    import('../core/observability/telemetry-sink.js'),
+    import('../core/observability/governance.js'),
+  ]);
+
   let cfg: AshlrConfig;
   try {
-    cfg = await loadConfig();
+    cfg = loadConfig();
   } catch (err) {
     process.stderr.write(
       `${C.red}error:${C.reset} failed to load config: ` +
@@ -272,27 +226,21 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
     return 1;
   }
 
-  // Load M19 sink module (lazy — degrades if not yet built)
-  const sinkMod = await loadSink();
-  const evalGov = await loadEvalGovernance();
-
   // Derive status fields
   const endpointConfigured = Boolean(cfg.telemetry?.pulse);
-  const patAvailable: boolean = sinkMod ? sinkMod.patAvailable(cfg) : false;
+  const patAvailable = sinkMod.patAvailable(cfg);
   const sinkMode: 'otlp' | 'local' = (endpointConfigured && patAvailable) ? 'otlp' : 'local';
 
   // Local telemetry dir + file count
-  const localDir = sinkMod ? sinkMod.localTelemetryDir() : `${process.env['HOME'] ?? '~'}/.ashlr/telemetry`;
+  const localDir = sinkMod.localTelemetryDir();
   const localFileCount = await countLocalFiles(localDir);
 
   // Governance
   let governance: GovernanceStatus | null = null;
-  if (evalGov) {
-    try {
-      governance = evalGov(cfg);
-    } catch {
-      governance = null;
-    }
+  try {
+    governance = evalGovernance(cfg);
+  } catch {
+    governance = null;
   }
 
   // ── status sub-command ────────────────────────────────────────────────────
@@ -307,7 +255,7 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
         localTelemetryDir: localDir,
         localFileCount,
         governance: governance ?? null,
-        m19ModulesAvailable: sinkMod !== null,
+        m19ModulesAvailable: true,
       };
       process.stdout.write(JSON.stringify(out, null, 2) + '\n');
       return 0;
@@ -332,12 +280,6 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
     row('Local telemetry dir:', gray(localDir));
     row('Local JSONL files:', String(localFileCount));
 
-    if (!sinkMod) {
-      console.log('');
-      console.log(`  ${yellow('Note:')} ${dim('M19 telemetry-sink module not yet built (telemetry-sink.ts).')}`);
-      console.log(`  ${dim('Default: LocalFileSink (all spans written to local JSONL).')}`);
-    }
-
     // Governance summary
     if (governance) {
       console.log('');
@@ -352,9 +294,6 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
         row('Spent / cap:', `$${governance.spentUsd.toFixed(2)} / $${governance.capUsd.toFixed(2)}  (${pct}%)`);
         row('Window:', governance.window);
       }
-    } else if (evalGov === null) {
-      console.log('');
-      console.log(`  ${dim('Spend governance: M19 governance module not yet built (governance.ts).')}`);
     } else {
       console.log('');
       console.log(`  ${bold('Spend governance')}  ${dim('○ ok — no cap configured')}`);
@@ -366,19 +305,6 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
 
   // ── test sub-command ──────────────────────────────────────────────────────
   if (parsed.sub === 'test') {
-    if (!sinkMod) {
-      const msg = 'M19 telemetry-sink module not yet built; cannot emit test span.';
-      if (parsed.json) {
-        process.stdout.write(JSON.stringify({ ok: false, detail: msg }) + '\n');
-      } else {
-        console.log('');
-        console.log(`  ${yellow('warn:')} ${msg}`);
-        console.log(`  ${dim('Fallback: test span would be written to local JSONL when built.')}`);
-        console.log('');
-      }
-      return 1;
-    }
-
     let result: TelemetryEmitResult;
     try {
       const sink = sinkMod.getSink(cfg);
@@ -391,10 +317,10 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
       };
     }
 
+    // detail must never contain PAT — the contract guarantees this, but
+    // we sanitize defensively (strip anything that looks like a Bearer token)
+    const safeDetail = result.detail.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
     if (parsed.json) {
-      // detail must never contain PAT — the contract guarantees this, but
-      // we sanitize defensively (strip anything that looks like a Bearer token)
-      const safeDetail = result.detail.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
       process.stdout.write(JSON.stringify({ ...result, detail: safeDetail }, null, 2) + '\n');
       return result.ok ? 0 : 1;
     }
@@ -405,9 +331,7 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
     const statusIcon = result.ok ? green('✓') : red('✗');
     const sinkLabel  = result.sink === 'otlp' ? cyan('otlp') : dim('local');
     console.log(`  ${statusIcon} sink=${sinkLabel}  ok=${result.ok ? green('true') : red('false')}`);
-    if (result.detail) {
-      // Defensively strip any accidental Bearer value before printing
-      const safeDetail = result.detail.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
+    if (safeDetail) {
       console.log(`  ${dim(safeDetail)}`);
     }
     console.log('');
@@ -492,12 +416,11 @@ function printTelemetryHelp(): void {
 /** Captured evidence only: completeness must be asserted by the collector. */
 export function diagnoseMergeThroughput(input: unknown) {
   const invalid = () => new Error('Invalid merge snapshot; see merge-throughput --help.');
-  if (!input || typeof input !== 'object') throw invalid();
-  const data = input as Record<string, unknown>;
+  if (!isObservabilityRecord(input)) throw invalid();
+  const data = input;
   const timestamp = (value: unknown): number => {
-    if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(value)) throw invalid();
-    const time = Date.parse(value);
-    if (!Number.isFinite(time) || new Date(time).toISOString().replace('.000Z', 'Z') !== value.replace('.000Z', 'Z')) throw invalid();
+    const time = parseStrictUtcIsoMs(value);
+    if (time === null) throw invalid();
     return time;
   };
   const start = timestamp(data.start);
@@ -509,8 +432,8 @@ export function diagnoseMergeThroughput(input: unknown) {
   let unknown = 0;
   const ids = new Set<string>();
   for (const value of data.observations) {
-    if (!value || typeof value !== 'object') throw invalid();
-    const row = value as Record<string, unknown>;
+    if (!isObservabilityRecord(value)) throw invalid();
+    const row = value;
     if (typeof row.id !== 'string' || !row.id.trim() || ids.has(row.id)) throw invalid();
     ids.add(row.id);
     if (row.state === 'merged') {
@@ -562,23 +485,7 @@ export async function cmdMergeThroughput(args: string[]): Promise<number> {
     return 2;
   }
   try {
-    const { open } = await import('node:fs/promises');
-    const file = await open(path, 'r');
-    let raw: string;
-    try {
-      if (!(await file.stat()).isFile()) throw new Error('not a file');
-      const buffer = Buffer.alloc(1_048_577);
-      let length = 0;
-      while (length < buffer.length) {
-        const { bytesRead } = await file.read(buffer, length, buffer.length - length, null);
-        if (bytesRead === 0) break;
-        length += bytesRead;
-      }
-      if (length > 1_048_576) throw new Error('too large');
-      raw = buffer.subarray(0, length).toString('utf8');
-    } finally {
-      await file.close();
-    }
+    const raw = await readBoundedRegularFile(path, 1_048_576);
     const result = diagnoseMergeThroughput(JSON.parse(raw));
     if (json) console.log(JSON.stringify(result, null, 2));
     else {

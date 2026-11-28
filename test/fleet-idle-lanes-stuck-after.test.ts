@@ -1,27 +1,13 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cmdFleetIdleLanes } from '../src/cli/fleet-idle-lanes.js';
 import { DEFAULT_STUCK_AFTER_MIN } from '../src/core/fleet/idle-lane-age.js';
-import type { IdleLane } from '../src/core/fleet/idle-lanes.js';
-import type { LaneLedgerEvent } from '../src/core/fleet/lane-console.js';
 
-const dirs: string[] = [];
-afterEach(async () => {
-  vi.restoreAllMocks();
-  await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })));
-});
+afterEach(() => vi.restoreAllMocks());
 
 const NOW = Date.parse('2026-11-04T12:00:00Z');
 const ago = (min: number) => new Date(NOW - min * 60_000).toISOString();
-const ev = (pool: string | null, at: string | null): LaneLedgerEvent => ({ job: 'j', pool, at, pr: null, merge: false });
-const red = (lane: string): IdleLane => ({ lane, status: 'red', running: 0, target: 4, queued: 17 });
 
 function fixture(contents: unknown) {
-  const dir = join(tmpdir(), `idle-lanes-stuck-${Date.now()}`);
-  dirs.push(dir);
-  const path = join(dir, 'status.json');
   return vi.fn(async (p: string) => {
     if (p.endsWith('status.json')) {
       return typeof contents === 'string' ? contents : JSON.stringify(contents);
@@ -31,8 +17,6 @@ function fixture(contents: unknown) {
 }
 
 function readerWithLedger(status: unknown, ledger: string | Error) {
-  const dir = join(tmpdir(), `idle-lanes-ledger-${Date.now()}`);
-  dirs.push(dir);
   return vi.fn(async (p: string) => {
     if (p.endsWith('status.json')) {
       return typeof status === 'string' ? status : JSON.stringify(status);
@@ -44,7 +28,7 @@ function readerWithLedger(status: unknown, ledger: string | Error) {
 
 it('a red lane quiet for 20 min is not STUCK by default, but STUCK with --stuck-after 15', async () => {
   const lane = 'stuck-demo';
-  const status = JSON.stringify({ lanes: { [lane]: { running: 0, target: 4, queued: 17, held: false } } });
+  const status = JSON.stringify({ last_tick: ago(0), lanes: { [lane]: { running: 0, target: 4, queued: 17, held: false } } });
   const ledger = JSON.stringify({ pool: lane, ts: ago(20) });
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
@@ -67,7 +51,7 @@ it('a red lane quiet for 20 min is not STUCK by default, but STUCK with --stuck-
 
 it('--json --stuck-after 15 reports stuckAfterMin 15 and stuck true; --json alone reports stuckAfterMin 30', async () => {
   const lane = 'json-test';
-  const status = JSON.stringify({ lanes: { [lane]: { running: 0, target: 4, queued: 17, held: false } } });
+  const status = JSON.stringify({ last_tick: ago(0), lanes: { [lane]: { running: 0, target: 4, queued: 17, held: false } } });
   const ledger = JSON.stringify({ pool: lane, ts: ago(20) });
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
@@ -92,7 +76,7 @@ it('--json --stuck-after 15 reports stuckAfterMin 15 and stuck true; --json alon
 
 it('flag order --stuck-after 15 --json works the same way', async () => {
   const lane = 'order-test';
-  const status = JSON.stringify({ lanes: { [lane]: { running: 0, target: 4, queued: 17, held: false } } });
+  const status = JSON.stringify({ last_tick: ago(0), lanes: { [lane]: { running: 0, target: 4, queued: 17, held: false } } });
   const ledger = JSON.stringify({ pool: lane, ts: ago(20) });
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
@@ -120,6 +104,7 @@ it('exits 2 for bad --stuck-after: missing, 0, 1441, 2.5, abc, repeated, --bogus
   for (const args of bads) {
     expect(await cmdFleetIdleLanes(args, r)).toBe(2);
   }
+  expect(r).not.toHaveBeenCalled();
 });
 
 it('--help still returns 0', async () => {

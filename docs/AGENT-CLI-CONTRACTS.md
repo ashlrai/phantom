@@ -82,7 +82,10 @@ inbox` is instead the unified pending view ([docs/CHANNELS.md](CHANNELS.md#unifi
 one `[since, before)` window) and `--contains
 <text>` narrow its items while `sources` keeps
 every store's real unfiltered pending count — `null` when a source could
-not be read, never a fabricated 0.
+not be read, never a fabricated 0. `--limit <1..200>` keeps only the first N
+ranked items of the matched view — the same slice `GET
+/api/verse/comms/inbox` and `fleet_comms_inbox` apply — with `total` still
+the true matched count and `omitted` covering every unshown item.
 Read selects the newest
 matching entries, returns them oldest first, and defaults to 50 (limit 1–200).
 `source` is metadata, not identity. Duplicate receipts last only for the
