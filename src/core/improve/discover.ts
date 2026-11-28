@@ -642,6 +642,19 @@
  *     so requests dying at drop ingest — invisible to every
  *     jobs.jsonl feeder — and request PRs closing unmerged never became
  *     work;
+ *   - the drop-ingest done/ journal's recurring rejection classes: the
+ *     RQ-PHX-<id>.md.<reason> files the host ingest moves to
+ *     <runs>/leader/drop/done/ when it finishes a drop with a recorded
+ *     reason — every producer's refused drops, not just change
+ *     requests — folded per digit-normalized reason shape across
+ *     distinct job ids inside the 7-day window
+ *     (dropRejectBacklogItems below). Until now the directory's only
+ *     readers were the newest-50 drop-fate pane and `phm doctor
+ *     supply`'s 24-hour tally — point-in-time reports — so a
+ *     rejection class that kept claiming new drops (a producer
+ *     minting contract-violating jobs, a writer whose validation
+ *     drifted from the real ingest, an ingest gate misfiring on a
+ *     whole family) never became work;
  *   - the Eng Ops autofix ledgers' recurring adverse evidence: the
  *     per-action LedgerLine rows appendLedger writes to
  *     <runs>/ledger/autofix.jsonl and the per-transition
@@ -2145,6 +2158,7 @@ import { automationBacklogItems } from './automation-backlog.js';
 import { gatewayActivityBacklogItems } from './gateway-activity-backlog.js';
 import { frictionFlagBacklogItems } from './friction-flag-backlog.js';
 import { changeRequestsBacklogItems } from './change-requests-backlog.js';
+import { dropRejectBacklogItems } from './drop-reject-backlog.js';
 import { routineBacklogItems } from './routine-backlog.js';
 import { autofixBacklogItems } from './autofix-backlog.js';
 import { launchdRunsBacklogItems } from './launchd-runs-backlog.js';
@@ -3261,6 +3275,30 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the journal describes this
   // install's console and carries no repository column.
   await feed('changeRequestsBacklogItems', () => changeRequestsBacklogItems({ repo }));
+
+  // Drop-ingest done/ journal: every RQ-PHX-<id>.md.<reason> file the
+  // host ingest finished with a recorded reason — the fleet's
+  // drop-fate projection reports them all as rejected fates, and a
+  // rejected ingest never becomes a job, invisible to every
+  // jobs.jsonl feeder exactly like the change-request deaths above,
+  // but across EVERY drop producer (gap proposals, the recut loop,
+  // reissues, red-pr fixes, spawn proposals, autofill, leader drops),
+  // not just UIREQ requests. Until now the directory's only readers
+  // were the newest-50 drop-fate pane and `phm doctor supply`'s
+  // 24-hour by-reason tally — point-in-time reports — so a rejection
+  // class that kept claiming new drops never became work. Names are
+  // validated under the fleet's own done-name contract
+  // (parseDoneName), file mtimes supply the window timestamps
+  // (filesystem-recorded, stated as approximate), a reason cell emits
+  // only at the recurring bar of distinct job ids inside the 7-day
+  // window, reasons group on the precheck-skip feed's digit-normalized
+  // shape while raw labels stay quoted, a capped directory listing is
+  // stated as a lower bound, and only the fleet's own repository
+  // inherits the items since the ingest is this install's machinery —
+  // the prompts name the pinned ops boundary (orch-ingest.py) and the
+  // repo-side surfaces that own the fix (the drop-job-writer mirror
+  // contract, writeDropJob validation, the producers).
+  await feed('dropRejectBacklogItems', () => dropRejectBacklogItems({ repo }));
 
   // Scheduled-routine attempt journal: the `phm routines` scheduler's own
   // per-attempt record — runs.jsonl under the Ashlr home's routines
