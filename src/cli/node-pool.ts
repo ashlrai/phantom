@@ -36,11 +36,23 @@ function poolConfigMissing(): string {
 function flags(args: string[], values: string[], booleans: string[] = []): Map<string, string> {
   const out = new Map<string, string>();
   for (let i = 0; i < args.length; i++) {
-    const key = args[i]!;
+    // --flag=value spells the same flag as --flag value — the form the
+    // standalone fleet parser and the explicit-join pre-check already take,
+    // so first enrollment accepts it too instead of refusing the spelling.
+    const arg = args[i]!;
+    const eq = arg.indexOf('=');
+    const key = eq === -1 ? arg : arg.slice(0, eq);
+    const inline = eq === -1 ? undefined : arg.slice(eq + 1);
     if (out.has(key)) throw new PoolUsageError('Duplicate node pool flag');
-    if (key === '--json' || booleans.includes(key)) out.set(key, '');
-    else if (values.includes(key) && args[i + 1] && !args[i + 1]!.startsWith('--')) out.set(key, args[++i]!);
-    else throw new PoolUsageError('Invalid node pool flags; run phm node --help');
+    if ((key === '--json' || booleans.includes(key)) && inline === undefined) out.set(key, '');
+    else if (values.includes(key)) {
+      const value = inline ?? args[i + 1];
+      if (value === undefined || (inline === undefined && value.startsWith('--'))) {
+        throw new PoolUsageError('Invalid node pool flags; run phm node --help');
+      }
+      if (inline === undefined) i++;
+      out.set(key, value);
+    } else throw new PoolUsageError('Invalid node pool flags; run phm node --help');
   }
   return out;
 }

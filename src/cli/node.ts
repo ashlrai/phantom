@@ -61,6 +61,11 @@ function extraUsageLines(...verbs: string[]): string {
  * stdin endpoints — the commands a multi-Mac setup runs together. */
 const NODE_POOL_USAGE = `${NODE_POOL_HEADER}\n${extraUsageLines('pool', 'join', 'watch', 'worker', 'run-once', 'rpc')}`;
 
+/** True for either spelling of a pool-enrollment alias flag: `--primary x`
+ * and `--primary=x` (the pool flag parser takes both). */
+const poolJoinFlag = (a: string) =>
+  a === '--primary' || a.startsWith('--primary=') || a === '--backup' || a.startsWith('--backup=');
+
 /**
  * Help scoped to the verb the user asked about, so `phm node join --help`
  * leads with join's usage instead of the whole command list. Returns null for
@@ -75,7 +80,7 @@ async function scopedNodeHelp(
 ): Promise<string | null> {
   if (!verb || verb.startsWith('-')) return null;
   const pointer = `\n\n${NODE_HELP_POINTER}`;
-  if (verb === 'join' && (args.includes('--primary') || args.includes('--backup'))) {
+  if (verb === 'join' && args.some(poolJoinFlag)) {
     return `${NODE_POOL_USAGE}${pointer}`;
   }
   if (fleetVerb) {
@@ -132,8 +137,6 @@ export async function cmdNode(args: string[]): Promise<number> {
   // --json-only or explicit — reaches cmdNodeFleet, which delegates to the
   // pool only when a pool config exists and otherwise answers with the
   // standalone registry's own usage error.
-  const poolJoinFlag = (a: string) =>
-    a === '--primary' || a.startsWith('--primary=') || a === '--backup' || a.startsWith('--backup=');
   if (!args.includes('--help') && !args.includes('-h') &&
       (['pool', 'rpc', 'watch', 'worker', 'replica'].includes(args[0] ?? '') || (args[0] === 'join' && args.some(poolJoinFlag)))) {
     return (await import('./node-pool.js')).cmdNodePool(args[0]!, args.slice(1));
