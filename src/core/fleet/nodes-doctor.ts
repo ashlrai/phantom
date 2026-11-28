@@ -11,12 +11,16 @@
  * The shipped remote adapter is a stub: `phm node rpc` serves pool calls only,
  * so for a remote computer the doctor falls back to what that computer
  * advertised in its heartbeat and says "unknown" (with a reason) for the rest.
+ *
+ * The checked lane set is per node: the fleet's five standard lanes plus every
+ * community agent-CLI cap the node advertises (`--caps aider`, `goose`, ...),
+ * so a community node's lanes are examined instead of ignored.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, statfsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { binaryCandidates } from '../drive/nodes/provider-binary.js';
+import { binaryCandidates, COMMUNITY_CLI_CANDIDATES } from '../drive/nodes/provider-binary.js';
 import { UNKNOWN } from './runtime-identity.js';
 import { capServesLane, readNodesRegistry, readNodesView, registryDiskFree, type NodeRow, type NodesViewDeps } from './nodes-view.js';
 
@@ -30,16 +34,17 @@ export type LaneStatus = 'ready' | 'not-installed' | 'signed-out' | 'unknown';
 
 /** What a probe saw. `signedIn: 'unknown'` means the CLI has no status command Phantom can run
  * or the check itself could not complete; `reason` then says which, overriding the default
- * "no sign-in check" wording. */
+ * "no sign-in check" wording. Lane keys are open: the five standard lanes plus any
+ * community agent-CLI cap a probe covers. */
 export interface NodeProbeReply {
-  lanes: Partial<Record<DoctorLane, { installed: boolean; signedIn: boolean | Unknown; reason?: string }>>;
+  lanes: Partial<Record<string, { installed: boolean; signedIn: boolean | Unknown; reason?: string }>>;
   repos: string[];
   diskFreeBytes: number | null;
 }
 /** The node adapter. Resolve null when the computer cannot be probed; it must not throw secrets. */
 export type NodeProbe = (node: string, isSelf: boolean) => Promise<NodeProbeReply | null>;
 
-export interface LaneCheck { lane: DoctorLane; status: LaneStatus; reason?: string }
+export interface LaneCheck { lane: string; status: LaneStatus; reason?: string }
 export interface DoctorNode {
   name: string;
   isSelf: boolean;
@@ -62,7 +67,7 @@ export interface NodesDoctorDeps { view: NodesViewDeps; probe: NodeProbe }
  * identical line prints once, in first-seen order. */
 const note = (list: string[], msg: string): void => { if (!list.includes(msg)) list.push(msg); };
 
-const LOGIN: Partial<Record<DoctorLane, string>> = { claude: 'claude auth login', codex: 'codex login' };
+const LOGIN: Partial<Record<string, string>> = { claude: 'claude auth login', codex: 'codex login' };
 const BINARY: Record<DoctorLane, string[]> = { claude: ['claude'], codex: ['codex'], devin: ['devin'], gemini: ['gemini'], 'local-model': ['ollama', 'omlx', 'llama-server'] };
 const STATUS_ARGS: Partial<Record<DoctorLane, string[]>> = { claude: ['auth', 'status', '--json'], codex: ['login', 'status'] };
 const REPO_ROOT = ['Projects', 'ashlrai'];
@@ -103,6 +108,16 @@ export function localProbe(run: typeof spawnSync = spawnSync, home: string = hom
     }
     lanes[lane] = { installed: present.length > 0, signedIn, ...(reason === undefined ? {} : { reason }) };
   }
+  // Community agent-CLI caps get the same file-presence check the join pays
+  // (unverifiedCliCaps): installed means a binary at an allowlisted path, and
+  // no community CLI has a sign-in command Phantom can run, so an installed
+  // one reports signedIn 'unknown' — never guessed. devin and gemini already
+  // have standard-lane rows above and keep their --version verdicts.
+  for (const { cap, bins } of COMMUNITY_CLI_CANDIDATES) {
+    if (lanes[cap] !== undefined) continue;
+    const present = bins.flatMap(name => binaryCandidates(name, { home })).filter(path => existsSync(path));
+    lanes[cap] = { installed: present.length > 0, signedIn: present.length > 0 ? UNKNOWN : false };
+  }
   const root = join(home, ...REPO_ROOT);
   let repos: string[] = [];
   try { repos = readdirSync(root, { withFileTypes: true }).filter(e => e.isDirectory() && existsSync(join(root, e.name, '.git'))).map(e => e.name).sort(); } catch { /* none */ }
@@ -116,7 +131,23 @@ export const defaultNodeProbe: NodeProbe = async (_node, isSelf) => (isSelf ? lo
 
 const gb = (bytes: number) => Math.round(bytes / 1e8) / 10;
 
-function laneStatus(lane: DoctorLane, probe: NodeProbeReply | null, caps: string[] | Unknown): LaneCheck {
+/** Agent-CLI caps beyond the five standard lanes: the community harnesses a
+ * node may advertise through --caps (COMMUNITY_CLI_CANDIDATES in
+ * provider-binary.ts). A cap that is also a standard lane (devin, gemini) is
+ * not repeated. */
+const COMMUNITY_LANE_CAPS: ReadonlySet<string> = new Set(COMMUNITY_CLI_CANDIDATES.map(c => c.cap));
+
+/** The lane checks one node gets: the fleet's five standard lanes plus every
+ * community agent-CLI cap it advertises, so a node serving aider or goose is
+ * checked for that lane instead of the cap going unexamined. caps UNKNOWN
+ * means no advertisement is visible, so only the standard lanes apply. */
+function doctorLanesFor(row: NodeRow): string[] {
+  const extra = row.lanes === UNKNOWN ? []
+    : row.lanes.filter(cap => COMMUNITY_LANE_CAPS.has(cap) && !(DOCTOR_LANES as readonly string[]).includes(cap));
+  return [...DOCTOR_LANES, ...extra.sort()];
+}
+
+function laneStatus(lane: string, probe: NodeProbeReply | null, caps: string[] | Unknown): LaneCheck {
   const seen = probe?.lanes[lane];
   if (seen) {
     if (!seen.installed) return { lane, status: 'not-installed' };
@@ -153,7 +184,7 @@ export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Pro
     // No live Phantom session means the computer cannot take jobs whatever its
     // lanes advertise; `state` already names the rejoin command when one exists.
     if (row.stateCode === 'not-running') note(gaps, `${row.name}: ${row.state}`);
-    const lanes = DOCTOR_LANES.map(lane => laneStatus(lane, probe, row.reachable === false ? UNKNOWN : row.lanes));
+    const lanes = doctorLanesFor(row).map(lane => laneStatus(lane, probe, row.reachable === false ? UNKNOWN : row.lanes));
     for (const c of lanes) {
       const login = LOGIN[c.lane];
       if (row.reachable === false) c.reason = 'computer is offline';
