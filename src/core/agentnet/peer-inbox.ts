@@ -10,7 +10,7 @@
  * advances over every scanned row, so a filtered read is a view of the page,
  * not a subscription — an unfiltered poll sees everything.
  */
-import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
+import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
 import { busBodyKind, busBodyResultOutcome, busBodyThread,
   WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../agents/bus-v2-schema.js';
 import { BUS_PRIORITIES, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
@@ -49,6 +49,9 @@ export interface PeerInboxFilterInput {
   thread?: string;
   job?: string;
   result?: string;
+  /** The cited envelope id a reply body answers — `peer-<uuid>` on the
+   * peer mesh, the same printable-label bound `id` takes. */
+  inReplyTo?: string;
 }
 
 export interface PeerInboxFilters {
@@ -72,6 +75,10 @@ export interface PeerInboxFilters {
   thread?: string;
   job?: string;
   result?: WorkResultOutcome;
+  /** Keep only bodies whose own `inReplyTo` strictly cites this envelope id —
+   * the shared `busBodyInReplyToMatch` own-property exact match every other
+   * bus read's `--in-reply-to` applies. */
+  inReplyTo?: string;
 }
 
 export type PeerInboxQuery = { ok: true; filters: PeerInboxFilters } | { ok: false };
@@ -87,7 +94,7 @@ function label(value: string | undefined): string | null | undefined {
 /** Shared validation for the CLI flags; `now` anchors the relative time grammar once per read. */
 export function parsePeerInboxFilters(input: PeerInboxFilterInput, now = Date.now()): PeerInboxQuery {
   const filters: PeerInboxFilters = {};
-  for (const key of ['from', 'excludeFrom', 'to', 'id', 'kind', 'thread', 'job'] as const) {
+  for (const key of ['from', 'excludeFrom', 'to', 'id', 'kind', 'thread', 'job', 'inReplyTo'] as const) {
     const value = label(input[key]);
     if (value === null) return { ok: false };
     if (value !== undefined) filters[key] = value;
@@ -175,8 +182,12 @@ function peerMessageKind(body: unknown): string | null {
  * applies; `since`/`before` compose one `[since, before)` window on
  * `receivedAt`;
  * `contains` matches the shared scrubbed body summary; `kind`, `job`,
- * `result` and the reply/thread citations read the same body fields every
- * other bus read's filters do.
+ * `result`, `inReplyTo` and the thread citation read the same body fields
+ * every other bus read's filters do — `inReplyTo` through the shared
+ * `busBodyInReplyToMatch` own-property exact match, so "who answered
+ * envelope X" means the same thing on the peer page as on every local
+ * bus read (and, since replies now stamp the citation on the bus body,
+ * on those reads too).
  */
 export function peerInboxMessageMatches(message: PeerInboxMessage, filters: PeerInboxFilters): boolean {
   const { envelope } = message;
@@ -194,5 +205,6 @@ export function peerInboxMessageMatches(message: PeerInboxMessage, filters: Peer
   if (filters.thread !== undefined && peerBodyThread(body) !== filters.thread) return false;
   if (filters.job !== undefined && !busBodyJobMatch(body, filters.job)) return false;
   if (filters.result !== undefined && busBodyResultOutcome(body) !== filters.result) return false;
+  if (filters.inReplyTo !== undefined && !busBodyInReplyToMatch(body, filters.inReplyTo)) return false;
   return true;
 }

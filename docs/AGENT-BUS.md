@@ -3057,8 +3057,12 @@ callsign/topic labels (never registry-resolved), `--since`/`--before` on the
 receipt stamp, `--contains` on the scrubbed body summary, `--id`, `--kind`
 (the `busBodyKind` discriminator), `--peer-kind` (the inner kind of a
 `peer.message` body), `--thread` (a `peer.message` payload's `threadId` or a
-note/context body's `thread`), `--job` (the shared job-citation rule) and
-`--result` (the `work.result` outcome) — applied to the admitted page only:
+note/context body's `thread`), `--job` (the shared job-citation rule),
+`--result` (the `work.result` outcome) and `--in-reply-to` (the shared
+own-property `inReplyTo` citation match — a `peer.message` reply stamps the
+cited parent id on its bus body at send time, so "who answered envelope X"
+reads the same on the peer page as on every local bus read) — applied to
+the admitted page only:
 they narrow what the caller sees and never admit an envelope the ledger or
 journal refused, and `nextCursor` still advances over every scanned row, so a
 filtered read is a view of the page rather than a subscription. Uncertain reservations remain visible

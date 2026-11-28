@@ -35,11 +35,13 @@ describe('parsePeerInboxFilters', () => {
   it('resolves every filter and anchors relative times once', () => {
     const query = parsePeerInboxFilters({ from: 'agent0', excludeFrom: 'agent2', to: 'mesh',
       since: '15m', before: '2h', contains: '  Deploy   THE fix ', id: 'peer-x', kind: 'peer.message',
-      peerKind: 'task', thread: 'sprint-7', job: 'RQ-1', result: 'complete' }, 10_000_000);
+      peerKind: 'task', thread: 'sprint-7', job: 'RQ-1', result: 'complete',
+      inReplyTo: 'peer-00000000-0000-0000-0000-0000000000aa' }, 10_000_000);
     expect(query).toEqual({ ok: true, filters: {
       from: 'agent0', excludeFrom: 'agent2', to: 'mesh', since: 9_100_000, before: 2_800_000,
       contains: 'deploy the fix', id: 'peer-x', kind: 'peer.message', peerKind: 'task',
-      thread: 'sprint-7', job: 'RQ-1', result: 'complete' } });
+      thread: 'sprint-7', job: 'RQ-1', result: 'complete',
+      inReplyTo: 'peer-00000000-0000-0000-0000-0000000000aa' } });
     expect(parsePeerInboxFilters({}, 0)).toEqual({ ok: true, filters: {} });
   });
   it('resolves --priority and --body-kind, and refuses a kind conflict', () => {
@@ -56,6 +58,7 @@ describe('parsePeerInboxFilters', () => {
     [{ from: 'has space' }], [{ to: 'tab\there' }], [{ id: '' }], [{ kind: 'a'.repeat(129) }],
     [{ bodyKind: 'two words' }], [{ priority: 'P4' }], [{ priority: 'p2' }], [{ priority: '' }],
     [{ thread: 'two words' }], [{ job: 'x'.repeat(129) }], [{ peerKind: 'dm' }], [{ result: 'merged' }],
+    [{ inReplyTo: 'has space' }], [{ inReplyTo: '' }], [{ inReplyTo: 'x'.repeat(129) }],
     [{ since: 'soon' }], [{ before: '1x' }], [{ contains: '' }], [{ contains: 'x'.repeat(513) }],
   ])('refuses malformed input %j', input => {
     expect(parsePeerInboxFilters(input)).toEqual({ ok: false });
@@ -71,6 +74,12 @@ describe('peerInboxMessageMatches', () => {
     outcome: 'complete' });
   const note = message({ kind: 'note', text: 'hello', thread: 'job:RQ-9' });
   const urgent = message(peerBody('task', 'Page the owner'), { priority: 'P0' });
+  // A peer reply stamps the bus-wide citation on the body beside the peer
+  // payload — the same own-property `inReplyTo` every other bus reply path
+  // writes, never the `replyTo` alias.
+  const cited = 'peer-00000000-0000-0000-0000-0000000000aa';
+  const reply = message({ ...peerBody('review', 'Done'), inReplyTo: cited });
+  const aliased = message({ ...peerBody('review', 'Done'), replyTo: cited });
   it('matches every filter against the admitted row fields', () => {
     expect(peerInboxMessageMatches(task, {})).toBe(true);
     expect(peerInboxMessageMatches(task, filters({ from: 'agent0' }))).toBe(true);
@@ -101,6 +110,14 @@ describe('peerInboxMessageMatches', () => {
     expect(peerInboxMessageMatches(task, filters({ result: 'complete' }))).toBe(false);
     expect(peerInboxMessageMatches(note, filters({ thread: 'job:RQ-9' }))).toBe(true);
     expect(peerInboxMessageMatches(note, filters({ kind: 'note' }))).toBe(true);
+    expect(peerInboxMessageMatches(reply, filters({ inReplyTo: cited }))).toBe(true);
+    expect(peerInboxMessageMatches(reply, filters({ inReplyTo: task.envelope.id }))).toBe(false);
+    expect(peerInboxMessageMatches(task, filters({ inReplyTo: cited }))).toBe(false);
+    expect(peerInboxMessageMatches(task, filters({ inReplyTo: task.envelope.id }))).toBe(false);
+    // The shared rule is an own-property exact match: the replyTo alias, a
+    // substring and a non-object body never count as the citation.
+    expect(peerInboxMessageMatches(aliased, filters({ inReplyTo: cited }))).toBe(false);
+    expect(peerInboxMessageMatches(reply, filters({ inReplyTo: cited.slice(0, -1) }))).toBe(false);
     expect(peerInboxMessageMatches(task, filters({ bodyKind: 'peer.message' }))).toBe(true);
     expect(peerInboxMessageMatches(task, filters({ bodyKind: 'work.post' }))).toBe(false);
     expect(peerInboxMessageMatches(task, filters({ priority: 'P2' }))).toBe(true);
@@ -193,6 +210,14 @@ describe('phm agentnet peers read filters', () => {
     expect((await read(1, ['--priority', 'P2', '--peer-kind', 'task'])).messages.map(m => m.envelope.id)).toEqual([task.id]);
     expect((await read(1, ['--thread', 'sprint-7'])).messages.map(m => m.envelope.id)).toEqual([task.id]);
     expect((await read(0, ['--thread', 'sprint-7'])).messages.map(m => m.envelope.id)).toEqual([review.id]);
+    // The reply's send-time replyTo is stamped on the bus body as the shared
+    // inReplyTo citation, so "who answered task" is one filtered read — the
+    // same own-property exact match every other bus read's --in-reply-to
+    // applies, and only the citing reply matches.
+    expect((await read(0, ['--in-reply-to', task.id!])).messages.map(m => m.envelope.id)).toEqual([review.id]);
+    expect((await read(0, ['--in-reply-to', review.id!])).messages).toEqual([]);
+    expect((await read(0, ['--in-reply-to', task.id!, '--peer-kind', 'review'])).messages.map(m => m.envelope.id)).toEqual([review.id]);
+    expect((await read(0, ['--in-reply-to', task.id!, '--peer-kind', 'task'])).messages).toEqual([]);
     expect((await read(1, ['--from', 'agent0'])).messages).toHaveLength(3);
     expect((await read(1, ['--from', 'agent2'])).messages.map(m => m.envelope.id)).toEqual([query.id]);
     expect((await read(1, ['--exclude-from', 'agent0'])).messages.map(m => m.envelope.id)).toEqual([query.id]);
@@ -202,7 +227,7 @@ describe('phm agentnet peers read filters', () => {
     expect((await read(1, ['--contains', 'fix docs'])).messages.map(m => m.envelope.id)).toEqual([work.id]);
     expect((await read(1, ['--job', 'RQ-PEER-1'])).messages.map(m => m.envelope.id)).toEqual([work.id]);
     expect((await read(1, ['--result', 'complete'])).messages).toEqual([]);
-    expect((await read(1, ['--id', task.id])).messages.map(m => m.envelope.id)).toEqual([task.id]);
+    expect((await read(1, ['--id', task.id!])).messages.map(m => m.envelope.id)).toEqual([task.id]);
     expect((await read(1, ['--since', '1d'])).messages).toHaveLength(4);
     expect((await read(1, ['--before', '1s'])).messages).toEqual([]);
     // Filters compose and never widen admission: agent2's DM stays invisible.
@@ -226,6 +251,9 @@ describe('phm agentnet peers read filters', () => {
     expect(await cmdAgentnet(['peers', 'send', 'agent1', 'query', 'Status?', '--body-kind', 'peer.message'], options(0), session(0))).toBe(2);
     expect(await cmdAgentnet(['peers', 'work-feed', '--priority', 'P2'], options(0), session(0))).toBe(2);
     expect(await cmdAgentnet(['peers', 'work-feed', '--body-kind', 'peer.message'], options(0), session(0))).toBe(2);
+    expect(await cmdAgentnet(['peers', 'work-feed', '--in-reply-to', 'peer-x'], options(0), session(0))).toBe(2);
+    expect(await cmdAgentnet(['peers', 'send', 'agent1', 'query', 'Status?', '--in-reply-to', 'peer-x'], options(0), session(0))).toBe(2);
+    expect(await cmdAgentnet(['peers', 'read', '--in-reply-to', 'has space'], options(1), session(1))).toBe(2);
     expect(log).not.toHaveBeenCalled();
   });
 });
