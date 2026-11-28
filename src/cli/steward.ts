@@ -113,6 +113,7 @@ export async function cmdSteward(argv: string[]): Promise<number> {
   if (unknown !== undefined) { console.error(`error: unknown argument: ${unknown}\n${USAGE}`); return 2; }
   const report = runSteward(defaultStewardPolicy(), { apply: rest.includes('--apply') });
   if (rest.includes('--json')) { console.log(JSON.stringify(report, null, 2)); return 0; }
+  console.log(`measured ${report.generatedAt ?? 'at an unknown time'}`);
   for (const r of report.roots) {
     if (!r.exists) continue;
     console.log(`${r.overQuota ? '!' : ' '} ${r.id.padEnd(16)} ${mb(r.bytes).padStart(10)} / ${mb(r.quotaBytes)}  ${r.action} ${mb(r.reclaimable.bytes)} (${r.reclaimable.files} files)`);

@@ -313,7 +313,9 @@ narrow or widen it. Everything else runs without ceremony.
   choose `--install` to write and activate the job; it remains report-only unless
   `--apply` is also selected. Install as a regular user with a built CLI
   (`npm run build` for a source checkout). Output goes to
-  `~/.ashlr/logs/steward.jsonl`. Existing job files and linked config/log paths
+  `~/.ashlr/logs/steward.jsonl`; every report carries its own `generatedAt`
+  measurement stamp so journaled evidence can be windowed and aged honestly.
+  Existing job files and linked config/log paths
   are refused. Activation failures exit nonzero and print manual recovery
   commands; verify the job with `launchctl print gui/$(id -u)/ai.ashlr.phm.steward`
   or `systemctl --user status phm-steward.timer`, as appropriate.
