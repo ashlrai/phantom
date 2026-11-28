@@ -205,6 +205,36 @@ const LAUNCHER_DIGEST_INPUTS = new Set([
   'scripts/canonical-launcher-digests.mjs',
 ]);
 
+/**
+ * capabilities/generated/ is deterministic codegen output: `phm caps
+ * generate` renders every registered surface/model pair's adapter configs
+ * from capabilities/registry.v1.json through src/core/caps/ (generate,
+ * registry validation, schema, output writer, service). The committed tree
+ * is held honest by test/caps-registry.test.ts's freshness cases, which
+ * otherwise run only inside the backend suite — a diff that stales the
+ * output (a registry edit, a generator change, a hand-edited adapter) used
+ * to pass verify-changed green and fail later in CI. The same suite now
+ * runs here when a generator input or the committed output changes, so an
+ * outside agent gets the drift verdict inside the same minutes-level pass
+ * instead of a queued-suite round trip. The trigger names the registry,
+ * the whole caps module tree (dispatch.ts over-selects harmlessly), the
+ * source imports outside that tree the generator's validation reads —
+ * connectors/profile's assertMetadata, run/engine-registry's
+ * BUILTIN_ENGINE_REGISTRY and run/model-catalog's KNOWN_MODELS — and every
+ * file under capabilities/generated/ so a hand edit fails too. Deletions
+ * count: removing the registry or a generator file stales the output the
+ * same way an edit does.
+ */
+const CAPS_GENERATED_PREFIX = 'capabilities/generated/';
+const CAPS_GENERATOR_PREFIX = 'src/core/caps/';
+const CAPS_GENERATOR_INPUTS = new Set([
+  'capabilities/registry.v1.json',
+  'src/core/connectors/profile.ts',
+  'src/core/run/engine-registry.ts',
+  'src/core/run/model-catalog.ts',
+]);
+const CAPS_FRESHNESS_SUITE = 'test/caps-registry.test.ts';
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -258,6 +288,10 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     llmsIndexCheck: changed.some((path) =>
       LLMS_INDEX_INPUT.test(path) || path === LLMS_INDEX_GENERATOR || path === LLMS_INDEX_PAGE_MODEL),
     launcherDigestCheck: changed.some((path) => LAUNCHER_DIGEST_INPUTS.has(path)),
+    capsGeneratedCheck: changed.some((path) =>
+      path.startsWith(CAPS_GENERATED_PREFIX) ||
+      path.startsWith(CAPS_GENERATOR_PREFIX) ||
+      CAPS_GENERATOR_INPUTS.has(path)),
   };
 }
 
@@ -2556,6 +2590,11 @@ function main() {
     run('canonical launcher digests', 'scripts/canonical-launcher-digests.mjs', ['--check']);
   } else {
     console.log('PASS canonical launcher digests skipped: no launcher or manifest change');
+  }
+  if (selection.capsGeneratedCheck) {
+    run('caps generated freshness', 'scripts/test-ci.mjs', [CAPS_FRESHNESS_SUITE]);
+  } else {
+    console.log('PASS caps generated freshness skipped: no capability registry, generator or generated-output change');
   }
   const preflight = eslintPreflight(root);
   if (!preflight.ok) {
