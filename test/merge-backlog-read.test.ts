@@ -42,7 +42,7 @@ const ghOk = (rows: unknown[]): CloudGh => async () => ({ ok: true, stdout: JSON
 const noStates: NonNullable<MergeBacklogReadInput['states']> = () => new Map<number, FleetMergeStateRead>();
 const clock = () => new Date(NOW);
 
-function input(over: MergeBacklogReadInput = {}): MergeBacklogReadInput {
+function input(over: Partial<MergeBacklogReadInput> = {}): MergeBacklogReadInput {
   return { repo: REPO, gh: ghOk([]), states: noStates, now: clock, ...over };
 }
 
