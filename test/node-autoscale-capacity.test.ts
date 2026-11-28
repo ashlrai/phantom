@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { childrenFromRows, harnessFor, harnessSessions, type ProcessRow } from '../src/core/drive/nodes/harness-adapters.js';
 import { BUILTIN_ENGINE_REGISTRY } from '../src/core/run/engine-registry.js';
+import { APPS_CATALOG } from '../src/core/verse/apps-catalog.js';
 import { CAPACITY_POLICY, computeNodeCapacity, parseNodeCapacityDoc, type NodeSnapshot } from '../src/core/drive/nodes/capacity-model.js';
 import {
   cpuBusyPercent, measureNode, parseFootprint, parsePgrepList, parsePsRows, parseSwapTotal, parseSwapouts, type MeasureHost,
@@ -58,7 +59,23 @@ describe('harness adapters', () => {
     expect(harnessFor('ac')?.id).toBe('ashlrcode');
     expect(harnessFor('ashlrcode')?.id).toBe('ashlrcode');
     expect(harnessFor('llama-server')?.kind).toBe('local-model');
+    // Community agent CLIs a contributor node can run: measured like every
+    // other harness so `phm node capacity` and `phm node route` see them.
+    for (const id of ['aider', 'goose', 'droid', 'pi', 'cline', 'copilot']) {
+      expect(harnessFor(id)?.id, id).toBe(id);
+      expect(harnessFor(id)?.kind, id).toBe('cloud-cli');
+    }
     for (const app of ['Claude', 'Codex', 'Grok', 'Devin', 'Hermes', 'Opencode', 'Ac', 'Aw', 'node', 'Python', '2.1']) expect(harnessFor(app)).toBeNull();
+  });
+
+  it('maps every terminal-agent catalog binary so a community node measures its sessions', () => {
+    // The apps catalog is the fleet's own list of agent CLIs; a new entry
+    // without a harness row would be invisible to node capacity/route exactly
+    // like an engine bin without one.
+    for (const entry of APPS_CATALOG.filter(e => e.group === 'terminal-agents')) {
+      expect(entry.binaries.length, entry.id).toBeGreaterThan(0);
+      for (const bin of entry.binaries) expect(harnessFor(bin), `${entry.id} bin ${bin}`).not.toBeNull();
+    }
   });
 
   it('maps every builtin cli-agent binary so node capacity can measure its sessions', () => {
