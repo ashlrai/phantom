@@ -653,6 +653,16 @@ export interface DispatchRouterContext {
   laneAuto?: LaneAutoEvidence;
   scheduling?: Readonly<Record<string,import('../routing/scheduling-types.js').AccountSchedulingView>>;
   advisorySeatId?: string | null;
+  /**
+   * Fleet outcome-learning seat penalties (routing/learned-seat-evidence.ts),
+   * pooled per seat id from the jobs ledger and dispatch event log. Absent or
+   * empty = no usable evidence; the ranking is then exactly the weights alone.
+   * Keys are fleet resource names — a seat id they do not name takes no
+   * penalty, and recorded names no seat carries are simply unused.
+   */
+  learnedPenalty?: Readonly<Record<string, number>>;
+  /** One-line provenance the seat router appends to the decision's why/summary. */
+  learningNote?: string;
   nowMs: number;
   /** The standing policy in force this tick. */
   policy: Pick<EffectivePolicy, 'engines' | 'spend' | 'repos'>;
@@ -832,6 +842,8 @@ export function routeWorkItem(item: WorkItem, legacy: LegacyRoute, ctx: Dispatch
     ...(ctx.weights ? { weights: ctx.weights } : {}),
     ...(ctx.scheduling ? { scheduling: ctx.scheduling } : {}),
     ...(ctx.advisorySeatId ? { advisorySeatId: ctx.advisorySeatId } : {}),
+    ...(ctx.learnedPenalty ? { learnedPenalty: ctx.learnedPenalty } : {}),
+    ...(ctx.learningNote ? { learningNote: ctx.learningNote } : {}),
   });
   const extra: SeatExclusion[] = [];
   const kind = item.source;

@@ -170,7 +170,7 @@ function ctx(capacity: SeatCapacity[], over: Partial<DispatchRouterContext> = {}
     budget,
     capacity,
     lanes: lanes(),
-    laneEngines: { local: 'llama-server' as EngineId, 'grok-cli': 'grok-cli' as EngineId, 'claude-cli': 'claude' as EngineId, codex: 'codex' as EngineId },
+    laneEngines: { local: 'llama-server' as EngineId, 'grok-cli': 'grok-cli' as EngineId, 'claude-cli': 'claude' as EngineId, codex: 'codex' as EngineId, 'devin-cli': null },
     demotions: [],
     repoOf: (path) => (path === REPO_PATH ? REPO : null),
     tierOf: (engine) => {
@@ -401,7 +401,7 @@ describe('Codex waits for its reset', () => {
   it('keeps Codex grant roles and unavailable-engine checks authoritative', async () => {
     const input = { policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {} };
     const p = policy();
-    p.spend.seats['codex-personal'] = seat('codex-personal', ['judge']);
+    p.spend.seats = { ...p.spend.seats, 'codex-personal': seat('codex-personal', ['judge']) };
     expect((await planLanes({ ...input, policy: p })).codex.slots).toBe(0);
     expect((await planLanes({ ...input, engineUnavailable: { codex: 'Account-bound native adapter unavailable.' } })).codex).toMatchObject({ slots: 0, capReason: 'Account-bound native adapter unavailable.' });
   });
@@ -655,6 +655,45 @@ describe('routing weights reach the seat ranking', () => {
   });
 });
 
+describe('learned seat penalties reach the seat ranking', () => {
+  const capacity: SeatCapacity[] = [
+    { ...grok(10), costBasis: 'credits' },
+    { ...claude(10, 10), costBasis: 'subscription' },
+  ];
+  const pinned = {
+    mode: 'balanced' as const,
+    updatedAt: NOW_ISO,
+    seats: {
+      claude: { seatId: 'claude', enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 },
+      grok: { seatId: 'grok', enabled: true, reservePercent: 0 },
+    },
+  };
+
+  it('demotes the seat the pooled outcome record penalizes and keeps the provenance note', () => {
+    const baseline = routeWorkItem(item({ effort: 3 }), LEGACY_LOCAL, ctx(capacity, { budget: pinned }));
+    expect(baseline.seatDecision?.candidates).toEqual(['grok', 'claude']);
+    const learned = routeWorkItem(item({ effort: 3 }), LEGACY_LOCAL, ctx(capacity, {
+      budget: pinned,
+      learnedPenalty: { grok: 1 },
+      learningNote: 'Fleet outcome learning ranked seats using their recorded merge outcomes.',
+    }));
+    expect(learned.seatDecision?.candidates).toEqual(['claude', 'grok']);
+    expect(learned.lane).toBe('claude-cli');
+    expect(learned.seatDecision?.why).toContain('Fleet outcome learning ranked seats');
+  });
+
+  it('leaves the ranking byte-identical when the evidence map is empty or names no seat', () => {
+    const baseline = routeWorkItem(item({ effort: 3 }), LEGACY_LOCAL, ctx(capacity, { budget: pinned }));
+    const learnedCases: Readonly<Record<string, number>>[] = [{}, { 'codex-personal': 1 }];
+    for (const learnedPenalty of learnedCases) {
+      const route = routeWorkItem(item({ effort: 3 }), LEGACY_LOCAL, ctx(capacity, { budget: pinned, learnedPenalty }));
+      expect(route.seatDecision?.candidates).toEqual(baseline.seatDecision?.candidates);
+      expect(route.backend).toBe(baseline.backend);
+      expect(route.seatDecision?.why).toBe(baseline.seatDecision?.why);
+    }
+  });
+});
+
 describe('lanes and requests', () => {
   const cfg = { user: { id: 't', name: 'T' } } as unknown as AshlrConfig;
 
@@ -699,7 +738,7 @@ describe('lanes and requests', () => {
 
   it('picks best-of-N candidates from distinct engines, grok first', () => {
     const open = lanes();
-    const engines = { local: 'llama-server' as EngineId, 'grok-cli': 'grok-cli' as EngineId, 'claude-cli': null, codex: null };
+    const engines = { local: 'llama-server' as EngineId, 'grok-cli': 'grok-cli' as EngineId, 'claude-cli': null, codex: null, 'devin-cli': null };
     expect(bestOfNCandidates(open, engines, ['llama-server' as EngineId, 'local-coder' as EngineId])).toEqual(['grok-cli', 'llama-server', 'local-coder']);
     expect(bestOfNCandidates(open, engines, ['llama-server' as EngineId, 'llama-server' as EngineId])).toEqual(['grok-cli', 'llama-server']);
     expect(bestOfNCandidates(lanes({ 'grok-cli': 0 }), engines, ['llama-server' as EngineId])).toEqual([]);
@@ -778,7 +817,7 @@ describe('best-of-N lane accounting (review c15)', () => {
       item: { effort: 5, source: 'todo', tags: [] },
       route: { hold: null, lane: 'grok-cli' },
       lanes: lanes({ local: 2 }),
-      laneEngines: { local: 'llama-server' as EngineId, 'grok-cli': 'grok-cli' as EngineId, 'claude-cli': null, codex: null },
+      laneEngines: { local: 'llama-server' as EngineId, 'grok-cli': 'grok-cli' as EngineId, 'claude-cli': null, codex: null, 'devin-cli': null },
       mode: 'balanced',
       weights: { lambdaCost: 1, lambdaPressure: 1, lambdaLatency: 1, bonThreshold: 'high' },
       priorFailures: 0,
@@ -1103,7 +1142,8 @@ describe('land-first scheduling', () => {
     });
 
     it('changes nothing while counts are healthy or never taken', () => {
-      for (const counts of [undefined, {}, { [REPO]: LAND_FIRST_OPEN_PR_LIMIT }]) {
+      const countsCases: (Readonly<Record<string, number>> | undefined)[] = [undefined, {}, { [REPO]: LAND_FIRST_OPEN_PR_LIMIT }];
+      for (const counts of countsCases) {
         const context = ctx([grok()], { openPrsByRepo: counts });
         expect(landFirstPriority(item(), context)).toBe(2);
         expect(landFirstPriority(item({ tags: ['land'] }), context)).toBe(2);
