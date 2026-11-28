@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process';
 import { chmodSync, linkSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir, totalmem } from 'node:os';
+import { platform, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { assessNodeCapacity, nodeRamSlots, packRamBytes, readNodeCapacity, shareNodeCapacity } from '../src/core/drive/nodes/capacity.js';
+import { assessNodeCapacity, availableMemoryBytes, nodeRamSlots, packRamBytes, readNodeCapacity, sampleHostStats, shareNodeCapacity } from '../src/core/drive/nodes/capacity.js';
+import { isHostStats } from '../src/core/drive/nodes/state.js';
 import { HostSlots } from '../src/core/drive/nodes/host-slots.js';
 import { readMacHostHeadroom, type HostHeadroom } from '../src/core/run/host-headroom.js';
 const GIB = 1024 ** 3;
@@ -173,6 +174,60 @@ describe('physical host slot leases', () => {
     symlinkSync(root, path);
     expect(() => new HostSlots(path)).toThrow();
     expect(shareNodeCapacity(base(), { registry }).held).toBe('host-slots-unmeasured');
+  });
+});
+
+describe('host stats available memory', () => {
+  it('reads the macOS reclaimable-aware free percentage as bytes', () => {
+    const readCommand = vi.fn(() => 'The system has 8589934592 (524288 pages with a page size of 16384).\nSystem-wide memory free percentage: 37%\n');
+    const total = 8 * GIB;
+    const available = availableMemoryBytes('darwin', total, { readCommand });
+    expect(readCommand).toHaveBeenCalledWith('/usr/bin/memory_pressure', ['-Q']);
+    expect(available).toBe(Math.round(total * 0.37));
+    // The point of the probe: reclaimable-inclusive availability, not the ~1%
+    // never-reused page count os.freemem() reports on a healthy Mac.
+    expect(available!).toBeGreaterThan(total * 0.3);
+  });
+  it('keeps macOS memory unknown when the pressure probe fails or lies', () => {
+    for (const readCommand of [
+      () => { throw new Error('unavailable'); },
+      () => 'no percentage here\n',
+      () => 'System-wide memory free percentage: 101%\n',
+      () => 'System-wide memory free percentage: -4%\n',
+    ]) expect(availableMemoryBytes('darwin', 8 * GIB, { readCommand })).toBeNull();
+    expect(availableMemoryBytes('darwin', 8 * GIB, { readCommand: () => 'System-wide memory free percentage: 0%\n' })).toBe(0);
+    expect(availableMemoryBytes('darwin', 8 * GIB, { readCommand: () => 'System-wide memory free percentage: 100%\n' })).toBe(8 * GIB);
+  });
+  it('reads Linux MemAvailable bytes and rejects inconsistent meminfo', () => {
+    const meminfo = (availableKib: string) => `MemTotal:        8388608 kB\nMemAvailable:   ${availableKib} kB\nSwapTotal:        1048576 kB\nSwapFree:          524288 kB\n`;
+    const readFile = vi.fn((path: string) => path === '/proc/meminfo' ? meminfo('4194304') : null);
+    expect(availableMemoryBytes('linux', 8 * GIB, { readFile })).toBe(4 * GIB);
+    expect(readFile).toHaveBeenCalledWith('/proc/meminfo');
+    // MemAvailable above the host total is an inconsistent reading, never clamped into a claim.
+    expect(availableMemoryBytes('linux', 2 * GIB, { readFile })).toBeNull();
+    for (const text of [null, '', 'MemTotal: 8388608 kB\n', meminfo('not-a-number')]) {
+      expect(availableMemoryBytes('linux', 8 * GIB, { readFile: () => text })).toBeNull();
+    }
+    expect(availableMemoryBytes('linux', 8 * GIB, { readFile: () => { throw new Error('gone'); } })).toBeNull();
+    expect(availableMemoryBytes('linux', 8 * GIB, { readFile: () => 'x'.repeat(300 * 1024) })).toBeNull();
+  });
+  it('has no honest reader on other platforms and rejects bad totals', () => {
+    for (const os of ['win32', 'freebsd', 'sunos']) expect(availableMemoryBytes(os, 8 * GIB)).toBeNull();
+    for (const total of [0, -1, NaN, Infinity, 1.5]) expect(availableMemoryBytes('linux', total)).toBeNull();
+  });
+  it('sampleHostStats reports OS-available memory as ramTotal minus ramUsed', () => {
+    const os = platform();
+    const deps = os === 'darwin'
+      ? { readCommand: () => 'System-wide memory free percentage: 37%\n' }
+      : os === 'linux'
+      ? { readFile: (path: string) => path === '/proc/meminfo'
+          ? 'MemTotal:        8388608 kB\nMemAvailable:   1048576 kB\nSwapTotal:           0 kB\nSwapFree:            0 kB\n'
+          : null }
+      : {};
+    const stats = sampleHostStats(deps);
+    expect(isHostStats(stats)).toBe(true);
+    const expected = availableMemoryBytes(os, stats.ramTotal, deps);
+    if (expected !== null) expect(stats.ramTotal - stats.ramUsed).toBe(expected);
   });
 });
 

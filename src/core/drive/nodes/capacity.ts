@@ -1,5 +1,7 @@
-import { statfsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, statfsSync } from 'node:fs';
 import { availableParallelism, cpus, freemem, homedir, loadavg, platform, totalmem, uptime } from 'node:os';
+import { parseLinuxMemory } from '../../resources/telemetry-parsers.js';
 import { assessHostHeadroom, readPlatformHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
 import { hostSlots, type HostSlotLease, type HostSlots } from './host-slots.js';
 
@@ -99,12 +101,58 @@ export function shareNodeCapacity(capacity: NodeCapacity, options: CapacityOptio
   } catch { return { ...capacity, slots: 0, held: 'host-slots-unmeasured' }; }
 }
 
-/** No shell, network, provider queries or writes. Deltas are calculated by the viewer. */
-export function sampleHostStats(): HostStats {
+/** Reader seams for host-stat sampling; tests inject fakes. */
+export interface HostStatsDeps {
+  readCommand?: (file: string, args: string[]) => string;
+  readFile?: (path: string) => string | null;
+}
+
+type StatsCommandReader = NonNullable<HostStatsDeps['readCommand']>;
+type StatsFileReader = NonNullable<HostStatsDeps['readFile']>;
+
+const readStatsCommand: StatsCommandReader = (file, args) => execFileSync(file, args, {
+  encoding: 'utf8', timeout: 1_000, maxBuffer: 64 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+});
+/** Bounded read of a /proc virtual file; oversized or unreadable is unknown. */
+const readStatsFile: StatsFileReader = path => {
+  try {
+    const text = readFileSync(path, 'utf8');
+    return text.length <= 256 * 1024 ? text : null;
+  } catch { return null; }
+};
+
+/** Bytes of RAM the OS reports as available to new work; null stays unknown.
+ * macOS `memory_pressure -Q` reports the free percentage that counts reclaimable
+ * pages — the same figure `phm node capacity` publishes — where `os.freemem()`
+ * counts only never-reused pages and reads near zero on a healthy Mac. Linux
+ * uses MemAvailable from /proc/meminfo. Other platforms have no honest reader
+ * here; callers keep the OS free-page count rather than inventing availability. */
+export function availableMemoryBytes(os: string, totalBytes: number, deps: HostStatsDeps = {}): number | null {
+  if (!Number.isSafeInteger(totalBytes) || totalBytes <= 0) return null;
+  if (os === 'darwin') {
+    try {
+      const text = (deps.readCommand ?? readStatsCommand)('/usr/bin/memory_pressure', ['-Q']);
+      const pct = Number(text.match(/System-wide memory free percentage:\s*(\d+)%/i)?.[1]);
+      return Number.isFinite(pct) && pct >= 0 && pct <= 100 ? Math.min(totalBytes, Math.round(totalBytes * pct / 100)) : null;
+    } catch { return null; }
+  }
+  if (os === 'linux') {
+    try {
+      const mem = parseLinuxMemory((deps.readFile ?? readStatsFile)('/proc/meminfo'));
+      return mem !== null && mem.freeBytes <= totalBytes ? mem.freeBytes : null;
+    } catch { return null; }
+  }
+  return null;
+}
+
+/** One bounded platform memory probe plus Node OS counters and statfs; no
+ * network, provider queries or writes. Deltas are calculated by the viewer. */
+export function sampleHostStats(deps: HostStatsDeps = {}): HostStats {
   let diskFree: number | null = null;
   try { const disk = statfsSync(homedir()); diskFree = disk.bavail * disk.bsize; } catch { /* unknown */ }
   const ramTotal = totalmem();
+  const free = Math.max(0, Math.min(availableMemoryBytes(platform(), ramTotal, deps) ?? freemem(), ramTotal));
   return { sampledAtMs: Date.now(), uptimeSeconds: uptime(), load: platform() === 'win32' ? [null, null, null] : loadavg(), ramTotal,
-    ramUsed: Math.max(0, ramTotal - freemem()), diskFree,
+    ramUsed: ramTotal - free, diskFree,
     cores: cpus().map(c => ({ total: Object.values(c.times).reduce((n, t) => n + t, 0), idle: c.times.idle })) };
 }
