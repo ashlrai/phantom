@@ -308,4 +308,17 @@ describe('generator yield', () => {
       expect(log.mock.calls.flat().join('\n')).toContain('Generator\tDrafted\tRejected\tLaunched');
     } finally { vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(dir, { recursive: true, force: true }); }
   });
+  it('answers --help and -h with usage and exit 0 before reading metrics', async () => {
+    // The verb is completable, so the help-safety sweep runs it with both
+    // flags; a help flag must win over the strict option parser.
+    for (const flag of ['--help', '-h']) {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        expect(await cmdQueueYield([flag, '--bogus']), flag).toBe(0);
+        expect(log.mock.calls.flat().join('\n'), flag).toContain('Usage: phm queue yield');
+        expect(err).not.toHaveBeenCalled();
+      } finally { log.mockRestore(); err.mockRestore(); }
+    }
+  });
 });
