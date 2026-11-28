@@ -117,6 +117,42 @@ describe('repeatable Mac enrollment', () => {
     expect(await cmdNodePool('join', ['--node=air', '--caps=codex', '--slots=2', '--json'])).toBe(0);
     expect(deps.call).toHaveBeenCalledWith(config, 'join', ['--node=air', '--caps=codex', '--slots=2', '--json']);
   });
+  it('accepts --flag=value spellings on first pool enrollment', async () => {
+    // The standalone fleet parser and the explicit-join pre-check already take
+    // --flag=value; first enrollment refused the same spelling, dead-ending a
+    // community joiner's natural `--owner=scope --primary=mac` command.
+    deps.read.mockReturnValue(null);
+    expect(await cmdNodePool('join', ['--owner=mason', '--primary=primary-mac', '--backup=backup-mac', '--node=air', '--json'])).toBe(0);
+    expect(deps.configure).toHaveBeenCalledWith(expect.objectContaining({ role: 'worker', node: 'air', owner: 'mason', primary: 'primary-mac', backup: 'backup-mac' }));
+    expect(deps.call).toHaveBeenCalledWith(expect.objectContaining({ owner: 'mason', primary: 'primary-mac', backup: 'backup-mac' }), 'join', expect.any(Array));
+    deps.configure.mockClear(); deps.call.mockClear();
+    // Mixed spellings parse identically.
+    expect(await cmdNodePool('join', ['--owner', 'mason', '--primary=primary-mac', '--backup', 'backup-mac', '--json'])).toBe(0);
+    expect(deps.configure).toHaveBeenCalled();
+  });
+  it('accepts --flag=value on the other pool verbs', async () => {
+    deps.worker.mockResolvedValue({ slots: 2, attempts: [] });
+    expect(await cmdNodePool('worker', ['--runner=/reviewed/runner', '--light', '--json'])).toBe(0);
+    expect(deps.worker).toHaveBeenCalledWith(config, '/reviewed/runner', true);
+    deps.read.mockReturnValue(null);
+    expect(await cmdNodePool('pool', ['--role=backup', '--node=air', '--owner=mason', '--primary=primary-mac', '--backup=backup-mac', '--json'])).toBe(0);
+    expect(deps.configure).toHaveBeenCalledWith(expect.objectContaining({ role: 'backup', node: 'air' }));
+  });
+  it('still refuses a repeated flag across spellings and a valued --json', async () => {
+    const lastError = () => (JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]) as { error: { code: string; message: string } }).error;
+    expect(await cmdNodePool('join', ['--owner', 'mason', '--owner=other', '--json'])).toBe(2);
+    expect(lastError().message).toContain('Duplicate');
+    expect(await cmdNodePool('join', ['--json=true', '--json'])).toBe(2);
+    expect(lastError().message).toContain('Invalid node pool flags');
+    expect(deps.call).not.toHaveBeenCalled();
+  });
+  it('shows pool-scoped join help for the --primary= spelling too', async () => {
+    expect(await cmdNode(['join', '--primary=primary-mac', '--backup=backup-mac', '--help'])).toBe(0);
+    const help = vi.mocked(console.log).mock.calls.at(-1)![0] as string;
+    expect(help).toContain('Multi-Mac pool');
+    expect(help).toContain('phm node join');
+    expect(help).not.toContain('Usage: phm node bootstrap');
+  });
   it('refuses a foreign --owner, a bad --node, bad caps and a bad slot bound before dialing', async () => {
     const lastError = () => (JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]) as { error: { message: string } }).error.message;
     expect(await cmdNodePool('join', ['--node', 'air', '--owner', 'other', '--caps', 'codex', '--json'])).toBe(2);
