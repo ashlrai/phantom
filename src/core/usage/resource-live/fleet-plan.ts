@@ -68,7 +68,7 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     const running = count(row['running']), ceiling = count(row['ceiling']), hard = count(row['hard_cap']);
     const cap = ceiling === null || hard === null ? null : Math.min(ceiling, hard);
     const held = typeof row['held'] === 'boolean' ? row['held'] || Boolean(dispatch['paused']) : null;
-    const queued = demand?.get(lane)?.length ?? count(row['queued']);
+    const queued = demand === undefined ? count(row['queued']) : demand.get(lane)?.length ?? null;
     const recent = jobs.filter(job => job.lane === lane);
     const tokenJobs = recent.filter(job => job.tokens !== null);
     const exhaustedUntil = (lane === 'agy' || lane === 'agy-neon') ? antigravity.reset_at : null;
@@ -105,7 +105,8 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
       projected_jobs: null as number | null, projected_waste_at_deadline: null as number | null,
       action: row.action };
   });
-  const resetProposal = resets ? planBankedReset({ ...resets, queued: demand?.get('codex-personal')?.length ?? resets.queued },
+  const resetProposal = resets ? planBankedReset({ ...resets,
+    queued: demand === undefined ? resets.queued : laneByName.get('codex-personal')?.queued_jobs ?? null },
     plan.allowances, new Map([...readings].map(([id, row]) => [id, row.source])), now).proposal : null;
   const deadlines = new Map<string, number>();
   for (const row of allowances) {

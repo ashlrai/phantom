@@ -1607,7 +1607,13 @@ slots, dispatcher lane caps and ready counts, and recent finishes in
 `metrics/jobs.jsonl`. It models **additional** work: already-running jobs
 occupy slots but are not credited with future quota spend. Headroom must be
 observed and positive for a machine to offer extra slots; a shared slot can
-only be allocated once. Unhinted work and future arrivals are not counted.
+only be allocated once. When the planner can evaluate the ready file, it
+counts eligible rows for included lanes, including explicitly routable open
+rows. A checked lane with no eligible work has zero demand. A lane omitted
+from that evaluation has unknown demand and cannot support extra-slot advice
+or a banked reset proposal using its raw dispatcher count. Dispatcher counts
+remain the fallback when the ready-file evaluation is unavailable. Future
+arrivals are outside the projection.
 
 Waste is in the allowance's own units. Where there is a quota change and
 matching finishes inside the observation interval, the estimate uses the
