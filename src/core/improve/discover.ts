@@ -2084,6 +2084,27 @@
  *     stays in-flight context, never failure, truncated tails are
  *     stated as lower bounds, and items emit only for the fleet's own
  *     repository since the loop is this install's machinery;
+ *   - the agent bus's transport dead-letter sink: the `status`
+ *     envelopes the file-bus router files under the reserved
+ *     `bus.dead-letter` address when a message's bounded retry budget
+ *     ends without delivery — 'exhausted', 'expired', 'no-route' or
+ *     'other' — kept in the same bus inbox store under a seven-day
+ *     TTL (busDeadLetterBacklogItems below). Until now the sink's only
+ *     readers were point-in-time surfaces — `agents bus
+ *     dead-letters`, the `agents bus status` deadLetters probe, the
+ *     unified inbox's `bus-dead-letter` items, `work mine` and the
+ *     fleet_bus_dead_letters MCP read — so a route or seat that kept
+ *     losing mail never became work. Per-recipient cells emit at the
+ *     recurring bars of three letters across two distinct UTC days
+ *     inside the window; per-reason cells add a recipient-spread
+ *     requirement so one dead route never reads as a fleet-wide
+ *     pattern while a reason spread across routes — or letters no
+ *     report can attribute at all — still does. Live letters only:
+ *     expired receipts are already gone evidence, a degraded store or
+ *     failed first page yields nothing, truncated walks are stated as
+ *     lower bounds, and items emit only for the fleet's own repository
+ *     since the bus describes this install's machinery and carries no
+ *     repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2260,6 +2281,7 @@ import { workedLedgerBacklogItems } from './worked-ledger-backlog.js';
 import { bottleneckBacklogItems } from './bottleneck-backlog.js';
 import { multimodelOutcomesBacklogItems } from './multimodel-outcomes-backlog.js';
 import { prDeltaBacklogItems } from './pr-delta-backlog.js';
+import { busDeadLetterBacklogItems } from './bus-dead-letter-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4778,6 +4800,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet's own repository inherits the item since the loop is this
   // install's machinery.
   await feed('ideationOutcomeBacklogItems', () => ideationOutcomeBacklogItems({ repo }));
+
+  // Agent-bus dead-letter sink: the `status` envelopes the file-bus
+  // router files under the reserved `bus.dead-letter` address when a
+  // message's bounded retry budget ends without delivery — mail that
+  // provably never landed, kept in the bus inbox store under a
+  // seven-day TTL. Until now the sink's only readers were
+  // point-in-time surfaces (`agents bus dead-letters`, the
+  // `agents bus status` deadLetters probe, the unified inbox's
+  // `bus-dead-letter` items, `work mine`, the fleet_bus_dead_letters
+  // MCP read), so a route or seat that kept losing mail never became
+  // work. Per-recipient cells emit at three letters across two
+  // distinct UTC days inside the window; per-reason cells add a
+  // recipient-spread requirement so one dead route never reads as a
+  // fleet-wide pattern while a spread reason — or unattributable
+  // letters — still does. Live letters only (expired receipts are
+  // already gone), a degraded store or failed first page yields
+  // nothing, truncated walks are stated as lower bounds, and only the
+  // fleet's own repository inherits the items since the bus describes
+  // this install's machinery and carries no repo column.
+  await feed('busDeadLetterBacklogItems', () => busDeadLetterBacklogItems({ repo }));
   return { items, errors };
 }
 
