@@ -2381,6 +2381,19 @@ describe('CI baseline evidence', () => {
       expect(report.groups[0]?.action, dep).toBe('pr-caused');
     }
   });
+  it('attributes PRs that add higher-priority import targets', async () => {
+    const contents = {
+      'test/example.test.ts': "import './helper.js';",
+      'test/helper.js': "import './panes';",
+      'test/panes/index.ts': 'export {};',
+    };
+    for (const touched of ['test/helper.ts', 'test/helper.tsx', 'test/panes.ts', 'test/panes.tsx']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, contents, touched }).gh);
+      expect(report.groups[0], touched).toMatchObject({ classification: 'pr-caused', unaffectedPrs: [] });
+    }
+    const lowerPriority = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, contents, touched: 'test/panes/index.tsx' }).gh);
+    expect(lowerPriority.groups[0]?.action).toBe('rerun-failed');
+  });
   it('fails closed when a dependency probe errors instead of 404ing', async () => {
     const contents = { 'test/example.test.ts': "import './helper.js';" };
     const report = await analyzeCiBaseline('owner/repo', github({ contents, contentsMiss: 'error' }).gh);
