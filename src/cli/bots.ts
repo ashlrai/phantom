@@ -1,8 +1,16 @@
-import { applySeatHandoff, applySeatHandoffs, listSeats, planSeatHandoff, planSeatHandoffs, sendSeatMessage } from '../core/bots/seats.js';
+import { applySeatHandoff, applySeatHandoffs, filterSeatHandoffsPlan, listSeats, planSeatHandoff, planSeatHandoffs, sendSeatMessage, type SeatHandoffsFilter, type SeatState } from '../core/bots/seats.js';
 import { explainPhantomBot, listPhantomBots, planPhantomBot, readPhantomBot } from '../core/agents/phantom-bot.js';
 
 const VALUE_FLAGS = ['--seat', '--id', '--outcome', '--profile', '--needs', '--min-tier', '--max-tier', '--max-cost-class', '--from', '--to', '--text'];
-const VALUE_FLAG_SET = new Set(VALUE_FLAGS);
+// `handoffs` alone takes the read-filter flags; other verbs keep refusing
+// them as invalid options instead of silently ignoring a filter they cannot
+// apply. wantsHelp still needs the union so `-h` after --state/--contains
+// reads as a value, not help.
+const HANDOFFS_VALUE_FLAGS = [...VALUE_FLAGS, '--state', '--contains'];
+const HANDOFFS_FLAGS = ['--json', '--dry-run', '--apply', '--eligible', '--ineligible', '--pending'];
+const VALUE_FLAG_SET = new Set([...VALUE_FLAGS, '--state', '--contains']);
+const SEAT_STATES: readonly SeatState['state'][] = ['active', 'draining', 'idle'];
+const CONTAINS_MAX = 512;
 
 // A -h token is help only when it is not the value of a preceding option
 // (e.g. `bots message --text -h` sends the text "-h"). --help can never be
@@ -22,17 +30,50 @@ function options(args: string[], flags: string[], values: string[]): Record<stri
   }
   return result;
 }
+
+/** Parse the `handoffs` read-filter flags into the shared
+ * `SeatHandoffsFilter`; validation lives here so the core filter stays a
+ * pure projection. An invalid value or the contradictory
+ * `--eligible`/`--ineligible` pair throws before any store read. */
+function seatHandoffsFilter(opts: Record<string, string>): SeatHandoffsFilter {
+  const filter: SeatHandoffsFilter = {};
+  if (opts['--seat'] !== undefined) filter.seat = opts['--seat'];
+  if (opts['--state'] !== undefined) {
+    if (!SEAT_STATES.includes(opts['--state'] as SeatState['state'])) throw new Error('Invalid --state: expected active, draining or idle.');
+    filter.state = opts['--state'] as SeatState['state'];
+  }
+  if (opts['--eligible'] !== undefined && opts['--ineligible'] !== undefined) throw new Error('Choose --eligible or --ineligible, not both.');
+  if (opts['--eligible'] !== undefined) filter.eligible = true;
+  else if (opts['--ineligible'] !== undefined) filter.eligible = false;
+  if (opts['--pending'] !== undefined) filter.pending = true;
+  if (opts['--contains'] !== undefined) {
+    const raw = opts['--contains'];
+    if (raw.trim() === '' || raw.length > CONTAINS_MAX) throw new Error(`Invalid --contains: expected a non-empty search text of at most ${CONTAINS_MAX} characters.`);
+    filter.contains = raw;
+  }
+  return filter;
+}
+
 export async function runBotsCli(argv: string[], out = console.log, home?: string): Promise<number> {
   try {
     const [verb, ...args] = argv;
     if (!verb || ['help', '--help', '-h'].includes(verb) || wantsHelp(args)) {
-      out('phm bots list|seats|handoffs [--apply]|handoff --seat <id> [--apply]|show <id>|explain <id>|create --dry-run --id <id> --outcome <text> --profile <id>|message --from <seat> --to <seat|owner> --text <text> [--json]'); return 0;
+      out('phm bots list|seats|handoffs [--seat <id>] [--state <active|draining|idle>] [--eligible|--ineligible] [--pending] [--contains <text>] [--apply]|handoff --seat <id> [--apply]|show <id>|explain <id>|create --dry-run --id <id> --outcome <text> --profile <id>|message --from <seat> --to <seat|owner> --text <text> [--json]'); return 0;
     }
     const name = ['show', 'explain'].includes(verb) ? args.shift()! : '';
-    const opts = options(args, ['--json', '--dry-run', '--apply'], VALUE_FLAGS);
+    const fleet = verb === 'handoffs';
+    const opts = options(args, fleet ? HANDOFFS_FLAGS : ['--json', '--dry-run', '--apply'], fleet ? HANDOFFS_VALUE_FLAGS : VALUE_FLAGS);
     let result: unknown;
     if (verb === 'seats') result = await listSeats({ home });
-    else if (verb === 'handoffs') result = await (opts['--apply'] ? applySeatHandoffs : planSeatHandoffs)({ home });
+    else if (verb === 'handoffs') {
+      const filter = seatHandoffsFilter(opts);
+      if (opts['--apply']) {
+        if (Object.keys(filter).length > 0) throw new Error('handoffs filters narrow the dry-run read only; --apply drains every eligible seat — use handoff --seat <id> --apply for one seat.');
+        result = await applySeatHandoffs({ home });
+      } else {
+        result = filterSeatHandoffsPlan(await planSeatHandoffs({ home }), filter);
+      }
+    }
     else if (verb === 'handoff') {
       if (!opts['--seat']) throw new Error('Missing --seat.');
       result = await (opts['--apply'] ? applySeatHandoff : planSeatHandoff)(opts['--seat'], { home });

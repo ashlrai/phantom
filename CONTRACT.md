@@ -159,7 +159,9 @@ increase above 20%. Refusal leaves the active harness unchanged.
 
 `src/core/bots/seats.ts` exports `BotSeat`, `QuotaEvidence`, `SeatAdapter`,
 `SeatState`, `SeatHandoff`, `SeatHandoffPlanEntry`, `SeatHandoffsPlan`,
-`SeatStoreInspection` and `SeatOptions`. The strict on-disk roster schema is
+`SeatHandoffsFilter`, `SeatStoreInspection`, `SeatOptions`,
+`seatHandoffContainsMatch` and `filterSeatHandoffsPlan`. The strict on-disk
+roster schema is
 `phantom-bot-seats.v1` at `~/.phantom/bots/seats.json`; missing means empty.
 Kinds are devin-bot, grok-bot, openai-bot, local and other; other requires a bus
 provider, all others derive it. Secret handles are names only; secret-shaped
@@ -189,7 +191,8 @@ Exports:
   without modifying stored identities, channels or authority.
 - `planSeatHandoff(id: string, opts?)` is a dry-run projection; active seats are
   refused. `planSeatHandoffs(opts?)` is the fleet-wide dry-run: one snapshot
-  returns `{schema:'phantom-bot-handoffs-plan.v1', apply:false, seats}` with one
+  returns `{schema:'phantom-bot-handoffs-plan.v1', apply:false, seats}` (plus
+  an optional `filter` echo on a filtered view) with one
   `{seatId, participantId, state, eligible, handoffs}` entry per roster seat —
   `participantId` is the bus routing label the seat's claims and messages
   answer to — ineligible seats
@@ -197,7 +200,16 @@ Exports:
   handoff ids are the same deterministic ids the single-seat plan and apply
   journal. Both plans enforce the same eligibility rule (draining seats always;
   idle seats only while holding work or carrying handoff history). Neither
-  writes state. `applySeatHandoff(id, opts?)` uses a stale-safe lock, fsyncs one
+  writes state. `filterSeatHandoffsPlan(plan, filter)` is the pure read
+  narrowing `phm bots handoffs` serves under `--seat`/`--state`/
+  `--eligible`/`--ineligible`/`--pending`/`--contains`: `seat` matches the
+  config seat id or bus `participantId` exactly, `state`/`eligible`/`pending`
+  are seat-level predicates, and `contains` is the record-level
+  `seatHandoffContainsMatch` needle over each record's `work.ref`/`branch`/`pr`
+  — a seat stays only while a record matches and its `handoffs` list narrows
+  to the matches. The result echoes the resolved `filter` whenever at least
+  one predicate applied; an unmatched filter is an honestly empty `seats`
+  list, never an error, and the input plan is not mutated. `applySeatHandoff(id, opts?)` uses a stale-safe lock, fsyncs one
   `phantom-bot-handoff.v1` record per work/lease identity before releasing work,
   retries held releases on replay, declines node sessions and releases bus
   claims by source — `origin:'message'` claims first settle through the bus

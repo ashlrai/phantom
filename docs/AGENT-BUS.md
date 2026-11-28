@@ -1375,7 +1375,13 @@ literal seat id or by its `participantId` under any of the agent's
 identity labels, never widened on an unreadable registry — that is
 eligible and still carries pending (not yet journaled) handoff records,
 the first 20 shown with `matched` the true total and `truncated`
-definitive. Each seat reports its config `seatId` (the `--seat` handle
+definitive. `phm bots handoffs` itself narrows the whole-roster plan
+with `--seat`, `--state`, `--eligible`/`--ineligible`, `--pending` and
+`--contains` — the eligibility, pending-record and held-work-text
+predicates this section shares through the same core projection —
+echoing the applied filter and never combining with `--apply` (see
+[BOT-SEATS](BOT-SEATS.md#inspect-and-hand-off)). Each seat reports its
+config `seatId` (the `--seat` handle
 `phm bots handoff` takes), `participantId`, projected lifecycle `state`
 and its `handoffs` — every live claim key or fenced node job the seat
 still holds as a `bus-claim`/`node-job` record carrying the

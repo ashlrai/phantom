@@ -93,6 +93,8 @@ unreadable or unresolved identities keep exact-label matching.
 ```sh
 phm bots seats --json
 phm bots handoffs --json
+phm bots handoffs --state draining --pending --json
+phm bots handoffs --seat devin-review --contains "RQ-123" --json
 phm bots handoffs --apply --json
 phm bots handoff --seat devin-review --json
 phm bots handoff --seat devin-review --apply --json
@@ -104,20 +106,35 @@ accept it (`eligible`), and the pending handoff records it would journal —
 the same deterministic ids a later per-seat apply dedupes on. Ineligible seats
 (active seats, and idle seats with no open work or handoff history) report
 `eligible: false` with no records instead of erroring, so the whole roster's
-handoff posture reads in one call. It writes nothing: no state transitions,
-releases, journals or notices. `phm comms inbox` lists each eligible seat
-with pending handoff records as a `seat-handoff` item — the same plan read —
-so pending seat work surfaces in the unified pending view without a second
-lookup. `phm agents bus work mine`'s `seats` section reads the same plan
-narrowed to the seats the queried agent denotes, so an agent sees its own
-pending seat handoffs inside the one per-agent digest. `phm bots handoffs
---apply` is the fleet-wide apply: it runs the same per-seat
-`applySeatHandoff` for every eligible seat in roster order —
-journal-before-release, idempotent notices and stale-safe claim fencing
-unchanged — and reports each seat's outcome (`applied`, `skipped`,
-`contended` or `failed` with a fixed reason) instead of stopping at the
-first failure, so one command drains the whole roster and a re-run resumes
-where a partial apply stopped. The isolated fleet
+handoff posture reads in one call. The read narrows with
+`--seat <id-or-participant>` (one seat's slice — the config seat id or the
+bus `participantId` exactly), `--state <active|draining|idle>`,
+`--eligible`/`--ineligible` (the verdict apply would give), `--pending`
+(seats still carrying at least one pending record — the "what would move"
+slice) and `--contains <text>` (a case-insensitive substring over each
+record's held-work `ref`/`branch`/`pr`, the same haystack `work mine`'s
+seats section and the unified inbox apply; a seat stays only while a
+record matches and its `handoffs` list narrows to the matches). The
+filters compose conjunctively, a filter that matches nothing is an
+honestly empty `seats` list — never an error — and the applied filter
+echoes on the result's `filter` field so a slice is never mistaken for
+the whole roster. `--eligible` and `--ineligible` are mutually exclusive,
+and no filter combines with `--apply`: the fleet apply always drains every
+eligible seat, so a filtered apply is refused with a pointer to
+`phm bots handoff --seat <id> --apply` for one seat. It writes nothing:
+no state transitions, releases, journals or notices. `phm comms inbox`
+lists each eligible seat with pending handoff records as a `seat-handoff`
+item — the same plan read — so pending seat work surfaces in the unified
+pending view without a second lookup. `phm agents bus work mine`'s
+`seats` section reads the same plan narrowed to the seats the queried
+agent denotes, so an agent sees its own pending seat handoffs inside the
+one per-agent digest. `phm bots handoffs --apply` is the fleet-wide apply:
+it runs the same per-seat `applySeatHandoff` for every eligible seat in
+roster order — journal-before-release, idempotent notices and stale-safe
+claim fencing unchanged — and reports each seat's outcome (`applied`,
+`skipped`, `contended` or `failed` with a fixed reason) instead of
+stopping at the first failure, so one command drains the whole roster and
+a re-run resumes where a partial apply stopped. The isolated fleet
 MCP server serves the same whole-roster plan as `fleet_seat_handoffs` —
 no arguments, server-owned roots, `apply` always false — so MCP-connected
 agents read the same handoff posture the CLI prints. The roster itself —
