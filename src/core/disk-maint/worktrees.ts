@@ -7,22 +7,65 @@ import { ledgerEventTs, ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } 
 import { readSource, type Source } from '../fleet/runs-parked-queue.js';
 import { parseKeepList, parsePsJobs } from '../fleet/wt-audit.js';
 import { parseLedgerTs } from '../metrics/loop.js';
-import { withDaemonGitHardening } from '../sandbox/safe-git.js';
 import { protectedReason, type MaintRoots } from './protect.js';
-import { isCommitId, isPullUrl, readWorktreeBridgeCommits, readWorktreePulls, type WorktreeEvidenceDeps } from './worktree-evidence.js';
+import { hardenedGitEnv, isCommitId, isPullUrl, readWorktreeBridgeCommits, readWorktreePulls, type WorktreeEvidenceDeps } from './worktree-evidence.js';
 
 const run = promisify(execFile);
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const REOPEN = new Set(['launch', 'enqueue', 'enqueued', 'queued', 'claim', 'batch_claim']);
 const TERMINAL = new Set(['MERGED', 'CLOSED', 'DONE-NOOP']);
 export const isWorktreeJobId = (name: string): boolean => JOB_ID.test(name) && !name.includes('..');
-const gitOptions = () => ({
-  env: {
-    ...withDaemonGitHardening(Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')))),
-    GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1',
-  },
-  timeout: 2_000,
-});
+export const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+const gitOptions = () => ({ env: hardenedGitEnv(), timeout: 2_000 });
+
+export interface JobLedgerRecord {
+  state: string | null;
+  finishMs: number | null;
+  finishEmpty: boolean;
+}
+
+/**
+ * Latest outcome and finish rows after the last launch per job id, read in the
+ * jobs-ledger dialect (job|job_id|jobId|id, event|type|kind, phase aliases,
+ * timestamp aliases and eventless reconciler rows). The last resolved outcome
+ * wins — a phase-less outcome row records nothing rather than overwriting a
+ * merge — and finish.empty marks an empty run. Publish claims and other
+ * operational rows are not lifecycle rows. Torn lines are skipped, never
+ * echoed.
+ */
+export function parseJobLedger(text: string): Map<string, JobLedgerRecord> {
+  const latest = new Map<string, { outcome?: string; finishMs: number | null; finishEmpty: boolean }>();
+  for (const line of text.split(/\r?\n/)) {
+    try {
+      const row: unknown = JSON.parse(line);
+      if (!isPlainRecord(row)) continue;
+      const id = ledgerJobId(row);
+      if (id === null) continue;
+      const phase = ledgerPhase(row);
+      const event = ledgerLifecycleEvent(row, phase);
+      if (event === 'launch') { latest.delete(id); continue; }
+      const state = ledgerOutcomeState(row, event, phase);
+      if (event !== 'finish' && state === null) continue;
+      const entry = latest.get(id) ?? { finishMs: null, finishEmpty: false };
+      if (event === 'finish') {
+        entry.finishMs = ledgerEventTs(row, phase);
+        entry.finishEmpty = row['empty'] === true;
+      }
+      if (state !== null) entry.outcome = state.toLowerCase();
+      latest.set(id, entry);
+    } catch { /* skip damaged rows; never echo their contents */ }
+  }
+  const records = new Map<string, JobLedgerRecord>();
+  for (const [id, entry] of latest) {
+    records.set(id, {
+      state: entry.outcome ?? null,
+      finishMs: entry.finishMs,
+      finishEmpty: entry.finishEmpty,
+    });
+  }
+  return records;
+}
 
 type JobState = { reason: string; at: number; prHead?: string; failed?: boolean; hold?: boolean; prUrl?: string };
 type ProcessText = { argv: string; cwd: string };
@@ -38,9 +81,10 @@ function ledgerWorktreeOutcomes(jobs: { state: Source; text: string }, names: Re
   const groups = new Map<string, { rows: { row: Record<string, unknown>; at: number | null; order: number }[]; latest: number }>();
   for (const line of jobs.text.split('\n')) {
     if (!line.trim()) continue;
-    let row: Record<string, unknown>;
-    try { row = JSON.parse(line) as Record<string, unknown>; } catch { return null; }
-    if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+    let parsed: unknown;
+    try { parsed = JSON.parse(line); } catch { return null; }
+    if (!isPlainRecord(parsed)) return null;
+    const row = parsed;
     const job = ledgerJobId(row);
     if (job === null || !names.has(job) || !isWorktreeJobId(job)) continue;
     const phase = ledgerPhase(row);

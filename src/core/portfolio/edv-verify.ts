@@ -31,6 +31,7 @@
  */
 
 import type { AshlrConfig, DecisionEntry, Proposal } from '../types.js';
+import { isPlainRecord } from './scoring.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -47,6 +48,8 @@ import type { AshlrConfig, DecisionEntry, Proposal } from '../types.js';
  * contributes to `mergedWeightedSum`.
  */
 export const EDV_UNVERIFIED_WEIGHT = 0.3;
+
+const NEGATIVE_VERDICTS: ReadonlySet<string> = new Set(['rejected', 'noise', 'harmful']);
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -100,7 +103,8 @@ export function edvConfirmationWeight(
   // number in (0, 1). Values outside that range (≤0 or ≥1) fall back to the
   // module default so a misconfiguration cannot accidentally confirm-all (≥1)
   // or zero-out signal (≤0).
-  const rawOverride = (cfg?.foundry as Record<string, unknown> | undefined)?.['edvUnverifiedWeight'];
+  const rawFoundry: unknown = cfg?.foundry;
+  const rawOverride = isPlainRecord(rawFoundry) ? rawFoundry['edvUnverifiedWeight'] : undefined;
   const unverifiedWeight =
     typeof rawOverride === 'number' && rawOverride > 0 && rawOverride < 1
       ? rawOverride
@@ -117,7 +121,6 @@ export function edvConfirmationWeight(
     }
 
     // ── Signal 3 & 4: separate verifier entry in the decisions ledger ─────────
-    const NEGATIVE_VERDICTS = new Set(['rejected', 'noise', 'harmful']);
     const verifierEntries = decisionsForProposal.filter((d) => d.action === 'verified');
     if (verifierEntries.length > 0) {
       // If ANY verifier verdict is negative, treat as not confirmed.

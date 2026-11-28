@@ -352,15 +352,25 @@ describe('OnboardingFlow — what it says about the machine', () => {
     await stepTo(user, 1);
     expect(await screen.findByText('Account information is unavailable in this build.')).toBeInTheDocument();
     expect(screen.queryByText(/No seats reported yet/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry accounts' })).not.toBeInTheDocument();
   });
 
-  it('shows an account read error instead of an empty roster', async () => {
-    vi.stubGlobal('fetch', routes({ '/api/verse/bootstrap': () => new Response('', { status: 503 }) }));
+  it('recovers from a transient account read failure without restarting the tour', async () => {
+    const readAccounts = vi.fn()
+      .mockImplementationOnce(() => new Response('', { status: 503 }))
+      .mockImplementationOnce(() => json(bootstrap({ seats: SEATS })));
+    vi.stubGlobal('fetch', routes({ '/api/verse/bootstrap': readAccounts }));
     const user = userEvent.setup();
     render(<OnboardingFlow />);
     await stepTo(user, 1);
     expect(await screen.findByText('Could not read accounts. The server answered HTTP 503.')).toBeInTheDocument();
     expect(screen.queryByText(/No seats reported yet/)).not.toBeInTheDocument();
+    expect(readAccounts).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: 'Retry accounts' }));
+    expect(await screen.findByRole('list', { name: 'Your seats' })).toHaveTextContent('Claude Max');
+    expect(readAccounts).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('button', { name: 'Retry accounts' })).not.toBeInTheDocument();
   });
 
   it('says no seats were reported, rather than inventing a roster, when there are none', async () => {

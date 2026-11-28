@@ -117,8 +117,11 @@ export async function readRunningJobs(runsDir: string, laneFilter?: string, incl
     const baseKey = baseMs === null ? null : String(Math.floor(baseMs / 1000));
     if (finished.has(job)) {
       // A .fin keyed to another attempt's .base does not close this one (dispatchd rule).
+      // An empty or unreadable .fin is no finish evidence: finMatchesBase in
+      // runs-sessions.ts applies the same non-empty finKey rule before trusting
+      // the marker alone, so the two running-job readers cannot disagree.
       const key = (await smallText(join(runDir, `${job}.fin`)))?.trim() ?? '';
-      if (baseKey === null || key === baseKey) continue;
+      if (key !== '' && (baseKey === null || key === baseKey)) continue;
     }
     const line = await smallText(join(runDir, `${job}.line`));
     const rawLane = line?.split('\t')[2]?.trim() ?? (includeBases ? (await smallText(join(runsDir, `${job}.base`)))?.trim().split(/\s+/)[3] : '') ?? '';

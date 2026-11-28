@@ -6,7 +6,7 @@ not current release instructions. Use [Releasing Phantom](RELEASING.md) for
 the commissioned canonical path. Do not replay completed publication effects.
 
 The body below is the historical record after the retired admission workflow
-filename was removed. Its SHA256 is `5d3f545a87d9759c2a5b0a7b2e9c6569dde69ccdfa7831d5d4d2203900e62f36`.
+filename was removed. Its SHA256 is `21705789d8832b0e191d05759145190a134a8678050476131803cd165d317511`.
 
 > **Verified distribution state — 2026-09-05 UTC:** `@ashlr/hub@3.3.2` is the
 > accepted npm production version. Both npm dist-tags, `latest` and `candidate`,

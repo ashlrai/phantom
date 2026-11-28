@@ -5,9 +5,7 @@ import { readBusThread, validBusThreadFilters, type BusThreadFilters } from '../
 import type { WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = 'Usage: ashlr fleet bus-thread --id <id> [--json] [--to <ref>] [--from <ref>] [--exclude-from <ref>] ' +
-  '[--channel <name>] [--job <id>] [--priority P0..P3] [--thread <t>] [--in-reply-to <id>] [--body-kind <kind>] ' +
-  '[--result <reserved|admitted|complete|failed>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]';
+const usage = 'Usage: ashlr fleet bus-thread --id <id> [--json] [--to <ref>] [--from <ref>] [--exclude-from <ref>] [--channel <name>] [--topic <topic>] [--job <id>] [--priority P0..P3] [--thread <t>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]';
 interface Dependencies {
   list?: typeof listBusInboxAfter;
   output?: (text: string) => void;
@@ -15,11 +13,11 @@ interface Dependencies {
 }
 
 /** The value flags the shared bus-read filter set adds beside --id/--json; each takes exactly one value. */
-const FILTER_VALUE_FLAGS = new Set(['--to', '--from', '--exclude-from', '--channel', '--job', '--priority',
+const FILTER_VALUE_FLAGS = new Set(['--to', '--from', '--exclude-from', '--channel', '--topic', '--job', '--priority',
   '--thread', '--in-reply-to', '--body-kind', '--result', '--since', '--before', '--contains']);
 /** The string-valued filters and the BusThreadFilters field each flag fills. */
 const STRING_FILTERS = { '--to': 'to', '--from': 'from', '--exclude-from': 'excludeFrom', '--channel': 'channel',
-  '--job': 'job', '--thread': 'thread', '--in-reply-to': 'inReplyTo', '--body-kind': 'bodyKind',
+  '--topic': 'topic', '--job': 'job', '--thread': 'thread', '--in-reply-to': 'inReplyTo', '--body-kind': 'bodyKind',
   '--contains': 'contains' } as const;
 
 export async function cmdFleetBusThread(args: string[], options: BusInboxOptions = {}, deps: Dependencies = {}): Promise<number> {

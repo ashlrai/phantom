@@ -14,12 +14,12 @@ const now = Date.parse('2026-01-01T12:00:00Z');
 let root = '';
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); });
 
-async function fixture(lastTick = now, paused = false, admission?: Record<string, unknown>) {
+async function fixture(lastTick = now, paused: boolean | string = false, admission?: Record<string, unknown>) {
   root = await mkdtemp(join(tmpdir(), 'headroom-api-'));
   await mkdir(join(root, 'queue'));
   await mkdir(join(root, 'metrics'));
   await writeFile(join(root, 'queue/status.json'), JSON.stringify({
-    last_tick: new Date(lastTick).toISOString(), paused, mem_free_pct: 50, admission,
+    schema: 'dispatchd.status.v1', last_tick: new Date(lastTick).toISOString(), paused, mem_free_pct: 50, admission,
     lanes: {
       held: { running: 1, target: 5, effective_target: 4, queued: 0, held: true },
       shed: { running: 1, target: 5, effective_target: 3, queued: 0, held: false },
@@ -59,14 +59,18 @@ test('preserves headroom alongside sibling capacity and current API evidence', a
 });
 
 test.each([
-  ['stale', now - 60_001, false, false],
-  ['future', now + 1, false, false],
-  ['paused', now, true, true],
-])('%s snapshot does not invent availability', async (_label, tick, paused, fresh) => {
+  ['stale', now - 60_001, false, false, null],
+  ['future', now + 1, false, false, null],
+  ['paused', now, true, true, 0],
+  ['pause reason at the freshness boundary', now - 60_000, 'disk guard', true, 0],
+  ['stale pause', now - 60_001, 'disk guard', false, null],
+] as const)('%s snapshot reports the same availability in both views', async (_label, tick, paused, fresh, available) => {
   const report = await fixture(tick, paused);
-  expect(report).toMatchObject({ fresh, paused, schema: 'fleet.status-api.v1' });
-  expect(report.lanes).toHaveLength(6);
-  expect(report.lanes.every(lane => lane.available === null)).toBe(true);
+  expect(report).toMatchObject({ fresh, paused: Boolean(paused), schema: 'fleet.status-api.v1' });
+  for (const lanes of [report.lanes, report.awareness.lanes]) {
+    expect(lanes).toHaveLength(6);
+    expect(lanes.map(lane => lane.available)).toEqual(Array(6).fill(available));
+  }
 });
 
 test.each([

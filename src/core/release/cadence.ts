@@ -8,13 +8,54 @@
  */
 export const CADENCE_SCHEMA = 'phantom.release-cadence/v1' as const;
 export const CADENCE_REPOS = ['phantom', 'phantom-secrets', 'ashlr-plugin', 'ashlr-stack', 'locus', 'lexicon', 'ashlr-md'] as const;
-export const CADENCE_OWNER = 'ashlrai';
+const CADENCE_OWNER = 'ashlrai';
 /** Under this many hours since the release a repo is fresh whatever has merged; over DUE_HOURS with merges it is stale. */
-export const FRESH_HOURS = 6;
-export const DUE_HOURS = 24;
+const FRESH_HOURS = 6;
+const DUE_HOURS = 24;
+export const RELEASE_DAY_MS = 86_400_000;
 export const UNKNOWN = 'unknown' as const;
 export type Unknown = typeof UNKNOWN;
 export type CadenceStatus = 'fresh' | 'due' | 'stale' | 'no_release' | Unknown;
+
+/** Pure, browser-safe shared guards and formatting helpers for release modules. */
+export function isReleaseRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function asReleaseRecord(value: unknown): Record<string, unknown> | null {
+  return isReleaseRecord(value) ? value : null;
+}
+
+export function isValidReleaseDate(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+export function parseReleaseIso(value: unknown): string | null {
+  return isValidReleaseDate(value) ? new Date(value).toISOString() : null;
+}
+
+export function isNonNegativeInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+export function parseWholeNumber(value: string | null | undefined): number | null {
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+export function releaseCount(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+export function stripReleaseOwner(repo: string): string {
+  return repo.replace(/^ashlrai\//, '');
+}
+
+/** Git-tag backlog due rule: over 20 commits or over 7 days since the latest tag. */
+export function gitReleaseState(commitsSinceTag: number, tagDate: string, now: number): 'ok' | 'due' {
+  return commitsSinceTag > 20 || now - Date.parse(tagDate) > 7 * RELEASE_DAY_MS ? 'due' : 'ok';
+}
 
 export interface CadenceInput {
   repo: string;
@@ -36,7 +77,7 @@ export interface CadenceRow {
 }
 export interface CadenceV1 { schema: typeof CADENCE_SCHEMA; as_of: string; repos: CadenceRow[] }
 
-const count = (n: number | null): number | Unknown => n !== null && Number.isSafeInteger(n) && n >= 0 ? n : UNKNOWN;
+const count = (n: number | null): number | Unknown => isNonNegativeInt(n) ? n : UNKNOWN;
 
 /** Pure: one row per input at `now` (ms). */
 export function buildReleaseCadence(inputs: readonly CadenceInput[], now: number): CadenceV1 {
@@ -57,21 +98,19 @@ export function buildReleaseCadence(inputs: readonly CadenceInput[], now: number
 type Fetch = (url: string, init?: { headers?: Record<string, string>; signal?: AbortSignal }) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
 export interface ReadCadenceOpts { repos?: readonly string[]; now?: number; fetch?: Fetch }
 
-const rec = (v: unknown): Record<string, unknown> | null => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
-
 async function readOne(get: (path: string) => Promise<unknown>, repo: string): Promise<CadenceInput> {
   const slug = `${CADENCE_OWNER}/${repo}`;
   let list: unknown;
   try { list = await get(`repos/${slug}/releases?per_page=10`); } catch { return { repo, release: null, mergedSince: null, readable: false }; }
   if (!Array.isArray(list)) return { repo, release: null, mergedSince: null, readable: false };
   // The latest real release: not a draft, not a prerelease (the API lists newest first).
-  const latest = list.map(rec).find(r => r && r.draft === false && r.prerelease === false);
+  const latest = list.map(asReleaseRecord).find(r => r && r.draft === false && r.prerelease === false);
   if (!latest) return { repo, release: null, mergedSince: 0 };
-  const tag = latest.tag_name, published = latest.published_at, assets = latest.assets;
-  if (typeof tag !== 'string' || typeof published !== 'string' || !Array.isArray(assets) || !Number.isFinite(Date.parse(published))) return { repo, release: null, mergedSince: null, readable: false };
-  const q = encodeURIComponent(`repo:${slug} is:pr is:merged merged:>${new Date(published).toISOString().replace(/\.\d{3}Z$/, 'Z')}`);
+  const tag = latest.tag_name, published = latest.published_at, publishedIso = parseReleaseIso(published), assets = latest.assets;
+  if (typeof tag !== 'string' || typeof published !== 'string' || !publishedIso || !Array.isArray(assets)) return { repo, release: null, mergedSince: null, readable: false };
+  const q = encodeURIComponent(`repo:${slug} is:pr is:merged merged:>${publishedIso.replace(/\.\d{3}Z$/, 'Z')}`);
   let merged: number | null = null;
-  try { const total = rec(await get(`search/issues?q=${q}&per_page=1`))?.total_count; merged = typeof total === 'number' ? total : null; } catch { /* stays unknown */ }
+  try { const total = asReleaseRecord(await get(`search/issues?q=${q}&per_page=1`))?.total_count; merged = typeof total === 'number' ? total : null; } catch { /* stays unknown */ }
   return { repo, release: { tag, publishedAt: published, assets: assets.length }, mergedSince: merged };
 }
 

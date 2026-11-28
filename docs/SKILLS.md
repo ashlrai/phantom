@@ -26,7 +26,12 @@ terminal phases `phase|state|outcome|status|result|conclusion`, and
 `merged`/`closed`/`revert`/`reverted` event names when no phase field
 resolves. Other event names leave the standing terminal verdict and its
 evidence intact unless the row carries a recognized terminal phase.
-Reverted covers the ledger's own revert spellings plus the
+An explicit ledger revert with one PR reference applies to that PR. A
+delayed standalone revert for an older PR leaves the recovery verdict and
+execution evidence for the current PR intact. A standalone revert with
+conflicting PR references supplies no verdict. Reverts without a PR
+reference retain job-wide attribution.
+Reverted also covers the
 standing revert set the daemon supplies (`revertedPrKeys` — outcome-ledger,
 cloud-task and `phm fleet reverts --record` detections): a merged job whose
 standing verdict row identifies a PR claimed by exactly that job and whose
@@ -168,10 +173,20 @@ trajectories for that sample or contribute to dispatch join diagnostics.
 Direct trajectory reads also exclude future UTC dispatch partitions from
 the file cap and future dispatches from the event cap. Physical scan limits
 still apply to every selected file.
+Agent-action receipts also use the report cutoff for timeline evidence and
+join counts. Future UTC action partitions leave dated file slots available,
+and valid future actions in selected files leave event slots available.
 Proposal snapshots whose creation timestamps fall after report time cannot
 supply trajectory outcomes or enter trajectory join diagnostics.
 Proposal decisions contribute trajectory coverage, metadata and terminal outcomes
-when their recorded timestamps are at or before report time.
+when their recorded timestamps are at or before report time. Evidence packs
+contribute verification and trajectory metadata only when their generation
+timestamp is parseable and at or before report time. The same cutoff applies
+to evidence packs in the proposal-to-verification join diagnostic.
+When a proposal's latest recorded activity is after report time, the join
+diagnostic checks its retained timestamps for activity inside the report
+window. Future activity alone cannot pull a historical proposal into join
+counts.
 The skill-outcome report anchors its ledger read and trajectory join to one
 report time, so time spent reading the ledger cannot shift either boundary.
 The trajectory timeline, join diagnostics and outcome tallies use only
@@ -182,6 +197,10 @@ outcome tallies — for example how many selections ended `merged`, `rejected`
 or `failed`, and how many merged selections were later `reverted` or
 `regressed`. Lifecycle stages of one use collapse into a single selection,
 and unjoined or conflicting skill rows never enter the tally.
+A receipt that resolves to one trajectory still conflicts if it gives a
+different identifier of a kind already recorded for that trajectory, even
+when the different identifier does not resolve elsewhere. An identifier of
+a kind the trajectory has never recorded can accompany a matching one.
 When joined production receipts carry distinct content hashes for the same skill
 ID and revision, the report omits that revision from per-skill results and
 aggregate skill outcome counts. Other revisions retain their tallies. This
@@ -202,7 +221,10 @@ Per-skill outcome counts require at least `MIN_SKILL_OBSERVED_TRAJECTORIES` (3)
 learning-eligible production trajectories with skill-use coverage.
 `skillObservation` measures receipt coverage across observed production
 trajectories, including incomplete trajectories. The outcome section is
-withheld when the skill-use ledger is degraded. A bounded read also marks
+withheld when the skill-use ledger is degraded. Skill-use receipts require a
+positive safe integer revision. The writer drops invalid revisions, and an
+invalid revision already in the scanned ledger degrades the sample.
+A bounded read also marks
 the sample degraded if the file cap omits a daily partition that can contain
 events in the requested window, a partition exceeds the 4 MiB tail read cap,
 its row scan runs out of room, or the number of distinct events exceeds

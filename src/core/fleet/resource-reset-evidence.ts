@@ -53,11 +53,13 @@ export function quotaEvidence(
   }
   evidence.state = row.usedPct! >= 100 ? 'exhausted' : 'observed-headroom';
   evidence.reason = 'measured-quota';
+  const statusAt = status ? time(status.observedAt) : NaN;
+  const statusReset = status ? time(status.resetAt) : NaN;
   if (valid(status) && status.lane === measured.lane && status.usedPct! >= 100 && measured.usedPct! < 100 &&
-      Number.isFinite(time(status.observedAt)) && time(status.observedAt) < at &&
-      Number.isFinite(reset) && reset > at && Number.isFinite(time(status.resetAt)) &&
+      Number.isFinite(statusAt) && statusAt < at &&
+      Number.isFinite(statusReset) && statusAt < statusReset && Number.isFinite(reset) && reset > at &&
       // Equal boundaries permit early/manual resets; advancing boundaries permit scheduled resets.
-      reset >= time(status.resetAt)) {
+      reset >= statusReset) {
     evidence.reason = 'quota-recovered';
     if (held === true) evidence.holdConflict = 'recovered-quota-while-held';
   }

@@ -1,12 +1,13 @@
 import { describe, test, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { computeRank, SEEDS, updateRank, readRank, validRank, localMerges } from '../src/core/fleet/repo-rank.js';
 import { allocateRepos, readAppliedRepoPriorities, writeRepoPriorityRequest, type RepoMarketEvidence } from '../src/core/fleet/repo-market.js';
-import { managedRepoCatalog, parseRepoMarketFacts, planRepoChange } from '../src/core/fleet/repos-manager.js';
+import { listManagedRepos, managedRepoCatalog, parseRepoMarketFacts, planRepoChange } from '../src/core/fleet/repos-manager.js';
+import type { GitRunner } from '../src/core/verse/git-ops.js';
 const now = new Date('2026-11-04T12:00:00Z');
 
 test('repository management distinguishes unknown metrics and routes scope changes to grant review', () => {
@@ -40,6 +41,18 @@ test('allocation responds to evidence, and boost and pause are bounded', () => {
     expect(readFileSync(join(directory, 'requests', 'ashlrai@locus'), 'utf8')).toBe('pause\n');
     expect(readAppliedRepoPriorities(join(directory, 'applied'))).toEqual({});
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('repo depth counts each queued job once when ready.tsv repeats a READY row', async () => {
+  const runsDir = mkdtempSync(join(tmpdir(), 'repos-runs-'));
+  mkdirSync(join(runsDir, 'queue'), { recursive: true });
+  writeFileSync(join(runsDir, 'queue', 'ready.tsv'),
+    'READY\tRQ-DUP-1\tcodex\twork\tashlrai/phantom\tone\n' +
+    'READY\tRQ-DUP-1\tcodex\twork\tashlrai/phantom\tone again\n' +
+    'READY\tRQ-DUP-2\tcodex\twork\tashlrai/phantom\ttwo\n');
+  const run: GitRunner = async () => ({ code: 0, stdout: JSON.stringify({ data: {} }), stderr: '', timedOut: false, truncated: false, missing: false });
+  const result = await listManagedRepos({ runsDir, now: Date.now(), run });
+  expect(result.repos.find(row => row.repo === 'ashlrai/phantom')?.queueDepth).toBe(2);
 });
 
 test('the manager includes the effective stage for repos beyond the ecosystem seed list', () => {

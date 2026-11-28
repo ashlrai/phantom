@@ -33,6 +33,7 @@ import { basename, join } from 'node:path';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, renameSync, writeFileSync } from 'node:fs';
 import { readPrivateFileCapped } from '../verse/preferences.js';
 import type { AshlrConfig } from '../types.js';
+import { escapeAppleScript } from './desktop-notify.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -60,21 +61,6 @@ export interface InboundMsg {
 export function commsEnabled(cfg: AshlrConfig): boolean {
   const c = cfg.comms;
   return c?.enabled === true && typeof c.imessageHandle === 'string' && c.imessageHandle.length > 0;
-}
-
-// ---------------------------------------------------------------------------
-// AppleScript escaping
-// ---------------------------------------------------------------------------
-
-/**
- * Escape a string for safe inclusion inside an AppleScript double-quoted
- * string literal. We escape backslashes, double-quotes, and collapse newlines.
- * This is the ONLY escaping context — the entire text is passed as a single
- * -e script literal to osascript, not via a shell. execFile guarantees the
- * osascript process receives the literal string; no shell expansion occurs.
- */
-function escapeAppleScript(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]/g, ' ');
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +157,7 @@ export function pollInboundReplies(sinceMs: number, cfg: AshlrConfig): Promise<I
   if (process.platform !== 'darwin') return Promise.resolve([]);
 
   const handle = cfg.comms!.imessageHandle!;
-  const dbPath = join(homedir(), 'Library', 'Messages', 'chat.db');
+  const dbPath = chatDbPath();
 
   if (!existsSync(dbPath)) {
     return Promise.resolve([]);
@@ -207,12 +193,7 @@ export function pollInboundReplies(sinceMs: number, cfg: AshlrConfig): Promise<I
           if (err) {
             // Check for permission denial (EPERM / "unable to open" / "authorization denied")
             const errMsg = (stderr ?? '') + (err.message ?? '');
-            const isPermErr =
-              errMsg.includes('unable to open') ||
-              errMsg.includes('authorization denied') ||
-              errMsg.includes('EPERM') ||
-              errMsg.includes('Operation not permitted');
-            if (isPermErr && !_hintEmitted) {
+            if (isPermissionText(errMsg) && !_hintEmitted) {
               _hintEmitted = true;
               process.stderr.write(
                 '[ashlr comms] Cannot read chat.db — grant Full Disk Access to Terminal ' +
@@ -539,7 +520,7 @@ function ps(pid: number): Promise<{ ppid: number; comm: string } | null> {
 }
 
 /** Nearest `Something.app` among this process's ancestors, else the parent command name. */
-export async function responsibleAppName(): Promise<string> {
+async function responsibleAppName(): Promise<string> {
   let pid = process.ppid;
   let first = '';
   for (let depth = 0; depth < 8 && pid > 1; depth++) {

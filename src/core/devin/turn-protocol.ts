@@ -14,6 +14,7 @@
  * Keychain and never printed; messages are scrubbed before they are printed.
  */
 import type { VerseRemoteState } from '../verse/types.js';
+import { isDevinRecord as isRecord } from './types.js';
 
 export type DevinTurnLine =
   /** The conversation this turn is bound to (cloud: the Devin task id `dv_…`; CLI: the ACP session id). */
@@ -86,9 +87,6 @@ function parseVerseMcp(raw: unknown): DevinTurnVerseMcp | null | undefined {
 }
 
 export const DEVIN_TURN_PAYLOAD_MAX_BYTES = 1024 * 1024;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /** Validate a stdin payload; null when anything is off (the process then exits 2 without doing anything). */
 export function parseDevinTurnPayload(raw: unknown): DevinTurnPayload | null {

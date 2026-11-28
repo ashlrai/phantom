@@ -26,7 +26,7 @@ export function cadenceMinutesFromEnv(raw: string | undefined = process.env.RELE
   return cappedCadenceMinutes(Number(raw));
 }
 export const REPOSITORY = 'ashlrai/phantom';
-export const REPOSITORY_ID = 1263526319;
+const REPOSITORY_ID = 1263526319;
 export const WEBSITE_HOOK = Object.freeze({
   repository: 'ashlrai/phantom-secrets',
   root: 'apps/web',
@@ -38,6 +38,8 @@ export const WEBSITE_HOOK = Object.freeze({
 const SHA = /^[a-f0-9]{40}$/;
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const SHA512_INTEGRITY = /^sha512-[A-Za-z0-9+/]{86}==$/;
+const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|dependency-audit|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
 const RELEASE_SUBJECT = /^chore\([^)\r\n]+\): release (0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?: \(#\d+\))?/;
 
 export type KillObservation = 'inactive' | 'active' | 'unknown';
@@ -46,13 +48,12 @@ export type Ancestry = 'ancestor' | 'identical' | 'diverged' | 'behind' | 'unkno
 export type CandidateCi = 'green' | 'red' | 'pending' | 'unknown';
 type StepStatus = 'complete' | 'pending' | 'stopped' | 'hooked';
 const ACTIONS_APP_ID = 15368;
-const RELEASE_TAG = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 
 /** GitHub `head_branch` is `master` or a bare `vX.Y.Z`. `refs/heads/vX.Y.Z` is a branch. */
 export function releaseHeadBranch(branch: unknown): boolean {
   if (branch === 'master') return true;
   if (typeof branch !== 'string' || branch.startsWith('refs/')) return false;
-  return RELEASE_TAG.test(branch);
+  return TAG.test(branch);
 }
 
 /** Release-train job name. It must never be a candidate-admission check. */
@@ -98,7 +99,6 @@ export function judgeRequiredChecks(
     if (seenIncomplete) pending = true;
     else if (seenSuccess) continue;
     else if (seenFailure) return 'red';
-    else pending = true;
   }
   return pending ? 'pending' : 'green';
 }
@@ -111,8 +111,8 @@ export interface FinalizeRunRecord {
   sha: string | null;
 }
 
-export const FINALIZE_ATTEMPT_CAP = 2;
-export const FINALIZE_FAILURE_COOLDOWN_MS = 60 * 60 * 1000;
+const FINALIZE_ATTEMPT_CAP = 2;
+const FINALIZE_FAILURE_COOLDOWN_MS = 60 * 60 * 1000;
 
 /** Matches `run-name` on finalize-github-release.yml. Anything else is unreadable. */
 export function finalizeRunIdentity(title: string | null): { version: string; sha: string } | null {
@@ -153,7 +153,7 @@ export function finalizeRetryDecision(input: {
   return { dispatch: true, reason: 'finalize-allowed' };
 }
 
-export const FINALIZE_HISTORY_MS = 24 * 60 * 60 * 1000;
+const FINALIZE_HISTORY_MS = 24 * 60 * 60 * 1000;
 const FINALIZE_RUN_PAGE_SIZE = 100;
 const FINALIZE_RUN_PAGE_CAP = 10;
 
@@ -324,7 +324,7 @@ export type ReleaseWrite =
 
 export interface TrainPlan { state: TrainState; writes: ReleaseWrite[]; exitCode: 0 | 1 }
 
-export function fleetKillPath(home = homedir()): string { return join(home, '.ashlr', 'KILL'); }
+function fleetKillPath(home = homedir()): string { return join(home, '.ashlr', 'KILL'); }
 export function autorunOffPath(home = homedir()): string { return join(home, '.ashlr-runs', 'RELEASE_AUTORUN_OFF'); }
 export const RELEASE_TRAIN_STOP_SCHEMA = 'phantom.release-train-stop.v1';
 const RELEASE_TRAIN_STOP_MARKER = 'release train off (fleet-stop)\n';
@@ -352,8 +352,8 @@ function releaseTrainStopRecord(value: unknown): value is {
   at: string;
   variableWasOn: boolean | null;
 } {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-  const row = value as Record<string, unknown>;
+  const row = record(value);
+  if (!row) return false;
   return row['schema'] === RELEASE_TRAIN_STOP_SCHEMA
     && typeof row['at'] === 'string' && Number.isFinite(Date.parse(row['at']))
     && (row['variableWasOn'] === true || row['variableWasOn'] === false || row['variableWasOn'] === null);
@@ -535,7 +535,7 @@ export function cappedCadenceMinutes(raw: number): number {
   return raw;
 }
 
-export function nextPatch(version: string): string {
+function nextPatch(version: string): string {
   const match = VERSION.exec(version);
   if (!match) throw new Error('invalid source version');
   const patch = Number(match[3]);
@@ -590,7 +590,7 @@ function readyReleasePr(pr: OpenReleasePr, checks: TrainObservation['pullChecks'
  * master. The candidate is only listed as skipped and superseded in the plan;
  * its tag and draft are never written.
  */
-export function fixForwardDue(input: TrainObservation, candidate: { name: string; sha: string }): boolean {
+function fixForwardDue(input: TrainObservation, candidate: { name: string; sha: string }): boolean {
   return input.pushCiRed === true && !input.build && !input.buildPending
     && input.head?.ancestry === 'ancestor' && input.masterSha !== candidate.sha
     && input.masterVersion === candidate.name.slice(1)
@@ -711,7 +711,6 @@ function emptyStages(mergeAt: string | null): Record<string, StageTiming> {
 export function assertReleaseWrite(write: ReleaseWrite): void {
   if (write.method !== 'PATCH' && write.method !== 'POST') throw new Error('refusing release write');
   const release = /^repos\/ashlrai\/phantom\/releases\/([1-9]\d*)$/;
-  const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|dependency-audit|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
   if (write.path.includes('/merge') || JSON.stringify(write.body).includes('admin') || JSON.stringify(write.body).includes('bypass')) {
     throw new Error('refusing release write');
   }
@@ -733,7 +732,7 @@ export function assertReleaseWrite(write: ReleaseWrite): void {
     }
     throw new Error('refusing release write');
   }
-  if (dispatch.test(write.path)) {
+  if (WORKFLOW_DISPATCH.test(write.path)) {
     const body = write.body as { ref?: string; inputs?: Record<string, string | boolean> };
     if ((body.ref !== 'master' && !/^v\d+\.\d+\.\d+$/.test(body.ref ?? '')) || !body.inputs) throw new Error('refusing workflow dispatch');
     if (write.path.endsWith('/release-please.yml/dispatches') && (body.ref !== 'master' || Object.keys(body.inputs).length !== 0)) throw new Error('refusing release PR dispatch');
@@ -747,10 +746,10 @@ export function assertReleaseWrite(write: ReleaseWrite): void {
         throw new Error('refusing finalize dispatch');
       }
       if (inputs.version === '3.30.34' || inputs.confirm_stable_finalization !== 'true') throw new Error('refusing finalize dispatch');
-      if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(inputs.version ?? '')) throw new Error('refusing finalize dispatch');
+      if (!VERSION.test(inputs.version ?? '')) throw new Error('refusing finalize dispatch');
       if (!/^[1-9]\d*$/.test(inputs.publish_run_id ?? '') || !/^[1-9]\d*$/.test(inputs.publish_run_attempt ?? '')) throw new Error('refusing finalize dispatch');
-      if (!/^[a-f0-9]{40}$/.test(inputs.candidate_sha ?? '')) throw new Error('refusing finalize dispatch');
-      if (!/^sha512-[A-Za-z0-9+/]{86}==$/.test(inputs.candidate_integrity ?? '')) throw new Error('refusing finalize dispatch');
+      if (!SHA.test(inputs.candidate_sha ?? '')) throw new Error('refusing finalize dispatch');
+      if (!SHA512_INTEGRITY.test(inputs.candidate_integrity ?? '')) throw new Error('refusing finalize dispatch');
     }
     return;
   }
@@ -838,7 +837,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   catch { return stopped('duplicate-tag'); }
   if (input.head && input.head.sha === '') return stopped('candidate-refused: tag_sha_empty');
   const eligibleTags = input.tags.filter((tag) => !input.skippedTags?.some((skipped) => skipped.tag === tag.name));
-  try { headTag = newestTag(eligibleTags); } catch { return stopped('duplicate-tag'); }
+  headTag = newestTag(eligibleTags);
   if (!input.head || !headTag || input.head.tag !== headTag.name || input.head.sha !== headTag.sha) {
     return stopped(input.head ? 'candidate-not-newest' : 'no-release-tag');
   }
@@ -850,7 +849,6 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   // to this SHA.
   const receiptAdmitted = input.head.packageVersion === version && input.head.releaseGate === 'green';
   const admitted = (input.head.ancestry === 'ancestor' || input.head.ancestry === 'identical')
-    && input.head.sha !== ''
     && (subjectAdmitted || receiptAdmitted);
   if (!admitted) {
     const detail = input.head.ancestry !== 'ancestor' && input.head.ancestry !== 'identical'
@@ -930,8 +928,6 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     });
   }
   if (input.build && input.attest && input.audit && input.npmPublished === false && publishable) {
-    // Re-run the strictly-greater tag check immediately before publish dispatch.
-    if (successorTagConflict(input.masterVersion, input.tags)) return stopped('duplicate_tag');
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/publish-canonical-npm.yml/dispatches`,
       body: { ref: 'master', inputs: {
@@ -947,7 +943,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     now: input.now, version, sha: headTag.sha, since: input.head.committedAt, runs: input.finalizeRuns ?? [],
   });
   if (row?.draft === true && stocked && publishable && input.npmPublished === true && input.npmPublish
-    && input.finalizePending !== true && finalizeRetry.dispatch && version !== '3.30.34' && headTag.name !== 'v3.30.34') {
+    && input.finalizePending !== true && finalizeRetry.dispatch && version !== '3.30.34') {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/dispatches`,
       body: { ref: 'master', inputs: {
@@ -989,7 +985,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     sign: { status: signed ? 'complete' : 'pending', reason: signed ? 'signed-release-assets' : 'mac-release-autorun' },
     notarize: { status: signed ? 'complete' : 'pending', reason: signed ? 'signed-release-assets' : 'mac-release-autorun' },
     npm: { status: input.npmPublished === true ? 'complete' : 'pending', ...(input.npmPublished === null ? { reason: 'registry-unknown' } : {}) },
-    feed: { status: publishedFeed || (feed && !published && feedMatches) ? 'complete' : 'pending', ...(published && !feedMatches ? { reason: 'feed-version-mismatch' } : {}) },
+    feed: { status: publishedFeed || (feed && !published && feedMatches) ? 'complete' : 'pending' },
     docs: { status: docs ? 'complete' : 'pending' },
     website: { status: docs ? 'hooked' : 'pending', reason: 'phantom-secrets' },
     finalize: { status: publishedFeed && input.npmPublished === true ? 'complete' : 'pending' },
@@ -1060,42 +1056,58 @@ async function pages(read: (path: string) => Promise<unknown>, path: string): Pr
   throw new Error('incomplete release inventory');
 }
 
+function isPendingRunStatus(status: unknown): boolean {
+  return status === 'queued' || status === 'in_progress' || status === 'waiting';
+}
+
+async function readPackageVersionAt(read: (path: string) => Promise<unknown>, sha: string): Promise<string | null> {
+  const content = record(await read(`repos/${REPOSITORY}/contents/package.json?ref=${sha}`));
+  if (content?.encoding !== 'base64' || typeof content.content !== 'string') return null;
+  const pkg = record(JSON.parse(Buffer.from(content.content.replace(/\s/g, ''), 'base64').toString('utf8')));
+  if (pkg?.name !== '@ashlr/phantom' || typeof pkg.version !== 'string' || !VERSION.test(pkg.version)) return null;
+  return pkg.version;
+}
+
 async function packageVersionAt(read: (path: string) => Promise<unknown>, sha: string): Promise<string | null> {
   try {
-    const content = record(await read(`repos/${REPOSITORY}/contents/package.json?ref=${sha}`));
-    if (content?.encoding !== 'base64' || typeof content.content !== 'string') return null;
-    const pkg = record(JSON.parse(Buffer.from(content.content.replace(/\s/g, ''), 'base64').toString('utf8')));
-    if (pkg?.name !== '@ashlr/phantom' || typeof pkg.version !== 'string' || !VERSION.test(pkg.version)) return null;
-    return pkg.version;
+    return await readPackageVersionAt(read, sha);
   } catch {
     return null;
   }
 }
 
+async function listLatestActionsCheckRuns(
+  read: (path: string) => Promise<unknown>,
+  sha: string,
+): Promise<{ name: string; status: string; conclusion: string | null; appId: number }[] | null> {
+  const collected: { name: string; status: string; conclusion: string | null; appId: number }[] = [];
+  let total: number | null = null;
+  for (let page = 1; page <= 10; page += 1) {
+    const listed = record(await read(`repos/${REPOSITORY}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100&page=${page}`));
+    const batch = listed && Array.isArray(listed.check_runs) ? listed.check_runs : null;
+    const pageTotal = listed && Number.isInteger(listed.total_count) ? Number(listed.total_count) : null;
+    if (!batch || pageTotal === null || pageTotal < 0) return null;
+    if (total === null) total = pageTotal;
+    else if (pageTotal !== total) return null;
+    for (const row of batch) {
+      const item = record(row);
+      collected.push({
+        name: text(item?.name) ?? '',
+        status: text(item?.status) ?? '',
+        conclusion: text(item?.conclusion),
+        appId: Number(record(item?.app)?.id),
+      });
+    }
+    if (batch.length < 100) break;
+  }
+  if (total === null || total !== collected.length || collected.length > 1000) return null;
+  return collected;
+}
+
 async function releaseGateFor(read: (path: string) => Promise<unknown>, sha: string): Promise<ReleaseGateReceipt> {
   try {
-    const collected: { name: string; status: string; conclusion: string | null; appId: number }[] = [];
-    let total: number | null = null;
-    for (let page = 1; page <= 10; page += 1) {
-      const listed = record(await read(`repos/${REPOSITORY}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100&page=${page}`));
-      const batch = listed && Array.isArray(listed.check_runs) ? listed.check_runs : null;
-      const pageTotal = listed && Number.isInteger(listed.total_count) ? Number(listed.total_count) : null;
-      if (!batch || pageTotal === null || pageTotal < 0) return 'unknown';
-      if (total === null) total = pageTotal;
-      else if (pageTotal !== total) return 'unknown';
-      for (const row of batch) {
-        const item = record(row);
-        collected.push({
-          name: text(item?.name) ?? '',
-          status: text(item?.status) ?? '',
-          conclusion: text(item?.conclusion),
-          appId: Number(record(item?.app)?.id),
-        });
-      }
-      if (batch.length < 100) break;
-    }
-    if (total === null || total !== collected.length || collected.length > 1000) return 'unknown';
-    return releaseGateReceipt(collected);
+    const collected = await listLatestActionsCheckRuns(read, sha);
+    return collected ? releaseGateReceipt(collected) : 'unknown';
   } catch {
     return 'unknown';
   }
@@ -1103,10 +1115,7 @@ async function releaseGateFor(read: (path: string) => Promise<unknown>, sha: str
 
 async function ancestorReleaseMessage(read: (path: string) => Promise<unknown>, tag: { name: string; sha: string }): Promise<string | null> {
   const version = tag.name.slice(1);
-  const content = record(await read(`repos/${REPOSITORY}/contents/package.json?ref=${tag.sha}`));
-  if (content?.encoding !== 'base64' || typeof content.content !== 'string') return null;
-  const pkg = record(JSON.parse(Buffer.from(content.content.replace(/\s/g, ''), 'base64').toString('utf8')));
-  if (pkg?.name !== '@ashlr/phantom' || pkg.version !== version) return null;
+  if (await readPackageVersionAt(read, tag.sha) !== version) return null;
   const rows = await read(`repos/${REPOSITORY}/commits?sha=${tag.sha}&per_page=30`);
   if (!Array.isArray(rows)) return null;
   for (const row of rows) {
@@ -1186,11 +1195,8 @@ export async function observeTrain(
   const master = record(await read(`repos/${REPOSITORY}/commits/master`));
   const masterSha = text(master?.sha);
   if (!masterSha || !SHA.test(masterSha)) throw new Error('master identity unavailable');
-  const content = record(await read(`repos/${REPOSITORY}/contents/package.json?ref=${masterSha}`));
-  if (content?.encoding !== 'base64' || typeof content.content !== 'string') throw new Error('package metadata unavailable');
-  const pkg = record(JSON.parse(Buffer.from(content.content.replace(/\s/g, ''), 'base64').toString('utf8')));
-  if (pkg?.name !== '@ashlr/phantom' || typeof pkg.version !== 'string' || !VERSION.test(pkg.version)) throw new Error('package metadata unavailable');
-  const masterVersion = pkg.version;
+  const masterVersion = await readPackageVersionAt(read, masterSha);
+  if (!masterVersion) throw new Error('package metadata unavailable');
   let lastTaggedAt: string | null = null;
   let aheadBy = 0;
   const current = await read(`repos/${REPOSITORY}/git/ref/tags/v${masterVersion}`);
@@ -1279,7 +1285,7 @@ export async function observeTrain(
     const headRef = text(record(detail?.head)?.ref) ?? '';
     const headSha = text(record(detail?.head)?.sha) ?? '';
     const nodeId = text(detail?.node_id) ?? '';
-    const pullState = detail?.merged_at ? 'MERGED' : detail?.state === 'open' ? 'OPEN' : 'OPEN';
+    const pullState = detail?.merged_at ? 'MERGED' : 'OPEN';
     if (!version || !headRef.startsWith('release-please--') || !SHA.test(headSha) || !PULL_NODE.test(nodeId)) throw new Error('invalid release pull request');
     // mergeable_state folds in advisory check and review state; enqueue
     // authority is the required-check judgment below plus GitHub's own rules.
@@ -1334,7 +1340,7 @@ export async function observeTrain(
   const npmRecord = record(npm);
   const integrity = text(record(npmRecord?.dist)?.integrity) ?? '';
   let npmPublish: TrainObservation['npmPublish'] = null;
-  if (/^sha512-[A-Za-z0-9+/]{86}==$/.test(integrity)) {
+  if (SHA512_INTEGRITY.test(integrity)) {
     try {
       const parsed = publishRunFromAttestation(await read(`registry/attestations/@ashlr/phantom/${version}`));
       if (parsed) npmPublish = { ...parsed, integrity };
@@ -1424,29 +1430,8 @@ async function requiredCheckNames(read: (path: string) => Promise<unknown>): Pro
 
 /** Required contexts judged on this exact SHA's latest Actions check runs. */
 async function requiredCiOnSha(read: (path: string) => Promise<unknown>, sha: string, names: readonly string[]): Promise<CandidateCi> {
-  const collected: unknown[] = [];
-  let total: number | null = null;
-  for (let page = 1; page <= 10; page += 1) {
-    const listed = record(await read(`repos/${REPOSITORY}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100&page=${page}`));
-    const batch = listed && Array.isArray(listed.check_runs) ? listed.check_runs : null;
-    const pageTotal = listed && Number.isInteger(listed.total_count) ? Number(listed.total_count) : null;
-    if (!batch || pageTotal === null || pageTotal < 0) return 'unknown';
-    if (total === null) total = pageTotal;
-    else if (pageTotal !== total) return 'unknown';
-    collected.push(...batch);
-    if (batch.length < 100) break;
-  }
-  if (total === null || total !== collected.length || collected.length > 1000) return 'unknown';
-  const parsed = collected.map((row) => {
-    const item = record(row);
-    return {
-      name: text(item?.name) ?? '',
-      status: text(item?.status) ?? '',
-      conclusion: text(item?.conclusion),
-      appId: Number(record(item?.app)?.id),
-    };
-  });
-  return judgeRequiredChecks(names, parsed);
+  const parsed = await listLatestActionsCheckRuns(read, sha);
+  return parsed ? judgeRequiredChecks(names, parsed) : 'unknown';
 }
 
 async function publishedFeedVersion(read: (path: string) => Promise<unknown>, releases: ReleaseRow[], tag: string | null): Promise<string | null> {
@@ -1478,7 +1463,7 @@ async function successfulRun(read: (path: string) => Promise<unknown>, workflow:
       if (run.status === 'completed' && run.conclusion === 'success') pushGreen = true;
       else if (run.status === 'completed') pushRed = true;
     }
-    if (run.status === 'queued' || run.status === 'in_progress' || run.status === 'waiting') pending = true;
+    if (isPendingRunStatus(run.status)) pending = true;
     if (!admitCiRun(run, sha, tag)) continue;
     if (run.status !== 'completed' || run.conclusion !== 'success') continue;
     const id = run.id; const attempt = run.run_attempt;
@@ -1494,7 +1479,7 @@ async function successfulRun(read: (path: string) => Promise<unknown>, workflow:
   return { build: null, pending, pushCiRed: pushRed && !pushGreen };
 }
 
-export function admitAuditRun(run: Record<string, unknown> | null, sha: string): boolean {
+function admitAuditRun(run: Record<string, unknown> | null, sha: string): boolean {
   if (!run || run.head_sha !== sha || run.path !== '.github/workflows/dependency-audit.yml') return false;
   return run.head_branch === 'master' || (typeof run.head_branch === 'string' && /^v\d+\.\d+\.\d+$/.test(run.head_branch));
 }
@@ -1506,7 +1491,7 @@ async function auditRun(read: (path: string) => Promise<unknown>, sha: string): 
   for (const row of runs) {
     const run = record(row);
     if (!admitAuditRun(run, sha)) continue;
-    if (run?.status === 'queued' || run?.status === 'in_progress' || run?.status === 'waiting') pending = true;
+    if (isPendingRunStatus(run?.status)) pending = true;
     if (run?.status !== 'completed' || run?.conclusion !== 'success') continue;
     if (!Number.isSafeInteger(run?.id) || !Number.isSafeInteger(run?.run_attempt)) continue;
     return { audit: { runId: Number(run.id), attempt: Number(run.run_attempt) }, pending };
@@ -1523,7 +1508,7 @@ async function attestRun(read: (path: string) => Promise<unknown>, ciRun: number
   for (const row of runs) {
     const run = record(row);
     if (!run || !releaseHeadBranch(run.head_branch)) continue;
-    if (run.status === 'queued' || run.status === 'in_progress' || run.status === 'waiting') pending = true;
+    if (isPendingRunStatus(run.status)) pending = true;
     if (run.status !== 'completed' || run.conclusion !== 'success' || !Number.isSafeInteger(run.id)) continue;
     const artifacts = record(await read(`repos/${REPOSITORY}/actions/runs/${Number(run.id)}/artifacts?per_page=100`));
     const rows = Array.isArray(artifacts?.artifacts) ? artifacts.artifacts : [];
@@ -1595,8 +1580,6 @@ export function releaseGithubCall(method: string, path: string, body?: unknown):
   return { args: [...args, '--input', '-', path], input: JSON.stringify(body) };
 }
 
-export const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|dependency-audit|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
-
 /** Draft PATCH and enqueue use the App token. Workflow dispatches stay on
  *  GITHUB_TOKEN: the ashlr-release App has no actions permission, so a mint
  *  that requests that permission 422s. */
@@ -1650,7 +1633,7 @@ async function githubRead(path: string): Promise<unknown> {
   }
   if (path.startsWith('registry/attestations/@ashlr/phantom/')) {
     const version = path.slice('registry/attestations/@ashlr/phantom/'.length);
-    if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) throw new Error('registry read failed');
+    if (!VERSION.test(version)) throw new Error('registry read failed');
     const response = await fetch(`https://registry.npmjs.org/-/npm/v1/attestations/@ashlr%2fphantom@${version}`, { redirect: 'error' });
     if (!response.ok) throw new Error('registry read failed');
     return response.json() as Promise<unknown>;

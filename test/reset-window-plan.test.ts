@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { resetWindowPlan, type ResetWindowResource } from '../src/core/fleet/reset-window-plan.js';
+import { ledgerWindowPlan, resetWindowPlan, type ResetWindowResource } from '../src/core/fleet/reset-window-plan.js';
 import { cmdFleetWindowPlan } from '../src/cli/fleet-window-plan.js';
 import type { ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
 
@@ -55,17 +55,37 @@ describe('fleet window-plan', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const before = structuredClone(ledger);
     try {
-      expect(await cmdFleetWindowPlan(['--json'], async () => ledger, () => now)).toBe(0);
+      expect(await cmdFleetWindowPlan(['--json'], async () => ({ ...ledger, lanes: ledger.lanes.map(row => ({
+        ...row, observation: { source: 'codex-personal-sessions', asOf: new Date(now).toISOString() },
+      })) }), () => now)).toBe(0);
       expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({ advisory: true, resources: [{ verdict: 'overspending' }] });
       expect(ledger).toEqual(before);
     } finally { log.mockRestore(); }
   });
-  it('keeps stale evidence unknown', async () => {
+  it('keeps a stale provider capture unknown even when the scheduler tick is current', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      expect(await cmdFleetWindowPlan(['--json'], async () => ({ ...ledger, asOf: new Date(now - 3600_000).toISOString() }), () => now)).toBe(0);
+      expect(await cmdFleetWindowPlan(['--json'], async () => ({ ...ledger, lanes: ledger.lanes.map(row => ({
+        ...row, observation: { source: 'codex-personal-sessions', asOf: new Date(now - 3600_000).toISOString() },
+      })) }), () => now)).toBe(0);
       expect(JSON.parse(log.mock.calls[0]![0]).resources[0].verdict).toBe('unknown');
     } finally { log.mockRestore(); }
+  });
+  it('does not treat a fresh scheduler tick as fresh provider quota', () => {
+    expect(ledgerWindowPlan(ledger, now)[0]).toMatchObject({
+      verdict: 'unknown', usedPercent: null, projectedPercentLeftAtReset: null,
+    });
+  });
+  it('uses a current lane-scoped quota capture in the status ledger', () => {
+    const row = ledger.lanes[0]!;
+    const statusQuota = { lane: row.lane, window: row.window, usedPct: row.usedPct, resetAt: row.resetAt,
+      source: row.source, observedAt: new Date(now - 20_000).toISOString() };
+    const measured = { ...row, quotaEvidence: {
+      state: 'unknown', reason: 'status-quota', holdConflict: null, statusQuota, measuredQuota: null, maxAgeMs: 300_000,
+    } } satisfies typeof row;
+    expect(ledgerWindowPlan({ ...ledger, lanes: [measured] }, now)[0]?.verdict).toBe('overspending');
+    const mismatched = { ...measured, quotaEvidence: { ...measured.quotaEvidence, statusQuota: { ...statusQuota, lane: 'another-account' } } };
+    expect(ledgerWindowPlan({ ...ledger, lanes: [mismatched] }, now)[0]?.verdict).toBe('unknown');
   });
   it('rejects unsupported arguments without reading evidence', async () => {
     const read = vi.fn();

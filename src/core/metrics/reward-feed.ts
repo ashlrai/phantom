@@ -23,7 +23,8 @@
  *     vocabulary: reverted:true, reverted_at/revertedAt, revert event/state
  *     names) at or after the latest effective merge resolves the job as merged:false —
  *     the v1 schema has no revert dimension and consumers score held merges.
- *     A revert that names a PR can only discount that PR's merge.
+ *     A revert that names a PR can only discount that PR's merge. An
+ *     unusable repository label cannot make a revert job-wide.
  *     A later merge is a fresh held merge. For a known merge, its merge time
  *     bounds dispatch and CI evidence even when a revert changes the verdict.
  *     Reverts only git history or the
@@ -211,6 +212,7 @@ interface RewardJobAccum {
   dispatches: DispatchMark[];
   dispatchUndated: boolean;
   batchClaims: Set<number>;
+  launchReservations: Set<number | null>;
   /** Latest merge-resolution row: row time, the GitHub mergedAt it reported, and its PR keys. */
   merge: ResolutionMark | null;
   /** Latest closed-unmerged resolution time, falling back to the row stamp. */
@@ -230,7 +232,7 @@ interface RewardJobAccum {
 function newAccum(): RewardJobAccum {
   return {
     dispatches: [],
-    dispatchUndated: false, batchClaims: new Set(),
+    dispatchUndated: false, batchClaims: new Set(), launchReservations: new Set(),
     merge: null, close: null, reverts: new Map(), latestRevert: null, standingReverted: false,
     ciBoundaryUndated: false, ciStarts: new Map(), ciCompletions: new Map(),
   };
@@ -267,6 +269,9 @@ function ciWallEvidence(
   if (complete < start) return {};
   for (const claim of acc.batchClaims) {
     if (claim >= start && claim <= complete) return {};
+  }
+  for (const reservation of acc.launchReservations) {
+    if (reservation === null || (reservation > start && reservation <= complete)) return {};
   }
   const startMark = acc.ciStarts.get(start)!;
   const completeMark = acc.ciCompletions.get(complete)!;
@@ -324,8 +329,8 @@ export function foldJobsLedgerRewards(
     // A future verdict cannot establish PR ownership or supply other evidence yet.
     if (resolvedAt !== null && resolvedAt > nowMs) continue;
     const name = firstLedgerString(row, LEDGER_EVENT_KEYS)?.toLowerCase();
-    const dispatch = name !== undefined && DISPATCH_EVENTS.has(name)
-      && !(name === 'claim' && row['launch_dedupe'] === true);
+    const reservation = name === 'claim' && row['launch_dedupe'] === true;
+    const dispatch = name !== undefined && DISPATCH_EVENTS.has(name) && !reservation;
     const ciBoundary = name === 'ci_start' || name === 'ci_complete';
     // A standalone future revert cannot contest a PR claim yet. Mixed
     // receipts can still supply independent resolution or execution evidence.
@@ -341,13 +346,15 @@ export function foldJobsLedgerRewards(
       }
     }
     if (!REWARD_JOB_ID_PATTERN.test(id)) continue;
-    if (receiptAt === null && !dispatch && !ciBoundary) continue;
+    if (receiptAt === null && !dispatch && !reservation && !ciBoundary) continue;
     let acc = jobs.get(id);
     if (!acc) {
       acc = newAccum();
       jobs.set(id, acc);
     }
-    if (at === null) {
+    if (reservation) {
+      acc.launchReservations.add(at);
+    } else if (at === null) {
       if (dispatch) acc.dispatchUndated = true;
       if (ciBoundary) acc.ciBoundaryUndated = true;
     } else if (dispatch) {
@@ -360,7 +367,10 @@ export function foldJobsLedgerRewards(
     if (revertedAtMs !== null && revertedAtMs <= nowMs) {
       const repo = repoOf(row, prKeys);
       const pr = prKeys.length === 1 ? prKeys[0]! : null;
-      if (pr !== null || firstLedgerString(row, LEDGER_URL_KEYS) === null) {
+      const repoLabel = row['repo'];
+      const repoOmitted = repoLabel == null || (typeof repoLabel === 'string' && repoLabel.trim() === '');
+      if (pr !== null || (firstLedgerString(row, LEDGER_URL_KEYS) === null
+          && (typeof repo === 'string' || repoOmitted))) {
         const key = pr ?? repo ?? null;
         acc.reverts.set(key, Math.max(acc.reverts.get(key) ?? 0, revertedAtMs));
         acc.latestRevert = latestResolution(acc.latestRevert, {
@@ -412,7 +422,13 @@ function dispatchBefore(acc: RewardJobAccum, resolution: ResolutionMark) {
     for (const key of dispatch.prKeys) prKeys.add(key);
   }
   const executionPrKeys = [...new Set([...prKeys, ...resolution.prKeys])];
-  if (prKeys.size > 0 && resolution.prKeys.length > 0 && executionPrKeys.length > 1) return null;
+  if (prKeys.size > 0 && executionPrKeys.length > 1) return null;
+  // A repository-only verdict still cannot resolve a dispatch tied to a PR
+  // in another repository.
+  if (resolution.prKeys.length === 0 && typeof resolution.repo === 'string') {
+    const repoPrefix = `${resolution.repo}#`;
+    if ([...prKeys].some((key) => !key.startsWith(repoPrefix))) return null;
+  }
   // The dispatcher stamps receipts to the second. Conflicting lanes at the
   // same timestamp cannot prove which pool earned the reward.
   return latestMs === null ? null : {

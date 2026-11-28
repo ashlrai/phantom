@@ -3,10 +3,11 @@
  * Thin: argv parsing and printing only; logic lives in src/core/caps/.
  */
 
+import type { CapsIssue } from '../core/caps/registry.js';
 import { capsGenerate, capsList, capsValidate } from '../core/caps/service.js';
 import { rejectUnknownOptions } from './args.js';
 
-export const CAPS_USAGE = `Usage: phm caps <list|validate|generate> [options]
+const CAPS_USAGE = `Usage: phm caps <list|validate|generate> [options]
 
   list       Surfaces, models, (surface, model) pairs, hosting edges,
              sessions, account references and capabilities.
@@ -30,14 +31,19 @@ Options:
 
 const VERBS = ['list', 'validate', 'generate'] as const;
 
+function printCapsIssues(issues: readonly CapsIssue[]): void {
+  for (const issue of issues) console.log(`${issue.path}: ${issue.message}`);
+}
+
 export async function cmdCaps(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { console.log(CAPS_USAGE); return 0; }
   const json = args.includes('--json');
-  const usage = (message: string): number => {
+  const fail = (message: string, code: number, includeUsage = false): number => {
     if (json) console.log(JSON.stringify({ ok: false, error: message }));
-    else console.error(`${message}\n\n${CAPS_USAGE}`);
-    return 2;
+    else console.error(includeUsage ? `${message}\n\n${CAPS_USAGE}` : message);
+    return code;
   };
+  const usage = (message: string): number => fail(message, 2, true);
   const verb = args[0];
   if (!verb || !(VERBS as readonly string[]).includes(verb)) return usage(verb ? `Unknown caps verb: ${verb}` : 'Missing caps verb.');
   const rest = args.slice(1);
@@ -57,13 +63,13 @@ export async function cmdCaps(args: string[]): Promise<number> {
       const result = await capsValidate({ registry });
       if (json) console.log(JSON.stringify(result));
       else if (result.ok) console.log(`PASS: ${result.registryPath} — ${Object.entries(result.counts).map(([k, n]) => `${n} ${k}`).join(', ')}`);
-      else { for (const i of result.issues) console.log(`${i.path}: ${i.message}`); console.log(`FAIL: ${result.issues.length} issue(s) in ${result.registryPath}`); }
+      else { printCapsIssues(result.issues); console.log(`FAIL: ${result.issues.length} issue(s) in ${result.registryPath}`); }
       return result.ok ? 0 : 1;
     }
     if (verb === 'list') {
       const view = await capsList({ registry });
       if (json) { console.log(JSON.stringify(view)); return view.ok ? 0 : 1; }
-      if (!view.ok) { for (const i of view.issues) console.log(`${i.path}: ${i.message}`); return 1; }
+      if (!view.ok) { printCapsIssues(view.issues); return 1; }
       console.log('Surfaces');
       for (const s of view.surfaces) console.log(`  ${s.id.padEnd(18)} ${s.kind.padEnd(13)} lane ${s.lane.padEnd(8)} adapter ${s.adapter}${s.hosts.length ? `  hosted by ${s.hosts.join(', ')}` : ''}`);
       console.log('Models');
@@ -79,7 +85,7 @@ export async function cmdCaps(args: string[]): Promise<number> {
     }
     const result = await capsGenerate({ registry, out: value('--out'), check: rest.includes('--check'), pinStage: rest.includes('--pin-stage') });
     if (json) console.log(JSON.stringify(result));
-    else if ('issues' in result) { for (const i of result.issues) console.log(`${i.path}: ${i.message}`); console.log('FAIL: registry invalid; nothing generated'); }
+    else if ('issues' in result) { printCapsIssues(result.issues); console.log('FAIL: registry invalid; nothing generated'); }
     else if (result.mode === 'check') {
       const d = result.drift;
       for (const p of d.changed) console.log(`changed: ${p}`);
@@ -93,9 +99,6 @@ export async function cmdCaps(args: string[]): Promise<number> {
     }
     return result.ok ? 0 : 1;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (json) console.log(JSON.stringify({ ok: false, error: message }));
-    else console.error(message);
-    return 1;
+    return fail(error instanceof Error ? error.message : String(error), 1);
   }
 }

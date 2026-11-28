@@ -21,10 +21,12 @@ import {
   HARD_LIMIT_GATE_FOR,
   SENSITIVITY_FLAGS,
   capsRegistrySchema,
+  type Capability,
   type CapsModel,
   type CapsRegistry,
   type CapsSurface,
   type ControlBackend,
+  type SensitivityFlag,
 } from './schema.js';
 
 /**
@@ -47,6 +49,32 @@ export class CapsRegistryError extends Error {
   constructor(readonly issues: CapsIssue[]) {
     super(`Capability registry is invalid (${issues.length} issue${issues.length === 1 ? '' : 's'}): ${issues.map((i) => `${i.path}: ${i.message}`).join('; ')}`);
   }
+}
+
+export function compareById<T extends { id: string }>(a: T, b: T): number {
+  return a.id.localeCompare(b.id);
+}
+
+/** Look up an engine spec in BUILTIN_ENGINE_REGISTRY without prototype traversal. */
+export function lookupBuiltinEngine(engineId: string | undefined): (typeof BUILTIN_ENGINE_REGISTRY)[string] | undefined {
+  return engineId !== undefined && Object.hasOwn(BUILTIN_ENGINE_REGISTRY, engineId)
+    ? BUILTIN_ENGINE_REGISTRY[engineId]
+    : undefined;
+}
+
+/** Sensitivity flags currently enabled on a capability, in canonical schema order. */
+export function activeSensitivityFlags(capability: Pick<Capability, 'sensitivity'>): SensitivityFlag[] {
+  return SENSITIVITY_FLAGS.filter((flag) => capability.sensitivity[flag]);
+}
+
+/** True when a capability carries any sensitivity flag requiring a hard-limit gate. */
+export function isGatedCapability(capability: Pick<Capability, 'sensitivity'>): boolean {
+  return SENSITIVITY_FLAGS.some((flag) => capability.sensitivity[flag]);
+}
+
+/** Direct host surface ids for `surfaceId`, sorted lexicographically. */
+export function hostsForSurface(reg: Pick<CapsRegistry, 'hosting'>, surfaceId: string): string[] {
+  return reg.hosting.filter((edge) => edge.guest === surfaceId).map((edge) => edge.host).sort();
 }
 
 const pathOf = (parts: readonly PropertyKey[]): string =>
@@ -114,12 +142,11 @@ function semanticIssues(reg: CapsRegistry): CapsIssue[] {
 
   reg.surfaces.forEach((s, i) => {
     const at = `surfaces[${i}]`;
-    if (s.engine !== undefined && !Object.hasOwn(BUILTIN_ENGINE_REGISTRY, s.engine)) {
+    const engine = lookupBuiltinEngine(s.engine);
+    if (s.engine !== undefined && !engine) {
       add(`${at}.engine`, `Engine "${s.engine}" is not in run/engine-registry.ts; the registry never invents engines.`);
     }
     if (s.dispatch === 'engine') {
-      const engine = s.engine && Object.hasOwn(BUILTIN_ENGINE_REGISTRY, s.engine)
-        ? BUILTIN_ENGINE_REGISTRY[s.engine] : undefined;
       if (!engine || s.hostedOnly) add(`${at}.dispatch`, 'Engine dispatch requires a known engine and a directly reachable surface.');
       if (!['cli', 'local-runtime'].includes(s.kind) || (engine &&
         ((s.kind === 'cli' && engine.kind !== 'cli-agent') || (s.kind === 'local-runtime' && engine.kind !== 'api-model')))) {
@@ -205,7 +232,7 @@ function semanticIssues(reg: CapsRegistry): CapsIssue[] {
 
   reg.sessions.forEach((s, i) => {
     const at = `sessions[${i}]`;
-    const pair = resolvePairIn(reg, s.surface, s.model);
+    const pair = resolveSurfaceModelPair(reg, s.surface, s.model);
     if (!pair.ok) add(at, pair.reason);
     s.capabilities.forEach((c, j) => {
       if (!capIds.has(c)) { add(`${at}.capabilities[${j}]`, `Unknown capability "${c}".`); return; }
@@ -289,7 +316,7 @@ function hostPath(reg: Pick<CapsRegistry, 'hosting' | 'surfaces'>, surfaceId: st
   const seen = new Set([surfaceId]);
   while (queue.length) {
     const { node, path } = queue.shift()!;
-    const hosts = reg.hosting.filter((e) => e.guest === node).map((e) => e.host).sort();
+    const hosts = hostsForSurface(reg, node);
     for (const host of hosts) {
       if (seen.has(host)) continue;
       seen.add(host);
@@ -301,7 +328,8 @@ function hostPath(reg: Pick<CapsRegistry, 'hosting' | 'surfaces'>, surfaceId: st
   return null;
 }
 
-function resolvePairIn(reg: CapsRegistry, surfaceId: string, modelId: string): PairResolution {
+/** Validate one `(surface, model)` pair the router proposes. */
+export function resolveSurfaceModelPair(reg: CapsRegistry, surfaceId: string, modelId: string): PairResolution {
   const surface: CapsSurface | undefined = reg.surfaces.find((s) => s.id === surfaceId);
   if (!surface) return { ok: false, reason: `Unknown surface "${surfaceId}".` };
   const model: CapsModel | undefined = reg.models.find((m) => m.id === modelId);
@@ -315,17 +343,12 @@ function resolvePairIn(reg: CapsRegistry, surfaceId: string, modelId: string): P
   return { ok: true, pair: { surface: surfaceId, model: modelId, catalogId: model.catalogId, via } };
 }
 
-/** Validate one `(surface, model)` pair the router proposes. */
-export function resolveSurfaceModelPair(reg: CapsRegistry, surfaceId: string, modelId: string): PairResolution {
-  return resolvePairIn(reg, surfaceId, modelId);
-}
-
 /** Every routable `(surface, model)` pair, sorted by surface then model. */
 export function surfaceModelPairs(reg: CapsRegistry): CapsPair[] {
   const pairs: CapsPair[] = [];
-  for (const s of [...reg.surfaces].sort((a, b) => a.id.localeCompare(b.id))) {
-    for (const m of [...reg.models].sort((a, b) => a.id.localeCompare(b.id))) {
-      const r = resolvePairIn(reg, s.id, m.id);
+  for (const s of [...reg.surfaces].sort(compareById)) {
+    for (const m of [...reg.models].sort(compareById)) {
+      const r = resolveSurfaceModelPair(reg, s.id, m.id);
       if (r.ok) pairs.push(r.pair);
     }
   }
@@ -339,5 +362,5 @@ export function hostedSurfaces(reg: CapsRegistry, hostId: string): string[] {
 
 /** Capabilities with any sensitivity flag set: callable only through their hard-limit gates. */
 export function gatedCapabilities(reg: CapsRegistry): CapsRegistry['capabilities'] {
-  return reg.capabilities.filter((c) => SENSITIVITY_FLAGS.some((f) => c.sensitivity[f]));
+  return reg.capabilities.filter(isGatedCapability);
 }

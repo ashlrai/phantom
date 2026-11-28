@@ -48,9 +48,11 @@ function field(row: Row, ...names: string[]): unknown {
   for (const name of names) if (row[name] !== undefined && row[name] !== null) return row[name];
   return undefined;
 }
-function stringField(row: Row, ...names: string[]): string | undefined {
-  const value = field(row, ...names);
-  return typeof value === 'string' && value.trim() ? value : undefined;
+function posthogJobId(row: Row): string | undefined {
+  const ids = new Set([row['jobId'], row['job_id']].filter(
+    (value): value is string => typeof value === 'string' && value.trim() !== '',
+  ));
+  return ids.size === 1 ? ids.values().next().value : undefined;
 }
 function observedArm(...values: unknown[]): string | undefined {
   for (const value of values) {
@@ -66,15 +68,19 @@ function numberField(row: Row, names: string[], max = Infinity): number | undefi
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > max) throw new Error(`Invalid ${names[0]}`);
   return value;
 }
-function timestampField(row: Row): unknown {
-  return field(row, 'timestamp', 'at', 'time', 'ts');
-}
-function timestamp(row: Row): number | undefined {
-  const value = timestampField(row);
-  if (value === undefined) return undefined;
-  const parsed = parseLedgerTs(value);
-  if (parsed === null) throw new Error('Invalid event timestamp');
-  return parsed;
+function timestamp(row: Row, ambiguousAsUnknown = false): number | undefined {
+  let observed: number | undefined;
+  for (const key of ['timestamp', 'at', 'time', 'ts']) {
+    const value = row[key];
+    if (value === undefined || value === null) continue;
+    const parsed = parseLedgerTs(value);
+    if (parsed === null || (observed !== undefined && observed !== parsed)) {
+      if (ambiguousAsUnknown) return undefined;
+      throw new Error(parsed === null ? 'Invalid event timestamp' : 'Conflicting event timestamps');
+    }
+    observed = parsed;
+  }
+  return observed;
 }
 function assign<K extends keyof Job>(job: Job, key: K, value: Job[K] | undefined): void {
   if (value === undefined) return;
@@ -132,6 +138,7 @@ function pair(jobs: Job[], prediction: (job: Job) => number | undefined, actual:
 /** Join per-job predictions with recorded dispatch and outcome evidence. */
 export function calibrateRouting(jobsJsonl: string, posthogJson?: string): CalibrationReport {
   const jobs = new Map<string, Job>();
+  const reservationTimes = new Map<string, Set<number | null>>();
   const rows = parseJsonl(jobsJsonl);
   let recognized = 0;
   for (const row of rows) {
@@ -151,8 +158,14 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
     const terminalPhases = new Set(ledgerStateTokens(row).filter((value) => value === 'MERGED' || value === 'CLOSED'));
     const phase = terminalPhases.values().next().value ?? ledgerPhase(row);
     const event = ledgerLifecycleEvent(row, phase);
+    if (id && event === 'claim' && row['launch_dedupe'] === true && row['launched'] !== false) {
+      const times = reservationTimes.get(id) ?? new Set<number | null>();
+      times.add(timestamp(row, true) ?? null);
+      reservationTimes.set(id, times);
+    }
     const state = ledgerOutcomeState(row, event, phase);
-    const isOutcomeEvent = OUTCOME_EVENTS.has(event ?? '');
+    const eventVerdict = event === 'merged' ? true : event === 'closed' ? false : undefined;
+    const isOutcomeEvent = eventVerdict !== undefined || OUTCOME_EVENTS.has(event ?? '');
     if (state === null && !isOutcomeEvent && !['launch', 'batch_claim', 'finish', 'publish'].includes(event ?? '')) continue;
     recognized++;
     if (row['launched'] === false) continue;
@@ -165,7 +178,7 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
       job.batchLanes ??= new Set();
       if (lane) job.batchLanes.add(lane);
       job.batchClaimTimes ??= new Set();
-      job.batchClaimTimes.add(parseLedgerTs(timestampField(row)));
+      job.batchClaimTimes.add(timestamp(row, true) ?? null);
     }
     if (event === 'launch') {
       if (job.launched) {
@@ -188,7 +201,7 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
     const reportedVerdicts = isOutcomeEvent
       ? [row['merged'], row['outcome'], row['result'], row['status']].map(outcome)
       : [terminalVerdict !== undefined && typeof row['merged'] === 'boolean' ? row['merged'] : undefined];
-    const verdicts = new Set([terminalVerdict, ...reportedVerdicts]);
+    const verdicts = new Set([eventVerdict, terminalVerdict, ...reportedVerdicts]);
     verdicts.delete(undefined);
     if (verdicts.size > 1 || (row['merged'] === true && terminalPhases.has('CLOSED'))) {
       throw new Error('Conflicting merged verdicts on a job receipt');
@@ -199,13 +212,13 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
   if (rows.length && !recognized) throw new Error('No recognized dispatch events');
   let unmatchedPosthogRuns = 0;
   if (posthogJson !== undefined) for (const row of parseExport(posthogJson)) {
-    const id = stringField(row, 'jobId', 'job_id');
+    const id = posthogJobId(row);
     const job = id ? jobs.get(id) : undefined;
     if (!job || (!job.launched && !job.batchLanes && job.rewardMerged === undefined)) { unmatchedPosthogRuns++; continue; }
     metrics(job, row);
   }
   const groups = new Map<string, Job[]>();
-  for (const job of jobs.values()) {
+  for (const [jobId, job] of jobs) {
     if (!job.launched && !job.batchLanes && job.rewardMerged === undefined) throw new Error('Event has no matching launch');
     if (!job.arm) {
       job.arm = !job.launched && job.batchLanes?.size === 1 ? [...job.batchLanes][0]! : 'unknown';
@@ -218,7 +231,10 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
       const ambiguous = [...(job.batchClaimTimes ?? [])].some(
         (claim) => claim === null || (claim >= started && claim <= finished),
       );
-      if (job.wallTimeMs === undefined && !ambiguous) job.wallTimeMs = finished - started;
+      const reservedAgain = [...(reservationTimes.get(jobId) ?? [])].some(
+        (claim) => claim === null || (claim > started && claim <= finished),
+      );
+      if (job.wallTimeMs === undefined && !ambiguous && !reservedAgain) job.wallTimeMs = finished - started;
     }
     const group = groups.get(job.arm) ?? [];
     group.push(job); groups.set(job.arm, group);

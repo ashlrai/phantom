@@ -1419,6 +1419,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
               const directives = clampLeaderDirectives(deps.directives(), currentPolicy);
               const snapshot = deps.capacitySnapshot();
               const reading = await deps.probeLocalRuntime(cfg, snapshot);
+              if (observationClosed || signal.aborted) return;
               const observed = await planLanes({
                 policy: currentPolicy,
                 directives,
@@ -1455,10 +1456,9 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
           const stopObserving = (): void => { observationClosed = true; clearInterval(laneTimer); };
           signal.addEventListener('abort', stopObserving, { once: true });
           if (signal.aborted) stopObserving();
-          const initialObservation = observe();
+          void observe();
           try {
-            const [prepared] = await Promise.all([deps.prepareMirrors(policy, signal), initialObservation]);
-            return prepared;
+            return await deps.prepareMirrors(policy, signal);
           } finally { stopObserving(); signal.removeEventListener('abort', stopObserving); }
         }, {
           deadlineMs: MIRROR_TICK_PREP_DEADLINE_MS + MIRROR_TICK_ABORT_GRACE_MS + 30_000,

@@ -53,11 +53,12 @@ import { readUsageSamples } from './usage-history.js';
 import { readReadySupply } from './ready-supply.js';
 import { readFleetRunsDirState } from './runs-dir-state.js';
 import { readRunsSwitches } from './runs-switches.js';
+import { laneLaunchTarget } from './lane-launch-target.js';
 
 export interface PlannerAutorunInput {
   /** Queued Phantom jobs (ids starting RQ-PHX-) in queue/ready.tsv. */
   phxReady: number;
-  /** Lane slot picture: running vs target, and whether the lane is held. */
+  /** Lane slot picture: running vs launch target, and whether the lane is held. */
   lanes: { lane: string; running: number; target: number; held: boolean }[];
   /** Newest planner health read (planner-failover.ts). */
   health: PlannerHealth;
@@ -248,7 +249,12 @@ export async function readPlannerAutorunInput(runsDir: string, now: number): Pro
   return {
     phxReady: supply !== null && !queueUnreadable ? supply.totals.phxReady + (supply.unhinted?.phantom ?? 0) : 0,
     lanes: (state?.lanes ?? [])
-      .map((lane) => ({ lane: lane.lane, running: lane.running, target: lane.target, held: lane.held })),
+      .map((lane) => ({
+        lane: lane.lane,
+        running: lane.running,
+        target: laneLaunchTarget(lane.target, lane.effectiveTarget),
+        held: lane.held,
+      })),
     health: health ?? { status: 'unknown', failingSince: null, lastGoodPassAt: null, resetAt: null, reason: null },
     orchOff: switches?.switches.some((row) => row.id === 'ORCH_OFF' && row.on) ?? false,
     nowMs: now,

@@ -181,6 +181,21 @@ describe('M343 agent action ledger', () => {
     expect(readAgentActions({ sinceMs: Date.parse('2026-07-08T00:01:30.000Z') }).map((event) => event.action)).toEqual(['c']);
   });
 
+  it('applies the inclusive cutoff before counting event and partition slots', () => {
+    const cutoff = '2026-07-08T00:01:00.000Z';
+    recordAgentAction([
+      makeEvent({ action: 'at-cutoff', ts: cutoff }),
+      makeEvent({ action: 'later-today', ts: '2026-07-08T00:01:00.001Z' }),
+      makeEvent({ action: 'tomorrow', ts: '2026-07-09T00:00:00.000Z' }),
+    ]);
+
+    const result = readAgentActionsDetailed({
+      asOfMs: Date.parse(cutoff), maxFiles: 1, limit: 1, stopAfterLimit: true,
+    });
+    expect(result).toMatchObject({ complete: true, filesRead: 1, rowsScanned: 2 });
+    expect(result.events.map((event) => event.action)).toEqual(['at-cutoff']);
+  });
+
   it('normalizes invalid timestamps before writing', () => {
     recordAgentAction(makeEvent({ action: 'bad-ts', ts: 'not-a-date' }));
 

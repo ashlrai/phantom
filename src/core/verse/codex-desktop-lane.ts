@@ -58,6 +58,8 @@ export function parseMemoryFreePercent(text: string | null): number | null {
 export interface HostProbes {
   loadavg: () => number[];
   cpus: () => unknown[];
+  /** Host platform; defaults to the real one inside readHostLoad when absent. */
+  platform?: () => string;
   /** Runs a read-only system command; resolves null on failure or timeout. */
   command: (file: string, args: string[]) => Promise<string | null>;
 }
@@ -72,7 +74,7 @@ export const DEFAULT_HOST_PROBES: HostProbes = {
 
 /** Measure the host right before a submission. Never throws. */
 export async function measureDesktopHost(probes: HostProbes = DEFAULT_HOST_PROBES): Promise<DesktopHostSample> {
-  const load = readHostLoad({ loadavg: probes.loadavg, cpus: probes.cpus });
+  const load = readHostLoad({ loadavg: probes.loadavg, cpus: probes.cpus, platform: probes.platform });
   const pressure = await probes.command('/usr/bin/memory_pressure', ['-Q']).catch(() => null);
   return { load, memoryFreePercent: parseMemoryFreePercent(pressure) };
 }

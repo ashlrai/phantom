@@ -58,6 +58,10 @@ export function rankLanes(tier: EngineTier, resourceSnapshot: LaneResourceSnapsh
       !Number.isFinite(observedAt) || observedAt > now ||
       (resetAt !== null && (!Number.isFinite(resetAt) || resetAt <= now)) ||
       (now - observedAt > MAX_OBSERVATION_AGE_MS && !(bucket.source === 'manual' && resetAt !== null)))) continue;
+    const availableSlots = view.mode === 'capacity-only'
+      ? Math.min(slots!, Math.floor(view.buckets.capacity?.remaining ?? 0))
+      : slots!;
+    if (availableSlots < 1) continue;
     const resets = observed.flatMap(({ resetAt }) => resetAt === null ? [] : [resetAt]);
     const forecasts = observed.flatMap(({ bucket, observedAt, resetAt }) => {
       const at = bucket.projectedExhaustion === null ? NaN : Date.parse(bucket.projectedExhaustion);
@@ -65,7 +69,7 @@ export function rankLanes(tier: EngineTier, resourceSnapshot: LaneResourceSnapsh
         (resetAt === null || at < resetAt) ? [at] : [];
     });
     const exhaustion = forecasts.length ? Math.min(...forecasts) : null;
-    ranked.push({ pool, backend: route.backend, availableSlots: slots!,
+    ranked.push({ pool, backend: route.backend, availableSlots,
       resetAt: resets.length ? new Date(Math.min(...resets)).toISOString() : null,
       projectedExhaustion: exhaustion === null ? null : new Date(exhaustion).toISOString(),
       spillRecommended: exhaustion !== null && exhaustion <= now + SPILL_HORIZON_MS,

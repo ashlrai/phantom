@@ -52,6 +52,8 @@ export interface FleetQueueV1 {
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const PARKED = /^PARKED-([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9][A-Za-z0-9._@-]{0,63}))?$/i;
 const DEP_REASON = /^(?:DEP|DEPENDENCY)$/i;
+/** True for the dependency-gate parked reasons the unmet/met dep detail covers — every other `PARKED-<reason>` group is a different hold the dep reads never resolve. */
+export const isDependencyParkedReason = (reason: string): boolean => DEP_REASON.test(reason);
 const GATE_LINE = /DEPENDENCY\s+GATE[:\s]+([^\n]+)/i;
 const GATE_TOK = /\b([A-Za-z0-9][A-Za-z0-9._-]{0,79})\b/g;
 const GATE_SKIP = new Set(['DEPENDENCY', 'GATE', 'AND', 'OR', 'NONE', 'N/A']);
@@ -292,7 +294,7 @@ export async function readSourceEnds(path: string, max: number): Promise<SourceE
 
 export async function readFleetQueue(opts: { runsDir?: string; now?: () => number; limit?: number; depDetail?: boolean; onWaitingJob?: (lane: string, id: string) => void } = {}): Promise<FleetQueueV1> {
   const now = (opts.now ?? Date.now)();
-  const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
+  const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const [readySource, skipsSource] = await Promise.all([
     readSource(join(root, 'queue', 'ready.tsv'), MAX_READY, false),
     readSource(join(root, 'queue', 'precheck-skips.tsv'), MAX_SKIPS, true),
@@ -415,6 +417,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
   let malformed = dropped;
   let unhinted = 0;
   const seenReady = new Set<string>();
+  const seenParked = new Set<string>();
   for (const parsed of parsedRows) {
     if ('openJobId' in parsed) {
       if (!seenReady.has(parsed.openJobId)) {
@@ -433,6 +436,12 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     if (!parkedState.parked) {
       if (seenReady.has(row.id)) continue;
       seenReady.add(row.id);
+    } else {
+      // A job parked twice — a duplicated hold row or two parked encodings —
+      // is one parked job: the first valid parked row supplies its reason,
+      // lane and group, the same first-valid-row rule ready rows follow.
+      if (seenParked.has(row.id)) continue;
+      seenParked.add(row.id);
     }
     // The parser uppercases the whole PARKED marker inside `status`, so its
     // lane capture can differ in case from the lane the row's own pool cell

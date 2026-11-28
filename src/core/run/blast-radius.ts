@@ -37,8 +37,7 @@
  * This module does not wire itself into the merge gate — build-only.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import type { Dirent } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 

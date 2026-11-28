@@ -4,6 +4,7 @@
  * command lines, environment variables or infer a merge from PR creation.
  */
 import type { GenAiSpan } from '../types.js';
+import { isNonNegativeSafeInt, isObservabilityRecord, isPositiveSafeInt } from './hop-events.js';
 
 export interface MemorySample {
   rssBytes: number;
@@ -32,10 +33,6 @@ const MAX_JOBS = 10_000;
 const MAX_SAMPLES = 100_000;
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
-const natural = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** Validate untrusted runner exports and copy an allowlist, dropping all content. */
 export function parseMemoryJobs(input: unknown): MemoryJob[] {
@@ -43,18 +40,18 @@ export function parseMemoryJobs(input: unknown): MemoryJob[] {
   const seen = new Set<string>();
   let samples = 0;
   return input.map(value => {
-    if (!record(value) || typeof value.jobId !== 'string' || !ID.test(value.jobId) || seen.has(value.jobId)) {
+    if (!isObservabilityRecord(value) || typeof value.jobId !== 'string' || !ID.test(value.jobId) || seen.has(value.jobId)) {
       throw new Error('Invalid or duplicate memory job identifier');
     }
     seen.add(value.jobId);
     if (!Array.isArray(value.samples) || (samples += value.samples.length) > MAX_SAMPLES) throw new Error('Expected at most 100000 memory samples');
     const job: MemoryJob = { jobId: value.jobId, samples: value.samples.map(sample => {
-      if (!record(sample) || !natural(sample.rssBytes) || (sample.memguard !== 'RUN' && sample.memguard !== 'PAUSE')) throw new Error('Invalid memory sample');
+      if (!isObservabilityRecord(sample) || !isNonNegativeSafeInt(sample.rssBytes) || (sample.memguard !== 'RUN' && sample.memguard !== 'PAUSE')) throw new Error('Invalid memory sample');
       return { rssBytes: sample.rssBytes, memguard: sample.memguard };
     }) };
     if (value.mergedPr !== undefined) {
       const pr = value.mergedPr;
-      if (!record(pr) || typeof pr.repo !== 'string' || !REPO.test(pr.repo) || !natural(pr.number) || pr.number === 0) throw new Error('Invalid merged PR identity');
+      if (!isObservabilityRecord(pr) || typeof pr.repo !== 'string' || !REPO.test(pr.repo) || !isPositiveSafeInt(pr.number)) throw new Error('Invalid merged PR identity');
       job.mergedPr = { repo: pr.repo.toLowerCase(), number: pr.number };
     }
     return job;

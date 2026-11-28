@@ -17,6 +17,13 @@ function artifact(jobId: string, ageMs: number, body: Record<string, unknown> = 
   writeFileSync(path, JSON.stringify({ schema: 'phm-node-runner.v1', event: 'finish', jobId, token: FAKE_TOKEN, leaderToken: FAKE_LEADER, outcome: 'succeeded', outputBytes: 4242, ...body }) + '\n', { mode: 0o600 });
   utimesSync(path, (NOW - ageMs) / 1000, (NOW - ageMs) / 1000);
 }
+/** The pack result payload shape contrib/mac/node-runner.mjs and runCodexFilePack write. */
+function payload(jobId: string, ageMs: number, result: Record<string, unknown> = { codex: 'ok', output: 'review text' }, body: Record<string, unknown> = {}): void {
+  const path = join(dir, `${jobId}.json`);
+  writeFileSync(path, JSON.stringify({ schemaVersion: 1, jobId, pack: 'codex-file',
+    completedAt: new Date(NOW - ageMs).toISOString(), result, ...body }) + '\n', { mode: 0o600 });
+  utimesSync(path, (NOW - ageMs) / 1000, (NOW - ageMs) / 1000);
+}
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'node-runs-401-')); dir = join(root, 'node-results'); mkdirSync(dir, { mode: 0o700 }); chmodSync(dir, 0o700); });
 afterEach(() => { vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }); });
 
@@ -58,8 +65,35 @@ describe('readNodeResults', () => {
     const s = readNodeResults({ dir, nowMs: NOW });
     expect(s).toMatchObject({ status: 'ok', inWindow: 1, unreadable: 3 });
   });
+  it('counts pack result payloads from the shipped runners, not just finish rows', () => {
+    artifact('RQ-FINISH', HOUR);
+    payload('RQ-CODEX', 30 * 60_000);
+    payload('RQ-SHELL', 2 * HOUR, { 'shell-check': 'ok' }, { pack: 'shell-check' });
+    const s = readNodeResults({ dir, nowMs: NOW });
+    expect(s).toMatchObject({ status: 'ok', inWindow: 3, unreadable: 0, truncated: false });
+    expect(s.newest).toEqual({ jobId: 'RQ-CODEX', at: new Date(NOW - 30 * 60_000).toISOString() });
+  });
+  it('counts a codex-file payload larger than the old 16 KiB bound', () => {
+    payload('RQ-BIG-RESULT', 1000, { codex: 'ok', output: 'x'.repeat(64 * 1024) });
+    const s = readNodeResults({ dir, nowMs: NOW });
+    expect(s).toMatchObject({ status: 'ok', inWindow: 1, unreadable: 0 });
+  });
+  it('rejects payload artifacts with mismatched ids or missing writer fields', () => {
+    payload('RQ-OK', 1000);
+    payload('RQ-WRONG-ID', 1000, undefined, { jobId: 'someone-else' });
+    payload('RQ-NO-PACK', 1000, undefined, { pack: undefined });
+    payload('RQ-NO-TIME', 1000, undefined, { completedAt: undefined });
+    const s = readNodeResults({ dir, nowMs: NOW });
+    expect(s).toMatchObject({ status: 'ok', inWindow: 1, unreadable: 3 });
+  });
+  it('never exposes result bodies or output text', () => {
+    payload('RQ-SECRET', 1000, { codex: 'ok', output: 'FAKE-RESULT-BODY-789' });
+    const text = JSON.stringify(readNodeResults({ dir, nowMs: NOW }));
+    expect(text).not.toContain('FAKE-RESULT-BODY-789');
+    expect(text).not.toContain('review text');
+  });
   it('rejects oversized files and marks truncation at max', () => {
-    artifact('RQ-BIG', 1000, { pad: 'x'.repeat(20_000) });
+    artifact('RQ-BIG', 1000, { pad: 'x'.repeat(400_000) });
     artifact('RQ-1', 2000); artifact('RQ-2', 3000);
     const s = readNodeResults({ dir, nowMs: NOW, max: 2 });
     expect(s.truncated).toBe(true);

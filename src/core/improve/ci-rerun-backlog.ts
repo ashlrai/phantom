@@ -70,9 +70,10 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
+import { HEAD_SHA_PATTERN } from '../cloud/pr-actions.js';
 import { ashlrHome, CLOUD_REPO_PATTERN } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
-import { observedAttempts, observedCallResults, readCiReruns } from '../fleet/ci-rerun.js';
+import { attributedTestVerdicts, observedAttempts, observedCallResults, observedVerdicts, readCiReruns } from '../fleet/ci-rerun.js';
 import { JOURNAL_TEST_MAX, RECURRING_FLAKE_WINDOW_MS } from '../fleet/ci-flakes.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -135,7 +136,7 @@ interface VerdictGroup {
   inconclusive: number;
   /** Distinct head SHAs the fail verdicts landed on. */
   failHeads: Set<string>;
-  /** `attempt` rows recorded for the same test inside the window (may be 0 after a tail cut). */
+  /** `attempt` rows recorded for the same test inside the window. */
   attempts: number;
 }
 
@@ -219,33 +220,26 @@ export async function ciRerunBacklogItems(opts: CiRerunItemsOptions): Promise<Cl
     // Every folded row names the target repo (case-insensitive), so test
     // alone keys a verdict group and the call tally is a single pair.
     const verdicts = new Map<string, VerdictGroup>();
-    const runVerdicts = new Map<number, RerunEntry | null>();
+    const observed = observedAttempts(repoEntries, nowMs);
+    const runVerdicts = attributedTestVerdicts(observed, observedVerdicts(repoEntries, nowMs), nowMs);
     const attempts = new Map<string, number>();
-    for (const entry of repoEntries) {
-      if (Date.parse(entry.at) > nowMs) continue;
-      if (entry.outcome !== 'verdict') continue;
-      const prior = runVerdicts.get(entry.runId);
-      if (prior === null) continue;
-      if (prior && (prior.head !== entry.head || prior.test !== entry.test || prior.verdict !== entry.verdict)) {
-        runVerdicts.set(entry.runId, null);
-      } else if (!prior || Date.parse(entry.at) < Date.parse(prior.at)) {
-        runVerdicts.set(entry.runId, entry);
-      }
-    }
-    for (const entry of observedAttempts(repoEntries, nowMs)) {
+    for (const entry of observed) {
       if (!inWindow(entry, nowMs, windowMs)) continue;
+      if (!HEAD_SHA_PATTERN.test(entry.head.toLowerCase())) continue;
       const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
       for (const test of new Set(tests)) {
         if (typeof test !== 'string' || !test || test.length > JOURNAL_TEST_MAX) continue;
         attempts.set(test, (attempts.get(test) ?? 0) + 1);
       }
     }
-    for (const entry of runVerdicts.values()) {
-      if (!entry || !inWindow(entry, nowMs, windowMs) || typeof entry.test !== 'string' || !entry.test) continue;
+    for (const entry of runVerdicts) {
+      if (!inWindow(entry, nowMs, windowMs) || typeof entry.test !== 'string' || !entry.test) continue;
+      const head = entry.head.toLowerCase();
+      if (!HEAD_SHA_PATTERN.test(head)) continue;
       const group = verdicts.get(entry.test) ?? { test: entry.test, fails: 0, passes: 0, inconclusive: 0, failHeads: new Set<string>(), attempts: 0 };
       if (entry.verdict === 'fail') {
         group.fails += 1;
-        if (typeof entry.head === 'string' && entry.head !== '') group.failHeads.add(entry.head);
+        group.failHeads.add(head);
       } else if (entry.verdict === 'pass') group.passes += 1;
       else if (entry.verdict === 'inconclusive') group.inconclusive += 1;
       verdicts.set(entry.test, group);

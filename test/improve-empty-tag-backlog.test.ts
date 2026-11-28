@@ -79,11 +79,15 @@ describe('foldEmptyTagWindow', () => {
 });
 
 describe('emptyTagBacklogItems', () => {
-  it.each(['launch', 'batch_claim'])('uses only current-attempt finishes after a %s', async (event) => {
+  it.each([
+    ['launch', {}],
+    ['batch_claim', {}],
+    ['claim', { launch_dedupe: true }],
+  ] as const)('uses only current-attempt finishes after a %s', async (event, fields) => {
     const ids = ['RQ-RETRY-1', 'RQ-RETRY-2', 'RQ-RETRY-3'];
     const receipts = ids.flatMap((job) => [
       finishRow(job, 4),
-      JSON.stringify({ ts: iso(4), job, event }),
+      JSON.stringify({ ts: iso(4), job, event, ...fields }),
       finishRow(job, 4), // Replaying the old finish cannot complete the retry.
     ]);
     const options = { repo: 'ashlrai/phantom', now: NOW, tagsText: '' };

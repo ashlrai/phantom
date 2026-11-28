@@ -189,6 +189,31 @@ describe('runDesktopOperator', () => {
     expect(order).toEqual(['permissions', 'list', 'permissions', 'list', 'read']);
   });
 
+  it('distinguishes app policy from a global input hold without acting on apps', async () => {
+    for (const [kill, paused, inputHold] of [
+      [false, false, null],
+      [false, true, 'comms_paused'],
+      [true, true, 'killed'],
+    ] as const) {
+      const order: string[] = [];
+      const surface = mockSurface({ order, apps: [
+        cursor, phantom, terminal, keychain, { ...cursor, name: 'Cursor preview', bundleId: null },
+      ] });
+      const result = await runDesktopOperator({ verb: 'list-apps' },
+        deps(surface, { killed: () => kill, commsPaused: () => paused }));
+      expect(result).toMatchObject({ ok: true, data: { inputHold } });
+      if (!result.ok) throw new Error('Expected desktop list');
+      expect(result.data['apps']).toMatchObject([
+        { name: 'Cursor', operable: true, appPolicy: { readAllowed: true, inputVerbs: ['focus', 'scroll', 'type', 'click'] } },
+        { name: 'Phantom', operable: true, appPolicy: { readAllowed: true, inputVerbs: [] } },
+        { name: 'Terminal', operable: true, appPolicy: { readAllowed: true, inputVerbs: [] } },
+        { name: 'Keychain Access', operable: false, appPolicy: { readAllowed: false, inputVerbs: [] } },
+        { name: 'Cursor preview', operable: false, appPolicy: { readAllowed: false, inputVerbs: [] } },
+      ]);
+      expect(order).toEqual(['permissions', 'list']);
+    }
+  });
+
   it('returns permission_required with the Accessibility pane and does not list apps', async () => {
     const order: string[] = [];
     const surface = mockSurface({ order, grants: { accessibility: false, screenRecording: true } });

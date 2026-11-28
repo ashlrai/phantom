@@ -312,6 +312,61 @@ describe('fleet_bus_hops MCP tool', () => {
     expect(excluded.parsed).toMatchObject({ matched: 1 });
   });
 
+  it('filters hops by channel room and group-address topic like every other bus read', async () => {
+    writeRawLog([
+      row('hop-a', { from: 'codex-cmp', to: 'group:eng:deploy' }),
+      row('hop-b', { from: 'codex-cmp', to: 'group:eng:general' }),
+      row('hop-c', { from: 'claude', to: 'group:ops:deploy' }),
+      row('hop-d', { from: 'codex-cmp', to: 'RQ-EVENTD' }),
+      row('hop-e', { from: 'codex-cmp', to: 'group:eng' }),
+      row('hop-f', { from: 'codex-cmp', to: 'group:ENG:deploy' }),
+    ].join('\n') + '\n');
+    const client = await connect();
+    // `channel` keeps the room's whole traffic under every topic — the same
+    // raw `group:<channel>:` `to`-prefix rule every bus read's channel
+    // filter applies; agent labels, bare rooms, other rooms and malformed
+    // group labels never match.
+    const byChannel = await callBus(client, { channel: 'eng' });
+    expect((byChannel.parsed['hops'] as Array<Record<string, unknown>>).map(hop => hop['id']))
+      .toEqual(['hop-a', 'hop-b']);
+    expect(byChannel.parsed).toMatchObject({ matched: 2, returnedHops: 2, truncated: false });
+    // `topic` keeps hops addressed to a well-formed group:<room>:<topic>
+    // label carrying that exact component across every room — the same
+    // groupAddressTopicOf match every bus read's topic filter applies; the
+    // bare `group:eng`, the agent label and the uppercase-room label parse
+    // to no topic and never match.
+    const byTopic = await callBus(client, { topic: 'deploy' });
+    expect((byTopic.parsed['hops'] as Array<Record<string, unknown>>).map(hop => hop['id']))
+      .toEqual(['hop-a', 'hop-c']);
+    expect(byTopic.parsed).toMatchObject({ matched: 2 });
+    // The pair composes into one room AND one topic.
+    const both = await callBus(client, { channel: 'eng', topic: 'deploy' });
+    expect((both.parsed['hops'] as Array<Record<string, unknown>>).map(hop => hop['id']))
+      .toEqual(['hop-a']);
+    expect(both.parsed).toMatchObject({ matched: 1 });
+    // A topic no hop addresses is an honest empty match, never a widened one.
+    const miss = await callBus(client, { topic: 'release' });
+    expect(miss.parsed).toMatchObject({ matched: 0, returnedHops: 0, hops: [] });
+    // The room/topic filters need no registry and compose with the address
+    // filters: `from` still resolves through the identity-label rule.
+    const composed = await callBus(client, { channel: 'eng', from: 'claude' });
+    expect(composed.parsed).toMatchObject({ matched: 0, returnedHops: 0, hops: [] });
+  });
+
+  it('rejects malformed channel and topic hop filters before reading the log', async () => {
+    const bus = vi.fn();
+    const client = await connect({ status: async () => ({}), loop: async () => ({}), bus });
+    for (const args of [
+      { channel: '' }, { channel: 'Has Space' }, { channel: 'a'.repeat(33) },
+      { channel: 5 }, { channel: null }, { topic: '' }, { topic: 'UPPER' },
+      { topic: 'a'.repeat(33) }, { topic: 5 }, { channel: 'eng', topic: 'deploy!' },
+    ]) {
+      await expect(client.callTool({ name: 'fleet_bus_hops', arguments: args }))
+        .rejects.toMatchObject({ code: -32602 });
+    }
+    expect(bus).not.toHaveBeenCalled();
+  });
+
   it('rejects malformed hop filter values before reading the log', async () => {
     const bus = vi.fn();
     const client = await connect({ status: async () => ({}), loop: async () => ({}), bus });

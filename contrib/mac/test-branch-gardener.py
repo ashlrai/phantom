@@ -75,7 +75,9 @@ class GardenerTests(unittest.TestCase):
             state = query['state'][0]
             if state == 'open':
                 self.before_refresh()
-            rows = [p for p in self.prs if state == 'all' or p['state'] == state]
+            repository = path.removeprefix('repos/').removesuffix('/pulls')
+            rows = [p for p in self.prs if p['base']['repo']['full_name'] == repository
+                    and (state == 'all' or p['state'] == state)]
         else:
             return {'full_name': path.removeprefix('repos/'), 'default_branch': 'main'}
         start = (int(query['page'][0]) - 1) * 100
@@ -92,8 +94,10 @@ class GardenerTests(unittest.TestCase):
         self.git(self.local, 'checkout', '-q', 'main')
         return sha
 
-    def pr(self, name, sha, state='closed', merged=False, owner='ashlrai', number=10000):
+    def pr(self, name, sha, state='closed', merged=False, owner='ashlrai', number=10000,
+           base_branch='main', base_owner='ashlrai'):
         self.prs.append({'head': {'ref': name, 'sha': sha, 'repo': {'full_name': owner + '/phantom'}},
+                         'base': {'ref': base_branch, 'repo': {'full_name': base_owner + '/phantom'}},
                          'number': number, 'state': state, 'merged_at': '2026-01-01' if merged else None})
         if state == 'closed':
             self.git(self.remote, 'update-ref', f'refs/pull/{number}/head', sha)
@@ -160,6 +164,47 @@ class GardenerTests(unittest.TestCase):
         rows = self.sweep(True)
         self.assertEqual(rows['second-page']['reason'], 'open-pr')
         self.assertFalse(self.exists('other-fork'))
+
+    def test_open_stacked_pr_keeps_target_even_when_ancestor_or_closed_head(self):
+        for number, name in enumerate(('stack-ancestor', 'stack-closed'), 11000):
+            sha = self.branch(name, unique=(name == 'stack-closed'))
+            if name == 'stack-closed':
+                self.pr(name, sha, number=number)
+            self.pr('other-head-' + str(number), sha, number=number + 10,
+                    state='open', owner='someone-else', base_branch=name)
+        with patch.object(g, 'delete_batch') as deleting:
+            for apply in (False, True):
+                rows = self.sweep(apply)
+                for name in ('stack-ancestor', 'stack-closed'):
+                    self.assertEqual((rows[name]['action'], rows[name]['reason']), ('keep', 'open-pr-base'))
+            deleting.assert_not_called()
+
+    def test_same_target_name_in_upstream_does_not_protect_fork(self):
+        self.branch('same-name')
+        self.pr('stack-head', self.base, state='open', owner='someone-else', base_branch='same-name')
+        report = g.garden('masonwyatt23/phantom', self.cfg, self.runs, self.projects, [self.wt], False)
+        self.assertIsNone(report['error'], report)
+        row = next(row for row in report['rows'] if row['branch'] == 'same-name')
+        self.assertEqual((row['action'], row['result']), ('delete', 'planned'))
+
+    def test_target_added_after_plan_is_kept_by_refresh(self):
+        self.branch('new-stack-target')
+        self.before_refresh = lambda: self.pr('new-stack-head', self.base, state='open',
+                                              owner='someone-else', base_branch='new-stack-target')
+        with patch.object(g, 'delete_batch') as deleting:
+            rows = self.sweep(True)
+            self.assertEqual(rows['new-stack-target']['result'], 'guard-changed')
+            deleting.assert_not_called()
+        self.assertTrue(self.exists('new-stack-target'))
+
+    def test_unknown_open_pr_base_ref_fails_closed(self):
+        self.branch('candidate')
+        self.pr('stack-head', self.base, state='open')
+        self.prs[0]['base'].pop('ref')
+        with patch.object(g, 'delete_batch') as deleting:
+            report = g.garden('ashlrai/phantom', self.cfg, self.runs, self.projects, [self.wt], True)
+            self.assertEqual(report['error'], 'invalid-open-pr-base')
+            deleting.assert_not_called()
 
     def test_changed_closed_tip_and_missing_preservation_ref_fail_closed(self):
         sha = self.branch('changed', unique=True)

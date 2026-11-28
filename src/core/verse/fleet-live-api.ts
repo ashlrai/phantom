@@ -73,6 +73,7 @@ import {
   FLEET_ENGINES,
   GATE_ORDER,
   REPO_HOLD_KINDS,
+  STALE_STANDING_TICK_REASON,
   VERSE_FLEET_LIVE_PATH,
   type FleetEngine,
   type FleetFunnelStage,
@@ -1386,7 +1387,7 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
         busy: busy[lane] ?? 0,
         capReason: state === 'dark' || state === 'stopped' || state === 'paused'
           ? stateReason ?? 'The fleet is not running.'
-          : 'No standing tick has reported lanes in the last 10 minutes.',
+          : STALE_STANDING_TICK_REASON,
       }));
 
   // ── Funnel ──────────────────────────────────────────────────────────────

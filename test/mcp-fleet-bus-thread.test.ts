@@ -90,13 +90,13 @@ describe('fleet_bus_thread argument parsing', () => {
 
   it('accepts the shared bus-read filters and resolves since/before/contains', () => {
     expect(parseFleetBusThreadArgs({ id: 'm-1', from: 'agent:a', to: 'agent:b',
-      excludeFrom: 'agent:c', channel: 'ops', job: 'RQ-1', priority: 'P1', thread: 'rq-1',
-      inReplyTo: 'm-0', bodyKind: 'note', result: 'failed',
+      excludeFrom: 'agent:c', channel: 'ops', topic: 'general', job: 'RQ-1', priority: 'P1',
+      thread: 'rq-1', inReplyTo: 'm-0', bodyKind: 'note', result: 'failed',
       since: '1700000000000', before: '2h', contains: '  Hello   World ' }))
       .toEqual({ id: 'm-1', filters: {
-        from: 'agent:a', to: 'agent:b', excludeFrom: 'agent:c', channel: 'ops', job: 'RQ-1',
-        priority: 'P1', thread: 'rq-1', inReplyTo: 'm-0', bodyKind: 'note', result: 'failed',
-        since: 1_700_000_000_000, before: expect.any(Number), contains: 'hello world',
+        from: 'agent:a', to: 'agent:b', excludeFrom: 'agent:c', channel: 'ops', topic: 'general',
+        job: 'RQ-1', priority: 'P1', thread: 'rq-1', inReplyTo: 'm-0', bodyKind: 'note',
+        result: 'failed', since: 1_700_000_000_000, before: expect.any(Number), contains: 'hello world',
       } });
   });
 
@@ -104,6 +104,8 @@ describe('fleet_bus_thread argument parsing', () => {
     for (const bad of [
       { id: 'm-1', priority: 'P9' }, { id: 'm-1', priority: 1 }, { id: 'm-1', result: 'lost' },
       { id: 'm-1', result: 'released' }, { id: 'm-1', channel: 'Bad Name' }, { id: 'm-1', channel: '' },
+      { id: 'm-1', topic: 'Bad Name' }, { id: 'm-1', topic: '' }, { id: 'm-1', topic: 'fleet.*' },
+      { id: 'm-1', topic: 5 },
       { id: 'm-1', since: 'whenever' }, { id: 'm-1', since: 5 }, { id: 'm-1', before: 'soon' },
       { id: 'm-1', contains: '' }, { id: 'm-1', contains: 'x'.repeat(600) }, { id: 'm-1', contains: 5 },
       { id: 'm-1', from: 'has space' }, { id: 'm-1', to: '' }, { id: 'm-1', excludeFrom: null },
@@ -175,7 +177,7 @@ describe('fleet_bus_thread MCP tool', () => {
     expect(tool?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false, required: ['id'] });
     expect(tool?.inputSchema.properties?.['id'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
-    for (const key of ['to', 'from', 'excludeFrom', 'channel', 'job', 'priority', 'thread',
+    for (const key of ['to', 'from', 'excludeFrom', 'channel', 'topic', 'job', 'priority', 'thread',
       'inReplyTo', 'bodyKind', 'result', 'since', 'before', 'contains']) {
       expect(tool?.inputSchema.properties?.[key], key).toBeDefined();
     }
@@ -218,16 +220,18 @@ describe('fleet_bus_thread MCP tool', () => {
       authority: 'none', generatedAt: '2026-01-01T00:00:00.000Z' };
     const busThread = vi.fn(async () => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), busThread });
-    await callThread(client, { id: 'm-1', from: 'agent:a', priority: 'P1',
-      since: '1700000000000', contains: 'hello' });
+    await callThread(client, { id: 'm-1', from: 'agent:a', channel: 'ops', topic: 'general',
+      priority: 'P1', since: '1700000000000', contains: 'hello' });
     expect(busThread).toHaveBeenCalledWith({ id: 'm-1', filters: {
-      from: 'agent:a', priority: 'P1', since: 1_700_000_000_000, contains: 'hello' } });
+      from: 'agent:a', channel: 'ops', topic: 'general', priority: 'P1',
+      since: 1_700_000_000_000, contains: 'hello' } });
   });
 
   it.each([
     [{ id: 'm-1', priority: 'P9' }], [{ id: 'm-1', result: 'lost' }], [{ id: 'm-1', channel: 'Bad Name' }],
     [{ id: 'm-1', since: 'whenever' }], [{ id: 'm-1', contains: '' }], [{ id: 'm-1', from: 'has space' }],
-    [{ id: 'm-1', kind: 'note' }], [{ id: 'm-1', topic: 'fleet.*' }], [{ id: 'm-1', id2: 'x' }],
+    [{ id: 'm-1', topic: 'Bad Name' }], [{ id: 'm-1', topic: 'fleet.*' }],
+    [{ id: 'm-1', kind: 'note' }], [{ id: 'm-1', id2: 'x' }],
   ])('rejects invalid filter arguments before invoking the reader: %j', async args => {
     const busThread = vi.fn();
     const client = await connect({ status: async () => ({}), loop: async () => ({}), busThread });

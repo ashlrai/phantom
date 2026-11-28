@@ -151,7 +151,8 @@ describe('owner-live notice planning', () => {
       { channel: 'imessage', replyTo: 'fake-imsg-inbound1', idempotencyKey: 'leader-live-imessage' },
     ]);
     const delivered: OwnerThreadMessage = { ...phantom, fanout: ['imessage'] };
-    expect(planOwnerLiveNotices([...thread, delivered], adapters(options))).toEqual([]);
+    expect(planOwnerLiveNotices([...thread, delivered], adapters(options))).toHaveLength(1);
+    expect(planOwnerLiveNotices([...thread, delivered], adapters(options), { [delivered.id]: { imessage: { state: 'delivered' } } })).toEqual([]);
   });
 
   it('plans nothing on a channel whose adapter is disabled', async () => {
@@ -215,7 +216,7 @@ describe('owner-live notice sending', () => {
     const report = await sendOwnerLiveNotices(options, { apply: true });
     expect(report.planned).toEqual(['telegram']);
     expect(report.sent).toEqual([]);
-    expect(report.failed).toEqual([{ channel: 'telegram', reason: 'refused' }]);
+    expect(report.failed).toMatchObject([{ channel: 'telegram', reason: 'disabled' }]);
   });
 
   it('KILL halts every plan and no transport is ever called', async () => {

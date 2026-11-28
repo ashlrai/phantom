@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LocalNodesStore } from '../src/core/drive/nodes/local-store.js';
 import { describe, expect, it, vi } from 'vitest';
-import { emptyState, parseState, type NodesState, type NodesStore } from '../src/core/drive/nodes/state.js';
+import { emptyState, NODE_HEARTBEAT_MS, parseState, type NodesState, type NodesStore } from '../src/core/drive/nodes/state.js';
 import { executePool, initializePool, PRIMARY_TIMEOUT_MS, type PoolRole } from '../src/core/drive/nodes/pool.js';
 import { callPool, configurePool, serveNodeRpc, type NodeRpcRequest, type PoolConfig } from '../src/core/drive/nodes/pool-host.js';
 import { callNodeSsh, sshApprovalStep, validSshHost } from '../src/core/drive/nodes/ssh.js';
@@ -99,6 +99,24 @@ describe('multi-Mac durable fencing witness', () => {
       const b = f.run('backup', 'enqueue', ['--job', `b${i}`]);
       expect(Number(!p.demoted) + Number(!b.demoted)).toBe(1);
     }
+  });
+  it('reports fresh shared host holds on empty pulls and omits expired holds', () => {
+    const f = fixture();
+    function joinWorker(node: string) {
+      const { session } = f.run('primary', 'join', ['--node', node, '--caps', 'codex']).result;
+      return ['--node', node, '--session', String(session)];
+    }
+    const worker = joinWorker('worker');
+    const sibling = joinWorker('sibling');
+    const sample = { hostId: 'mac', sampledAtMs: 1000, ramBytes: 8 * 1024 ** 3 };
+    f.run('primary', 'beat', [...worker, '--capacity', JSON.stringify({ ...sample, slots: 1, held: null })]);
+    f.run('primary', 'beat', [...sibling, '--capacity', JSON.stringify({ ...sample, slots: 0, held: 'memory-pressure' })]);
+    f.run('primary', 'enqueue', ['--job', 'waiting', '--requires', 'codex']);
+
+    expect(f.run('primary', 'pull', worker).result).toEqual({ pulled: false, slots: 1, held: 'memory-pressure', open: 1 });
+    f.advance(2 * NODE_HEARTBEAT_MS + 1);
+    f.run('primary', 'beat', sibling);
+    expect(f.run('primary', 'pull', sibling).result).toEqual({ pulled: false, slots: 0, open: 1 });
   });
   it('rejects clock regression, malformed state and witness reinitialization', () => {
     const f = fixture();
@@ -198,9 +216,27 @@ describe('SSH routing and device-local provider lanes', () => {
     expect(vi.mocked(run).mock.calls[0]![1]).toEqual(['login', 'status']);
     expect(providerBinaryCandidates('codex', { home: '/Users/air', execPath: '/Users/air/.nvm/v24/bin/node' })).toEqual([
       '/opt/homebrew/bin/codex', '/usr/local/bin/codex', '/Users/air/.local/bin/codex', '/Users/air/.npm-global/bin/codex',
-      '/Users/air/.nvm/v24/bin/codex']);
+      '/Users/air/.nvm/v24/bin/codex',
+      '/Users/air/.volta/bin/codex', '/Users/air/.bun/bin/codex',
+      '/Users/air/.local/share/mise/shims/codex', '/Users/air/.asdf/shims/codex',
+      '/usr/bin/codex', '/bin/codex', '/snap/bin/codex']);
     expect(resolveProviderBinary('codex', { home: '/Users/air', executable: path => path === '/Users/air/.npm-global/bin/codex' }))
       .toBe('/Users/air/.npm-global/bin/codex');
+  });
+  it('resolves provider CLIs installed only in Linux or version-manager locations', () => {
+    const run = vi.fn(() => ({ status: 0 })) as unknown as typeof spawnSync;
+    const linuxOnly = { home: '/home/dev', execPath: '/usr/bin/node', executable: (path: string) => path === '/usr/bin/codex' };
+    expect(resolveProviderBinary('codex', linuxOnly)).toBe('/usr/bin/codex');
+    expect(probeProviderBinaries(run, linuxOnly)).toEqual({ codex: '/usr/bin/codex' });
+    const miseShim = { home: '/home/dev', execPath: '/usr/bin/node', executable: (path: string) => path === '/home/dev/.local/share/mise/shims/claude' };
+    expect(resolveProviderBinary('claude', miseShim)).toBe('/home/dev/.local/share/mise/shims/claude');
+  });
+  it('keeps every pre-existing install location ahead of the appended Linux locations', () => {
+    const executable = (path: string) => ['/usr/bin/codex', '/opt/homebrew/bin/codex'].includes(path);
+    expect(resolveProviderBinary('codex', { home: '/home/dev', execPath: '/usr/bin/node', executable }))
+      .toBe('/opt/homebrew/bin/codex');
+    const snapOnly = { home: 'relative-home', execPath: '/x/bin/node', executable: (path: string) => path === '/snap/bin/codex' };
+    expect(resolveProviderBinary('codex', snapOnly)).toBe('/snap/bin/codex');
   });
 });
 

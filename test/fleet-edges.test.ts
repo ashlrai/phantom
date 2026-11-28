@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
-import { projectFleetEdges, readFleetEdges } from '../src/core/fleet/fleet-edges.js';
+import { appendBusInbox, type BusInboxReceipt } from '../src/core/fleet/bus-inbox.js';
+import { projectFleetEdges, parseFleetEdgesQuery, readFleetEdges } from '../src/core/fleet/fleet-edges.js';
 import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { runAgentsCli } from '../src/cli/agents-bus-contract.js';
 import { cmdFleetEdges } from '../src/cli/fleet-edges.js';
@@ -66,6 +66,88 @@ describe('fleet edges', () => {
     // A filter that matches nothing is an honest empty list, not an error.
     expect(projectFleetEdges(rows, 2000, undefined, { from: () => false })).toEqual([]);
   });
+  it('narrows the projection to one group room or one room topic', () => {
+    const post = (id: string, from: string, to: string) =>
+      ({ id, from, to, priority: 'P2' as const, ttl: 9_000_000, body: { text: 'hi' } });
+    const opsGeneral = post('og', 'a', 'group:ops:general');
+    const opsAlerts = post('oa', 'b', 'group:ops:alerts');
+    const engGeneral = post('eg', 'c', 'group:eng:general');
+    const dm = post('dm', 'd', 'e');
+    const rows = [opsGeneral, opsAlerts, engGeneral, dm].map((envelope, cursor) => ({ cursor, receivedAt: 1000 + cursor, envelope }));
+    const edge = (from: string, to: string, messages = 1) =>
+      ({ from: { address: from, provider: null }, to: { address: to, provider: null }, messages, messagesLastHour: messages, lastAt: 1000 + rows.findIndex(row => row.envelope.id !== undefined && row.envelope.from === from && row.envelope.to === to) });
+    // --channel keeps the room's traffic under every topic, agent mail excluded.
+    // Edges sort newest-first, so the alerts link (lastAt 1001) leads.
+    expect(projectFleetEdges(rows, 2000, undefined, undefined, { channel: 'ops' })).toEqual([
+      edge('b', 'group:ops:alerts'), edge('a', 'group:ops:general'),
+    ]);
+    // --topic keeps one topic across every room.
+    expect(projectFleetEdges(rows, 2000, undefined, undefined, { topic: 'general' })).toEqual([
+      edge('c', 'group:eng:general'), edge('a', 'group:ops:general'),
+    ]);
+    // The two compose into one room AND one topic.
+    expect(projectFleetEdges(rows, 2000, undefined, undefined, { channel: 'ops', topic: 'alerts' })).toEqual([
+      edge('b', 'group:ops:alerts'),
+    ]);
+    // A bare group:<room> label and an agent address never match; the room
+    // prefix rule keeps deeper labels under group:<room>:* like every other
+    // bus read's --channel, while --topic still requires the well-formed parse.
+    const odd = [post('bare', 'a', 'group:ops'), post('deep', 'a', 'group:ops:general:extra'),
+      post('agent', 'a', 'agent:b')].map((envelope, cursor) => ({ cursor, receivedAt: 5000 + cursor, envelope }));
+    expect(projectFleetEdges(odd, 6000, undefined, undefined, { topic: 'general' })).toEqual([]);
+    expect(projectFleetEdges(odd, 6000, undefined, undefined, { channel: 'ops' })).toEqual([
+      { from: { address: 'a', provider: null }, to: { address: 'group:ops:general:extra', provider: null },
+        messages: 1, messagesLastHour: 1, lastAt: 5001 },
+    ]);
+    // A room filter that matches nothing is an honest empty list, not an error.
+    expect(projectFleetEdges(rows, 2000, undefined, undefined, { channel: 'missing' })).toEqual([]);
+    // A presence heartbeat inside the room still drops out under agentToAgent.
+    const beat = { id: 'beat', from: 'a', to: 'group:ops:general', priority: 'P3' as const, ttl: 300_000,
+      body: { kind: 'group.presence', state: 'online' } };
+    const withBeat = [...rows, { cursor: 9, receivedAt: 5000, envelope: beat }];
+    expect(projectFleetEdges(withBeat, 6000, undefined, undefined, { channel: 'ops' })).toEqual([
+      edge('b', 'group:ops:alerts'), edge('a', 'group:ops:general'),
+    ]);
+  });
+  it('narrows the receipt set by the shared slice filters before aggregating', () => {
+    const receipt = (cursor: number, receivedAt: number, envelope: BusInboxReceipt['envelope']): BusInboxReceipt =>
+      ({ cursor, receivedAt, envelope });
+    const rows = [
+      // a->b: P1 ask naming job RQ-9, received now.
+      receipt(0, 9_000_000, { id: 'm1', from: 'a', to: 'b', priority: 'P1', ttl: 9_000_000, channel: 'bus',
+        body: { kind: 'note', thread: 'job:RQ-9', text: 'please deploy the fix?' } }),
+      // a->b: P2 status about something else, received now.
+      receipt(1, 9_500_000, { id: 'm2', from: 'a', to: 'b', priority: 'P2', ttl: 9_000_000, channel: 'bus',
+        body: { kind: 'note', text: 'ship has sailed' } }),
+      // c->d: P0 handoff, received hours ago — outside the last-hour count.
+      receipt(2, 100, { id: 'm3', from: 'c', to: 'd', priority: 'P0', ttl: 9_000_000, channel: 'handoff',
+        body: { kind: 'note', text: 'taking over the lane' } }),
+    ];
+    const now = 10_000_000;
+    const edge = (from: string, to: string, messages: number, messagesLastHour: number, lastAt: number) =>
+      ({ from: { address: from, provider: null }, to: { address: to, provider: null },
+        messages, messagesLastHour, lastAt });
+    // kind keeps only the receipts classify files under it — the same vocabulary phm messages --kind reports.
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { kind: 'ask' })).toEqual([edge('a', 'b', 1, 1, 9_000_000)]);
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { kind: 'handoff' })).toEqual([edge('c', 'd', 1, 0, 100)]);
+    // priority keeps only the exact band; job keeps only bodies citing the job; contains keeps only summary matches.
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { priority: 'P0' })).toEqual([edge('c', 'd', 1, 0, 100)]);
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { job: 'RQ-9' })).toEqual([edge('a', 'b', 1, 1, 9_000_000)]);
+    // contains matches case-insensitively over the scrubbed summary — the projection
+    // normalizes the needle itself, so a direct caller needs no pre-lowercasing.
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { contains: 'DEPLOY' })).toEqual([edge('a', 'b', 1, 1, 9_000_000)]);
+    // since/before compose into the [since, before) receipt-time window the other bus reads apply —
+    // m1 and m2 share the a->b link, so the filtered set aggregates into one edge of two messages.
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { since: 1_000 }))
+      .toEqual([edge('a', 'b', 2, 2, 9_500_000)]);
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { since: 1_000, before: 9_200_000 }))
+      .toEqual([edge('a', 'b', 1, 1, 9_000_000)]);
+    expect(projectFleetEdges(rows, now, undefined, undefined, undefined, { before: 9_200_000 }))
+      .toEqual([edge('a', 'b', 1, 1, 9_000_000), edge('c', 'd', 1, 0, 100)]);
+    // The slice composes with the address, room and window bounds, never replacing them.
+    expect(projectFleetEdges(rows, now, undefined, { from: value => value === 'c' }, undefined, { kind: 'status' }))
+      .toEqual([]);
+  });
   it('reads --from/--to through the same identity-label rule the bus reads apply', () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-edges-filter-'));
     const options = { root, now: () => 1000 };
@@ -116,6 +198,46 @@ describe('fleet edges', () => {
       expect(readFleetEdges({ root, now: () => 7000 }).edges).toEqual([]);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
+  describe('parseFleetEdgesQuery', () => {
+    it('passes the unfiltered read through as empty options', () => {
+      expect(parseFleetEdgesQuery({})).toEqual({ ok: true, options: {} });
+    });
+    it('parses every filter with the same rules the flags and MCP arguments apply', () => {
+      expect(parseFleetEdgesQuery({ windowMinutes: '60', from: 'atlas', to: 'agent:bob',
+        channel: 'ops', topic: 'general' })).toEqual({ ok: true, options: {
+        windowMinutes: 60, from: 'atlas', to: 'agent:bob', channel: 'ops', topic: 'general' } });
+      expect(parseFleetEdgesQuery({ windowMinutes: '1' })).toEqual({ ok: true, options: { windowMinutes: 1 } });
+      expect(parseFleetEdgesQuery({ windowMinutes: '1440' })).toEqual({ ok: true, options: { windowMinutes: 1440 } });
+    });
+    it('parses the shared row-slice filters with the same rules the bus reads apply', () => {
+      const now = 10_000_000;
+      expect(parseFleetEdgesQuery({ since: '2h', before: '15m', priority: 'P1',
+        kind: 'HANDOFF', job: 'RQ-1', contains: 'Deploy  Fix' }, now)).toEqual({ ok: true, options: {
+        since: now - 7_200_000, before: now - 900_000, priority: 'P1',
+        kind: 'handoff', job: 'RQ-1', contains: 'deploy fix' } });
+      expect(parseFleetEdgesQuery({ since: '1700000000000', before: '2026-06-01T00:00:00.000Z' }, now))
+        .toEqual({ ok: true, options: { since: 1_700_000_000_000, before: Date.parse('2026-06-01T00:00:00.000Z') } });
+    });
+    it('rejects malformed values before the store is touched', () => {
+      for (const input of [
+        { windowMinutes: '' }, { windowMinutes: '0' }, { windowMinutes: '1441' },
+        { windowMinutes: '1.5' }, { windowMinutes: 'abc' }, { windowMinutes: '-5' },
+        { windowMinutes: 'x'.repeat(40) }, { windowMinutes: '9'.repeat(40) },
+        { from: '' }, { from: 'has space' }, { from: 'x'.repeat(129) },
+        { to: 'bad label' }, { to: 'x'.repeat(129) },
+        { channel: '' }, { channel: 'Bad Room' }, { channel: 'UPPER' }, { channel: 'x'.repeat(33) },
+        { topic: 'has space' }, { topic: 'UPPER' }, { topic: 'x'.repeat(33) },
+        { since: '' }, { since: 'bogus' }, { since: '-5' }, { since: '0x10' }, { since: '9'.repeat(40) },
+        { before: 'soon' }, { before: '1.5h' },
+        { priority: '' }, { priority: 'P4' }, { priority: 'p1' }, { priority: 'high' },
+        { kind: '' }, { kind: 'unknown' }, { kind: 'asks' },
+        { job: '' }, { job: 'has space' }, { job: 'x'.repeat(129) },
+        { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) },
+      ]) {
+        expect(parseFleetEdgesQuery(input).ok, JSON.stringify(input)).toBe(false);
+      }
+    });
+  });
   describe('phm fleet edges flags', () => {
     let root: string, log: ReturnType<typeof vi.spyOn>;
     const post = (id: string, from: string, to: string, at: number) => appendBusInbox(
@@ -125,7 +247,7 @@ describe('fleet edges', () => {
     const run = async (args: string[]) => {
       const index = log.mock.calls.length;
       const code = await cmdFleetEdges(args);
-      return { code, out: log.mock.calls.slice(index).map(call => String(call[0])) };
+      return { code, out: log.mock.calls.slice(index).map((call: unknown[]) => String(call[0])) };
     };
     beforeEach(() => {
       root = mkdtempSync(join(tmpdir(), 'fleet-edges-cli-'));
@@ -173,12 +295,98 @@ describe('fleet edges', () => {
       expect(JSON.parse(none.out[0]!).edges).toEqual([]);
     });
 
+    it('passes --channel and --topic through to the same projection', async () => {
+      const now = Date.now();
+      const room = (id: string, from: string, to: string) => appendBusInbox(
+        { id, from, to, priority: 'P2', ttl: 9_000_000, body: { text: 'private body' } },
+        { root, now: () => now });
+      expect(room('og', 'a', 'group:ops:general').status).toBe('posted');
+      expect(room('oa', 'b', 'group:ops:alerts').status).toBe('posted');
+      expect(room('eg', 'c', 'group:eng:general').status).toBe('posted');
+      expect(room('dm', 'd', 'e').status).toBe('posted');
+      const ops = await run(['--root', root, '--channel', 'ops', '--json']);
+      expect(ops.code).toBe(0);
+      // The room's traffic under every topic; agent mail never reaches the page.
+      // Tied lastAt sorts by sender address, so a's link leads.
+      expect(JSON.parse(ops.out[0]!).edges).toEqual([
+        { from: { address: 'a', provider: null }, to: { address: 'group:ops:general', provider: null }, messages: 1, messagesLastHour: 1, lastAt: now },
+        { from: { address: 'b', provider: null }, to: { address: 'group:ops:alerts', provider: null }, messages: 1, messagesLastHour: 1, lastAt: now },
+      ]);
+      const general = await run(['--root', root, '--topic', 'general', '--json']);
+      expect(JSON.parse(general.out[0]!).edges).toEqual([
+        { from: { address: 'a', provider: null }, to: { address: 'group:ops:general', provider: null }, messages: 1, messagesLastHour: 1, lastAt: now },
+        { from: { address: 'c', provider: null }, to: { address: 'group:eng:general', provider: null }, messages: 1, messagesLastHour: 1, lastAt: now },
+      ]);
+      // The two compose into one room AND one topic.
+      const both = await run(['--root', root, '--channel', 'ops', '--topic', 'alerts', '--json']);
+      expect(JSON.parse(both.out[0]!).edges).toEqual([
+        { from: { address: 'b', provider: null }, to: { address: 'group:ops:alerts', provider: null }, messages: 1, messagesLastHour: 1, lastAt: now },
+      ]);
+      // A room nothing carries is an honest empty list.
+      const none = await run(['--root', root, '--channel', 'missing', '--json']);
+      expect(JSON.parse(none.out[0]!).edges).toEqual([]);
+      expect(JSON.stringify(ops.out)).not.toContain('private body');
+    });
+
+    it('passes the shared slice flags through to the same projection', async () => {
+      const now = Date.now();
+      const post = (id: string, from: string, to: string, priority: string, body: unknown, at = now) => appendBusInbox(
+        { id, from, to, priority, ttl: 9_000_000, body,
+          channel: 'bus', channel_ref: id, sender: { agent_id: from, vendor: 'openai', human: false, team: true }, external: false },
+        { root, now: () => at });
+      expect(post('m1', 'a', 'b', 'P1', { kind: 'note', thread: 'job:RQ-9', text: 'please deploy the fix?' }).status).toBe('posted');
+      expect(post('m2', 'a', 'b', 'P2', { kind: 'note', text: 'ship has sailed' }).status).toBe('posted');
+      expect(post('m3', 'c', 'd', 'P0', { kind: 'note', text: 'taking over the lane' }, now - 7_200_000).status).toBe('posted');
+      // b and d never send, so their provider stays unknown — the same inference bound every filter keeps.
+      const edge = (from: string, to: string, messages: number, lastAt: number) =>
+        ({ from: { address: from, provider: 'openai' }, to: { address: to, provider: null },
+          messages, messagesLastHour: lastAt > now - 3_600_000 ? messages : 0, lastAt });
+      // --kind keeps only the receipts classify files under it.
+      const ask = await run(['--root', root, '--kind', 'ask', '--json']);
+      expect(ask.code).toBe(0);
+      expect(JSON.parse(ask.out[0]!).edges).toEqual([edge('a', 'b', 1, now)]);
+      // --priority keeps only the exact band.
+      const p0 = await run(['--root', root, '--priority', 'P0', '--json']);
+      expect(JSON.parse(p0.out[0]!).edges).toEqual([edge('c', 'd', 1, now - 7_200_000)]);
+      // --job keeps only bodies citing the job; --contains keeps only summary matches.
+      const job = await run(['--root', root, '--job', 'RQ-9', '--json']);
+      expect(JSON.parse(job.out[0]!).edges).toEqual([edge('a', 'b', 1, now)]);
+      const needle = await run(['--root', root, '--contains', 'DEPLOY', '--json']);
+      expect(JSON.parse(needle.out[0]!).edges).toEqual([edge('a', 'b', 1, now)]);
+      // --since/--before compose into the [since, before) receipt-time window.
+      const since = await run(['--root', root, '--since', '1h', '--json']);
+      expect(JSON.parse(since.out[0]!).edges).toEqual([edge('a', 'b', 2, now)]);
+      const before = await run(['--root', root, '--before', '1h', '--json']);
+      expect(JSON.parse(before.out[0]!).edges).toEqual([edge('c', 'd', 1, now - 7_200_000)]);
+      // The filters compose conjunctively.
+      const both = await run(['--root', root, '--kind', 'ask', '--priority', 'P2', '--json']);
+      expect(JSON.parse(both.out[0]!).edges).toEqual([]);
+      // `--flag=value` keeps a needle that itself starts with `--` expressible.
+      const dashed = await run(['--root', root, '--contains=--deploy', '--json']);
+      expect(dashed.code).toBe(0);
+      expect(JSON.parse(dashed.out[0]!).edges).toEqual([]);
+      expect(JSON.stringify(since.out)).not.toContain('private body');
+    });
+
     it('rejects malformed flags before touching the store', async () => {
       for (const bad of [['--help', '--json'], ['--window-minutes'], ['--window-minutes', '--json'],
         ['--window-minutes', '0'], ['--window-minutes', '1441'], ['--window-minutes', '1.5'],
         ['--window-minutes', 'abc'], ['--window-minutes', '60', '--window-minutes', '30'],
         ['--from'], ['--from', '--json'], ['--from', 'has space'], ['--from', ''],
         ['--from', 'a', '--from', 'b'], ['--to'], ['--to', '--json'], ['--to', 'a b'],
+        ['--channel'], ['--channel', '--json'], ['--channel', 'Bad Room'], ['--channel', ''],
+        ['--channel', 'a', '--channel', 'b'], ['--topic'], ['--topic', '--json'],
+        ['--topic', 'has space'], ['--topic', 'x'.repeat(33)], ['--topic', 'a', '--topic', 'b'],
+        ['--since'], ['--since', '--json'], ['--since', 'bogus'], ['--since', ''],
+        ['--since', '1h', '--since', '2h'], ['--before', 'soon'], ['--before', '1.5h'],
+        ['--priority'], ['--priority', '--json'], ['--priority', 'P4'], ['--priority', 'p1'],
+        ['--priority', 'P1', '--priority', 'P2'],
+        ['--kind'], ['--kind', '--json'], ['--kind', 'unknown'], ['--kind', ''],
+        ['--kind', 'ask', '--kind', 'reply'],
+        ['--job'], ['--job', '--json'], ['--job', 'has space'], ['--job', ''],
+        ['--job', 'a', '--job', 'b'],
+        ['--contains'], ['--contains', ''], ['--contains', 'x'.repeat(513)],
+        ['--contains', 'a', '--contains', 'b'],
         ['--root'], ['--root', 'relative'], ['--root', root, '--root', root], ['--json', '--json'],
         ['--unknown'], ['edges']]) {
         expect((await run(bad)).code).toBe(2);

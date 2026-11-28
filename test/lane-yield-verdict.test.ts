@@ -32,6 +32,22 @@ describe('laneYield', () => {
 });
 
 describe('parseLaneJobs', () => {
+  it('keeps the original position of reserialized timestamped launches', () => {
+    const ts = '2026-11-20T10:00:00Z';
+    const ledger = ['replayed', 'retried', 'undated'].flatMap(job => {
+      const launch = { event: 'launch', job, lane: 'zai', ts: job === 'undated' ? undefined : ts };
+      return [
+        launch,
+        { event: 'finish', job, empty: true, ts },
+        { ts: launch.ts, lane: job === 'retried' ? 'claude' : launch.lane, job, event: 'launch' },
+      ];
+    }).map(record => JSON.stringify(record)).join('\n');
+
+    expect(parseLaneJobs(ledger)).toEqual([
+      { job: 'replayed', lane: 'zai', at: Date.parse(ts), empty: true, merged: false },
+    ]);
+  });
+
   it('attributes finish evidence only after the latest launch', () => {
     const ledger = ['stale', 'pending', 'same-time', 'undated'].flatMap(job => {
       const first = '2026-11-20T10:00:00Z';

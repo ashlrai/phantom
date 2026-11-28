@@ -294,14 +294,14 @@ it('seat reads and dry-run handoff do not initialize a missing node store on a f
 it('posts a real bus note to leaders for each handed-off record by default', async () => {
   const o = await fixture();
   const fleetRoot = join(o.home, '.ashlr', 'fleet');
-  acquireCoordination({ root: fleetRoot, origin: 'resource', key: 'pr:o/r#6', owner: 'helper', sourceId: 'bus-note-claim', leaseMs: 3600000, leaseUntil: Date.now() + 3600000, now: Date.now() });
+  acquireCoordination({ root: fleetRoot, origin: 'resource', key: 'pr:o/r#6', owner: 'helper', sourceId: 'bus-note-claim', leaseMs: 3600000, leaseUntil: now + 3600000, now });
   await writeFile(join(o.root, 'seat-state.json'), JSON.stringify({ helper: { state: 'draining', since: iso(), exhaustedReset: null } }));
   const ownerNotice = vi.fn(async () => ({ status: 'accepted' }));
   const opts: SeatOptions = { ...o, readQuota: async () => exhausted, ownerNotice };
   const result = await applySeatHandoff('helper', opts);
   expect(result.handoffs).toHaveLength(1);
   expect(result.handoffs[0]!.notifications).toEqual({ bus: 'posted', owner: 'accepted' });
-  const page = listBusInboxAfter(0, 100, { root: fleetRoot });
+  const page = listBusInboxAfter(0, 100, { root: fleetRoot, now: o.now });
   expect(page.status).toBe('ok');
   const rows = page.status === 'ok' ? page.messages : [];
   expect(rows).toHaveLength(1);
@@ -315,7 +315,7 @@ it('posts a real bus note to leaders for each handed-off record by default', asy
   expect(envelope.body).toEqual({ kind: 'note', text: 'Seat helper handed off bus-claim pr:o/r#6. Done: unknown; left: unknown.' });
   // A replayed apply neither re-appends nor re-notifies.
   expect((await applySeatHandoff('helper', opts)).handoffs).toEqual([]);
-  const again = listBusInboxAfter(0, 100, { root: fleetRoot });
+  const again = listBusInboxAfter(0, 100, { root: fleetRoot, now: o.now });
   expect(again.status === 'ok' ? again.messages : []).toHaveLength(1);
 });
 it('cites a node-job handoff notice under its job thread and leaves claim keys uncited', async () => {
@@ -335,7 +335,7 @@ it('cites a node-job handoff notice under its job thread and leaves claim keys u
   const result = await applySeatHandoff('helper', opts);
   expect(result.handoffs.map(h => `${h.work.kind}:${h.work.ref}`).sort())
     .toEqual([`bus-claim:pr:o/r#9`, 'node-job:node-job-7', `node-job:${'x'.repeat(130)}`].sort());
-  const page = listBusInboxAfter(0, 100, { root: fleetRoot });
+  const page = listBusInboxAfter(0, 100, { root: fleetRoot, now: o.now });
   expect(page.status).toBe('ok');
   const rows = page.status === 'ok' ? page.messages : [];
   expect(rows).toHaveLength(3);

@@ -17,6 +17,19 @@ function setup(classification = 'probable-flake') {
 }
 
 describe('resident CI reruns', () => {
+  it.each([true, false])('preserves rerun deduplication only for a complete receipt at the tail cutoff (complete: %s)', async (complete) => {
+    const { opts, gh } = setup();
+    const attempt = { at: new Date(opts.now!()).toISOString(), repo: 'org/repo', head: 'a'.repeat(40), runId: 123, pr: 1, outcome: 'attempt' };
+    const tail = `${JSON.stringify(attempt)}\n`;
+    const padding = ' '.repeat(4 * 1024 * 1024 - Buffer.byteLength(tail));
+    writeFileSync(opts.journalPath!, `\n${complete ? '\n' : 'x'}${tail}${padding}`);
+
+    expect(readCiReruns(opts.journalPath!, opts.now!()).counts.attempted).toBe(complete ? 1 : 0);
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos['org/repo']?.skippedDuplicate).toBe(complete ? 1 : 0);
+    expect(gh).toHaveBeenCalledTimes(complete ? 0 : 1);
+  });
+
   it('journals before rerunning and deduplicates by workflow run even when the reported head changes', async () => {
     const { opts, gh, report } = setup();
     gh.mockImplementation(async () => {
@@ -148,6 +161,29 @@ describe('resident CI reruns', () => {
     report.groups[0]!.runs = [];
     const status = await runCiRerunMaintenance(opts);
     expect(status.repos[report.repo]).toMatchObject({ recurringFlakes: 0, flakeFixesQueued: 0 });
+  });
+
+  it.each([
+    ['matching singleton aliases', ['test/a.test.ts > a'], 1],
+    ['conflicting singleton aliases', ['test/b.test.ts > b'], 0],
+    ['singleton and multiple tests', ['test/a.test.ts > a', 'test/b.test.ts > b'], 0],
+    ['partially invalid array', ['test/a.test.ts > a', null], 0],
+    ['malformed array field', 'test/a.test.ts > a', 0],
+  ] as const)('attributes recurrence with %s only when the test identity agrees', async (_case, tests, expected) => {
+    const { opts, report } = setup();
+    const test = 'test/a.test.ts > a';
+    const rows = ['a', 'b', 'c'].map((head, i) => ({
+      at: '2026-01-01T11:30:00Z', repo: report.repo, head: head.repeat(40),
+      runId: 123 + i, pr: i + 1, outcome: 'attempt', test,
+      ...(i === 0 ? { tests } : {}),
+    }));
+    appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.counts.attempted).toBe(3);
+    expect(read.recurringFlakes.map(flake => flake.test)).toEqual(expected ? [test] : []);
+    report.groups[0]!.runs = [];
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos[report.repo]).toMatchObject({ recurringFlakes: expected, flakeFixesQueued: expected });
   });
 
   it('records a workflow-only verdict when the attempt belongs to a different head', async () => {

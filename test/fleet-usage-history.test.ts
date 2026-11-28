@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetUsageHistory } from '../src/cli/fleet-usage-history.js';
 import { readResourceLedger } from '../src/core/fleet/runs-resource-ledger.js';
 import {
-  appendUsageReadings, parseUsageHistory, poolUsageSeries, projectUsageHistory, readUsageHistory,
-  USAGE_HISTORY_MAX_AGE_MS, USAGE_HISTORY_SCHEMA, USAGE_WINDOW_MS, usageHistoryPath, usageRunway, type UsageHistoryV1, type UsageReading,
+  appendUsageReadings, parseUsageHistory, poolUsageSeries, projectUsageHistory, readUsageHistory, readUsageSamples,
+  USAGE_HISTORY_MAX_AGE_MS, USAGE_HISTORY_MAX_ROWS, USAGE_HISTORY_SCHEMA, USAGE_WINDOW_MS, usageHistoryPath, usageRunway, type UsageHistoryV1, type UsageReading,
 } from '../src/core/fleet/usage-history.js';
 
 const NOW = Date.parse('2026-11-18T12:00:00.000Z');
@@ -20,7 +20,7 @@ const IDEAL_NOW = 4 / 7 * 100;
 
 const dirs: string[] = [];
 const tmp = (): string => { const d = mkdtempSync(join(tmpdir(), 'usage-history-')); dirs.push(d); return d; };
-afterEach(() => { dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })); vi.restoreAllMocks(); });
+afterEach(() => { dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe('append-only history', () => {
   it('skips a reading whose value and reset time are unchanged, and one not newer than the last row', () => {
@@ -43,6 +43,20 @@ describe('append-only history', () => {
     expect(next.rows).toEqual([edge, read(1, 20)]);
     expect(appendUsageReadings([old], [], NOW)).toEqual({ rows: [], changed: true });
     expect(appendUsageReadings([], [read(USAGE_HISTORY_MAX_AGE_MS / H + 1, 5)], NOW).rows).toEqual([]);
+  });
+
+  it('applies the row cap by observation time across pools', () => {
+    const history = Array.from({ length: USAGE_HISTORY_MAX_ROWS }, (_, i) => ({
+      ...read(0, i % 100), observed_at: iso(NOW - USAGE_HISTORY_MAX_ROWS + i),
+    }));
+    const tooOld = read(1, 20, RESET, 'codex-personal');
+    expect(appendUsageReadings(history, [tooOld], NOW)).toEqual({ rows: history, changed: false });
+
+    const oldest = history[0]!;
+    const delayed = { ...tooOld, observed_at: iso(Date.parse(oldest.observed_at) + 5) };
+    const retained = appendUsageReadings(history, [delayed], NOW);
+    expect(retained.changed).toBe(true);
+    expect(retained.rows).toEqual([...history.slice(1, 6), delayed, ...history.slice(6)]);
   });
 
   it('drops malformed rows and reads a wrong schema as empty', () => {
@@ -154,6 +168,19 @@ describe('pool series', () => {
     });
   });
 
+  it.each([
+    ['after reset', iso(NOW - H)],
+    ['before opening', iso(NOW + 8 * D)],
+  ])('keeps current quota pace when a later reading falls %s in its own window', (_label, reset) => {
+    const current = [read(3, 20), read(1, 24)];
+    const expected = poolUsageSeries('claude', current, NOW);
+    expect(expected).toMatchObject({
+      reset_at: RESET, used_pct: 24, pace: 'behind', runway: { pace_per_hour: 2 },
+    });
+    const [series] = projectUsageHistory(current, NOW, [read(0, 99, reset)]);
+    expect(series).toEqual(expected);
+  });
+
   it('compares a rollover to the last in-window reading when an expired sample intervenes', () => {
     const oldReset = iso(NOW - 96 * H);
     const old = read(97, 90, oldReset);
@@ -253,6 +280,28 @@ describe('ledger recording, CLI and file', () => {
     expect(history.pools[0]).toMatchObject({ pace: 'unknown', points: [{ at: iso(NOW - H), used_pct: 40 }] });
     const stored = JSON.parse(readFileSync(usageHistoryPath(dir), 'utf8')) as { rows: UsageReading[] };
     expect(stored.rows.filter(row => row.pool === 'claude')).toEqual([read(1, 40)]);
+  });
+
+  it('honors ASHLR_RUNS_DIR for the ledger read and the history write', async () => {
+    const dir = runs(45, iso(NOW - H));
+    vi.stubEnv('ASHLR_RUNS_DIR', dir);
+    const history = await readUsageHistory({ now: () => NOW });
+    expect(history.source_state).toBe('healthy');
+    expect(history.pools.map(p => p.pool)).toEqual(['claude']);
+    const stored = JSON.parse(readFileSync(usageHistoryPath(dir), 'utf8')) as { rows: UsageReading[] };
+    expect(stored.rows).toEqual([{ pool: 'claude', used_pct: 45, observed_at: iso(NOW - H), reset_at: RESET, source: 'test' }]);
+  });
+
+  it('readUsageSamples honors ASHLR_RUNS_DIR, and an explicit runsDir still wins', async () => {
+    const dir = tmp();
+    mkdirSync(join(dir, 'metrics'), { recursive: true });
+    writeFileSync(usageHistoryPath(dir), JSON.stringify({ schema: USAGE_HISTORY_SCHEMA, rows: [read(2, 42)] }));
+    const other = tmp();
+    mkdirSync(join(other, 'metrics'), { recursive: true });
+    writeFileSync(usageHistoryPath(other), JSON.stringify({ schema: USAGE_HISTORY_SCHEMA, rows: [read(1, 43, RESET, 'codex-personal')] }));
+    vi.stubEnv('ASHLR_RUNS_DIR', dir);
+    expect(await readUsageSamples({ nowMs: NOW })).toEqual([read(2, 42)]);
+    expect(await readUsageSamples({ runsDir: other, nowMs: NOW })).toEqual([read(1, 43, RESET, 'codex-personal')]);
   });
 
   it('reads an empty runs dir as missing without writing, and a damaged file as degraded without overwriting it', async () => {

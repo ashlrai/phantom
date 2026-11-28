@@ -1178,10 +1178,10 @@ function fillRecordMetadata(
   if (!record.learningEpoch && meta.learningEpoch) record.learningEpoch = bounded(meta.learningEpoch, 120);
 }
 
-function evidenceEvent(evidence: OutcomeRecordEvidence, proposalId: string, tsFallback: string): TrajectoryTimelineEvent {
+function evidenceEvent(evidence: OutcomeRecordEvidence, proposalId: string): TrajectoryTimelineEvent {
   const verification = evidence.verification;
   return {
-    ts: evidence.generatedAt || tsFallback,
+    ts: evidence.generatedAt,
     kind: 'evidence',
     outcome: verification.passed ? 'passed' : 'failed',
     proposalId,
@@ -1288,11 +1288,13 @@ function listTrajectoryRecordsAt(
     const read = deps.readAgentActions
       ? deps.readAgentActions({
         sinceMs,
+        asOfMs,
         limit: Math.max(limit * 4, 200),
         maxFiles,
       })
       : readAgentActions({
         sinceMs,
+        asOfMs,
         limit: Math.max(limit * 4, 200),
         maxFiles,
         requireComplete: true,
@@ -1472,6 +1474,7 @@ function listTrajectoryRecordsAt(
     });
 
     for (const evidence of outcome.evidencePacks) {
+      if (!evidencePackObserved(evidence, asOfMs)) continue;
       record.coverage.evidence = true;
       fillRecordMetadata(record, {
         trajectoryId: evidence.trajectoryId,
@@ -1483,7 +1486,7 @@ function listTrajectoryRecordsAt(
         routerPolicyVersion: evidence.routerPolicyVersion,
         learningEpoch: evidence.learningEpoch,
       });
-      noteTimeline(record, evidenceEvent(evidence, proposal.id, proposal.createdAt));
+      noteTimeline(record, evidenceEvent(evidence, proposal.id));
     }
 
     for (const decision of outcome.decisions) {
@@ -1651,7 +1654,7 @@ function listTrajectoryRecordsAt(
       rank: 1,
       apply: () => processOutcome(outcome),
     })),
-    ...actions.map((action) => ({ ts: action.ts, rank: 2, apply: () => processAction(action) })),
+    ...actions.filter((action) => Date.parse(action.ts) <= asOfMs).map((action) => ({ ts: action.ts, rank: 2, apply: () => processAction(action) })),
   ].sort((a, b) => eventMs(a.ts) - eventMs(b.ts) || a.rank - b.rank);
   for (const event of causalEvents) event.apply();
 
@@ -1696,6 +1699,17 @@ function listTrajectoryRecordsAt(
     const record = recordId && includedRecordIds.has(recordId) ? records.get(recordId) : undefined;
     if (!record) {
       skillObservation.unjoined++;
+      continue;
+    }
+    // An unmatched alias is compatible only if the trajectory has no
+    // recorded identity in that namespace.
+    const contradictsRecord = aliases.some((candidate) => {
+      if (record.aliases.has(candidate)) return false;
+      const namespace = candidate.slice(0, candidate.indexOf(':') + 1);
+      return [...record.aliases].some((known) => known.startsWith(namespace));
+    });
+    if (contradictsRecord) {
+      skillObservation.conflicting++;
       continue;
     }
     const selectionIdentity = skillSelectionIdentity(event);
@@ -1917,10 +1931,35 @@ function aliasMatches(index: Map<string, Set<number>>, aliases: string[]): Set<n
   return matches;
 }
 
-function verificationStates(outcome: OutcomeRecord): Set<boolean> {
+function evidencePackObserved(evidence: OutcomeRecordEvidence, asOfMs: number): boolean {
+  return Date.parse(evidence.generatedAt) <= asOfMs;
+}
+
+function outcomeActiveInWindow(outcome: OutcomeRecord, sinceMs: number, asOfMs: number): boolean {
+  const createdMs = Date.parse(outcome.proposal.createdAt);
+  if (!(createdMs <= asOfMs)) return false;
+  const latestMs = eventMs(outcome.lastActivityAt);
+  if (latestMs <= asOfMs) return latestMs >= sinceMs;
+
+  // A future maximum can hide earlier, in-window activity in the same record.
+  const inWindow = (ts: string | undefined) => {
+    const ms = ts === undefined ? NaN : Date.parse(ts);
+    return ms >= sinceMs && ms <= asOfMs;
+  };
+  return createdMs >= sinceMs || inWindow(outcome.proposal.decidedAt)
+    || outcome.decisions.some((row) => inWindow(row.ts))
+    || outcome.judgeTraces.some((row) => inWindow(row.ts) || inWindow(row.outcomeAt))
+    || outcome.evidencePacks.some((row) => inWindow(row.generatedAt))
+    || outcome.workedEvents.some((row) => inWindow(row.ts))
+    || (outcome.postMergeObservations ?? []).some((row) => inWindow(row.observedAt));
+}
+
+function verificationStates(outcome: OutcomeRecord, asOfMs: number): Set<boolean> {
   const states = new Set<boolean>();
   if (outcome.proposal.verifyResult) states.add(outcome.proposal.verifyResult.passed);
-  for (const evidence of outcome.evidencePacks) states.add(evidence.verification.passed);
+  for (const evidence of outcome.evidencePacks) {
+    if (evidencePackObserved(evidence, asOfMs)) states.add(evidence.verification.passed);
+  }
   return states;
 }
 
@@ -1970,6 +2009,7 @@ export function listTrajectoryJoinQuality(
   try {
     actionRead = (deps.readAgentActionsDetailed ?? readAgentActionsDetailed)({
       sinceMs,
+      asOfMs,
       limit: Math.max(limit * 4, 200),
       maxFiles,
       inspectionOnly: true,
@@ -1981,14 +2021,17 @@ export function listTrajectoryJoinQuality(
   const dispatchQuality = (({ events: _events, ...quality }) => quality)(dispatchRead);
   const actionQuality = (({ events: _events, ...quality }) => quality)(actionRead);
   const outcomesInWindow = outcomeRead.records.filter(
-    (outcome) => Date.parse(outcome.proposal.createdAt) <= asOfMs && eventMs(outcome.lastActivityAt) >= sinceMs,
+    (outcome) => outcomeActiveInWindow(outcome, sinceMs, asOfMs),
   );
   const dispatches = attachReadQuality(
     dispatchRead.events.filter((event) => Date.parse(event.ts) <= asOfMs),
     dispatchQuality,
   );
   const outcomes = attachReadQuality(outcomesInWindow, outcomeRead.sourceQuality);
-  const actions = attachReadQuality(actionRead.events, actionQuality);
+  const actions = attachReadQuality(
+    actionRead.events.filter((action) => Date.parse(action.ts) <= asOfMs),
+    actionQuality,
+  );
   const records = listTrajectoryRecordsAt({
     windowHours,
     limit,
@@ -2027,7 +2070,7 @@ export function listTrajectoryJoinQuality(
   const proposalToVerification = emptyJoinEdge();
   const verifiedOutcomes: OutcomeRecord[] = [];
   for (const outcome of outcomesInWindow) {
-    const states = verificationStates(outcome);
+    const states = verificationStates(outcome, asOfMs);
     noteJoin(
       proposalToVerification,
       states.size,
@@ -2078,7 +2121,7 @@ export function listTrajectoryJoinQuality(
 
   const agentActions = emptyJoinEdge();
   let excludedIdentityFree = 0;
-  for (const action of actionRead.events) {
+  for (const action of actions) {
     const aliases = joinAliases(action);
     if (aliases.length === 0) {
       excludedIdentityFree++;

@@ -62,14 +62,14 @@ const PROTECTED_COMPONENTS: readonly RegExp[] = [
 /** Every candidate is also refused when a component is exactly one of these. */
 const PROTECTED_EXACT = new Set(['.codex', '.codex-2']);
 
-function insideRoot(root: string, path: string): boolean {
+export function isInsideRoot(root: string, path: string): boolean {
   const rel = relative(root, path);
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
-const real = (path: string): string | null => {
+export function realPathOrNull(path: string): string | null {
   try { return realpathSync.native(path); } catch { return null; }
-};
+}
 
 /** Child dirs of parent matching `name` - for `~/.codex*` and per-project `models` dirs. */
 function matchingDirs(parent: string, name: RegExp): string[] {
@@ -123,7 +123,7 @@ export function protectedRoots(roots: MaintRoots): string[] {
   }
   const out = new Set<string>();
   for (const path of raw) {
-    const physical = real(path);
+    const physical = realPathOrNull(path);
     out.add(physical ?? resolve(path));
   }
   return [...out];
@@ -135,14 +135,15 @@ export function protectedRoots(roots: MaintRoots): string[] {
  */
 export function protectedReason(path: string, roots: MaintRoots, rootsList?: readonly string[]): string | null {
   if (!isAbsolute(path)) return 'not-absolute';
-  const parts = resolve(path).split(sep).filter(Boolean);
+  const resolved = resolve(path);
+  const parts = resolved.split(sep).filter(Boolean);
   for (const part of parts) {
     if (PROTECTED_EXACT.has(part) || PROTECTED_COMPONENTS.some(re => re.test(part))) {
       return `protected-name:${part}`;
     }
   }
   for (const root of rootsList ?? protectedRoots(roots)) {
-    if (insideRoot(root, resolve(path))) return `protected-root:${basename(root)}`;
+    if (isInsideRoot(root, resolved)) return `protected-root:${basename(root)}`;
   }
   return null;
 }

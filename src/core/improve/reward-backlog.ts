@@ -33,8 +33,8 @@
  *    shape. Anything less is an invalid row: counted, never partially
  *    trusted. The ledger only ever records RESOLVED jobs — in-flight work
  *    is absent by design and never counts for or against a pool.
- *    Only the first valid retained row per job counts, matching the writer's
- *    refusal to overwrite a recorded job. Deduplication precedes windowing.
+ *    Only the first valid row per job visible at evaluation time counts.
+ *    Deduplication precedes the lower bound of the evidence window.
  *  - Recurring means recorded across days at a rate that cannot be a
  *    transient burst: a pool's cell emits only when its in-window rows
  *    reach REWARD_MIN_ROWS, its not-held rows reach REWARD_MIN_NOT_HELD,
@@ -51,8 +51,8 @@
  *    'phantom'. Row-level repo names are quoted as evidence, never
  *    used to filter — a pool's arm quality is fleet-level in
  *    calibration.
- *  - A truncated ledger yields no items. The omitted rows can change
- *    the majority verdict and which row was recorded first for a job.
+ *  - A truncated ledger or one with invalid rows yields no items. Missing
+ *    evidence can change the majority verdict and which row came first.
  *  - Dedup is downstream: item ids hash the pool identity — never the
  *    counts or timestamps — so a refresh re-derives the same ids and
  *    appendUserBacklogItems adds only what is new; a pool that recovers
@@ -138,7 +138,7 @@ export interface RewardPoolTally {
 }
 
 export interface RewardJournalFold {
-  /** Distinct jobs whose first valid retained reward row is in the window. */
+  /** Distinct jobs whose first valid reward row visible at evaluation time is in the window. */
   records: number;
   /** Retained-tail lines that failed JSON parse or the producer contract. */
   invalidRows: number;
@@ -162,10 +162,12 @@ export function foldRewardJournal(text: string, nowMs: number, windowMs: number)
     let row: unknown;
     try { row = JSON.parse(trimmed); } catch { fold.invalidRows += 1; continue; }
     if (!isRewardSignalV1(row)) { fold.invalidRows += 1; continue; }
+    const atMs = Date.parse(row.recordedAt);
+    if (atMs > nowMs || Date.parse(row.dispatchedAt) > nowMs ||
+        (row.mergedAt !== null && Date.parse(row.mergedAt) > nowMs)) continue;
     if (seenJobs.has(row.jobId)) continue;
     seenJobs.add(row.jobId);
-    const atMs = Date.parse(row.recordedAt);
-    if (!Number.isFinite(atMs) || atMs < since || atMs > nowMs) continue;
+    if (atMs < since) continue;
     fold.records += 1;
     const key = row.pool ?? UNATTRIBUTED_KEY;
     let tally = fold.pools.get(key);
@@ -317,7 +319,7 @@ export async function rewardBacklogItems(opts: RewardBacklogItemsOptions): Promi
     const tail = await readLedgerTail(path, REWARD_SIGNAL_MAX_BYTES);
     if (tail.state !== 'read' || tail.truncated) return [];
     const fold = foldRewardJournal(tail.text, nowMs, windowMs);
-    if (fold.records === 0) return [];
+    if (fold.invalidRows > 0 || fold.records === 0) return [];
     const cells = rewardCells(fold);
     const limit = Math.max(1, Math.min(opts.limit ?? REWARD_BACKLOG_MAX_ITEMS, REWARD_BACKLOG_ITEM_HARD_MAX));
     return cells.slice(0, limit).map((cell) => rewardItem(cell, repo));

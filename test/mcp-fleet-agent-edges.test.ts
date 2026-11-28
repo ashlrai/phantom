@@ -65,6 +65,29 @@ describe('fleet_agent_edges argument parsing', () => {
       .toEqual({ windowMinutes: 1, from: 'a', to: 'b' });
     expect(parseFleetAgentEdgesArgs({ windowMinutes: 1440 })).toEqual({ windowMinutes: 1440 });
     expect(parseFleetAgentEdgesArgs({ from: 'x'.repeat(128) })).toEqual({ from: 'x'.repeat(128) });
+    expect(parseFleetAgentEdgesArgs({ channel: 'ops' })).toEqual({ channel: 'ops' });
+    expect(parseFleetAgentEdgesArgs({ topic: 'alerts' })).toEqual({ topic: 'alerts' });
+    expect(parseFleetAgentEdgesArgs({ channel: 'ops', topic: 'general', from: 'a', windowMinutes: 5 }))
+      .toEqual({ channel: 'ops', topic: 'general', from: 'a', windowMinutes: 5 });
+    // The shared row-slice filters take the same values the CLI flags and query params do:
+    // since/before resolve the 15m|2h|1d|ISO|epoch grammar to epoch-ms bounds, priority stays
+    // an exact P0..P3 member, kind lowercases into the classified-kind enum, job takes the
+    // printable label and contains the bounded needle normalized like every bus read's.
+    const sliced = parseFleetAgentEdgesArgs({ since: '15m', before: '2026-06-01T00:00:00.000Z',
+      priority: 'P1', kind: 'HANDOFF', job: 'RQ-1', contains: 'Deploy  Fix' });
+    expect(sliced).toMatchObject({ before: Date.parse('2026-06-01T00:00:00.000Z'),
+      priority: 'P1', kind: 'handoff', job: 'RQ-1', contains: 'deploy fix' });
+    expect(sliced!.since).toBeGreaterThan(0);
+    expect(parseFleetAgentEdgesArgs({ since: '1700000000000' })).toEqual({ since: 1_700_000_000_000 });
+    expect(parseFleetAgentEdgesArgs({ kind: 'Ask' })).toEqual({ kind: 'ask' });
+    expect(parseFleetAgentEdgesArgs({ contains: '   ' })).toBeNull();
+  });
+
+  it('rejects malformed channel and topic names', () => {
+    for (const bad of ['', 'Bad Room', 'has space', 'x'.repeat(33), 'line\nbreak', 'group:ops', 5, null, true, ['a']]) {
+      expect(parseFleetAgentEdgesArgs({ channel: bad })).toBeNull();
+      expect(parseFleetAgentEdgesArgs({ topic: bad })).toBeNull();
+    }
   });
 
   it('rejects an out-of-range or non-integer windowMinutes', () => {
@@ -77,6 +100,25 @@ describe('fleet_agent_edges argument parsing', () => {
     for (const bad of ['', 'has space', 'x'.repeat(129), 'line\nbreak', 5, null, true, ['a']]) {
       expect(parseFleetAgentEdgesArgs({ from: bad })).toBeNull();
       expect(parseFleetAgentEdgesArgs({ to: bad })).toBeNull();
+    }
+  });
+
+  it('rejects malformed slice-filter values', () => {
+    for (const bad of ['bogus', '', '-5', '0x10', '9'.repeat(40), 5, null, true, ['1h']]) {
+      expect(parseFleetAgentEdgesArgs({ since: bad })).toBeNull();
+      expect(parseFleetAgentEdgesArgs({ before: bad })).toBeNull();
+    }
+    for (const bad of ['P4', 'p1', 'high', '', 1, null, true]) {
+      expect(parseFleetAgentEdgesArgs({ priority: bad })).toBeNull();
+    }
+    for (const bad of ['unknown', 'asks', '', 5, null, true]) {
+      expect(parseFleetAgentEdgesArgs({ kind: bad })).toBeNull();
+    }
+    for (const bad of ['', 'has space', 'x'.repeat(129), 5, null, true]) {
+      expect(parseFleetAgentEdgesArgs({ job: bad })).toBeNull();
+    }
+    for (const bad of ['', '   ', 'x'.repeat(513), 5, null, true]) {
+      expect(parseFleetAgentEdgesArgs({ contains: bad })).toBeNull();
     }
   });
 
@@ -97,10 +139,14 @@ describe('fleet_agent_edges reader', () => {
       return availableEdges();
     };
     const result = await readFleetAgentEdges(
-      parseFleetAgentEdgesArgs({ windowMinutes: 30, from: 'agent:sender', to: 'ops' })!,
+      parseFleetAgentEdgesArgs({ windowMinutes: 30, from: 'agent:sender', to: 'ops', channel: 'ops', topic: 'alerts',
+        since: '2026-01-01T00:00:00.000Z', before: '1700000000000', priority: 'P1', kind: 'handoff',
+        job: 'RQ-1', contains: 'Deploy' })!,
       { read },
     );
-    expect(seen).toEqual([{ windowMinutes: 30, from: 'agent:sender', to: 'ops' }]);
+    expect(seen).toEqual([{ windowMinutes: 30, from: 'agent:sender', to: 'ops', channel: 'ops', topic: 'alerts',
+      since: Date.parse('2026-01-01T00:00:00.000Z'), before: 1_700_000_000_000,
+      priority: 'P1', kind: 'handoff', job: 'RQ-1', contains: 'deploy' }]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       schema: 'fleet.edges.v1', source: 'available',
@@ -140,11 +186,32 @@ describe('fleet_agent_edges MCP tool', () => {
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['to'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['channel'])
+      .toMatchObject({ type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$' });
+    expect(tool?.inputSchema.properties?.['topic'])
+      .toMatchObject({ type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$' });
+    expect(tool?.inputSchema.properties?.['since']).toMatchObject({ type: 'string' });
+    expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
+    expect(tool?.inputSchema.properties?.['priority'])
+      .toMatchObject({ type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] });
+    expect(tool?.inputSchema.properties?.['kind'])
+      .toMatchObject({ type: 'string', enum: ['ask', 'reply', 'handoff', 'status', 'blocker'] });
+    expect(tool?.inputSchema.properties?.['job'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['contains'])
+      .toMatchObject({ type: 'string', minLength: 1, maxLength: 512 });
   });
 
   it.each([
     [{ windowMinutes: 0 }], [{ windowMinutes: 1441 }], [{ windowMinutes: 1.5 }], [{ windowMinutes: '60' }],
     [{ from: '' }], [{ from: 'has space' }], [{ from: 'x'.repeat(129) }], [{ to: 5 }],
+    [{ channel: 'Bad Room' }], [{ channel: '' }], [{ channel: 'x'.repeat(33) }], [{ channel: 5 }],
+    [{ topic: 'has space' }], [{ topic: 'group:ops' }], [{ topic: null }],
+    [{ since: 'bogus' }], [{ since: '' }], [{ since: 5 }], [{ before: 'soon' }], [{ before: null }],
+    [{ priority: 'P4' }], [{ priority: 'p1' }], [{ priority: 1 }],
+    [{ kind: 'unknown' }], [{ kind: '' }], [{ kind: 5 }],
+    [{ job: 'has space' }], [{ job: '' }], [{ job: 5 }],
+    [{ contains: '' }], [{ contains: '   ' }], [{ contains: 'x'.repeat(513) }], [{ contains: 5 }],
     [{ root: '/tmp/fake-root' }], [{ path: '/tmp/x' }], [{ cwd: '/tmp' }], [{ limit: 5 }], [{ extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const agentEdges = vi.fn();

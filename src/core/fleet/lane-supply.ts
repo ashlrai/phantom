@@ -11,6 +11,7 @@
  */
 import type { FleetLaneSnapshot, FleetLaneView } from './lane-console.js';
 import { hooksFromPlannerReport, type SelfTickHook } from './self-tick-hooks.js';
+import { LOCAL_LANES } from './unfed-market.js';
 
 export const LANE_SUPPLY_SCHEMA = 'fleet.lane-supply.v1' as const;
 export const LANE_SUPPLY_PATH = '/api/verse/fleet/lane-supply';
@@ -79,7 +80,7 @@ function resetWords(resetAt: string | null): string {
   return Number.isFinite(at) ? new Date(at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'its next reset (time unknown)';
 }
 
-/** The verdict and plain sentence for one lane. `openRows` is the snapshot's lane-open READY count: supply the market may place on any lane, so a positive count keeps a free lane from reading as idle. */
+/** The verdict and plain sentence for one lane. Open READY rows only feed executors that accept open work. */
 export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: number | null = null, launchHeadroom?: number | null): LaneSupplyLane {
   const running = view.liveJobs;
   const target = view.slotTarget;
@@ -88,7 +89,8 @@ export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: num
   const leftPct = left === null ? null : Math.max(0, Math.min(100, left));
   const resetMs = view.credit.resetAt === null ? NaN : Date.parse(view.credit.resetAt);
   const hoursToReset = Number.isFinite(resetMs) ? Math.max(0, Math.round(((resetMs - nowMs) / HOUR_MS) * 10) / 10) : null;
-  const free = held ? 0 : launchHeadroom !== undefined ? launchHeadroom
+  const drained = leftPct !== null && leftPct <= 0;
+  const free = held || drained ? 0 : launchHeadroom !== undefined ? launchHeadroom
     : running === null || target === null ? null : Math.max(0, target - running);
   const row = {
     lane: view.lane, running, target, freeSlots: free, queued: view.queueDepth,
@@ -96,12 +98,12 @@ export function laneSupplyLane(view: FleetLaneView, nowMs: number, openRows: num
     resetAt: view.credit.resetAt, hoursToReset,
   };
   const idle = free !== null && free > 0 && view.queueDepth === 0;
-  const openSupply = typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows > 0;
+  const openSupply = !LOCAL_LANES.has(view.lane) && typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows > 0;
   let verdict: LaneSupplyVerdict;
   let text: string;
   let detail: string | null = null;
   if (held) { verdict = 'held'; detail = view.hold?.reason ?? null; text = `${view.lane} held${detail ? `: ${detail}` : ''}`; }
-  else if (leftPct !== null && leftPct <= 0) { verdict = 'out-of-usage'; detail = `until ${resetWords(view.credit.resetAt)}`; text = `${view.lane} out of usage ${detail}`; }
+  else if (drained) { verdict = 'out-of-usage'; detail = `until ${resetWords(view.credit.resetAt)}`; text = `${view.lane} out of usage ${detail}`; }
   else if (idle && openRows === null) { verdict = 'unknown'; detail = 'lane-open supply unknown'; text = `${view.lane}: ${detail}`; }
   else if (idle && leftPct !== null && openSupply) { verdict = 'open-supply'; text = `${view.lane} open supply: ${plural(free, 'free slot')}, ${pct(leftPct)}% left, ${plural(openRows, 'open row')} wait`; }
   else if (idle && leftPct !== null) { verdict = 'idle-with-usage-left'; text = `${view.lane} idle: ${plural(free, 'free slot')}, ${pct(leftPct)}% left`; }

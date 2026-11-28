@@ -1,5 +1,5 @@
 /**
- * inventory.ts: everything this install can use, in one list. Messaging
+ * inventory.ts: everything this install can discover, in one list. Messaging
  * channels, connectors, plugins, skills and tools, each with a plain state
  * (ready, needs setup, off, error, unknown), for `phm inventory`,
  * GET /api/verse/fleet/runs/inventory and the desktop Inventory pane.
@@ -97,11 +97,12 @@ function channelEntries(overview: ChannelsOverview | null): Entry[] {
 function connectorEntries(connectors: readonly ConnectorFact[] | null, at: string): Entry[] {
   if (!connectors) return [unread('connector', 'profile', 'Connector profile')];
   return connectors.map((c): Entry => {
-    const state: InventoryState = c.availability === 'available' ? 'ready' : c.availability === 'unavailable' ? 'needs setup' : 'unknown';
+    const state: InventoryState = c.availability === 'unavailable' ? 'needs setup'
+      : c.availability === 'available' && !c.credentials && c.lanes.length ? 'ready' : 'unknown';
     const parts = [
       CONNECTOR_KIND[c.kind] ?? c.kind,
       ...(c.description ? [c.description.replace(/\.+$/, '')] : []),
-      ...(state === 'needs setup' ? ['Its program is not on PATH'] : state === 'unknown' ? ['Not checked: nothing here contacts it'] : []),
+      ...(c.availability === 'unavailable' ? ['Its program is not on PATH'] : c.availability === 'available' ? ['Program found on this machine; it was not started'] : ['Not checked: nothing here contacts it']),
       ...(c.credentials ? [`Lists ${plural(c.credentials, 'credential name')}; whether each is set is not checked here`] : []),
       ...(c.lanes.length ? [] : ['No lane is listed, so no lane can run it']),
     ];
@@ -138,7 +139,7 @@ function installedEntries(kind: 'plugin' | 'skill', panel: InstalledPanel | null
   for (const need of tools?.needs ?? []) {
     const name = need.startsWith(`${kind}:`) ? need.slice(kind.length + 1) : null;
     if (name === null || seen.has(name)) continue;
-    entries.push({ item: { kind, id: `${kind}:lane-tools/${name}`, name, state: 'ready', detail: 'Declared for a lane; not found in an installed list on this machine.', lastChecked: at, usedByLanes: declaredFor(name), next: null } });
+    entries.push({ item: { kind, id: `${kind}:lane-tools/${name}`, name, state: 'unknown', detail: 'Declared for a lane; installation is not confirmed on this machine.', lastChecked: at, usedByLanes: declaredFor(name), next: null } });
   }
   return entries;
 }
@@ -174,7 +175,7 @@ function toolEntries(tools: ToolParityReport | null, registry: readonly Registry
       if (!name || connectorIds.has(name)) continue;
       const has = lanesWith(need, 'has');
       entries.push({
-        item: { kind: 'tool', id: `tool:${need}`, name, state: 'ready', detail: `${toolLabel(need)}. Declared for ${plural(has.length, 'lane')}.`, lastChecked: at, usedByLanes: has, next: null },
+        item: { kind: 'tool', id: `tool:${need}`, name, state: 'unknown', detail: `${toolLabel(need)}. Declared for ${plural(has.length, 'lane')}; availability not checked.`, lastChecked: at, usedByLanes: has, next: null },
         verdict: verdictFor(need),
       });
     }
@@ -182,15 +183,17 @@ function toolEntries(tools: ToolParityReport | null, registry: readonly Registry
   if (!registry) entries.push(unread('tool', 'registry', 'Shared tool registry'));
   for (const t of registry ?? []) {
     const active = t.status === 'active';
+    // The registry currently routes connector calls through the deliberately disabled run path.
+    const usable = active && t.kind === 'skill';
     const what = t.kind === 'skill' ? 'Shared instruction template' : 'Shared connector call';
     const lanes = [...t.lanes];
     entries.push({
       item: {
-        kind: 'tool', id: `tool:registry/${t.id}`, name: t.id, state: active ? 'ready' : 'off',
-        detail: clip(`${what}${active ? '' : ', revoked'}. ${t.description}`), lastChecked: at, usedByLanes: lanes.length ? lanes : 'all', next: null,
+        kind: 'tool', id: `tool:registry/${t.id}`, name: t.id, state: usable ? 'ready' : 'off',
+        detail: clip(`${what}${!active ? ', revoked' : usable ? '' : ', registered but invocation is disabled'}. ${t.description}`), lastChecked: at, usedByLanes: lanes.length ? lanes : 'all', next: null,
       },
-      // An empty lane list means every lane can find it. A revoked entry is off for everyone, so it is not compared.
-      ...(active ? { verdict: (lane: string): Verdict => (!lanes.length || lanes.includes(lane) ? 'has' : 'lacks') } : {}),
+      // An empty lane list means every lane can find it. Disabled or revoked entries are not compared.
+      ...(usable ? { verdict: (lane: string): Verdict => (!lanes.length || lanes.includes(lane) ? 'has' : 'lacks') } : {}),
     });
   }
   return entries;
@@ -316,7 +319,7 @@ export function formatInventory(inventory: Inventory): string {
   const { parity } = inventory;
   lines.push('', `Tool gap between lanes: ${parity.widestGap}. Each lane against ${parity.compared} tools and connectors.`);
   const width = Math.max(4, ...parity.lanes.map(l => l.lane.length)) + 2;
-  for (const l of parity.lanes) lines.push(`  ${l.lane.padEnd(width)}can use ${l.has.length}, lacks ${l.gap}, unknown ${l.unknown}`);
+  for (const l of parity.lanes) lines.push(`  ${l.lane.padEnd(width)}reported ${l.has.length}, lacks ${l.gap}, unknown ${l.unknown}`);
   lines.push('unknown = no source says; it is never counted as lacking. One kind: phm inventory --kind <kind>. All fields: phm inventory --json');
   return lines.join('\n');
 }

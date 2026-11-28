@@ -10,7 +10,10 @@ import { describe, it, expect, afterEach } from 'vitest';
 import {
   resolveModelProfile,
   adaptivePromptsEnabled,
+  parseModelParamSizeB,
+  pickBestLocalModel,
 } from '../src/core/run/model-profile.js';
+import { isRecord } from '../src/core/run/tool-calls.js';
 import type { AshlrConfig } from '../src/core/types.js';
 
 describe('M41 resolveModelProfile', () => {
@@ -104,5 +107,25 @@ describe('M41 adaptivePromptsEnabled', () => {
     expect(adaptivePromptsEnabled(cfg(true))).toBe(false);
     process.env.ASHLR_ADAPTIVE_PROMPTS = '1';
     expect(adaptivePromptsEnabled(cfg(false))).toBe(true);
+  });
+});
+
+describe('consolidated run helpers', () => {
+  it('parses model parameter sizes and picks the smallest non-embedding local model', () => {
+    expect(parseModelParamSizeB('qwen2.5-coder:7b')).toBe(7);
+    expect(parseModelParamSizeB('phi3:mini')).toBe(3);
+    expect(parseModelParamSizeB('custom-chat')).toBeNull();
+    expect(pickBestLocalModel([])).toBe('default');
+    expect(pickBestLocalModel(['nomic-embed-text', 'llama3.1:70b', 'qwen2.5:7b', 'qwen2.5-coder:7b'])).toBe('qwen2.5-coder:7b');
+    expect(pickBestLocalModel(['nomic-embed-text'])).toBe('nomic-embed-text');
+  });
+
+  it('checks plain non-array object records via isRecord', () => {
+    expect(isRecord({ a: 1 })).toBe(true);
+    expect(isRecord(Object.create(null))).toBe(true);
+    expect(isRecord(null)).toBe(false);
+    expect(isRecord(undefined)).toBe(false);
+    expect(isRecord([])).toBe(false);
+    expect(isRecord('text')).toBe(false);
   });
 });

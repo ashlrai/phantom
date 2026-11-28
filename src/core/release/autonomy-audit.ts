@@ -1,8 +1,15 @@
 import { execFile } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
 import { readRunsSwitches } from '../fleet/runs-switches.js';
+import { asReleaseRecord, stripReleaseOwner } from './cadence.js';
 
 export const AUTONOMY_REPOS = ['phantom', 'phantom-secrets', 'locus', 'lexicon', 'ashlr-plugin', 'ashlr-stack', 'ashlr-md'] as const;
+
+/** Short enrolled repo name for `name` or `ashlrai/name`; null for anything else. */
+export function releaseRepo(name: string): string | null {
+  const short = stripReleaseOwner(name);
+  return AUTONOMY_REPOS.some((repo) => repo === short) ? short : null;
+}
 type Classification = 'cut' | 'automate' | 'hard-limit';
 type Status = 'human step' | 'gate (keep)' | 'ok' | 'unknown';
 export interface AutonomyGate { id: string; where: string; kind: string; classification: Classification; reason: string }
@@ -11,7 +18,7 @@ export interface RepoAudit { repo: string; defaultBranch: string | null; allowAu
 export interface AutonomyReport { repos: RepoAudit[]; gates: AutonomyGate[]; complete: boolean }
 export interface AuditOptions { repo?: string; read?: (endpoint: string) => Promise<unknown>; publishHold?: { on: boolean | null; sourceState: string } }
 export class GitHubNotFoundError extends Error { constructor() { super('GitHub resource not found'); } }
-const obj = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
+const obj = (v: unknown): Record<string, unknown> => asReleaseRecord(v) ?? {};
 const arr = (v: unknown): unknown[] => Array.isArray(v) ? v : [];
 const str = (v: unknown): string | null => typeof v === 'string' ? v : null;
 const gate = (id: string, where: string, kind: string, classification: Classification, reason: string): AutonomyGate => ({ id, where, kind, classification, reason });
@@ -68,8 +75,8 @@ function triggers(content: unknown): string[] | null {
 }
 
 export async function auditAutonomy(options: AuditOptions = {}): Promise<AutonomyReport> {
-  const name = options.repo?.replace(/^ashlrai\//, '');
-  if (name && !AUTONOMY_REPOS.some((r) => r === name)) throw new Error('Unknown enrolled repository');
+  const name = options.repo ? stripReleaseOwner(options.repo) : undefined;
+  if (name && !releaseRepo(name)) throw new Error('Unknown enrolled repository');
   const read = options.read ?? githubRead;
   const switchState = options.publishHold ?? await (async () => { const state = await readRunsSwitches(); return { on: state.sourceState === 'healthy' ? state.switches.find((s) => s.id === 'PUBLISH_HOLD')?.on ?? null : null, sourceState: state.sourceState }; })();
   const gates = POLICY.map((row) => ({ ...row }));
@@ -152,12 +159,13 @@ export async function auditAutonomy(options: AuditOptions = {}): Promise<Autonom
   return { repos, gates, complete };
 }
 export function formatAutonomy(report: AutonomyReport, markdown = false): string {
+  const formatCells = (values: readonly string[]) => values.map((s) => s.replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' '));
   const lines = markdown ? ['| Repository | Item | Status | Detail |', '| --- | --- | --- | --- |'] : [];
   for (const repo of report.repos) for (const item of repo.items) {
-    const cells = [repo.repo, item.id, item.status, item.detail].map((s) => s.replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' '));
+    const cells = formatCells([repo.repo, item.id, item.status, item.detail]);
     lines.push(markdown ? `| ${cells.join(' | ')} |` : `${cells[0]}: ${cells[1]}: ${cells[2]}: ${cells[3]}`);
   }
   if (markdown) lines.push('', '| Gate | Where | Kind | Classification | Reason |', '| --- | --- | --- | --- | --- |');
-  for (const g of report.gates) { const cells = [g.id, g.where, g.kind, g.classification, g.reason].map((s) => s.replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ')); lines.push(markdown ? `| ${cells.join(' | ')} |` : `gate: ${cells.join(' | ')}`); }
+  for (const g of report.gates) { const cells = formatCells([g.id, g.where, g.kind, g.classification, g.reason]); lines.push(markdown ? `| ${cells.join(' | ')} |` : `gate: ${cells.join(' | ')}`); }
   return lines.join('\n');
 }

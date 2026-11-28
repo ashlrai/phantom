@@ -187,7 +187,7 @@ export function computeLearnedSeatEvidence(opts: LearnedSeatEvidenceOptions = {}
     if (measured === 0) return { learnedPenalty };
     return {
       learnedPenalty,
-      learningNote: 'Fleet outcome learning ranked seats by their pooled merge and allowance record.',
+      learningNote: 'Fleet outcome learning ranked seats using their recorded merge outcomes and comparable allowance readings where available.',
     };
   } catch {
     return { learnedPenalty: {} };

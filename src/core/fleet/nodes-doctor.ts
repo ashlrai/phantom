@@ -17,9 +17,8 @@ import { existsSync, readdirSync, statfsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { binaryCandidates } from '../drive/nodes/provider-binary.js';
-import { aliasMatches } from './pool-reach.js';
 import { UNKNOWN } from './runtime-identity.js';
-import { capServesLane, MIRROR_FRESH_MS, readNodesRegistry, readNodesView, type NodeRow, type NodesViewDeps } from './nodes-view.js';
+import { capServesLane, readNodesRegistry, readNodesView, registryDiskFree, type NodeRow, type NodesViewDeps } from './nodes-view.js';
 
 export const NODES_DOCTOR_SCHEMA = 'phantom.nodes-doctor.v1';
 /** Below this the node pool already holds jobs (see drive/nodes/capacity.ts). */
@@ -29,9 +28,11 @@ export type DoctorLane = typeof DOCTOR_LANES[number];
 type Unknown = typeof UNKNOWN;
 export type LaneStatus = 'ready' | 'not-installed' | 'signed-out' | 'unknown';
 
-/** What a probe saw. `signedIn: 'unknown'` means the CLI has no status command Phantom can run. */
+/** What a probe saw. `signedIn: 'unknown'` means the CLI has no status command Phantom can run
+ * or the check itself could not complete; `reason` then says which, overriding the default
+ * "no sign-in check" wording. */
 export interface NodeProbeReply {
-  lanes: Partial<Record<DoctorLane, { installed: boolean; signedIn: boolean | Unknown }>>;
+  lanes: Partial<Record<DoctorLane, { installed: boolean; signedIn: boolean | Unknown; reason?: string }>>;
   repos: string[];
   diskFreeBytes: number | null;
 }
@@ -68,15 +69,39 @@ const REPO_ROOT = ['Projects', 'ashlrai'];
 
 /** Real probe for this computer: exit codes only, absolute binaries, no shell, no output kept. */
 export function localProbe(run: typeof spawnSync = spawnSync, home: string = homedir()): NodeProbeReply {
-  const exits = (binary: string, args: string[]) => {
+  // 'ok' the CLI answered 0; 'failed' it ran to a nonzero exit — a real verdict;
+  // 'unknown' it could not be spawned, was killed or timed out — never a verdict.
+  const probe = (binary: string, args: string[]): 'ok' | 'failed' | 'unknown' => {
     const r = run(binary, args, { timeout: 5000, stdio: 'ignore', shell: false, env: { PATH: process.env['PATH'], HOME: home } });
-    return !r.error && r.status === 0;
+    return r.error || r.status === null ? 'unknown' : r.status === 0 ? 'ok' : 'failed';
   };
   const lanes: NodeProbeReply['lanes'] = {};
   for (const lane of DOCTOR_LANES) {
-    const binary = BINARY[lane].flatMap(name => binaryCandidates(name, { home })).find(path => existsSync(path) && exits(path, ['--version']));
+    // `installed` is file presence at an allowlisted path. A binary that exists
+    // but cannot answer `--version` is installed yet unverifiable — an honest
+    // unknown, never "not installed" (that fix would reinstall working software)
+    // and never "signed out" (the sign-in check never ran).
+    const present = BINARY[lane].flatMap(name => binaryCandidates(name, { home })).filter(path => existsSync(path));
+    const binary = present.find(path => probe(path, ['--version']) === 'ok');
     const status = STATUS_ARGS[lane];
-    lanes[lane] = { installed: Boolean(binary), signedIn: !binary ? false : status ? exits(binary, status) : lane === 'local-model' ? true : UNKNOWN };
+    let signedIn: boolean | Unknown = false;
+    let reason: string | undefined;
+    if (present.length > 0 && binary === undefined) {
+      signedIn = UNKNOWN;
+      reason = `${lane} is installed but did not answer \`--version\``;
+    } else if (binary !== undefined) {
+      if (status === undefined) signedIn = lane === 'local-model' ? true : UNKNOWN;
+      else {
+        const verdict = probe(binary, status);
+        if (verdict === 'ok') signedIn = true;
+        else if (verdict === 'failed') signedIn = false;
+        else {
+          signedIn = UNKNOWN;
+          reason = `${lane} is installed but did not answer the sign-in check`;
+        }
+      }
+    }
+    lanes[lane] = { installed: present.length > 0, signedIn, ...(reason === undefined ? {} : { reason }) };
   }
   const root = join(home, ...REPO_ROOT);
   let repos: string[] = [];
@@ -97,7 +122,7 @@ function laneStatus(lane: DoctorLane, probe: NodeProbeReply | null, caps: string
     if (!seen.installed) return { lane, status: 'not-installed' };
     if (seen.signedIn === true) return { lane, status: 'ready' };
     if (seen.signedIn === false) return { lane, status: 'signed-out' };
-    return { lane, status: 'unknown', reason: `${lane} is installed but has no sign-in check Phantom can run` };
+    return { lane, status: 'unknown', reason: seen.reason ?? `${lane} is installed but has no sign-in check Phantom can run` };
   }
   // No probe: a lane the node advertised in its heartbeat is installed and signed in.
   // `local-model` is the report name; the advertisement is the oMLX cap family.
@@ -109,13 +134,7 @@ export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Pro
   const view = readNodesView(deps.view);
   let registry: ReturnType<typeof readNodesRegistry> | null = null;
   try { registry = deps.view.readRegistry(); } catch { /* disk stays unknown */ }
-  const state = registry?.state ?? null;
-  // hostStats vouch for disk only while their session is live — the same rule
-  // the nodes view applies before showing memory/load. An expired record or a
-  // stale pool mirror leaves its last disk figure behind, not a measurement.
   const nowMs = Date.parse(view.asOf);
-  const mirrorStale = registry?.source === 'pool-mirror' && state !== null && nowMs - state.observedAt > MIRROR_FRESH_MS;
-  const live = (record: { expiresAt: number }): boolean => !mirrorStale && record.expiresAt > nowMs;
   const safeProbe = async (row: NodeRow) => { try { return await deps.probe(row.name, row.isSelf); } catch { return null; } };
   const rows = view.nodes.filter(n => only === undefined || n.name === only);
   const selfProbe = await safeProbe(view.nodes.find(n => n.isSelf) ?? { name: view.self, isSelf: true } as NodeRow);
@@ -137,15 +156,7 @@ export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Pro
       else if (c.status === 'signed-out') note(gaps, `${row.name}: ${c.lane} is not signed in. ${login ? `Run \`${login}\`` : `Sign in to ${c.lane}`} on that Mac.`);
       else if (c.status === 'unknown' && c.reason) note(unknowns, `${row.name}: ${c.reason}`);
     }
-    // The standalone registry is single-host: under it every record is this
-    // computer's, so only the self row reads host stats from it (newest
-    // session first) — a peer sharing a local node id's name must not
-    // inherit this machine's disk measurement.
-    const record = registry?.source === 'local'
-      ? (row.isSelf ? [...(state?.nodes ?? [])].filter(live).sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0] : undefined)
-      : state?.nodes.filter(r => live(r) && [r.nodeId, r.capacity?.hostId].some(id => typeof id === 'string' && aliasMatches(id, row.name)))
-        .sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
-    const diskBytes = probe?.diskFreeBytes ?? (row.reachable === false ? null : record?.hostStats?.diskFree ?? null);
+    const diskBytes = probe?.diskFreeBytes ?? registryDiskFree(registry, row, nowMs);
     const diskFreeGb = diskBytes === null ? UNKNOWN : gb(diskBytes);
     if (diskFreeGb === UNKNOWN) note(unknowns, `${row.name}: free disk unknown (no measurement from that computer)`);
     else if (diskFreeGb < DOCTOR_MIN_DISK_GB) note(gaps, `${row.name}: only ${diskFreeGb} GB free; jobs hold under ${DOCTOR_MIN_DISK_GB} GB. Free space on that Mac.`);
@@ -161,13 +172,19 @@ export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Pro
 }
 
 export function doctorText(report: NodesDoctor): string {
-  if (!report.nodes.length) return 'No computers known. Run `phm node join` on each computer.';
   const words: Record<LaneStatus, string> = { ready: 'ok', 'not-installed': 'not installed', 'signed-out': 'signed out', unknown: 'unknown' };
-  return report.nodes.flatMap(n => [
-    `${n.name}${n.isSelf ? ' (this computer)' : ''}: ${n.reachable === true ? 'reachable' : n.reachable === false ? 'not reachable' : 'reachability unknown'} | disk ${n.diskFreeGb === UNKNOWN ? 'unknown' : `${n.diskFreeGb} GB free`}`,
-    `  ${n.lanes.map(l => `${l.lane} ${words[l.status]}`).join(' | ')}`,
-    `  repos: ${n.repos === UNKNOWN ? 'unknown' : n.repos.join(', ') || 'none'}`,
-    ...n.gaps.map(g => `  fix: ${g}`), ...n.unknowns.map(u => `  unknown: ${u}`),
-    ...(n.ready ? ['  ready for jobs'] : []),
-  ]).join('\n');
+  // The view-level reasons explain the gaps the per-node lines cannot — for
+  // example why a reachable remote computer gets no join command (this
+  // computer has no node pool). `phm nodes` and `phm nodes offload` already
+  // print them as `note:` lines; the doctor report carries the same list, so
+  // its text output shows it too instead of leaving the JSON as the only read.
+  const body = report.nodes.length === 0 ? ['No computers known. Run `phm node join` on each computer.']
+    : report.nodes.flatMap(n => [
+      `${n.name}${n.isSelf ? ' (this computer)' : ''}: ${n.reachable === true ? 'reachable' : n.reachable === false ? 'not reachable' : 'reachability unknown'} | disk ${n.diskFreeGb === UNKNOWN ? 'unknown' : `${n.diskFreeGb} GB free`}`,
+      `  ${n.lanes.map(l => `${l.lane} ${words[l.status]}`).join(' | ')}`,
+      `  repos: ${n.repos === UNKNOWN ? 'unknown' : n.repos.join(', ') || 'none'}`,
+      ...n.gaps.map(g => `  fix: ${g}`), ...n.unknowns.map(u => `  unknown: ${u}`),
+      ...(n.ready ? ['  ready for jobs'] : []),
+    ]);
+  return [...body, ...report.reasons.map(r => `note: ${r}`)].join('\n');
 }

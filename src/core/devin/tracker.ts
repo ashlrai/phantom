@@ -36,7 +36,7 @@ import { devinTaskDiagnostics, hasAmbiguousDevinCreate, previewDevinCreateRecove
 import { devinReportFromStructuredOutput, parseDevinReport } from './delivery-contract.js';
 import { connectedClient, recordDevinApiOutcome, snapshotOf, type DevinServiceDeps } from './service.js';
 import { readDevinTaskInventory, readDevinTask, writeDevinTask } from './store.js';
-import { DEVIN_TASK_EXPIRY_MS, type DevinTaskV1 } from './types.js';
+import { DEVIN_TASK_EXPIRY_MS, isValidDevinAcu, type DevinRefreshResult, type DevinTaskV1 } from './types.js';
 import { stateFromSession } from './session-state.js';
 
 // Preserve the existing tracker API while keeping the shared mapper inert.
@@ -49,9 +49,9 @@ export interface DevinTrackerDeps extends DevinServiceDeps {
 
 const HOUR = 60 * 60 * 1000;
 /** Expired tasks stay watched this long after creation so a late PR is not lost. */
-export const DEVIN_EXPIRED_WATCH_MS = 48 * HOUR;
+const DEVIN_EXPIRED_WATCH_MS = 48 * HOUR;
 /** queued / launching this long means the launch was interrupted by a restart. */
-export const DEVIN_STALE_LAUNCH_MS = 10 * 60 * 1000;
+const DEVIN_STALE_LAUNCH_MS = 10 * 60 * 1000;
 const MAX_CHECKS_PER_REFRESH = 30;
 
 const watched = (task: DevinTaskV1, nowMs: number): boolean =>
@@ -62,8 +62,7 @@ const watched = (task: DevinTaskV1, nowMs: number): boolean =>
 function unsettledRemoteUsage(task: DevinTaskV1): boolean {
   if (task.sessionId === null) return false;
   const observation = task.session;
-  return observation === null || !['exit', 'error'].includes(observation.status)
-    || typeof observation.acusConsumed !== 'number' || !Number.isFinite(observation.acusConsumed) || observation.acusConsumed < 0;
+  return observation === null || !['exit', 'error'].includes(observation.status) || !isValidDevinAcu(observation.acusConsumed);
 }
 
 /** Shared scheduler/tracker eligibility, independent of local visibility and delivery age. */
@@ -110,7 +109,7 @@ export function resetDevinTrackerCursorForTest(): void {
   lastCheckedTaskId = null;
 }
 
-export async function refreshDevinTasks(deps: DevinTrackerDeps = {}): Promise<import('./types.js').DevinRefreshResult> {
+export async function refreshDevinTasks(deps: DevinTrackerDeps = {}): Promise<DevinRefreshResult> {
   const gh = deps.gh ?? defaultCloudGh;
   const clock = deps.now ?? (() => new Date());
   const nowMs = clock().getTime();
@@ -159,8 +158,7 @@ export async function refreshDevinTasks(deps: DevinTrackerDeps = {}): Promise<im
       const session = preview.session;
       // A still-running/paused session is not proof of settled spend. Keep the
       // full create hold until a literal terminal status AND actual ACUs exist.
-      if (!['exit', 'error'].includes(session.status)
-        || typeof session.acusConsumed !== 'number' || !Number.isFinite(session.acusConsumed) || session.acusConsumed < 0) continue;
+      if (!['exit', 'error'].includes(session.status) || !isValidDevinAcu(session.acusConsumed)) continue;
       const mapped = stateFromSession(task, session);
       if (!mapped) continue;
       try {

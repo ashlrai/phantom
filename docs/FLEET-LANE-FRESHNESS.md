@@ -10,9 +10,11 @@ The command uses the same projection as `GET /api/verse/fleet/live`.
 It reports slot counts and working jobs, with no account credentials or invented
 usage percentages. Missing observations are `null` in JSON and `unknown` in text.
 
-A standing tick publishes lane observations before mirror preparation and
-re-probes every minute while it waits. Tick completion is not required. If an
-observation fails, the previous observation expires after ten minutes. A repo
+A standing tick starts a lane observation alongside mirror preparation and
+re-probes every minute while preparation is in progress. Preparation
+can finish while an observation is pending. Any observation still in flight
+when preparation ends is discarded. If an observation fails, the previous
+observation expires after ten minutes. A repo
 has three minutes for preparation, including fetch, reset and dependencies.
 At its deadline its operations are cancelled, the repo is reported as failed,
 and the next repo proceeds. Failed mirrors remain ineligible for dispatch.

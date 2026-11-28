@@ -32,7 +32,7 @@ const STATION_MERGED = 'merged';
 
 type VisitKind =
   | 'enqueue' | 'queued' | 'launch' | 'finish' | 'publish'
-  | 'merged' | 'closed' | 'noop' | 'launch_failed' | 'ci_start' | 'ci_complete';
+  | 'merged' | 'closed' | 'noop' | 'launch_failed' | 'launch_terminal' | 'ci_start' | 'ci_complete';
 
 interface LedgerEvent {
   job: string;
@@ -45,12 +45,14 @@ interface LedgerEvent {
   lane: string | null;
   /** `launch_failed` receipts carry action=retry|give_up. */
   action: string | null;
+  /** `launch_terminal` rows carry reason=launcher-exited|spawn-failed. */
+  reason: string | null;
   /** DONE-NOOP rows record launched=false when the job never ran. */
   launchedFalse: boolean;
 }
 
 const KNOWN_EVENTS = new Set<string>([
-  'enqueue', 'queued', 'launch', 'finish', 'publish', 'launch_failed', 'ci_start', 'ci_complete',
+  'enqueue', 'queued', 'launch', 'finish', 'publish', 'launch_failed', 'launch_terminal', 'ci_start', 'ci_complete',
 ]);
 
 function str(value: unknown): string | null {
@@ -106,6 +108,7 @@ function classifyRow(row: Record<string, unknown>, order: number, now: number): 
     url: urlOf(row),
     lane: str(row.lane ?? row.pool ?? row.arm),
     action: str(row.action),
+    reason: str(row.reason),
     launchedFalse: row.launched === false,
   };
 }
@@ -167,6 +170,24 @@ function visitsForJob(job: string, events: LedgerEvent[]): { visits: QueueVisit[
   });
   const preQueue = ordered.filter(e => e.order < launches[0]!.order);
 
+  // dispatchd writes launch_terminal for every solo launch that ends without
+  // "launched " — deferred (PAUSED/HELD), spawn-failed, retried and
+  // interrupted attempts — and requeues the line on all but the give_up and
+  // skip endings, which drop it. The stamp is therefore re-arrival evidence
+  // for the next attempt and the observed end of this attempt's claimed
+  // visit, except the terminal right after a launch_failed give_up receipt:
+  // that attempt dropped the line, so its terminal belongs to a dead stint
+  // and a later launch is a row-less re-add whose dwell stays unbounded.
+  // launch_failed is emitted immediately before its terminal, so the
+  // previous known event pairs them.
+  const droppedEnd = new Set<number>();
+  for (let i = 1; i < ordered.length; i++) {
+    const prev = ordered[i - 1]!;
+    if (ordered[i]!.kind === 'launch_terminal' && prev.kind === 'launch_failed' && prev.action === 'give_up') {
+      droppedEnd.add(ordered[i]!.order);
+    }
+  }
+
   // Publish URLs map globally: late outcomes match the PR, not the job id or
   // the window they happen to land in (dispatchd reconciliation contract).
   const urlToAttempt = new Map<string, number>();
@@ -202,20 +223,28 @@ function visitsForJob(job: string, events: LedgerEvent[]): { visits: QueueVisit[
     // READY: queue dwell ends when the launch fires; dispatch service is
     // instantaneous, so startedAt === completedAt keeps wait honest and mu null.
     // Re-arrival evidence is the same for every attempt: an enqueue/queued
-    // stamp or a launch_failed retry receipt inside the previous window.
+    // stamp, a launch_failed retry receipt or an unsuppressed launch_terminal
+    // inside the previous window — the terminal is the only row a deferred
+    // or spawn-failed requeue leaves.
     const reArrival = (e: LedgerEvent) =>
-      e.kind === 'enqueue' || e.kind === 'queued' || (e.kind === 'launch_failed' && e.action === 'retry');
+      e.kind === 'enqueue' || e.kind === 'queued' || (e.kind === 'launch_failed' && e.action === 'retry')
+      || (e.kind === 'launch_terminal' && !droppedEnd.has(e.order));
     const arrivalPool = k === 0 ? preQueue.filter(reArrival) : windows[k - 1]!.filter(reArrival);
-    const arrival = earliest(arrivalPool, ['enqueue', 'queued', 'launch_failed'])?.at ?? null;
+    const arrival = earliest(arrivalPool, ['enqueue', 'queued', 'launch_failed', 'launch_terminal'])?.at ?? null;
     if (arrival !== null) {
       push(makeVisit(job, attempt, STATION_READY, pool, arrival, launch.at, launch.at));
     }
 
     // claimed: dedicated worker — service starts at launch; exit is the first
-    // recorded boundary (finish, publish or a matched terminal outcome).
+    // recorded boundary (finish, publish, the attempt's own launch_terminal or
+    // a matched terminal outcome). Only a launcher-exited terminal can be this
+    // attempt's end: a spawn-failed one belongs to the next attempt's failed
+    // claim, which never fired a launch. A deferred or failed attempt leaves
+    // no finish row; its terminal receipt is the observed end of the slot.
     const claimedExit = earliest(
-      [...win.filter(e => e.kind === 'finish' || e.kind === 'publish'), ...exits],
-      ['finish', 'publish', 'merged', 'closed']);
+      [...win.filter(e => e.kind === 'finish' || e.kind === 'publish'
+        || (e.kind === 'launch_terminal' && e.reason === 'launcher-exited')), ...exits],
+      ['finish', 'publish', 'launch_terminal', 'merged', 'closed']);
     push(makeVisit(job, attempt, STATION_CLAIMED, pool, launch.at, launch.at, claimedExit?.at));
 
     // publish: entry is the finish row; exit is the publish row. A finish

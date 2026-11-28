@@ -7,11 +7,12 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
-import { ledgerLine, scrubText, skipIfRecorded } from './guard.js';
+import { ledgerLine, planOrSkip, safeReportToken, scrubText, securityReportsDir, skipIfRecorded } from './guard.js';
 import type { FixContext } from './launchd.js';
 import {
   AUDIT_REPO, AUDIT_WORKFLOW, LANE_RE, LOAD_PER_CPU, NICE_BATCH, NICE_NORMAL, PINNED_NAMES, RELEASE_LABEL, SHA_RE,
-  type LaneLease, type LaneView, type LedgerLine, type PinnedFile, type Proc, type ReleaseDraft,
+  isAutofixRecord, type FixerId, type LaneLease, type LaneView, type LedgerLine, type PinnedFile, type Proc,
+  type ReleaseDraft,
 } from './types.js';
 
 const TAG_RE = /v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)/;
@@ -86,17 +87,34 @@ export function newerReleasePublished(tag: string, releases: readonly ReleaseDra
 export function laneTargetFromSlots(text: string | null, lane: string): number | null {
   if (!text || !LANE_RE.test(lane)) return null;
   try {
-    const parsed = JSON.parse(text) as Record<string, unknown>;
-    const body = parsed.lanes && typeof parsed.lanes === 'object' && !Array.isArray(parsed.lanes)
-      ? parsed.lanes as Record<string, unknown>
-      : parsed;
+    const parsed = JSON.parse(text) as unknown;
+    if (!isAutofixRecord(parsed)) return null;
+    const body = isAutofixRecord(parsed.lanes) ? parsed.lanes : parsed;
     const row = body[lane];
-    if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
-    const target = (row as { target?: unknown }).target;
+    if (!isAutofixRecord(row)) return null;
+    const target = row.target;
     return typeof target === 'number' && Number.isInteger(target) && target >= 0 ? target : null;
   } catch {
     return null;
   }
+}
+
+function runGuardedExec(
+  ctx: FixContext,
+  ts: string,
+  fixer: FixerId,
+  target: string,
+  action: string,
+  before: unknown,
+  after: unknown,
+  argv: readonly string[],
+): LedgerLine {
+  const plan = planOrSkip(ctx, ts, fixer, target, action, before, after);
+  if (plan.done) return plan.line;
+  const result = ctx.host.exec(argv);
+  return result.code === 0
+    ? plan.planned
+    : ledgerLine(ts, fixer, target, action, before, { code: result.code }, 'failed');
 }
 
 export function fixReleaseStuckDraft(release: ReleaseDraft, log: string, ctx: FixContext): LedgerLine[] {
@@ -104,38 +122,16 @@ export function fixReleaseStuckDraft(release: ReleaseDraft, log: string, ctx: Fi
   const target = `${release.tag}#${release.id}`;
   const before = { id: release.id, tag: release.tag, sha: release.sha, assetCount: release.assetCount };
   const kick = `gui/${ctx.host.uid()}/${RELEASE_LABEL}`;
-  const kickLine = ledgerLine(ts, 'release-stuck-draft', target, 'kickstart-release-autorun', before, { kicked: kick }, ctx.dryRun ? 'dry-run' : 'applied');
-  const lines: LedgerLine[] = [];
-  if (ctx.dryRun) lines.push(kickLine);
-  else {
-    const skipped = skipIfRecorded(ctx.ledger, kickLine);
-    if (skipped) lines.push(skipped);
-    else {
-      const result = ctx.host.exec(['launchctl', 'kickstart', kick]);
-      lines.push(result.code === 0
-        ? kickLine
-        : ledgerLine(ts, 'release-stuck-draft', target, 'kickstart-release-autorun', before, { code: result.code }, 'failed'));
-    }
-  }
+  const lines: LedgerLine[] = [
+    runGuardedExec(ctx, ts, 'release-stuck-draft', target, 'kickstart-release-autorun', before, { kicked: kick }, ['launchctl', 'kickstart', kick]),
+  ];
   if (!auditAbsentForSha(log, release.sha)) return lines;
-  const auditBefore = { tag: release.tag, sha: release.sha };
-  const auditLine = ledgerLine(ts, 'release-stuck-draft', release.tag, 'dispatch-dependency-audit', auditBefore, {
-    workflow: AUDIT_WORKFLOW, ref: release.tag,
-  }, ctx.dryRun ? 'dry-run' : 'applied');
-  if (ctx.dryRun) {
-    lines.push(auditLine);
-    return lines;
-  }
-  const auditSkipped = skipIfRecorded(ctx.ledger, auditLine);
-  if (auditSkipped) {
-    lines.push(auditSkipped);
-    return lines;
-  }
-  const argv = ['gh', 'workflow', 'run', AUDIT_WORKFLOW, '--repo', AUDIT_REPO, '--ref', release.tag] as const;
-  const dispatched = ctx.host.exec(argv);
-  lines.push(dispatched.code === 0
-    ? auditLine
-    : ledgerLine(ts, 'release-stuck-draft', release.tag, 'dispatch-dependency-audit', auditBefore, { code: dispatched.code }, 'failed'));
+  lines.push(runGuardedExec(
+    ctx, ts, 'release-stuck-draft', release.tag, 'dispatch-dependency-audit',
+    { tag: release.tag, sha: release.sha },
+    { workflow: AUDIT_WORKFLOW, ref: release.tag },
+    ['gh', 'workflow', 'run', AUDIT_WORKFLOW, '--repo', AUDIT_REPO, '--ref', release.tag],
+  ));
   return lines;
 }
 
@@ -158,18 +154,13 @@ export async function fixStuckLane(lane: LaneView, ctx: FixContext, stuckMs: num
       lines.push(ledgerLine(ts, 'stuck-lane', lease.id, action, before, { reaped: false }, 'skipped'));
       continue;
     }
-    if (ctx.dryRun) {
-      lines.push(ledgerLine(ts, 'stuck-lane', lease.id, action, before, { reaped: true }, 'dry-run'));
-      continue;
-    }
-    const planned = ledgerLine(ts, 'stuck-lane', lease.id, action, before, { reaped: true }, 'applied');
-    const skipped = skipIfRecorded(ctx.ledger, planned);
-    if (skipped) {
-      lines.push(skipped);
+    const plan = planOrSkip(ctx, ts, 'stuck-lane', lease.id, action, before, { reaped: true });
+    if (plan.done) {
+      lines.push(plan.line);
       continue;
     }
     ctx.host.unlink(path);
-    lines.push(planned);
+    lines.push(plan.planned);
   }
   const before = {
     lane: lane.lane,
@@ -178,14 +169,9 @@ export async function fixStuckLane(lane: LaneView, ctx: FixContext, stuckMs: num
     stale: stale.map((lease) => lease.id),
   };
   const action = 'restart-lane-pool';
-  if (ctx.dryRun) {
-    lines.push(ledgerLine(ts, 'stuck-lane', lane.lane, action, before, { restarted: true }, 'dry-run'));
-    return lines;
-  }
-  const planned = ledgerLine(ts, 'stuck-lane', lane.lane, action, before, { restarted: true }, 'applied');
-  const skipped = skipIfRecorded(ctx.ledger, planned);
-  if (skipped) {
-    lines.push(skipped);
+  const plan = planOrSkip(ctx, ts, 'stuck-lane', lane.lane, action, before, { restarted: true });
+  if (plan.done) {
+    lines.push(plan.line);
     return lines;
   }
   try {
@@ -209,13 +195,12 @@ export function isDispatchdBinary(comm: string): boolean {
   return base === 'dispatchd' || base === 'dispatchd.py';
 }
 
-function loadBlocks(proc: Proc): 'kernel' | 'dispatchd' | 'interactive' | null {
-  if (proc.pid <= 1) return 'kernel';
+function isLoadProtected(proc: Proc): boolean {
+  if (proc.pid <= 1) return true;
   const base = commBase(proc.comm);
-  if (proc.dispatchdOwned || isDispatchdBinary(proc.comm)) return 'dispatchd';
-  if (KERNEL.has(base) || base.startsWith('[') || (proc.uid === 0 && base.startsWith('kernel'))) return 'kernel';
-  if (INTERACTIVE.has(base)) return 'interactive';
-  return null;
+  if (proc.dispatchdOwned || isDispatchdBinary(proc.comm)) return true;
+  if (KERNEL.has(base) || base.startsWith('[') || (proc.uid === 0 && base.startsWith('kernel'))) return true;
+  return INTERACTIVE.has(base);
 }
 
 function niceTarget(proc: Proc): number {
@@ -228,26 +213,14 @@ export function fixOutsideLoad(load1: number, ncpu: number, loadPerCpu: number, 
   const ts = ctx.host.now().toISOString();
   const lines: LedgerLine[] = [];
   for (const proc of processes) {
-    const block = loadBlocks(proc);
-    if (block) continue;
+    if (isLoadProtected(proc)) continue;
     const nice = niceTarget(proc);
-    const before = { pid: proc.pid, comm: proc.comm, nice: proc.nice, load1, loadTarget: target };
-    const action = `renice-${nice}`;
     if (proc.nice >= nice) continue;
-    if (ctx.dryRun) {
-      lines.push(ledgerLine(ts, 'outside-load', String(proc.pid), action, before, { nice }, 'dry-run'));
-      continue;
-    }
-    const planned = ledgerLine(ts, 'outside-load', String(proc.pid), action, before, { nice }, 'applied');
-    const skipped = skipIfRecorded(ctx.ledger, planned);
-    if (skipped) {
-      lines.push(skipped);
-      continue;
-    }
-    const result = ctx.host.exec(['renice', '-n', String(nice), '-p', String(proc.pid)]);
-    lines.push(result.code === 0
-      ? planned
-      : ledgerLine(ts, 'outside-load', String(proc.pid), action, before, { code: result.code }, 'failed'));
+    const before = { pid: proc.pid, comm: proc.comm, nice: proc.nice, load1, loadTarget: target };
+    lines.push(runGuardedExec(
+      ctx, ts, 'outside-load', String(proc.pid), `renice-${nice}`, before, { nice },
+      ['renice', '-n', String(nice), '-p', String(proc.pid)],
+    ));
   }
   return lines;
 }
@@ -280,8 +253,7 @@ export function reportPinnedHandEdit(file: PinnedFile, ctx: FixContext): LedgerL
   if (ctx.dryRun) {
     return ledgerLine(ts, 'pinned-hand-edit', file.name, 'security-report', before, { detectOnly: true }, 'dry-run');
   }
-  const safe = file.name.replace(/[^A-Za-z0-9._-]/g, '_');
-  const path = join(ctx.host.runsDir(), 'ledger', 'autofix-security', `${safe}.json`);
+  const path = join(securityReportsDir(ctx.host.runsDir()), `${safeReportToken(file.name)}.json`);
   ctx.host.writeFile(path, `${JSON.stringify(report, null, 2)}\n`);
   return ledgerLine(ts, 'pinned-hand-edit', file.name, 'security-report', before, { detectOnly: true, report: path }, 'detect-only');
 }

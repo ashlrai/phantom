@@ -54,7 +54,10 @@ const object = (v: unknown): Record<string, unknown> => v !== null && typeof v =
 const count = (v: unknown): number | null => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null;
 const instant = (v: unknown): string | null => typeof v === 'string' && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : null;
 const fresh = (v: string, now: number): boolean => Number.isFinite(now) && Date.parse(v) <= now && now - Date.parse(v) <= LANE_TRUTH_MAX_AGE_MS;
-const valid = (s: MeterSample): boolean => typeof s.usedPercent === 'number' && Number.isFinite(s.usedPercent) && s.usedPercent >= 0 && s.usedPercent <= 100 && !!s.window && instant(s.sampledAt) !== null && instant(s.resetAt) !== null;
+const valid = (s: MeterSample): boolean =>
+  typeof s.usedPercent === 'number' && Number.isFinite(s.usedPercent) &&
+  s.usedPercent >= 0 && s.usedPercent <= 100 && !!s.window &&
+  s.resetAt !== null && Date.parse(s.sampledAt) < Date.parse(s.resetAt);
 
 export interface LaneTruthRow {
   lane: string;
@@ -92,8 +95,9 @@ function analyzeLaneTruth(lanes: readonly LaneState[], meters: readonly MeterSam
     if (known && typeof lane.held === 'boolean') {
       const reset = windows.some(samples => {
         const current = samples[0]!;
-        const previous = samples.find(s => Date.parse(s.sampledAt) < Date.parse(current.sampledAt));
-        return previous && valid(previous) && fresh(previous.sampledAt, now) &&
+        const previous = samples.find(s => Date.parse(s.sampledAt) < Date.parse(current.sampledAt) &&
+          valid(s) && fresh(s.sampledAt, now));
+        return previous &&
           (previous.usedPercent! - current.usedPercent! >= 20 || Date.parse(current.resetAt!) > Date.parse(previous.resetAt!));
       });
       // A contradictory hold is the actionable verdict even when a reset also occurred.
@@ -155,15 +159,21 @@ async function boundedRead(path: string, limit: number): Promise<{ text: string;
   } finally { await handle.close(); }
 }
 
-/** Fixed homes; intentionally ignores CODEX_HOME and never visits ~/.codex. */
+/** Fixed homes; intentionally ignores CODEX_HOME and never visits ~/.codex.
+ * The slots tree follows ASHLR_RUNS_DIR when `home` is the process home — the
+ * same runs-dir override every other fleet reader honors. A relocated home
+ * (tests, fixtures) keeps its own .ashlr-runs so the override cannot leak in. */
 export function defaultLaneTruthReaders(home = homedir(), now = Date.now()): LaneTruthReaders {
+  const runsDir = home === homedir()
+    ? process.env['ASHLR_RUNS_DIR'] ?? join(home, '.ashlr-runs')
+    : join(home, '.ashlr-runs');
   return {
     async lanes() {
       try {
-        for (const path of [join(home, '.ashlr-runs'), join(home, '.ashlr-runs/queue')]) {
+        for (const path of [runsDir, join(runsDir, 'queue')]) {
           if (!(await lstat(path)).isDirectory()) return [];
         }
-        const file = await boundedRead(join(home, '.ashlr-runs/queue/slots.json'), 64 * 1024);
+        const file = await boundedRead(join(runsDir, 'queue', 'slots.json'), 64 * 1024);
         const raw = object(JSON.parse(file.text));
         const current = fresh(new Date(file.mtime).toISOString(), now);
         return Object.entries(object(raw.lanes ?? raw)).filter(([lane]) => lane !== 'hard_cap').map(([lane, value]) => {

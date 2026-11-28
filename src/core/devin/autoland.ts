@@ -9,6 +9,7 @@ import { ensurePrivateDirectory, readPrivateFileTailCapped, writePrivateFileAtom
 import type { DevinClient, DevinSelf } from './client.js';
 import { defaultLandJobId, DEVIN_LAND_LEDGER_FILE, landDevinSession, type CommandRunner, type DevinLandRequest, type DevinLandResult } from './land.js';
 import { devinHome } from './store.js';
+import { isDevinRecord } from './types.js';
 
 export interface DevinAutolandRequest { apply: boolean; cap?: number }
 type Api = Pick<DevinClient, 'getSelf' | 'listSessions' | 'listSessionAttachments' | 'terminateSession' | 'archiveSession'>;
@@ -39,13 +40,17 @@ export function setDevinAutolandPaused(paused: boolean): void {
 }
 function rows(path: string): Record<string, unknown>[] {
   return (readPrivateFileTailCapped(path, 2 * 1024 * 1024)?.text ?? '').split('\n').flatMap(line => {
-    try { const row: unknown = JSON.parse(line); return row && typeof row === 'object' && !Array.isArray(row) ? [row as Record<string, unknown>] : []; } catch { return []; }
+    try { const row: unknown = JSON.parse(line); return isDevinRecord(row) ? [row] : []; } catch { return []; }
   });
 }
 const runCommand: CommandRunner = (cmd, args, opts) => new Promise(resolve => {
   execFile(cmd, [...args], { cwd: opts.cwd, env: opts.env, timeout: opts.timeoutMs, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => resolve({ code: error ? 1 : 0, stdout, stderr }));
 });
 const errorMessage = (error: unknown): string => scrubSecrets(error instanceof Error ? error.message : typeof error === 'string' ? error : 'Unknown error.').replace(/\s+/g, ' ').trim().slice(0, 300);
+const retryBackoffMs = (failures: number): number => Math.min(15 * 60_000 * 2 ** (failures - 1), 86400_000);
+const closeSupersededPr = (runner: CommandRunner, home: string, oldPr: string, newPr: string, repo: string, sessionId: string) =>
+  runner('gh', ['pr', 'close', oldPr, '--repo', `ashlrai/${repo}`, '--comment', `Superseded by ${newPr} (later bundle from Devin session ${sessionId}).`], { cwd: home, env: process.env, timeoutMs: 30_000 })
+    .catch(error => ({ code: 1, stderr: errorMessage(error) }));
 
 export async function runDevinAutoland(request: DevinAutolandRequest, deps: DevinAutolandDeps = {}): Promise<DevinAutolandResult> {
   const result: DevinAutolandResult = { v: 1, ok: true, mode: request.apply ? 'apply' : 'dry-run', passId: randomUUID(), decisions: [], landed: 0 };
@@ -119,12 +124,12 @@ export async function runDevinAutoland(request: DevinAutolandRequest, deps: Devi
               result.ok = false;
               continue;
             }
-            if (failures && now().getTime() < lastFail + Math.min(15 * 60_000 * 2 ** (failures - 1), 86400_000)) {
+            if (failures && now().getTime() < lastFail + retryBackoffMs(failures)) {
               decide('supersede-backoff', 'Waiting before retrying the superseded-PR close.', { ...detail, pr: newPr, supersededPr: oldPr, repo });
               continue;
             }
             if (!request.apply) { decide('would-close-superseded', 'Would retry closing the superseded PR before archiving.', { ...detail, pr: newPr, supersededPr: oldPr, repo }); continue; }
-            const closed = await (deps.run ?? runCommand)('gh', ['pr', 'close', oldPr, '--repo', `ashlrai/${repo}`, '--comment', `Superseded by ${newPr} (later bundle from Devin session ${sessionId}).`], { cwd: deps.home ?? homedir(), env: process.env, timeoutMs: 30_000 }).catch(error => ({ code: 1, stderr: errorMessage(error) }));
+            const closed = await closeSupersededPr(deps.run ?? runCommand, deps.home ?? homedir(), oldPr, newPr, repo, sessionId);
             if (closed.code === 0) {
               decide('superseded', 'The old PR was closed.', { ...detail, pr: newPr, supersededPr: oldPr, repo });
               if (!recorded?.['bundleAttachmentId'] || recorded['bundleAttachmentId'] === bundle.attachmentId) { await cleanup(); continue; }
@@ -145,7 +150,7 @@ export async function runDevinAutoland(request: DevinAutolandRequest, deps: Devi
             if (row['decision'] === 'land-failed') { failures++; lastFail ||= Date.parse(String(row['at'])); }
           }
           if (failures >= 5) { decide('gave-up', 'Five landing failures; waiting for a new bundle.', detail); continue; }
-          if (failures && now().getTime() < lastFail + Math.min(15 * 60_000 * 2 ** (failures - 1), 86400_000)) { decide('backoff', 'Waiting before retrying the failed bundle.', detail); continue; }
+          if (failures && now().getTime() < lastFail + retryBackoffMs(failures)) { decide('backoff', 'Waiting before retrying the failed bundle.', detail); continue; }
           if (attempts >= cap) { decide('cap-reached', 'The pass has reached its landing attempt cap.', detail); continue; }
           attempts++;
           deps.signal?.throwIfAborted();
@@ -160,11 +165,12 @@ export async function runDevinAutoland(request: DevinAutolandRequest, deps: Devi
             result.landed++;
             deps.signal?.throwIfAborted();
             if (last && pr) {
-              const closed = await (deps.run ?? runCommand)('gh', ['pr', 'close', String(last['pr']), '--repo', `ashlrai/${landed.repo ?? 'phantom'}`, '--comment', `Superseded by ${pr} (later bundle from Devin session ${sessionId}).`], { cwd: deps.home ?? homedir(), env: process.env, timeoutMs: 30_000 }).catch(error => ({ code: 1, stderr: errorMessage(error) }));
-              if (closed.code === 0) decide('superseded', 'The old PR was closed.', { ...detail, pr, supersededPr: String(last['pr']), repo: landed.repo ?? 'phantom' });
+              const repo = landed.repo ?? 'phantom';
+              const closed = await closeSupersededPr(deps.run ?? runCommand, deps.home ?? homedir(), String(last['pr']), pr, repo, sessionId);
+              if (closed.code === 0) decide('superseded', 'The old PR was closed.', { ...detail, pr, supersededPr: String(last['pr']), repo });
               else {
                 result.ok = false;
-                decide('pending-supersede', 'The old PR could not be closed; the next pass will retry.', { ...detail, pr, supersededPr: String(last['pr']), repo: landed.repo ?? 'phantom', error: errorMessage(closed.stderr || 'gh pr close failed.') });
+                decide('pending-supersede', 'The old PR could not be closed; the next pass will retry.', { ...detail, pr, supersededPr: String(last['pr']), repo, error: errorMessage(closed.stderr || 'gh pr close failed.') });
                 continue;
               }
             }

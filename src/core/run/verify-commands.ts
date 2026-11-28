@@ -21,9 +21,8 @@
 
 import type { Duplex } from 'node:stream';
 import type { MetadataLaunchDescriptor } from './native-metadata-launch.js';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type SpawnSyncOptionsWithStringEncoding } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
-import type { SpawnSyncOptionsWithStringEncoding } from 'node:child_process';
 import { existsSync, lstatSync, mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';

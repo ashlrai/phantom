@@ -91,6 +91,39 @@ describe('readNodesView', () => {
     expect(nodesThatCanTake(view, 'codex').map(row => row.name)).toEqual(['node-b']);
   });
 
+  it('pool workers sharing one measured host count its free slots once, not per session', () => {
+    // Two worker sessions on node-b each advertise slots=4 derived from the same
+    // shared host budget; the machine's free slots are the host's, not their sum.
+    const capacity = { hostId: 'node-b', sampledAtMs: NOW, ramBytes: 32 * GIB, slots: 4, held: null };
+    const records = [
+      node('w1', { capacity, slots: 4 }),
+      node('w2', { session: 2, capacity, slots: 4 }),
+    ];
+    const jobs: NodesState['jobs'] = [{ id: 'job-1', state: 'running', claim: { jobId: 'job-1', nodeId: 'w1', session: 1, token: 2, leaderToken: 1, expiresAt: NOW + 5_000 } }];
+    const pooled = registry(records, jobs);
+    pooled.state!.pool = { primary: 'primary-mac', backup: 'backup-mac', active: 'primary', epoch: 1, heartbeatAt: NOW - 2_000 };
+    const view = readNodesView(deps(tailnet([peer('node-b', true)]), pooled));
+    // w1: 4 slots - 1 claim = 3; w2: 4 - 0 = 4; shared host reports the tighter 3.
+    expect(view.nodes.find(row => row.name === 'node-b')).toMatchObject({ jobsRunning: ['job-1'], freeSlots: 3 });
+    // The same records in a non-pool store keep per-session bounds: 4+4-1 = 7.
+    const standalone = readNodesView(deps(tailnet([peer('node-b', true)]), registry(records, jobs)));
+    expect(standalone.nodes.find(row => row.name === 'node-b')).toMatchObject({ freeSlots: 7 });
+  });
+
+  it('standalone registry: sessions on this computer share one slot budget', () => {
+    // The standalone store is single-host authority, so two joined node ids
+    // are sessions on the same computer: their advertised bounds are one
+    // physical budget — the tightest per-session remainder (4-1=3, 4-0=4),
+    // never the sum a non-pool store keeps for hosts it cannot prove shared.
+    const local = (nodes: NodeRecord[], jobs: NodesState['jobs']): NodesRegistry => ({ source: 'local', selfNode: null, pool: null, state: {
+      version: 'drive.nodes.v1', sequence: 3, observedAt: NOW - 1_000, nodes, leader: null, jobs } });
+    const records = [node('w1', { slots: 4 }), node('w2', { session: 2, slots: 4 })];
+    const jobs: NodesState['jobs'] = [{ id: 'job-1', state: 'running', claim: { jobId: 'job-1', nodeId: 'w1', session: 1, token: 2, leaderToken: 1, expiresAt: NOW + 5_000 } }];
+    const view = readNodesView(deps(tailnet([]), local(records, jobs)));
+    expect(view.nodes).toHaveLength(1);
+    expect(view.nodes[0]).toMatchObject({ isSelf: true, jobsRunning: ['job-1'], freeSlots: 3, stateCode: 'ready' });
+  });
+
   it('one offline: says since when, today and on an earlier day', () => {
     const view = readNodesView(deps(tailnet([peer('node-b', false), peer('node-c', false, '2026-11-14T08:05:00Z'), peer('node-d', false, '0001-01-01T00:00:00Z')]),
       registry([node('node-a'), node('node-b', { expiresAt: NOW - 60_000 })])));
@@ -123,14 +156,34 @@ describe('readNodesView', () => {
     // The standalone store is single-host, so the record is this computer:
     // the self row reports Phantom running and the peer named laptop stays
     // not joined instead of inheriting the local heartbeat. With no node pool
-    // the peer cannot join this computer's list at all, so no command is shown.
+    // the peer cannot join this computer's list at all, so no command is
+    // shown — and the single-host registry cannot see whether the peer runs
+    // its own Phantom, so its status is unknown, never a claimed
+    // "not running".
     const view = readNodesView(deps(tailnet([peer('laptop', true)]), local([node('laptop', { caps: ['build', 'gh'], slots: undefined })])));
     expect(view.nodes.map(row => [row.name, row.isSelf, row.phantom, row.state])).toEqual([
       ['node-a', true, 'running', 'Phantom running; free slots unknown'],
-      ['laptop', false, 'not-running', 'reachable but Phantom not running'],
+      ['laptop', false, 'unknown', 'reachable; Phantom status unknown'],
     ]);
     expect(view.nodes[0]).toMatchObject({ joined: true, joinCommand: null, lanes: ['build', 'gh'], jobsRunning: [], freeSlots: 'unknown' });
     expect(view.nodes[1]).toMatchObject({ joined: false, joinCommand: null, reachable: true, lanes: 'unknown' });
+  });
+
+  it('standalone registry: a peer\'s Phantom status is unknown, never a claimed not-running', () => {
+    // The standalone store is single-host: it holds only this computer's
+    // sessions, so a tailnet peer's silence proves nothing about whether the
+    // peer runs its own Phantom — reachable or not. 'none' and 'elsewhere'
+    // already answer unknown for the same reason; joining locally must not
+    // make other computers' status more known. Offline still wins on
+    // reachability alone.
+    const local: NodesRegistry = { source: 'local', selfNode: null, pool: null, state: {
+      version: 'drive.nodes.v1', sequence: 3, observedAt: NOW - 1_000, nodes: [], leader: null, jobs: [] } };
+    const view = readNodesView(deps(tailnet([peer('studio-mac', true), peer('old-mini', false)]), local));
+    expect(view.nodes.map(row => [row.name, row.phantom, row.stateCode, row.state])).toEqual([
+      ['node-a', 'not-running', 'not-running', 'reachable but Phantom not running: run `phm node join --owner <scope> --watch` here'],
+      ['old-mini', 'unknown', 'offline', 'offline since 10:42'],
+      ['studio-mac', 'unknown', 'unknown', 'reachable; Phantom status unknown'],
+    ]);
   });
 
   it('standalone registry: an expired local session is told the rejoin its record proves', () => {
@@ -237,7 +290,7 @@ describe('chooseNodeForLane', () => {
   it('does not inherit a lane from an expired record on an otherwise ready computer', () => {
     const view = readNodesView(deps(tailnet([peer('node-b', true)]), registry([
       node('node-a'), node('node-b'), node('old-worker', { expiresAt: NOW, caps: ['gemini'],
-        capacity: { hostId: 'node-b', sampledAtMs: NOW, ramBytes: 32 * GIB, slots: 2 } }),
+        capacity: { hostId: 'node-b', sampledAtMs: NOW, ramBytes: 32 * GIB, slots: 2, held: null } }),
     ])));
     expect(view.nodes[1]?.lanes).toEqual(['claude', 'codex']);
     expect(chooseNodeForLane(view, 'gemini')).toMatchObject({ node: null, reason: 'no-ready-node' });
@@ -271,6 +324,29 @@ describe('chooseNodeForLane', () => {
     expect(nodesThatCanTake(view, 'omlx').map(row => row.name)).toEqual(['node-b']);
     expect(nodesThatCanTake(view, 'omlx-work').map(row => row.name)).toEqual(['node-b']);
     expect(chooseNodeForLane(view, 'local-model')).toMatchObject({ node: 'node-b', target: 'remote', reason: 'remote-ready' });
+  });
+
+  it('market lane names resolve to the remote caps the claim bridge requires', () => {
+    // `codex-personal`/`claude-max` are queue lanes, not advertised caps: the
+    // claim bridge, `phm nodes plan` and the fleet resource plan all resolve
+    // them through remoteLaneCap to the `codex`/`claude` caps a node must
+    // advertise. --can-take must name the same computers or it contradicts
+    // the plan that would assign those jobs.
+    const view = readNodesView(deps(tailnet([peer('node-b', true), peer('node-c', true)]), registry([
+      node('node-a', { caps: ['claude'] }),
+      node('node-b', { caps: ['codex'] }),
+      node('node-c', { caps: ['claude', 'codex'] }),
+    ])));
+    expect(nodesThatCanTake(view, 'codex-personal').map(row => row.name)).toEqual(['node-b', 'node-c']);
+    expect(nodesThatCanTake(view, 'claude-max').map(row => row.name)).toEqual(['node-a', 'node-c']);
+    // The remote pick follows the same most-free-slots rule plan uses: node-c
+    // advertises both caps but holds the same slots, so name order breaks the tie.
+    expect(chooseNodeForLane(view, 'codex-personal')).toMatchObject({ node: 'node-b', target: 'remote', reason: 'remote-ready' });
+    // Lanes that never leave this host or ride an API key resolve to no remote
+    // cap: they keep the direct advertised-cap match only, so a provider cap
+    // cannot stand in for them.
+    expect(nodesThatCanTake(view, 'claude-api')).toEqual([]);
+    expect(nodesThatCanTake(view, 'codex-local')).toEqual([]);
   });
 });
 
@@ -331,6 +407,17 @@ describe('phm nodes', () => {
     vi.restoreAllMocks();
     expect(JSON.parse((await run(['--can-take', 'gemini', '--json'])).out).placement)
       .toMatchObject({ node: null, target: 'none', reason: 'no-ready-node' });
+  });
+
+  it('--can-take resolves a queue lane to the caps its jobs need', async () => {
+    // codex-personal is a market lane, not an advertised cap: both computers
+    // here advertise `codex`, the cap the claim bridge requires for it, so the
+    // answer names them and still prefers the ready remote one.
+    const json = JSON.parse((await run(['--can-take', 'codex-personal', '--json'])).out);
+    expect([json.canTake, json.nodes.map((row: { name: string }) => row.name)]).toEqual(['codex-personal', ['node-a', 'node-b']]);
+    expect(json.placement).toMatchObject({ lane: 'codex-personal', node: 'node-b', target: 'remote', reason: 'remote-ready' });
+    vi.restoreAllMocks();
+    expect((await run(['--can-take', 'codex-personal'])).out).toContain('Suggested computer: node-b.');
   });
 
   it('says "Only this Mac." when no other computer is known', async () => {
