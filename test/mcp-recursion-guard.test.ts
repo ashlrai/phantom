@@ -82,4 +82,34 @@ describe('MCP recursion guard', () => {
     expect(isSelfGateway(spec({ command: 'node', args: ['/project/server.js', 'mcp'] }))).toBe(false);
     expect(isSelfGateway(spec({ name: 'phm', command: 'phm', args: ['--version'] }))).toBe(false);
   });
+
+  it.each([
+    ['phantom-fleet', 'phm', ['mcp', 'fleet']],
+    ['phantom-fleet', '/usr/local/bin/ashlr', ['mcp', 'fleet']],
+    ['phantom-context', 'phm', ['mcp', 'context']],
+    ['phantom-docs', 'ashlr', ['mcp', 'docs']],
+    ['phantom-fleet', 'node', [fileURLToPath(new URL('../dist/cli/index.js', import.meta.url)), 'mcp', 'fleet']],
+    ['phantom-docs', 'tsx', [fileURLToPath(new URL('../src/cli/index.ts', import.meta.url)), 'mcp', 'docs']],
+  ] as Array<[string, string, string[]]>)('allows isolated read-only subcommand %s (%s %j)', async (name, command, args) => {
+    const configured = spec({ name, command, args });
+    expect(isSelfGateway(configured)).toBe(false);
+    expect((await probeServer(configured)).ok).toBe(true);
+    expect(state.transports).toHaveLength(1);
+    expect(state.transports[0]?.env[GATEWAY_ENV_MARKER]).toBe('1');
+  });
+
+  it.each([
+    ['ashlr', '/custom/wrapper', ['mcp', 'fleet']],
+    ['phm', '/custom/wrapper', ['mcp', 'docs']],
+    ['phantom-fleet', 'phm', ['mcp', 'fleet', '--extra']],
+    ['phantom-fleet', 'phm', ['--_worker', 'mcp', 'fleet']],
+    ['phantom-fleet', 'node', [fileURLToPath(new URL('../dist/cli/index.js', import.meta.url)), '--extra', 'mcp', 'fleet']],
+    ['ashlr-hub', 'phm', ['mcp', 'run']],
+    ['ashlr-hub', 'ashlr', ['mcp', '--lazy']],
+  ] as Array<[string, string, string[]]>)('fails closed on ambiguous or gateway subcommand %s (%s %j)', async (name, command, args) => {
+    const configured = spec({ name, command, args });
+    expect(isSelfGateway(configured)).toBe(true);
+    expect(await probeServer(configured)).toMatchObject({ ok: false, toolCount: 0, error: expect.stringContaining('recurse') });
+    expect(state.transports).toEqual([]);
+  });
 });

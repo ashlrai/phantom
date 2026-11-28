@@ -112,7 +112,7 @@ registration entries for three companions:
 | `locus` | `locus-mcp` | `locus-mcp` with the Locus identity environment |
 | `ashlr-md` (optional) | `mdopener-mcp` | `mdopener-mcp` |
 
-Ashlr MD is optional: `phm mcp doctor` only requires `ashlr`, `phantom-secrets`
+Ashlr MD is optional: `phm mcp doctor` only requires `ashlr-hub`, `ashlr`, `phantom-secrets`
 and `locus`, so a missing `mdopener-mcp` is reported and skipped, never an
 error. Once registered, the `phm mcp` gateway lists each server's tools with
 the server name as a prefix, for example `ashlr-md__<tool>`.
