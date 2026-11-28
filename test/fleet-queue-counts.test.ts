@@ -43,6 +43,21 @@ it('counts ready, parked, running and last-hour merges per lane', async () => {
   expect(report.totals).toEqual({ ready: 3, parked: 1, running: 2, merges: 3, blockedReasons: [{ reason: 'DEP', count: 1 }], stale: 0 });
 });
 
+it('includes lane-neutral work in the fleet ready total without assigning it a lane', async () => {
+  const readyPath = join(queueDir, 'ready.tsv');
+  const open = 'RQ-OPEN\tphantom\tdevin\twork\tprompts/open.md\t{"preferred_lane":null}';
+  await writeFile(readyPath, open);
+  const openOnly = await getLaneQueueCounts({ runsDir: root, now });
+  expect(openOnly.sources.ready).toBe('healthy');
+  expect(openOnly.totals.ready).toBe(1);
+  expect(openOnly.lanes).toEqual([]);
+
+  await writeFile(readyPath, [open, row('READY', 'a-1', 'codex'), row('PARKED-HOLD.codex', 'a-2', 'codex')].join('\n'));
+  const mixed = await getLaneQueueCounts({ runsDir: root, now });
+  expect(mixed.totals).toMatchObject({ ready: 2, parked: 1 });
+  expect(mixed.lanes).toMatchObject([{ lane: 'codex', ready: 1, parked: 1 }]);
+});
+
 it('ignores merge events with missing or invalid timestamps', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
   await writeFile(join(queueDir, 'jobs.jsonl'), [
