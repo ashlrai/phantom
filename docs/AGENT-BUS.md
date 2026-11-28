@@ -703,6 +703,13 @@ watches one identity's addressed projection — DMs, handoffs, channel
 posts and legacy traffic with the same kind/held/job annotations `inbox`
 reports — so an agent on the unified surface can wait for mail without
 polling `inbox` in a loop or dropping to the raw-envelope stream.
+`fleet_agent_follow` (the isolated fleet MCP tool) serves the same
+`followAgentBus` projection as one bounded call — `agent` and a required
+`durationMs` capped at 60000 with the same inbox filters — collecting the
+emitted message records into a single response with the follower's
+terminal `outcome`, the safe `cursor` resume point and a 200-record bound
+reported as `limit`, so an MCP-connected agent waits for mail without a
+poll loop or a stdio stream.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
 [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
