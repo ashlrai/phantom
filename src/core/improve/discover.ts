@@ -2351,6 +2351,33 @@
  *     quoted, truncated tails are stated as lower bounds, and items
  *     emit only for the fleet's own repository since the journal
  *     describes this install's host and agent-log roots;
+ *   - the scheduled model-radar run journal's recurring adverse
+ *     verdicts: `phm models radar schedule --install` writes a
+ *     launchd agent or systemd user timer that runs
+ *     `phm models radar --fetch --propose --json` daily and appends
+ *     the report's stdout and stderr to
+ *     ~/.ashlr/logs/model-radar.jsonl — one pretty-printed
+ *     models.radar.v1 report per completed run carrying the
+ *     registry verdict, per-provider doc state, the --fetch save
+ *     results and the --propose filing counts — until now with no
+ *     reader at all beyond the log file itself and the sibling
+ *     modelRadarBacklogItems fold of the inbox notes that did
+ *     land, so a radar that kept failing before it could file
+ *     (registry unreadable, every source page refusing to save,
+ *     notes never landing on disk, candidates found but never
+ *     filed) never became work (modelRadarRunBacklogItems below).
+ *     Documents carry no timestamp, so recurrence is measured in
+ *     recorded runs — each axis emits only while its adverse
+ *     verdict holds on the newest MODEL_RADAR_MIN_RUNS consecutive
+ *     valid reports that measured it; registry-outage runs count
+ *     as unmeasured for the doc axis so an empty scan never
+ *     fabricates per-provider blindness; documents count only
+ *     under the writer's contract, the column-0 brace framing
+ *     makes torn mid-write documents count as coverage, stderr
+ *     noise between reports is counted never quoted, truncated
+ *     tails are stated as lower bounds, and items emit only for
+ *     the fleet's own repository since the journal describes this
+ *     install's radar and inbox;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2544,6 +2571,7 @@ import { frictionItemBacklogItems } from './friction-item-backlog.js';
 import { routerWeightBacklogItems } from './router-weights-backlog.js';
 import { promptVariantBacklogItems } from './prompt-variant-backlog.js';
 import { stewardBacklogItems } from './steward-backlog.js';
+import { modelRadarRunBacklogItems } from './model-radar-run-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -5322,6 +5350,34 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // own repository inherits the items since the journal describes
   // this install's host and carries no repo column.
   await feed('stewardBacklogItems', () => stewardBacklogItems({ repo }));
+  // The scheduled model radar's run journal: `phm models radar
+  // schedule --install` writes a launchd agent or systemd user timer
+  // that runs `phm models radar --fetch --propose --json` daily and
+  // appends the report's stdout AND stderr to the log — one
+  // pretty-printed models.radar.v1 report per completed run carrying
+  // the registry verdict, per-provider doc state, the --fetch save
+  // results and the --propose filing counts. Until now the journal
+  // had no reader at all beyond the log file itself and the sibling
+  // modelRadarBacklogItems fold of the inbox notes that did land, so
+  // a radar that kept failing before it could file — registry
+  // unreadable, every source page refusing to save, notes never
+  // landing on disk, candidates found but never filed — never became
+  // work (modelRadarRunBacklogItems below). Documents carry no
+  // timestamp, so recurrence is honest run-counting per axis: each
+  // emits only while its adverse verdict holds on the newest
+  // MODEL_RADAR_MIN_RUNS consecutive valid reports that measured it
+  // — a registry-outage run counts as unmeasured for the doc axis
+  // (the empty scan writes doc:'unknown' for every provider by
+  // construction), a fetch-less report is unmeasured for the fetch
+  // axis, and a proposals-less report is unmeasured for the
+  // proposals axis. Documents count only under the writer's
+  // models.radar.v1 contract; the column-0 brace framing makes torn
+  // mid-write documents count as coverage; stderr noise between
+  // reports is counted never quoted; truncated tails are stated as
+  // lower bounds; and only the fleet's own repository inherits the
+  // items since the journal describes this install's radar and
+  // inbox and carries no repo column.
+  await feed('modelRadarRunBacklogItems', () => modelRadarRunBacklogItems({ repo }));
   return { items, errors };
 }
 
