@@ -223,22 +223,63 @@ describe('readWtCensus', () => {
     expect(report.entries.find(c => c.job === 'RQ-RUN')).toMatchObject({ bytes: 1e9, cleanup: 'retain', reason: expect.stringContaining('running') });
     expect(report.entries.filter(c => c.kind === 'job-artifact').every(c => c.cleanup === 'retain' && c.bytes === 123)).toBe(true);
     expect(report.categories[0]).toMatchObject({ count: 9, bytes: 11e9, complete: true });
+    expect(report.categories[0]?.reclaimable).toEqual({ bytes: null, provenBytes: 5e9, candidates: 3, complete: false });
+    expect(report.categories[1]?.reclaimable).toEqual({ bytes: null, provenBytes: 0, candidates: 0, complete: false });
+    expect(report.cleanupCandidates.map(c => c.via)).toEqual(['worktree-remove', 'worktree-remove', 'reap-one']);
+    expect(report.entries.filter(c => c.cleanup === 'retain').every(c => c.via === null)).toBe(true);
     expect(JSON.stringify(await readFleetDiskAttribution(deps))).toBe(JSON.stringify(report));
     const reordered = { ...deps, fs: { ...deps.fs!, entries: async (path: string) => (await deps.fs!.entries(path))?.reverse() ?? null } };
     expect(JSON.stringify(await readFleetDiskAttribution(reordered))).toBe(JSON.stringify(report));
     expect(formatFleetDiskAttribution(report).join('\n')).toContain('Largest safe cleanup candidates: 3');
+    expect(formatFleetDiskAttribution(report).join('\n')).toContain('reclaimable: unknown (at least 5.00 GB proven)');
+    expect(formatFleetDiskAttribution(report).join('\n')).toContain('preview: phm disk-maint --json');
   });
 
   it('reports missing paths and partial measurements as unknown, never as safe zero-byte cleanup', async () => {
     const absent = await readFleetDiskAttribution(healthyDeps({ failDirs: true, entries: { [RUNS]: null } }));
     expect(absent.categories.every(c => c.bytes === null && !c.complete)).toBe(true);
     expect(absent.cleanupCandidates).toEqual([]);
+    expect(absent.categories.every(c => c.reclaimable.bytes === null && !c.reclaimable.complete)).toBe(true);
     const partial = await readFleetDiskAttribution({ ...healthyDeps(spec, { rows,
       measure: () => ({ bytes: 42, complete: false }) }), artifactBytes: async () => null });
     expect(partial.categories.every(c => c.bytes === null && !c.complete)).toBe(true);
     expect(partial.categories[0].measuredBytes).toBe(9 * 42);
     expect(partial.cleanupCandidates).toEqual([]);
+    expect(partial.categories[0]?.reclaimable).toEqual({ bytes: null, provenBytes: 0, candidates: 0, complete: false });
     expect(formatFleetDiskAttribution(partial).join('\n')).toContain('unknown (measured at least');
+  });
+
+  it('totals all candidates beyond the top ten and excludes active and protected merged trees', async () => {
+    const safe = Array.from({ length: 12 }, (_, i) => `RQ-SAFE-${i}`);
+    const held = ['RQ-ACTIVE', 'secrets', 'models'];
+    const names = [...safe, ...held];
+    const deps = healthyDeps({ dirs: { [WT]: names }, entries: { [RUN]: ['RQ-ACTIVE.dispatched'] } }, {
+      rows: names.flatMap(name => [launch(name, 30), finish(name, 20), outcome(name, 'MERGED', 15)]),
+    });
+    const report = await readFleetDiskAttribution(deps);
+    expect(report.categories[0]?.reclaimable).toEqual({ bytes: 12e9, provenBytes: 12e9, candidates: 12, complete: true });
+    expect(report.cleanupCandidates).toHaveLength(10);
+    for (const name of held) {
+      expect(report.entries.find(e => e.job === name)).toMatchObject({ cleanup: 'retain', via: null });
+    }
+    expect(report.entries.find(e => e.job === 'RQ-ACTIVE')?.reason).toContain('running');
+    expect(report.entries.find(e => e.job === 'secrets')?.reason).toContain('protect-list:');
+    expect(report.entries.find(e => e.job === 'models')?.reason).toContain('protect-list:');
+    expect(formatFleetDiskAttribution(report).join('\n')).toContain('reclaimable: 12.00 GB');
+  });
+
+  it('does not mistake unread safety evidence or unproven git state for zero reclaimable bytes', async () => {
+    const deps = healthyDeps({ dirs: { [WT]: ['RQ-MERGED'] } }, { rows });
+    for (const over of [
+      { readJobs: async () => ({ state: 'degraded' as const, text: '' }) },
+      { ps: () => null }, { readPins: () => ({ paths: [], valid: false }) },
+      { git: cleanGit({ dirty: async () => null }) },
+    ]) {
+      const report = await readFleetDiskAttribution({ ...deps, ...over });
+      expect(report.categories[0]).toMatchObject({ bytes: 1e9, complete: true,
+        reclaimable: { bytes: null, provenBytes: 0, candidates: 0, complete: false } });
+      expect(report.cleanupCandidates).toEqual([]);
+    }
   });
 
   it('measures real artifact metadata without following links or changing files', async () => {
