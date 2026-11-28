@@ -3229,7 +3229,9 @@ and TTL of the retained envelope whose processing refused the projection),
 present on the body-level refusals (`invalid-body`, `missing-provider`,
 `duplicate-job`, `owner-mismatch`) and absent when no single well-formed
 receipt is the cause (`invalid-receipts`, `invalid-participants`).
-It validates at most 1024 retained receipts in strictly increasing cursor order;
+It validates at most the bus store's retained bound (`BUS_INBOX_MAX_MESSAGES`
+receipts) in strictly increasing cursor order and refuses a snapshot that
+would emit more than the feed's 1024-job wire bound;
 legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`,
 `to` set to the announcement envelope's routing label, and the announcement's
 own `title` plus optional `dispatch` spec carried onto the job so the feed

@@ -219,6 +219,24 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(readFileSync(file, 'utf8')).toBe(before);
   });
 
+  it('reads a retained store past the retired 1024-receipt feed cap', () => {
+    // 1100 live receipts — more than the old feed bound refused — with one
+    // announced job and the rest opaque traffic: the feed must still answer.
+    const rows = Array.from({ length: 1100 }, (_, i) => ({
+      cursor: i + 1, receivedAt: now,
+      envelope: { id: `fake-busy-${i + 1}`, from: 'fake-agent', to: 'leaders',
+        priority: 'P2', ttl: 1000, body: i === 0 ? post : { kind: 'note', n: i } },
+    }));
+    const directory = join(root, 'bus-inbox');
+    mkdirSync(directory, { mode: 0o700 });
+    const file = join(directory, 'messages.json');
+    writeFileSync(file, JSON.stringify({ version: 2, highWater: rows.length, rows }), { mode: 0o600 });
+    chmodSync(file, 0o600);
+    const result = readBusWorkFeed({ root });
+    expect(result).toMatchObject({ status: 'ok', receipts: 1100,
+      jobs: [{ id: post.jobId, owner: 'fake-agent', provider: 'devin', status: 'queued' }] });
+  });
+
   it('reports an unreadable inbox and prints a failure footer with exit 1', async () => {
     append(post);
     writeFileSync(join(root, 'bus-inbox', 'messages.json'), 'invalid JSON');
