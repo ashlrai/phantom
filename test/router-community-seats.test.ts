@@ -92,14 +92,16 @@ const row = (
 ): OutsidePrOutcomeJournalRow => ({
   v: 1, kind: OUTSIDE_PR_OUTCOME_SCHEMA, at: AT,
   repo, number, title: `fix ${number}`, author: 'ext-dev', agent, model: null,
-  mergedAt, createdAt: null, reviews: null, reverted: verdict, ...over,
+  mergedAt, createdAt: null, reviews: null, ci: null, diff: null, reverted: verdict, ...over,
 });
 
-/** The evidence tallies every seat reports when its journaled rows carry no createdAt/reviews. */
+/** The evidence tallies every seat reports when its journaled rows carry no createdAt/reviews/ci/diff. */
 const NO_EVIDENCE = {
   ttm_known: 0, ttm_minutes_mean: null,
   reviews_known: 0, reviewed: 0, unreviewed: 0,
   approved: 0, changes_requested: 0, review_required: 0,
+  ci_known: 0, ci_passed: 0, ci_failed: 0, ci_pending: 0, ci_none: 0,
+  diff_known: 0, diff_lines_mean: null, diff_files_mean: null,
 };
 
 describe('foldCommunitySeats', () => {
@@ -147,12 +149,65 @@ describe('foldCommunitySeats', () => {
         ttm_known: 2, ttm_minutes_mean: 90,
         reviews_known: 2, reviewed: 1, unreviewed: 1,
         approved: 1, changes_requested: 0, review_required: 0,
+        ci_known: 0, ci_passed: 0, ci_failed: 0, ci_pending: 0, ci_none: 0,
+        diff_known: 0, diff_lines_mean: null, diff_files_mean: null,
       },
       {
         agent: 'cursor', model: null, repos: 1, prs: 1, reverted: 1, kept: 0, unknown: 0,
         ttm_known: 0, ttm_minutes_mean: null,
         reviews_known: 1, reviewed: 1, unreviewed: 0,
         approved: 0, changes_requested: 1, review_required: 0,
+        ci_known: 0, ci_passed: 0, ci_failed: 0, ci_pending: 0, ci_none: 0,
+        diff_known: 0, diff_lines_mean: null, diff_files_mean: null,
+      },
+    ]);
+  });
+
+  it('tallies journaled CI verdicts per seat with an honest denominator', () => {
+    const seats = foldCommunitySeats([
+      // devin: one of each recorded verdict plus a null-ci pre-fields row.
+      row('acme/widgets', 1, 'no', 'devin', daysAgo(2), { ci: 'success' }),
+      row('acme/widgets', 2, 'yes', 'devin', daysAgo(3), { ci: 'failure' }),
+      row('acme/widgets', 3, 'no', 'devin', daysAgo(4), { ci: 'pending' }),
+      row('acme/widgets', 4, 'no', 'devin', daysAgo(5), { ci: 'none' }),
+      row('acme/widgets', 5, 'no', 'devin', daysAgo(6)),
+      // cursor: only null-ci rows — the denominator stays empty, never a guessed zero.
+      row('acme/widgets', 6, 'no', 'cursor', daysAgo(7)),
+      row('acme/widgets', 7, 'no', 'cursor', daysAgo(8), { ci: null }),
+    ], opts);
+    expect(seats).toEqual([
+      {
+        agent: 'devin', model: null, repos: 1, prs: 5, reverted: 1, kept: 4, unknown: 0,
+        ...NO_EVIDENCE,
+        ci_known: 4, ci_passed: 1, ci_failed: 1, ci_pending: 1, ci_none: 1,
+      },
+      {
+        agent: 'cursor', model: null, repos: 1, prs: 2, reverted: 0, kept: 2, unknown: 0,
+        ...NO_EVIDENCE,
+      },
+    ]);
+  });
+
+  it('tallies journaled diff size per seat with an honest denominator', () => {
+    const seats = foldCommunitySeats([
+      // devin: two recorded diffs (10+4 lines over 2 files; 30+6 lines over
+      // 3 files → means 25 lines / 2.5 files) plus a pre-fields null row.
+      row('acme/widgets', 1, 'no', 'devin', daysAgo(2), { diff: { additions: 10, deletions: 4, changedFiles: 2 } }),
+      row('acme/widgets', 2, 'yes', 'devin', daysAgo(3), { diff: { additions: 30, deletions: 6, changedFiles: 3 } }),
+      row('acme/widgets', 3, 'no', 'devin', daysAgo(4)),
+      // cursor: only null-diff rows — the denominator stays empty, never a guessed zero.
+      row('acme/widgets', 4, 'no', 'cursor', daysAgo(5)),
+      row('acme/widgets', 5, 'no', 'cursor', daysAgo(6), { diff: null }),
+    ], opts);
+    expect(seats).toEqual([
+      {
+        agent: 'devin', model: null, repos: 1, prs: 3, reverted: 1, kept: 2, unknown: 0,
+        ...NO_EVIDENCE,
+        diff_known: 2, diff_lines_mean: 25, diff_files_mean: 2.5,
+      },
+      {
+        agent: 'cursor', model: null, repos: 1, prs: 2, reverted: 0, kept: 2, unknown: 0,
+        ...NO_EVIDENCE,
       },
     ]);
   });
@@ -324,11 +379,14 @@ describe('phm fleet router-weights', () => {
   it('joins community-seat tallies into the JSON report and renders them in text', async () => {
     writeLedger([{ job: 'j1', lane: 'alpha', work_class: 'code', phase: 'MERGED' }]);
     writeJournal([
-      // devin #11 carries recorded open/review evidence; #12 and the
-      // unattributed #13 are pre-fields rows — honest unknown denominators.
+      // devin #11 carries recorded open/review/CI/diff evidence; #12 and
+      // the unattributed #13 are pre-fields rows — honest unknown
+      // denominators.
       outcomeLine('acme/widgets', 11, 'yes', 'devin', 2, {
         createdAt: new Date(NOW - 2 * DAY - 90 * MIN).toISOString(),
         reviews: { decision: 'APPROVED', latest: 1 },
+        ci: 'success',
+        diff: { additions: 40, deletions: 10, changedFiles: 4 },
       }),
       outcomeLine('acme/widgets', 12, 'no', 'devin', 4),
       outcomeLine('acme/widgets', 13, 'unknown', null, 6),
@@ -345,6 +403,8 @@ describe('phm fleet router-weights', () => {
         ttm_known: 1, ttm_minutes_mean: 90,
         reviews_known: 1, reviewed: 1, unreviewed: 0,
         approved: 1, changes_requested: 0, review_required: 0,
+        ci_known: 1, ci_passed: 1, ci_failed: 0, ci_pending: 0, ci_none: 0,
+        diff_known: 1, diff_lines_mean: 50, diff_files_mean: 4,
       },
       { agent: null, model: null, repos: 1, prs: 1, reverted: 0, kept: 0, unknown: 1, ...NO_EVIDENCE },
     ]);
@@ -355,8 +415,8 @@ describe('phm fleet router-weights', () => {
     const out = logged.join('\n');
     expect(out).toContain('community_seats=read');
     expect(out).toContain('community seats (outside-pr-outcomes.jsonl');
-    expect(out).toContain('devin: prs=2 reverted=1 kept=1 unknown=0 repos=1 ttm=90m mean over 1 merges reviews=1 reviewed/0 unreviewed/1 approved/0 changes-requested/0 review-required over 1 merges');
-    expect(out).toContain('unattributed: prs=1 reverted=0 kept=0 unknown=1 repos=1 ttm=unknown reviews=unknown');
+    expect(out).toContain('devin: prs=2 reverted=1 kept=1 unknown=0 repos=1 ttm=90m mean over 1 merges reviews=1 reviewed/0 unreviewed/1 approved/0 changes-requested/0 review-required over 1 merges ci=1 green/0 red/0 pending/0 no-checks over 1 merges diff=50 lines/4 files mean over 1 merges');
+    expect(out).toContain('unattributed: prs=1 reverted=0 kept=0 unknown=1 repos=1 ttm=unknown reviews=unknown ci=unknown diff=unknown');
     expect(out).toContain('model is never recorded');
   });
 

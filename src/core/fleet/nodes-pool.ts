@@ -40,9 +40,13 @@ export function buildNodesPool(view: NodesView, extra: { disk?: ReadonlyMap<stri
   const freeSlots = online.reduce((sum, n) => sum + (typeof n.freeSlots === 'number' ? n.freeSlots : 0), 0);
   const slotsUnknown = online.filter(n => n.freeSlots === UNKNOWN).length;
   const jobsRunning = nodes.reduce((sum, n) => sum + (n.jobsRunning === UNKNOWN ? 0 : n.jobsRunning.length), 0);
+  // Same rule as slotsUnknown: an online Mac whose running count the registry
+  // cannot say stays out of the sum, and the total says how many were skipped
+  // instead of letting the remainder read as the whole pool's count.
+  const jobsUnknown = online.filter(n => n.jobsRunning === UNKNOWN).length;
   const line = `${plural(nodes.length, 'Mac')}, ${plural(freeSlots, 'free slot')}${slotsUnknown ? ` (${slotsUnknown} not measured)` : ''}`;
   return { schema: NODES_POOL_SCHEMA, schemaVersion: 1, asOf: view.asOf, nodes,
-    total: { macs: nodes.length, online: online.length, freeSlots, slotsUnknown, jobsRunning, line }, reasons: view.reasons };
+    total: { macs: nodes.length, online: online.length, freeSlots, slotsUnknown, jobsRunning, jobsUnknown, line }, reasons: view.reasons };
 }
 
 /** Read every source through its seam and join; never throws. */

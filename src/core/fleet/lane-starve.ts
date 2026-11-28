@@ -24,7 +24,10 @@
  */
 import { KNOWN_STATUSES } from './lane-console.js';
 import { dispatcherAdmissionHeadroom, laneLaunchTarget } from './lane-launch-target.js';
-import { readyMarketLine } from './unfed-market.js';
+import {
+  derivedRowCodes, marketContext, marketLaneView, readyMarketLine,
+  type ReadyMarketRow, type UnfedMarketInputs,
+} from './unfed-market.js';
 
 /** Filler ids end in A, six or more digits, then Q8. */
 export const FILLER_ID = /A\d{6,}Q8$/;
@@ -42,6 +45,16 @@ export interface StarvedLane {
   ready: number | null;
   filler: number | null;
   real: number | null;
+  /**
+   * Work-market reason codes tallied over this lane's own market-evaluated
+   * ready rows — why the shared market would not launch each row here — or
+   * null when the market inputs (queue/slots.json and friends) cannot be
+   * read. Rows in other ready.tsv dialects are not market jobs and are not
+   * scored; `scored` counts the rows `blocked` covers.
+   */
+  blocked: Record<string, number> | null;
+  /** Market-evaluated ready rows behind `blocked`; null when `blocked` is null. */
+  scored: number | null;
 }
 
 export interface StarvedLanes {
@@ -92,9 +105,18 @@ function queueRow(line: string): QueueRow | null {
   return id ? { id, lane } : null;
 }
 
-/** Pure: supply and occupancy from a snapshot. Pass report time for a live verdict. */
+/**
+ * Pure: supply and occupancy from a snapshot. Pass report time for a live
+ * verdict. `market` carries the dispatcher's market inputs (slots.json,
+ * models.json, budget-overrides.json, adaptive.json, HOLD); when they parse,
+ * each starved lane also reports the work-market reason codes its own
+ * ready rows are blocked by, exactly like `phm fleet unfed` derives them.
+ * `market.nowMs` defaults to `now` so adaptive.json freshness is judged
+ * against the same instant as the tick check.
+ */
 export function findStarvedLanes(
   statusJson: string, readyTsv: string | null, routerQueue?: string | null, now?: number,
+  market?: UnfedMarketInputs,
 ): StarvedLanes {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
@@ -104,16 +126,23 @@ export function findStarvedLanes(
       throw new Error('unusable dispatcher tick');
     }
   }
+  const ctx = marketContext(market === undefined ? undefined : { ...market, nowMs: market.nowMs ?? now });
   const split = new Map<string, { filler: number; real: number }>();
+  const marketRows = new Map<string, ReadyMarketRow[]>();
   const countedJobs = new Set<string>();
   let open = 0;
-  const attribute = (id: string, lane: string | null): void => {
+  const attribute = (id: string, lane: string | null, row?: ReadyMarketRow): void => {
     if (countedJobs.has(id)) return;
     countedJobs.add(id);
     if (lane === null) { open++; return; }
     const entry = split.get(lane) ?? { filler: 0, real: 0 };
     entry[FILLER_ID.test(id) ? 'filler' : 'real']++;
     split.set(lane, entry);
+    if (row !== undefined) {
+      const rows = marketRows.get(lane);
+      if (rows === undefined) marketRows.set(lane, [row]);
+      else rows.push(row);
+    }
   };
   for (const line of readyTsv?.split('\n') ?? []) {
     const cells = line.split('\t');
@@ -124,10 +153,10 @@ export function findStarvedLanes(
     // verdict first and fall back to the tolerant lane-column read only when
     // the line is not a dispatcher row at all.
     if (first !== '' && !KNOWN_STATUSES.has(status)) {
-      const market = readyMarketLine(line, routerQueue);
-      if (market === 'invalid') continue;
-      if (market !== null) {
-        attribute(market.id, market.hint);
+      const marketRow = readyMarketLine(line, routerQueue);
+      if (marketRow === 'invalid') continue;
+      if (marketRow !== null) {
+        attribute(marketRow.id, marketRow.hint, marketRow);
         continue;
       }
     }
@@ -145,11 +174,24 @@ export function findStarvedLanes(
     const target = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
     if (admissionClosed || value.held === true || value.running >= target || value.queued === 0) continue;
     const { filler, real } = split.get(lane) ?? { filler: 0, real: 0 };
+    let blocked: Record<string, number> | null = null;
+    let scored: number | null = null;
+    if (ctx !== null) {
+      const view = marketLaneView(lane, value.running, target, value.held === true, ctx,
+        typeof value.healthy === 'boolean' ? value.healthy : null);
+      const rows = marketRows.get(lane) ?? [];
+      scored = rows.length;
+      blocked = {};
+      for (const row of rows) {
+        for (const code of derivedRowCodes(row, lane, view)) blocked[code] = (blocked[code] ?? 0) + 1;
+      }
+    }
     out.push({
       lane, running: value.running, target, queued: value.queued,
       ready: readyTsv === null ? null : filler + real,
       filler: readyTsv === null ? null : filler,
       real: readyTsv === null ? null : real,
+      blocked, scored,
     });
   }
   return { lanes: out.sort((a, b) => a.lane.localeCompare(b.lane)), openRows: readyTsv === null ? null : open };

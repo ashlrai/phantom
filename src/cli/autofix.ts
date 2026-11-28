@@ -5,9 +5,9 @@
  */
 import { collectSnapshot } from '../core/autofix/collect.js';
 import { createNodeHost } from '../core/autofix/host-node.js';
-import { runAutofix, fixerId } from '../core/autofix/run.js';
+import { runAutofix } from '../core/autofix/run.js';
 import {
-  AUTOFIX_SCHEMA, FIXER_IDS,
+  AUTOFIX_SCHEMA, FIXER_IDS, isFixerId,
   type AutofixHost, type AutofixSnapshot, type FixerId,
 } from '../core/autofix/types.js';
 
@@ -51,12 +51,11 @@ export async function cmdAutofix(args: string[], deps: AutofixCliDeps = {}): Pro
         return 2;
       }
       if (arg === '--only') {
-        const id = fixerId(value);
-        if (!id || id === 'pinned-hand-edit') {
+        if (!isFixerId(value) || value === 'pinned-hand-edit') {
           err(`error: unknown fixer ${value}\n${USAGE}`);
           return 2;
         }
-        only.push(id);
+        only.push(value);
         continue;
       }
       if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 10080) {

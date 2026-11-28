@@ -2953,10 +2953,38 @@ Provider rules and models can change.
   not a blanket determination that every multi-account deployment is permitted.
   [Claude authentication](https://code.claude.com/docs/en/authentication#credential-management),
   [credential-use requirements](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use).
-- The proposed separate monthly Agent SDK credit change was paused. The current
-  notice says native print/SDK usage still draws from subscription limits. Do not
-  implement the superseded table below that notice as a new resource balance.
-  [Claude SDK plan notice](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan).
+- Claude Platform monthly API credits are a shared, separate billing pool for
+  the linked Console organization. Anthropic lists Messages, Message Batches,
+  Playground, Managed Agents and the Agent SDK as eligible. Agent SDK and
+  `claude -p` use the API credit only when run with a key from the linked
+  organization; plan sign-in still uses subscription quota. Interactive Claude
+  Code, IDE/desktop and GitHub Action sessions are not API-credit lanes.
+  [Monthly credit coverage](https://support.claude.com/en/articles/17154008-monthly-api-credits-for-max-ultra-and-team-plans),
+  [SDK authentication and billing](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan).
+- Provider eligibility does not enable an execution path. The first-party
+  Messages path is evidence-gated and is not proof of a live grant or a
+  commissioned worker. Keep each of the following behind that same
+  organization/credential binding and promotion-only budget boundary:
+  - **Messages:** bounded synchronous calls for time-sensitive classification
+    and review. Reserve a worst-case amount before sending a request.
+  - **Message Batches:** a candidate for non-blocking evals and backlog
+    classification. Reserve across the entire batch, reconcile per-item
+    outcomes, and do not immediately replay a submission with an unknown
+    acknowledgement.
+    [Batch processing](https://platform.claude.com/docs/en/build-with-claude/batch-processing).
+  - **Agent SDK:** a candidate tool-capable worker. Verify that it is using the
+    linked organization key, not the native subscription session, and cap its
+    permitted tools and turns.
+  - **Managed Agents:** a candidate hosted worker, with a bounded session and a
+    verified session/usage receipt. Account for runtime and billable tools in
+    addition to tokens.
+    [Managed Agents pricing](https://platform.claude.com/docs/en/about-claude/pricing#claude-managed-agents-pricing).
+  - **Playground:** a human-facing prototyping surface, not an autonomous fleet
+    worker. Bring validated prompts or eval cases back through reviewed repo
+    artifacts, not browser automation.
+  No surface should silently spend purchased credit or enable automatic reload
+  when the promotional grant is exhausted. See
+  [credit evidence and admission](RESOURCE-EVIDENCE.md#claude-api-promotional-grants).
 - On Max, Fable 5/5.1 can use up to 50% of the **same** weekly allowance, not an
   additional allowance. Continued Fable use after that limit can involve paid
   credits. Phantom neither enables such credits nor guarantees the owner has disabled

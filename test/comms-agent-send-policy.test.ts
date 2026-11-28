@@ -179,6 +179,44 @@ describe('Comms role and triage', () => {
     expect(triage.deleted).toBe(0);
   });
 
+  it('keeps the internal mail class out of the deliverable reply text', async () => {
+    const runsDir = temp();
+    const messages: InboxMessage[] = [
+      { id: 'person-1', transport: 'email', from: 'ada@example.com', subject: 'Question', body: 'Can you look?' },
+      { id: 'owner-1', transport: 'email', from: 'boss@example.com', subject: 'Directive', body: 'Do the thing' },
+    ];
+    await writeInbox(runsDir, messages);
+    const sentTexts: string[] = [];
+    const report = await runCommsAgent({
+      runsDir,
+      lanes: [],
+      teamIdentities: [],
+      ...quiet,
+      approvals: [
+        { transport: 'email', recipient: 'ada@example.com' },
+        { transport: 'email', recipient: 'boss@example.com' },
+      ],
+      owners: ['boss@example.com'],
+      deliver: async attempt => { sentTexts.push(attempt.text); return { status: 'sent', reason: 'ok' }; },
+    });
+    expect(report.sends.every(send => send.status === 'sent')).toBe(true);
+    expect(sentTexts).toHaveLength(2);
+    // The mail class is owner-facing triage metadata: it stays in `summaries`
+    // but must never reach the text a recipient is sent — the stub names the
+    // subject being answered, nothing else.
+    for (const text of sentTexts) {
+      expect(text).not.toMatch(/^(person|owner|bulk|bot|unknown):/m);
+      expect(text).not.toContain('person:');
+      expect(text).not.toContain('owner:');
+    }
+    expect(sentTexts.some(text => text.includes('Question'))).toBe(true);
+    expect(sentTexts.some(text => text.includes('Directive'))).toBe(true);
+    expect(report.summaries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ class: 'person', summary: 'person: Question' }),
+      expect.objectContaining({ class: 'owner', summary: 'owner: Directive' }),
+    ]));
+  });
+
   it('reports and journals each inbox message\'s triage decision', async () => {
     const runsDir = temp();
     const messages: InboxMessage[] = [

@@ -57,6 +57,8 @@ curve and compute forecasts are **UNVERIFIED** as outcomes.
 | [Node router](../NODE-ROUTER.md) | Caps, heartbeats, local auth, owner filtering, leases and fencing are useful foundations. The local store is not an ACL boundary. The [multi-Mac pool](../../AGENTS.md#multi-mac-node-pool) uses trusted SSH peers and primary/backup fencing; it is not a multi-tenant public service. Fencing prevents stale acceptance, not duplicate effects at sinks that ignore the fence. |
 | [Constitution](../../CONSTITUTION.md) | Article 1 allows autonomous ordinary merges and sanctioned releases; Security GATES v3, existing holds, fork-only publishing and the prohibition on making private material public remain. Article 9 says fix merged code forward, not auto-revert. The Constitution has a distinct narrower promotion path for loop-owned self-improvement PRs. |
 
+For the adapter contract, typed graph boundaries, scheduler replay and GPU-cluster seam, see [Open fleet adapters and replay](OPEN-FLEET-ADAPTERS-AND-REPLAY.md).
+
 ## The proposed recursive loop
 
 **Observe → hypothesize → test against control → shadow/canary → expand or

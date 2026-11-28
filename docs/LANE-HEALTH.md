@@ -90,7 +90,9 @@ discarding the other readings in the rollout. If it is the latest reading for
 its window, the lane verdict stays unknown.
 
 Lane truth uses the modification time of `queue/slots.json` to qualify its
-running count, queued count and hold state. These fields are null when the
+running count, queued count and hold state. The file is read under the
+resolved runs directory (`ASHLR_RUNS_DIR`, else `~/.ashlr-runs`), the same
+override the other fleet readers honor. These fields are null when the
 file is more than 15 minutes old or dated after report time. The configured
 target remains visible.
 
@@ -119,6 +121,9 @@ PRs divided by lane RAM (`lanes.<lane>.ram_gb`, total GiB). Missing measurements
 are `null`, and unmeasured lanes sort after measured lanes, with lane name as a
 deterministic tie-break. Idle lanes are kept open in the recommendation.
 Unknown lane kinds and missing running counts are not selected for shedding.
+An active lane keeps its current admission setting when the same tick reports
+a hold, a zero configured target or a zero effective launch target. Its
+running workers remain visible while they drain.
 
 The current dispatcher does not publish lane RAM or consume this plan. Until
 those gaps are closed, the order within a kind may be unmeasured and this

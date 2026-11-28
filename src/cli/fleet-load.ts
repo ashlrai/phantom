@@ -20,7 +20,7 @@ export async function readFleetLoad(read: NonNullable<FleetLoadOptions['read']> 
   let admission: Record<string, unknown> = {};
   let unavailable = false;
   try {
-    const raw: unknown = JSON.parse(await read(join(homedir(), '.ashlr-runs', 'queue', 'status.json')));
+    const raw: unknown = JSON.parse(await read(join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'status.json')));
     const value = (raw as { admission?: unknown } | null)?.admission;
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('missing admission');
     admission = value as Record<string, unknown>;

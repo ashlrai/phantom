@@ -12,21 +12,29 @@ import { cmdCommsBusClaim, COMMS_BUS_CLAIM_HELP } from './comms-bus-claim.js';
 import { withCodexPeersSession, type LocusPeersEndpoint } from '../core/fleet/adapters/codex-peers.js';
 import { BUS_PROTOCOL_KINDS, BUS_PROTOCOL_VERSION, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
 import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
-import { busBodyThread } from '../core/agents/bus-v2-schema.js';
+import { WORK_RESULT_OUTCOMES, busBodyKind, busBodyResultOutcome, busBodyThread } from '../core/agents/bus-v2-schema.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
+import { busPageAddressMatchers, busPageRowMatch, type BusPageAddressRefs, type BusPageFilters } from '../core/fleet/bus-page-filters.js';
 
-const HELP = `phm comms bus group read <room> <topic> <cursor>
+const HELP = `phm comms bus group read <room> <topic> <cursor> [--from <address>] [--exclude-from <address>] [--id <id>] [--priority <P0|P1|P2|P3>] [--body-kind <kind>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
 phm comms bus group presence <room> <topic>
 phm comms bus group heartbeat <room> <topic> <id> <member> <online|offline>
 phm comms bus group publish <room> <topic> <id> <from> <ttl-ms> <json-body>
 Group labels are local routing labels, not identities; group read advances the shared bus cursor.
+group read filters apply the shared bus page rules on top of the room+topic address: --from and
+--exclude-from resolve sender labels through the identity registry like every bus read, --id is an
+exact envelope match, --priority one P0..P3 band, --body-kind the body's own kind discriminator
+(group.message payloads vs group.presence heartbeats), --since/--before the [since, before) window
+on receivedAt, and --contains the scrubbed one-line summary substring. The room/topic address
+already fixes the to/channel/topic scope, so those filters are not offered; filters narrow shown
+rows, never the scan — keep reading nextCursor until it stops advancing.
 phm comms bus post --file <envelope.json|->
 phm comms bus post --reply-to <id> --id <new-id> --from <address> --text <text> [--ttl-ms <ms>]
 phm comms bus post-batch --file <batch.json|->
 phm comms bus status
-phm comms bus read [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--thread <label>] [--job <id>] [--channel <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
-phm comms bus watch [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--thread <label>] [--job <id>] [--channel <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>] [--until-reply]
+phm comms bus read [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--thread <label>] [--job <id>] [--channel <name>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
+phm comms bus watch [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--thread <label>] [--job <id>] [--channel <name>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>] [--until-reply]
 ${COMMS_BUS_CLAIM_HELP}
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
 Protocol v${BUS_PROTOCOL_VERSION}: a body may carry {"protocol":{"version":1,"kind":<kind>,"topic"?,"payload_ref"?}}.
@@ -54,6 +62,8 @@ This is an application convention, not an envelope field or authenticated identi
 --since keeps only rows received at or after the cutoff — the same inclusive receivedAt >= since match agents bus inbox --since, channel read --since, wakes --since and phm messages --since apply; the value is 15m, 2h, 1d, epoch ms or an ISO time, resolved once when the read starts.
 --before keeps only rows received strictly before the cutoff — the exclusive receivedAt < before match fleet bus-follow --before and fleet_bus_inbox's before apply; the same 15m, 2h, 1d, epoch ms or ISO grammar, resolved once when the read starts, composing with --since into one [since, before) window where a row stamped exactly at either bound never matches.
 --contains keeps only envelopes whose scrubbed one-line summary — the same text agents bus inbox --contains, channel read --contains, phm messages --contains and fleet bus-follow --contains match — carries the needle as a case-insensitive substring, whitespace collapsed on both sides; matching runs over the rendered summary, never the raw body, so a secret-shaped value stays unfindable, and protocol-v1 payloads stay opaque to it. The value is bounded free text (up to 512 characters); --contains=<text> also works for values that look like flags.
+--body-kind keeps only envelopes whose body carries that exact kind discriminator — the same busBodyKind own-field match agents bus inbox --body-kind, channel read --body-kind, wakes --body-kind, agents conversations --body-kind, phm messages --body-kind and fleet bus-follow --body-kind apply: the v2 kind field, else a bus-transport v1 protocol.kind, else the type/schema a kindless notice keys on, matched exactly and case-sensitively; a body carrying no discriminator never matches and an unrecognized but printable value is an honest empty page.
+--result keeps only work.result bodies whose own outcome strictly equals the code — the same busBodyResultOutcome own-field match and WORK_RESULT_OUTCOMES vocabulary phm messages --result, agents messages --result, fleet messages, bus recent, fleet_bus_inbox's result, fleet_agent_messages' result and the work feed's --result share; every other body kind — including a work.release body's own released/completed outcome, a different vocabulary — and a work.result carrying no outcome never match, so "which retained result receipts failed" is one filtered read of the raw store; a value outside the vocabulary is invalid.
 All supplied filters must match. Limit applies before filtering; it counts scanned live records, not matches.
 Expired records advance the cursor but do not count toward the limit.
 Priority is a routing attribute; it does not establish identity or authority.
@@ -109,7 +119,7 @@ export interface CommsBusDependencies {
   peers?: CommsBusPeersDeps;
 }
 
-type BusFilters = { id?: string; inReplyTo?: string; to?: string; from?: string; excludeFrom?: string; priority?: string; kind?: string; topic?: string; thread?: string; job?: string; channel?: string; since?: string; before?: string; contains?: string };
+type BusFilters = { id?: string; inReplyTo?: string; to?: string; from?: string; excludeFrom?: string; priority?: string; kind?: string; topic?: string; thread?: string; job?: string; channel?: string; bodyKind?: string; result?: string; since?: string; before?: string; contains?: string };
 
 /** Resolved address predicates; each is present exactly when its filter is. */
 type BusAddressMatchers = { to?: (value: string) => boolean; from?: (value: string) => boolean; excludeFrom?: (value: string) => boolean };
@@ -248,6 +258,8 @@ function filterPage(page: BusInboxPage, filters: BusFilters, addresses: BusAddre
     (filters.topic === undefined || topicMatches(filters.topic, protocolOf(envelope.body)?.topic ?? '')) &&
     (filters.thread === undefined || busBodyThread(envelope.body) === filters.thread) &&
     (filters.job === undefined || busBodyJobMatch(envelope.body, filters.job)) &&
+    (filters.bodyKind === undefined || busBodyKind(envelope.body) === filters.bodyKind) &&
+    (filters.result === undefined || busBodyResultOutcome(envelope.body) === filters.result) &&
     (sinceMs === undefined || receivedAt >= sinceMs) &&
     (beforeMs === undefined || receivedAt < beforeMs) &&
     (containsNeedle === undefined || busReadContainsMatch(envelope.body, containsNeedle))) };
@@ -384,12 +396,83 @@ async function peers(args: string[], deps: CommsBusDependencies): Promise<number
   }
 }
 
+/** The shared bus page filters `group read` accepts; the room/topic address already fixes to/channel/topic. */
+const GROUP_READ_FLAGS = ['--from', '--exclude-from', '--id', '--priority', '--body-kind', '--since', '--before', '--contains'] as const;
+type GroupReadFlag = (typeof GROUP_READ_FLAGS)[number];
+/** The printable routing-label bound every bus id/address field shares. */
+const GROUP_READ_LABEL = /^[\x21-\x7e]{1,128}$/;
+
+/**
+ * Parse the `group read` filter tail into the shared bus page row rule. The
+ * room+topic address is the subscription's own scope, so the address-implied
+ * filters (`to`, `channel`, protocol `kind`/`topic`, and the body fields
+ * group bodies never carry — `inReplyTo`, `thread`, `job`, `result`) are not
+ * offered: every accepted flag can match a group row. `--body-kind` is the
+ * discriminator that separates `group.message` payloads from `group.presence`
+ * heartbeats; `--from`/`--exclude-from` resolve through the same identity
+ * registry every bus read's sender filter uses. Returns null on any invalid
+ * value — a malformed filter is an argument error, never a widened page.
+ */
+function parseGroupReadFilters(args: string[], options: BusInboxOptions): ((row: BusInboxReceipt) => boolean) | null {
+  const values = new Map<GroupReadFlag, string>();
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i]!;
+    const inline = /^--(from|exclude-from|id|priority|body-kind|since|before|contains)=(.*)$/s.exec(token);
+    const key = (inline ? `--${inline[1]}` : token) as GroupReadFlag;
+    if (!(GROUP_READ_FLAGS as readonly string[]).includes(key) || values.has(key)) return null;
+    const value = inline ? inline[2] : args[++i];
+    if (value === undefined || value === '' || (!inline && value.startsWith('--'))) return null;
+    values.set(key, value);
+  }
+  const refs: BusPageAddressRefs = {};
+  const filters: BusPageFilters = {};
+  const from = values.get('--from'), excludeFrom = values.get('--exclude-from');
+  for (const value of [from, excludeFrom]) {
+    if (value !== undefined && !validateBusEnvelope({ id: value, from: value, to: value, priority: 'P3', ttl: 1, body: null }).ok) return null;
+  }
+  if (from !== undefined) refs.from = from;
+  if (excludeFrom !== undefined) refs.excludeFrom = excludeFrom;
+  const id = values.get('--id');
+  if (id !== undefined) {
+    if (!GROUP_READ_LABEL.test(id)) return null;
+    filters.id = id;
+  }
+  const priority = values.get('--priority');
+  if (priority !== undefined) {
+    if (!(BUS_PRIORITIES as readonly string[]).includes(priority)) return null;
+    filters.priority = priority as BusPriority;
+  }
+  const bodyKind = values.get('--body-kind');
+  if (bodyKind !== undefined) {
+    if (!GROUP_READ_LABEL.test(bodyKind)) return null;
+    filters.bodyKind = bodyKind;
+  }
+  const now = (options.now ?? Date.now)();
+  for (const flag of ['--since', '--before'] as const) {
+    const raw = values.get(flag);
+    if (raw === undefined) continue;
+    const resolved = parseSince(raw, now);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    filters[flag === '--since' ? 'since' : 'before'] = resolved;
+  }
+  const contains = values.get('--contains');
+  if (contains !== undefined) {
+    const needle = busReadContains(contains);
+    if (needle === null || needle === undefined) return null;
+    filters.contains = needle;
+  }
+  if (Object.keys(refs).length === 0 && Object.values(filters).every(value => value === undefined)) return () => true;
+  const matchers = busPageAddressMatchers(refs, { root: options.root });
+  return (row: BusInboxReceipt) => busPageRowMatch(row, filters, matchers);
+}
+
 async function groupCommand(args: string[], options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
   const [verb, room, topic, ...rest] = args;
   let result: { status: string } = { status: 'invalid' };
   if (room && topic) {
-    if (verb === 'read' && rest.length === 1 && /^(0|[1-9][0-9]*)$/.test(rest[0]!)) {
-      result = subscribeGroup(room, topic, Number(rest[0]), 100, options);
+    if (verb === 'read' && rest.length >= 1 && /^(0|[1-9][0-9]*)$/.test(rest[0]!)) {
+      const match = parseGroupReadFilters(rest.slice(1), options);
+      result = match === null ? { status: 'invalid' } : subscribeGroup(room, topic, Number(rest[0]), 100, options, match);
     } else if (verb === 'presence' && rest.length === 0) {
       result = groupPresence(room, topic, options);
     } else if (verb === 'heartbeat' && rest.length === 3 && (rest[2] === 'online' || rest[2] === 'offline')) {
@@ -424,7 +507,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const token = rest[i]!, inline = /^(--id|--in-reply-to|--reply-to|--to|--from|--exclude-from|--text|--contains)=(.*)$/s.exec(token);
     const key = inline?.[1] ?? token;
     const label = key === '--id' || key === '--in-reply-to' || key === '--reply-to' || key === '--to' || key === '--from' || key === '--exclude-from' || key === '--text' || key === '--contains';
-    const flags = verb === 'post' ? ['--file', '--reply-to', '--id', '--from', '--text', '--ttl-ms'] : verb === 'watch' ? ['--checkpoint', '--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--until-reply', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic', '--thread', '--job', '--channel', '--since', '--before', '--contains'] : ['--checkpoint', '--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic', '--thread', '--job', '--channel', '--since', '--before', '--contains'];
+    const flags = verb === 'post' ? ['--file', '--reply-to', '--id', '--from', '--text', '--ttl-ms'] : verb === 'watch' ? ['--checkpoint', '--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--until-reply', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic', '--thread', '--job', '--channel', '--body-kind', '--result', '--since', '--before', '--contains'] : ['--checkpoint', '--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic', '--thread', '--job', '--channel', '--body-kind', '--result', '--since', '--before', '--contains'];
     if (!flags.includes(key) || values.has(key)) return invalid();
     if (key === '--until-reply') { values.set(key, 'true'); continue; }
     const value = inline ? inline[2] : rest[++i];
@@ -436,13 +519,15 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const value = values.get(key);
     if (value !== undefined && (!/^(0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value)))) return invalid();
   }
-  const filters = { id: values.get('--id'), inReplyTo: values.get('--in-reply-to'), to: values.get('--to'), from: values.get('--from'), excludeFrom: values.get('--exclude-from'), priority: values.get('--priority'), kind: values.get('--kind'), topic: values.get('--topic'), thread: values.get('--thread'), job: values.get('--job'), channel: values.get('--channel'), since: values.get('--since'), before: values.get('--before'), contains: values.get('--contains') };
+  const filters = { id: values.get('--id'), inReplyTo: values.get('--in-reply-to'), to: values.get('--to'), from: values.get('--from'), excludeFrom: values.get('--exclude-from'), priority: values.get('--priority'), kind: values.get('--kind'), topic: values.get('--topic'), thread: values.get('--thread'), job: values.get('--job'), channel: values.get('--channel'), bodyKind: values.get('--body-kind'), result: values.get('--result'), since: values.get('--since'), before: values.get('--before'), contains: values.get('--contains') };
   if (filters.priority !== undefined && !BUS_PRIORITIES.includes(filters.priority as BusPriority)) return invalid();
   if (filters.kind !== undefined && !(BUS_PROTOCOL_KINDS as readonly string[]).includes(filters.kind)) return invalid();
   if (filters.topic !== undefined && !isTopicPattern(filters.topic)) return invalid();
   if (filters.thread !== undefined && !/^[\x21-\x7e]{1,128}$/.test(filters.thread)) return invalid();
   if (filters.job !== undefined && !/^[\x21-\x7e]{1,128}$/.test(filters.job)) return invalid();
   if (filters.channel !== undefined && !agentChannelNameSchema.safeParse(filters.channel).success) return invalid();
+  if (filters.bodyKind !== undefined && !/^[\x21-\x7e]{1,128}$/.test(filters.bodyKind)) return invalid();
+  if (filters.result !== undefined && !(WORK_RESULT_OUTCOMES as readonly string[]).includes(filters.result)) return invalid();
   const containsNeedle = busReadContains(filters.contains);
   if (containsNeedle === null) return invalid();
   const sinceMs = filters.since === undefined ? undefined : parseSince(filters.since, (options.now ?? Date.now)());

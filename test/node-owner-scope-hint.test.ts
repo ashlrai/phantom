@@ -172,6 +172,64 @@ describe('an --owner the store does not know names the scopes it does', () => {
   });
 });
 
+describe('plan on an empty queue names the scopes the store knows', () => {
+  async function planText(store: MemoryStore, args: string[]): Promise<string> {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      expect(await cmdNodeFleet('plan', args, { store })).toBe(0);
+      return lines.at(-1)!;
+    } finally { vi.restoreAllMocks(); }
+  }
+
+  it('a mistyped --owner is named alongside the scopes the store knows', async () => {
+    const store = new MemoryStore();
+    const nodes = new DriveNodes(store);
+    executeNodeFleet('join', ['--node', 'box', '--owner', 'ops'], nodes);
+    executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'personal'], nodes);
+    // j1 sits completed-free but pending under 'personal': plan --owner typo
+    // has no jobs, so the note must not invite an enqueue under 'typo' alone.
+    const out = await planText(store, ['--owner', 'typo']);
+    expect(out).toContain("No jobs queued in owner 'typo'.");
+    expect(out).toContain('This store knows: ops, personal.');
+    expect(out).toContain('phm node enqueue --job <id> --owner typo');
+  });
+
+  it('a scope with a node but no jobs keeps the plain enqueue line', async () => {
+    const store = new MemoryStore();
+    const nodes = new DriveNodes(store);
+    executeNodeFleet('join', ['--node', 'box', '--owner', 'ops'], nodes);
+    executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'personal'], nodes);
+    // 'ops' is a real scope (it owns a node); an empty queue under it is not a
+    // mistyped scope, so no "store knows" correction is printed.
+    const out = await planText(store, ['--owner', 'ops']);
+    expect(out).toBe("No jobs queued in owner 'ops'. Enqueue one: phm node enqueue --job <id> --owner ops");
+  });
+
+  it('a bare plan names the one known scope as a runnable enqueue target', async () => {
+    const store = new MemoryStore();
+    const nodes = new DriveNodes(store);
+    executeNodeFleet('join', ['--node', 'box', '--owner', 'ops'], nodes);
+    const out = await planText(store, []);
+    expect(out).toBe('No jobs queued in any owner scope. This store knows: ops. Enqueue one: phm node enqueue --job <id> --owner ops');
+  });
+
+  it('an empty store and the --json view stay unchanged', async () => {
+    const store = new MemoryStore();
+    const bare = await planText(store, ['--owner', 'acme']);
+    expect(bare).toBe("No jobs queued in owner 'acme'. Enqueue one: phm node enqueue --job <id> --owner acme");
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const populated = new MemoryStore();
+      const nodes = new DriveNodes(populated);
+      executeNodeFleet('join', ['--node', 'box', '--owner', 'ops'], nodes);
+      expect(await cmdNodeFleet('plan', ['--owner', 'typo', '--json'], { store: populated })).toBe(0);
+      expect(JSON.parse(lines.at(-1)!)).toEqual({ schemaVersion: 1, command: 'plan', routes: [] });
+    } finally { vi.restoreAllMocks(); }
+  });
+});
+
 describe('unrouted-job join fixes carry --watch on the standalone path', () => {
   // One live node under 'ops' and two unrouted jobs: j1 has no node in its
   // owner scope at all (the join fix), j2 has a node that lacks its cap (the

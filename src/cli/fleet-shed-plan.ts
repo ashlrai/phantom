@@ -8,7 +8,7 @@ export async function cmdFleetShedPlan(args: string[], reader: (path: string) =>
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
   if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) { console.error(usage); return 2; }
   try {
-    const plan = planFleetShed(JSON.parse(await reader(join(homedir(), '.ashlr-runs', 'queue', 'status.json'))));
+    const plan = planFleetShed(JSON.parse(await reader(join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'status.json'))));
     if (args.includes('--json')) console.log(JSON.stringify(plan));
     else console.log(`Memory pressure: ${plan.pressure} (free: ${plan.memFreePct === null ? 'unknown' : `${plan.memFreePct}%`}; swap: ${plan.swapGb === null ? 'unknown' : `${plan.swapGb} GiB`}).\n${plan.nextAction}\n${plan.gaps.join('\n')}`);
     return 0;

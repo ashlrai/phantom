@@ -1,5 +1,8 @@
 /** `phm messages`: thin argv layer over core/fleet/agent-messages.ts. */
-export const MESSAGES_USAGE = `Usage: phm messages [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--limit <n>] [--text]
+import type { BusCliAdapter } from '../core/agents/bus-cli-adapters.js';
+import type { BusInboxOptions } from '../core/fleet/bus-inbox.js';
+
+export const MESSAGES_USAGE = `Usage: phm messages [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--limit <n>] [--frame <cli>] [--text]
 Agent-to-agent messages on the local agent bus, newest first: id, ts, priority,
 from, to, kind (ask, reply, handoff, status, blocker), a one-line scrubbed
 summary, and the related job or PR when known. --before keeps only messages
@@ -68,31 +71,55 @@ outcome strictly equals reserved, admitted, complete or failed — the same
 outcome vocabulary the work feed's --result filter validates, so every
 result receipt the fleet reported, including ones a job's newer status
 has since superseded, is one filtered read of the whole fleet timeline;
+--frame <cli> prints the same read as one bounded block marked untrusted
+under BEGIN/END UNTRUSTED AGENT BUS TIMELINE markers — the same frame the
+agents bus reads produce, under its own markers so a timeline block can
+never pass for an addressed inbox page — with --text printing the bare
+block and the default JSON carrying it as framed beside the full
+projection, the cut stated when the 32 KiB bound clips the page;
 JSON by default; --text for
 people. Read-only.
 Damaged bus records are skipped and counted. Exit 0 read, 1 bus unreadable, 2 bad usage.`;
 
-export async function cmdMessages(args: string[]): Promise<number> {
-  if (args.some(a => a === '--help' || a === '-h' || a === 'help')) { console.log(MESSAGES_USAGE); return 0; }
-  let text = false;
+export async function cmdMessages(args: string[], out: (text: string) => void = console.log,
+  err: (text: string) => void = console.error, options: BusInboxOptions = {}): Promise<number> {
+  if (args.some(a => a === '--help' || a === '-h' || a === 'help')) { out(MESSAGES_USAGE); return 0; }
+  let text = false, frame: string | undefined;
   const values: { since?: string; before?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; to?: string; inReplyTo?: string; id?: string; channel?: string; topic?: string; bodyKind?: string; result?: string; limit?: string } = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--text') { text = true; continue; }
     if (arg === '--json') continue;
+    if (arg === '--frame') {
+      const value = args[i + 1];
+      if (frame !== undefined || value === undefined || value.startsWith('--')) { err(MESSAGES_USAGE); return 2; }
+      frame = value; i++; continue;
+    }
     const key = arg === '--since' ? 'since' : arg === '--before' ? 'before' : arg === '--agent' ? 'agent' : arg === '--with' ? 'with'
       : arg === '--kind' ? 'kind' : arg === '--priority' ? 'priority' : arg === '--job' ? 'job'
       : arg === '--thread' ? 'thread' : arg === '--channel' ? 'channel' : arg === '--topic' ? 'topic' : arg === '--contains' ? 'contains'
       : arg === '--from' ? 'from' : arg === '--exclude-from' ? 'excludeFrom' : arg === '--to' ? 'to' : arg === '--in-reply-to' ? 'inReplyTo'
       : arg === '--id' ? 'id' : arg === '--body-kind' ? 'bodyKind' : arg === '--result' ? 'result' : arg === '--limit' ? 'limit' : null;
     const value = args[i + 1];
-    if (!key || values[key] !== undefined || value === undefined || value.startsWith('--')) { console.error(MESSAGES_USAGE); return 2; }
+    if (!key || values[key] !== undefined || value === undefined || value.startsWith('--')) { err(MESSAGES_USAGE); return 2; }
     values[key] = value; i++;
   }
   const core = await import('../core/fleet/agent-messages.js');
   const parsed = core.parseAgentMessagesQuery(values);
-  if (!parsed.ok) { console.error(text ? parsed.error : JSON.stringify({ error: parsed.error })); return 2; }
-  const result = core.readAgentMessages(parsed.query);
-  console.log(text ? core.formatAgentMessagesText(result) : JSON.stringify(result, null, 2));
+  if (!parsed.ok) { err(text ? parsed.error : JSON.stringify({ error: parsed.error })); return 2; }
+  let adapter: BusCliAdapter | undefined;
+  if (frame !== undefined) {
+    const { getBusCliAdapter } = await import('../core/agents/bus-cli-adapters.js');
+    adapter = getBusCliAdapter(frame);
+    if (adapter === undefined) { err(MESSAGES_USAGE); return 2; }
+  }
+  const result = core.readAgentMessages(parsed.query, options);
+  if (adapter !== undefined) {
+    const { frameAgentMessages } = await import('../core/agents/bus-cli-adapters.js');
+    const framed = frameAgentMessages(adapter.cli, core.formatAgentMessagesText(result).split('\n'));
+    out(text ? framed : JSON.stringify({ ...result, framed }, null, 2));
+  } else {
+    out(text ? core.formatAgentMessagesText(result) : JSON.stringify(result, null, 2));
+  }
   return result.source === 'unavailable' ? 1 : 0;
 }

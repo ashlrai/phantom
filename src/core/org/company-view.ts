@@ -2,9 +2,16 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
-import { z } from 'zod';
 import { readTelemetryFile } from '../resources/telemetry.js';
-import { joinsDir, orgFile, validateOrg, type Org } from './org.js';
+import {
+  ORG_FILE_MAX_BYTES,
+  joinRecordFilename,
+  joinsDir,
+  orgFile,
+  orgJoinRecordSchema,
+  validateOrg,
+  type Org,
+} from './org.js';
 
 type Source = 'available' | 'missing' | 'unavailable' | 'invalid';
 export interface CompanyOrgView {
@@ -12,11 +19,6 @@ export interface CompanyOrgView {
   sources: { org: Source; joins: Source };
   members: number | null; contributingMembers: number | null; contributingLanes: number | null;
 }
-const id = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
-const recordSchema = z.object({
-  v: z.literal(1), member: id, machine: id, joinedAt: z.string().datetime(),
-  lanes: z.array(z.object({ lane: id, share: z.number().min(0).max(100) })).max(16),
-});
 
 export async function readCompanyOrg(options: { file?: string; dir?: string; now?: number } = {}): Promise<CompanyOrgView> {
   const now = options.now ?? Date.now();
@@ -30,7 +32,7 @@ export async function readCompanyOrg(options: { file?: string; dir?: string; now
   if (text === null) return view;
   let org: Org;
   try {
-    if (Buffer.byteLength(text) > 256 * 1024) throw new Error('oversized');
+    if (Buffer.byteLength(text) > ORG_FILE_MAX_BYTES) throw new Error('oversized');
     org = validateOrg(parse(text));
   } catch { view.sources.org = 'invalid'; return view; }
   view.sources.org = 'available';
@@ -49,11 +51,11 @@ export async function readCompanyOrg(options: { file?: string; dir?: string; now
     try {
       const raw = await readTelemetryFile(join(dir, name));
       if (raw === null) { view.sources.joins = 'unavailable'; return view; }
-      const record = recordSchema.parse(JSON.parse(raw));
+      const record = orgJoinRecordSchema.parse(JSON.parse(raw));
       if (new Set(record.lanes.map(lane => lane.lane)).size !== record.lanes.length) throw new Error('duplicate lane');
       const member = org.members.find(member => member.id === record.member);
       if (!member || !member.machines.some(machine => machine.id === record.machine) ||
-        name !== `${record.member}.${record.machine}.json` || Date.parse(record.joinedAt) > now) continue;
+        name !== joinRecordFilename(record.member, record.machine) || Date.parse(record.joinedAt) > now) continue;
       for (const contribution of record.lanes) {
         const declared = member.contributions.find(lane => lane.lane === contribution.lane);
         if (declared && contribution.share > 0 && contribution.share <= declared.share) {

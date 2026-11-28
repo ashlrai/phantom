@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirty-six local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates forty local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -65,12 +65,56 @@
  *               `phm owner pair status`, `phm owner pair imessage` (a
  *               waiting pair is checked first, so re-running it after the
  *               YES finishes the binding).
+ *   inbox-acks  MASON-INBOX.md entries still owed a channel ack — the
+ *               `pending` rows of the same bounded read `phm fleet
+ *               inbox-acks` serves (the 256 KiB inbox tail, the
+ *               `queue/inbox-acks.jsonl` ledger and the MASON-OUTBOX/
+ *               PLAN-LOG reply journals, shared through `readInboxAcks`
+ *               so the two surfaces can never disagree): a recorded Mason
+ *               message whose planner "Got it" ack has no ledger row and
+ *               no answering leader reply. Until the next planner ack
+ *               pass — or `phm fleet inbox-acks --flush` — Mason has no
+ *               confirmation his message landed. Entries the ledger
+ *               already settled (`acked`, `skipped`) or that no channel
+ *               can carry (`no-channel`) are recorded decisions, never
+ *               pending work, and never list. Warn, non-blocking — the
+ *               act is agent-side. `since` is the entry's recorded
+ *               timestamp, `expiresAt` null — an owed ack waits for the
+ *               next pass, never a guessed deadline. Coverage is the same
+ *               bounded tail `fleet inbox-acks` reads: an absent inbox is
+ *               'missing' (verified: nothing recorded, nothing owed); an
+ *               unreadable inbox or ack ledger 'unavailable' — pending is
+ *               unknown, never an empty ack state passed off as fact; a
+ *               partially readable reply journal 'degraded' — pending rows
+ *               may include entries a leader reply already answered, so
+ *               the set is an upper bound. Act: `phm fleet inbox-acks
+ *               --flush`, `phm fleet inbox-acks`, `phm comms inbox read`.
  *   drafts      outbound email drafts still pending approval
  *               (`phm drafts list --status pending`), act: show/approve/reject —
  *               plus pending Comms-agent reply drafts that have no cos mirror
  *               (every non-email transport, or an email mirror that failed to
  *               write; a mirrored copy already lists through the cos draft, so
  *               one pending reply is one item), act: `phm comms-agent drafts`.
+ *   comms-mail  mail in the Comms agent's inbox (`<runsDir>/comms-agent/
+ *               inbox.json`, the document `phm comms-agent run` triages)
+ *               that no reply-draft record covers — kept mail still
+ *               awaiting a pass, plus mail whose send the policy refused
+ *               and mail no sender identity let the triage draft, the
+ *               pending work `phm comms-agent status` counts as `inbox`
+ *               depth but no item-level surface ever listed. A Comms
+ *               draft — pending (the reply waits on the owner, already
+ *               listed under `drafts`) or sent (the reply was delivered;
+ *               archiving the row is the next pass's own bookkeeping) —
+ *               covers its `messageId`, so one pending reply stays one
+ *               item. The schema keeps no timestamp and `from` is a
+ *               handle, so `since`/`expiresAt` stay null and items carry
+ *               the transport plus the scrubbed subject only — never
+ *               `from`, body or labels. An unreadable or malformed inbox
+ *               reports 'unavailable' — the pending set is unknown,
+ *               never an empty inbox; an unreadable drafts store degrades
+ *               the read, coverage then unproven so every message lists
+ *               rather than suppressing on a guess. Act:
+ *               `phm comms-agent run`, `phm comms-agent drafts`.
  *   bus         live envelopes whose body the claim contract accepts
  *               (`isClaimableWork`: a `kind:'work'` body, or a protocol-v1
  *               transport `task` body) with no live claim row — an expired
@@ -100,6 +144,15 @@
  *               and edges projections deliberately exclude it as "not agent
  *               mail" — act: `phm agents bus show`, `phm agents bus
  *               dead-letters`, `phm comms bus read --to bus.dead-letter`.
+ *               Every live `forum.mention` envelope lists too, as
+ *               `forum-mention`: the fleet forum's wake into the bus —
+ *               the forum store keeps the post and its thread, so this
+ *               envelope is the only bus-side trace that someone pulled
+ *               the `to` addressee into a forum thread, and without the
+ *               item a live mention is visible only inside the
+ *               addressee's own inbox mail until the wake TTL lapses —
+ *               act: `phm agents bus show`, `phm comms bus read --to
+ *               <addressee>`.
  *               When the claims table itself
  *               cannot be read the section reports 'degraded' and still lists
  *               candidates rather than hiding possibly unclaimed work; a
@@ -600,6 +653,34 @@
  *               The job id is the item's own citation, so `--job` matches.
  *               Act: `phm queue stuck`, `phm fleet unfed --json`,
  *               `phm queue`.
+ *   jobs-stuck  running jobs that are not really running — the same
+ *               `readStuckJobs`/`jobs.stuck.v1` read `phm jobs stuck` and
+ *               the `--stuck` pass of `phm fleet stray-stop` serve, over
+ *               the dispatchd run markers (`queue/run/<job>.line` open,
+ *               `.fin` absent): a GHOST — the recorded pid is gone while
+ *               the marker still claims the lane's running slot — and
+ *               STUCK — started over 90 minutes ago with the log silent
+ *               for 30. Until now a dead or hung job held its lane's
+ *               running count — every status, vitals and capacity read
+ *               inflated — while no pending surface named it: the bus,
+ *               feed, board, queue and channel sources all look at work
+ *               not yet claimed or refused, never at markers that claim
+ *               a run which is not happening. Each row lists as a warn
+ *               `stuck-ghost`/`stuck-job` naming the job id — the same
+ *               label `phm jobs stuck` prints — `since` the recorded
+ *               start reconstructed at the report's whole-minute
+ *               precision (null when the marker kept none — age unknown
+ *               stays unknown) and `expiresAt` null: a lying marker
+ *               waits for stray-stop or a finish, never a guessed
+ *               deadline. The job id is the item's own citation, so
+ *               `--job` matches. The marker directory unreadable is
+ *               'unavailable' — the stuck set is unknown, never an
+ *               empty list passed off as fact — unless `queue/run` is
+ *               verified absent, which is 'missing' (no job can count
+ *               as running, so nothing can be stuck). The stray-stop /
+ *               self-tick remediation is the act, never this read.
+ *               Act: `phm jobs stuck`, `phm fleet stray-stop --stuck
+ *               --apply`.
  *   channel-health  owner-channel transport health — the slack and
  *               iMessage bridges through `readChannelHealth` (the same
  *               projection `phm fleet channel-health` and `phm channels`
@@ -634,6 +715,185 @@
  *               transports, not a store that can be absent. Act: `phm fleet channel-health`, `phm channels
  *               slack status`, `phm imessage doctor`, `phm comms health
  *               --json`, `phm comms cycle`, `phm channels`.
+ *   queue-parked  PARKED-DEP rows in the dispatch ready queue
+ *               (`<runsDir>/queue/ready.tsv`) — dependency-gated jobs the
+ *               same `readFleetQueue` projection `phm fleet queue-parked`,
+ *               `phm fleet parked` and the autopilot's `stale-parked-deps`
+ *               gap serve, so this source and those surfaces can never
+ *               disagree. Until now the parked dependency backlog had no
+ *               inbox surface: the router-queue source lists only READY
+ *               rows in `queue/router-queue.md`, so a job parked on
+ *               `DEPENDENCY GATE` ids was invisible to the one view an
+ *               agent checks for work. Each parked row lists once under
+ *               its own state: gates still lacking a MERGED outcome in
+ *               `metrics/jobs.jsonl` list as info `parked-dep-waiting`
+ *               naming the unmet gate ids — queued work correctly
+ *               waiting on named jobs — while a row whose gate ids ALL
+ *               show MERGED yet was never unparked lists as warn
+ *               `parked-dep-stale` — the auto-unpark pass should have
+ *               freed it already, so it is stuck work, not a wait.
+ *               `jobIds` carries the parked job's own id plus the gate
+ *               ids its detail names, so `--job` finds the row under the
+ *               parked job and under every job it waits on. Every OTHER
+ *               parked reason — BYHAND, HOLD, MERGERATE, QUOTA and the
+ *               rest of the free-form `PARKED-<reason>` vocabulary — had
+ *               no inbox surface either: `phm fleet queue-parked` prints
+ *               them as `parked REASON (lane): count [jobs]` groups, so
+ *               each non-dependency reason+lane group now lists once as
+ *               info `parked-group` carrying the group's true count, its
+ *               lane and the projection's own eight-job cap named as a
+ *               floor (`+N more` when the group is larger), with `jobIds`
+ *               the listed ids so `--job` finds a listed member — parked
+ *               under a non-dependency reason is a hold, never a proven
+ *               gate wait or stale park, so it stays info rather than
+ *               borrowing the dep kinds' verdicts. `since`/
+ *               `expiresAt` stay null throughout: ready.tsv rows keep no
+ *               park timestamp and a parked job waits for its gates, its
+ *               reason's resolution or an unpark pass, never a guessed
+ *               deadline; no item is Mason-blocking. A missing `ready.tsv`
+ *               is 'missing' (verified-empty — no parked rows can exist),
+ *               an unreadable or malformed one 'degraded' — the listed
+ *               rows are a floor, never a complete set — and a throwing
+ *               read 'unavailable', never an empty queue passed off as
+ *               fact. Act: `phm fleet queue-parked`, `phm fleet parked`,
+ *               `phm fleet autopilot --once`.
+ *   stuck-fixes  guardian FIXUP-MAIN jobs whose published pull request
+ *               never reached a terminal outcome — the same
+ *               `findStuckFixes`/`readStuckFixes` fold `phm fleet
+ *               stuck-fixes`, `phm fleet main-health`, the verse
+ *               runs-history `stuck-fixes` route and the web-ui
+ *               needs-you strip serve, over `<runsDir>/metrics/jobs.jsonl`,
+ *               so this source and those surfaces can never disagree.
+ *               Until now a fix PR sitting open past the 20-minute
+ *               terminal-outcome bound had no item-level surface here:
+ *               the jobs-stuck source reads run markers, the queue
+ *               sources read ready/router rows, and every bus/feed/board
+ *               read looks at work not yet claimed — while a guardian
+ *               fix that published and then stalled was invisible to the
+ *               one view an agent checks for work. Each stuck row lists
+ *               once as a warn `stuck-fix` — 'high' once the PR has been
+ *               stuck an hour, the same escalation the needs-you strip
+ *               applies — naming the repo ('unknown repo' when no repo
+ *               is on record), the PR url and the job id, `since` the
+ *               recorded publish time and `expiresAt` null: a stuck fix
+ *               waits for a merge or close decision, never a guessed
+ *               deadline; the job id is the item's own citation, so
+ *               `--job` matches. `phm fleet main-health`'s own rule
+ *               applies — a verified-absent ledger means no fix PR was
+ *               ever published, so 'missing' (verified-empty); a ledger
+ *               that exists but cannot be folded, or a path that cannot
+ *               be inspected, is 'unavailable' — the stuck set is
+ *               unknown, never an empty list passed off as fact; the
+ *               fold itself never throws and skips torn lines by
+ *               contract. Act: `phm fleet stuck-fixes`, `phm fleet
+ *               main-health`.
+ *   stranded-work  finished work in kept worktrees that never became a
+ *               pull request — the same `readStrandedWork`/
+ *               `findStrandedWork` fold `phm fleet stranded` serves,
+ *               over `<runsDir>/queue/status.json`'s kept list, the
+ *               `metrics/jobs.jsonl` finish events, each job's
+ *               `.publish` sidecar and the queue run markers, so this
+ *               source and that surface can never disagree. Until now
+ *               finished-but-unshipped work had no item-level surface
+ *               here: the jobs-stuck source reads open run markers,
+ *               the queue sources read ready/router rows, the
+ *               stuck-fixes source reads published fix PRs, and every
+ *               bus/feed/board read looks at work not yet claimed —
+ *               while a job that finished with real changes and then
+ *               stopped short of a PR (a publish abort, a safety-gate
+ *               stop, an unexplained result) sat invisible in a kept
+ *               worktree, its diff at risk of being reaped or
+ *               forgotten. Each unrecovered stranded row lists once as
+ *               a warn `stranded-worktree` naming the job id, `since`
+ *               the recorded finish time (null when the ledger kept
+ *               none — unknown stays unknown) and `expiresAt` null: a
+ *               stranded job waits for a republish or re-run, never a
+ *               guessed deadline; the job id is the item's own
+ *               citation, so `--job` matches. Rows a later job already
+ *               recovered — or a verify already proved on main — never
+ *               list: their own next step says there is nothing to do.
+ *               The kept-list rule `phm fleet stranded` itself reports
+ *               applies — a verified-absent `queue/status.json` is
+ *               'missing' (no kept worktree can be listed, so no
+ *               finished work can be stranded), a kept list that
+ *               exists but cannot be read, or a throwing read, is
+ *               'unavailable' — the stranded set is unknown, never an
+ *               empty list passed off as fact — and a known read with
+ *               gaps (an unreadable metrics ledger leaves finish times
+ *               and sizes unknown, so the listed rows are a floor) is
+ *               'degraded'. Act: `phm fleet stranded`, `phm fleet
+ *               republish`, `phm fleet kept-worktrees`.
+ *   dispatch-stuck  queued jobs dispatch keeps refusing or failing —
+ *               the same `findStuckJobs`/`readDispatchStuckJobs` fold
+ *               `phm fleet stuck` and the `fleet.stuck.v1` row of `phm
+ *               fleet vitals` serve, over the tail of
+ *               `dispatch-events.log` (`*_REFUSED`/`*_FAILED` lines naming
+ *               a job, two or more since its last LAUNCH, still active
+ *               inside the one-hour quiet window) plus the ready list's
+ *               lane attribution, so this source and those surfaces can
+ *               never disagree. Until now a job the dispatcher could
+ *               never place — a lane refusing its size or repo every
+ *               tick, a worktree cleanup that keeps failing — had no
+ *               item-level surface here: the router-queue source lists
+ *               only READY rows in `queue/router-queue.md`, the
+ *               queue-parked source lists only PARKED rows, the
+ *               jobs-stuck source reads run markers for jobs already
+ *               launched, and every bus/feed/board read looks at work
+ *               not yet claimed — while the refused job sat in the queue
+ *               generating refusal events an agent had to already know to
+ *               look for. Each stuck row lists once as a warn
+ *               `dispatch-stuck` naming the job id — the same label
+ *               `phm fleet stuck` prints — `since` the first recorded
+ *               refusal or failure (the moment the stuck condition
+ *               began) and `expiresAt` null: a refused job waits for a
+ *               lane move or a queue edit, never a guessed deadline; the
+ *               job id is the item's own citation, so `--job` matches.
+ *               Lane-refusal causes deep-link `phm queue lane <id>
+ *               <lane>` — the steer that moves the row — a worktree
+ *               cleanup failure deep-links `phm fleet worktrees`, and an
+ *               unrecognised cause deep-links `phm fleet
+ *               dispatch-events` to read the raw lines, every item
+ *               leading with `phm fleet stuck`. The event log is the
+ *               only witness a job is being refused, so `phm fleet
+ *               stuck`'s own rule applies — a missing or unreadable log
+ *               leaves the stuck set unknown, 'unavailable' (pending
+ *               null), never an empty list passed off as fact; a
+ *               degraded ready read still lists every event-proven job
+ *               but marks the source 'degraded' — lane attribution is a
+ *               floor, never a complete set.
+ *   apps-recovery  apps-watch supervision runs whose retained verdict is
+ *               still an open incident — the same
+ *               `readAppsRecoveryInvocations`/`appsRecoveryVerdict` fold
+ *               `phm fleet apps-recovery-state`, `apps-recovery-check`,
+ *               `apps-recovery-wait`, `apps-recovery-batch` and `phm fleet
+ *               glance` serve, over the runs bus-inbox's retained
+ *               `apps-watch.*` events, so this source and those surfaces
+ *               can never disagree. Until now a failing or silent
+ *               supervision run had no item-level surface here: the bus
+ *               source lists only pending envelopes, and the glance is a
+ *               status line an agent had to already know to run — while a
+ *               watch cycling against dead apps or one that stopped
+ *               reporting sat invisible in the one view an agent checks
+ *               for work. A live invocation whose last observation failed
+ *               lists as warn `apps-recovery-retrying` naming the apps
+ *               still down, a live one silent past the 30-minute freshness
+ *               bound as warn `apps-recovery-silent`, and a terminal
+ *               `failed` outcome inside the same 24-hour window its bus
+ *               announcement TTL carries as high `apps-recovery-failed` —
+ *               `since` the invocation's latest retained event time and
+ *               `expiresAt` null for live rows (an unhealthy or silent
+ *               run waits for repair, never a guessed deadline) or the
+ *               announcement window's end for a failed one. Completed and
+ *               cancelled runs, healthy and unknown verdicts never list:
+ *               a finished run is history its summary already announced,
+ *               and an unproven verdict is unknown, never a fabricated
+ *               incident. A history read that is not 'available' — an
+ *               unreadable or invalid-cursor store — is 'unavailable'
+ *               (pending null), a truncated scan 'degraded' with the
+ *               proven verdicts still listed as a floor. No item names a
+ *               job and none is Mason-blocking. Act: `phm fleet
+ *               apps-recovery-check --invocation <id> --max-age-ms
+ *               1800000 --json`, `phm fleet apps-recovery-state --json`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -657,7 +917,7 @@ import { busBodyFallbackSummary, busBodyJobIds, busBodySummary, readAllWakes,
 import { coordinationRowBlocks, listCoordination } from '../agents/claim-store.js';
 import { readPendingProposals, readTeamApprovals, type ProposalApprovalItem, type TeamApprovalItem } from '../approvals/surface.js';
 import { listDrafts, type Draft } from '../cos/drafts.js';
-import { listDrafts as listCommsAgentDrafts, type CommsDraft } from '../comms-agent/store.js';
+import { commsRunsRoot, listDrafts as listCommsAgentDrafts, readInbox as readCommsAgentInbox, type CommsDraft, type InboxRead } from '../comms-agent/store.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../fleet/bus-mailbox.js';
@@ -679,6 +939,8 @@ import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
 import { readOwnerAwaitingReplies, readOwnerUndeliveredReplies, type OwnerAwaitingReplies, type OwnerUndeliveredReplies } from './owner-thread.js';
 import { fixedOwnerConfigDir } from './owner-channel.js';
 import { readOwnerPairPending, type OwnerPairPendingRead } from './owner-pair-pending.js';
+import { readInboxAcks, type InboxAcksRead } from '../fleet/inbox-acks-read.js';
+import { inboxEntryMs } from '../fleet/inbox-ack-match.js';
 import { commsRequestAgeStartMs, commsRequestTtlMs, DEFAULT_REQUEST_TTL_HOURS, readCommsRequests, type CommsRequestsRead } from './requests.js';
 import { probePauseState, type PauseProbe } from './pause.js';
 import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
@@ -711,12 +973,26 @@ import { listWorkBoard, WORK_BOARD_MAX_LIMIT, type WorkBoardResult } from './wor
 import type { WorkItemState } from './work-item-state.js';
 import { readKillSwitch, type KillSwitchReadResult } from '../sandbox/policy.js';
 import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
+import { readStuckJobs, type StuckJob as RunningStuckJob, type StuckJobsReport } from '../fleet/running-stuck.js';
+import { readStuckFixes, type StuckFixRow } from '../fleet/stuck-fixes.js';
+import { readStrandedWork, type StrandedItem } from '../fleet/stranded-work.js';
+import { readDispatchStuckJobs, type DispatchStuckRead } from '../fleet/dispatch-stuck.js';
+import type { StuckJob as DispatchStuckJob } from '../fleet/stuck-jobs.js';
+import { isDependencyParkedReason, readFleetQueue, type FleetQueueV1, type ParkedGroup, type ParkedMetDep, type ParkedUnmetDep } from '../fleet/runs-parked-queue.js';
 import { readChannelHealth } from '../fleet/channel-health.js';
 import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
+import { readAppsRecoveryInvocations } from '../fleet/apps-recovery-invocations.js';
+import { appsRecoveryVerdict } from '../fleet/apps-recovery-verdict.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
 export const UNIFIED_INBOX_CONTAINS_MAX = 512;
+/** Longest `--id` value the unified view accepts — a `<source>:<ref>` item id is a bounded machine label, never free text. */
+export const UNIFIED_INBOX_ID_MAX = 256;
+/** The `--id` value rule: a non-empty printable label of at most UNIFIED_INBOX_ID_MAX chars — the same shape every bus read's `--id` takes, widened for the namespaced `<source>:<ref>` form. */
+const UNIFIED_INBOX_ITEM_ID = /^[\x21-\x7e]+$/;
+export const isUnifiedInboxItemId = (value: string): boolean =>
+  value.length <= UNIFIED_INBOX_ID_MAX && UNIFIED_INBOX_ITEM_ID.test(value);
 const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
@@ -724,10 +1000,11 @@ const SUGGESTED_LEASE_MS = 600_000;
 /** Every pending-work source the unified view can report, in display order. */
 export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
-  'owner-delivery', 'owner-pair', 'drafts', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
+  'owner-delivery', 'owner-pair', 'inbox-acks', 'drafts', 'comms-mail', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'peer-inbox', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
-  'send-gate', 'router-queue', 'channel-health',
+  'send-gate', 'router-queue', 'jobs-stuck', 'channel-health', 'queue-parked',
+  'stuck-fixes', 'stranded-work', 'dispatch-stuck', 'apps-recovery',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -742,11 +1019,13 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
  * `bus-work`/`bus-handoff`/`bus-dead-letter`, the `board` source into
  * `board-delivery`/`board-task`, `work-board` into its three pending
  * states and `claim-drift` into its three row
- * classes, so `kind` is the finer classification
+ * classes, the `queue-parked` source into its dependency-gate
+ * waiting/stale split plus one `parked-group` item per non-dependency
+ * parked reason and lane, so `kind` is the finer classification
  * `--kind` filters on. */
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
-  'owner-reply-undelivered', 'owner-pair-waiting', 'draft-approval', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
+  'owner-reply-undelivered', 'owner-pair-waiting', 'inbox-ack', 'draft-approval', 'comms-mail', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'forum-mention', 'mailbox-message',
   'board-delivery', 'board-task', 'work-board-received', 'work-board-assigned', 'work-board-blocked',
   'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'peer-message', 'session-handoff', 'org-membership', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
@@ -756,7 +1035,11 @@ export const UNIFIED_INBOX_KINDS = [
   'coordination-message', 'coordination-assignment', 'coordination-return-unposted',
   'claim-drift-bus', 'claim-drift-coordination', 'claim-drift-owner',
   'send-gate-kill', 'send-gate-pause', 'router-queue-job',
+  'stuck-ghost', 'stuck-job',
   'channel-blocked', 'channel-degraded', 'channel-unknown',
+  'parked-dep-waiting', 'parked-dep-stale', 'parked-group', 'stuck-fix',
+  'stranded-worktree', 'dispatch-stuck',
+  'apps-recovery-retrying', 'apps-recovery-silent', 'apps-recovery-failed',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -784,7 +1067,10 @@ export interface UnifiedInboxItem extends AttentionItem {
    * the job-carrying-thread rule `BusBoard.pendingFor` applies), a
    * conversation thread's `jobs`, a teammate task's `jobId`, a seat handoff's
    * node-job refs, a peer-dispatch receipt's peer-announced `jobId`, a
-   * session-handoff journal's job id, or a router-queue row's own READY id.
+   * session-handoff journal's job id, a router-queue row's own READY id, a
+   * jobs-stuck marker's own job id, a queue-parked row's own job id plus
+   * the gate ids it names, a stuck-fix row's own job id, a
+   * stranded-work row's own job id, or a dispatch-stuck row's own job id.
    * Absent when the item names no job — unknown stays out of a
    * `--job` match rather than being guessed in.
    */
@@ -822,6 +1108,15 @@ export interface UnifiedInboxFilter {
   severity?: UnifiedInboxSeverity;
   /** Keep only blocking items when true, only non-blocking when false. */
   blocking?: boolean;
+  /** Keep only the item whose stable namespaced id (`<source>:<ref>`, the
+   * id every row reports) strictly equals this value — the same exact-id
+   * match every bus read's `--id` applies, so an agent holding a cited item
+   * id re-resolves exactly that item across every source in one read rather
+   * than guessing which source read to run. `--contains` never sees the id
+   * (it searches title/detail only) and `--job` matches the citation set,
+   * not the item id, so this is the one dimension that pinpoints a single
+   * projected item. Callers bound the raw value to UNIFIED_INBOX_ID_MAX. */
+  id?: string;
   /** Keep only items that provably name this job id — the same citation
    * rule every `--job` bus read shares, joined with the feed-id, board
    * `itemId`, conversation-thread, teammate-task, seat node-job,
@@ -910,6 +1205,83 @@ export interface RouterQueueStuckRead {
   jobs: readonly StuckJob[];
 }
 
+/** The resolved jobs-stuck read: `readStuckJobs`'s ghost/stuck rows mapped
+ * onto the unified source states — 'missing' a verified-absent run-marker
+ * directory (`queue/run` itself missing: no job can count as running, so
+ * nothing can be stuck), 'unavailable' any other read failure (the stuck
+ * set is unknown, never an empty list), 'healthy' the full read. `jobs`
+ * stays empty whenever the state is 'missing'/'unavailable'. */
+export interface JobsStuckSourceRead {
+  state: UnifiedInboxSourceState;
+  jobs: readonly RunningStuckJob[];
+}
+
+/** The resolved queue-parked read: `readFleetQueue`'s parked rows mapped
+ * onto the unified source states — 'missing' a verified-absent
+ * `queue/ready.tsv` (no parked rows can exist), 'unavailable' any read
+ * failure (the parked set is unknown, never an empty queue), 'degraded' a
+ * partial read (listed rows are a floor), 'healthy' the full read.
+ * `waiting`/`stale` stay empty whenever the state is 'missing'/
+ * 'unavailable'. `groups` carries the parked groups whose reason is NOT a
+ * dependency gate — the `DEP`/`DEPENDENCY` rows stay on `waiting`/`stale`
+ * so no row lists twice — each the projection's own reason+lane rollup
+ * with its true count and up to eight listed job ids. */
+export interface QueueParkedRead {
+  state: UnifiedInboxSourceState;
+  waiting: readonly ParkedUnmetDep[];
+  stale: readonly ParkedMetDep[];
+  groups: readonly ParkedGroup[];
+}
+
+/** The resolved stuck-fixes read: `readStuckFixes`'s ledger fold mapped onto
+ * the unified source states — 'missing' a verified-absent
+ * `metrics/jobs.jsonl` (no job rows can exist, so no fix PR can be on
+ * record — `phm fleet main-health`'s own rule), 'unavailable' a ledger
+ * that exists but cannot be folded or a path that cannot be inspected
+ * (the stuck set is unknown, never an empty list), 'healthy' the full
+ * read. `stuck` stays empty whenever the state is 'missing'/
+ * 'unavailable'. */
+export interface StuckFixesSourceRead {
+  state: UnifiedInboxSourceState;
+  stuck: readonly StuckFixRow[];
+}
+
+/** The resolved stranded-work read: `readStrandedWork`'s kept-worktree
+ * fold mapped onto the unified source states — 'missing' a
+ * verified-absent `queue/status.json` (no kept worktree can be listed,
+ * so no finished work can be stranded), 'unavailable' a kept list that
+ * exists but cannot be read or a throwing read (the stranded set is
+ * unknown, never an empty list), 'degraded' a known read carrying gaps
+ * (an unreadable metrics ledger leaves finish times and sizes unknown —
+ * the listed rows are a floor), 'healthy' the full read. `items` stays
+ * the projection's own stranded rows — recovered and already-on-main
+ * rows included — so the item builder, not the seam, decides which rows
+ * list as pending. */
+export interface StrandedWorkSourceRead {
+  state: UnifiedInboxSourceState;
+  items: readonly StrandedItem[];
+}
+
+/** The resolved dispatch-stuck read: `readDispatchStuckJobs`'s
+ * `fleet.stuck.v1` rows mapped onto the unified source states —
+ * 'unavailable' an event log that is missing or cannot be read (the
+ * stuck set is unknown — `phm fleet stuck`'s own `count:null` rule —
+ * never an empty list), 'degraded' a healthy log whose ready read is
+ * partial (every event-proven job still lists; lane attribution is a
+ * floor), 'healthy' the full read. `jobs` stays empty whenever the
+ * state is 'unavailable'. */
+export interface DispatchStuckSourceRead {
+  state: UnifiedInboxSourceState;
+  jobs: readonly DispatchStuckJob[];
+}
+
+/** The resolved apps-recovery read: `readAppsRecoveryInvocations`'s retained
+ * apps-watch projection verbatim — `availability` 'unavailable' or
+ * 'invalid-cursor' leaves the invocation set unknown ('unavailable',
+ * pending null), 'available' with `truncated` a partial scan ('degraded',
+ * the proven verdicts a floor), 'available' untruncated the full read. */
+export type AppsRecoverySourceRead = ReturnType<typeof readAppsRecoveryInvocations>;
+
 /** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
  * when the store could be read — 'missing' is a verified-empty board (no
  * `state.json` ever written), 'unavailable' an unreadable one, never an
@@ -988,6 +1360,9 @@ export interface UnifiedInboxOptions {
   listPendingDrafts?: typeof listDrafts;
   /** Comms-agent draft store seam; default reads `<runsDir>/comms-agent/drafts.jsonl`. */
   listCommsDrafts?: (runsDir: string) => Promise<CommsDraft[]>;
+  /** Comms-agent inbox seam; default reads `<runsDir>/comms-agent/inbox.json`
+   * through `readInbox` — the same document `phm comms-agent run` triages. */
+  readCommsInbox?: (runsDir: string) => Promise<InboxRead>;
   listBus?: typeof listBusInboxAfter;
   inspectBus?: typeof inspectBusInbox;
   /** Legacy `phm bus` mailbox seam; default reads `pendingAll` under the fleet root's parent. */
@@ -1009,6 +1384,10 @@ export interface UnifiedInboxOptions {
    * and the owner-live self-tick consult, minus the handles (only the sent count
    * ever leaves the store). */
   readOwnerPair?: (options: { configDir: string }) => OwnerPairPendingRead;
+  /** Inbox-ack seam; default reads the same bounded MASON-INBOX tail, ack
+   * ledger and reply journals `phm fleet inbox-acks` serves through
+   * `readInboxAcks`. */
+  readInboxAcks?: (options: { runsDir?: string; limit?: number }) => Promise<InboxAcksRead>;
   readConversations?: typeof readAgentConversations;
   /** Wake-hint seam; default reads `readAllWakes` fleet-wide under the same
    * bus root and runs dir `agents bus wakes --all`/`fleet_agent_wakes` use. */
@@ -1055,6 +1434,36 @@ export interface UnifiedInboxOptions {
    * `dispatch-events.log` through `readStuckQueue` — the same bounded read
    * `phm queue stuck` and the desktop Queue view serve. */
   readRouterQueue?: (options: { runsDir?: string; now?: () => number }) => Promise<RouterQueueStuckRead>;
+  /** Jobs-stuck seam; default reads `<runsDir>/queue/run` markers through
+   * `readStuckJobs` — the same bounded read `phm jobs stuck` and the
+   * `--stuck` pass of `phm fleet stray-stop` serve. */
+  readJobsStuck?: (options: { runsDir?: string; now?: () => number }) => Promise<JobsStuckSourceRead>;
+  /** Queue-parked seam; default reads `<runsDir>/queue/ready.tsv` plus
+   * `metrics/jobs.jsonl` through `readFleetQueue` with `depDetail` — the
+   * same bounded read `phm fleet queue-parked` and the autopilot's
+   * `stale-parked-deps` gap serve. */
+  readQueueParked?: (options: { runsDir?: string; now?: () => number }) => Promise<QueueParkedRead>;
+  /** Stuck-fixes seam; default reads `<runsDir>/metrics/jobs.jsonl` through
+   * `readStuckFixes` — the same fold `phm fleet stuck-fixes`, `phm fleet
+   * main-health`, the verse runs-history route and the web-ui needs-you
+   * strip serve. */
+  readStuckFixes?: (options: { runsDir?: string; now?: () => number }) => Promise<StuckFixesSourceRead>;
+  /** Stranded-work seam; default reads kept worktrees through
+   * `readStrandedWork` — the same fold `phm fleet stranded` serves, over
+   * `<runsDir>/queue/status.json`, `metrics/jobs.jsonl`, the `.publish`
+   * sidecars and the queue run markers. */
+  readStrandedWork?: (options: { runsDir?: string; now?: () => number }) => Promise<StrandedWorkSourceRead>;
+  /** Dispatch-stuck seam; default reads the `dispatch-events.log` tail,
+   * `queue/ready.tsv` and `queue/router-queue.md` through
+   * `readDispatchStuckJobs` — the same bounded read `phm fleet stuck`
+   * and the `fleet.stuck.v1` row of `phm fleet vitals` serve. */
+  readDispatchStuck?: (options: { runsDir?: string; now?: () => number }) => Promise<DispatchStuckSourceRead>;
+  /** Apps-recovery seam; default reads `<runsDir>/bus-inbox` through
+   * `readAppsRecoveryInvocations` — the same retained apps-watch projection
+   * `phm fleet apps-recovery-state`, `apps-recovery-check`,
+   * `apps-recovery-wait`, `apps-recovery-batch` and `phm fleet glance`
+   * serve. */
+  readAppsRecovery?: (options: { runsDir?: string; now?: () => number }) => AppsRecoverySourceRead;
   /** Channel-health seam; default reads `readChannelHealth` — the same
    * slack/imessage bridge projection `phm fleet channel-health` and
    * `phm channels` serve. */
@@ -1404,6 +1813,53 @@ function ownerPairItems(read: NonNullable<UnifiedInboxOptions['readOwnerPair']>,
   return { report: { state: 'healthy', pending: items.length }, items };
 }
 
+/**
+ * MASON-INBOX.md entries still owed a channel ack — the `pending` rows of
+ * the same bounded read `phm fleet inbox-acks` serves. Until the next
+ * planner ack pass — or `phm fleet inbox-acks --flush` — Mason has no
+ * confirmation his recorded message landed, so the wait is real pending
+ * work: warn, non-blocking, `since` the entry's recorded timestamp and
+ * `expiresAt` null because an owed ack has no deadline — it waits for the
+ * next pass, never a guessed one. Entries the ledger already settled or
+ * that no channel can carry are recorded decisions, never pending work.
+ * An absent inbox is 'missing' (verified: nothing recorded, nothing owed);
+ * an unreadable inbox or ack ledger 'unavailable' — pending is unknown,
+ * never an empty ack state passed off as fact; a partially readable reply
+ * journal 'degraded' — pending rows may include entries a leader reply
+ * already answered, so the listed set is an upper bound.
+ */
+async function inboxAckItems(
+  read: NonNullable<UnifiedInboxOptions['readInboxAcks']>,
+  runsDir: string | undefined,
+): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: InboxAcksRead;
+  try { result = await read({ runsDir: dir }); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  const state: UnifiedInboxSourceState =
+    result.inbox === 'missing' ? 'missing'
+    : result.inbox === 'unavailable' || result.ledger === 'unavailable' ? 'unavailable'
+    : result.replies === 'degraded' ? 'degraded'
+    : 'healthy';
+  if (state === 'unavailable') return { report: { state, pending: null }, items: [] };
+  const items = result.entries.filter(row => row.state === 'pending').map((row): Omit<UnifiedInboxItem, 'priority'> => {
+    const ms = inboxEntryMs(row.raw);
+    const preview = oneLine(row.text, 200);
+    return {
+      id: `inbox-acks:${row.entryId}`,
+      source: 'inbox-acks',
+      kind: 'inbox-ack',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Inbox ack pending on ${row.channel ?? 'unlabelled source'} — ${row.entryId.slice(0, 12)}`, TITLE_MAX),
+      detail: oneLine(`${preview} — ${row.reason ?? 'ack not recorded'}`, DETAIL_MAX),
+      since: isoMs(ms),
+      expiresAt: null,
+      act: ['phm fleet inbox-acks --flush', 'phm fleet inbox-acks', 'phm comms inbox read'],
+    };
+  });
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
+}
+
 async function draftItems(
   list: typeof listDrafts,
   listComms: (runsDir: string) => Promise<CommsDraft[]>,
@@ -1461,6 +1917,52 @@ async function draftItems(
   ];
   const merged: UnifiedInboxSourceState = state === 'unavailable' ? 'unavailable' : commsFailed ? 'degraded' : 'healthy';
   return { report: { state: merged, pending: pendingCount(merged, items.length) }, items };
+}
+
+/**
+ * Comms-agent inbound mail no reply-draft record covers — the kept half of
+ * `<runsDir>/comms-agent/inbox.json` (`phm comms-agent run`'s triage input)
+ * still awaiting a pass. Mail whose Comms draft exists — pending, already
+ * listed under `drafts`, or sent, already answered — suppresses its row so
+ * one pending reply stays one item; a refused send leaves no draft, so that
+ * mail lists here — the pending work `phm comms-agent status` counts as
+ * `inbox` depth but no item-level surface ever showed. The schema keeps no
+ * timestamp and `from` is a handle, so `since`/`expiresAt` stay null and
+ * items carry the transport plus the scrubbed subject only. An unreadable
+ * or malformed inbox is 'unavailable' — the pending set is unknown, never
+ * an empty inbox; an unreadable drafts store degrades the read, coverage
+ * then unproven so every message lists rather than suppressing on a guess.
+ */
+async function commsMailItems(
+  readInboxFn: (runsDir: string) => Promise<InboxRead>,
+  listComms: (runsDir: string) => Promise<CommsDraft[]>,
+  runsDir: string | undefined,
+): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const runs = commsRunsRoot(runsDir);
+  let inbox: InboxRead;
+  try { inbox = await readInboxFn(runs); } catch {
+    return { report: { state: 'unavailable', pending: null }, items: [] };
+  }
+  let drafts: CommsDraft[] = [];
+  let draftsFailed = false;
+  try { drafts = await listComms(runs); } catch { draftsFailed = true; }
+  const covered = new Set(drafts.map(draft => draft.messageId));
+  const items = inbox.messages
+    .filter(message => !covered.has(message.id))
+    .map((message): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `comms-mail:${message.id}`,
+      source: 'comms-mail',
+      kind: 'comms-mail',
+      severity: 'info',
+      blocking: false,
+      title: oneLine(`Comms mail via ${message.transport}`, TITLE_MAX),
+      detail: oneLine(message.subject || '(no subject)', DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      act: ['phm comms-agent run', 'phm comms-agent drafts'],
+    }));
+  const state: UnifiedInboxSourceState = draftsFailed ? 'degraded' : 'healthy';
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
 }
 
 /**
@@ -1876,6 +2378,54 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
           act: [
             `phm agents bus show ${envelope.id}`,
             `phm comms bus read --to ${BUS_DEAD_LETTER_ADDRESS}`,
+          ],
+        });
+        continue;
+      }
+      // A forum mention is the fleet forum's wake into the bus: the forum
+      // store keeps the post and its thread, this envelope is the only
+      // trace the bus carries that someone pulled the `to` addressee into
+      // a forum thread. It is neither claimable work nor feed traffic, so
+      // without this branch a live mention is visible only inside the
+      // addressee's own inbox mail — and only until the wake TTL lapses —
+      // while finding it otherwise takes a forum read this view cannot
+      // run. Listing it here keeps the one pending view honest about
+      // mentions that would otherwise need the forum store to discover.
+      // Agent coordination, never Mason-blocking.
+      if (busBodyKind(envelope.body) === 'forum.mention') {
+        // busBodyKind matched, so the body is a non-array object; every
+        // field below is read defensively because stored bodies are
+        // untrusted data.
+        const record = envelope.body as Record<string, unknown>;
+        const mentionField = (key: string): string | null => {
+          const value = record[key];
+          return typeof value === 'string' && value.trim() ? value : null;
+        };
+        const threadId = mentionField('threadId');
+        const postId = mentionField('postId');
+        const channelId = mentionField('channelId');
+        const detail = oneLine([
+          threadId === null ? null : `thread ${threadId}`,
+          postId === null ? null : `post ${postId}`,
+          channelId === null ? null : `channel ${channelId}`,
+          `from ${envelope.from}`,
+          `cursor ${receipt.cursor}`,
+        ].filter((part): part is string => part !== null).join(' · '), DETAIL_MAX);
+        covered.envelopes.add(envelope.id);
+        items.push({
+          id: `bus-mention:${envelope.id}`,
+          source: 'bus',
+          kind: 'forum-mention',
+          severity: envelope.priority === 'P0' ? 'high' : 'warn',
+          blocking: false,
+          title: oneLine(`forum mention for ${envelope.to}: ${busBodySummary(envelope.body) ?? 'forum thread'}`, TITLE_MAX),
+          detail: detail || null,
+          since: iso(receipt.receivedAt),
+          expiresAt: iso(now + envelope.ttl),
+          ...jobIdsField(busBodyJobIds(envelope.body)),
+          act: [
+            `phm agents bus show ${envelope.id}`,
+            `phm comms bus read --to ${envelope.to}`,
           ],
         });
         continue;
@@ -3899,6 +4449,544 @@ async function readRouterQueueSource(options: { runsDir?: string; now?: () => nu
   }
 }
 
+/**
+ * Running jobs that are not really running — dispatchd run markers
+ * (`queue/run/<job>.line` open, `.fin` absent) whose recorded pid is gone
+ * (GHOST) or whose log has been silent past the stuck bound (STUCK) — the
+ * same `readStuckJobs`/`jobs.stuck.v1` read `phm jobs stuck` and the
+ * `--stuck` pass of `phm fleet stray-stop` serve, so this source and those
+ * surfaces can never disagree. Until now a dead or hung job held its
+ * lane's running count — every status, vitals and capacity read inflated —
+ * while no pending surface named it: the bus, feed, board, queue and
+ * channel sources all look at work not yet claimed or refused, never at
+ * markers that claim a run which is not happening. Each row lists as a
+ * warn `stuck-ghost`/`stuck-job` naming the job id (the same label
+ * `phm jobs stuck` prints), `since` the recorded start reconstructed at
+ * the report's whole-minute precision (`age_min` floors to minutes, so
+ * the reconstructed start can sit up to a minute late; `age_min` null —
+ * the marker kept no start — leaves `since` null rather than guessing)
+ * and `expiresAt` null: a lying marker waits for stray-stop or a finish,
+ * never a guessed deadline. The job id is the item's own citation, so
+ * `--job` matches. The read itself never writes: closing a ghost marker
+ * or stopping a stuck job is `phm fleet stray-stop --stuck --apply`'s
+ * job, which the self-tick also runs.
+ */
+async function jobsStuckItems(read: NonNullable<UnifiedInboxOptions['readJobsStuck']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: JobsStuckSourceRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const nowMs = (options.now ?? Date.now)();
+  const items = result.jobs.map((job): Omit<UnifiedInboxItem, 'priority'> => {
+    const ageMin = typeof job.age_min === 'number' && Number.isFinite(job.age_min) && job.age_min >= 0
+      ? job.age_min : null;
+    const ghost = job.kind === 'ghost';
+    return {
+      id: `jobs-stuck:${job.job}`,
+      source: 'jobs-stuck',
+      kind: ghost ? 'stuck-ghost' : 'stuck-job',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(ghost
+        ? `Job ${job.job} counted running but its process is gone`
+        : `Job ${job.job} running with a silent log`, TITLE_MAX),
+      detail: oneLine(`lane ${job.lane} · ${ageMin === null ? 'age unknown' : `age ${queueWaitLabel(ageMin * 60)}`} · last log ${job.last_log_at ?? 'none'} · ${job.why}`, DETAIL_MAX) || null,
+      since: ageMin === null ? null : iso(nowMs - ageMin * 60_000),
+      expiresAt: null,
+      jobIds: [job.job],
+      act: ['phm jobs stuck', 'phm fleet stray-stop --stuck --apply'],
+    };
+  });
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real jobs-stuck read: `readStuckJobs` on the shared runs dir. The
+ * read itself never throws — an unlistable marker directory comes back
+ * `known:false`, which this maps by probing `queue/run`: verified absent
+ * is 'missing' (no job can count as running, so nothing can be stuck),
+ * anything else is 'unavailable' — the stuck set is unknown, never an
+ * empty list passed off as fact. */
+async function readJobsStuckSource(options: { runsDir?: string; now?: () => number }): Promise<JobsStuckSourceRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const report: StuckJobsReport = await readStuckJobs({ runsDir: dir, now: options.now });
+  if (report.known) return { state: 'healthy', jobs: report.stuck };
+  try {
+    lstatSync(join(dir, 'queue', 'run'));
+    return { state: 'unavailable', jobs: [] };
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? 'missing' : 'unavailable', jobs: [] };
+  }
+}
+
+/**
+ * PARKED rows in the dispatch ready queue — the same `readFleetQueue`
+ * `depDetail` projection `phm fleet queue-parked`, `phm fleet parked` and
+ * the autopilot's `stale-parked-deps` gap serve, so this source and those
+ * surfaces can never disagree. Each dependency-gated row lists once under
+ * its own state: gates still lacking a MERGED outcome list as info
+ * `parked-dep-waiting` (queued work correctly waiting on named jobs), a
+ * row whose gates ALL merged yet was never unparked lists as warn
+ * `parked-dep-stale` (stuck work — the auto-unpark pass should have freed
+ * it). `jobIds` carries the parked job's own id plus the gate ids the
+ * detail names, so `--job` finds the row under the parked job and under
+ * every job it waits on. Every non-dependency parked reason+lane group
+ * lists once as info `parked-group` — the same rollup those reads print —
+ * with `jobIds` the group's own listed job ids. `since`/`expiresAt` stay
+ * null throughout: ready.tsv rows keep no park timestamp and a parked job
+ * waits for its gates or an unpark pass, never a guessed deadline; no item
+ * is Mason-blocking.
+ */
+async function queueParkedItems(read: NonNullable<UnifiedInboxOptions['readQueueParked']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: QueueParkedRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const degraded = result.state === 'degraded'
+    ? ' · ready.tsv read degraded — the parked set may be incomplete' : '';
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [
+    ...result.waiting.map((row): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `queue-parked:${row.job}`,
+      source: 'queue-parked',
+      kind: 'parked-dep-waiting',
+      severity: 'info',
+      blocking: false,
+      title: oneLine(`Job ${row.job} parked on unmet dependency gates`, TITLE_MAX),
+      detail: oneLine(`lane ${row.lane ?? 'unknown'} · waiting on gates ${row.unmet.join(', ')} — no MERGED outcome recorded${degraded}`, DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      ...jobIdsField([row.job, ...row.unmet]),
+      act: ['phm fleet queue-parked', 'phm fleet autopilot --once'],
+    })),
+    ...result.stale.map((row): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `queue-parked:${row.job}`,
+      source: 'queue-parked',
+      kind: 'parked-dep-stale',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Job ${row.job} parked past merged dependency gates`, TITLE_MAX),
+      detail: oneLine(`lane ${row.lane ?? 'unknown'} · all gates MERGED (${row.gates.join(', ')}) yet the row was never unparked — a stale-park signal${degraded}`, DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      ...jobIdsField([row.job, ...row.gates]),
+      act: ['phm fleet queue-parked', 'phm fleet autopilot --once'],
+    })),
+    // Every other parked reason lists once per reason+lane group — the same
+    // rollup `phm fleet queue-parked`'s `parked REASON (lane): count [jobs]`
+    // lines print — so a BYHAND/HOLD/MERGERATE backlog is visible here too,
+    // not only the dependency-gated rows above. `count` is the group's true
+    // total while `jobs` is the projection's own eight-id cap, so the detail
+    // names the overflow rather than passing the listed ids off as the set.
+    ...result.groups.map((group): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `queue-parked:${group.reason}:${group.lane ?? 'unknown'}`,
+      source: 'queue-parked',
+      kind: 'parked-group',
+      severity: 'info',
+      blocking: false,
+      title: oneLine(`${group.count} job${group.count === 1 ? '' : 's'} parked ${group.reason}`, TITLE_MAX),
+      detail: oneLine(`lane ${group.lane ?? 'unknown'} · jobs ${group.jobs.join(', ')}${group.count > group.jobs.length ? ` · +${group.count - group.jobs.length} more` : ''} — parked under a non-dependency reason, never a gate wait or stale park${degraded}`, DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      ...jobIdsField(group.jobs),
+      act: ['phm fleet queue-parked', 'phm fleet parked'],
+    })),
+  ];
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real queue-parked read: `readFleetQueue` with `depDetail` on the
+ * shared runs dir — the same bounded read `phm fleet queue-parked` and the
+ * autopilot's `stale-parked-deps` gap serve. The projection never throws
+ * on an absent or unreadable store: `sources.ready` carries the verdict —
+ * 'missing' a verified-absent `ready.tsv` (no parked rows can exist),
+ * 'degraded' a partial read (the listed rows are a floor) — and any throw
+ * is 'unavailable', never an empty queue passed off as fact. */
+async function readQueueParkedSource(options: { runsDir?: string; now?: () => number }): Promise<QueueParkedRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  try {
+    const view: FleetQueueV1 = await readFleetQueue({ runsDir: dir, depDetail: true, now: options.now });
+    const ready = view.sources.ready;
+    const state: UnifiedInboxSourceState = ready === 'missing' ? 'missing'
+      : ready === 'degraded' ? 'degraded' : 'healthy';
+    return { state, waiting: view.unmetDeps ?? [], stale: view.metDeps ?? [],
+      groups: view.groups.filter((group) => !isDependencyParkedReason(group.reason)) };
+  } catch {
+    return { state: 'unavailable', waiting: [], stale: [], groups: [] };
+  }
+}
+
+/** A fix PR stuck this long lists 'high' — the same hour mark the web-ui
+ * needs-you strip's urgent band applies to the same rows. */
+const STUCK_FIX_HIGH_MINUTES = 60;
+
+/**
+ * Guardian FIXUP-MAIN jobs whose published pull request never reached a
+ * terminal outcome — the same `findStuckFixes`/`readStuckFixes` fold `phm
+ * fleet stuck-fixes`, `phm fleet main-health`, the verse runs-history
+ * `stuck-fixes` route and the web-ui needs-you strip serve, over
+ * `<runsDir>/metrics/jobs.jsonl`, so this source and those surfaces can
+ * never disagree. Until now a fix PR sitting open past the 20-minute
+ * terminal-outcome bound had no item-level surface here: the jobs-stuck
+ * source reads run markers, the queue sources read ready/router rows, and
+ * every bus/feed/board read looks at work not yet claimed — while a
+ * guardian fix that published and then stalled was invisible to the one
+ * view an agent checks for work. Each stuck row lists once as a
+ * `stuck-fix` — warn, 'high' once the PR has been stuck an hour, the
+ * same escalation the needs-you strip applies — naming the repo
+ * ('unknown repo' when no repo is on record), the PR url and the job
+ * id, `since`
+ * the recorded publish time and `expiresAt` null: a stuck fix waits for
+ * a merge or close decision, never a guessed deadline. The job id is the
+ * item's own citation, so `--job` matches. `phm fleet main-health`'s own
+ * rule applies — a verified-absent ledger means no fix PR was ever
+ * published, so 'missing' (verified-empty); a ledger that exists but
+ * cannot be folded is 'unavailable' — the stuck set is unknown, never an
+ * empty list passed off as fact.
+ */
+async function stuckFixItems(read: NonNullable<UnifiedInboxOptions['readStuckFixes']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: StuckFixesSourceRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const items = result.stuck.map((fix): Omit<UnifiedInboxItem, 'priority'> => ({
+    id: `stuck-fixes:${fix.job}`,
+    source: 'stuck-fixes',
+    kind: 'stuck-fix',
+    severity: fix.ageMinutes >= STUCK_FIX_HIGH_MINUTES ? 'high' : 'warn',
+    blocking: false,
+    title: oneLine(`${fix.repo ?? 'unknown repo'} fix PR stuck ${fix.ageMinutes} min`, TITLE_MAX),
+    detail: oneLine(`job ${fix.job} · ${fix.prUrl} · no MERGED/CLOSED outcome recorded`, DETAIL_MAX) || null,
+    since: fix.publishedAt,
+    expiresAt: null,
+    jobIds: [fix.job],
+    act: ['phm fleet stuck-fixes', 'phm fleet main-health'],
+  }));
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real stuck-fixes read: `readStuckFixes` on the shared runs dir. The
+ * fold itself never throws — an unreadable ledger comes back `known:false`
+ * — so existence is probed first, the same convention `jobs-stuck` and
+ * `phm fleet main-health` apply: a verified-absent `metrics/jobs.jsonl`
+ * means no fix PR was ever published ('missing', verified-empty), while a
+ * ledger that exists but cannot be folded is 'unavailable' — the stuck
+ * set is unknown, never an empty list passed off as fact. */
+async function readStuckFixesSource(options: { runsDir?: string; now?: () => number }): Promise<StuckFixesSourceRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  try {
+    lstatSync(join(dir, 'metrics', 'jobs.jsonl'));
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? 'missing' : 'unavailable', stuck: [] };
+  }
+  const report = await readStuckFixes({ runsDir: dir, now: options.now });
+  return report.known ? { state: 'healthy', stuck: report.stuck } : { state: 'unavailable', stuck: [] };
+}
+
+/**
+ * Finished work in kept worktrees that never became a pull request — the
+ * same `readStrandedWork`/`findStrandedWork` fold `phm fleet stranded`
+ * serves, over `<runsDir>/queue/status.json`'s kept list, the
+ * `metrics/jobs.jsonl` finish events, each job's `.publish` sidecar and
+ * the queue run markers, so this source and that surface can never
+ * disagree. Until now finished-but-unshipped work had no item-level
+ * surface here: the jobs-stuck source reads open run markers, the queue
+ * sources read ready/router rows, the stuck-fixes source reads published
+ * fix PRs, and every bus/feed/board read looks at work not yet claimed —
+ * while a job that finished with real changes and then stopped short of
+ * a PR (a publish abort, a safety-gate stop, an unexplained result) sat
+ * invisible in a kept worktree, its diff at risk of being reaped or
+ * forgotten. Each unrecovered stranded row lists once as a warn
+ * `stranded-worktree` naming the job id, `since` the recorded finish
+ * time (null when the ledger kept none — unknown stays unknown) and
+ * `expiresAt` null: a stranded job waits for a republish or re-run,
+ * never a guessed deadline; the job id is the item's own citation, so
+ * `--job` matches. Rows a later job already recovered — or a verify
+ * already proved on main — never list: their own next step says there
+ * is nothing to do. The kept-list rule `phm fleet stranded` itself
+ * reports applies — a verified-absent `queue/status.json` is 'missing'
+ * (no kept worktree can be listed, so no finished work can be
+ * stranded), a kept list that exists but cannot be read or a throwing
+ * read is 'unavailable' — the stranded set is unknown, never an empty
+ * list passed off as fact — and a known read with gaps (an unreadable
+ * metrics ledger leaves finish times and sizes unknown, so the listed
+ * rows are a floor) is 'degraded'.
+ */
+async function strandedWorkItems(read: NonNullable<UnifiedInboxOptions['readStrandedWork']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: StrandedWorkSourceRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const items = result.items
+    .filter((item) => item.recovered_by === null && item.verify !== 'already_on_main')
+    .map((item): Omit<UnifiedInboxItem, 'priority'> => {
+      const cause = item.cause.replaceAll('_', ' ');
+      const size = item.diff_files === null ? 'size unknown'
+        : `${item.diff_files} files, ${item.diff_lines === null ? 'lines unknown' : `${item.diff_lines} lines`}`;
+      return {
+        id: `stranded-work:${item.job}`,
+        source: 'stranded-work',
+        kind: 'stranded-worktree',
+        severity: 'warn',
+        blocking: false,
+        title: oneLine(`Job ${item.job} finished with changes but no pull request`, TITLE_MAX),
+        detail: oneLine(`${item.repo} · ${item.lane} lane · ${cause} · ${size} — ${item.next_step}`, DETAIL_MAX) || null,
+        since: item.finished_at,
+        expiresAt: null,
+        jobIds: [item.job],
+        act: item.cause === 'abort_after_push'
+          ? ['phm fleet stranded', 'phm fleet republish', 'phm fleet kept-worktrees']
+          : ['phm fleet stranded', 'phm fleet kept-worktrees'],
+      };
+    });
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real stranded-work read: `readStrandedWork` on the shared runs
+ * dir, its kept-worktree fold mapped onto the unified source states —
+ * the same existence probe `jobs-stuck`/`stuck-fixes` apply: a
+ * verified-absent `queue/status.json` means no kept worktree can be
+ * listed, so no finished work can be stranded ('missing',
+ * verified-empty); a status file that exists but whose kept list cannot
+ * be read is 'unavailable' — the stranded set is unknown, never an
+ * empty list passed off as fact; and a known read carrying gaps — an
+ * unreadable metrics ledger leaves finish times and sizes unknown — is
+ * 'degraded', the listed rows a floor. The read itself never throws on
+ * missing files; a throwing read is 'unavailable' all the same. */
+async function readStrandedWorkSource(options: { runsDir?: string; now?: () => number }): Promise<StrandedWorkSourceRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  try {
+    lstatSync(join(dir, 'queue', 'status.json'));
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? 'missing' : 'unavailable', items: [] };
+  }
+  try {
+    const report = await readStrandedWork({ runsDir: dir, now: options.now?.() });
+    if (!report.known) return { state: 'unavailable', items: [] };
+    return { state: report.gaps.length > 0 ? 'degraded' : 'healthy', items: report.items };
+  } catch {
+    return { state: 'unavailable', items: [] };
+  }
+}
+
+/** Deep links per dispatch-stuck cause: a lane refusal is fixed by moving
+ * the row (`phm queue lane`), a worktree cleanup failure by inspecting the
+ * worktrees, and an unrecognised cause by reading the raw event lines —
+ * every item still leads with the `phm fleet stuck` diagnostic. */
+const dispatchStuckActs = (job: DispatchStuckJob): readonly string[] => {
+  if (job.cause === 'lane_refused_size' || job.cause === 'lane_refused_repo') {
+    return ['phm fleet stuck', `phm queue lane ${job.job} <lane>`, 'phm queue'];
+  }
+  if (job.cause === 'worktree_cleanup_failed') return ['phm fleet stuck', 'phm fleet worktrees', 'phm queue'];
+  return ['phm fleet stuck', 'phm fleet dispatch-events', 'phm queue'];
+};
+
+/**
+ * Queued jobs dispatch keeps refusing or failing — the same
+ * `findStuckJobs`/`readDispatchStuckJobs` fold `phm fleet stuck` and the
+ * `fleet.stuck.v1` row of `phm fleet vitals` serve, over the tail of
+ * `dispatch-events.log` plus the ready list's lane attribution, so this
+ * source and those surfaces can never disagree. Until now a job the
+ * dispatcher could never place — a lane refusing its size or repo every
+ * tick, a worktree cleanup that keeps failing — had no item-level surface
+ * here: the router-queue source lists only READY rows in
+ * `queue/router-queue.md`, the queue-parked source lists only PARKED
+ * rows, the jobs-stuck source reads run markers for jobs already
+ * launched, and every bus/feed/board read looks at work not yet claimed —
+ * while the refused job sat in the queue generating refusal events an
+ * agent had to already know to look for. Each stuck row lists once as a
+ * warn `dispatch-stuck` naming the job id — the same label `phm fleet
+ * stuck` prints — `since` the first recorded refusal or failure (the
+ * moment the stuck condition began) and `expiresAt` null: a refused job
+ * waits for a lane move or a queue edit, never a guessed deadline; the
+ * job id is the item's own citation, so `--job` matches. A degraded
+ * ready read still lists every event-proven job — the events log, not
+ * the ready list, proves the stuck set — but marks the source 'degraded'
+ * and says so in the detail: lane attribution is a floor, never a
+ * complete set.
+ */
+async function dispatchStuckItems(read: NonNullable<UnifiedInboxOptions['readDispatchStuck']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: DispatchStuckSourceRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const degraded = result.state === 'degraded'
+    ? ' · ready.tsv read degraded — lane may be misattributed' : '';
+  const items = result.jobs.map((job): Omit<UnifiedInboxItem, 'priority'> => {
+    const refused = job.kind.endsWith('_REFUSED');
+    return {
+      id: `dispatch-stuck:${job.job}`,
+      source: 'dispatch-stuck',
+      kind: 'dispatch-stuck',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Job ${job.job} cannot launch — dispatch keeps ${refused ? 'refusing' : 'failing'} it`, TITLE_MAX),
+      detail: oneLine(`lane ${job.lane ?? 'unknown'} · waiting ${queueWaitLabel(job.ageSeconds)} · ${job.events} events · ${job.kind}${job.reason ? ` ${job.reason}` : ''} · ${job.action}${degraded}`, DETAIL_MAX) || null,
+      since: job.firstSeen,
+      expiresAt: null,
+      jobIds: [job.job],
+      act: dispatchStuckActs(job),
+    };
+  });
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real dispatch-stuck read: `readDispatchStuckJobs` on the shared
+ * runs dir — the same bounded read `phm fleet stuck` and the
+ * `fleet.stuck.v1` row of `phm fleet vitals` serve. `phm fleet stuck`'s
+ * own health rule applies — the event log is the only witness a job is
+ * being refused, so a missing or unreadable log leaves the stuck set
+ * unknown ('unavailable', pending null), never an empty list passed off
+ * as fact; a degraded ready read keeps every event-proven job but marks
+ * the source 'degraded' — lane attribution is a floor. */
+async function readDispatchStuckSource(options: { runsDir?: string; now?: () => number }): Promise<DispatchStuckSourceRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  try {
+    const report: DispatchStuckRead = await readDispatchStuckJobs({ runsDir: dir }, options.now?.() ?? Date.now());
+    if (report.sources.events !== 'healthy') return { state: 'unavailable', jobs: [] };
+    return { state: report.sources.ready === 'degraded' ? 'degraded' : 'healthy', jobs: report.jobs };
+  } catch {
+    return { state: 'unavailable', jobs: [] };
+  }
+}
+
+/** The freshness bound a live invocation's verdict is judged against — the
+ * same 30-minute `maxAgeMs` `phm fleet apps-recovery-check` callers and the
+ * operator glance pass by convention: older than this with no terminal
+ * outcome, the run is 'stale' (silent), never 'healthy'. */
+const APPS_RECOVERY_MAX_AGE_MS = 30 * 60_000;
+/** A terminal-'failed' verdict lists only inside the same 24-hour window the
+ * apps-watch/apps-recovery-bus announcement envelopes carry as their TTL —
+ * the failure stays a pending incident while its announcement would still be
+ * live on the bus, then ages out of the view like the envelope itself. */
+const APPS_RECOVERY_FAILED_WINDOW_MS = 24 * 3_600_000;
+
+/** The app names an incident line carries — the same rule
+ * `appsRecoveryIncident` applies: apps whose retained observation is not
+ * provably running, falling back to the observed list, first three names
+ * plus a "+N" tail, 'apps' when the store kept none. */
+function appsRecoveryIncidentApps(row: AppsRecoverySourceRead['invocations'][number]): string {
+  const down = row.retainedObservedState?.filter(item => item.observedRunning !== true).map(item => item.app);
+  const names = down !== undefined && down.length > 0 ? down : row.observedApps ?? [];
+  return names.length === 0 ? 'apps'
+    : names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3}` : '');
+}
+
+/**
+ * Apps-watch supervision runs whose retained verdict is still an open
+ * incident — the same `readAppsRecoveryInvocations`/`appsRecoveryVerdict`
+ * fold `phm fleet apps-recovery-state`, `apps-recovery-check`,
+ * `apps-recovery-wait`, `apps-recovery-batch` and `phm fleet glance` serve,
+ * over `<runsDir>/bus-inbox`'s retained `apps-watch.*` events, so this
+ * source and those surfaces can never disagree. Until now a failing or
+ * silent supervision run had no item-level surface here: the bus source
+ * lists only pending envelopes, and the glance is a status line an agent
+ * had to already know to run — while a watch cycling against dead apps or
+ * one that stopped reporting sat invisible in the one view an agent checks
+ * for work. A live invocation (`terminalOutcome` null) whose verdict is
+ * 'unhealthy' lists as warn `apps-recovery-retrying` naming the apps still
+ * down, one 'stale' — silent past the freshness bound — as warn
+ * `apps-recovery-silent`; a 'terminal' verdict lists only on
+ * `terminalOutcome === 'failed'` inside the announcement window as high
+ * `apps-recovery-failed` — 'completed'/'cancelled' runs are finished
+ * history their summary already announced, and 'healthy'/'unknown'
+ * verdicts never fabricate an incident. `since` is the invocation's latest
+ * retained event time (null when none parses — unknown stays unknown);
+ * `expiresAt` is null for live rows — an unhealthy or silent run waits for
+ * repair, never a guessed deadline — or the announcement window's end for
+ * a failed one. The verdict is computed with the same `maxAgeMs` the
+ * check CLI and glance use; a truncated projection already answers
+ * 'unknown' for every live row, so only proven verdicts list. The
+ * invocation id is embedded in each act so one copy-paste probes exactly
+ * this run. No item names a job and none is Mason-blocking.
+ */
+function appsRecoveryItems(read: NonNullable<UnifiedInboxOptions['readAppsRecovery']>,
+  options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const nowMs = (options.now ?? Date.now)();
+  let projection: AppsRecoverySourceRead;
+  try { projection = read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  const state: UnifiedInboxSourceState = projection.availability !== 'available' ? 'unavailable'
+    : projection.truncated ? 'degraded' : 'healthy';
+  if (state === 'unavailable') return { report: { state, pending: null }, items: [] };
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const row of projection.invocations) {
+    const verdict = appsRecoveryVerdict(projection, row.invocationId, APPS_RECOVERY_MAX_AGE_MS, nowMs);
+    const since = Number.isFinite(row.latestTime) ? iso(row.latestTime) : null;
+    const acts = [
+      `phm fleet apps-recovery-check --invocation ${row.invocationId} --max-age-ms ${APPS_RECOVERY_MAX_AGE_MS} --json`,
+      'phm fleet apps-recovery-state --json',
+    ];
+    if (verdict.verdict === 'unhealthy') {
+      items.push({
+        id: `apps-recovery:${row.invocationId}`,
+        source: 'apps-recovery',
+        kind: 'apps-recovery-retrying',
+        severity: 'warn',
+        blocking: false,
+        title: oneLine(`App recovery retrying: ${appsRecoveryIncidentApps(row)}`, TITLE_MAX),
+        detail: oneLine(`${row.consecutiveFailures} consecutive failed cycles · ${row.totalFailedCycles} total · invocation ${row.invocationId}`, DETAIL_MAX) || null,
+        since,
+        expiresAt: null,
+        act: acts,
+      });
+    } else if (verdict.verdict === 'stale') {
+      const silentMin = verdict.ageMs === null ? null : Math.floor(verdict.ageMs / 60_000);
+      items.push({
+        id: `apps-recovery:${row.invocationId}`,
+        source: 'apps-recovery',
+        kind: 'apps-recovery-silent',
+        severity: 'warn',
+        blocking: false,
+        title: oneLine(silentMin === null ? 'App recovery silent' : `App recovery silent for ${silentMin} min`, TITLE_MAX),
+        detail: oneLine(`no retained event inside the freshness window · invocation ${row.invocationId}`, DETAIL_MAX) || null,
+        since,
+        expiresAt: null,
+        act: acts,
+      });
+    } else if (verdict.verdict === 'terminal' && verdict.terminalOutcome === 'failed' &&
+      (!Number.isFinite(row.latestTime) || nowMs - row.latestTime <= APPS_RECOVERY_FAILED_WINDOW_MS)) {
+      items.push({
+        id: `apps-recovery:${row.invocationId}`,
+        source: 'apps-recovery',
+        kind: 'apps-recovery-failed',
+        severity: 'high',
+        blocking: false,
+        title: oneLine(`App recovery failed: ${appsRecoveryIncidentApps(row)}`, TITLE_MAX),
+        detail: oneLine(`terminal outcome failed · ${row.totalFailedCycles} failed cycles · invocation ${row.invocationId}`, DETAIL_MAX) || null,
+        since,
+        expiresAt: Number.isFinite(row.latestTime) ? iso(row.latestTime + APPS_RECOVERY_FAILED_WINDOW_MS) : null,
+        act: acts,
+      });
+    }
+  }
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
+}
+
+/** The real apps-recovery read: `readAppsRecoveryInvocations` on the shared
+ * runs dir — the same bounded retained-history scan `phm fleet
+ * apps-recovery-state` serves. The projection never throws on a missing
+ * store (an absent bus-inbox reads 'available' with no events); a throwing
+ * seam is 'unavailable', never an empty incident list passed off as fact. */
+function readAppsRecoverySource(options: { runsDir?: string; now?: () => number }): AppsRecoverySourceRead {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  return readAppsRecoveryInvocations(dir);
+}
+
 /** Display label and deep links per channel-health leg; telegram's acts differ because its diagnostic is `phm comms health`, not `phm fleet channel-health`. */
 const channelHealthPresentation = (channel: string): { label: string; acts: readonly string[] } =>
   channel === 'slack'
@@ -4188,7 +5276,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const ownerDelivery = ownerDeliveryItems(options.readOwnerUndelivered ?? readOwnerUndeliveredReplies, options.runsDir);
   const ownerPair = ownerPairItems(options.readOwnerPair ?? ((o) => readOwnerPairPending(o.configDir)),
     fixedOwnerConfigDir(), now);
+  const inboxAcks = await inboxAckItems(options.readInboxAcks ?? readInboxAcks, options.runsDir);
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
+  const commsMail = await commsMailItems(options.readCommsInbox ?? readCommsAgentInbox, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
   const bus = busItems(options);
   const mailbox = mailboxItems(options.readMailbox ?? readMailboxPending, options);
   const board = boardItems(options.readBoard ?? readBusBoardPending, options);
@@ -4221,7 +5311,13 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const claimDrift = claimDriftItems(options.readClaimDrift ?? readClaimStoreDrift, options);
   const sendGate = sendGateItems(options.readKillSwitch ?? readKillSwitch, options.probePause ?? probePauseState);
   const routerQueue = await routerQueueItems(options.readRouterQueue ?? readRouterQueueSource, options);
+  const jobsStuck = await jobsStuckItems(options.readJobsStuck ?? readJobsStuckSource, options);
   const channelHealth = await channelHealthItems(options);
+  const queueParked = await queueParkedItems(options.readQueueParked ?? readQueueParkedSource, options);
+  const stuckFixes = await stuckFixItems(options.readStuckFixes ?? readStuckFixesSource, options);
+  const strandedWork = await strandedWorkItems(options.readStrandedWork ?? readStrandedWorkSource, options);
+  const dispatchStuck = await dispatchStuckItems(options.readDispatchStuck ?? readDispatchStuckSource, options);
+  const appsRecovery = appsRecoveryItems(options.readAppsRecovery ?? readAppsRecoverySource, options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -4231,7 +5327,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'owner-thread': ownerThread.report,
     'owner-delivery': ownerDelivery.report,
     'owner-pair': ownerPair.report,
+    'inbox-acks': inboxAcks.report,
     drafts: drafts.report,
+    'comms-mail': commsMail.report,
     bus: bus.report,
     mailbox: mailbox.report,
     board: board.report,
@@ -4259,9 +5357,15 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'claim-drift': claimDrift.report,
     'send-gate': sendGate.report,
     'router-queue': routerQueue.report,
+    'jobs-stuck': jobsStuck.report,
     'channel-health': channelHealth.report,
+    'queue-parked': queueParked.report,
+    'stuck-fixes': stuckFixes.report,
+    'stranded-work': strandedWork.report,
+    'dispatch-stuck': dispatchStuck.report,
+    'apps-recovery': appsRecovery.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...channelHealth.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...inboxAcks.items, ...drafts.items, ...commsMail.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items, ...stuckFixes.items, ...strandedWork.items, ...dispatchStuck.items, ...appsRecovery.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
@@ -4272,7 +5376,8 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const filter = requested !== undefined &&
     (requested.source !== undefined || requested.kind !== undefined ||
       requested.severity !== undefined ||
-      requested.blocking !== undefined || requested.job !== undefined ||
+      requested.blocking !== undefined || requested.id !== undefined ||
+      requested.job !== undefined ||
       requested.since !== undefined || requested.before !== undefined ||
       requested.contains !== undefined)
     ? requested : undefined;
@@ -4289,6 +5394,10 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     (filter.kind === undefined || item.kind === filter.kind) &&
     (filter.severity === undefined || item.severity === filter.severity) &&
     (filter.blocking === undefined || item.blocking === filter.blocking) &&
+    // An id filter keeps only the item whose stable <source>:<ref> id strictly
+    // equals the value — the same exact-id match every bus read's --id
+    // applies; an item can never partially match its own id.
+    (filter.id === undefined || item.id === filter.id) &&
     // A job filter keeps only items whose own citation set names the job —
     // an item with no provable job relation stays out of the match.
     (filter.job === undefined || item.jobIds?.includes(filter.job) === true) &&

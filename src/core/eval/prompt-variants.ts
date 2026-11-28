@@ -18,6 +18,7 @@
 
 import { createHash } from 'node:crypto';
 
+import { asRecord } from './dataset-jsonl.js';
 import type { PolicyJobView } from './router-eval.js';
 import type { PromptPromotionsRegistry } from './prompt-promotions.js';
 
@@ -76,7 +77,7 @@ const ADAPTIVE: PromptVariant = {
   },
 };
 
-export const PROMPT_VARIANTS: readonly PromptVariant[] = [PLAIN, ADAPTIVE];
+const PROMPT_VARIANTS: readonly PromptVariant[] = [PLAIN, ADAPTIVE];
 
 export function promptVariant(arm: string): PromptVariant | undefined {
   return PROMPT_VARIANTS.find((v) => v.arm === arm);
@@ -120,7 +121,7 @@ export interface PromotionGateSpec {
   costRegressionTolerance: number;
 }
 
-export const DEFAULT_PROMOTION_GATE: PromotionGateSpec = {
+const DEFAULT_PROMOTION_GATE: PromotionGateSpec = {
   minResolvedPerArm: 8,
   maxUnobservedShare: 0.25,
   costRegressionTolerance: 0.5,
@@ -174,9 +175,7 @@ function compileClass(cls: PromptClassSpec, specId: string): CompiledClass {
 
 /** Parse and validate an experiment spec; malformed input throws. */
 export function parsePromptExperimentSpec(value: unknown): PromptExperimentSpec {
-  const rec = value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
+  const rec = asRecord(value);
   if (!rec) throw new Error('prompt-ab spec must be an object');
   if (rec.v !== 1) throw new Error(`prompt-ab spec: unsupported v ${JSON.stringify(rec.v)}`);
   const id = rec.id;
@@ -192,8 +191,8 @@ export function parsePromptExperimentSpec(value: unknown): PromptExperimentSpec 
   }
   const gate: Partial<PromotionGateSpec> = {};
   if (rec.gate !== undefined) {
-    const g = rec.gate as Record<string, unknown>;
-    if (g === null || typeof g !== 'object' || Array.isArray(g)) {
+    const g = asRecord(rec.gate);
+    if (!g) {
       throw new Error('prompt-ab spec gate must be an object');
     }
     for (const key of ['minResolvedPerArm', 'maxUnobservedShare', 'costRegressionTolerance'] as const) {

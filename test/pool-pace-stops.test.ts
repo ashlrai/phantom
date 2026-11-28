@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { reservePace } from '../src/core/usage/reserve-pace.js';
 import { buildFleetPace, readFleetPace } from '../src/core/fleet/pace-verdict.js';
+import { readPoolSources } from '../src/core/fleet/pool-evidence.js';
 import { paceStops } from '../src/core/fleet/pace-stops.js';
 import { cmdPoolWhy } from '../src/cli/pool-why.js';
 import { cmdPool } from '../src/cli/pool.js';
@@ -97,4 +98,29 @@ it('explains free slots, stale provider records, history and exhausted pools wit
   expect(await cmdPool(['why', '../bad'])).toBe(2);
   expect(await cmdPoolWhy(['absent'], read)).toBe(1);
   expect(error).toHaveBeenCalledTimes(2);
+});
+
+it('leaves codex-local CPU headroom unknown on win32, where os.loadavg() is a [0,0,0] stub', async () => {
+  root = await mkdtemp(join(tmpdir(), 'pool-'));
+  const lanes = { 'codex-local': { running: 1, target: 3 } };
+  const win = await readPoolSources(root, {}, lanes, [], now, null, () => 'win32');
+  expect(win['codex-local']!.headroom).toMatchObject({ slots: 2 });
+  expect(win['codex-local']!.headroom!.ramBytes).toBeGreaterThan(0);
+  expect(win['codex-local']!.headroom!.cpuCores).toBeUndefined();
+  const posix = await readPoolSources(root, {}, lanes, [], now, null, () => 'linux');
+  expect(typeof posix['codex-local']!.headroom!.cpuCores).toBe('number');
+});
+
+it('omits the CPU claim from a pace line whose cpu headroom was never measured', () => {
+  const data = buildFleetPace({ generatedAt: at(0), pools: [
+    { id: 'codex-local', usedPct: null, hoursLeft: null, burnPctPerHour: null, resetAt: null,
+      headroom: { slots: 2, ramBytes: 8 * 1024 ** 3 } },
+    { id: 'devin-flash', usedPct: null, hoursLeft: null, burnPctPerHour: null, resetAt: null,
+      headroom: { slots: 1, ramBytes: 4 * 1024 ** 3, cpuCores: 4 } },
+  ] }, now);
+  const rows = Object.fromEntries(data.pools.map(p => [p.pool, p]));
+  expect(rows['codex-local']!.line).toContain('RAM bytes');
+  expect(rows['codex-local']!.line).not.toContain('CPU cores');
+  expect(rows['codex-local']!.line).not.toContain('undefined');
+  expect(rows['devin-flash']!.line).toContain('4.0 CPU cores available');
 });

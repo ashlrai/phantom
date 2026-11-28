@@ -41,14 +41,13 @@
  *     gates elsewhere are never weakened from here.
  */
 
-import { readEnvironmentCredential } from './secrets.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { lstatSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import type { AshlrConfig } from '../types.js';
 import {
+  buildPulseExporterConfig,
   exportFleetEvents,
+  isGlobalKillSwitchOn,
+  resolveFleetPulsePat,
   shipDepEdges,
   pollFleetCommands,
   patchFleetCommand,
@@ -110,11 +109,6 @@ function withoutFleetMirrors(enrolled: string[]): string[] {
 
 /** Endpoint env var (spec). Falls back to cfg.pulse.endpoint then localhost. */
 const PULSE_URL_ENV = 'PULSE_URL';
-/** Fleet PAT env var (spec). Forwarded to exporter calls as opts.pat. */
-const PULSE_FLEET_PAT_ENV = 'PULSE_FLEET_PAT';
-/** Exporter-native PAT env vars (M89) — accepted as fallbacks. */
-const ASHLR_PULSE_PAT_ENV = 'ASHLR_PULSE_PAT';
-const ASHLR_PULSE_READ_PAT_ENV = 'ASHLR_PULSE_READ_PAT';
 
 /** Per-call cap so a flooded queue can't monopolise a tick. */
 const MAX_COMMANDS_PER_TICK = 25;
@@ -132,15 +126,6 @@ function resolveEndpoint(cfg: AshlrConfig): string | undefined {
   return undefined;
 }
 
-/** Resolve the fleet PAT (spec env → exporter envs). Null when none present. */
-function resolvePat(): string | null {
-  const pat =
-    readEnvironmentCredential(PULSE_FLEET_PAT_ENV) ??
-    readEnvironmentCredential(ASHLR_PULSE_READ_PAT_ENV) ??
-    readEnvironmentCredential(ASHLR_PULSE_PAT_ENV);
-  return pat && pat.length > 0 ? pat : null;
-}
-
 /**
  * Is the fleet→pulse round-trip enabled for this machine?
  * TRUE only when there is BOTH an endpoint AND a PAT, AND either the operator
@@ -149,7 +134,7 @@ function resolvePat(): string | null {
  */
 export function pulseSyncEnabled(cfg: AshlrConfig): boolean {
   const hasEndpoint = !!resolveEndpoint(cfg);
-  const hasPat = !!resolvePat();
+  const hasPat = !!resolveFleetPulsePat();
   const optedIn = cfg.pulse?.enabled === true || !!process.env[PULSE_URL_ENV];
   return hasEndpoint && hasPat && optedIn;
 }
@@ -160,15 +145,12 @@ export function pulseSyncEnabled(cfg: AshlrConfig): boolean {
  * the exporter decoupled from the full AshlrConfig tree (its own design).
  */
 function exporterConfig(cfg: AshlrConfig): PulseExporterConfig {
-  return {
-    pulse: { enabled: true, endpoint: resolveEndpoint(cfg) },
-    ...(cfg.user ? { user: { id: cfg.user.id, name: cfg.user.name } } : {}),
-  };
+  return buildPulseExporterConfig(cfg, resolveEndpoint(cfg));
 }
 
 /** The PAT forwarded to every exporter call (so env precedence is uniform). */
 function patOpt(): { pat: string } | undefined {
-  const pat = resolvePat();
+  const pat = resolveFleetPulsePat();
   return pat ? { pat } : undefined;
 }
 
@@ -238,16 +220,6 @@ export interface PulseAuthority {
 
 const pulseAuthorityStorage = new AsyncLocalStorage<PulseAuthority>();
 
-/** Match policy.killSwitchOn(): only a proven ENOENT is permissive. */
-function globalKillSwitchOn(): boolean {
-  try {
-    lstatSync(join(homedir(), '.ashlr', 'KILL'));
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
-  }
-}
-
 function combineSignals(first?: AbortSignal, second?: AbortSignal): AbortSignal | undefined {
   if (!first) return second;
   if (!second || first === second) return first;
@@ -259,7 +231,7 @@ function authorityFailure(
   signal?: AbortSignal,
 ): PulseAuthorityFailure | null {
   if (!ownsOutwardMutationFence(authority.fence)) return 'fence-lost';
-  if (globalKillSwitchOn()) return 'kill-switch';
+  if (isGlobalKillSwitchOn()) return 'kill-switch';
   if (aborted(authority.signal) || aborted(signal)) return 'aborted';
   return null;
 }
@@ -302,7 +274,7 @@ export async function withPulseAuthority<T>(
 
     // KILL is checked only after entering the global serialization boundary so
     // a concurrent resume/pause cannot race this decision.
-    if (globalKillSwitchOn()) return blocked('kill-switch');
+    if (isGlobalKillSwitchOn()) return blocked('kill-switch');
     if (aborted(signal)) return blocked('aborted');
 
     const activeAuthority: PulseAuthority = { fence, signal, pending: new Set() };
@@ -617,7 +589,7 @@ async function recoverExpiredClaimedCommands(
   const nowMs = Date.now();
   const leaseMs = commandClaimLeaseMs(cfg);
   for (const cmd of claimed.value.commands.slice(0, MAX_COMMANDS_PER_TICK)) {
-    if (aborted(signal) || globalKillSwitchOn()) return;
+    if (aborted(signal) || isGlobalKillSwitchOn()) return;
     if (cmd.status !== 'claimed' || cmd.claimedBy !== claimant ||
       !claimExpired(cmd, nowMs, leaseMs)) continue;
 
@@ -661,7 +633,7 @@ async function pollAndApplyCommandsWithAuthority(
     // before pending polling so a command abandoned when pause won can be
     // re-claimed on the same resumed/restarted pass without a false failure.
     await recoverExpiredClaimedCommands(cfg, xcfg, claimant, signal);
-    if (aborted(signal) || globalKillSwitchOn()) return out;
+    if (aborted(signal) || isGlobalKillSwitchOn()) return out;
     const polled = await underPulseAuthority(signal, (authority, effectiveSignal) =>
       pollFleetCommands(xcfg, {
         ...requestOpts(authority.fence, effectiveSignal),
@@ -673,7 +645,7 @@ async function pollAndApplyCommandsWithAuthority(
     if (!poll.ok || poll.commands.length === 0) return out;
 
     for (const cmd of poll.commands.slice(0, MAX_COMMANDS_PER_TICK)) {
-      if (aborted(signal) || globalKillSwitchOn()) break;
+      if (aborted(signal) || isGlobalKillSwitchOn()) break;
       const synchronizeCommand = async (): Promise<boolean> => {
         // 1. Atomically claim — skip if another machine got it first.
         const claimed = await underPulseAuthority(signal, (authority, effectiveSignal) =>
@@ -719,7 +691,7 @@ async function pollAndApplyCommandsWithAuthority(
         }
 
         // 4. Audit every applied command (metadata-only summary).
-        if (aborted(signal) || globalKillSwitchOn()) return false;
+        if (aborted(signal) || isGlobalKillSwitchOn()) return false;
         try {
           audit({
             action: 'pulse:command',
@@ -879,7 +851,7 @@ export async function runPulseSync(
     if (aborted(opts?.signal)) {
       return { ...disabled, enabled: true, detail: 'pulse-sync aborted after tick export' };
     }
-    if (globalKillSwitchOn()) {
+    if (isGlobalKillSwitchOn()) {
       return { ...disabled, enabled: true, tickEmitted, detail: 'pulse-sync blocked by global KILL' };
     }
 
@@ -893,7 +865,7 @@ export async function runPulseSync(
         detail: 'pulse-sync aborted during command sync',
       };
     }
-    if (globalKillSwitchOn()) {
+    if (isGlobalKillSwitchOn()) {
       return {
         ...disabled,
         enabled: true,
@@ -915,7 +887,7 @@ export async function runPulseSync(
         detail: 'pulse-sync aborted during dependency shipping',
       };
     }
-    if (globalKillSwitchOn()) {
+    if (isGlobalKillSwitchOn()) {
       return {
         enabled: true,
         tickEmitted,

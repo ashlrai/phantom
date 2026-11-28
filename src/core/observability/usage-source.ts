@@ -531,12 +531,13 @@ function collectRunEvents(sinceMs: number): UsageEvent[] {
 
     if (tokensIn === 0 && tokensOut === 0) continue;
 
+    const tokenEvidence = validateTokenEvidence(u["tokenEvidence"], tokensIn, tokensOut);
     events.push({
       ts,
       project: null,
       model,
       source: "run",
-      ...(validateTokenEvidence(u["tokenEvidence"], tokensIn, tokensOut) ? { tokenEvidence: validateTokenEvidence(u["tokenEvidence"], tokensIn, tokensOut) } : {}),
+      ...(tokenEvidence ? { tokenEvidence } : {}),
       tokensIn,
       tokensOut,
       cacheRead: 0,

@@ -1,5 +1,5 @@
 /** Local metadata only. Spend and token counts never stand in for a quota percentage. */
-import { cpus, freemem, loadavg } from 'node:os';
+import { cpus, freemem, loadavg, platform } from 'node:os';
 import { join } from 'node:path';
 import { readSource } from './runs-parked-queue.js';
 import { budgetTimestamp } from './resource-reset-evidence.js';
@@ -17,7 +17,8 @@ async function json(file: string) {
   try { return object(JSON.parse((await readSource(file, 4096, false)).text)); } catch { return {}; }
 }
 
-export async function readPoolSources(root: string, budget: Record<string, unknown>, lanes: Record<string, unknown>, samples: UsageReading[], now: number, statusAt: number | null): Promise<Record<string, PaceInput>> {
+export async function readPoolSources(root: string, budget: Record<string, unknown>, lanes: Record<string, unknown>, samples: UsageReading[], now: number, statusAt: number | null,
+  readPlatform: () => string = platform): Promise<Record<string, PaceInput>> {
   const result: Record<string, PaceInput> = {};
   for (const id of [...new Set([...POOLS, ...Object.keys(budget), ...Object.keys(lanes), ...samples.map(s => s.pool)])].filter(id => id !== 'codex-cmp').slice(0, 64)) {
     if (!/^[a-z0-9][a-z0-9._-]{0,79}$/.test(id)) continue;
@@ -41,7 +42,8 @@ export async function readPoolSources(root: string, budget: Record<string, unkno
       observedAt: newest ? new Date(time(newest.at)).toISOString() : null,
       source: newest?.source ?? `${file} or metrics/usage-history.json; metrics/jobs.jsonl records lane spend, not remaining quota`,
       ...(id === 'codex-local' || id === 'devin-flash' ? { headroom: { slots: lane.held === true || target === 0 || (number(lane.pause_new_until) ?? 0) > now / 1000 ? 0 : target === null || running === null ? null : Math.max(0, target - running),
-        ...(id === 'codex-local' ? { ramBytes: freemem(), cpuCores: Math.max(0, cpus().length - loadavg()[0]) } : {}) } } : {}),
+        // os.loadavg() is a [0,0,0] stub on Windows; cores-minus-load is not a CPU headroom there.
+        ...(id === 'codex-local' ? { ramBytes: freemem(), ...(readPlatform() === 'win32' ? {} : { cpuCores: Math.max(0, cpus().length - loadavg()[0]) }) } : {}) } } : {}),
     };
   }
   return result;

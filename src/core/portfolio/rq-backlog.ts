@@ -1,6 +1,8 @@
 /** Offline proposal planner. Nothing here executes job text or grants authority. */
 import { createHash } from 'node:crypto';
-import { scoreItem, sourceTierMultiplier } from './scoring.js';
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
+import { isPlainRecord, scoreItem, sourceTierMultiplier, WORK_SOURCES } from './scoring.js';
 
 export const RQ_MAX_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_ROWS = 20_000;
@@ -8,7 +10,6 @@ const REPO_RE = /^ashlrai\/[a-z0-9][a-z0-9._-]{0,99}$/;
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,179}$/;
 const STATES = ['READY', 'RUNNING', 'BLOCKED', 'DONE', 'FAILED', 'CANCELLED'] as const;
 const SOURCES = ['vision', 'issue', 'scan'] as const;
-const SCAN_SOURCES = ['issue', 'todo', 'test', 'dep', 'doc', 'security', 'plugin', 'self', 'lint', 'goal', 'hygiene', 'invent'];
 
 export interface RqConfig {
   v: 1;
@@ -42,8 +43,8 @@ export interface RqPlan {
 }
 
 function object(value: unknown): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected an object');
-  return value as Record<string, unknown>;
+  if (!isPlainRecord(value)) throw new Error('Expected an object');
+  return value;
 }
 
 function array(value: unknown, max: number): unknown[] {
@@ -123,8 +124,30 @@ function namesAnchors(job: RqJob): boolean {
 }
 
 /** A READY parked-family row without a worktree path and test file anchor. */
-export function rqJobIsParked(job: RqJob): boolean {
+function rqJobIsParked(job: RqJob): boolean {
   return job.status === 'READY' && PARKED_FAMILY.test(job.id) && !namesAnchors(job);
+}
+
+/**
+ * One bounded UTF-8 read through a single non-following descriptor: size
+ * checks cannot be defeated by replacing or growing the file between stat and
+ * read. Preserves BOM bytes so queue SHAs match actual file bytes.
+ */
+export async function readBoundedRqSnapshot(path: string): Promise<string> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stat = await file.stat();
+    if (!stat.isFile() || stat.size > RQ_MAX_FILE_BYTES) throw new Error('Invalid snapshot file');
+    const buffer = Buffer.alloc(RQ_MAX_FILE_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await file.read(buffer, length, buffer.length - length, null);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    if (length > RQ_MAX_FILE_BYTES) throw new Error('Snapshot is too large');
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, length));
+  } finally { await file.close(); }
 }
 
 /** Invalid queue data is unknown, never an empty queue. No partial admission. */
@@ -225,7 +248,7 @@ function candidates(value: unknown, config: RqConfig): Candidate[] {
       const id = text(scan['id'], 180);
       if (scanIds.has(id)) throw new Error('Duplicate scan identity');
       scanIds.add(id);
-      const source = member(scan['source'], SCAN_SOURCES);
+      const source = member(scan['source'], WORK_SOURCES);
       const title = text(scan['title'], 240);
       const detail = text(scan['detail'], 16_000, true);
       const value = integer(scan['value'], 1, 5);

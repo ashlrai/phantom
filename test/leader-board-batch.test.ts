@@ -25,6 +25,19 @@ describe('leader board rebase members recovered from #7167', () => {
     expect([...conflictingPrIds('RQ-REBASE-BATCH-PHANTOM-7-8-abcdef0')]).toEqual([]);
   });
 
+  it('counts queuegen retry-suffixed rebase ids toward their base PRs', () => {
+    const ids = conflictingPrIds([
+      'READY\tRQ-REBASE-PHANTOM-4021-abc1234-retry1\tdevin\twork',
+      'PARKED-DEP.codex\tRQ-REBASE-phantom-4023-u3f2a1b-RETRY2',
+      'READY\tRQ-REBASE-PHANTOM-4021-abc1234\tdevin\twork',
+      'READY\tRQ-REBASE-BATCH-PHANTOM-7-8-abcdef-retry1\tdevin\twork',
+      'READY\tRQ-REBASE-PHANTOM-4021-abc1234-retry1-extra\tdevin\twork',
+      'READY\tRQ-REBASE-PHANTOM-4021-abc1234-retryX\tdevin\twork',
+      'READY\tRQ-REBASE-PHANTOM-4021-retry1\tdevin\twork',
+    ].join('\n'));
+    expect([...ids].sort()).toEqual(['PHANTOM-4021', 'PHANTOM-4023', 'PHANTOM-7', 'PHANTOM-8']);
+  });
+
   it.each([
     'RQ-REBASE-BATCH-PHANTOM-7-8-abcdef-suffix',
     'RQ-REBASE-BATCH-PHANTOM-7-8-abcdefX',
@@ -32,6 +45,7 @@ describe('leader board rebase members recovered from #7167', () => {
     'RQ-REBASE-PHANTOM-7-uabcdef-suffix',
     'RQ-REBASE-PHANTOM-7-abcdef0X',
     'RQ-REBASE-PHANTOM-7-abcdef0-suffix',
+    'RQ-REBASE-PHANTOM-7-abcdef0-retry',
   ])('rejects incomplete or suffixed identifiers: %s', id => {
     expect([...conflictingPrIds(id)]).toEqual([]);
   });

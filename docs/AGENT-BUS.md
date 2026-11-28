@@ -8,7 +8,21 @@ It gives every agent a single shared inbox to read from and write to.
 
 GET `/api/verse/agent-bus?after=<cursor>&limit=<1..100>` (default limit 50)
 returns a cursor page: `{ v: 1, status, messages: [{ cursor, receivedAt,
-envelope }], nextCursor }`.  GET `/api/verse/agent-bus/status` returns
+envelope }], nextCursor }`. The same read takes the shared bus page
+filters — `to`, `from` and `excludeFrom` resolve routing labels through
+the agent identity registry with exact-label fallback, `id` and
+`inReplyTo` are exact own-field matches, `priority` is one P0–P3 band,
+`kind` one protocol kind, `topic` a topic name or `ns.*` prefix, and
+`thread`, `job`, `channel`, `bodyKind`, `result`, `since`, `before` and
+`contains` are the same body, address and receipt-time matches
+`phm comms bus read|watch --…`, `fleet bus-follow` and `fleet_bus_inbox`
+apply — all validated by `parseBusPageQuery` and narrowed by
+`filterBusInboxPage`, the one rule those reads share, so an HTTP read, a
+CLI read and an MCP read can never disagree about what a filter keeps.
+`limit` still counts scanned records before filtering: a page whose
+filters match nothing returns `messages: []` and still advances
+`nextCursor`, and the phone gateway continues to admit only the bare
+`after`/`limit` shape.  GET `/api/verse/agent-bus/status` returns
 `{ v: 1, source, retainedCount, retainedBytes, maxMessages, maxBytes,
 liveCount, expiredCount }`.  Read endpoints need a current read session and
 return 401 if absent or expired; `source` is `missing` when the store has
@@ -197,6 +211,22 @@ an unreadable bus or registry stays null rather than an invented empty
 thread list, and the tool accepts no caller root or path and never posts,
 claims, acks, replies or renews TTL.
 
+The fleet-wide catch-up reads carry the same bounded untrusted-data frame
+every `agents bus` read produces. `phm messages --frame <cli>` and
+`phm agents messages --frame <cli>` print the timeline page — head, one
+scrubbed row per message, the damaged-record tail — as one block marked
+untrusted under BEGIN/END UNTRUSTED AGENT BUS TIMELINE markers;
+`phm agents conversations --frame <cli>` prints the thread rollup the
+same way under BEGIN/END UNTRUSTED AGENT BUS CONVERSATIONS markers. Each
+read's own markers keep a timeline or conversations block from passing
+for an addressed inbox page, the scrub and flattening rules and the 32
+KiB clip bound with the cut stated are the ones every bus `--frame` read
+shares, and `--json` carries the block as `framed` beside the full
+projection while the human read prints it bare — so a host hands a CLI's
+next turn "what every agent said" or "which threads wait on whom" as
+marked-untrusted data in a single block. A missing or unreadable store
+frames its own state line, never an invented page.
+
 ## Write
 
 POST `/api/verse/agent-bus` sends one envelope; the caller needs
@@ -218,7 +248,8 @@ The `BusEnvelope` carries exactly six wire fields — each is a flat value:
 - `ttl` positive remaining lifetime in milliseconds (safe integer).
 - `body` opaque strict JSON data; no event-kind or payload interpretation.
 
-Caps: 1024 messages, 1 MiB total, 100 per read page.
+Caps: 1 MiB total, at most `BUS_INBOX_MAX_MESSAGES` (~9,986 minimal-size
+receipts) retained, 100 per read page.
 
 ## Conventions
 
@@ -515,6 +546,7 @@ untrusted data: a wake is a hint to read the inbox and grants no authority.
 [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>]
+[--topic <topic>]
 [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]`
 returns one page of
@@ -579,7 +611,16 @@ handoffs alike, matched on the delivery address rather than the reported
 kind — so an agent in several rooms reads one room's pending mail in one
 filtered read; it composes with `--kind` to separate a room's direct mail
 from its assignments, and a channel the agent is not a member of simply
-has no mail to show. `--contains` keeps only mail whose scrubbed
+has no mail to show. `--topic` keeps only mail addressed under that exact
+topic component of a well-formed `group:<room>:<topic>` address — the
+same `groupAddressTopicOf` verdict `phm messages --topic`, `channel
+read --topic`, `work feed --topic`, `work claim-next --topic`, `work
+next --topic`, `dead-letters --topic`, `thread --topic` and `work mine
+--topic` apply, decided on the row's own `to` label rather than the room
+name and validated by the same strict channel-name grammar — so it
+composes with `--channel` into one room AND one topic ("which of my
+pending mail concerns `group:eng:alerts`"), and a DM, legacy label or
+deeper `group:` label parses to no topic and never matches. `--contains` keeps only mail whose scrubbed
 one-line summary — the same text the `--frame` read renders per row —
 carries the needle as a case-insensitive substring, whitespace collapsed
 on both sides, so "did anyone send me mail about X" is one filtered read
@@ -688,9 +729,16 @@ watches one identity's addressed projection — DMs, handoffs, channel
 posts and legacy traffic with the same kind/held/job annotations `inbox`
 reports — so an agent on the unified surface can wait for mail without
 polling `inbox` in a loop or dropping to the raw-envelope stream.
+`fleet_agent_follow` (the isolated fleet MCP tool) serves the same
+`followAgentBus` projection as one bounded call — `agent` and a required
+`durationMs` capped at 60000 with the same inbox filters — collecting the
+emitted message records into a single response with the follower's
+terminal `outcome`, the safe `cursor` resume point and a 200-record bound
+reported as `limit`, so an MCP-connected agent waits for mail without a
+poll loop or a stdio stream.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
-[--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
+[--channel <name>] [--topic <topic>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]` lists wake
 hints for the agent — addressed under any spelling that resolves to its
 identity, exact first then lowercase, the same fold the inbox read
@@ -729,7 +777,18 @@ and every other filter: on a per-agent read it narrows to one room's
 hints for that agent (a channel the agent does not belong to simply has
 no hints to show), and on `--all` it answers "which hints concern room
 X" in one fleet read, with `matched` counting it inside the queue-tail
-match like `from`/`excludeFrom`. A ref that resolves to no registered identity keeps exact-label
+match like `from`/`excludeFrom`. `--topic` keeps only hints whose own
+`to` label parses to that exact topic component of a well-formed
+`group:<room>:<topic>` address — the same `groupAddressTopicOf` verdict
+every other bus read's `--topic` applies, decided on the hint's address
+alone like `--channel` so it needs no referent resolution and composes
+with `--channel` into one room AND one topic: a `bus.send` hint whose
+triggering envelope was addressed to `group:eng:alerts` matches
+`--topic alerts`, while a claim-holder `wh-…` hint's bare owner label
+and every DM parse to no topic and never match — "which wake hints
+concern `group:eng:alerts`" is one filtered read on a per-agent read or
+under `--all`, `matched` counting it inside the queue-tail match like
+`channel`. A ref that resolves to no registered identity keeps exact-label
 matching instead — the page reports `scope: 'label'` (vs `'identity'`),
 `agent` the queried label verbatim, and only hints whose `to` is that label
 match — so hints queued under a bare coordination or routing label, like the
@@ -833,12 +892,21 @@ cannot be read. Triage no longer costs one `agents bus show` per hint.
 `fleet_agent_wakes` (the isolated fleet MCP tool) serves the same read with
 the same dimensions as arguments — `agent` optional (omitted, the
 fleet-wide `--all` read under `scope: 'fleet'`), `since`/`job`/`from`/
-`excludeFrom`/`channel`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` the same filters — under the identical
+`excludeFrom`/`channel`/`topic`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` the same filters — under the identical
 `readAgentWakes`/`readAllWakes` validation, so an MCP-connected agent reads its wake
 hints, claim-holder citations and resolved referents — or the whole
 fleet's pending hints in one call — without shelling out
 to `phm`; it accepts no caller root or path and passes a refused or
-unavailable page through untouched.
+unavailable page through untouched. `--frame <cli>` prints the page as the
+same bounded block the inbox and channel-read `--frame`s produce —
+identical markers, scrub and clip bound — with each hint's bracket naming
+its id, recorded sender and addressee labels and the resolved referent's
+own priority plus the same held/holder/job evidence, and the resolved
+summary or claim-holder detail as payload; a hint whose referent is
+`unresolved` or `unknown` shows that state with no invented band or
+payload, so the claim-holder `wh-…` hints an inbox frame can never carry
+still reach a CLI's next turn as untrusted data. It is a CLI-only
+rendering, so `fleet_agent_wakes` takes no `frame` argument.
 
 **Lookup.** `phm agents bus show <id>` resolves one retained envelope by the
 wire id wake hints, `work mine` items and claim operations cite — the third
@@ -874,7 +942,17 @@ citation (`to` holder label, `statusId`, `jobId`, `status`, optional
 `detail`). A hint with no retained row or no reproducing receipt reports
 `not-found`, an unreadable wake queue `unavailable` — never a guessed
 receipt. Envelope ids are caller-chosen printable tokens, so a real
-receipt always wins over hint interpretation. `fleet_bus_show` (the
+receipt always wins over hint interpretation. On the unified surface,
+`agents bus show <id> --frame <cli>` prints the same resolution — the
+receipt row, scrubbed body summary and held/holder/job/wake-hint
+evidence — as one bounded block marked untrusted under
+BEGIN/END UNTRUSTED AGENT BUS ENVELOPE markers, the same scrub,
+flattening and 32 KiB clip bound the inbox, channel-read, wakes,
+`work mine`, `work feed`, thread, claims and dead-letters frames apply
+with the cut stated, so a host can hand the envelope a citation names
+to a CLI's next turn as data in a single block; `--json` carries it as
+`framed` beside the full lookup, and a not-found or unreadable lookup
+answers its own status rather than an invented envelope. `fleet_bus_show` (the
 isolated fleet MCP tool) serves the same read with `id` as its only
 argument — the same printable routing-label rule — so an MCP-connected
 agent resolves the `post=`/`status=`/`receipt=`/handoff and wake-hint
@@ -910,6 +988,15 @@ shared `groupAddressTopicOf` — decided on the raw routing label with no
 registry dependence, the same match every other bus read's `--topic`
 applies, composing with `--channel` into one room AND one topic while an
 agent address, a bare `group:<room>` or a malformed topic never matches.
+On the unified surface only, `--frame <cli>` prints the same chain — the
+verdict header and every receipt's summary and held/holder/job evidence —
+as one bounded block marked untrusted under BEGIN/END UNTRUSTED AGENT BUS
+THREAD markers, the same scrub, flattening and 32 KiB clip bound the
+inbox, channel-read, wakes, `work mine` and `work feed` frames apply with
+the cut stated, so a host can hand a whole exchange to a CLI's next turn
+as data in a single block; `--json` carries it as `framed` beside the
+full projection, and a proven miss frames its own not-found verdict
+rather than an invented chain.
 All three surfaces read with live evidence: every message
 carries the same `held`/`holder`/`job`/`fromAgent` annotations `agents bus
 inbox`, `agents bus channel read` and `agents bus show` report — whether
@@ -969,7 +1056,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 [--exclude-owner <agent>]
 [--channel <name>] [--topic <topic>] [--result <reserved|admitted|complete|failed>] [--id <envelope-id>]
 [--claims] [--open] [--claimable]
-[--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-200>]`
+[--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-200>] [--frame <cli>]`
 reads the
 same projection back — jobs newest-first, optionally filtered by status,
 exact job id, announced repo, provider, declared dispatch tier,
@@ -983,7 +1070,11 @@ also carries the same per-key hold coverage `work mine` reports —
 coverage is `truncated` or `unknown`, never a guess — and the human lines mark
 it `claimable=yes|no|unknown`; non-open jobs and claimless reads carry none of
 the fields, so "which of these can I claim" answers in one read instead of a
-second join. `--claimable` keeps only the open jobs whose `claimable` is
+second join. Each hold row names the blocking claim's `claimKey`, `owner`,
+lease `until` and `origin` class (`resource`, `message`, `team`, `board` or
+`queue`) — the same claim detail `work mine`'s holders and `claim list`
+already show, so the feed never makes a reader cross-reference the claim
+table to learn what kind of hold blocks a job. `--claimable` keeps only the open jobs whose `claimable` is
 provably true — it implies the claims join, and unknown coverage never counts
 as claimable, so an unreadable hold table answers an honest empty view rather
 than a guessed one. Every job cites the retained envelopes its state came
@@ -1031,11 +1122,14 @@ twice, and, because the view sorts newest-first under the `--limit` cap,
 plain newest page can never show once more than the cap match. `--contains`
 keeps only jobs whose descriptive text carries the needle as a
 case-insensitive substring — the announcement title, the newest status
-detail and the declared dispatch scope/acceptance, each scrubbed,
+detail, the declared dispatch scope/acceptance and the newest
+`work.result` citation's reason code, each scrubbed,
 single-lined and clipped at the same bounds the job line renders, with
 whitespace collapsed on both sides like every other `--contains` bus
-read — so "which announced jobs mention X" is one filtered read; ids,
-claim keys, statuses and routing labels are structured fields with their
+read — so "which announced jobs mention X" and "which jobs reported a
+result for reason X" are each one filtered read; ids,
+claim keys, statuses, result outcomes and routing labels are structured
+fields with their
 own filters, never search text, and a secret-shaped value is scrubbed
 before the match even though the stored envelope keeps it. `--result`
 keeps only jobs whose newest retained `work.result` citation carries that
@@ -1060,7 +1154,14 @@ true filtered total before the cap and `omitted` as the rest — the same
 page `fleet_work_feed`'s `limit` argument (default 50 there) and the
 endpoint's `limit` parameter serve through the shared
 `sliceBusWorkFeedView`, with claims holds regrouped under the shown jobs
-only. The filters narrow
+only. `--frame <cli>` prints the same feed — job rows, hold rows and the
+`jobs=… feed=…` summary line — as one bounded block marked untrusted under
+BEGIN/END UNTRUSTED AGENT BUS WORK FEED markers, the same scrub and 32 KiB
+clip bound the inbox, channel-read, wakes and `work mine --frame` reads
+apply with the cut stated, so a host can hand the fleet's whole work board
+to a CLI's next turn as data in a single block; `--json` carries it as
+`framed` beside the full projection, and a refused or unavailable feed
+frames its own state line, never an invented job list. The filters narrow
 the fleet view, they never widen
 it. `phm fleet work-feed` accepts the same flags.
 
@@ -1155,7 +1256,7 @@ guessed claim no matter how long the wait runs. Exit 0 on
 otherwise. Claims still coordinate scope only — holding one never permits
 a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>] [--frame <cli>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -1366,7 +1467,10 @@ honestly empty (a request envelope carries no provable job citation and,
 by the board's own request rule, no in-reply-to citation); `contains`
 matches the item's scrubbed state/channel/missing-evidence/dependency
 text, `since`/`before` bound `receivedAt`, `channel` keeps requests
-whose `to` carries `group:<name>:`, `from`/`excludeFrom` match the
+whose `to` carries `group:<name>:`, `topic` keeps requests whose `to`
+parses to `group:<room>:<topic>` under the same `groupAddressTopicOf`
+verdict every other section applies — a request naming no provable
+`to` never listing — `from`/`excludeFrom` match the
 request's `from` label (an item naming no provable `from` never lists
 under either), `id` keeps the request whose envelope id equals the
 value, and `priority`/`bodyKind`/`result`/`thread` leave the section
@@ -1542,7 +1646,8 @@ the case-insensitive substring rule every other bus `--contains` read
 applies, matched over each section's scrubbed one-line display text and
 never over raw bodies, ids, claim keys as keys, statuses or routing
 labels: feed and announced jobs match the feed's job search text
-(title, newest status detail, declared dispatch); a claim lists only
+(title, newest status detail, declared dispatch, newest result reason);
+a claim lists only
 when its displayed evidence carries the needle — a blocked announced
 job's title/detail or a resolved leased message's summary; `next`,
 `handoffs` and `mailbox` mail match the body summary; dead letters match
@@ -1663,7 +1768,41 @@ room in
 their projections and stay unfiltered, like they do under
 `--priority`; every count stays the filtered total, the result
 echoes `channel` in JSON and the human header prints it, and a row
-whose room cannot be proven never matches. `--from <agent>` narrows
+whose room cannot be proven never matches. `--topic <name>` narrows
+the whole digest the same way — "what is pending for me on this
+topic" — under the same `groupAddressTopicOf` verdict every other
+bus `--topic` read applies: the topic segment of a well-formed
+`group:<room>:<topic>` routing label, validated by the strict
+channel-name grammar and matched on each section's own address
+evidence, room-agnostic like every other `--topic` read (an ops
+room's `alerts` traffic matches `--topic alerts` unless `--channel`
+also narrows the room, the two composing into one room AND topic):
+feed jobs and announced jobs keep announcements whose `to` parses
+to that exact topic, `next`/`handoffs`/`mailbox` keep envelopes
+whose `to` parses to it, dead letters keep reports whose ORIGINAL
+`to` parses to it — matched on the kept routing label rather than
+the letter's own `bus.dead-letter` address — claims keep only
+message claims whose resolved leased envelope sits on the topic —
+a claim naming no resolved message, a scope-key claim or an
+unresolvable/unreadable lease names no provable topic and never
+lists, the same "unknown stays out" rule `--channel` applies, the
+three thread sections keep threads whose latest message — the
+wait's own recipient for waiting threads, the block report's
+recipient for blocked ones — is addressed to the topic, and
+work-board requests keep those whose `to` parses to it — a request
+naming no provable `to` never listing. `wakes` and `inbox` delegate
+to reads that carry the same group-topic filter, so the digest
+forwards `topic` to both: `wakes` counts the topic-matched hints
+inside the bounded queue-tail match — `matched` exact when the tail
+read is complete, a proven lower bound under `truncated`, the same
+convention the section's own `truncated` flag documents — while
+`inbox`'s `matched:true` read reports the true topic-filtered total
+across the retained store. `board`, `channels`, `sessions`, `coordination`
+and `seats` carry no per-item topic in their projections and stay
+unfiltered, like they do under `--channel`; every count stays the
+filtered total, the result echoes `topic` in JSON and the human
+header prints it, and a row whose topic cannot be proven never
+matches. `--from <agent>` narrows
 the whole digest the same way — "what is pending for me from X" —
 under the same sender rule every bus `--from` read applies, validated
 by the printable-label bound and matched through the
@@ -1879,7 +2018,13 @@ required, `job`/`since`/`before`/`contains`/`priority`/`channel`/`from`/`exclude
 filters — under the same
 validation, so an MCP-connected agent reads its whole pending digest
 without shelling out to `phm`; it accepts no caller root or path and
-passes a refused or degraded section through untouched.
+passes a refused or degraded section through untouched. `--frame <cli>`
+prints the same digest as one bounded block marked untrusted — BEGIN/END
+UNTRUSTED AGENT BUS WORK DIGEST markers, the same scrub and 32 KiB clip
+bound the inbox, channel-read and wakes frames apply, the cut stated —
+so a host can hand the agent's whole pending-work picture to the CLI's
+next turn as data in a single block; `--json` carries it as `framed`
+beside the full projection.
 
 **Pending-work claim.** `phm agents bus work next [<agent>] --lease-ms
 <1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since
@@ -1939,23 +2084,25 @@ the claimable work-feed jobs. Exit 0 on
 coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the nineteen
-dependencies every verb above touches plus the outbound send gate every
-write verb passes through: the message store (retained/live/expired
+**Status.** `phm agents bus status [--json]` is a read-only probe of the
+twenty-one dependencies every verb above touches plus the outbound send
+gate every write verb passes through: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
 the wake queue (state, observed hint count before the row cap, and whether
 the bounded tail or cap truncated older hints), the bus hop log every
 wake-enabled send and accepted channel mirror appends
 (`<root>/bus/hops.jsonl` — `state` plus on-disk `bytes`, the `hops`
-count observed inside the bounded tail `fleet_bus_hops` reads,
+count observed inside the bounded tail `fleet_bus_hops` and
+`phm fleet bus-hops` read,
 `skippedRows` for malformed or torn rows and a `truncated` flag for hops
 beyond the window; 0 counts on a verified-missing log, null when
 unreadable, never message ids, agent labels or bodies), the shared
 coordination table
 (live claims and status rows), the message-id claim journal behind `fleet
 bus-next`/`bus-claim` and the `work mine` hold state (retained claim records),
-the work-feed projection (job count, or the refusal reason when the feed
-is poisoned), the legacy `phm bus` mailbox store `work mine` still reads
+the work-feed projection (job count, or the refusal reason plus the blamed
+receipt's wire id — `receipt=<id>` on the human line, `feed.receipt` in JSON —
+when the projection named one), the legacy `phm bus` mailbox store `work mine` still reads
 (`source` plus a store-wide `pending` count of unacked, unexpired messages
 across every recipient label — totals only, never labels; 0 on a
 verified-missing store, null when unreadable), the owner-chat share
@@ -2070,7 +2217,33 @@ report unavailable (`source` plus `messages`/`proposals`/`returns`
 counts of the live pending surface — posted coordination mail, advisory
 assignment proposals and unpublished RESULT intents still inside their
 TTLs; 0 on a verified-missing ledger, null when unreadable, never agent
-labels, repos, task text, bodies or record ids), plus the
+labels, repos, task text, bodies or record ids), the org plane's
+membership outbox (`<runsRoot>/org/agents.json`, the `org.agents.v1`
+store `phm fleet org-sync`/`org-board` read under the same runs root —
+`options.runsRoot`, `ASHLR_RUNS_DIR` or `~/.ashlr-runs`, never the bus
+`root` override): the `org.membership` events the chart recorded but
+`phm fleet org-sync --apply` has not yet confirmed posted, read through
+`previewOrgOutbox` — the same replay `org-sync` previews and the unified
+inbox org-outbox source itemizes — so a corrupt, unsafe or otherwise
+invalid store is named here instead of leaving status green while the
+bus cannot see staffing changes it never received (`source` plus a
+`pending` count of distinct events the apply pass would post — the same
+pending count the unified inbox reports; 0 on a verified-missing store
+or a fully delivered ledger, null when unreadable, never role ids,
+actors, revisions, proposals or bodies), the channel adapter
+registry `listChannelRegistry` reads — the same projection `agents bus
+channels list`, `agents bus channels test` and the comms-agent adapter
+probe serve — behind every channel-addressed send's delivery decision
+(`source` plus one `adapters` row per fixed channel id in CHANNEL_IDS
+order carrying `adapterRegistered` and the adapter's own `healthy`
+verdict — `true` usable, `false` confirmed down, `'unknown'` when nothing
+can assess it, never collapsed to a boolean and never guessed for an
+unregistered channel; the bus and handoff adapters probe the same inbox
+store `store` reports, so their health tracks it, and the section
+describes this process's adapter table, never a fleet-wide channel
+census; `adapters` is null only when the registry cannot be read —
+`source:'unavailable'`, never an invented empty table — channel ids and
+verdicts only, never adapter internals or message data), plus the
 claim-store drift verdict the claim journal and the
 coordination table imply — the same `fleet.claim-drift.v1` read
 `ashlr fleet claim-drift` serves, run over the probe's own two reads so the
@@ -2210,12 +2383,26 @@ attempt log; read it with a file transport whose addresses include
 `ashlr agents bus dead-letters` — the unified bus's fleet-level list of the
 same live letters, each with its parsed delivery-failure report and the
 `exhausted`/`expired`/`no-route`/`other` classification `agents bus status`
-tallies. The read filters on the letter envelope and the report's kept
+tallies. `fleet_bus_dead_letters` (the isolated fleet MCP tool) serves the
+same read with the same filters as arguments — `reason`, `id`, the
+`from`/`excludeFrom`/`to` original-party matchers, `channel`/`topic` on the
+original recipient's room address, `bodyKind`, `priority`, `since`/`before`,
+`contains` and `limit` — under server-owned roots, where `fleet_bus_status`
+reports only the pending count by reason and `fleet_comms_inbox` keeps
+letters inside its capped mixed page. The read filters on the letter envelope and the report's kept
 evidence — `--since`/`--before`, `--contains`, `--priority`, `--id`,
 `--reason`, the `--from`/`--exclude-from`/`--to` sender and recipient
 matchers, `--channel`/`--topic` on the original recipient's room address
 and `--body-kind` on the original kind — never on fields the letter
-dropped. The
+dropped. `--frame <cli>` prints the same list — every letter line and
+the `matched=… shown=… source=… as-of=…` summary — as one bounded block
+marked untrusted under BEGIN/END UNTRUSTED AGENT BUS DEAD LETTERS
+markers, the same scrub, flattening and 32 KiB clip bound every other
+bus `--frame` read applies with the cut stated, so a host can hand the
+whole delivery-failure backlog to a CLI's next turn as data in a single
+block; `--json` carries it as `framed` beside the full projection, and a
+verified-missing store frames its own missing line rather than an
+invented letter. The
 unified comms inbox (`phm comms inbox`, kind `bus-dead-letter`) lists each
 live letter as pending attention — the mail provably never arrived — naming
 the reason, attempt count and original routing metadata the letter kept. The
@@ -2392,7 +2579,7 @@ from now and may not exceed the acquired length. `phm agents bus claim
 acquire|renew|release` runs the same core path locally with `--key`,
 `--lease-ms`, `--owner` (defaults to `PHM_AGENT_ID`), `--token`, `--outcome`
 and optional `--id`; exit 0 on success, 2 on invalid arguments, 1 otherwise.
-`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--jobs]` is
+`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--jobs] [--frame <cli>]` is
 the read
 side: it prints the live coordination claims (owner, origin, lease end, source
 id — never tokens) across every origin, narrowed by `--key` to those that
@@ -2441,6 +2628,15 @@ reverse of `work feed --claims`, with the same retained receipt citations
 so a blocked job names its `agents bus show` handles),
 and the JSON `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
+`--frame <cli>` prints the same list — every claim row, its `--jobs`
+blocked-job labels when asked and the `claims=… source=… as-of=…`
+summary — as one bounded block marked untrusted under BEGIN/END
+UNTRUSTED AGENT BUS CLAIMS markers, the same scrub, flattening and 32 KiB
+clip bound every other bus `--frame` read applies with the cut stated,
+so a host can hand the whole held-scope table to a CLI's next turn as
+data in a single block; `--json` carries it as `framed` beside the full
+projection, and a read that cannot complete still answers its own status
+line rather than an invented claim list.
 `fleet_bus_claims` (the isolated fleet MCP tool) serves the same
 `listBusClaims` read with `key`, `owner`, `excludeOwner`, `contains`,
 `origin`, `since`, `before`, `job` and `jobs` as its only
@@ -2553,6 +2749,17 @@ unresolvable sender or unreadable registry keeping exact-label matching —
 `--exclude-from` drops envelopes sent under any registered spelling of one
 identity — the same sender-exclusion rule `comms bus read|watch`'s
 `--exclude-from` and `fleet_bus_inbox`'s `excludeFrom` apply —
+`--with <agent-or-label>` narrows a `--to`-scoped stream to the two-way
+exchange that agent and one peer name — the same pairwise rule `agents bus
+inbox --with`, `agents bus follow --with`, `phm messages --with` and `agents
+conversations --with` apply: an envelope emits only when its `to` is an
+identity label of the `--to` agent — the strict match that excludes the
+member-channel posts `--to` alone streams — and its `from` matches every
+registered spelling of the peer, so "stream only our private pending thread
+with the reviewer" is one filtered follow instead of the room traffic `--to`
+also carries; `--with` requires `--to`, an unresolvable ref on either side
+and an unreadable registry keep exact-label matching, and filtered rows
+still advance checkpoints like every other filter —
 `--priority` keeps one `P0`–`P3`, `--thread` keeps `note`/`context` bodies
 carrying that thread label, `--since <15m|2h|1d|ISO>` keeps rows received
 at or after the cutoff, and `--before <15m|2h|1d|ISO>` keeps rows received
@@ -2624,7 +2831,29 @@ opaque to it. The value is bounded free text, up to 512 characters. On
 `bus-follow` filtered rows still advance checkpoints exactly like every
 other filter, and a `comms bus --checkpoint` consumer binds the raw
 `--contains` spelling into its filter identity, so a changed needle fails
-closed.
+closed. `--body-kind <kind>` narrows `comms bus read|watch` to envelopes
+whose body carries that exact kind discriminator — the same `busBodyKind`
+own-field match `agents bus inbox --body-kind`, `channel read
+--body-kind`, `wakes --body-kind`, `agents conversations --body-kind`,
+`phm messages --body-kind` and `fleet bus-follow --body-kind` apply: the
+v2 `kind` field, else a bus-transport v1 `protocol.kind`, else the
+`type`/`schema` a kindless notice keys on, exact and case-sensitive, a
+body carrying no discriminator never matching and an unrecognized but
+printable value an honest empty page; a `comms bus --checkpoint` consumer
+binds the `--body-kind` value into its filter identity, so a changed
+discriminator fails closed. `--result
+<reserved|admitted|complete|failed>` narrows `comms bus read|watch` to
+`work.result` bodies whose own `outcome` strictly equals the code — the
+same `busBodyResultOutcome` own-field match and `WORK_RESULT_OUTCOMES`
+vocabulary `phm messages --result`, `agents messages --result`, `fleet
+messages`, `bus recent`, `fleet_bus_inbox`'s `result`,
+`fleet_agent_messages`'s `result` and the work feed's `--result` share —
+so every other body kind, including a `work.release` body's own
+`released`/`completed` outcome, and a `work.result` carrying no outcome
+never match, the envelope-level audit trail the feed's per-job
+newest-result `--result` cannot show; a value outside the vocabulary is
+invalid and a `comms bus --checkpoint` consumer binds the `--result`
+value into its filter identity the same way.
 
 ### 4. Work feed
 
@@ -2645,7 +2874,9 @@ Statuses from that owner update retained jobs in cursor order with receipt time
 as `updatedAt`; when the read layer supplies `ownerKeyFor`, any sender label
 resolving to the job owner's key counts as that owner, while labels it cannot
 resolve still require exact label equality. Orphan statuses are ignored.
-Duplicate posts and malformed work bodies are refused. A body-level refusal
+Duplicate posts and malformed work bodies are refused. The projection accepts
+any snapshot the bus store can retain (`BUS_INBOX_MAX_MESSAGES` receipts) and
+refuses one that would emit more than the feed's 1024-job wire bound. A body-level refusal
 carries `receipt` — the wire id, receipt time and TTL of the retained envelope
 whose processing refused the projection — so a poisoned feed names its cause
 (`agents bus show <id>` resolves it) instead of silently hiding every job
@@ -2713,8 +2944,9 @@ receipt stay in the body — while `unavailable`, `retryable` and `invalid`
 storage answer 503. A missing store reads as an empty `ok` feed. Status
 filtering stays client-side; a missing provider stays a refusal, never a
 fabricated owner. Every refused-feed read names the receipt when the
-projection could attribute one: the feed CLIs print it as `receipt=<id>`,
-`agents bus status` reports it as `feed.receipt`, `agents bus work mine`
+projection could attribute one: the feed CLIs and the `agents bus status`
+human line print it as `receipt=<id>`, `agents bus status --json` reports it
+as `feed.receipt`, `agents bus work mine`
 carries it on the refused `jobs`/`announced` sections, the work send verbs
 refuse `at receipt <id>`, and the unified comms inbox lists the refusal
 itself as a high-severity bus item deep-linking `agents bus show <id>` —
@@ -2910,11 +3142,38 @@ exact topic component through the shared `groupAddressTopicOf`, composing with
 `--channel` into one room AND one topic while an agent address, a bare
 `group:<room>` or a malformed topic never matches; both take the strict
 channel-name grammar. `--root <absolute>` reads a non-default
-fleet store like the other fleet bus reads. `fleet_agent_edges` (the isolated
+fleet store like the other fleet bus reads. The read also takes the
+shared row-slice vocabulary every other bus read applies before its
+projection: `--since <15m|2h|1d|ISO|epoch>` keeps only links whose
+receipts were received at or after the cutoff and `--before` keeps only
+links received strictly before its own cutoff on the same grammar — the
+exclusive upper bound composing with `--since` into one `[since, before)`
+window on receipt time and with `--window-minutes` into the intersection
+of both bounds; `--priority <P0|P1|P2|P3>` keeps only links carrying
+receipts stamped with that exact band; `--kind
+<ask|reply|handoff|status|blocker>` keeps only links whose receipts
+classify to that one agent-message kind — the same `classify`
+`phm messages --kind` and `fleet_agent_messages` apply, matched
+case-insensitively; `--job <id>` keeps only links whose receipts name
+that job — the shared `busBodyJobMatch` rule every bus read's job
+filter applies; and `--contains <text>` keeps only links whose
+receipts' scrubbed one-line summaries carry the needle as a
+case-insensitive substring — the same `busReadContainsMatch` rule every
+bus read's contains filter applies, so a secret-shaped value stays
+unfindable. Every filter narrows the receipt set before it aggregates,
+so counts, `lastAt` and provider inference describe only the matching
+traffic; the per-envelope filters (`--id`, `--in-reply-to`) stay out —
+an edge is an aggregate, never one receipt, and `agents bus show`
+already serves the single-envelope read. `fleet_agent_edges` (the isolated
 fleet MCP tool) serves the same `readFleetEdges` projection with the same
-`windowMinutes`/`from`/`to`/`channel`/`topic` arguments — every other key
+`windowMinutes`/`from`/`to`/`channel`/`topic`/`since`/`before`/`priority`/
+`kind`/`job`/`contains` arguments — every other key
 refused and no caller root, path or working directory accepted, the bus store
-and registry roots staying server-owned. Provider labels come from sender metadata observed on
+and registry roots staying server-owned — and `GET
+/api/verse/agent-bus/edges` serves it over HTTP (read session required) with
+the same parameters, each validated by the shared
+`parseFleetEdgesQuery` rules so the three reads can never disagree about what
+a filter keeps. Provider labels come from sender metadata observed on
 the filtered receipts — a provider proven only by traffic the filters exclude
 stays `null` (unknown), the same bound the window applies. A missing or conflicting provider is `null` (unknown). Labels
 are not authenticated identities. Broadcasts to `leaders`, human/external

@@ -216,9 +216,27 @@ describe('SSH routing and device-local provider lanes', () => {
     expect(vi.mocked(run).mock.calls[0]![1]).toEqual(['login', 'status']);
     expect(providerBinaryCandidates('codex', { home: '/Users/air', execPath: '/Users/air/.nvm/v24/bin/node' })).toEqual([
       '/opt/homebrew/bin/codex', '/usr/local/bin/codex', '/Users/air/.local/bin/codex', '/Users/air/.npm-global/bin/codex',
-      '/Users/air/.nvm/v24/bin/codex']);
+      '/Users/air/.nvm/v24/bin/codex',
+      '/Users/air/.volta/bin/codex', '/Users/air/.bun/bin/codex',
+      '/Users/air/.local/share/mise/shims/codex', '/Users/air/.asdf/shims/codex',
+      '/usr/bin/codex', '/bin/codex', '/snap/bin/codex']);
     expect(resolveProviderBinary('codex', { home: '/Users/air', executable: path => path === '/Users/air/.npm-global/bin/codex' }))
       .toBe('/Users/air/.npm-global/bin/codex');
+  });
+  it('resolves provider CLIs installed only in Linux or version-manager locations', () => {
+    const run = vi.fn(() => ({ status: 0 })) as unknown as typeof spawnSync;
+    const linuxOnly = { home: '/home/dev', execPath: '/usr/bin/node', executable: (path: string) => path === '/usr/bin/codex' };
+    expect(resolveProviderBinary('codex', linuxOnly)).toBe('/usr/bin/codex');
+    expect(probeProviderBinaries(run, linuxOnly)).toEqual({ codex: '/usr/bin/codex' });
+    const miseShim = { home: '/home/dev', execPath: '/usr/bin/node', executable: (path: string) => path === '/home/dev/.local/share/mise/shims/claude' };
+    expect(resolveProviderBinary('claude', miseShim)).toBe('/home/dev/.local/share/mise/shims/claude');
+  });
+  it('keeps every pre-existing install location ahead of the appended Linux locations', () => {
+    const executable = (path: string) => ['/usr/bin/codex', '/opt/homebrew/bin/codex'].includes(path);
+    expect(resolveProviderBinary('codex', { home: '/home/dev', execPath: '/usr/bin/node', executable }))
+      .toBe('/opt/homebrew/bin/codex');
+    const snapOnly = { home: 'relative-home', execPath: '/x/bin/node', executable: (path: string) => path === '/snap/bin/codex' };
+    expect(resolveProviderBinary('codex', snapOnly)).toBe('/snap/bin/codex');
   });
 });
 

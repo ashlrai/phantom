@@ -34,21 +34,32 @@ export interface OwnerLiveReplyReport {
 
 export const replyHash = (text: string): string => createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex');
 
-function readState(path: string): ReplyState {
-  try {
-    const raw: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    const o = raw as Partial<ReplyState>;
-    if (typeof o.lastSentAt === 'number' && Array.isArray(o.hashes)) {
-      const hashes = o.hashes.filter((h): h is string => typeof h === 'string').slice(-KEEP_HASHES);
-      const delivered: ReplyState['delivered'] = {};
-      for (const hash of hashes) {
-        const channels = o.delivered?.[hash];
-        if (Array.isArray(channels)) delivered[hash] = PHONE_CHANNELS.filter(c => channels.includes(c));
-      }
-      return { lastSentAt: o.lastSentAt, hashes, delivered };
-    }
-  } catch { /* first run or unreadable: nothing sent yet */ }
-  return { lastSentAt: 0, hashes: [], delivered: {} };
+type StateRead = { kind: 'ready'; state: ReplyState } | { kind: 'unknown' };
+
+// Only ENOENT is a first run; anything unreadable or malformed is unknown history (never sent from, never rewritten).
+function readState(path: string): StateRead {
+  const first: StateRead = { kind: 'ready', state: { lastSentAt: 0, hashes: [], delivered: {} } };
+  let text: string;
+  try { text = readFileSync(path, 'utf8'); } catch (error) {
+    return (error as NodeJS.ErrnoException)?.code === 'ENOENT' ? first : { kind: 'unknown' };
+  }
+  let raw: unknown = null;
+  try { raw = JSON.parse(text); } catch { /* falls through to the shape check */ }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { kind: 'unknown' };
+  const o = raw as Record<string, unknown>;
+  if (typeof o.lastSentAt !== 'number' || !Number.isFinite(o.lastSentAt) || !Array.isArray(o.hashes)) return { kind: 'unknown' };
+  if (!o.hashes.every(h => typeof h === 'string')) return { kind: 'unknown' };
+  const hashes = (o.hashes as string[]).slice(-KEEP_HASHES);
+  if (o.delivered !== undefined && (typeof o.delivered !== 'object' || o.delivered === null || Array.isArray(o.delivered))) return { kind: 'unknown' };
+  const evidence = (o.delivered ?? {}) as Record<string, unknown>;
+  const delivered: ReplyState['delivered'] = {};
+  for (const hash of hashes) {
+    if (!Object.hasOwn(evidence, hash)) continue;
+    const channels = evidence[hash];
+    if (!Array.isArray(channels) || !channels.every(c => typeof c === 'string' && (PHONE_CHANNELS as readonly string[]).includes(c))) return { kind: 'unknown' };
+    delivered[hash] = PHONE_CHANNELS.filter(c => channels.includes(c));
+  }
+  return { kind: 'ready', state: { lastSentAt: o.lastSentAt, hashes, delivered } };
 }
 
 function writeState(dir: string, state: ReplyState): void {
@@ -82,7 +93,9 @@ export async function sendLeaderReplyToPhone(
     if (lock.state !== 'acquired') return done('not-delivered');
   }
   try {
-    const state = readState(join(dir, STATE_FILE));
+    const read = readState(join(dir, STATE_FILE));
+    if (read.kind === 'unknown') return done('not-delivered');
+    const state = read.state;
     const known = state.hashes.includes(hash);
     // A legacy hash has no destination evidence and must retain global dedupe.
     if (known && !Object.hasOwn(state.delivered, hash)) return done('already-sent');

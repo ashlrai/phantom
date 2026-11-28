@@ -10,7 +10,11 @@
 import { join } from 'node:path';
 
 import { laneTargetFromSlots, newerReleasePublished, tagOf } from './fixers.js';
-import { LANE_RE, RESIDENT_LABEL, type AutofixSnapshot, type IncidentStatusLine, type LaunchdJob } from './types.js';
+import { parseJsonlRecords, securityReportsDir } from './guard.js';
+import {
+  LANE_RE, defaultLaunchdJob, isAutofixRecord, isIncidentStatus,
+  type AutofixSnapshot, type IncidentStatusLine, type LaunchdJob,
+} from './types.js';
 
 export const INCIDENT_KEY_RE = /^[a-z0-9._-]{1,96}$/;
 const INCIDENT_FILE_RE = /^INCIDENT-([a-z0-9._-]{1,96})\.md$/;
@@ -82,19 +86,13 @@ export function incidentsLedgerPath(runsDir: string): string {
 }
 
 export function readIncidentStatuses(text: string | null): IncidentStatusLine[] {
-  if (!text) return [];
-  const lines: IncidentStatusLine[] = [];
-  for (const raw of text.split('\n')) {
-    if (!raw.trim()) continue;
-    try {
-      const parsed = JSON.parse(raw) as Partial<IncidentStatusLine>;
-      if (typeof parsed.key !== 'string' || !INCIDENT_KEY_RE.test(parsed.key)) continue;
-      if (parsed.status !== 'fixed' && parsed.status !== 'failed' && parsed.status !== 'intentional' && parsed.status !== 'refused') continue;
-      if (typeof parsed.reason !== 'string' || typeof parsed.ts !== 'string') continue;
-      lines.push({ key: parsed.key, status: parsed.status, reason: parsed.reason, ts: parsed.ts });
-    } catch { /* skip */ }
-  }
-  return lines;
+  return parseJsonlRecords(text, (parsed): IncidentStatusLine | null => {
+    if (!isAutofixRecord(parsed)) return null;
+    if (typeof parsed.key !== 'string' || !INCIDENT_KEY_RE.test(parsed.key)) return null;
+    if (!isIncidentStatus(parsed.status)) return null;
+    if (typeof parsed.reason !== 'string' || typeof parsed.ts !== 'string') return null;
+    return { key: parsed.key, status: parsed.status, reason: parsed.reason, ts: parsed.ts };
+  });
 }
 
 export function terminalIncident(lines: readonly IncidentStatusLine[], key: string): IncidentStatusLine | null {
@@ -120,22 +118,12 @@ export function securityReportForHold(key: string, ts: string): string {
 }
 
 export function holdReportPath(runsDir: string, key: string): string {
-  return join(runsDir, 'ledger', 'autofix-security', `INCIDENT-${key}.json`);
+  return join(securityReportsDir(runsDir), `INCIDENT-${key}.json`);
 }
 
 export function jobForLabel(snapshot: AutofixSnapshot, label: string, plistMtimeMs: number | null, rollbackMtimeMs: number | null): LaunchdJob {
   const found = snapshot.launchdJobs.find((job) => job.label === label);
-  if (found) return found;
-  return {
-    label,
-    domain: 'gui',
-    disabled: false,
-    samples: [],
-    logTail: '',
-    plistMtimeMs,
-    rollbackMtimeMs,
-    authorityGoverned: label === RESIDENT_LABEL,
-  };
+  return found ?? defaultLaunchdJob(label, plistMtimeMs, rollbackMtimeMs);
 }
 
 export function slotsTarget(snapshot: AutofixSnapshot, slotsText: string | null, lane: string): number | null {

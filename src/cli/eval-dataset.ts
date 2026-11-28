@@ -15,6 +15,7 @@ import { writeFileSync } from 'node:fs';
 
 import { foldRouterEvalDataset, routerEvalDatasetText } from '../core/eval/router-dataset.js';
 import { readRouterOutcomes, type RouterOutcomeRead } from '../core/router/outcomes.js';
+import { isEvalHelpArgs, parseStrictEvalFlags } from './eval-cli-helpers.js';
 
 const USAGE = `Usage: phm eval dataset [--runs-dir <dir>] [--lane <lane>] [--out <jobs.jsonl>] [--json]
 
@@ -40,28 +41,11 @@ interface ParsedArgs {
 }
 
 function parseArgs(args: string[]): ParsedArgs {
-  const parsed: ParsedArgs = { json: false };
-  const valueFlags = new Set(['--runs-dir', '--lane', '--out']);
-  const seen = new Set<string>();
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (seen.has(arg)) { parsed.usageError = `repeated argument: ${arg}`; return parsed; }
-    if (arg === '--json') { parsed.json = true; seen.add(arg); continue; }
-    if (valueFlags.has(arg)) {
-      const value = args[++i];
-      if (value === undefined || value.startsWith('-')) {
-        parsed.usageError = `${arg} requires a value`;
-        return parsed;
-      }
-      const key = { '--runs-dir': 'runsDir', '--lane': 'lane', '--out': 'out' }[arg] as 'runsDir' | 'lane' | 'out';
-      parsed[key] = value;
-      seen.add(arg);
-      continue;
-    }
-    parsed.usageError = `unknown argument: ${arg}`;
-    return parsed;
-  }
-  return parsed;
+  const { booleans, values, usageError } = parseStrictEvalFlags(args, {
+    booleans: { '--json': 'json' },
+    values: { '--runs-dir': 'runsDir', '--lane': 'lane', '--out': 'out' },
+  });
+  return { ...values, json: booleans.json, usageError };
 }
 
 export async function cmdEvalDataset(args: string[], overrides: EvalDatasetCliDeps = {}): Promise<number> {
@@ -73,7 +57,7 @@ export async function cmdEvalDataset(args: string[], overrides: EvalDatasetCliDe
     now: () => new Date(),
     ...overrides,
   };
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { deps.out(USAGE); return 0; }
+  if (isEvalHelpArgs(args)) { deps.out(USAGE); return 0; }
   const parsed = parseArgs(args);
   if (parsed.usageError) { deps.err(`error: ${parsed.usageError}\n${USAGE}`); return 2; }
 

@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { computeNodeCapacity, NODE_CAPACITY_SCHEMA, parseNodeCapacityDoc, type NodeCapacityDoc } from '../core/drive/nodes/capacity-model.js';
 import { measureNode } from '../core/drive/nodes/node-measure.js';
-import { planAutoscaleRoutes, type HarnessModelCost, type RouteJob, type RouteNode } from '../core/drive/nodes/autoscale-router.js';
+import { fleetRunnable, planAutoscaleRoutes, type HarnessModelCost, type RouteJob, type RouteNode } from '../core/drive/nodes/autoscale-router.js';
+import { nodeFleetListItems } from '../core/drive/nodes/commands.js';
 import { readRouteLaneOutcomes, type RouteLaneOutcomes } from '../core/drive/nodes/route-outcomes.js';
 
 export const NODE_CAPACITY_USAGE = `Usage: phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json]
@@ -15,7 +16,8 @@ capacity measures this node (CPU, memory, swap, swap growth, per-harness session
 and prints agents runnable now per harness. --out writes the document atomically (mode 0600);
 the previous document (default: --out) supplies swap growth and learned footprints.
 route scores (node, provider, model) per job from capacity documents, a cost/latency file
-and lane outcomes. --outcomes is a hand-maintained {provider: {attempts, merged}} file;
+and lane outcomes, and reports the fleet-wide runnable sessions per harness
+(fleet_runnable). --outcomes is a hand-maintained {provider: {attempts, merged}} file;
 --outcomes-ledger derives the same tallies from <runs-dir>/metrics/jobs.jsonl
 (default ASHLR_RUNS_DIR, then ~/.ashlr-runs) and usable --outcomes entries win per provider.
 Both are local and read-only apart from --out: no network, no launches.`;
@@ -79,6 +81,26 @@ function fail(json: boolean, command: string, message: string, exit = 2, code: '
   return exit;
 }
 
+/** Text-mode rendering of a capacity document. Display precision only: the
+ * document and --json keep every measured digit for the route planner, while a
+ * human reading `phm node capacity` gets load/headroom/rate at two decimals
+ * and the same `unknown` marker every other unmeasured field uses. */
+export function nodeCapacityText(doc: NodeCapacityDoc): string {
+  const gib = (n: number | null) => n === null ? 'unknown' : `${(n / 1024 ** 3).toFixed(1)} GiB`;
+  const num = (n: number | null) => n === null ? 'unknown' : n.toFixed(2);
+  return [
+    `node ${doc.node} at ${doc.measured_at} (process source: ${doc.basis.process_source})`,
+    `cpu: ${doc.cpu.cores} cores, busy ${doc.cpu.busy_percent ?? 'unknown'}%, load ${num(doc.cpu.load_1m)}, headroom ${num(doc.cpu.headroom_cores)} cores`,
+    `memory: free ${doc.mem_free.free_percent ?? 'unknown'}%, pressure level ${doc.mem_free.pressure_level ?? 'unknown'}, headroom ${gib(doc.mem_free.headroom_bytes)}`,
+    `swap: used ${gib(doc.swap.used_bytes)}, swapouts/min ${num(doc.swap.swapouts_per_min)}`,
+    ...Object.entries(doc.agents_runnable_now).map(([harness, n]) => {
+      const fp = doc.per_harness_footprint[harness];
+      return `  ${harness}: runnable ${n ?? 'unknown'} (${doc.basis.limiting[harness]})${fp ? `, ${fp.sessions} live, ${gib(fp.mem_bytes_max)} per session [${fp.source}]` : ''}`;
+    }),
+    ...doc.basis.notes.map(note => `note: ${note}`),
+  ].join('\n');
+}
+
 export async function cmdNodeCapacity(args: string[]): Promise<number> {
   const json = args.includes('--json');
   const problem = validate(args, ['--node', '--out', '--previous'], ['--json']);
@@ -100,16 +122,7 @@ export async function cmdNodeCapacity(args: string[]): Promise<number> {
     try { await writeCapacityDoc(out, doc); } catch { return fail(json, 'capacity', `could not write ${out}; check the directory exists and is writable`, 1, 'error'); }
   }
   if (json) { console.log(JSON.stringify(doc)); return 0; }
-  const gib = (n: number | null) => n === null ? 'unknown' : `${(n / 1024 ** 3).toFixed(1)} GiB`;
-  console.log(`node ${doc.node} at ${doc.measured_at} (process source: ${doc.basis.process_source})`);
-  console.log(`cpu: ${doc.cpu.cores} cores, busy ${doc.cpu.busy_percent ?? 'unknown'}%, load ${doc.cpu.load_1m ?? '?'}, headroom ${doc.cpu.headroom_cores ?? 'unknown'} cores`);
-  console.log(`memory: free ${doc.mem_free.free_percent ?? 'unknown'}%, pressure level ${doc.mem_free.pressure_level ?? 'unknown'}, headroom ${gib(doc.mem_free.headroom_bytes)}`);
-  console.log(`swap: used ${gib(doc.swap.used_bytes)}, swapouts/min ${doc.swap.swapouts_per_min ?? 'unknown'}`);
-  for (const [harness, n] of Object.entries(doc.agents_runnable_now)) {
-    const fp = doc.per_harness_footprint[harness];
-    console.log(`  ${harness}: runnable ${n ?? 'unknown'} (${doc.basis.limiting[harness]})${fp ? `, ${fp.sessions} live, ${gib(fp.mem_bytes_max)} per session [${fp.source}]` : ''}`);
-  }
-  for (const note of doc.basis.notes) console.log(`note: ${note}`);
+  console.log(nodeCapacityText(doc));
   return 0;
 }
 
@@ -157,15 +170,25 @@ export async function cmdNodeRoute(args: string[]): Promise<number> {
       return { doc, ...(strings(m.providers) ? { providers: m.providers } : {}), ...(strings(m.localModels) ? { localModels: m.localModels } : {}),
         ...(typeof m.overheadMinutes === 'number' ? { overheadMinutes: m.overheadMinutes } : {}) };
     });
-    const exhausted = flagValues(args, '--exhausted').flatMap(v => v.split(',')).filter(Boolean);
+    // The shared list parser trims items and refuses a real entry beside an
+    // empty one, so '--exhausted a, b' names b and 'a,' cannot silently mark
+    // only a exhausted.
+    const exhausted = flagValues(args, '--exhausted').flatMap(v => nodeFleetListItems(v, '--exhausted'));
+    const nowMs = Date.now();
     const plan = planAutoscaleRoutes({ nodes, costs: costs as HarnessModelCost[], jobs: jobs as RouteJob[],
-      outcomes: ledger?.outcomes ?? {}, outcomeOverrides: outcomesRaw, exhausted, nowMs: Date.now() });
+      outcomes: ledger?.outcomes ?? {}, outcomeOverrides: outcomesRaw, exhausted, nowMs });
+    // The fleet-wide rollup under the same freshness, conflict, measured-memory,
+    // footprint and host-stop rules the plan applies, over the raw documents —
+    // additional sessions each harness could start right now. A harness no
+    // fresh node can answer for stays null, never a fabricated zero.
+    const runnable = fleetRunnable(docs, nowMs);
     if (json) {
-      console.log(JSON.stringify({ schema: 'phantom.node-route.v1', plan,
+      console.log(JSON.stringify({ schema: 'phantom.node-route.v1', plan, fleet_runnable: runnable,
         ...(ledger ? { outcomes_ledger: { state: ledger.state, truncated: ledger.truncated, path: ledger.path,
           providers: Object.keys(ledger.outcomes).length } } : {}) }));
     } else {
       if (ledger) console.log(`lane outcomes: ${ledger.path} state=${ledger.state} providers=${Object.keys(ledger.outcomes).length} truncated=${ledger.truncated}`);
+      console.log(`fleet runnable now: ${Object.entries(runnable).map(([harness, n]) => `${harness}=${n ?? 'unknown'}`).join(' ')}`);
       for (const p of plan) {
         console.log(p.nodeId ? `${p.jobId} -> ${p.nodeId} ${p.provider}/${p.model} score ${p.score} (merge ${p.mergeRate ?? 'unknown'}, ${p.mergesPerMTok ?? 'unknown'}/Mtok, ${p.mergesPerHour ?? 'unknown'}/h)`
           : `${p.jobId}: unplaced ${JSON.stringify(p.rejected)}`);

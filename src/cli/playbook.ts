@@ -21,11 +21,18 @@ import { join } from 'node:path';
 
 import type { CloudLaunchRequest, CloudLaunchResponse } from '../core/cloud/types.js';
 import type { DevinLaunchRequest, DevinLaunchResponse } from '../core/devin/types.js';
-import type { PlaybookOutcomeCounts, PlaybookSummary, PlaybookV1, PlaybookVersionInfo } from '../core/playbooks/types.js';
+import {
+  formatPlaybookRef,
+  parsePlaybookRefText,
+  type PlaybookOutcomeCounts,
+  type PlaybookSummary,
+  type PlaybookV1,
+  type PlaybookVersionInfo,
+} from '../core/playbooks/types.js';
 import type { SavePlaybookOptions, SavePlaybookResult } from '../core/playbooks/store.js';
 import { isTty, makeColors, pad } from './ui.js';
 
-export const PLAYBOOK_USAGE = [
+const PLAYBOOK_USAGE = [
   'Usage: ashlr playbook list [--json]',
   '       ashlr playbook show <id>[@vN] [--source] [--json]',
   '       ashlr playbook new <id> [--file path] [--note "why"]',
@@ -120,7 +127,7 @@ interface Parsed {
 const VALUE_FLAGS = new Set(['--file', '--note', '--repo', '--lane', '--task', '--title', '--base']);
 const BOOL_FLAGS = new Set(['--json', '--source']);
 
-export function parsePlaybookArgs(args: readonly string[]): Parsed {
+function parsePlaybookArgs(args: readonly string[]): Parsed {
   const out: Parsed = { positional: [], flags: new Map(), bools: new Set() };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -143,9 +150,9 @@ export function parsePlaybookArgs(args: readonly string[]): Parsed {
 }
 
 function parseRef(text: string | undefined): { id: string; version: number | null } {
-  const m = /^!?([a-z0-9][a-z0-9-]{1,47})(?:@v?(\d{1,6}))?$/.exec((text ?? '').trim());
-  if (!m) throw new UsageError('name a playbook id, e.g. `fix-issue` or `fix-issue@v2`');
-  return { id: m[1]!, version: m[2] ? Number(m[2]) : null };
+  const parsed = parsePlaybookRefText(text ?? '');
+  if (!parsed) throw new UsageError('name a playbook id, e.g. `fix-issue` or `fix-issue@v2`');
+  return parsed;
 }
 
 /** `--json` keeps stdout machine-readable on refusals too: one `{ v, error }` object. */
@@ -203,7 +210,7 @@ async function cmdShow(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
     return 0;
   }
   const { bold, dim } = makeColors(deps.color);
-  deps.out(bold(`${pb.meta.name} — ${pb.meta.id}@v${pb.version} (${pb.meta.macro})`));
+  deps.out(bold(`${pb.meta.name} — ${formatPlaybookRef({ id: pb.meta.id, version: pb.version })} (${pb.meta.macro})`));
   if (pb.meta.description) deps.out(dim(pb.meta.description));
   deps.out('');
   deps.out(deps.render(pb));
@@ -247,23 +254,37 @@ function reportSave(deps: PlaybookCliDeps, result: SavePlaybookResult): number {
     for (const e of result.errors) deps.err(`  - ${e.field}: ${e.message}`);
     return 1;
   }
-  deps.out(`Saved ${result.playbook.meta.id}@v${result.playbook.version} (${result.playbook.meta.macro}, sha ${result.playbook.sha}).`);
+  const ref = formatPlaybookRef({ id: result.playbook.meta.id, version: result.playbook.version });
+  deps.out(`Saved ${ref} (${result.playbook.meta.macro}, sha ${result.playbook.sha}).`);
   return 0;
 }
 
-async function cmdNew(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
-  const { id } = parseRef(p.positional[0]);
-  const source = sourceFor(deps, p, deps.template(id));
+async function saveFromInput(
+  deps: PlaybookCliDeps,
+  p: Parsed,
+  initial: string,
+  opts: Omit<SavePlaybookOptions, 'author' | 'note'>,
+  validate?: (source: string) => string | null,
+): Promise<number> {
+  const source = sourceFor(deps, p, initial);
   if (source === null) {
     deps.err('Editor closed without saving; nothing written.');
     return 1;
   }
-  if (!new RegExp(`^id:\\s*${id}\\s*$`, 'm').test(source)) {
-    deps.err(`The playbook's front-matter must say \`id: ${id}\`.`);
+  const problem = validate?.(source);
+  if (problem) {
+    deps.err(problem);
     return 1;
   }
   const note = p.flags.get('--note');
-  return reportSave(deps, await deps.save(source, { createOnly: true, author: 'cli', ...(note ? { note } : {}) }));
+  return reportSave(deps, await deps.save(source, { ...opts, author: 'cli', ...(note ? { note } : {}) }));
+}
+
+async function cmdNew(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
+  const { id } = parseRef(p.positional[0]);
+  return saveFromInput(deps, p, deps.template(id), { createOnly: true }, (source) =>
+    new RegExp(`^id:\\s*${id}\\s*$`, 'm').test(source) ? null : `The playbook's front-matter must say \`id: ${id}\`.`,
+  );
 }
 
 async function cmdEdit(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
@@ -273,15 +294,7 @@ async function cmdEdit(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
     deps.err(`No playbook named ${id}. Create it with \`ashlr playbook new ${id}\`.`);
     return 1;
   }
-  const source = sourceFor(deps, p, current.source);
-  if (source === null) {
-    deps.err('Editor closed without saving; nothing written.');
-    return 1;
-  }
-  const note = p.flags.get('--note');
-  return reportSave(deps, await deps.save(source, {
-    editOnly: true, baseVersion: current.version, author: 'cli', ...(note ? { note } : {}),
-  }));
+  return saveFromInput(deps, p, current.source, { editOnly: true, baseVersion: current.version });
 }
 
 async function cmdRun(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
@@ -294,12 +307,13 @@ async function cmdRun(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
   if (lane !== 'cloud' && lane !== 'devin') throw new UsageError('--lane is cloud or devin');
   const task = p.flags.get('--task')?.trim() || `Run the “${pb.meta.name}” playbook on ${repo}.`;
   const base = p.flags.get('--base');
+  const pbRef = formatPlaybookRef({ id: pb.meta.id, version: pb.version });
   const req = {
     repo,
     prompt: task,
     title: p.flags.get('--title') ?? pb.meta.name,
     origin: 'cli' as const,
-    playbook: `${pb.meta.id}@v${pb.version}`,
+    playbook: pbRef,
     ...(base ? { baseBranch: base } : {}),
   };
   const result = lane === 'cloud' ? await deps.launchCloud(req) : await deps.launchDevin(req);
@@ -311,7 +325,7 @@ async function cmdRun(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
     deps.err(`Not launched: ${result.error ?? 'the session could not be started.'}`);
     return 1;
   }
-  deps.out(`Launched ${lane} task ${result.task.id} under ${pb.meta.id}@v${pb.version}.`);
+  deps.out(`Launched ${lane} task ${result.task.id} under ${pbRef}.`);
   if (result.task.sessionUrl) deps.out(`Session: ${result.task.sessionUrl}`);
   return 0;
 }

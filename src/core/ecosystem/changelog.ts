@@ -2,6 +2,7 @@
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isPlainRecord, normalizeUnicodeDashes } from './focus.js';
 import {
   ECOSYSTEM_CHANGELOG_REPOSITORIES, ECOSYSTEM_TIER_RANK,
   type EcosystemChangelogRepository,
@@ -53,12 +54,36 @@ const MAX_BYTES = 4 * 1024 * 1024;
 const SOURCES: readonly ChangelogSource[] = ['changelog', 'release', 'pull-request'];
 const REPOSITORY = /^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9._-]*$/i;
 const DIRECTORY = /^[a-z0-9][a-z0-9._-]*$/i;
+const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const ISO_DATE_OR_DATETIME_RE = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))?$/;
 const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
-const clean = (value: string): string => value.replace(/\r\n?/g, '\n').replace(/[\u2010-\u2015]/g, ' - ').trim();
+const clean = (value: string): string => normalizeUnicodeDashes(value.replace(/\r\n?/g, '\n'), ' - ').trim();
+
+/**
+ * Date.parse normalizes impossible calendar days (like February 30) instead of
+ * rejecting them. Verify the YYYY-MM-DD prefix round-trips cleanly in UTC.
+ */
+export function isValidIsoCalendarDay(day: string): boolean {
+  const ms = Date.parse(`${day}T00:00:00Z`);
+  return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === day;
+}
+
+export function parseStrictIsoInstant(
+  value: unknown,
+  opts: { allowDateOnly?: boolean } = {},
+): string | null {
+  if (typeof value !== 'string') return null;
+  const pattern = opts.allowDateOnly ? ISO_DATE_OR_DATETIME_RE : ISO_DATETIME_RE;
+  if (!pattern.test(value)) return null;
+  if (!isValidIsoCalendarDay(value.slice(0, 10))) return null;
+  const ms = Date.parse(value.length === 10 ? `${value}T00:00:00Z` : value);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
 class InvalidResponse extends Error {}
 function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new InvalidResponse();
-  return value as Record<string, unknown>;
+  if (!isPlainRecord(value)) throw new InvalidResponse();
+  return value;
 }
 function string(value: unknown): string {
   if (typeof value !== 'string') throw new InvalidResponse();
@@ -69,14 +94,9 @@ function positive(value: unknown): number {
   return Number(value);
 }
 function timestamp(value: unknown): string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))) {
-    throw new InvalidResponse();
-  }
-  // Date.parse normalizes February 30 instead of rejecting it. Check the local
-  // calendar day separately so valid timezone offsets remain supported.
-  const day = value.slice(0, 10);
-  if (new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) !== day) throw new InvalidResponse();
-  return new Date(value).toISOString();
+  const parsed = parseStrictIsoInstant(value);
+  if (parsed === null) throw new InvalidResponse();
+  return parsed;
 }
 
 /** Fixed public host, GET only, argv execution, bounded time/output, no token handling. */

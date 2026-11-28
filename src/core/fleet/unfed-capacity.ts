@@ -362,7 +362,8 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     const hardCap = isRecord(slot) && count(slot.hard_cap) ? slot.hard_cap : null;
     const target = laneLaunchTarget(laneLaunchTarget(tickTarget, configuredTarget), hardCap);
     const statusHeld = value.held === true;
-    const view = ctx === null ? null : marketLaneView(lane, value.running, target, statusHeld, ctx);
+    const view = ctx === null ? null : marketLaneView(lane, value.running, target, statusHeld, ctx,
+      typeof value.healthy === 'boolean' ? value.healthy : null);
     const held = view?.held ?? (statusHeld || operatorHolds?.has(lane) === true);
     const headroom = Math.max(0, target - value.running);
     const readyHinted = hints === null ? null : hints.byLane.get(lane) ?? 0;
@@ -844,7 +845,9 @@ export function renderUnfed(report: UnfedReport): string[] {
   const lines: string[] = [];
   for (const r of report.resources) {
     const use = r.utilization === null ? 'no target' : `${Math.round(r.utilization * 100)}%`;
-    const state = r.held ? '  HELD' : r.unfed ? `  UNFED: ${r.headroom} free, ${r.waitingElsewhere} rows waiting elsewhere${Object.keys(r.blocked).length ? ` (${topCodes(r.blocked)})` : ''}` : '';
+    const state = r.held ? '  HELD'
+      : r.unfed === null ? `  UNFED?: ${r.headroom} free, elsewhere rows unknown`
+      : r.unfed ? `  UNFED: ${r.headroom} free, ${r.waitingElsewhere} rows waiting elsewhere${Object.keys(r.blocked).length ? ` (${topCodes(r.blocked)})` : ''}` : '';
     lines.push(`${r.lane}  ${r.running}/${r.target} running (${use}), ${r.readyHinted ?? 'unknown'} hinted here${state}`);
   }
   for (const lane of report.resourcePlan ?? []) {

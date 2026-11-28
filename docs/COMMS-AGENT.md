@@ -38,6 +38,16 @@ The policy is code, not prompt text. A prompt cannot approve a recipient.
   --status sent` (or `all`) reads the resolved half of the same store —
   delivered replies with their `resolvedAt` stamp — and `--transport`
   narrows either slice to one channel; the default stays pending-only.
+  `--to` keeps only drafts addressed to one exact recipient — the same
+  exact transport+recipient pairing standing approvals apply — `--contains`
+  keeps drafts whose scrubbed subject or body carries the needle as a
+  case-insensitive substring, `--since`/`--before` keep drafts whose
+  `createdAt` stamp falls inside one [since, before) window on the shared
+  `15m|2h|1d|ISO|epoch` grammar (never `resolvedAt`, and a record whose
+  `createdAt` does not parse drops out rather than guessing a time),
+  `--id` keeps only the draft whose id strictly equals the value, and
+  `--limit` caps the page oldest-first while `matched` still reports the
+  true filtered total; every filter applies to the `drafts` verb only.
 - KILL and the comms pause refuse every send. Both are read from the account
   home (`os.userInfo().homedir`), so a process with a relocated `$HOME` still
   sees `~/.ashlr/KILL` and `~/.ashlr/comms/pause.json`.
@@ -54,6 +64,7 @@ phm comms-agent status --json
 phm comms-agent run --lanes claude,local --json
 phm comms-agent drafts --json
 phm comms-agent drafts --status sent --transport email --json
+phm comms-agent drafts --to known@example.com --contains "invoice" --since 2h --json
 ```
 
 `--lanes` is the candidate set. Omit it and the run reports no lane rather
@@ -61,9 +72,10 @@ than picking one. The run report lists each inbox message's mail class and
 scrubbed one-line summary under `summaries`, and the same per-message
 decisions are appended to the run journal `status` reads. `--dir` selects
 an isolated runs directory. `drafts`
-takes `--status pending|sent|all` (default `pending`) and `--transport`
-(one of the Comms transports) to narrow the read; the filters apply to the
-`drafts` verb only.
+takes `--status pending|sent|all` (default `pending`), `--transport`
+(one of the Comms transports), `--to`, `--contains`, `--since`, `--before`,
+`--id` and `--limit` (1–200) to narrow the read; the filters apply to the
+`drafts` verb only, and `ashlr_comms_agent_drafts` accepts the same set.
 
 `status` reports the pending inbox depth as `inbox`: a real count of
 messages still awaiting a reply — unanswered mail only, since a delivered

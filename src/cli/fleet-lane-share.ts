@@ -130,7 +130,7 @@ export async function cmdFleetLaneShare(
   }
   try {
     const view = sanitizePublicJson(explainFleetLaneShare(JSON.parse(
-      await reader(join(homedir(), '.ashlr-runs', 'queue', 'status.json')),
+      await reader(join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'status.json')),
     ))) as FleetLaneShareView;
     console.log(args.includes('--json') ? JSON.stringify(view) : formatFleetLaneShare(view));
     return view.status === 'red' ? 1 : 0;

@@ -18,10 +18,11 @@ import { sampleHostStats } from '../drive/nodes/capacity.js';
 import { joinHintCommand } from '../drive/nodes/commands.js';
 import { readPoolConfig } from '../drive/nodes/pool-host.js';
 import { NODE_OFFLINE_MS, nodeCanAcceptWork } from '../drive/nodes/router.js';
-import { isHostStats, parseState, type HostStats, type NodeRecord, type NodesState } from '../drive/nodes/state.js';
+import { isHostStats, isNodeCapacity, parseState, type HostStats, type NodeRecord, type NodesState } from '../drive/nodes/state.js';
 import { isVersionCap } from '../drive/nodes/phm-version.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { aliasMatches } from './pool-reach.js';
+import { remoteLaneCap } from './unfed-market.js';
 import { sanitizeIdentityText, UNKNOWN } from './runtime-identity.js';
 import { defaultTailnetPeersDeps, readTailnetPeers, type TailnetPeers, type TailnetPeersDeps } from './tailnet-peers.js';
 
@@ -217,8 +218,15 @@ export function buildNodesView(
 
   const nodes = machines.map((machine): NodeRow => {
     const live = machine.records.filter(record => !mirrorStale && record.expiresAt > nowMs);
-    // Absence proves "not running" only where the list is authoritative and current.
-    const silenceKnown = state !== null ? !mirrorStale : machine.isSelf && registry?.source === 'none';
+    // Absence proves "not running" only where the registry could hold that
+    // machine's record and the list is authoritative and current. The
+    // standalone registry is single-host — every record in it is this
+    // computer's session — so a tailnet peer's silence there says nothing
+    // about whether its own Phantom runs; it stays unknown, the same answer
+    // the 'none' and 'elsewhere' sources give. Pool registries are the fleet
+    // roster and cover every machine.
+    const covered = registry?.source !== 'local' || machine.isSelf;
+    const silenceKnown = covered && (state !== null ? !mirrorStale : machine.isSelf && registry?.source === 'none');
     const phantom = live.length ? 'running' : silenceKnown ? 'not-running' : UNKNOWN;
     // A claim counts only while the session that took it can still act on it:
     // unexpired claim, unexpired record on this machine, same node and session.
@@ -227,8 +235,39 @@ export function buildNodesView(
       return job.state === 'running' && claim !== undefined && claim.expiresAt > nowMs &&
         live.some(record => record.nodeId === claim.nodeId && record.session === claim.session);
     }).map(job => job.id).sort();
-    const slots = live.length && live.every(record => record.slots !== undefined) && jobs !== UNKNOWN
-      ? Math.max(0, live.reduce((sum, record) => sum + (record.slots ?? 0), 0) - jobs.length) : UNKNOWN;
+    // Per-session running claims under the same liveness rule `jobs` applies.
+    const claimsOn = (record: NodeRecord): number => state === null || mirrorStale ? 0 : state.jobs.filter(job => {
+      const claim = job.claim;
+      return job.state === 'running' && claim !== undefined && claim.expiresAt > nowMs &&
+        claim.nodeId === record.nodeId && claim.session === record.session;
+    }).length;
+    let slots: number | Unknown;
+    if (!(live.length && live.every(record => record.slots !== undefined) && jobs !== UNKNOWN)) slots = UNKNOWN;
+    else if (localRegistry) {
+      // The standalone store is single-host authority: every live record is a
+      // session on this computer sharing one physical slot budget, so free
+      // slots are the tightest per-session remainder — the same rule pool
+      // workers on one hostId follow — never the sum of advertised bounds.
+      slots = Math.max(0, Math.min(...live.map(record => Math.max(0, (record.slots ?? 0) - claimsOn(record)))));
+    } else if (state?.pool === undefined) {
+      slots = Math.max(0, live.reduce((sum, record) => sum + (record.slots ?? 0), 0) - jobs.length);
+    } else {
+      // Pool workers on one physical host share a single measured slot budget:
+      // each session's advertised bound already includes that shared free
+      // space, so summing bounds counts the host's free slots once per session.
+      // Collapse records sharing a measured capacity hostId to the tightest
+      // remaining bound (slots minus that session's own claims); records with
+      // no sample keep their own advertised bound.
+      const byHost = new Map<string, number>();
+      let total = 0;
+      for (const record of live) {
+        const remaining = Math.max(0, (record.slots ?? 0) - claimsOn(record));
+        const hostId = isNodeCapacity(record.capacity) ? record.capacity.hostId : null;
+        if (hostId === null) total += remaining;
+        else byHost.set(hostId, Math.min(byHost.get(hostId) ?? remaining, remaining));
+      }
+      slots = Math.max(0, total + [...byHost.values()].reduce((sum, free) => sum + free, 0));
+    }
     const held = live.map(record => record.capacity?.held).find(Boolean);
     const newest = [...live].sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
     const joined = machine.isSelf || machine.records.length > 0;
@@ -279,11 +318,25 @@ export function capServesLane(cap: string, lane: string): boolean {
   return lane === 'local-model' ? isLocalModelCap(cap) : cap === lane;
 }
 
+/** The lane names a `--can-take`/placement query matches advertised caps
+ * under: the name itself plus the remote cap a market lane resolves to through
+ * the same remoteLaneCap map the claim bridge, `phm nodes plan` and the fleet
+ * resource plan share — so `codex-personal` finds the `codex` computers a
+ * codex-personal job would actually be offered to instead of answering "no
+ * computer" while the plan assigns it. A lane that only runs on this host or
+ * on an API key resolves to no remote cap and keeps the direct match only, and
+ * `local-model` keeps its oMLX-family match through capServesLane. */
+function canTakeLaneNames(lane: string): readonly string[] {
+  const remote = remoteLaneCap(lane);
+  return remote === null || remote === lane ? [lane] : [lane, remote];
+}
+
 /** Require confirmed reachability, free slots and a live advertisement for the lane. */
 export function nodesThatCanTake(view: NodesView, lane: string): NodeRow[] {
+  const names = canTakeLaneNames(lane);
   return view.nodes.filter(node => node.stateCode === 'ready' && node.reachable === true
     && typeof node.freeSlots === 'number' && node.freeSlots > 0 && node.lanes !== UNKNOWN
-    && node.lanes.some(cap => capServesLane(cap, lane)));
+    && node.lanes.some(cap => names.some(name => capServesLane(cap, name))));
 }
 
 export interface NodePlacement {

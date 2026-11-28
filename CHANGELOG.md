@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.80 |
-| Latest dated changelog release (2026-11-27) | 3.30.80 |
+| Source package | 3.30.86 |
+| Latest dated changelog release (2026-11-28) | 3.30.86 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -168,6 +168,161 @@ Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.86] - 2026-11-28
+
+
+### Features
+
+* **prs:** batch offline three-way evidence by exact head ([#10744](https://github.com/ashlrai/phantom/issues/10744)) ([a4fbdbb](https://github.com/ashlrai/phantom/commit/a4fbdbbf38b676763b4425b893c91ae5f52c3381))
+
+
+### Fixes
+
+* **ci:** seed bus status fixture within the byte ceiling ([#10748](https://github.com/ashlrai/phantom/issues/10748)) ([d1ed1fe](https://github.com/ashlrai/phantom/commit/d1ed1fefb1e437a26986b3a85097fabb58b29d6a))
+* **desktop:** report unsupported managed install platforms ([#10759](https://github.com/ashlrai/phantom/issues/10759)) ([bd60dc3](https://github.com/ashlrai/phantom/commit/bd60dc393cbaa3d94c1cb3cb1701d79af82245d6))
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795848517-N17:** ([#10755](https://github.com/ashlrai/phantom/issues/10755)) ([9d81468](https://github.com/ashlrai/phantom/commit/9d81468b6f1fec68412ce72dd9c2f3e22de4e3e4))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795849717-N17:** ([#10764](https://github.com/ashlrai/phantom/issues/10764)) ([b754954](https://github.com/ashlrai/phantom/commit/b754954405c98b0fd3bea7856c4d5188372fed3a))
+* **RQ-DEVINCLOUD-RQ-DVL-CXFLEET-1795754093-N17:** ([#10246](https://github.com/ashlrai/phantom/issues/10246)) ([34fb8b1](https://github.com/ashlrai/phantom/commit/34fb8b14f1f7bea159274cbe7045c10edb4798ce))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795849058-N17:** ([#10756](https://github.com/ashlrai/phantom/issues/10756)) ([1ebadea](https://github.com/ashlrai/phantom/commit/1ebadea3956ebe233fa3e9d0bc4056d949a5ac12))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795849775-N17:** ([#10762](https://github.com/ashlrai/phantom/issues/10762)) ([1a9b50c](https://github.com/ashlrai/phantom/commit/1a9b50c5fea6d960154dbd4bbe599eabd87008ac))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795850075-N17:** ([#10765](https://github.com/ashlrai/phantom/issues/10765)) ([73ced0a](https://github.com/ashlrai/phantom/commit/73ced0ae70023b637ed935ddaf25cef121c00992))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795848414-N17:** ([#10754](https://github.com/ashlrai/phantom/issues/10754)) ([a3ff8fe](https://github.com/ashlrai/phantom/commit/a3ff8fe3239a1836e2c602096caf19c79caf7e56))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795848618-N17:** ([#10758](https://github.com/ashlrai/phantom/issues/10758)) ([12fe811](https://github.com/ashlrai/phantom/commit/12fe8110f15bde74f54b8825936164fb6ce337c2))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795849566-N17:** ([#10770](https://github.com/ashlrai/phantom/issues/10770)) ([f90ffcf](https://github.com/ashlrai/phantom/commit/f90ffcf61a8922360259605ea33ffa798623a470))
+
+
+### Documentation
+
+* show Phantom platform support and contribution paths up front ([#10752](https://github.com/ashlrai/phantom/issues/10752)) ([0fa3eb9](https://github.com/ashlrai/phantom/commit/0fa3eb9121b4e309cb3edb9079e85ff4b802e379))
+
+## [3.30.85] - 2026-11-28
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795843892-N17:** ([#10733](https://github.com/ashlrai/phantom/issues/10733)) ([ba9a801](https://github.com/ashlrai/phantom/commit/ba9a8012845a6907ea512b3cebc2a94137fbac2c))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795844253-N17:** ([#10734](https://github.com/ashlrai/phantom/issues/10734)) ([02594e3](https://github.com/ashlrai/phantom/commit/02594e3fcd0b11c919118d2628c00629866e25c7))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795847219-N17:** ([#10746](https://github.com/ashlrai/phantom/issues/10746)) ([0f5ffb7](https://github.com/ashlrai/phantom/commit/0f5ffb7c6de764f37776edbe0701025735e380fb))
+* **RQ-DEVINCLOUD-RQ-DVL-CXFLEET-1795693874-N17:** ([#9464](https://github.com/ashlrai/phantom/issues/9464)) ([75aed8a](https://github.com/ashlrai/phantom/commit/75aed8ae357ad5db4b430fded9182e42546a8510))
+* **RQ-DEVINCLOUD-RQ-DVL-CXFLEET-1795732937-N17:** ([#9971](https://github.com/ashlrai/phantom/issues/9971)) ([0e6d40d](https://github.com/ashlrai/phantom/commit/0e6d40dc9932e53d9ed7374be4e3006031aa9d1b))
+* **RQ-DEVINCLOUD-RQ-DVL-CXFLEET-1795757283-N17:** ([#10282](https://github.com/ashlrai/phantom/issues/10282)) ([f6d5183](https://github.com/ashlrai/phantom/commit/f6d5183a7e1de125bf054074f73d73a3e5038ba8))
+* **RQ-DEVINCLOUD-RQ-DVL-CXFLEET-1795762679-N17:** ([#10350](https://github.com/ashlrai/phantom/issues/10350)) ([e3597ce](https://github.com/ashlrai/phantom/commit/e3597cebd5fefb8df4350e1858d1f868bbb103b7))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795844543-N17:** ([#10735](https://github.com/ashlrai/phantom/issues/10735)) ([4007544](https://github.com/ashlrai/phantom/commit/400754467cb9216414001a6f1466189b367b86f2))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795845416-N17:** ([#10737](https://github.com/ashlrai/phantom/issues/10737)) ([b414b4a](https://github.com/ashlrai/phantom/commit/b414b4a447c10bdcd759079877c00a1f8f324cda))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795846007-N17:** ([#10742](https://github.com/ashlrai/phantom/issues/10742)) ([0cb5e8c](https://github.com/ashlrai/phantom/commit/0cb5e8cb95f85df6647fc9a0e5b7ce923cf8145b))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795846414-N17:** ([#10743](https://github.com/ashlrai/phantom/issues/10743)) ([d164da0](https://github.com/ashlrai/phantom/commit/d164da041ee631e94c1d4a102e1dd1b6e91087ec))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795844899-N17:** ([#10736](https://github.com/ashlrai/phantom/issues/10736)) ([497677b](https://github.com/ashlrai/phantom/commit/497677b5c5e882eb2cf46ea9118a88b69281e4a4))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795845723-N17:** ([#10740](https://github.com/ashlrai/phantom/issues/10740)) ([d0fec41](https://github.com/ashlrai/phantom/commit/d0fec41ccdbe53f41a10b288a7e37dc28dc9c81f))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795847246-N17:** ([#10745](https://github.com/ashlrai/phantom/issues/10745)) ([69f8f76](https://github.com/ashlrai/phantom/commit/69f8f76a007d8064d3a0c86bb579e88a3e6e00dc))
+
+## [3.30.84] - 2026-11-28
+
+
+### Changes
+
+* **FIXUP-CI-phantom-publish-qualified-ph-344415:** FIXUP-CI publish-qualified-phantom-npm ([#10670](https://github.com/ashlrai/phantom/issues/10670)) ([03eb91a](https://github.com/ashlrai/phantom/commit/03eb91a7c9b3b50b76746429d6af6c8e9e3ace2f))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795834041-N17:** ([#10664](https://github.com/ashlrai/phantom/issues/10664)) ([632d2c2](https://github.com/ashlrai/phantom/commit/632d2c23b6e2c2191af4c78cfef3da083b5e1a6b))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795835377-N17:** ([#10671](https://github.com/ashlrai/phantom/issues/10671)) ([44ef688](https://github.com/ashlrai/phantom/commit/44ef6885a88451c22dbb43fd6e085dbbd4f3f728))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795832500-N17:** ([#10661](https://github.com/ashlrai/phantom/issues/10661)) ([230807f](https://github.com/ashlrai/phantom/commit/230807f5690f855f35382087127bb765b8205408))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795834635-N17:** ([#10665](https://github.com/ashlrai/phantom/issues/10665)) ([678c755](https://github.com/ashlrai/phantom/commit/678c7550c44d3bec6e5fcc895d82ba7e4e885687))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795833076-N17:** ([#10659](https://github.com/ashlrai/phantom/issues/10659)) ([4480b76](https://github.com/ashlrai/phantom/commit/4480b76ca319ced07a733ce707d11cce3bec0d23))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795833657-N17:** ([#10669](https://github.com/ashlrai/phantom/issues/10669)) ([b00fa5a](https://github.com/ashlrai/phantom/commit/b00fa5a54c43e31afed22b5e3039b2eba4237c95))
+
+## [3.30.83] - 2026-11-28
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795831461-N17:** ([#10651](https://github.com/ashlrai/phantom/issues/10651)) ([c466209](https://github.com/ashlrai/phantom/commit/c466209b90bb29bbd938bcd408c3d55bd4d60623))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795830953-N17:** ([#10653](https://github.com/ashlrai/phantom/issues/10653)) ([6addbde](https://github.com/ashlrai/phantom/commit/6addbde2b898698220377e5210bc4e7496ffb04e))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795831643-N17:** ([#10650](https://github.com/ashlrai/phantom/issues/10650)) ([811faa9](https://github.com/ashlrai/phantom/commit/811faa97831c86f6e3c95bbe2b0db5195584d501))
+
+## [3.30.82] - 2026-11-28
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795827303-N17:** ([#10637](https://github.com/ashlrai/phantom/issues/10637)) ([31df766](https://github.com/ashlrai/phantom/commit/31df766c28a7a8f640bca9795c89c091a0b78004))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795828226-N17:** ([#10640](https://github.com/ashlrai/phantom/issues/10640)) ([fdd7afc](https://github.com/ashlrai/phantom/commit/fdd7afce47d99841af0447c224034a18c288479d))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795827616-N17:** ([#10643](https://github.com/ashlrai/phantom/issues/10643)) ([252a622](https://github.com/ashlrai/phantom/commit/252a622f93d0b6dc43b96c82860ed1173d4a621a))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795827371-N17:** ([#10641](https://github.com/ashlrai/phantom/issues/10641)) ([dfd2ea2](https://github.com/ashlrai/phantom/commit/dfd2ea2ee23b164495e01afc0f63353e14c778e8))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795829103-N17:** ([#10642](https://github.com/ashlrai/phantom/issues/10642)) ([9a1b2f6](https://github.com/ashlrai/phantom/commit/9a1b2f69c067892853ed357fe15cd8e65d40eb20))
+
+## [3.30.81] - 2026-11-28
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795785412-N17:** ([#10538](https://github.com/ashlrai/phantom/issues/10538)) ([ea0fcf6](https://github.com/ashlrai/phantom/commit/ea0fcf6751d2cdd2c6f9eb389884d30d325cd470))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795788323-N17:** ([#10542](https://github.com/ashlrai/phantom/issues/10542)) ([9523c57](https://github.com/ashlrai/phantom/commit/9523c573505ac8fa13aaa7c592731c163980df72))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795788975-N17:** ([#10545](https://github.com/ashlrai/phantom/issues/10545)) ([0f3cabf](https://github.com/ashlrai/phantom/commit/0f3cabfabc50435dda57d845dab8a18ebca9dd88))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795790293-N17:** ([#10547](https://github.com/ashlrai/phantom/issues/10547)) ([e1b94c9](https://github.com/ashlrai/phantom/commit/e1b94c9a9f58b0e2cfc510fa78087d9b9664f392))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795792626-N17:** ([#10554](https://github.com/ashlrai/phantom/issues/10554)) ([7120bfb](https://github.com/ashlrai/phantom/commit/7120bfb8395111313f78ad805755ac4b98211a25))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795794273-N17:** ([#10564](https://github.com/ashlrai/phantom/issues/10564)) ([8e52b6a](https://github.com/ashlrai/phantom/commit/8e52b6a75c49f3cf558f22cdeffd37eb72bc0276))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795795196-N17:** ([#10560](https://github.com/ashlrai/phantom/issues/10560)) ([1b27822](https://github.com/ashlrai/phantom/commit/1b2782277e3f1a70459c9a4ee8d93dad8c9a2d30))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795798482-N17:** ([#10575](https://github.com/ashlrai/phantom/issues/10575)) ([4d0e759](https://github.com/ashlrai/phantom/commit/4d0e759c6aec73ea5326d16dce6424c080141d7f))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795801934-N17:** ([#10584](https://github.com/ashlrai/phantom/issues/10584)) ([ad15652](https://github.com/ashlrai/phantom/commit/ad15652de804e21931b08047a3da382572c839c8))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795802697-N17:** ([#10587](https://github.com/ashlrai/phantom/issues/10587)) ([aad81c2](https://github.com/ashlrai/phantom/commit/aad81c216a557173922198baf9da982a6608b46a))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795804179-N17:** ([#10600](https://github.com/ashlrai/phantom/issues/10600)) ([437957b](https://github.com/ashlrai/phantom/commit/437957bbbd7962e1fae00f64d65a0baaac8381e3))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795807673-N17:** ([#10606](https://github.com/ashlrai/phantom/issues/10606)) ([1dee63c](https://github.com/ashlrai/phantom/commit/1dee63c3427708ad888fb4b9294bbc8da8c7c1f3))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795808935-N17:** ([#10610](https://github.com/ashlrai/phantom/issues/10610)) ([61a0f0a](https://github.com/ashlrai/phantom/commit/61a0f0a8a5b82e2c92547150d27ccbe0a3db9929))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795809636-N17:** ([#10617](https://github.com/ashlrai/phantom/issues/10617)) ([590b9d3](https://github.com/ashlrai/phantom/commit/590b9d38c7aa0877993d2943617a86b823a55c3a))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795810910-N17:** ([#10618](https://github.com/ashlrai/phantom/issues/10618)) ([c2d03c5](https://github.com/ashlrai/phantom/commit/c2d03c5641725b3ebd2ec8e48ffbaea437882af0))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795812256-N17:** ([#10623](https://github.com/ashlrai/phantom/issues/10623)) ([fb93f4b](https://github.com/ashlrai/phantom/commit/fb93f4b13ae57dd47883cfdcf3cf70fe91bc3a23))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795814405-N17:** ([#10630](https://github.com/ashlrai/phantom/issues/10630)) ([fb63cbd](https://github.com/ashlrai/phantom/commit/fb63cbdc1be33ed3a787ab8b80ff8242b607c3f6))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795826144-N17:** ([#10632](https://github.com/ashlrai/phantom/issues/10632)) ([b6224a8](https://github.com/ashlrai/phantom/commit/b6224a85e13139e7bbe7571afc4ca519e57330a8))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795786670-N17:** ([#10536](https://github.com/ashlrai/phantom/issues/10536)) ([c56c88e](https://github.com/ashlrai/phantom/commit/c56c88ea7d99fe4f1163a506543fb3a163adc8a2))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795787243-N17:** ([#10539](https://github.com/ashlrai/phantom/issues/10539)) ([807f188](https://github.com/ashlrai/phantom/commit/807f188a136651612b953662abb1796a699b607c))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795788728-N17:** ([#10541](https://github.com/ashlrai/phantom/issues/10541)) ([9564423](https://github.com/ashlrai/phantom/commit/9564423e131fb35b6ebd5ef2b38940ebd31a4a31))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795789690-N17:** ([#10546](https://github.com/ashlrai/phantom/issues/10546)) ([873d2db](https://github.com/ashlrai/phantom/commit/873d2db9fd029fa5fbeb74b9ba8105e087098b22))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795790027-N17:** ([#10550](https://github.com/ashlrai/phantom/issues/10550)) ([6947119](https://github.com/ashlrai/phantom/commit/6947119cb906535327a02310b5659281f07717cc))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795792872-N17:** ([#10552](https://github.com/ashlrai/phantom/issues/10552)) ([c42f9a2](https://github.com/ashlrai/phantom/commit/c42f9a2cad274de3486e054e536b77dd175b4d6b))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795793662-N17:** ([#10555](https://github.com/ashlrai/phantom/issues/10555)) ([b7758df](https://github.com/ashlrai/phantom/commit/b7758df1bc4f84e361415c8782b654616a0df3c7))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795794660-N17:** ([#10561](https://github.com/ashlrai/phantom/issues/10561)) ([ca5af40](https://github.com/ashlrai/phantom/commit/ca5af40f657fa999a99d29b69f341503bde7a275))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795795170-N17:** ([#10559](https://github.com/ashlrai/phantom/issues/10559)) ([ca91e83](https://github.com/ashlrai/phantom/commit/ca91e83a52039c587d3a50dbc8c82728d24a6597))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795796580-N17:** ([#10565](https://github.com/ashlrai/phantom/issues/10565)) ([4c2a345](https://github.com/ashlrai/phantom/commit/4c2a345702236b5cafc86f388e01545b39093435))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795796918-N17:** ([#10569](https://github.com/ashlrai/phantom/issues/10569)) ([88be355](https://github.com/ashlrai/phantom/commit/88be355c6d03c14a4424b0c71860570f8017862b))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795798821-N17:** ([#10573](https://github.com/ashlrai/phantom/issues/10573)) ([5e4d18f](https://github.com/ashlrai/phantom/commit/5e4d18fa878806b447e9904bf75933b18f4ea134))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795799592-N17:** ([#10576](https://github.com/ashlrai/phantom/issues/10576)) ([17c4892](https://github.com/ashlrai/phantom/commit/17c4892de0e9a5a7fc6b54a3c79f9b7188c155be))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795800782-N17:** ([#10581](https://github.com/ashlrai/phantom/issues/10581)) ([00b7878](https://github.com/ashlrai/phantom/commit/00b7878ef209ad09d151b71ea56bedf59306d17c))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795800912-N17:** ([#10583](https://github.com/ashlrai/phantom/issues/10583)) ([1573df8](https://github.com/ashlrai/phantom/commit/1573df8c09af26a7e0ada92b220aab91574b45f2))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795801633-N17:** ([#10585](https://github.com/ashlrai/phantom/issues/10585)) ([10c47f4](https://github.com/ashlrai/phantom/commit/10c47f4c41b39cc6a3f712bd2164d939bcc13de1))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795805945-N17:** ([#10598](https://github.com/ashlrai/phantom/issues/10598)) ([0b3b3eb](https://github.com/ashlrai/phantom/commit/0b3b3ebecee2a33098e921d9e5ccb4063b74b81b))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795807081-N17:** ([#10601](https://github.com/ashlrai/phantom/issues/10601)) ([9c75882](https://github.com/ashlrai/phantom/commit/9c75882b66ab23c6fa0f8f11736fd35ecf74d6d8))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795808336-N17:** ([#10609](https://github.com/ashlrai/phantom/issues/10609)) ([42c9dcb](https://github.com/ashlrai/phantom/commit/42c9dcb113ac8afdf2d5da3bdb81aaa36c5bb461))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795809826-N17:** ([#10615](https://github.com/ashlrai/phantom/issues/10615)) ([8b91c56](https://github.com/ashlrai/phantom/commit/8b91c5610b63d7b10ba775010678e2b9341aeae2))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795811224-N17:** ([#10620](https://github.com/ashlrai/phantom/issues/10620)) ([ade999c](https://github.com/ashlrai/phantom/commit/ade999cf397ebe3dd4c55036904271d34f4bca51))
+* **RQ-DEVINCLOUD-RQ-DVL-FLEET-1795814559-N17:** ([#10628](https://github.com/ashlrai/phantom/issues/10628)) ([2b1b6dc](https://github.com/ashlrai/phantom/commit/2b1b6dcd25fab1f5212b48dddd6da4a616b64723))
+* **RQ-DEVINCLOUD-RQ-DVL-NEON-1795790149-N17:** ([#10544](https://github.com/ashlrai/phantom/issues/10544)) ([a844f9d](https://github.com/ashlrai/phantom/commit/a844f9d6abc250da8fd484eb7b7f2c5b7b36e5fa))
+* **RQ-DEVINCLOUD-RQ-DVL-NEON-1795791813-N17:** ([#10551](https://github.com/ashlrai/phantom/issues/10551)) ([ecfb3b3](https://github.com/ashlrai/phantom/commit/ecfb3b3a60e2bd1c11c4e0f550fa6fb7c8d47fa3))
+* **RQ-DEVINCLOUD-RQ-DVL-NEON-1795794014-N17:** ([#10556](https://github.com/ashlrai/phantom/issues/10556)) ([a26a12c](https://github.com/ashlrai/phantom/commit/a26a12ce4deaba4c0bf66df77ddf8a73164f5428))
+* **RQ-DEVINCLOUD-RQ-DVL-NEON-1795800720-N17:** ([#10579](https://github.com/ashlrai/phantom/issues/10579)) ([6fc0968](https://github.com/ashlrai/phantom/commit/6fc0968842abac12cf738049b85561a7ec6a679f))
+* **RQ-DEVINCLOUD-RQ-DVL-NEON-1795805813-N17:** ([#10596](https://github.com/ashlrai/phantom/issues/10596)) ([8489c50](https://github.com/ashlrai/phantom/commit/8489c5035c254f0ad3fff68b8d5b4a72860dd43f))
+* **RQ-DEVINCLOUD-RQ-DVL-NEON-1795807371-N17:** ([#10602](https://github.com/ashlrai/phantom/issues/10602)) ([063ac3c](https://github.com/ashlrai/phantom/commit/063ac3c7202ed9228f64987be935f82291f8cef4))
+* **RQ-DEVINCLOUD-RQ-DVL-NEON-1795808707-N17:** ([#10605](https://github.com/ashlrai/phantom/issues/10605)) ([27099a8](https://github.com/ashlrai/phantom/commit/27099a8f9d1e576993fa5ecd3b7e7129f9f84ce8))
+* **RQ-DEVINCLOUD-RQ-DVL-NEON-1795811529-N17:** ([#10621](https://github.com/ashlrai/phantom/issues/10621)) ([e3365f5](https://github.com/ashlrai/phantom/commit/e3365f51c428c503458f533517432052f08930eb))
+* **RQ-DEVINCLOUD-RQ-DVL-NEON-1795813912-N17:** ([#10625](https://github.com/ashlrai/phantom/issues/10625)) ([7fd93d2](https://github.com/ashlrai/phantom/commit/7fd93d2463079cff6eb2845b43662456a14b6a23))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795786253-N17:** ([#10535](https://github.com/ashlrai/phantom/issues/10535)) ([7a06984](https://github.com/ashlrai/phantom/commit/7a069841495faa32d7d9f3f3977005d72bdeba8a))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795787145-N17:** ([#10543](https://github.com/ashlrai/phantom/issues/10543)) ([b20b988](https://github.com/ashlrai/phantom/commit/b20b988981557bc9b81b727a6e6726c74f31f0e2))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795791129-N17:** ([#10557](https://github.com/ashlrai/phantom/issues/10557)) ([63a40d9](https://github.com/ashlrai/phantom/commit/63a40d997e9f529a51c0c3e7a6f17a2a1ff917c1))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795793354-N17:** ([#10562](https://github.com/ashlrai/phantom/issues/10562)) ([d95f916](https://github.com/ashlrai/phantom/commit/d95f916f74b7d3c39a1aa8cb7050f7bbc1def814))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795795987-N17:** ([#10570](https://github.com/ashlrai/phantom/issues/10570)) ([0b1ba37](https://github.com/ashlrai/phantom/commit/0b1ba37cf7d4d9756ecef5890afe1dbfd10a6939))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795796422-N17:** ([#10572](https://github.com/ashlrai/phantom/issues/10572)) ([21141d5](https://github.com/ashlrai/phantom/commit/21141d523937a622c6c38a5159f7efc46b7ee442))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795797179-N17:** ([#10568](https://github.com/ashlrai/phantom/issues/10568)) ([6352081](https://github.com/ashlrai/phantom/commit/6352081e50524e4d4fb573c4f518362feab73dc0))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795800683-N17:** ([#10582](https://github.com/ashlrai/phantom/issues/10582)) ([bd86754](https://github.com/ashlrai/phantom/commit/bd86754f4362f15306c6fa58f07907e0effff1f0))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795803658-N17:** ([#10592](https://github.com/ashlrai/phantom/issues/10592)) ([20d5a46](https://github.com/ashlrai/phantom/commit/20d5a46dcfabc53147e1aae5522af0fcbc02fb57))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795804706-N17:** ([#10593](https://github.com/ashlrai/phantom/issues/10593)) ([fef7336](https://github.com/ashlrai/phantom/commit/fef7336afc5fafe0572a3161fc8e95b4821e0161))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795806760-N17:** ([#10613](https://github.com/ashlrai/phantom/issues/10613)) ([7cd73d8](https://github.com/ashlrai/phantom/commit/7cd73d8c71cac83c78be8ec346eb2663373c88af))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795808207-N17:** ([#10616](https://github.com/ashlrai/phantom/issues/10616)) ([619e57d](https://github.com/ashlrai/phantom/commit/619e57d26533306e628b16d2223538aba2492280))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795810335-N17:** ([#10622](https://github.com/ashlrai/phantom/issues/10622)) ([b58e40e](https://github.com/ashlrai/phantom/commit/b58e40eceb7b62c8d5bd5e321c15c645658a457d))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795813913-N17:** ([#10629](https://github.com/ashlrai/phantom/issues/10629)) ([8c4fb08](https://github.com/ashlrai/phantom/commit/8c4fb08878236b1b40adc70b8d1a9140eb74aae8))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795826073-N17:** ([#10635](https://github.com/ashlrai/phantom/issues/10635)) ([3b7ed1e](https://github.com/ashlrai/phantom/commit/3b7ed1ee9b1625a0594033cbc863040eda685940))
+* **RQ-PHX-PAIRTOMLEDITTEST1048:** Bridge Notes - Testing iMessage TOML Editing Functions ([#10631](https://github.com/ashlrai/phantom/issues/10631)) ([25f2d4d](https://github.com/ashlrai/phantom/commit/25f2d4daa05b88245b82adc1de3dc7c9451480c2))
 
 ## [3.30.80] - 2026-11-27
 

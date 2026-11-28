@@ -1,8 +1,8 @@
 /** Content-free notifications derived from the same sources as the Leader pane. */
 import { parseInboxAt } from '../../web-ui/routes/verse/fleet/interject-ack-model.js';
+import { isRemoteRecord as record } from './remote-access.js';
 
 interface PushLeaderLine { who: string; source: string; at: number; text: string }
-const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
 export function validLeaderReplies(value: unknown): value is PushLeaderLine[] {
   return Array.isArray(value) && value.length <= 3000 && value.every(line => record(line)

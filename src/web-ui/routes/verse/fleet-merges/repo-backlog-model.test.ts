@@ -3,7 +3,7 @@ import { ageText, repoBacklogView, type RepoBacklog } from './repo-backlog-model
 
 const NOW = Date.parse('2026-11-09T12:00:00Z');
 const repo = (name: string, open: number, dirty: number, extra: Partial<RepoBacklog> = {}): RepoBacklog =>
-  ({ repo: name, state: 'ok', open, dirty, behind: 0, clean: 0, oldestDirtyAt: null, ...extra });
+  ({ repo: name, state: 'ok', complete: true, open, dirty, behind: 0, clean: 0, oldestDirtyAt: null, ...extra });
 const gone = (name: string, state: 'not-enrolled' | 'unavailable'): RepoBacklog => ({ ...repo(name, 0, 0), state });
 
 it('sorts most DIRTY first, then most open, unreadable repos last', () => {
@@ -35,4 +35,10 @@ it('words the oldest DIRTY age', () => {
   expect(ageText(null, NOW)).toBe('—');
   expect(ageText('garbage', NOW)).toBe('—');
   expect(repoBacklogView([repo('example-org/a', 1, 1, { oldestDirtyAt: '2026-11-07T12:00:00Z' })], NOW).rows[0]!.oldestDirtyText).toBe('2 d');
+});
+
+it('reports capped and older server totals as unknown', () => {
+  const view = repoBacklogView([repo('example-org/a', 100, 4, { complete: false }), repo('example-org/b', 12, 1)], NOW);
+  expect(view.headline).toContain('112 sampled PRs · total unknown');
+  expect(view.rows.map(item => item.complete)).toEqual([false, true]);
 });

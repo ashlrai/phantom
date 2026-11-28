@@ -40,7 +40,7 @@ export async function cmdNodeBridge(args: string[]): Promise<number> {
   } catch (error) {
     // Store and privacy messages in this stack are fixed operator-facing
     // strings; anything else stays masked, as in the node fleet verbs.
-    const operatorMessage = /^(?:Invalid |Drive |Universe storage|Unsafe drive|Cannot create filesystem root)/;
+    const operatorMessage = /^(?:Invalid |Drive |(?:Universe|Private) storage|Unsafe drive|Cannot create filesystem root)/;
     const message = error instanceof Error && operatorMessage.test(error.message)
       ? error.message : 'Node bridge unavailable or misconfigured.';
     if (json) console.log(JSON.stringify({ schemaVersion: 1, command: 'bridge',
