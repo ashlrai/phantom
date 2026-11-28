@@ -1,5 +1,5 @@
 /** Group rooms are a convention over the local durable bus, not an identity boundary. */
-import { appendBusInbox, listBusInboxAfter, type BusInboxOptions } from './bus-inbox.js';
+import { appendBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 import type { BusJsonValue, BusPriority } from './bus-envelope.js';
 
 const NAME = /^[a-z0-9](?:[a-z0-9_-]{0,31})$/;
@@ -63,13 +63,21 @@ export function isGroupPresenceBody(body: unknown): boolean {
     (body as Record<string, unknown>).kind === 'group.presence';
 }
 
-/** One page of a subscription. Advance using nextCursor even when no rows match. */
-export function subscribeGroup(room: string, topic: string, after: number, limit: number, options: BusInboxOptions = {}) {
+/**
+ * One page of a subscription. Advance using nextCursor even when no rows match.
+ * `match` narrows the admitted room rows through the caller's predicate — the
+ * same hook `readBusWakes` exposes — so `comms bus group read` applies the
+ * shared bus page filters without this transport primitive importing the
+ * filter module. The room/topic address check always applies first; a row
+ * outside the address never reaches `match`, and filters never fabricate rows.
+ */
+export function subscribeGroup(room: string, topic: string, after: number, limit: number, options: BusInboxOptions = {},
+  match?: (row: BusInboxReceipt) => boolean) {
   let address: string;
   try { address = groupAddress(room, topic); } catch { return { status: 'invalid' as const }; }
   const page = listBusInboxAfter(after, limit, options);
   if (page.status !== 'ok') return page;
-  return { ...page, messages: page.messages.filter(row => row.envelope.to === address) };
+  return { ...page, messages: page.messages.filter(row => row.envelope.to === address && (match === undefined || match(row))) };
 }
 
 /** Fold all live presence observations in cursor order; callers must handle failures. */
