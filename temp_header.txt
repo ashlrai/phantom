@@ -1,0 +1,20 @@
+/**
+ * routes/verse/mobile/screens/FeedScreen.tsx — the Feed on the phone: the same
+ * newest-first stream as the desktop Feed, built by the desktop model
+ * (feed/feed-model.ts `buildFeed`) from the same reads.
+ *
+ * Remote mode (the paired phone behind the gateway): the owner-thread and
+ * update-status routes are not on the gateway's read allowlist, so they are
+ * not asked for; one footnote says what is missing. Nothing here widens it.
+ * Every text is untrusted and rendered as plain text.
+ */
+import { useMemo, useState } from 'react';
+import { deriveUpdateNotifications } from '../../../../components/notifications/deriveUpdateNotifications.js';
+import { readFailureReason } from '../../../../data/client.js';
+import { useQuery, useRefetch } from '../../../../data/hooks.js';
+import { refetchQuery } from '../../../../data/cache.js';
+import { isRemoteMobileMode } from '../../../../data/remote-mode.js';
+import { ago } from '../../command/ladder-model.js';
+import { buildFeed, filterFeed, type FeedFilter, type FeedItem, type FeedKind } from '../../feed/feed-model.js';
+import { fleetMergesQuery } from '../../fleet-merges/fleet-merges-queries.js';
+import { leaderThreadQuery } from '../../leader/thread-data.js';
