@@ -15,12 +15,20 @@ import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } fro
 import { busBodyThread } from '../core/agents/bus-v2-schema.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
+import { busPageAddressMatchers, busPageRowMatch, type BusPageAddressRefs, type BusPageFilters } from '../core/fleet/bus-page-filters.js';
 
-const HELP = `phm comms bus group read <room> <topic> <cursor>
+const HELP = `phm comms bus group read <room> <topic> <cursor> [--from <address>] [--exclude-from <address>] [--id <id>] [--priority <P0|P1|P2|P3>] [--body-kind <kind>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
 phm comms bus group presence <room> <topic>
 phm comms bus group heartbeat <room> <topic> <id> <member> <online|offline>
 phm comms bus group publish <room> <topic> <id> <from> <ttl-ms> <json-body>
 Group labels are local routing labels, not identities; group read advances the shared bus cursor.
+group read filters apply the shared bus page rules on top of the room+topic address: --from and
+--exclude-from resolve sender labels through the identity registry like every bus read, --id is an
+exact envelope match, --priority one P0..P3 band, --body-kind the body's own kind discriminator
+(group.message payloads vs group.presence heartbeats), --since/--before the [since, before) window
+on receivedAt, and --contains the scrubbed one-line summary substring. The room/topic address
+already fixes the to/channel/topic scope, so those filters are not offered; filters narrow shown
+rows, never the scan — keep reading nextCursor until it stops advancing.
 phm comms bus post --file <envelope.json|->
 phm comms bus post --reply-to <id> --id <new-id> --from <address> --text <text> [--ttl-ms <ms>]
 phm comms bus post-batch --file <batch.json|->
@@ -384,12 +392,83 @@ async function peers(args: string[], deps: CommsBusDependencies): Promise<number
   }
 }
 
+/** The shared bus page filters `group read` accepts; the room/topic address already fixes to/channel/topic. */
+const GROUP_READ_FLAGS = ['--from', '--exclude-from', '--id', '--priority', '--body-kind', '--since', '--before', '--contains'] as const;
+type GroupReadFlag = (typeof GROUP_READ_FLAGS)[number];
+/** The printable routing-label bound every bus id/address field shares. */
+const GROUP_READ_LABEL = /^[\x21-\x7e]{1,128}$/;
+
+/**
+ * Parse the `group read` filter tail into the shared bus page row rule. The
+ * room+topic address is the subscription's own scope, so the address-implied
+ * filters (`to`, `channel`, protocol `kind`/`topic`, and the body fields
+ * group bodies never carry — `inReplyTo`, `thread`, `job`, `result`) are not
+ * offered: every accepted flag can match a group row. `--body-kind` is the
+ * discriminator that separates `group.message` payloads from `group.presence`
+ * heartbeats; `--from`/`--exclude-from` resolve through the same identity
+ * registry every bus read's sender filter uses. Returns null on any invalid
+ * value — a malformed filter is an argument error, never a widened page.
+ */
+function parseGroupReadFilters(args: string[], options: BusInboxOptions): ((row: BusInboxReceipt) => boolean) | null {
+  const values = new Map<GroupReadFlag, string>();
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i]!;
+    const inline = /^--(from|exclude-from|id|priority|body-kind|since|before|contains)=(.*)$/s.exec(token);
+    const key = (inline ? `--${inline[1]}` : token) as GroupReadFlag;
+    if (!(GROUP_READ_FLAGS as readonly string[]).includes(key) || values.has(key)) return null;
+    const value = inline ? inline[2] : args[++i];
+    if (value === undefined || value === '' || (!inline && value.startsWith('--'))) return null;
+    values.set(key, value);
+  }
+  const refs: BusPageAddressRefs = {};
+  const filters: BusPageFilters = {};
+  const from = values.get('--from'), excludeFrom = values.get('--exclude-from');
+  for (const value of [from, excludeFrom]) {
+    if (value !== undefined && !validateBusEnvelope({ id: value, from: value, to: value, priority: 'P3', ttl: 1, body: null }).ok) return null;
+  }
+  if (from !== undefined) refs.from = from;
+  if (excludeFrom !== undefined) refs.excludeFrom = excludeFrom;
+  const id = values.get('--id');
+  if (id !== undefined) {
+    if (!GROUP_READ_LABEL.test(id)) return null;
+    filters.id = id;
+  }
+  const priority = values.get('--priority');
+  if (priority !== undefined) {
+    if (!(BUS_PRIORITIES as readonly string[]).includes(priority)) return null;
+    filters.priority = priority as BusPriority;
+  }
+  const bodyKind = values.get('--body-kind');
+  if (bodyKind !== undefined) {
+    if (!GROUP_READ_LABEL.test(bodyKind)) return null;
+    filters.bodyKind = bodyKind;
+  }
+  const now = (options.now ?? Date.now)();
+  for (const flag of ['--since', '--before'] as const) {
+    const raw = values.get(flag);
+    if (raw === undefined) continue;
+    const resolved = parseSince(raw, now);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    filters[flag === '--since' ? 'since' : 'before'] = resolved;
+  }
+  const contains = values.get('--contains');
+  if (contains !== undefined) {
+    const needle = busReadContains(contains);
+    if (needle === null || needle === undefined) return null;
+    filters.contains = needle;
+  }
+  if (Object.keys(refs).length === 0 && Object.values(filters).every(value => value === undefined)) return () => true;
+  const matchers = busPageAddressMatchers(refs, { root: options.root });
+  return (row: BusInboxReceipt) => busPageRowMatch(row, filters, matchers);
+}
+
 async function groupCommand(args: string[], options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
   const [verb, room, topic, ...rest] = args;
   let result: { status: string } = { status: 'invalid' };
   if (room && topic) {
-    if (verb === 'read' && rest.length === 1 && /^(0|[1-9][0-9]*)$/.test(rest[0]!)) {
-      result = subscribeGroup(room, topic, Number(rest[0]), 100, options);
+    if (verb === 'read' && rest.length >= 1 && /^(0|[1-9][0-9]*)$/.test(rest[0]!)) {
+      const match = parseGroupReadFilters(rest.slice(1), options);
+      result = match === null ? { status: 'invalid' } : subscribeGroup(room, topic, Number(rest[0]), 100, options, match);
     } else if (verb === 'presence' && rest.length === 0) {
       result = groupPresence(room, topic, options);
     } else if (verb === 'heartbeat' && rest.length === 3 && (rest[2] === 'online' || rest[2] === 'offline')) {
