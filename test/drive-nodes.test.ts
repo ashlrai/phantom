@@ -324,6 +324,30 @@ describe('release: decline versus retry (CLI + router)', () => {
 
 describe('pull session honesty', () => {
   const pullArgs = (nodeId: string, session: number) => ['--node', nodeId, '--session', String(session)];
+  it('keeps newer capacity through delayed holds and delayed ready samples', () => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'] })!;
+    const ready = { hostId: 'worker-host', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000 };
+    const held = { ...ready, slots: 0, held: 'memory-pressure' } as const;
+    f.a.enqueue('job', { owner: 'o' });
+    f.advance(10);
+    const currentHold = { ...held, sampledAtMs: 1_010 };
+    f.a.heartbeat(worker, { capacity: currentHold });
+    f.advance(5);
+    f.b.heartbeat(worker, { capacity: ready, slots: 1 });
+    expect(f.a.snapshot().nodes.find(n => n.nodeId === worker.nodeId)).toMatchObject({
+      capacity: currentHold, slots: 0, heartbeatAt: 1_015,
+    });
+    expect(f.a.pull(worker)).toBeNull();
+
+    const recovered = { ...ready, sampledAtMs: 1_015 };
+    f.a.heartbeat(worker, { capacity: recovered });
+    f.b.heartbeat(worker, { capacity: currentHold, slots: 0 });
+    expect(f.a.snapshot().nodes.find(n => n.nodeId === worker.nodeId)).toMatchObject({
+      capacity: recovered, slots: 1,
+    });
+    expect(f.a.pull(worker)?.job.id).toBe('job');
+  });
   it('answers no-job only to a live session; a dead one gets session-expired', () => {
     const f = fixture();
     const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
