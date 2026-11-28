@@ -28,3 +28,18 @@ export function nodeTaskArgs(task: EmbeddedNodeTask | undefined): string[] {
   if (part) args.push(`--task-part=${part}`);
   return args;
 }
+
+/** Build the embedded task a whole-text source becomes — the `--task-file`
+ * payload or stdin on the enqueue CLI. The digest is computed here so the
+ * caller never runs sha256sum by hand, and the store's own validity rules are
+ * applied before any argv exists. The thrown Error names the broken rule so
+ * the CLI can quote it in a usage error. */
+export function embeddedTaskFromText(text: string): EmbeddedNodeTask {
+  const task: EmbeddedNodeTask = { text, sha256: createHash('sha256').update(text, 'utf8').digest('hex') };
+  if (validNodeTask(task)) return task;
+  const reason = !text.trim() ? 'the text is empty'
+    : Buffer.byteLength(text, 'utf8') > NODE_TASK_LIMIT ? `the text exceeds ${NODE_TASK_LIMIT} bytes`
+    : scrubSecrets(text) !== text ? 'the text contains a secret-shaped string'
+    : 'the text is not valid UTF-8';
+  throw new Error(`Invalid embedded node task: ${reason}.`);
+}

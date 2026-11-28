@@ -109,6 +109,16 @@ advertised. A manual runner can also read the printed task, do the work and
 `complete --result` with its own result text — the pack is what an automated
 runner executes, not a requirement on the result.
 
+When the task text already lives in a file, `--task-file <path>` (or `-` to
+read stdin) is the whole-text spelling of the same pair — the digest and part
+split are computed for you, and it cannot be combined with
+`--task-part`/`--task-sha256`:
+
+```sh
+phm node enqueue --job review-1 --owner acme --requires codex,pack:codex-file \
+  --pack codex-file --task-file task.md --json
+```
+
 `phm node result --job <id> --owner <scope>` is the read-only way back to a
 job's outcome: `pending`, `running` (naming the node whose live claim can act,
 or `no live claim` once the claim lapsed or was fenced — the same words

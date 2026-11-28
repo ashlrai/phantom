@@ -1,10 +1,12 @@
 /** `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave`: thin handlers over DriveNodes. */
+import { readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import type { DriveNodes, NodesStore } from '../core/drive/nodes/index.js';
 import { UsageError, joinHintCommand, knownOwnerScopes, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
 import { validId, type NodeAuth } from '../core/drive/nodes/state.js';
 import type { SelfUpdatePlan } from '../core/drive/nodes/phm-version.js';
 import type { LocalLaneProbeDeps } from '../core/drive/nodes/local-model-caps.js';
+import { embeddedTaskFromText, nodeTaskArgs } from '../core/drive/nodes/task.js';
 import { parseNodeWatchFlags, type NodeWatchFlags } from './node-watch.js';
 import type { NodeBeatWatchDeps } from './node-beat-watch.js';
 
@@ -28,6 +30,9 @@ export interface NodeFleetDeps {
    * gh login check, exit codes only); defaults to this machine's real probe.
    * An explicit --caps skips the probe entirely. */
   providerLanes?: () => string[];
+  /** Test seam for `enqueue --task-file -` (the task text on stdin); defaults
+   * to reading process.stdin. Only consulted when the flag asks for stdin. */
+  readTaskStdin?: () => Promise<string>;
 }
 
 
@@ -112,6 +117,68 @@ function planEmptyNote(nodes: DriveNodes, owner: string | undefined): string {
 async function joinSignInLanes(probeAuth: () => NodeAuth): Promise<string[]> {
   const { probeProviderBinaries } = await import('../core/drive/nodes/worker.js');
   return [...Object.keys(probeProviderBinaries()), ...(probeAuth() === 'ok' ? ['gh'] : [])].sort();
+}
+
+/** `--task-file <path>` (`-` reads stdin) is the whole-text spelling of the
+ * --task-part/--task-sha256 pair: the source's text becomes the embedded task
+ * the store already transports, so an enqueue caller never computes the
+ * digest or splits parts by hand. It is resolved here — before flag parsing,
+ * on both the standalone and pool paths — into the same --task-part args the
+ * wire already carries, so runNodeFleet and the SSH endpoint see no new flag.
+ * The produced args go through parseNodeFleetFlags and the store's own
+ * validation unchanged; only the file read and the digest live here. */
+async function readTaskFileStdin(): Promise<string> {
+  if (process.stdin.isTTY) throw new Error('stdin is a terminal');
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+const TASK_FILE_FLAG = '--task-file';
+const TASK_PART_FLAGS = ['--task-part', '--task-sha256'];
+const hasTaskPartFlag = (arg: string): boolean => TASK_PART_FLAGS.some(f => arg === f || arg.startsWith(`${f}=`));
+
+async function resolveEnqueueTaskFile(args: string[], readStdin: () => Promise<string>): Promise<string[]> {
+  const hits = args.flatMap((a, i) => (a === TASK_FILE_FLAG || a.startsWith(`${TASK_FILE_FLAG}=`)) ? [i] : []);
+  if (hits.length === 0) return args;
+  if (hits.length > 1) {
+    throw new UsageError('duplicate-flag', '--task-file was given more than once.',
+      'Pass it once, or use --task-part/--task-sha256 for parts you assembled yourself. Run: phm node --help');
+  }
+  const i = hits[0]!;
+  const arg = args[i]!;
+  const inline = arg.startsWith(`${TASK_FILE_FLAG}=`) ? arg.slice(TASK_FILE_FLAG.length + 1) : undefined;
+  const value = inline ?? args[i + 1];
+  if (value === undefined || value === '' || (inline === undefined && value.startsWith('--'))) {
+    throw new UsageError('missing-value', '--task-file needs a path, or - to read the task from stdin.', 'Run: phm node --help');
+  }
+  // The flag and its separate value (when not --task-file=<path>) are the only
+  // argv slots this rewrite owns; a --task-part/--task-sha256 anywhere else
+  // would give the job two task texts, so the mix is refused by name.
+  const consumed = new Set(inline === undefined ? [i, i + 1] : [i]);
+  if (args.some((a, j) => !consumed.has(j) && hasTaskPartFlag(a))) {
+    throw new UsageError('conflicting-task', '--task-file cannot be combined with --task-part or --task-sha256: both name the embedded task text.',
+      'Use --task-file for the whole text, or the --task-part/--task-sha256 pair for parts you assembled yourself. Run: phm node --help');
+  }
+  let text: string;
+  if (value === '-') {
+    if (process.stdin.isTTY) {
+      throw new UsageError('bad-task-file', '--task-file - reads the task from stdin, but stdin is a terminal.',
+        'Pipe the task text in, or pass a file path. Run: phm node --help');
+    }
+    try { text = await readStdin(); }
+    catch { throw new UsageError('bad-task-file', 'Could not read the task from stdin.', 'Pipe the task text on stdin, or pass a file path. Run: phm node --help'); }
+  } else {
+    try { text = await readFile(value, 'utf8'); }
+    catch { throw new UsageError('bad-task-file', `Cannot read the task file ${JSON.stringify(value)}.`, 'Check the path exists and is readable, or pass - to read stdin. Run: phm node --help'); }
+  }
+  let packed: string[];
+  try { packed = nodeTaskArgs(embeddedTaskFromText(text)); }
+  catch (error) {
+    const reason = error instanceof Error && error.message.startsWith('Invalid embedded node task') ? error.message : 'Invalid embedded node task.';
+    throw new UsageError('bad-task', reason, 'Pass non-empty task text of at most 16 KiB with no secret-shaped strings. Run: phm node --help');
+  }
+  return [...args.filter((_, j) => !consumed.has(j)), ...packed];
 }
 
 function text(verb: string, out: Record<string, unknown>, notes?: {
@@ -353,6 +420,10 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       joinWatch = parsed;
       args = parsed.base;
     }
+    // `--task-file` resolves to the --task-part/--task-sha256 args the store
+    // already transports, before parsing — so the standalone and pool paths
+    // both see only flags the shared parser and wire already accept.
+    if (verb === 'enqueue') args = await resolveEnqueueTaskFile(args, deps.readTaskStdin ?? readTaskFileStdin);
     const flags = parseNodeFleetFlags(verb, args);
     if (!deps.store) {
       const { cmdNodePool, hasNodePool } = await import('./node-pool.js');
