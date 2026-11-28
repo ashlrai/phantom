@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
-import { NODE_BRIDGE_CALL_MS, NODE_BRIDGE_PASS_BUDGET_MS, bridgeLeaseOwner, localBridgeRouter, nodeBridgeReadiness, runNodeBridge, type BridgeRouter, type NodeBridgeHost } from '../src/core/drive/nodes/ready-bridge.js';
+import { NODE_BRIDGE_CALL_MS, NODE_BRIDGE_PASS_BUDGET_MS, bridgeLeaseOwner, localBridgeRouter, nodeBridgeInertFix, nodeBridgeReadiness, runNodeBridge, type BridgeRouter, type NodeBridgeHost } from '../src/core/drive/nodes/ready-bridge.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { probeNodeLanes } from '../src/core/drive/nodes/worker.js';
 import { probeRunnerPacks } from '../src/core/drive/nodes/runner-packs.js';
@@ -637,6 +637,20 @@ describe('ready.tsv -> node router bridge', () => {
     rmSync(join(f.host.runsRoot, 'bin', 'dispatchd.py'));
     expect(nodeBridgeReadiness(f.host)).toBe('dispatcher-absent');
     expect((await f.pass(true, { owner: null })).inert).toBe('bridge-owner-unset');
+  });
+
+  it('names a remediation for every inert reason the bridge can report', () => {
+    // docs/NODE-ROUTER.md enumerates the inert codes; each must map to a fix,
+    // and an unknown code must stay unmapped rather than inventing guidance.
+    for (const code of ['bridge-owner-unset', 'bridge-config-invalid', 'bridge-disabled',
+      'pool-config-invalid', 'not-pool-primary', 'owner-not-pool-scope', 'router-unavailable',
+      'stopped', 'queue-absent', 'dispatcher-absent', 'dispatcher-lease-unsupported']) {
+      expect(nodeBridgeInertFix(code, '/x/node-bridge.json'), code).toBeTruthy();
+    }
+    expect(nodeBridgeInertFix('bridge-owner-unset', '/x/node-bridge.json')).toContain('/x/node-bridge.json');
+    expect(nodeBridgeInertFix('bridge-config-invalid')).toContain('{"enabled": true, "owner": "<scope>"}');
+    expect(nodeBridgeInertFix(null)).toBeNull();
+    expect(nodeBridgeInertFix('some-future-code')).toBeNull();
   });
   it('starts no router call that cannot finish before the pass deadline', async () => {
     const f = fixture([row('RQ-REVIEW-A'), row('RQ-REVIEW-B'), row('RQ-REVIEW-C')]);

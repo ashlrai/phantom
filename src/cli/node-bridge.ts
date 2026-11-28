@@ -1,5 +1,5 @@
 /** `phm node bridge [--owner <scope>] [--apply] [--json]`: thin handler over the ready.tsv -> node bridge. */
-import type { NodeBridgeReport } from '../core/drive/nodes/ready-bridge.js';
+import { nodeBridgeInertFix, type NodeBridgeReport } from '../core/drive/nodes/ready-bridge.js';
 
 const USAGE = 'Usage: phm node bridge [--owner <scope>] [--apply] [--json]';
 
@@ -14,9 +14,10 @@ async function bridgeConfigLabel(): Promise<string> {
   } catch { return '~/.ashlr/node-bridge.json'; }
 }
 
-function text(r: NodeBridgeReport): string {
+function text(r: NodeBridgeReport, fix: string | null): string {
   const head = `node bridge ${r.mode} owner=${r.owner ?? 'unset'} ${r.inert ? `inert: ${r.inert}` : 'active'}${r.held ? ` held: ${r.held}` : ''}`;
   return [head,
+    ...(fix ? [`fix: ${fix}`] : []),
     ...r.nodes.map(n => `node ${n.nodeId} caps=${n.caps.join(',') || '-'} free=${n.freeSlots ?? 'unknown'}/${n.slots ?? 'unknown'}`),
     ...r.rows.map(row => `${row.job} ${row.offload ? `-> ${row.nodeId}` : `stays local: ${row.reasons.join(',')}`}`),
     ...r.leases.map(l => `lease ${l.job} ${l.state} router=${l.routerState ?? 'absent'} next=${l.action}`)].join('\n');
@@ -48,6 +49,9 @@ export async function cmdNodeBridge(args: string[]): Promise<number> {
     else console.error(message);
     return 1;
   }
-  console.log(json ? JSON.stringify({ schemaVersion: 1, command: 'bridge', ...report }) : text(report));
+  // An inert report names its reason code; the fix line says what clears it,
+  // spelled with the same config path the help and error text use.
+  const fix = report.inert ? nodeBridgeInertFix(report.inert, await bridgeConfigLabel()) : null;
+  console.log(json ? JSON.stringify({ schemaVersion: 1, command: 'bridge', ...report, ...(fix ? { fix } : {}) }) : text(report, fix));
   return 0;
 }

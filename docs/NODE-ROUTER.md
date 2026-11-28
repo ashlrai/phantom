@@ -499,12 +499,13 @@ whose lane cell is not a lane id with no matching envelope, stays local with
 
 The bridge does nothing and reports `inert` with one of these reason codes:
 `bridge-owner-unset`, `bridge-disabled` (when `--apply` is used without
-config), `bridge-config-invalid`, `stopped` (`KILL`, `PAUSE` or
-`queue/NODE_BRIDGE_OFF`), `queue-absent`, `dispatcher-absent`,
+config), `bridge-config-invalid`, `pool-config-invalid`, `stopped` (`KILL`,
+`PAUSE` or `queue/NODE_BRIDGE_OFF`), `queue-absent`, `dispatcher-absent`,
 `dispatcher-lease-unsupported` (the installed `~/.ashlr-runs/bin/dispatchd.py`
 lacks the lease protocol), `router-unavailable`, `not-pool-primary` or
-`owner-not-pool-scope`. On a pool primary the bridge goes through the witness
-(`callPool`). A demoted primary never claims.
+`owner-not-pool-scope`. The CLI prints a `fix:` line (and a `fix` field with
+`--json`) naming the remediation for each code. On a pool primary the bridge
+goes through the witness (`callPool`). A demoted primary never claims.
 
 A row stays local with one of these reasons: `invalid_row`,
 `invalid_requirements`, `parked_row`, `data_class_invalid`, `needs_invalid`,

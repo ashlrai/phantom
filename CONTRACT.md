@@ -2790,7 +2790,7 @@ windows. Existing repair and freshness emissions share the configured cycle cap.
 `src/core/drive/nodes/ready-bridge.ts` exports `runNodeBridge`, `planNodeBridge`,
 `parseReadyRow`, `remoteLaneCap` (defined in `src/core/fleet/unfed-market.ts`
 alongside `LOCAL_LANES` and re-exported here), `remotePackFor`, `bridgeLeaseOwner`,
-`nodeBridgeReadiness`, `flockDispatcher`, `localBridgeRouter`, `poolBridgeRouter`,
+`nodeBridgeReadiness`, `nodeBridgeInertFix`, `flockDispatcher`, `localBridgeRouter`, `poolBridgeRouter`,
 the constants `NODE_BRIDGE_SCHEMA`, `NODE_BRIDGE_LEASE_PREFIX`,
 `NODE_BRIDGE_READ_ONLY_KINDS`, `NODE_BRIDGE_WORKTREE_PACK_ENABLED`,
 `NODE_BRIDGE_PENDING_TTL_MS`, `NODE_BRIDGE_MAX_PER_PASS` and
