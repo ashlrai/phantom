@@ -1808,9 +1808,13 @@ window's `route_decision` rows to each job's latest decision and tallies
 `claim`/`batch_claim` events — launches that actually left their hinted
 lane, including `batch_session` moves decisions never record — into the
 report's `claims` field (`available`, `truncated`, `claimed`, `overridden`,
-`byReason`, `lanes`). A missing or unreadable jobs ledger sets `available`
-to false and both `claimed` and `overridden` to null. A readable ledger
-with no matching evidence returns zero counts. Counts from a truncated tail
+`unclaimedLaunches`, `byReason`, `lanes`). A missing or unreadable jobs ledger sets `available`
+to false and `claimed`, `overridden` and `unclaimedLaunches` to null. A readable ledger
+with no matching evidence returns zero counts. `unclaimedLaunches` counts in-window
+`launch` receipts no claim record could pair with — launch activity every
+dispatcher version writes but only the dedupe protocol attributes, so
+`claimed: 0` beside a positive count means overrides are unknown, not that
+nothing launched. Counts from a truncated tail
 are lower bounds. `foldDecisionOutcomes` joins the same collapsed
 latest-per-job decisions to the newest recorded outcome in the retained
 jobs.jsonl tail through the router outcome fold, partitioning decided jobs

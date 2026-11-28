@@ -537,6 +537,13 @@ A missing or unreadable jobs ledger leaves `claims.claimed` and
 matching events supplies zero counts.
 `claims.truncated` is true when the ledger
 exceeded the retained tail, so those counts are a lower bound.
+Every dispatcher version writes a `launch` receipt per launch, but only the
+dedupe protocol writes the `claim` row that carries hint and override detail.
+A `launch` receipt no claim record can pair with — an older pinned
+dispatcher, or a launch outside the market's claim path — counts under
+`claims.unclaimedLaunches`: launch activity is real while its lane-override
+accounting stays unknown, so `claimed: 0` beside a positive count never
+reads as "nothing launched".
 The same window's `queue_reroute` rows fold into `reroutes`: the Leader's
 own lane moves, which the route_decision stream never records — each
 receipt is one applied re-hint of a READY row toward an under-target
