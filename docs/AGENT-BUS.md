@@ -2103,7 +2103,8 @@ next turn as data in a single block; `--json` carries it as `framed`
 beside the full projection.
 
 **Pending-work claim.** `phm agents bus work next [<agent>] --lease-ms
-<1..3600000> [--owner <label>] [--id <envelope-id>] [--contains <text>] [--since
+<1..3600000> [--owner <label>] [--id <envelope-id>] [--in-reply-to <id>]
+[--body-kind <kind>] [--contains <text>] [--since
 <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel
 <name>] [--topic <topic>] [--from <agent>] [--exclude-from <agent>]
 [--wait-ms <1..300000>]` is the claim half of the loop `work
@@ -2117,7 +2118,16 @@ strictly equal — the same exact-envelope match every bus `--id` read
 applies — so a wake hint's or a filtered read's named envelope claims in
 one atomic step under the same addressed-to, claimable-work and filter
 rules rather than through the unfiltered `claim message acquire --id`
-primitive; `--contains`, `--since`, `--before`, `--priority`,
+primitive; `--in-reply-to` keeps only receipts whose own body cites that
+envelope id through its `inReplyTo` field — the same own-property exact
+match every bus read's `--in-reply-to` applies, never the `replyTo`
+alias — so claimable `kind:'work'` reply-work (the citation
+`fleet work-trace` joins on) narrows the claim exactly the way the
+matching read lists it; `--body-kind` keeps only receipts whose body
+carries that exact kind discriminator — the same `busBodyKind`
+own-field match every bus read's `--body-kind` applies, splitting the
+claimable set into the legacy `work` convention and the protocol-v1
+`task` envelopes `isClaimableWork` accepts; `--contains`, `--since`, `--before`, `--priority`,
 `--channel`, `--topic`, `--from` and `--exclude-from`
 narrow the
 claimable set under the same rules every bus read applies — the scrubbed
@@ -2758,11 +2768,15 @@ surfaces —
 `agents bus work next` and `comms bus next` (each taking a `--wait-ms`
 flag that runs the same bounded wait `fleet bus-wait-claim` provides, so
 neither surface needs a fleet verb to block for work), `fleet bus-next`
-and `fleet bus-wait-claim` — take the same `--id <envelope-id>`, `--contains <text>`, `--since
+and `fleet bus-wait-claim` — take the same `--id <envelope-id>`, `--in-reply-to <id>`, `--body-kind <kind>`, `--contains <text>`, `--since
 <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--priority <P0|P1|P2|P3>`,
 `--channel <name>`, `--topic <topic>`, `--from <agent>` and `--exclude-from <agent>`
 read filters, applied inside
 the claim scan under the identical rules the reads use (the exact wire id,
+the body's own `inReplyTo` citation and `busBodyKind` discriminator —
+the two own-field matches claimable `kind:'work'`/protocol-`task`
+receipts can carry, with `job`, `thread`, `result` and the protocol
+kind/topic pair still off because claimable bodies never satisfy them —
 the scrubbed
 one-line summary substring, the inclusive `receivedAt` cutoff, the
 exclusive `receivedAt` ceiling composing with `--since` into one

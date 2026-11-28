@@ -127,6 +127,44 @@ it('claims the named envelope under --id and refuses ids outside the claim rules
   expect(await run([...args(), '--id', 'has space'])).toEqual({ code: 2, status: 'invalid' });
 });
 
+it('applies the in-reply-to and body-kind flags to the claimable scan', async () => {
+  for (const [id, priority, body] of [
+    ['fltreply', 'P1', { kind: 'work', text: 'answer the root', inReplyTo: 'root-msg' }],
+    ['fltalias', 'P0', { kind: 'work', text: 'replyTo alias only', replyTo: 'root-msg' }],
+    ['fltplain', 'P0', { kind: 'work', text: 'no citation' }],
+    ['flttask', 'P0', { protocol: { version: 1, kind: 'task' }, text: 'protocol task' }],
+    ['flttaskreply', 'P2', { protocol: { version: 1, kind: 'task' }, inReplyTo: 'root-msg' }],
+  ] as const) {
+    expect(appendBusInbox({ id, from: 'fake', to: 'worker-a', priority, ttl: 120_000, body }, { root }).status).toBe('posted');
+  }
+  // --in-reply-to keeps only own-field citations: the P1 legacy reply claims
+  // first, the alias spelling and uncited work stay out.
+  const reply = await run([...args(), '--in-reply-to', 'root-msg']);
+  expect(reply).toMatchObject({ code: 0, status: 'acquired',
+    receipt: { envelope: { id: 'fltreply' } } });
+  const replyTask = await run([...args(), '--in-reply-to', 'root-msg', '--body-kind', 'task']);
+  expect(replyTask).toMatchObject({ code: 0, status: 'acquired',
+    receipt: { envelope: { id: 'flttaskreply' } } });
+  // Both cited receipts are held by worker-a's own live leases.
+  expect(await run([...args(), '--in-reply-to', 'root-msg']))
+    .toEqual({ code: 0, status: 'empty', candidates: 2, held: 2 });
+  // --body-kind splits the claimable set: 'task' takes the uncited protocol
+  // envelope, 'work' the remaining legacy ones — the held cites never match
+  // the other kind.
+  const task = await run([...args(), '--body-kind', 'task']);
+  expect(task).toMatchObject({ code: 0, status: 'acquired',
+    receipt: { envelope: { id: 'flttask' } } });
+  const work = await run([...args(), '--body-kind', 'work']);
+  expect(work).toMatchObject({ code: 0, status: 'acquired',
+    receipt: { envelope: { id: 'fltalias' } } });
+  // A kind nothing claimable carries is an honest empty scan, and a
+  // malformed filter value is a usage error — never a widened claim.
+  expect(await run([...args(), '--body-kind', 'result']))
+    .toEqual({ code: 0, status: 'empty', candidates: 0, held: 0 });
+  expect(await run([...args(), '--in-reply-to', 'has space'])).toEqual({ code: 2, status: 'invalid' });
+  expect(await run([...args(), '--body-kind', ''])).toEqual({ code: 2, status: 'invalid' });
+});
+
 it('validates all flags without returning bodies or tokens', async () => {
   for (const bad of [[], ['--help', '--json'], args().slice(0, -1), [...args(), '--json'],
     [...args(), '--owner', 'duplicate'], args().map(x => x === '60000' ? '0' : x),
