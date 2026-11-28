@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Script } from 'node:vm';
 
@@ -161,6 +161,21 @@ const HTML_FILE = /\.html?$/i;
 const POWERSHELL_FILE = /\.ps[dm]?1$/i;
 
 /**
+ * .bats files are bash plus the @test DSL: `bash -n` rejects the @test
+ * lines outright, and every bats entry point that gathers tests
+ * (`--count`, bats-exec-file) evaluates the file's top level while
+ * discovering cases, so neither is a parse-only check. The grammar step
+ * is bats' own preprocessor — a pure file-to-bash transform that never
+ * executes the suite — piped through `bash -n`, which parses the emitted
+ * bash without running it. The repo's staging suites
+ * (staging/<job>/precheck_dup_match.bats) escaped every check until this
+ * bucket existed. test/fixtures/ payloads are exempt like the html and
+ * conflict-marker checks: a fixture may intentionally embed an invalid
+ * suite as input to another test.
+ */
+const BATS_FILE = /\.bats$/i;
+
+/**
  * scripts/check-realio-lane-membership.mjs reads every .test.ts file under
  * test/ (contents decide the spawn-marker verdict) plus its lane manifests,
  * the known-fast-spawn allowlist, the inventory helpers and itself. A diff
@@ -245,6 +260,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     shellFiles: changed.filter((path) => existing.has(path) && /\.sh$/.test(path)),
     perlFiles: changed.filter((path) => existing.has(path) && /\.pl$/i.test(path)),
     powershellFiles: changed.filter((path) => existing.has(path) && POWERSHELL_FILE.test(path)),
+    batsFiles: changed.filter((path) => existing.has(path) && BATS_FILE.test(path) && !path.startsWith('test/fixtures/')),
     jsonFiles: changed.filter((path) => existing.has(path) && (/\.(?:json|webmanifest)$/.test(path) || TSBUILDINFO_FILE.test(path))),
     jsonlFiles: changed.filter((path) => existing.has(path) && /\.jsonl$/.test(path)),
     xmlFiles: changed.filter((path) => existing.has(path) && /\.(?:xml|plist(?:\.in)?|svg)$/.test(path)),
@@ -940,6 +956,115 @@ export function runNodeSyntaxCheck(root, files, spawn = spawnSync) {
     }
   }
   console.log('PASS node syntax check');
+  return true;
+}
+
+/**
+ * bats-preprocess locations relative to an install root, matching the
+ * upstream/Homebrew `libexec/bats-core/` layout and distro `lib/bats-core/`
+ * repackaging. The preprocessor sources `$BATS_ROOT/$BATS_LIBDIR/bats-core/
+ * common.bash`, so the returned root is always the ancestor that owns the
+ * `lib/bats-core/` library tree.
+ */
+const BATS_PREPROCESS_LOCATIONS = [
+  'libexec/bats-core/bats-preprocess',
+  'lib/bats-core/bats-preprocess',
+];
+
+/**
+ * Locate bats' file-to-bash preprocessor beside the `bats` binary on PATH.
+ * Install layouts differ (Homebrew's versioned Cellar path behind a bin/
+ * symlink, a source checkout's libexec/, a distro lib/), so the search
+ * realpaths the PATH entry and walks its ancestors for either documented
+ * location; the nearest ancestor wins. Returns { path, root } or null when
+ * no candidate exists — the caller reports that as SKIP, never a failure.
+ */
+export function batsPreprocessPath(pathEnv = process.env.PATH) {
+  for (const dir of String(pathEnv ?? '').split(delimiter)) {
+    if (dir === '') continue;
+    const entry = join(dir, 'bats');
+    try {
+      if (!statSync(entry).isFile()) continue;
+    } catch {
+      continue;
+    }
+    let resolved;
+    try {
+      resolved = realpathSync(entry);
+    } catch {
+      resolved = entry;
+    }
+    let ancestor = dirname(resolved);
+    for (let depth = 0; depth < 8; depth += 1) {
+      for (const location of BATS_PREPROCESS_LOCATIONS) {
+        const candidate = join(ancestor, location);
+        try {
+          if (statSync(candidate).isFile()) return { path: candidate, root: ancestor };
+        } catch { /* keep walking ancestors */ }
+      }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) break;
+      ancestor = parent;
+    }
+  }
+  return null;
+}
+
+/**
+ * Probe for a working bats and its preprocessor. `bats --version` proves the
+ * runner exists; batsPreprocessPath proves the parse-only transform the
+ * check needs is installed beside it. Either absence prints SKIP.
+ */
+export function batsPreflight(spawn = spawnSync, pathEnv = process.env.PATH) {
+  const probe = spawn('bats', ['--version'], { encoding: 'utf8', timeout: 15000 });
+  if (probe.error || probe.signal || probe.status !== 0) {
+    return { ok: false, reason: 'bats is unavailable or did not run; changed .bats files cannot be syntax-checked locally' };
+  }
+  const preprocess = batsPreprocessPath(pathEnv);
+  if (preprocess === null) {
+    return { ok: false, reason: 'bats is installed but bats-preprocess was not found beside it; changed .bats files cannot be syntax-checked locally' };
+  }
+  return { ok: true, preprocess };
+}
+
+/**
+ * Syntax-check changed .bats files by running bats' own preprocessor — a
+ * pure text transform that never executes the suite — and parsing the
+ * emitted bash with `bash -n`. One file at a time keeps the diagnostic
+ * pointed at the failing path, matching the perl/node/powershell checks.
+ * BATS_ROOT/BATS_LIBDIR point the preprocessor at the library tree beside
+ * the resolved install, and CHECK_BATS_COMMENT_COMMANDS applies the same
+ * tag validation bats-exec-file enables, so an invalid `# bats test_tags=`
+ * comment fails exactly as it would under `bats` itself.
+ */
+export function runBatsSyntaxCheck(root, files, preprocess, spawn = spawnSync) {
+  for (const path of files) {
+    // bash runs the preprocessor explicitly: the script is bash by contract
+    // (bats itself cannot run without it) and this never depends on the
+    // install's exec bits.
+    const transformed = spawn('bash', [preprocess.path, `./${path}`], {
+      cwd: root, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024,
+      env: { ...process.env, BATS_ROOT: preprocess.root, BATS_LIBDIR: 'lib', CHECK_BATS_COMMENT_COMMANDS: '1' },
+    });
+    if (transformed.error || transformed.signal || transformed.status !== 0) {
+      if (transformed.stdout) console.log(transformed.stdout.trimEnd());
+      if (transformed.stderr) console.error(transformed.stderr.trimEnd());
+      if (transformed.error) console.error(transformed.error.message);
+      console.log(`FAIL bats syntax check: ${path}`);
+      return false;
+    }
+    const parsed = spawn('bash', ['-n'], {
+      cwd: root, encoding: 'utf8', timeout: 120000, input: transformed.stdout,
+    });
+    if (parsed.error || parsed.signal || parsed.status !== 0) {
+      if (parsed.stdout) console.log(parsed.stdout.trimEnd());
+      if (parsed.stderr) console.error(parsed.stderr.trimEnd());
+      if (parsed.error) console.error(parsed.error.message);
+      console.log(`FAIL bats syntax check: ${path}`);
+      return false;
+    }
+  }
+  console.log('PASS bats syntax check');
   return true;
 }
 
@@ -2649,6 +2774,16 @@ function main() {
     console.log('PASS node syntax check skipped: no node-shebang script changed');
   } else if (!runNodeSyntaxCheck(root, nodeFiles)) {
     process.exitCode = 1;
+  }
+  if (selection.batsFiles.length === 0) {
+    console.log('PASS bats syntax check skipped: no bats change');
+  } else {
+    const bats = batsPreflight();
+    if (!bats.ok) {
+      console.log(`SKIP bats syntax check: ${bats.reason}`);
+    } else if (!runBatsSyntaxCheck(root, selection.batsFiles, bats.preprocess)) {
+      process.exitCode = 1;
+    }
   }
   if (selection.detachedScriptFiles.length === 0) {
     console.log('PASS detached script syntax check skipped: no script change under src/raycast/ or examples/universe-site/');
