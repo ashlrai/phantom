@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -12,12 +12,15 @@ const fixture = 'test/fixtures/job-latency/jobs.jsonl';
 const gitFixture = 'test/fixtures/job-latency/git-observations.jsonl';
 afterEach(() => vi.restoreAllMocks());
 
-it('reads observations from real local Git calls and reports a held index lock', async () => {
+it.each([undefined, '   ', 'configured'])('reads local Git observations with ASHLR_RUNS_DIR %j', async (runsSetting) => {
   const cwd = await mkdtemp(join(tmpdir(), 'phantom-git-observations-'));
   const wt = join(cwd, 'wt');
   const git = async (...args: string[]) => (await defaultGitRunner('git', args, { cwd })).code;
   const home = await mkdtemp(join(tmpdir(), 'phantom-git-observations-home-'));
+  const defaultRuns = join(home, '.ashlr-runs');
+  const configuredRuns = join(home, 'fleet-runs');
   vi.stubEnv('HOME', home);
+  vi.stubEnv('ASHLR_RUNS_DIR', runsSetting === 'configured' ? configuredRuns : runsSetting);
   try {
     expect(await git('init', '-q')).toBe(0);
     expect(await git('-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-m', 'initial')).toBe(0);
@@ -27,6 +30,9 @@ it('reads observations from real local Git calls and reports a held index lock',
     expect(await git('push', '.', 'HEAD:refs/heads/observed')).toBe(0);
     await writeFile(join(cwd, '.git', 'index.lock'), '');
     expect(await git('add', '.')).not.toBe(0);
+    const runsDir = runsSetting === 'configured' ? configuredRuns : defaultRuns;
+    await access(join(runsDir, 'metrics', 'jobs.jsonl'));
+    if (runsSetting === 'configured') await expect(access(defaultRuns)).rejects.toMatchObject({ code: 'ENOENT' });
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdFleetJobLatency(['--json'])).toBe(0);
     const report: ReturnType<typeof jobLatency> = JSON.parse(log.mock.calls[0]![0] as string);
@@ -37,6 +43,10 @@ it('reads observations from real local Git calls and reports a held index lock',
       { operation: 'fetch', timed_samples: 1, retries: { samples: 1, total: 0 } },
       { operation: 'push', timed_samples: 1, retries: { samples: 1, total: 0 } },
     ]);
+    expect(await cmdPulse(['merge-latency', '--json'])).toBe(0);
+    expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ schema: 'pulse.merge-latency.v1', known: true });
+    expect(await cmdFleetJobLatency(['--jobs', fixture, '--json'])).toBe(0);
+    expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ jobs: 3 });
   } finally {
     vi.unstubAllEnvs();
     await rm(cwd, { recursive: true, force: true });
