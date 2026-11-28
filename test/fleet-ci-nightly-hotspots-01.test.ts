@@ -78,6 +78,35 @@ describe('scheduled CI evidence', () => {
     } finally { log.mockRestore(); }
   });
 
+  it('measures only completed, executed steps within a measured job window', async () => {
+    const measured = job(1, 'timing', ['ubuntu']);
+    const step = measured.steps[0]!;
+    const gh: CloudGh = async args => {
+      const endpoint = args[1]!;
+      const data = endpoint.includes('actions/runs?')
+        ? { total_count: 1, workflow_runs: [run(1)] }
+        : endpoint.includes('/jobs')
+          ? { total_count: 2, jobs: [
+            { ...measured, steps: [
+              null,
+              { ...step, name: 'skipped', number: 2, conclusion: 'skipped', completed_at: time(8) },
+              { ...step, name: 'outside', number: 3, completed_at: time(10) },
+              { ...step, name: 'unfinished', number: 4, status: 'in_progress', completed_at: time(8) },
+              step,
+            ] },
+            { ...job(2, 'unassigned', ['ubuntu']), runner_id: null },
+          ] }
+          : run(1);
+      return { ok: true, stdout: JSON.stringify(data), stderr: '' };
+    };
+    const report = await readCiNightly('ashlrai/phantom', gh);
+    expect(report.errors).toEqual([]);
+    expect(report.runs[0]?.jobsComplete).toBe(true);
+    expect(report.runs[0]?.jobs[0]?.slowestSteps.map(({ name, durationMs }) => [name, durationMs]))
+      .toEqual([['Tests', 300_000], ['skipped', null], ['outside', null], ['unfinished', null]]);
+    expect(report.runs[0]?.jobs[1]?.slowestSteps[0]?.durationMs).toBeNull();
+  });
+
   it('returns no evidence for an empty complete listing and fails closed on reads', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const empty: CloudGh = async () => ({ ok: true, stdout: JSON.stringify({ total_count: 0, workflow_runs: [] }), stderr: '' });
