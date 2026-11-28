@@ -975,6 +975,14 @@ unavailable feed refuses the send rather than posting a receipt that would
 poison the projection. Neither verb dispatches, claims or executes anything;
 the bodies remain untrusted contract data until a consumer admits them.
 
+An accepted `work.status` also mirrors the job's newest status into the
+shared coordination table's per-job `statuses[]` index — the rows
+`setWorkStatus` upserts by job id and `claimBoard` reads back beside the
+live claims, and the count `agents bus status` reports under `coordination`.
+The mirror runs post-accept and best-effort: a coordination-store fault or an
+out-of-contract field leaves the row unrecorded and never fails the send, and
+the bus feed stays the authoritative projection either way.
+
 **Claim-holder wakes.** When a `work.status` reaches a terminal state
 (`done`, `failed` or `terminated`), the send also queues one routing-only wake
 hint per distinct live claim owner whose coordination keys overlap the job's

@@ -12,7 +12,7 @@ import {
   sendWakeRequest, shouldWake, updateWorkStatus, type AgentWakeRow, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
-import { acquireCoordination } from '../src/core/agents/claim-store.js';
+import { acquireCoordination, claimBoard, listCoordination } from '../src/core/agents/claim-store.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import {
   attachBusCliSession, busAgentView, busSelfFromEnv, detectBusCli, frameBusChannelRead, frameBusInbox, frameBusThread, frameBusWakes, getBusCliAdapter, listBusCliAdapters,
@@ -2313,6 +2313,37 @@ describe('v2 work announcements and statuses on the one bus store', () => {
     const feed = readBusWorkFeed({ root: options.root, now: options.now });
     expect(feed).toMatchObject({ status: 'ok', jobs: [{ id: 'RQ-W-1', owner: 'agent:atlas', provider: 'claude',
       repo: 'ashlrai/phantom', status: 'queued' }] });
+  });
+
+  it('mirrors accepted work status moves into the coordination status table', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-st' }, options))
+      .toMatchObject({ status: 'posted' });
+    // The announcement alone records no status row: only an accepted work.status
+    // transition writes the coordination table's per-job index.
+    expect(listCoordination(options.root, options.clock.now).statuses).toEqual([]);
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-W-st', status: 'running' }, options))
+      .toMatchObject({ status: 'posted' });
+    expect(listCoordination(options.root, options.clock.now).statuses).toEqual([
+      expect.objectContaining({ jobId: 'RQ-W-st', owner: 'agent:atlas', provider: 'claude',
+        repo: 'ashlrai/phantom', claimKeys: ['repo:ashlrai/phantom'], status: 'running' }),
+    ]);
+    // A second move upserts the same job id to the newest status, never a second row.
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-W-st', status: 'done' }, options))
+      .toMatchObject({ status: 'posted' });
+    const listed = listCoordination(options.root, options.clock.now);
+    expect(listed.statuses).toEqual([
+      expect.objectContaining({ jobId: 'RQ-W-st', status: 'done' }),
+    ]);
+    // claimBoard — the read side setWorkStatus was written for — reports the row.
+    expect(claimBoard({ root: options.root, now: options.clock.now }).statuses.map(row => row.jobId))
+      .toEqual(['RQ-W-st']);
+    // A refused status move records nothing: only the announcing identity may move the job.
+    expect(await updateWorkStatus({ from: 'nova', jobId: 'RQ-W-st', status: 'running' }, options))
+      .toMatchObject({ status: 'refused' });
+    expect(listCoordination(options.root, options.clock.now).statuses[0]).toMatchObject({ status: 'done' });
   });
 
   it('fills the provider from the newest runtime, honors an explicit one and refuses a missing one', async () => {
