@@ -222,7 +222,7 @@ activity by owner so both teammates see whose fleet produced what.
 ### 1. Install ashlr
 
 ```bash
-npm i -g https://github.com/ashlrai/ashlr-hub/releases/download/v3.17.2/ashlr-hub-3.17.2.tgz
+npm install -g @ashlr/phantom
 ```
 
 ### 2. Run setup

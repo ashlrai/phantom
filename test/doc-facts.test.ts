@@ -358,6 +358,20 @@ describe('agent docs name only real CLI commands, verbs and flags', () => {
     expect(bad, 'unknown npm script; fix the documented command').toEqual([]);
   });
 
+  it('keeps install steps on the npm package, not retired release tarballs', () => {
+    // The repo was renamed ashlr-hub -> phantom and the CLI ships as
+    // @ashlr/phantom (docs/QUICKSTART.md). An `npm i -g` aimed at a GitHub
+    // release tarball of the old repo name still resolves but installs a
+    // stale build; agent-facing install lines must name the npm package.
+    const bad: string[] = [];
+    for (const file of [...DOCS, ...SITE_PAGES]) {
+      readFileSync(join(ROOT, file), 'utf8').split('\n').forEach((line, i) => {
+        if (line.includes('ashlr-hub/releases/download')) bad.push(`${file}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    expect(bad, 'retired ashlr-hub release URL; install with `npm install -g @ashlr/phantom`').toEqual([]);
+  });
+
   it('finds invocations to check', () => {
     expect(all.length).toBeGreaterThan(50);
   });
