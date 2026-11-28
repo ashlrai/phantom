@@ -1,14 +1,15 @@
 /**
  * CLI and MCP surface for the Comms role.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { cmdCommsAgent } from '../src/cli/comms-agent.js';
 import { callNativeTool } from '../src/core/mcp-native.js';
-import { appendDraft, appendRunRecord, readRunJournal, writeInbox, type CommsDraft, type CommsRunRecord } from '../src/core/comms-agent/store.js';
+import { appendArchive, appendDraft, appendRunRecord, readRunJournal, writeInbox, type CommsDraft, type CommsRunRecord } from '../src/core/comms-agent/store.js';
 import type { CommsTransport } from '../src/core/comms-agent/policy.js';
 
 const roots: string[] = [];
@@ -357,6 +358,132 @@ describe('phm comms-agent', () => {
       if (previous === undefined) delete process.env.ASHLR_RUNS_DIR;
       else process.env.ASHLR_RUNS_DIR = previous;
     }
+  });
+
+  it('intake merges a dropped inbox document and a retried drop is a pure duplicate pass', async () => {
+    const runsDir = temp();
+    const drop = join(runsDir, 'drop.json');
+    writeFileSync(drop, JSON.stringify({ messages: [
+      { id: 'mail-1', transport: 'email', from: 'ada@example.com', subject: 'Hello', body: 'First', receivedAt: 'keep-me' },
+      { id: 'mail-2', transport: 'imessage', from: '+15550001111', subject: '', body: 'Ping', labels: ['bulk'] },
+    ] }), { mode: 0o600 });
+
+    const first = capture();
+    expect(await cmdCommsAgent(['intake', '--file', drop, '--dir', runsDir, '--json'])).toBe(0);
+    const report = JSON.parse(first.lines.at(-1) ?? '{}') as { ok: boolean; schema: string; accepted: number; duplicates: number; pending: number };
+    first.restore();
+    expect(report).toMatchObject({ ok: true, schema: 'comms-agent.intake.v1', accepted: 2, duplicates: 0, pending: 2 });
+
+    // The stored document keeps the feeder's extra fields beside the
+    // canonical message fields — triage does not own the row's shape.
+    const stored = JSON.parse(readFileSync(join(runsDir, 'comms-agent', 'inbox.json'), 'utf8')) as { messages: Array<Record<string, unknown>> };
+    expect(stored.messages.map(row => row.id)).toEqual(['mail-1', 'mail-2']);
+    expect(stored.messages[0]).toMatchObject({ id: 'mail-1', receivedAt: 'keep-me' });
+
+    const second = capture();
+    expect(await cmdCommsAgent(['intake', '--file', drop, '--dir', runsDir, '--json'])).toBe(0);
+    const again = JSON.parse(second.lines.at(-1) ?? '{}') as { accepted: number; duplicates: number; pending: number };
+    second.restore();
+    expect(again).toMatchObject({ accepted: 0, duplicates: 2, pending: 2 });
+
+    // The run pass triages exactly what intake delivered: the pipeline's
+    // first stage now feeds its second.
+    const run = capture();
+    expect(await cmdCommsAgent(['run', '--dir', runsDir, '--json'])).toBe(0);
+    const ran = JSON.parse(run.lines.at(-1) ?? '{}') as {
+      triage: { kept: number; archived: number };
+      summaries: Array<{ id: string; class: string }>;
+    };
+    run.restore();
+    expect(ran.triage).toMatchObject({ kept: 1, archived: 1 });
+    expect(ran.summaries.map(row => `${row.id}:${row.class}`).sort()).toEqual(['mail-1:person', 'mail-2:bulk']);
+  }, 60_000);
+
+  it('intake skips ids already pending or archived, including repeats inside one document', async () => {
+    const runsDir = temp();
+    await writeInbox(runsDir, [
+      { id: 'pending-1', transport: 'email', from: 'ada@example.com', subject: 'Pending', body: 'Waiting' },
+    ]);
+    await appendArchive(runsDir, { id: 'archived-1', transport: 'email', from: 'news@example.com', subject: 'Old', body: 'Done' });
+
+    const drop = join(runsDir, 'drop.json');
+    writeFileSync(drop, JSON.stringify({ messages: [
+      { id: 'pending-1', transport: 'email', from: 'ada@example.com', subject: 'Pending', body: 'Waiting' },
+      { id: 'archived-1', transport: 'email', from: 'news@example.com', subject: 'Old', body: 'Done' },
+      { id: 'new-1', transport: 'bus', from: 'lane', subject: '', body: 'Work' },
+      { id: 'new-1', transport: 'bus', from: 'lane', subject: '', body: 'Work' },
+    ] }), { mode: 0o600 });
+
+    const out = capture();
+    expect(await cmdCommsAgent(['intake', '--file', drop, '--dir', runsDir, '--json'])).toBe(0);
+    const report = JSON.parse(out.lines.at(-1) ?? '{}') as { accepted: number; duplicates: number; pending: number };
+    out.restore();
+    expect(report).toMatchObject({ accepted: 1, duplicates: 3, pending: 2 });
+
+    const stored = JSON.parse(readFileSync(join(runsDir, 'comms-agent', 'inbox.json'), 'utf8')) as { messages: Array<{ id: string }> };
+    expect(stored.messages.map(row => row.id).sort()).toEqual(['new-1', 'pending-1']);
+  });
+
+  it('intake refuses a malformed or oversized document and writes nothing', async () => {
+    const runsDir = temp();
+    const drop = join(runsDir, 'drop.json');
+    writeFileSync(drop, '{ "messages": [ { "id": "x" } ] }', { mode: 0o600 });
+    const bad = capture();
+    expect(await cmdCommsAgent(['intake', '--file', drop, '--dir', runsDir, '--json'])).toBe(1);
+    const refused = JSON.parse(bad.lines.at(-1) ?? '{}') as { ok: boolean; error: string };
+    bad.restore();
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain('Inbox intake');
+    // A refused drop leaves no store behind — the directory is never created.
+    expect(() => readFileSync(join(runsDir, 'comms-agent', 'inbox.json'), 'utf8')).toThrow();
+
+    writeFileSync(drop, 'not json', { mode: 0o600 });
+    const notJson = capture();
+    expect(await cmdCommsAgent(['intake', '--file', drop, '--dir', runsDir, '--json'])).toBe(1);
+    const parse = JSON.parse(notJson.lines.at(-1) ?? '{}') as { ok: boolean; error: string };
+    notJson.restore();
+    expect(parse.error).toContain('not valid JSON');
+
+    // One intake accepts at most 200 messages; a bigger drop splits.
+    writeFileSync(drop, JSON.stringify({ messages: Array.from({ length: 201 }, (_, i) => ({
+      id: `m-${i}`, transport: 'email', from: 'ada@example.com', subject: 'S', body: 'B',
+    })) }), { mode: 0o600 });
+    const capped = capture();
+    expect(await cmdCommsAgent(['intake', '--file', drop, '--dir', runsDir, '--json'])).toBe(1);
+    const over = JSON.parse(capped.lines.at(-1) ?? '{}') as { ok: boolean; error: string };
+    capped.restore();
+    expect(over.error).toContain('limited to 200');
+
+    // An unreadable path is an error, never a silent empty intake.
+    const missing = capture();
+    expect(await cmdCommsAgent(['intake', '--file', join(runsDir, 'missing.json'), '--dir', runsDir, '--json'])).toBe(1);
+    const unreadable = JSON.parse(missing.lines.at(-1) ?? '{}') as { ok: boolean; error: string };
+    missing.restore();
+    expect(unreadable.ok).toBe(false);
+  });
+
+  it('intake --file is required on the verb and refused on the others', async () => {
+    const runsDir = temp();
+    const drop = join(runsDir, 'drop.json');
+    writeFileSync(drop, JSON.stringify({ messages: [] }), { mode: 0o600 });
+    expect(await cmdCommsAgent(['intake', '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['status', '--file', drop, '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['drafts', '--file', drop, '--dir', runsDir, '--json'])).toBe(2);
+    expect(await cmdCommsAgent(['run', '--file', drop, '--dir', runsDir, '--json'])).toBe(2);
+    // A flag-looking value is a missing document path, not a file named --json.
+    expect(await cmdCommsAgent(['intake', '--file', '--json', '--dir', runsDir, '--json'])).toBe(2);
+  });
+
+  it('intake reads the document from stdin with --file -', async () => {
+    const runsDir = temp();
+    const document = JSON.stringify({ messages: [
+      { id: 'stdin-1', transport: 'email', from: 'ada@example.com', subject: 'Hi', body: 'There' },
+    ] });
+    const out = capture();
+    expect(await cmdCommsAgent(['intake', '--file', '-', '--dir', runsDir, '--json'], { stdin: Readable.from([document]) })).toBe(0);
+    const report = JSON.parse(out.lines.at(-1) ?? '{}') as { accepted: number; pending: number };
+    out.restore();
+    expect(report).toMatchObject({ accepted: 1, pending: 1 });
   });
 
   it('exposes status, drafts and run as native MCP tools', async () => {
