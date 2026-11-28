@@ -126,7 +126,12 @@ function laneStatus(lane: DoctorLane, probe: NodeProbeReply | null, caps: string
   }
   // No probe: a lane the node advertised in its heartbeat is installed and signed in.
   // `local-model` is the report name; the advertisement is the oMLX cap family.
-  if (caps !== UNKNOWN && caps.some(cap => capServesLane(cap, lane))) return { lane, status: 'ready' };
+  // caps UNKNOWN means the computer has no node records in this registry at all
+  // (never joined, left, or invisible to it), so "not advertised" would assert a
+  // negative we cannot see; the advertisement itself is unknown.
+  if (caps === UNKNOWN) return { lane, status: 'unknown',
+    reason: `${lane} advertisement is unknown (no node records in this registry); installed or signed out is unknown until remote checks exist` };
+  if (caps.some(cap => capServesLane(cap, lane))) return { lane, status: 'ready' };
   return { lane, status: 'unknown', reason: `${lane} is not advertised; installed or signed out is unknown until remote checks exist` };
 }
 
