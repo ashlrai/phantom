@@ -217,7 +217,15 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
     && exactParams(params, { limit: COS_LIST_LIMIT })) return { kind: 'read', path };
   if (path === '/api/verse/fleet/cos/status'
     && exactParams(params, { id: (v) => COS_JOB_ID.test(v) })) return { kind: 'read', path };
-  if ((path === '/api/verse/fleet/live/bus' || path === '/api/verse/fleet/live/queue')
+  if (path === '/api/verse/fleet/live/bus') {
+    // `kind` narrows the typed dispatch events to one BusFeedEventKind; it is
+    // optional, so the read admits {limit} or {limit,kind} — never {kind} alone
+    // (the gateway keeps requiring the bounded limit every feed read carries).
+    const kind = (v: string): boolean => /^(inbox|orch|incident|lane-hold|launch|published|blocked|other)$/.test(v);
+    if (exactParams(params, { limit: FLEET_READ_LIMIT })
+      || exactParams(params, { limit: FLEET_READ_LIMIT, kind })) return { kind: 'read', path };
+  }
+  if (path === '/api/verse/fleet/live/queue'
     && exactParams(params, { limit: FLEET_READ_LIMIT })) return { kind: 'read', path };
   if (path === '/api/verse/agent-bus') {
     const after = (v: string): boolean => /^[0-9]{1,12}(?![\s\S])/.test(v);

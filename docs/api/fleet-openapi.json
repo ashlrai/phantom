@@ -530,7 +530,8 @@
         "operationId": "getFleetBusFeed", "tags": ["fleet"],
         "summary": "Agent bus message feed (FleetBusFeedV1).",
         "parameters": [
-          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "Hub clamps 1-500 (default 100); remote gateway admits 1-200." }
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "Hub clamps 1-500 (default 100); remote gateway admits 1-200." },
+          { "name": "kind", "in": "query", "schema": { "type": "string", "enum": ["inbox", "orch", "incident", "lane-hold", "launch", "published", "blocked", "other"] }, "description": "Optional. Narrows the returned dispatch events to this BusFeedEventKind; hops are unaffected." }
         ],
         "responses": { "200": { "$ref": "#/components/responses/FleetBusFeedV1" }, "default": { "$ref": "#/components/responses/Error" } }
       }

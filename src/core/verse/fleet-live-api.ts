@@ -1945,22 +1945,27 @@ export const handleFleetLiveApi: ApiModule = async (ctx, req, res, path, method)
       sendJson(res, 405, { error: 'method not allowed' });
       return true;
     }
+    const { readFleetBusFeed, BUS_FEED_EVENT_KINDS } = await import('../fleet/bus-feed.js');
+    const { sanitizePublicJson } = await import('../util/public-json.js');
     let limit: number | undefined;
+    let kind: import('../fleet/bus-feed.js').BusFeedEventKind | undefined;
     try {
       const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-      if ([...params.keys()].some((key) => key !== 'limit') || params.getAll('limit').length > 1 ||
-          (params.has('limit') && !/^-?\d+$/.test(params.get('limit')!))) {
+      const allowed = new Set(['limit', 'kind']);
+      if ([...params.keys()].some((key) => !allowed.has(key)) || params.getAll('limit').length > 1 ||
+          params.getAll('kind').length > 1 ||
+          (params.has('limit') && !/^-?\d+$/.test(params.get('limit')!)) ||
+          (params.has('kind') && !BUS_FEED_EVENT_KINDS.has(params.get('kind') as import('../fleet/bus-feed.js').BusFeedEventKind))) {
         sendInvalid(res, 'invalid query string');
         return true;
       }
       if (params.has('limit')) limit = Number(params.get('limit'));
+      if (params.has('kind')) kind = params.get('kind') as import('../fleet/bus-feed.js').BusFeedEventKind;
     } catch {
       sendInvalid(res, 'invalid query string');
       return true;
     }
-    const { readFleetBusFeed } = await import('../fleet/bus-feed.js');
-    const { sanitizePublicJson } = await import('../util/public-json.js');
-    sendJson(res, 200, sanitizePublicJson(await readFleetBusFeed({ limit })));
+    sendJson(res, 200, sanitizePublicJson(await readFleetBusFeed({ limit, kind })));
     return true;
   }
   if (path === '/api/verse/fleet/live/queue') {
