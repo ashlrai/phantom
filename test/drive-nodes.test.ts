@@ -775,6 +775,27 @@ describe('join dropped-profile report', () => {
       expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.slots).toBeUndefined();
     } finally { vi.restoreAllMocks(); }
   });
+  it('prints restore caps in the same sorted order the join reply and stored profile use', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      let now = 1_000_000;
+      const deps = { store, now: () => now, phmVersion: () => '9.9.9' };
+      // The stored profile sorts caps, so a narrower re-join's new caps would
+      // concatenate in front of the dropped ones unsorted (mango,apple,zebra)
+      // if the restore did not sort like the owners list and the join reply do.
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme',
+        '--caps', 'zebra,apple', '--json'], deps)).toBe(0);
+      now += 31_000;
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme',
+        '--caps', 'mango', '--json'], deps)).toBe(0);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out['dropped']).toMatchObject({ caps: ['apple', 'zebra'] });
+      expect(out['dropped']['restore']).toBe(
+        'phm node join --node laptop --owner acme --caps apple,mango,zebra --watch');
+    } finally { vi.restoreAllMocks(); }
+  });
   it('stays silent when nothing was dropped: first join, leave, and identical re-join', async () => {
     const lines: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });

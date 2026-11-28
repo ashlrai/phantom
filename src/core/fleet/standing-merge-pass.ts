@@ -781,7 +781,7 @@ export async function runStandingMergePass(input: {
   // note says why instead of leaving the stall silent.
   try {
     const publisher = ctx.deps.ensureCapacityPublisher(input.cfg);
-    if (publisher && (publisher.state === 'lease-held-elsewhere' || publisher.state === 'sample-timeout' || publisher.state === 'failed')) {
+    if (publisher && (publisher.state === 'unconfigured' || publisher.state === 'lease-held-elsewhere' || publisher.state === 'sample-timeout' || publisher.state === 'failed')) {
       note(ctx, `seat headroom is cold: ${publisher.reason}`);
     }
   } catch {

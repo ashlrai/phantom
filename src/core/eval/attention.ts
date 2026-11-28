@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import type { AgentActionEvent, AgentActionRepoScope } from '../fleet/agent-action-ledger.js';
 import type {
@@ -15,6 +14,7 @@ import {
   classifyProductionAttemptForLearningWithLabel,
   emptyProductionAttemptShape,
 } from '../learning/attempt-shape.js';
+import { asRecord, sha256Hex } from './dataset-jsonl.js';
 
 export type AttentionEvalWindow = '1d' | '7d' | '30d';
 
@@ -146,7 +146,7 @@ const WINDOW_HOURS: Record<AttentionEvalWindow, number> = {
   '30d': 30 * 24,
 };
 
-export function attentionWindowHours(window: AttentionEvalWindow): number {
+function attentionWindowHours(window: AttentionEvalWindow): number {
   return WINDOW_HOURS[window];
 }
 
@@ -224,9 +224,9 @@ export function buildAttentionEvalReport(
 
     if (event.repo) increment(repoCounts, event.repo);
 
-    const route = routeSnapshot(event.routeSnapshot);
-    const run = runEventSummary(event.runEventSummary);
-    const evidence = evidenceOutcome(event.evidenceOutcome);
+    const route = asTypedRecord<RouteSnapshot>(event.routeSnapshot);
+    const run = asTypedRecord<RunEventSummary>(event.runEventSummary);
+    const evidence = asTypedRecord<EvidenceOutcomeSummary>(event.evidenceOutcome);
 
     const backend = category(event.backend) ?? category(route?.backend);
     const tier = category(event.tier) ?? category(route?.tier);
@@ -248,7 +248,7 @@ export function buildAttentionEvalReport(
 
     const context = run?.contextSummary;
     if (context && (context.prompt || context.retrieval || context.compression)) contextSummaryEvents++;
-    const prompt = promptSummary(context?.prompt);
+    const prompt = asTypedRecord<PromptContextSummary>(context?.prompt);
     if (prompt) {
       pushFinite(promptBudgetRatios, ratio(prompt.promptBudgetRatio));
       pushFinite(contextWindowRatios, ratio(prompt.contextWindowRatio));
@@ -257,7 +257,7 @@ export function buildAttentionEvalReport(
         if (prompt.cacheHit) promptCacheHits++;
       }
     }
-    const retrieval = retrievalSummary(context?.retrieval);
+    const retrieval = asTypedRecord<RetrievalContextSummary>(context?.retrieval);
     if (retrieval) {
       retrievalSamples++;
       hitCount += nonNegative(retrieval.hitCount) ?? 0;
@@ -269,7 +269,7 @@ export function buildAttentionEvalReport(
       const source = category(retrieval.source);
       if (source) increment(retrievalSourceCounts, source);
     }
-    const compression = compressionSummary(context?.compression);
+    const compression = asTypedRecord<CompressionContextSummary>(context?.compression);
     if (compression) {
       compressionSamples++;
       if (compression.truncated === true) truncations++;
@@ -449,13 +449,13 @@ export function buildAttentionEvalReport(
 }
 
 function metadataEvent(value: unknown): AgentActionEvent | undefined {
-  if (!record(value)) return undefined;
-  if (value['schemaVersion'] !== 1) return undefined;
-  const ts = typeof value['ts'] === 'string' ? value['ts'] : undefined;
-  const kind = typeof value['kind'] === 'string' ? value['kind'] : undefined;
-  const outcome = typeof value['outcome'] === 'string' ? value['outcome'] : undefined;
+  const rec = asRecord(value);
+  if (!rec || rec['schemaVersion'] !== 1) return undefined;
+  const ts = typeof rec['ts'] === 'string' ? rec['ts'] : undefined;
+  const kind = typeof rec['kind'] === 'string' ? rec['kind'] : undefined;
+  const outcome = typeof rec['outcome'] === 'string' ? rec['outcome'] : undefined;
   if (!ts || !kind || !outcome || !Number.isFinite(Date.parse(ts))) return undefined;
-  return value as unknown as AgentActionEvent;
+  return rec as unknown as AgentActionEvent;
 }
 
 function isoTimestamp(input: Date | string | undefined): string {
@@ -471,32 +471,8 @@ function laterIso(current: string | null, next: string): string {
   return Date.parse(next) > Date.parse(current) ? next : current;
 }
 
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function routeSnapshot(value: unknown): RouteSnapshot | undefined {
-  return record(value) ? value as RouteSnapshot : undefined;
-}
-
-function runEventSummary(value: unknown): RunEventSummary | undefined {
-  return record(value) ? value as RunEventSummary : undefined;
-}
-
-function evidenceOutcome(value: unknown): EvidenceOutcomeSummary | undefined {
-  return record(value) ? value as EvidenceOutcomeSummary : undefined;
-}
-
-function promptSummary(value: unknown): PromptContextSummary | undefined {
-  return record(value) ? value as PromptContextSummary : undefined;
-}
-
-function retrievalSummary(value: unknown): RetrievalContextSummary | undefined {
-  return record(value) ? value as unknown as RetrievalContextSummary : undefined;
-}
-
-function compressionSummary(value: unknown): CompressionContextSummary | undefined {
-  return record(value) ? value as CompressionContextSummary : undefined;
+function asTypedRecord<T>(value: unknown): T | undefined {
+  return asRecord(value) as T | undefined;
 }
 
 function category(value: unknown): string | undefined {
@@ -561,7 +537,7 @@ function topRepoCounts(map: Map<string, number>, limit: number): AttentionRepoCo
     .sort((a, b) => b[1] - a[1] || repoLabel(a[0]).localeCompare(repoLabel(b[0])))
     .slice(0, limit)
     .map(([repo, count]) => ({
-      repoKey: createHash('sha256').update(repo).digest('hex').slice(0, 12),
+      repoKey: sha256Hex(repo).slice(0, 12),
       repoLabel: repoLabel(repo),
       count,
       share: total > 0 ? roundRatio(count / total) : 0,

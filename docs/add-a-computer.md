@@ -44,7 +44,9 @@ text mode; a probe that finds no sign-ins reports `autoCaps: []` and says so,
 since the node then advertises no sign-in lanes. Sign in to a provider CLI
 or `gh` and join again, or pass `--caps` to choose the advertisement
 yourself — an explicit list replaces the sign-in detection entirely
-(local-model and version caps still merge in). Either way, advertise only
+(local-model and version caps still merge in), and a `--caps` that names no
+capability is refused: omit the flag to auto-detect or name at least one.
+Either way, advertise only
 what this computer
 can actually do: jobs select nodes that advertise all their required
 capabilities and share their owner scope. For `gh` jobs, sign in locally
@@ -132,6 +134,23 @@ node, pull on that node instead. Read the outcome back with:
 ```sh
 phm node result --job hello-1 --owner acme --json
 phm node status --owner acme --json
+```
+
+A bare `enqueue` is a connectivity ping: the job carries no instructions.
+To hand the node real work, embed the task text — the prompt `pull` prints
+under `Task:` for the operator (or their agent) to run. `--task-part` carries
+the text (repeat the flag, in order, for long prompts; 16 KiB joined at
+most) and `--task-sha256` proves it arrived intact: `sha256:` plus the
+lowercase hex digest of the exact joined text (`shasum -a 256` on macOS,
+`sha256sum` on Linux). An embedded task requires `--pack codex-file`, and
+`codex-file` requires the embedded task — enqueue refuses the pair split
+either way:
+
+```sh
+TASK='Reply with exactly: phantom-node-ok'
+DIGEST="$(printf %s "$TASK" | shasum -a 256 | cut -d' ' -f1)"
+phm node enqueue --job demo-1 --owner acme --pack codex-file --task-part "$TASK" --task-sha256 "sha256:$DIGEST" --json
+phm node pull --node <nodeId> --session 1
 ```
 
 Every command above runs on this computer: the standalone registry is local,

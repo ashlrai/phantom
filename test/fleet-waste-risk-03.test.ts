@@ -1,8 +1,8 @@
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { buildWasteRiskInputs, type WasteRiskFacts } from '../src/core/resources/waste-risk-read.js';
+import { buildWasteRiskInputs, readWasteRiskInputs, type WasteRiskFacts } from '../src/core/resources/waste-risk-read.js';
 import { projectWasteRisk } from '../src/core/resources/waste-risk.js';
 import { cmdFleetWasteRisk } from '../src/cli/fleet-waste-risk.js';
 import { notifyWasteRiskTransition } from '../src/core/resources/waste-risk-notify.js';
@@ -35,6 +35,46 @@ it('keeps stale samples and reset crossings unknown', () => {
   expect(projectWasteRisk(buildWasteRiskInputs(facts, '2026-10-30T20:00:00Z')[0]!).waste_risk).toBe('unknown');
   const changed = { ...facts, meters: facts.meters.map((m, i) => ({ ...m, resetAt: i ? reset : '2026-10-30T20:00:00Z' })) };
   expect(buildWasteRiskInputs(changed, now)[0]?.burn_per_hour).toBeNull();
+});
+it('readWasteRiskInputs roots at ASHLR_RUNS_DIR and keeps an explicit dir authoritative', async () => {
+  const runs = await mkdtemp(join(tmpdir(), 'waste-runs-'));
+  const other = await mkdtemp(join(tmpdir(), 'waste-other-'));
+  const queue = join(runs, 'queue');
+  await mkdir(queue, { recursive: true });
+  const at = new Date(Date.parse(now));
+  const slotsPath = join(queue, 'slots.json');
+  await writeFile(slotsPath, JSON.stringify({ 'fake-lane': { target: 8, running: 2, queued: 3, held: false } }));
+  await utimes(slotsPath, at, at);
+  const previous = process.env.ASHLR_RUNS_DIR;
+  process.env.ASHLR_RUNS_DIR = runs;
+  try {
+    const inputs = await readWasteRiskInputs(undefined, now);
+    expect(inputs.find(row => row.lane === 'fake-lane')).toMatchObject({ running: 2, ceiling: 8, held: false });
+    const explicit = await readWasteRiskInputs(other, now);
+    expect(explicit.some(row => row.lane === 'fake-lane')).toBe(false);
+  } finally {
+    if (previous === undefined) delete process.env.ASHLR_RUNS_DIR;
+    else process.env.ASHLR_RUNS_DIR = previous;
+    await rm(runs, { recursive: true, force: true });
+    await rm(other, { recursive: true, force: true });
+  }
+});
+it('cmdFleetWasteRisk roots at ASHLR_RUNS_DIR without --runs-dir', async () => {
+  const runs = await mkdtemp(join(tmpdir(), 'waste-cli-runs-'));
+  const seen: Array<string | undefined> = [];
+  const previous = process.env.ASHLR_RUNS_DIR;
+  process.env.ASHLR_RUNS_DIR = runs;
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    const deps = { read: async (runsDir?: string) => { seen.push(runsDir); return []; } };
+    expect(await cmdFleetWasteRisk(['--json'], deps)).toBe(0);
+    expect(seen).toEqual([runs]);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).schema).toBe('fleet.waste-risk.v1');
+  } finally {
+    if (previous === undefined) delete process.env.ASHLR_RUNS_DIR;
+    else process.env.ASHLR_RUNS_DIR = previous;
+    await rm(runs, { recursive: true, force: true });
+  }
 });
 it('prints schema without writing; notify persists and suppresses repeated high', async () => {
   const runsDir = await mkdtemp(join(tmpdir(), 'fake-waste-'));

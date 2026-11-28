@@ -86,7 +86,18 @@ function planEmptyNote(nodes: DriveNodes, owner: string | undefined): string {
     const jobs = nodes.snapshot().jobs.filter(j => j.owner && (owner === undefined || j.owner === owner));
     const scope = owner === undefined ? 'any owner scope' : `owner '${owner}'`;
     if (!jobs.length) {
-      return `No jobs queued in ${scope}. Enqueue one: phm node enqueue --job <id> --owner ${owner ?? '<scope>'}`;
+      // The same unknown-scope guard the status empty-scope hint applies: a
+      // mistyped --owner must not be invited to enqueue into a scope fragment
+      // no node serves, so the note names the scopes the store does know —
+      // but only when the requested scope is absent from them (a scope with a
+      // node and no jobs is legitimate and keeps the plain enqueue line). With
+      // no --owner at all, one known scope also replaces the <scope>
+      // placeholder with a runnable command.
+      const known = knownOwnerScopes(nodes) ?? [];
+      const hint = known.length > 0 && (owner === undefined || !known.includes(owner))
+        ? ` This store knows: ${known.join(', ')}.` : '';
+      const target = owner ?? (known.length === 1 ? known[0]! : '<scope>');
+      return `No jobs queued in ${scope}.${hint} Enqueue one: phm node enqueue --job <id> --owner ${target}`;
     }
     const counts = { pending: 0, running: 0, completed: 0 };
     for (const j of jobs) counts[j.state] += 1;
@@ -394,6 +405,19 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
         // worker's 'no-local-provider-login' hold makes for a lane-less join.
         autoCaps = lanes;
         if (lanes.length > 0) flags.set('--caps', lanes.join(','));
+      } else {
+        // An explicit --caps that names nothing is a scripting accident
+        // (`--caps "$EMPTY"`), not a deliberate empty advertisement: silently
+        // joining with zero work caps where a bare join would have
+        // auto-detected this machine's sign-ins leaves a first-run node that
+        // looks joined but can never take a lane job. The pool wire still
+        // accepts an empty --caps (a lane-less worker legitimately joins with
+        // none), so this refusal stays on the standalone CLI path only.
+        const named = (flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean);
+        if (named.length === 0) {
+          throw new UsageError('bad-caps', '--caps needs at least one capability.',
+            'Omit --caps to auto-detect this machine\'s sign-ins, or name capabilities such as build,gh. Run: phm node --help');
+        }
       }
       // A standalone join advertises this build as a `phm-<version>` cap, the same
       // report a pool worker sends, so `phm node self-update` reads a real version
@@ -503,7 +527,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     const known = error instanceof UsageError;
     // Validation, privacy and lock messages in this stack are fixed operator-facing
     // strings (no values echoed), so they are shown; anything else stays masked.
-    const operatorMessage = /^(?:Invalid |Drive |Universe storage|Unsafe drive|Cannot create filesystem root)/;
+    const operatorMessage = /^(?:Invalid |Drive |(?:Universe|Private) storage|Unsafe drive|Cannot create filesystem root)/;
     const message = error instanceof Error && (known || operatorMessage.test(error.message)) ? error.message : 'Node store unavailable or invalid.';
     const fix = known ? error.fix : /^Invalid drive/.test(message) ? 'Check ids (letters, digits, . _ : / -), caps (lowercase) and secret NAMES (UPPER_SNAKE). Run: phm node --help'
       : `Check that ${nodesDirLabel} is a private (0700) directory you own, and that no other process holds its lock.`;

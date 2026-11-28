@@ -16,6 +16,8 @@
  * reads /proc/meminfo (MemAvailable, swap), /proc/pressure/memory PSI `some
  * avg10` — the same bands host admission applies — and /proc/vmstat
  * `pswpout`. A platform or file with no reader stays unknown, never normal.
+ * Windows has no reader for load average, memory pressure or swap, and
+ * os.loadavg()'s [0,0,0] stub there is not a measurement.
  */
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
@@ -223,12 +225,13 @@ export async function measureNode(options: MeasureOptions = {}): Promise<NodeSna
   const swapGb = swap ? parseSwapUsage(swap) : null;
   const linuxMem = linux ? parseLinuxMemory(meminfo) : null;
   const linuxLevel = linux ? parseLinuxPressureLevel(psi) : null;
-  const load = io.loadavg();
+  // os.loadavg() always returns [0,0,0] on Windows; that stub is not a load reading.
+  const load = io.platform === 'win32' ? null : io.loadavg();
   return {
     node: options.node ?? io.hostname().replace(/\.local$/, ''),
     measuredAtMs: io.now(),
     platform: io.platform,
-    cpu: { cores: after.length, load: load.length === 3 && load.every(Number.isFinite) ? [load[0]!, load[1]!, load[2]!] : null,
+    cpu: { cores: after.length, load: load !== null && load.length === 3 && load.every(Number.isFinite) ? [load[0]!, load[1]!, load[2]!] : null,
       busyPercent: cpuBusyPercent(before, after) },
     mem: {
       totalBytes,

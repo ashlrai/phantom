@@ -218,6 +218,37 @@ SwapFree:        1048576 kB
   });
 });
 
+describe('Windows measurement', () => {
+  it('reports no load average on win32, where os.loadavg() is a [0,0,0] stub', async () => {
+    let cpuCalls = 0;
+    const host: MeasureHost = {
+      platform: 'win32', now: () => T0, hostname: () => 'win-box', loadavg: () => [0, 0, 0],
+      totalmem: () => 16 * GIB, freemem: () => 8 * GIB, sleep: async () => {},
+      run: async () => null,
+      cpus: () => {
+        const later = cpuCalls++ > 0;
+        return Array.from({ length: 8 }, () => ({ model: '', speed: 0, times: { user: later ? 50 : 0, nice: 0, sys: 0, irq: 0, idle: later ? 50 : 0 } }));
+      },
+    };
+    const s = await measureNode({ host });
+    expect(s.platform).toBe('win32');
+    expect(s.cpu.load).toBeNull();
+    // CPU counter deltas still measure real busy percent on Windows.
+    expect(s.cpu.busyPercent).toBe(50);
+    expect(s.mem).toEqual({ totalBytes: 16 * GIB, freeBytes: 8 * GIB, freePercent: null, pressureLevel: null });
+    expect(s.swap).toEqual({ usedBytes: null, totalBytes: null, swapoutsTotal: null });
+    expect(s.processSource).toBe('unavailable');
+    expect(s.sessions).toBeNull();
+    const doc = computeNodeCapacity(s);
+    expect(doc.cpu.load_1m).toBeNull();
+    expect(doc.cpu.load_5m).toBeNull();
+    expect(doc.cpu.load_15m).toBeNull();
+    expect(doc.cpu.run_queue_per_core).toBeNull();
+    expect(doc.cpu.headroom_cores).toBeCloseTo(2.8);
+    expect(doc.agents_runnable_now.codex).toBeNull();
+  });
+});
+
 describe('capacity model', () => {
   it('derives headroom above the memguard raise line and per-harness runnable from measured footprints', () => {
     expect(CAPACITY_POLICY.memReserveFreePct).toBe(MEMORY_GUARD.raiseFreePct);
@@ -332,6 +363,61 @@ describe('capacity model', () => {
     }
   });
 
+  it('ignores a session footprint too small to be a real session tree', () => {
+    // A CLI caught mid-exec measures a few dozen KiB; publishing it as the
+    // per-session cost reports thousands of runnable sessions and lets the
+    // router place them. Below the floor the harness stays unmeasured, exactly
+    // like a zero or unreadable reading.
+    const doc = computeNodeCapacity(snap({ sessions: [
+      { harness: 'codex', rootPid: 10, processes: 1, memBytes: 32 * 1024, cpuPercent: 0.1 },
+    ] }));
+    expect(doc.per_harness_footprint.codex).toBeUndefined();
+    expect(doc.agents_runnable_now.codex).toBeNull();
+    expect(doc.basis.limiting.codex).toBe('unmeasured');
+    expect(doc.basis.notes.some(n => n.includes('session minimum'))).toBe(true);
+    expect(parseNodeCapacityDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
+  });
+
+  it('keeps the real session cost when a stub shares the sample', () => {
+    const doc = computeNodeCapacity(snap({ sessions: [
+      { harness: 'codex', rootPid: 10, processes: 1, memBytes: 32 * 1024, cpuPercent: 0.1 },
+      { harness: 'codex', rootPid: 11, processes: 4, memBytes: 400 * MIB, cpuPercent: 40 },
+    ] }));
+    expect(doc.per_harness_footprint.codex).toMatchObject({ sessions: 2, mem_bytes_max: 400 * MIB, source: 'measured' });
+  });
+
+  it('keeps a usable learned footprint when the live sample is all stubs', () => {
+    const prev = computeNodeCapacity(snap());
+    const doc = computeNodeCapacity(snap({
+      measuredAtMs: T0 + 60_000,
+      sessions: [{ harness: 'codex', rootPid: 10, processes: 1, memBytes: 32 * 1024, cpuPercent: 0.1 }],
+    }), prev);
+    expect(doc.per_harness_footprint.codex).toMatchObject({ source: 'learned', mem_bytes_max: 600 * MIB, learned_at: prev.measured_at });
+    expect(doc.agents_runnable_now.codex).toBe(15);
+    expect(doc.basis.notes.some(n => n.includes('session minimum'))).toBe(true);
+  });
+
+  it('does not carry a learned footprint below the session floor', () => {
+    // A document written before the floor existed can hold one; it must not
+    // be carried forward as learned evidence.
+    const prev = computeNodeCapacity(snap());
+    prev.per_harness_footprint.codex!.mem_bytes_max = 512 * 1024;
+    const doc = computeNodeCapacity(snap({
+      measuredAtMs: T0 + 60_000,
+      sessions: [{ harness: 'codex', rootPid: 10, processes: 1, memBytes: 32 * 1024, cpuPercent: 0.1 }],
+    }), prev);
+    expect(doc.per_harness_footprint.codex).toBeUndefined();
+    expect(doc.agents_runnable_now.codex).toBeNull();
+  });
+
+  it('rejects a capacity document whose footprint is below the session floor', () => {
+    const doc = JSON.parse(JSON.stringify(computeNodeCapacity(snap())));
+    doc.per_harness_footprint.codex.mem_bytes_max = CAPACITY_POLICY.minSessionFootprintBytes - 1;
+    expect(parseNodeCapacityDoc(doc)).toBeNull();
+    doc.per_harness_footprint.codex.mem_bytes_max = CAPACITY_POLICY.minSessionFootprintBytes;
+    expect(parseNodeCapacityDoc(doc)).not.toBeNull();
+  });
+
   it('charges host busy cores per session when the process source has no CPU column', () => {
     const doc = computeNodeCapacity(snap({ processSource: 'pgrep+footprint', cpu: { cores: 18, load: [214.56, 115.14, 89.08], busyPercent: 95 },
       sessions: [{ harness: 'codex', rootPid: 1, processes: 3, memBytes: 500 * MIB, cpuPercent: null }] }));
@@ -432,6 +518,36 @@ describe('phm node capacity / route CLI', () => {
     expect(JSON.parse(lines[0]!)).toMatchObject({ schema: 'phantom.node-route.v1', plan: [{ jobId: 'j1', nodeId: 'mbp', provider: 'grok' }] });
     expect(JSON.parse(lines[1]!).error.message).toMatch(/node-capacity\.v1/);
     expect(JSON.parse(lines[2]!).error.message).toMatch(/node-capacity\.v1/);
+  });
+
+  it('reports fleet-wide runnable sessions per harness next to the plan', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { cmdNodeRoute } = await import('../src/cli/node-capacity.js');
+    const dir = mkdtempSync(join(tmpdir(), 'node-route-fleet-'));
+    const file = (name: string, value: unknown) => { writeFileSync(join(dir, name), JSON.stringify(value)); return join(dir, name); };
+    const doc = computeNodeCapacity(snap({ measuredAtMs: Date.now() }));
+    const cap = file('cap.json', doc);
+    const costs = file('costs.json', [{ provider: 'grok', model: 'grok-5', harness: 'grok', tokensPerJob: 1e6, minutesPerJob: 20 }]);
+    const jobs = file('jobs.json', [{ id: 'j1' }]);
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (line: string) => { lines.push(line); };
+    try {
+      expect(await cmdNodeRoute(['--capacity', cap, '--costs', costs, '--jobs', jobs, '--json'])).toBe(0);
+      expect(await cmdNodeRoute(['--capacity', cap, '--costs', costs, '--jobs', jobs])).toBe(0);
+    } finally { console.log = log; }
+    const out = JSON.parse(lines[0]!);
+    // The fleet rollup counts this node's measured runnable sessions and keeps
+    // harnesses no fresh node can answer for at null, never a fabricated zero.
+    expect(out.fleet_runnable.codex).toBe(doc.agents_runnable_now.codex);
+    expect(out.fleet_runnable.grok).toBe(doc.agents_runnable_now.grok);
+    expect(out.fleet_runnable.devin).toBeNull();
+    expect(lines[1]).toContain('fleet runnable now:');
+    expect(lines[1]).toContain(`codex=${doc.agents_runnable_now.codex}`);
+    expect(lines[1]).toContain('devin=unknown');
+    expect(lines[2]).toContain('j1 -> mbp');
   });
 
   it('refuses a repeated single-value flag but allows the repeatable ones', async () => {

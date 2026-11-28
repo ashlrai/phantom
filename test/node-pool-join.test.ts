@@ -81,6 +81,37 @@ describe('repeatable Mac enrollment', () => {
     expect(out.error.message).toContain('--node');
     expect(deps.call).not.toHaveBeenCalled();
   });
+  it('refuses join that mixes enrollment and explicit flags before dialing', async () => {
+    // --primary/--backup enroll (probed lanes/capacity); --caps/--slots are the
+    // explicit router-client form. Mixing them used to flip to the explicit
+    // path and leak the enrollment flags into the pool call as a masked
+    // refusal — or "no node pool configuration" on a fresh Mac.
+    const lastError = () => (JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]) as { error: { code: string; message: string } }).error;
+    expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--caps', 'codex', '--json'])).toBe(2);
+    expect(lastError().code).toBe('usage');
+    expect(lastError().message).toContain('--primary/--backup');
+    expect(lastError().message).toContain('--caps/--slots');
+    deps.call.mockClear();
+    expect(await cmdNodePool('join', ['--backup', 'backup-mac', '--slots=2', '--owner', 'mason', '--json'])).toBe(2);
+    expect(lastError().message).toContain('cannot combine');
+    expect(deps.call).not.toHaveBeenCalled();
+    // The pure forms still pass the guard: enrollment-only and explicit-only.
+    deps.read.mockReturnValue(null);
+    expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--owner', 'mason', '--json'])).toBe(0);
+    expect(deps.call).toHaveBeenCalled();
+  });
+  it('routes a lone --backup join to the pool alias check instead of flag rejection', async () => {
+    // --backup has no standalone join meaning; the dispatcher must send it to
+    // the pool path so the operator hears "need both aliases", not "flag not
+    // supported by 'phm node join'".
+    deps.read.mockReturnValue(null);
+    expect(await cmdNode(['join', '--backup', 'backup-mac', '--owner', 'mason', '--json'])).toBe(2);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]) as { error: { code: string; message: string } };
+    expect(out.error.code).toBe('usage');
+    expect(out.error.message).toContain('--primary and --backup');
+    expect(deps.call).not.toHaveBeenCalled();
+    deps.read.mockReturnValue(config);
+  });
   it('accepts --flag=value spellings on the explicit join path', async () => {
     expect(await cmdNodePool('join', ['--node=air', '--caps=codex', '--slots=2', '--json'])).toBe(0);
     expect(deps.call).toHaveBeenCalledWith(config, 'join', ['--node=air', '--caps=codex', '--slots=2', '--json']);

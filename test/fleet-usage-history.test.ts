@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetUsageHistory } from '../src/cli/fleet-usage-history.js';
 import { readResourceLedger } from '../src/core/fleet/runs-resource-ledger.js';
 import {
-  appendUsageReadings, parseUsageHistory, poolUsageSeries, projectUsageHistory, readUsageHistory,
+  appendUsageReadings, parseUsageHistory, poolUsageSeries, projectUsageHistory, readUsageHistory, readUsageSamples,
   USAGE_HISTORY_MAX_AGE_MS, USAGE_HISTORY_MAX_ROWS, USAGE_HISTORY_SCHEMA, USAGE_WINDOW_MS, usageHistoryPath, usageRunway, type UsageHistoryV1, type UsageReading,
 } from '../src/core/fleet/usage-history.js';
 
@@ -20,7 +20,7 @@ const IDEAL_NOW = 4 / 7 * 100;
 
 const dirs: string[] = [];
 const tmp = (): string => { const d = mkdtempSync(join(tmpdir(), 'usage-history-')); dirs.push(d); return d; };
-afterEach(() => { dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })); vi.restoreAllMocks(); });
+afterEach(() => { dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe('append-only history', () => {
   it('skips a reading whose value and reset time are unchanged, and one not newer than the last row', () => {
@@ -280,6 +280,28 @@ describe('ledger recording, CLI and file', () => {
     expect(history.pools[0]).toMatchObject({ pace: 'unknown', points: [{ at: iso(NOW - H), used_pct: 40 }] });
     const stored = JSON.parse(readFileSync(usageHistoryPath(dir), 'utf8')) as { rows: UsageReading[] };
     expect(stored.rows.filter(row => row.pool === 'claude')).toEqual([read(1, 40)]);
+  });
+
+  it('honors ASHLR_RUNS_DIR for the ledger read and the history write', async () => {
+    const dir = runs(45, iso(NOW - H));
+    vi.stubEnv('ASHLR_RUNS_DIR', dir);
+    const history = await readUsageHistory({ now: () => NOW });
+    expect(history.source_state).toBe('healthy');
+    expect(history.pools.map(p => p.pool)).toEqual(['claude']);
+    const stored = JSON.parse(readFileSync(usageHistoryPath(dir), 'utf8')) as { rows: UsageReading[] };
+    expect(stored.rows).toEqual([{ pool: 'claude', used_pct: 45, observed_at: iso(NOW - H), reset_at: RESET, source: 'test' }]);
+  });
+
+  it('readUsageSamples honors ASHLR_RUNS_DIR, and an explicit runsDir still wins', async () => {
+    const dir = tmp();
+    mkdirSync(join(dir, 'metrics'), { recursive: true });
+    writeFileSync(usageHistoryPath(dir), JSON.stringify({ schema: USAGE_HISTORY_SCHEMA, rows: [read(2, 42)] }));
+    const other = tmp();
+    mkdirSync(join(other, 'metrics'), { recursive: true });
+    writeFileSync(usageHistoryPath(other), JSON.stringify({ schema: USAGE_HISTORY_SCHEMA, rows: [read(1, 43, RESET, 'codex-personal')] }));
+    vi.stubEnv('ASHLR_RUNS_DIR', dir);
+    expect(await readUsageSamples({ nowMs: NOW })).toEqual([read(2, 42)]);
+    expect(await readUsageSamples({ runsDir: other, nowMs: NOW })).toEqual([read(1, 43, RESET, 'codex-personal')]);
   });
 
   it('reads an empty runs dir as missing without writing, and a damaged file as degraded without overwriting it', async () => {

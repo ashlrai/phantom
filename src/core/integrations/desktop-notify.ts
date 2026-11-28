@@ -39,8 +39,8 @@ export interface DesktopNotifyOpts {
 // ---------------------------------------------------------------------------
 
 /** Escape for inclusion inside an AppleScript double-quoted string literal. */
-function escapeAppleScript(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, ' ');
+export function escapeAppleScript(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]/g, ' ');
 }
 
 /**

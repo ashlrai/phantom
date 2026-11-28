@@ -14,6 +14,7 @@
  * are built, matching the M3/M4 lazy-import pattern.
  */
 
+import { spawnSync } from 'node:child_process';
 import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import type { ActivityRollup, BudgetAlert, CostForecast, GovernanceStatus } from '../core/types.js';
 import type { AshlrConfig } from '../core/types.js';
@@ -846,8 +847,6 @@ export async function cmdPulseTest(args: string[] = []): Promise<number> {
 // M62: `phm pulse connect` — hub→pulse bridge configuration + test
 // ---------------------------------------------------------------------------
 
-import { spawnSync } from 'node:child_process';
-
 /** Secret name used by OtlpHttpSink (PHANTOM_PAT_KEY in telemetry-sink.ts). */
 const CONNECT_PHANTOM_PAT_KEY = 'ASHLR_PULSE_TOKEN';
 const PHANTOM_BIN = 'phantom';
@@ -1057,7 +1056,7 @@ async function connectSet(args: string[]): Promise<number> {
  *
  * NEVER prints, logs, stores, or returns the token value itself.
  */
-function storePatViaPhantom(cfg: import('../core/types.js').AshlrConfig, _token: string): boolean {
+function storePatViaPhantom(cfg: import('../core/types.js').AshlrConfig, token: string): boolean {
   if (!cfg.phantom?.enabled) return false;
 
   // Quick binary probe
@@ -1073,7 +1072,7 @@ function storePatViaPhantom(cfg: import('../core/types.js').AshlrConfig, _token:
     encoding: 'utf8',
     timeout: 5_000,
     env: { ...process.env, PHANTOM_NO_UPDATE_CHECK: '1' },
-    input: _token,
+    input: token,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
@@ -1088,15 +1087,13 @@ async function connectStatus(): Promise<number> {
   const { loadConfig } = await import('../core/config.js') as {
     loadConfig: () => import('../core/types.js').AshlrConfig;
   };
-  const { patAvailable, getSink } = await import('../core/observability/telemetry-sink.js') as {
+  const { patAvailable } = await import('../core/observability/telemetry-sink.js') as {
     patAvailable: (cfg: import('../core/types.js').AshlrConfig, allowPhantomProbe?: boolean) => boolean;
-    getSink: (cfg: import('../core/types.js').AshlrConfig) => { emit: (spans: import('../core/types.js').GenAiSpan[]) => Promise<import('../core/types.js').TelemetryEmitResult> };
   };
 
   const cfg = loadConfig();
   const endpoint = cfg.telemetry?.pulse;
   const hasPat = patAvailable(cfg, true);
-  const sink = getSink(cfg);
   // Determine active sink name without emitting
   const sinkName = endpoint && hasPat ? 'OtlpHttpSink' : 'LocalFileSink';
 
@@ -1119,8 +1116,6 @@ async function connectStatus(): Promise<number> {
   }
   console.log('');
 
-  // Suppress unused variable warning — sink is used for type inference only
-  void sink;
   return 0;
 }
 

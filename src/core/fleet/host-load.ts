@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { readdirSync } from 'node:fs';
-import { cpus, homedir, loadavg } from 'node:os';
+import { cpus, homedir, loadavg, platform } from 'node:os';
 import { join } from 'node:path';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -12,10 +12,13 @@ export interface HostLoad {
   cores: number | null; ratio: number | null;
 }
 
-export function readHostLoad(deps: { loadavg: () => number[]; cpus: () => unknown[] } = { loadavg, cpus }): HostLoad {
+export function readHostLoad(deps: { loadavg: () => number[]; cpus: () => unknown[]; platform?: () => string } = { loadavg, cpus }): HostLoad {
   let loads: number[] = [];
   let cores: number | null = null;
-  try { loads = deps.loadavg(); } catch { /* The load reading is unavailable. */ }
+  // os.loadavg() always returns [0,0,0] on Windows; that stub is not a load reading.
+  let posix = true;
+  try { posix = (deps.platform ?? platform)() !== 'win32'; } catch { /* Platform unknown: try the reading. */ }
+  if (posix) try { loads = deps.loadavg(); } catch { /* The load reading is unavailable. */ }
   try { const count = deps.cpus().length; if (count > 0) cores = count; } catch { /* Core count is unavailable. */ }
   const valid = (value: number | undefined): number | null =>
     typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;

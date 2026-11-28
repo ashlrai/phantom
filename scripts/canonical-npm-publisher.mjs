@@ -55,13 +55,34 @@ export function bindAttestedArtifact(input, run, artifact) {
   return artifact;
 }
 
+// Trust-bearing code: the workflow, its scripts and the release policies.
+const TRUST_PATHS = ['.github/', 'scripts/'];
+const COMPARE_FILE_CAP = 300;
+
+// Master advances every few minutes, so a dispatched run can start after the
+// tip moved. The run is still current when its sha is a strict ancestor of the
+// tip and nothing the publisher executes or trusts changed in between. Any
+// other drift (diverged, behind, truncated file list, trust path touched) fails.
+export function assertWorkflowCurrent(repository, workflowSha, masterSha, read) {
+  if (workflowSha === masterSha) return;
+  const compare = read(`repos/${repository}/compare/${workflowSha}...${masterSha}`);
+  assert.equal(compare?.status, 'ahead', 'npm workflow is not current master');
+  const files = compare.files;
+  assert.ok(Array.isArray(files) && files.length < COMPARE_FILE_CAP, 'npm workflow is not current master');
+  for (const file of files) {
+    for (const name of [file.filename, file.previous_filename]) {
+      assert.ok(name === undefined || !TRUST_PATHS.some(prefix => name.startsWith(prefix)), 'npm workflow is not current master');
+    }
+  }
+}
+
 export function prepare(env = process.env, read = api) {
   const input = publisherInput(env);
   assert.equal(git('rev-parse', 'HEAD'), env.GITHUB_SHA);
   assert.equal(git('status', '--porcelain', '--untracked-files=normal'), '');
   requireRepositoryMetadata(REPO, read(`repos/${REPO}`));
   const masterSha = assertEffectiveManualProtection(REPO, read(`repos/${REPO}/branches/master`), read(`repos/${REPO}/rules/branches/master`));
-  assert.equal(masterSha, env.GITHUB_SHA, 'npm workflow is not current master');
+  assertWorkflowCurrent(REPO, env.GITHUB_SHA, masterSha, read);
   resolveReleaseSourceRef({ read, repository: REPO, masterSha, attestorSha: input.attestorSha, candidateSha: input.revision, version: input.version });
   bindAttestedArtifact(input, read(`repos/${REPO}/actions/runs/${input.attestorRun}/attempts/${input.attestorAttempt}`), read(`repos/${REPO}/actions/artifacts/${input.artifactId}`));
   const directory = fs.mkdtempSync(join(fs.realpathSync(env.RUNNER_TEMP), 'phantom-npm-')); fs.chmodSync(directory, 0o700);

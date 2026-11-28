@@ -25,7 +25,7 @@ export async function cmdFleetPlannerBrief(args: string[], io: IO = {}): Promise
     if (flag !== '--note' && !isAbsolute(value)) return bad();
     values.set(flag, value);
   }
-  const runsRoot = values.get('--runs-dir') ?? join(homedir(), '.ashlr-runs');
+  const runsRoot = values.get('--runs-dir') ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   try {
     const brief = await buildPlannerBrief({ runsRoot, repoRoot: values.get('--repo'), note: values.get('--note'), realSupply: readLiveRealSupply, orderCoverage: () => readOrderTrace({ runsDir: runsRoot }), wasteRisk: async () => (await readWasteRiskInputs(runsRoot)).map(projectWasteRisk), frictionTop: async () => collectFrictionTop(frictionLedgerPath(homedir()), join(runsRoot, 'queue', 'noop-streak.json'), 10) });
     const written = flags.has('--write') ? writePlannerBrief(runsRoot, brief.text) : undefined;

@@ -27,7 +27,8 @@ export const FLEET_ROUTER_WEIGHTS_USAGE =
   'side ledgers (api-spend/work-market/empty-tags/merge-events/launch-cost) plus the reward-signal ledger ' +
   '(<ashlr>/metrics/reward-signals.jsonl), the cross-review verdict journal (<ashlr>/fleet/cross-review.jsonl), ' +
   'the outside-PR outcome journal (<runs-dir>/metrics/outside-pr-outcomes.jsonl, folded into per-agent community-seat ' +
-  'tallies — outside PRs carry no lane/work_class and never enter the proposals) and the fleet controller\'s ' +
+  'tallies — verdict, open→merge latency, review, CI and diff-size evidence; outside PRs carry no lane/work_class ' +
+  'and never enter the proposals) and the fleet controller\'s ' +
   'recorded lane-quality verdicts in <runs-dir>/queue/fleet-controller.json. ' +
   'Proposes bounded weight shifts per work_class/lane from held-merge outcomes (20 known outcomes required, ' +
   'shifts capped at 0.1; merges recorded as reverted never count as held). Writes nothing and changes no ' +
@@ -143,15 +144,20 @@ function qualityReceiptLine(r: ControllerQualityReceipt): string {
 
 /**
  * One compact text rendering of a community-seat tally; agent null prints
- * as the unattributed bucket. Latency and review tallies print 'unknown'
- * when their journaled-evidence denominator is empty — rows written
- * before the fields existed never read as zero reviews or zero minutes.
+ * as the unattributed bucket. Latency, review, CI and diff-size tallies
+ * print 'unknown' when their journaled-evidence denominator is empty —
+ * rows written before the fields existed never read as zero reviews,
+ * zero CI, zero minutes or empty diffs.
  */
 function seatLine(s: CommunitySeatOutcome): string {
   const ttm = s.ttm_known === 0 ? 'unknown' : `${s.ttm_minutes_mean}m mean over ${s.ttm_known} merges`;
   const reviews = s.reviews_known === 0 ? 'unknown'
     : `${s.reviewed} reviewed/${s.unreviewed} unreviewed/${s.approved} approved/${s.changes_requested} changes-requested/${s.review_required} review-required over ${s.reviews_known} merges`;
-  return `  ${s.agent ?? 'unattributed'}: prs=${s.prs} reverted=${s.reverted} kept=${s.kept} unknown=${s.unknown} repos=${s.repos} ttm=${ttm} reviews=${reviews}`;
+  const ci = s.ci_known === 0 ? 'unknown'
+    : `${s.ci_passed} green/${s.ci_failed} red/${s.ci_pending} pending/${s.ci_none} no-checks over ${s.ci_known} merges`;
+  const diff = s.diff_known === 0 ? 'unknown'
+    : `${s.diff_lines_mean} lines/${s.diff_files_mean} files mean over ${s.diff_known} merges`;
+  return `  ${s.agent ?? 'unattributed'}: prs=${s.prs} reverted=${s.reverted} kept=${s.kept} unknown=${s.unknown} repos=${s.repos} ttm=${ttm} reviews=${reviews} ci=${ci} diff=${diff}`;
 }
 
 /**

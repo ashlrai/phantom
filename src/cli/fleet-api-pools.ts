@@ -100,7 +100,7 @@ export async function cmdFleetApiPools(args: string[], reader: ApiPoolReader = p
     options[key] = parsed;
   }
   try {
-    const rawJson = await reader(join(homedir(), '.ashlr-runs', 'queue', 'status.json'));
+    const rawJson = await reader(join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'status.json'));
     const parsed = JSON.parse(rawJson);
     const budget = row(row(row(parsed.budget)['claude-api']));
     const rawPools = budget?.pools;

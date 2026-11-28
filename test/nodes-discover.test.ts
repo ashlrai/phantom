@@ -62,7 +62,10 @@ describe('phm nodes --discover', () => {
     const noPool: NodesRegistry = { source: 'local', selfNode: null, pool: null, state: {
       version: 'drive.nodes.v1', sequence: 1, observedAt: NOW - 1_000, nodes: [], leader: null, jobs: [] } };
     const rows = readNodesView(deps(TWO_ONLINE_ONE_OFF, noPool)).nodes;
-    expect(rows.find(r => r.name === 'studio-mac')).toMatchObject({ joined: false, joinCommand: null, state: 'reachable but Phantom not running' });
+    // The standalone registry is single-host: it cannot see whether studio-mac
+    // runs its own Phantom, so the peer's status is unknown — never a claimed
+    // "not running".
+    expect(rows.find(r => r.name === 'studio-mac')).toMatchObject({ joined: false, joinCommand: null, state: 'reachable; Phantom status unknown' });
     const { code, out } = await run(['--discover'], TWO_ONLINE_ONE_OFF, noPool);
     expect(code).toBe(0);
     expect(out).toContain('studio-mac (online): not joined; this computer has no node pool to join it');

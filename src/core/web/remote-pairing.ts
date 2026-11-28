@@ -12,7 +12,7 @@ import {
   type AuthenticationResponseJSON,
   type RegistrationResponseJSON,
 } from '@simplewebauthn/server';
-import { parseRemoteAccessConfig, type RemoteAccessIdentity } from './remote-access.js';
+import { REMOTE_TOKEN_RE, parseRemoteAccessConfig, sha256Hex, type RemoteAccessIdentity } from './remote-access.js';
 import type { RemoteDevice, RemoteDeviceStore } from './remote-device-store.js';
 
 const PAIR_TTL_MS = 5 * 60_000;
@@ -58,10 +58,6 @@ interface Assertion {
 interface OperationDigest { method: 'POST' | 'DELETE'; path: string; bodyDigest: string }
 export interface RemoteOperation { method: 'POST' | 'DELETE'; path: string; body: string | Uint8Array }
 
-function digest(bytes: string | Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
-}
-
 /** This identifies exact bytes. It does not authorize a route; stage 3 must. */
 function operationDigest(operation: RemoteOperation): OperationDigest | null {
   if ((operation.method !== 'POST' && operation.method !== 'DELETE')
@@ -72,7 +68,7 @@ function operationDigest(operation: RemoteOperation): OperationDigest | null {
     || !(typeof operation.body === 'string' || operation.body instanceof Uint8Array)) return null;
   const length = Buffer.byteLength(operation.body);
   if (length > MAX_BODY_BYTES) return null;
-  return { method: operation.method, path: operation.path, bodyDigest: digest(operation.body) };
+  return { method: operation.method, path: operation.path, bodyDigest: sha256Hex(operation.body) };
 }
 
 function sameOperation(a: OperationDigest, b: OperationDigest): boolean {
@@ -179,7 +175,7 @@ export function createRemotePairing(
           || !scopes || scopes.read !== true || typeof scopes.act !== 'boolean') return null;
         const code = randomBytes(32).toString('base64url');
         const expiresAt = now() + PAIR_TTL_MS;
-        invitations.set(digest(code), { subject, scopes: { ...scopes }, expiresAt });
+        invitations.set(sha256Hex(code), { subject, scopes: { ...scopes }, expiresAt });
         return { code, expiresAt };
       },
       pendingApprovals() {
@@ -220,11 +216,11 @@ export function createRemotePairing(
       },
       async claimInvitation(identity: RemoteAccessIdentity, code: string, label: string) {
         pruneExpired();
-        if (!validIdentity(identity) || typeof code !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(code)
+        if (!validIdentity(identity) || typeof code !== 'string' || !REMOTE_TOKEN_RE.test(code)
           || typeof label !== 'string' || registrations.size >= MAX_REGISTRATIONS) return null;
         const name = cleanLabel(label);
         if (!name) return null;
-        const key = digest(code);
+        const key = sha256Hex(code);
         const invite = invitations.get(key);
         if (!invite || invite.subject !== identity.subject) return null;
         invitations.delete(key);

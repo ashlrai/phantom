@@ -160,7 +160,7 @@ export async function cmdFleetStarved(
     return 2;
   }
   try {
-    const status = JSON.parse(await reader(join(homedir(), '.ashlr-runs', 'queue', 'status.json')));
+    const status = JSON.parse(await reader(join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'status.json')));
     const view = sanitizePublicJson(explainFleetStarved(status, await lanes().catch(() => null))) as FleetStarvedView;
     console.log(args.includes('--json') ? JSON.stringify(view) : formatFleetStarved(view));
     return view.status === 'red' || (view.starved_lanes?.length ?? 0) > 0 ? 1 : 0;

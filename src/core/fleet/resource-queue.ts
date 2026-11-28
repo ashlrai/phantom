@@ -13,6 +13,7 @@ export async function readResourceQueue(runsDir: string, now: number, status: un
   const snapshot = object(status), admission = object(snapshot.admission);
   const tick = Date.parse(String(snapshot.last_tick ?? ''));
   if (snapshot.schema !== 'dispatchd.status.v1' || !(tick <= now && now - tick <= FRESH_MS) ||
+      (admission.ts !== undefined && admission.ts !== snapshot.last_tick) ||
       (snapshot.paused !== null && snapshot.paused !== false) || admission.admit !== true ||
       admission.decision === 'stop' || admission.gate_reason) return null;
   const read = (name: string, max = MAX_BYTES) => readSource(join(runsDir, name), max, false);
@@ -42,7 +43,8 @@ export async function readResourceQueue(runsDir: string, now: number, status: un
   const lanes = new Map(Object.entries(object(snapshot.lanes)).flatMap(([lane, raw]) => {
     const row = object(raw), running = count(row.running), target = count(row.effective_target ?? row.target);
     if (running === null || target === null || typeof row.held !== 'boolean' || !Object.hasOwn(ctx.slots, lane)) return [];
-    return [[lane, marketLaneView(lane, running, target, row.held, ctx)] as const];
+    return [[lane, marketLaneView(lane, running, target, row.held, ctx,
+      typeof row.healthy === 'boolean' ? row.healthy : null)] as const];
   }));
   const rows = lines.flatMap((line, index) => {
     const cells = line.replace(/\r$/, '').split('\t');

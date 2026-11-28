@@ -3,8 +3,15 @@ import { lstatSync, type BigIntStats } from 'node:fs';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import type { Socket } from 'node:net';
 import { dirname, isAbsolute, parse, resolve } from 'node:path';
-import { isProxy } from 'node:util/types';
 
+import {
+  canonicalEpochJson as canonicalJson,
+  canonicalEpochJsonDigest,
+  isValidRawEpochDigest,
+  nonProxyPlainRecord as plainRecord,
+  ownDataPropertyValue as ownValue,
+  rawEpochDigest,
+} from '../vision/agent-os-epoch-shared.js';
 import {
   AGENT_OS_LOCAL_CONTAINER_NATIVE_PRODUCER_ENTRYPOINT_V1,
   agentOsLocalContainerCreatePolicyDigestV1,
@@ -12,18 +19,16 @@ import {
   type AgentOsLocalContainerCreatePolicyV1,
 } from '../vision/agent-os-local-container-policy.js';
 
-export const AGENT_OS_DOCKER_ENGINE_CLIENT_V1 = 'ashlr-agent-os-docker-engine-client-v1' as const;
 export const AGENT_OS_DOCKER_ENGINE_API_VERSION_V1 = '1.54' as const;
-export const AGENT_OS_DOCKER_ENGINE_MAX_JSON_BYTES_V1 = 1024 * 1024;
-export const AGENT_OS_DOCKER_ENGINE_MAX_SECCOMP_BYTES_V1 = 64 * 1024;
-export const AGENT_OS_DOCKER_ENGINE_MAX_STDERR_BYTES_V1 = 64 * 1024;
-export const AGENT_OS_DOCKER_ENGINE_MAX_REQUEST_FRAME_BYTES_V1 = 3 * 1024 * 1024;
+const AGENT_OS_DOCKER_ENGINE_MAX_JSON_BYTES_V1 = 1024 * 1024;
+const AGENT_OS_DOCKER_ENGINE_MAX_SECCOMP_BYTES_V1 = 64 * 1024;
+const AGENT_OS_DOCKER_ENGINE_MAX_STDERR_BYTES_V1 = 64 * 1024;
+const AGENT_OS_DOCKER_ENGINE_MAX_REQUEST_FRAME_BYTES_V1 = 3 * 1024 * 1024;
 export const AGENT_OS_DOCKER_ENGINE_CONTROL_TIMEOUT_MS_V1 = 5_000;
 
 const CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const CONTAINER_NAME_RE = /^ashlr-agent-os-[a-f0-9]{32}$/u;
 const API_VERSION_RE = /^1\.[0-9]{2}$/u;
-const RAW_DIGEST_RE = /^[a-f0-9]{64}$/u;
 const MAX_REQUEST_TIMEOUT_MS = 6 * 60_000;
 
 export type AgentOsDockerEngineClientReasonV1 =
@@ -131,38 +136,12 @@ export interface AgentOsDockerExpectedInspectionV1 {
   seccompProfile: Uint8Array;
 }
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const row = value as Record<string, unknown>;
-  return `{${Object.keys(row).sort().map((key) =>
-    `${JSON.stringify(key)}:${canonicalJson(row[key])}`).join(',')}}`;
-}
-
 function rawDigest(domain: string, value: unknown): string {
-  return createHash('sha256').update(domain, 'utf8').update('\0', 'utf8')
-    .update(canonicalJson(value), 'utf8').digest('hex');
+  return canonicalEpochJsonDigest(`${domain}\0`, value);
 }
 
 function bytesDigest(domain: string, value: Uint8Array): string {
-  return createHash('sha256').update(domain, 'utf8').update('\0', 'utf8')
-    .update(Buffer.from(value)).digest('hex');
-}
-
-function plainRecord(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null ? value as Record<string, unknown> : null;
-}
-
-function ownValue(value: unknown, key: string): unknown {
-  if (value === null || typeof value !== 'object' || isProxy(value)) return undefined;
-  try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
-  } catch {
-    return undefined;
-  }
+  return rawEpochDigest(`${domain}\0`, Buffer.from(value));
 }
 
 function parseJsonRecord(bytes: Buffer): Record<string, unknown> | null {
@@ -259,7 +238,7 @@ function createRequestBody(
 
 function seccompAdmitted(profile: Uint8Array, expectedDigest: string): boolean {
   if (!(profile instanceof Uint8Array) || profile.byteLength < 2 ||
-    profile.byteLength > AGENT_OS_DOCKER_ENGINE_MAX_SECCOMP_BYTES_V1 || !RAW_DIGEST_RE.test(expectedDigest) ||
+    profile.byteLength > AGENT_OS_DOCKER_ENGINE_MAX_SECCOMP_BYTES_V1 || !isValidRawEpochDigest(expectedDigest) ||
     createHash('sha256').update(Buffer.from(profile)).digest('hex') !== expectedDigest) return false;
   try { return plainRecord(JSON.parse(Buffer.from(profile).toString('utf8'))) !== null; } catch { return false; }
 }

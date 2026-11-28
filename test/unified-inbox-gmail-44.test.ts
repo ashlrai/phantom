@@ -69,7 +69,7 @@ describe('unified inbox gmail source', () => {
       readNeeds: () => ({ status: 'available', items: [{ id: 'nm-1', text: 'fake needs-you line' }] } as never),
     });
     expect(inbox.sources.gmail).toEqual({ state: 'degraded', pending: 0 });
-    expect(Object.keys(inbox.sources).sort()).toEqual(['board', 'bus', 'channel-health', 'claim-drift', 'conversations', 'coordination', 'drafts', 'email-inbox', 'email-outbox', 'gmail', 'imessage', 'leader-delivery', 'leader-network', 'leader-replies', 'linkedin', 'mailbox', 'needs-you', 'needs-you-delivery', 'org-outbox', 'owner-delivery', 'owner-pair', 'owner-thread', 'peer-dispatch', 'peer-inbox', 'proposals', 'requests', 'router-queue', 'seats', 'send-gate', 'session-handoff', 'slack', 'slack-sends', 'team-approvals', 'teammate-tasks', 'wakes', 'work-board']);
+    expect(Object.keys(inbox.sources).sort()).toEqual(['board', 'bus', 'channel-health', 'claim-drift', 'comms-mail', 'conversations', 'coordination', 'dispatch-stuck', 'drafts', 'email-inbox', 'email-outbox', 'gmail', 'imessage', 'jobs-stuck', 'leader-delivery', 'leader-network', 'leader-replies', 'linkedin', 'mailbox', 'needs-you', 'needs-you-delivery', 'org-outbox', 'owner-delivery', 'owner-pair', 'owner-thread', 'peer-dispatch', 'peer-inbox', 'proposals', 'queue-parked', 'requests', 'router-queue', 'seats', 'send-gate', 'session-handoff', 'slack', 'slack-sends', 'stranded-work', 'stuck-fixes', 'team-approvals', 'teammate-tasks', 'wakes', 'work-board']);
     expect(inbox.items.map(i => i.id)).toContain('needs-you:nm-1');
   });
 

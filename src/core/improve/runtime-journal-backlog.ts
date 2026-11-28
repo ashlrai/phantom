@@ -6,8 +6,10 @@
  * outcome — dispatched, held or skipped — carrying the route decision
  * behind it (backend, lane, seatId, the full SeatRouter seatDecision
  * with per-seat exclusion details, the RouteHold when the router parked
- * or split the item, the skipReason when dispatch declined it, and the
- * harness version the attempt ran under). landing rows record merges and
+ * or split the item, the skipReason when dispatch declined it, the
+ * route.lane-auto.v1 autoModel receipt when the seat evaluation
+ * resolved a lane whose models.json entry is 'auto', and the harness
+ * version the attempt ran under). landing rows record merges and
  * reverts. The journal rotates at 2 MB keeping one previous generation.
  *
  * Until now its only readers were display and attribution surfaces: the
@@ -52,6 +54,18 @@
  *    that fit no seat's context window. Skip cells count only
  *    code-shaped skipReason values on non-dispatched rows with no hold —
  *    sentence reasons never become cells.
+ *  - Lane-auto cells fold the autoModel receipts dispatch rows carry:
+ *    chooseLaneAuto's route.lane-auto.v1 verdict for a lane whose
+ *    models.json entry resolves to 'auto'. 'held' verdicts (no pick —
+ *    gated before scoring by the billing/engine/catalog checks, or
+ *    scored with no candidate at the sample bar and no eligible prior
+ *    default) and 'threshold-fallback' verdicts (nothing reached the
+ *    sample bar, so the configured prior default kept serving) each emit
+ *    per (lane, tier, via) at the same recurring bars; 'scored' verdicts
+ *    are the healthy path and only count as context. Until now the
+ *    receipt's only reader was the route decision itself, so a lane
+ *    configured 'auto' that never picks — or whose scorer starves for
+ *    outcome evidence — parked or silently defaulted work invisibly.
  *  - Truncation is stated, never hidden: when either bounded tail cut
  *    older bytes, every prompt says the counts are a lower bound.
  *  - Fleet machinery only: items emit only for the fleet's own
@@ -67,6 +81,7 @@ import { CLOUD_REPO_PATTERN } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
 import { readLedgerTail } from '../router/outcomes.js';
 import { runsJournalPath, RUNS_JOURNAL_MAX_BYTES } from '../fleet/fleet-runtime-journal.js';
+import { FLEET_ENGINES } from '../fleet/fleet-types.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 /** Items one call may emit; the cell kinds are small closed vocabularies. */
@@ -93,6 +108,14 @@ const SAFE_SEAT_ID = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
 const SAFE_REASON_KIND = /^[a-z][a-z0-9-]{0,39}$/;
 /** skipReason cells need a code, not a sentence: lowercase code-shaped values only. */
 const SAFE_SKIP_CODE = /^[a-z0-9][a-z0-9._:-]{1,79}$/;
+/** autoModel receipts: the lane vocabulary is the fleet's closed engine set. */
+const AUTO_LANES: ReadonlySet<string> = new Set(FLEET_ENGINES);
+/** autoModel receipts: tier is ModelRoutingTier's closed vocabulary (model-catalog.ts). */
+const SAFE_AUTO_TIERS: ReadonlySet<string> = new Set(['fast', 'mid', 'computer', 'work', 'frontier']);
+/** autoModel receipts: `via` is a models.json key — `<lane>[.<tier>]` under lane-models.ts's LANE_RE/TIER_RE shapes. */
+const SAFE_AUTO_VIA = /^[a-z][a-z0-9-]{0,62}(\.[a-z0-9][a-z0-9_-]{0,31})?$/;
+/** Candidate entries one receipt's sample-depth scan reads; the count itself is the array's own length. */
+const MAX_AUTO_CANDIDATES = 128;
 /** ±5-minute future skew, the sibling folds' tolerance for clock drift on journal timestamps. */
 const SKEW_MS = 300_000;
 /** Backlog title cap mirrored from validBacklogItem; composed titles are truncated to it. */
@@ -177,6 +200,50 @@ function rowExclusions(seatDecision: unknown): RowExclusions | null {
   return { adverse, kinds: [...kinds] };
 }
 
+/** One autoModel receipt's foldable fields — the verdict plus candidate-depth evidence. */
+interface ParsedAuto {
+  lane: string;
+  tier: string;
+  /** The models.json key that resolved to 'auto' for this lane/tier. */
+  via: string;
+  /** The receipt's own verdict; 'threshold-fallback' folds as 'fallback'. */
+  verdict: 'scored' | 'threshold-fallback' | 'held';
+  /** The picked model on scored/fallback verdicts (null on held, 'unknown' tally when absent). */
+  model: string | null;
+  /** Candidates the receipt listed — only the empty/non-empty split is folded. */
+  candidateCount: number;
+  /** Deepest candidate.samples across the scanned entries — starvation depth vs the scorer's bar. */
+  maxSamples: number;
+}
+
+/** The route.lane-auto.v1 receipt contract, field by field; null for anything else. */
+function parseAutoReceipt(value: unknown): ParsedAuto | null {
+  if (!isRecord(value) || value['schema'] !== 'route.lane-auto.v1') return null;
+  const lane = value['lane'];
+  const tier = value['tier'];
+  const via = value['via'];
+  const reason = value['reason'];
+  if (typeof lane !== 'string' || !AUTO_LANES.has(lane)) return null;
+  if (typeof tier !== 'string' || !SAFE_AUTO_TIERS.has(tier)) return null;
+  if (typeof via !== 'string' || via.length > 96 || !SAFE_AUTO_VIA.test(via)) return null;
+  if (reason !== 'scored' && reason !== 'threshold-fallback' && reason !== 'held') return null;
+  const minimumSamples = value['minimumSamples'];
+  if (typeof minimumSamples !== 'number' || !Number.isFinite(minimumSamples) || minimumSamples <= 0) return null;
+  const modelRaw = value['model'];
+  const model = typeof modelRaw === 'string' && modelRaw.trim() !== ''
+    ? fieldText(modelRaw, 128) || null
+    : null;
+  const candidates = value['candidates'];
+  if (!Array.isArray(candidates)) return null;
+  let maxSamples = 0;
+  for (const candidate of candidates.slice(0, MAX_AUTO_CANDIDATES)) {
+    if (!isRecord(candidate)) continue;
+    const samples = candidate['samples'];
+    if (typeof samples === 'number' && Number.isFinite(samples) && samples > maxSamples) maxSamples = samples;
+  }
+  return { lane, tier, via, verdict: reason, model, candidateCount: candidates.length, maxSamples };
+}
+
 interface ParsedRow {
   atMs: number;
   itemId: string;
@@ -188,6 +255,7 @@ interface ParsedRow {
   holdKind: 'park' | 'split' | null;
   holdReopens: boolean;
   skipCode: string | null;
+  autoModel: ParsedAuto | null;
 }
 
 /** The journal's dispatch-row contract, field by field; null for anything else. */
@@ -237,6 +305,7 @@ function parseDispatchRow(value: unknown): ParsedRow | null {
     holdKind,
     holdReopens,
     skipCode,
+    autoModel: parseAutoReceipt(value['autoModel']),
   };
 }
 
@@ -290,12 +359,47 @@ export interface SkipFold {
   lastMs: number | null;
 }
 
+/** One lane-auto verdict's recurring evidence: 'held' picks or 'fallback' serves per (lane, tier, via). */
+export interface LaneAutoVerdictFold {
+  /** 'held' or 'fallback' (the receipt's 'threshold-fallback'). */
+  verdict: 'held' | 'fallback';
+  items: Set<string>;
+  /** Contributing dispatch rows. */
+  rows: number;
+  days: Set<string>;
+  repos: Map<string, number>;
+  sources: Map<string, number>;
+  firstMs: number | null;
+  lastMs: number | null;
+  /** Rows whose receipt carried zero candidates — gated before scoring ran. */
+  gatedRows: number;
+  /** Rows that reached scoring with non-empty candidates yet produced this verdict. */
+  evaluatedRows: number;
+  /** Deepest candidate.samples across the cell's rows — starvation depth vs the scorer's bar. */
+  maxSamples: number;
+  /** Fallback verdicts only: which prior-default model kept serving ('unknown' when unnamed). */
+  pickedModels: Map<string, number>;
+}
+
+/** Every lane-auto verdict recorded for one (lane, tier, via) config key. */
+export interface LaneAutoFold {
+  lane: string;
+  tier: string;
+  via: string;
+  /** 'scored' verdict rows — the healthy path, context only, never a cell. */
+  scoredRows: number;
+  held: LaneAutoVerdictFold | null;
+  fallback: LaneAutoVerdictFold | null;
+}
+
 export interface RuntimeJournalFold {
   /** In-window dispatch rows — the share denominator the prompts quote. */
   rows: number;
   exclusions: Map<string, SeatExclusionFold>;
   holds: Map<string, HoldFold>;
   skips: Map<string, SkipFold>;
+  /** Lane-auto verdicts keyed `${lane}${tier}${via}`. */
+  laneAutos: Map<string, LaneAutoFold>;
   /** Non-blank lines that were not JSON objects, plus dispatch-shaped failures. */
   malformed: number;
 }
@@ -322,7 +426,7 @@ export function foldRuntimeJournal(
 ): RuntimeJournalFold {
   const fold: RuntimeJournalFold = {
     rows: 0,
-    exclusions: new Map(), holds: new Map(), skips: new Map(), malformed: 0,
+    exclusions: new Map(), holds: new Map(), skips: new Map(), laneAutos: new Map(), malformed: 0,
   };
   const since = nowMs - windowHours * 3_600_000;
   const until = nowMs + SKEW_MS;
@@ -356,6 +460,40 @@ export function foldRuntimeJournal(
           bump(cell.repos, row.repo);
           bump(cell.sources, row.source);
           touch(cell, row.atMs);
+        }
+      }
+
+      // Lane-auto receipts: the route.lane-auto.v1 verdict rides every
+      // dispatch row whose seat evaluation resolved a lane configured
+      // 'auto' — dispatched rows carry scored/threshold-fallback picks,
+      // the parked rows carry 'held'. All three fold; only held and
+      // threshold-fallback can become cells.
+      if (row.autoModel !== null) {
+        const auto = row.autoModel;
+        const key = `${auto.lane}${auto.tier}${auto.via}`;
+        let group = fold.laneAutos.get(key);
+        if (group === undefined) {
+          group = { lane: auto.lane, tier: auto.tier, via: auto.via, scoredRows: 0, held: null, fallback: null };
+          fold.laneAutos.set(key, group);
+        }
+        if (auto.verdict === 'scored') {
+          group.scoredRows += 1;
+        } else {
+          const verdict = auto.verdict === 'held' ? 'held' : 'fallback';
+          let cell = verdict === 'held' ? group.held : group.fallback;
+          if (cell === null) {
+            cell = { verdict, items: new Set(), rows: 0, days: new Set(), repos: new Map(), sources: new Map(), firstMs: null, lastMs: null, gatedRows: 0, evaluatedRows: 0, maxSamples: 0, pickedModels: new Map() };
+            if (verdict === 'held') group.held = cell; else group.fallback = cell;
+          }
+          cell.items.add(row.itemId);
+          cell.rows += 1;
+          cell.days.add(day);
+          bump(cell.repos, row.repo);
+          bump(cell.sources, row.source);
+          touch(cell, row.atMs);
+          if (auto.candidateCount === 0) cell.gatedRows += 1; else cell.evaluatedRows += 1;
+          cell.maxSamples = Math.max(cell.maxSamples, auto.maxSamples);
+          if (verdict === 'fallback') bump(cell.pickedModels, auto.model ?? 'unknown');
         }
       }
 
@@ -456,7 +594,41 @@ export interface SkipCell extends CellBase {
   backends: UsageTally[];
 }
 
-export type RuntimeJournalCell = SeatExclusionCell | HoldCell | SkipCell;
+interface LaneAutoCellBase extends CellBase {
+  lane: string;
+  tier: string;
+  /** The models.json key that resolved to 'auto' for this lane/tier. */
+  via: string;
+  /** 'scored' verdicts on the same (lane, tier, via) in-window — context, never cells. */
+  scoredRows: number;
+  /** Contributing rows whose receipt carried zero candidates (gated before scoring). */
+  gatedRows: number;
+  /** Contributing rows that reached scoring with non-empty candidates. */
+  evaluatedRows: number;
+  /** Deepest candidate sample count seen — how far the best candidate is from the scorer's bar. */
+  maxSamples: number;
+  repos: UsageTally[];
+  sources: UsageTally[];
+}
+
+export interface LaneAutoHeldCell extends LaneAutoCellBase {
+  kind: 'lane-auto-held';
+  /** The receipt verdict this cell folds. */
+  verdict: 'held';
+  pickedModels: null;
+}
+
+export interface LaneAutoFallbackCell extends LaneAutoCellBase {
+  kind: 'lane-auto-fallback';
+  /** The receipt verdict this cell folds. */
+  verdict: 'threshold-fallback';
+  /** Which prior-default model kept serving. */
+  pickedModels: UsageTally[];
+}
+
+export type LaneAutoCell = LaneAutoHeldCell | LaneAutoFallbackCell;
+
+export type RuntimeJournalCell = SeatExclusionCell | HoldCell | SkipCell | LaneAutoCell;
 
 function tallyOf(map: Map<string, number>, max: number): UsageTally[] {
   return [...map.entries()]
@@ -481,8 +653,9 @@ const baseOf = (
 
 /**
  * Pure: recurring cells — a (seat, kind) exclusion, a (hold kind, repo)
- * hold group or a skip code at the distinct-item and distinct-day bars.
- * Seat-exclusion cells sort by item count; hold and skip cells follow.
+ * hold group, a skip code or a lane-auto (lane, tier, via) verdict group
+ * at the distinct-item and distinct-day bars. Seat-exclusion cells sort
+ * by item count; lane-auto, hold and skip cells follow.
  */
 export function runtimeJournalCells(fold: RuntimeJournalFold, lowerBound = false): RuntimeJournalCell[] {
   const cells: RuntimeJournalCell[] = [];
@@ -520,9 +693,34 @@ export function runtimeJournalCells(fold: RuntimeJournalFold, lowerBound = false
       backends: tallyOf(cell.backends, MAX_PROMPT_TALLIES),
     });
   }
-  // Worst first inside each kind; kinds ordered seat-exclusion, holds, skips.
+  for (const group of fold.laneAutos.values()) {
+    for (const verdict of ['held', 'fallback'] as const) {
+      const cell = verdict === 'held' ? group.held : group.fallback;
+      if (cell === null || cell.items.size < RUNTIME_JOURNAL_MIN_ITEMS || cell.days.size < RUNTIME_JOURNAL_MIN_DAYS) continue;
+      const shared = {
+        ...baseOf(cell.items, cell.days, cell.rows, cell.firstMs, cell.lastMs, dispatchRows, lowerBound),
+        lane: group.lane,
+        tier: group.tier,
+        via: group.via,
+        scoredRows: group.scoredRows,
+        gatedRows: cell.gatedRows,
+        evaluatedRows: cell.evaluatedRows,
+        maxSamples: cell.maxSamples,
+        repos: tallyOf(cell.repos, MAX_PROMPT_TALLIES),
+        sources: tallyOf(cell.sources, MAX_PROMPT_TALLIES),
+      };
+      cells.push(verdict === 'held'
+        ? { kind: 'lane-auto-held', verdict: 'held', ...shared, pickedModels: null }
+        : { kind: 'lane-auto-fallback', verdict: 'threshold-fallback', ...shared, pickedModels: tallyOf(cell.pickedModels, MAX_PROMPT_TALLIES) });
+    }
+  }
+  // Worst first inside each kind; kinds ordered seat-exclusion, lane-auto, holds, skips.
   const rank = (c: RuntimeJournalCell): number =>
-    c.kind === 'seat-exclusion' ? 0 : c.kind === 'park-hold' ? 1 : c.kind === 'split-hold' ? 2 : 3;
+    c.kind === 'seat-exclusion' ? 0
+      : c.kind === 'lane-auto-held' ? 1
+        : c.kind === 'lane-auto-fallback' ? 2
+          : c.kind === 'park-hold' ? 3
+            : c.kind === 'split-hold' ? 4 : 5;
   return cells.sort((a, b) => rank(a) - rank(b) || b.items - a.items || a.kind.localeCompare(b.kind));
 }
 
@@ -530,9 +728,9 @@ export function runtimeJournalCells(fold: RuntimeJournalFold, lowerBound = false
 // Item builders
 // ---------------------------------------------------------------------------
 
-const EVIDENCE = 'The evidence is fleet/runtime/runs.jsonl under the ASHLR home (~/.ashlr/fleet/runtime, the writer\'s own path — it does not follow $ASHLR_HOME): the standing fleet\'s append-only dispatch journal. tick-hooks-live\'s afterDispatch (src/core/fleet/tick-hooks-live.ts) appends one fleet.runtime dispatch row per work-item outcome — dispatched, held or skipped — carrying the route decision behind it: backend, lane, seatId, the full SeatRouter seatDecision with per-seat exclusion details (kind per SeatReason), the RouteHold (park|split) when the router held the item, the skipReason when dispatch declined it, and the harness version the attempt ran under. landing rows record merges and reverts. The journal rotates at 2 MB keeping one previous generation. Its only readers until this feed were display and attribution surfaces — the Fleet live projection (/api/verse/fleet/live, behind `phm fleet lane-slots`, `phm lanes`, `phm map` and the console\'s Fleet screen), the ops board and scheduling\'s work-history join — and tick.json keeps only the LAST tick\'s held list, so recurring holds, chronic seat exclusions and repeating skip codes were invisible history.';
+const EVIDENCE = 'The evidence is fleet/runtime/runs.jsonl under the ASHLR home (~/.ashlr/fleet/runtime, the writer\'s own path — it does not follow $ASHLR_HOME): the standing fleet\'s append-only dispatch journal. tick-hooks-live\'s afterDispatch (src/core/fleet/tick-hooks-live.ts) appends one fleet.runtime dispatch row per work-item outcome — dispatched, held or skipped — carrying the route decision behind it: backend, lane, seatId, the full SeatRouter seatDecision with per-seat exclusion details (kind per SeatReason), the RouteHold (park|split) when the router held the item, the skipReason when dispatch declined it, the route.lane-auto.v1 autoModel receipt when the seat evaluation resolved a lane whose models.json entry is \'auto\' (the scorer\'s verdict — scored, threshold-fallback or held — the picked model, the sample bar and the eligible candidates\' outcome tallies), and the harness version the attempt ran under. landing rows record merges and reverts. The journal rotates at 2 MB keeping one previous generation. Its only readers until this feed were display and attribution surfaces — the Fleet live projection (/api/verse/fleet/live, behind `phm fleet lane-slots`, `phm lanes`, `phm map` and the console\'s Fleet screen), the ops board and scheduling\'s work-history join — and tick.json keeps only the LAST tick\'s held list, so recurring holds, chronic seat exclusions, repeating skip codes and lane-auto verdicts that never pick or never leave the default were invisible history.';
 
-const REPRO = 'Reproduce the fold by reading the newest dispatch rows — the Fleet live surface (`/api/verse/fleet/live`, or `phm fleet lane-slots --json` / `phm map --json` which build the same snapshot), or the JSONL directly under ~/.ashlr/fleet/runtime/ — and filtering type=\'dispatch\' rows inside the window. The writers and folds this repository owns are src/core/fleet/fleet-runtime-journal.ts (the journal contract and rotation), src/core/fleet/tick-hooks-live.ts (afterDispatch, what each field means), src/core/fleet/dispatch-router.ts (routeWorkItem: the park/split holds and the seatDecision it journals), src/core/routing/router.ts and seat-reasons.ts (routeSeat, the exclusion reason kinds) and src/core/routing/budget-store.ts (the capacity snapshot and shadow decision log the router reads).';
+const REPRO = 'Reproduce the fold by reading the newest dispatch rows — the Fleet live surface (`/api/verse/fleet/live`, or `phm fleet lane-slots --json` / `phm map --json` which build the same snapshot), or the JSONL directly under ~/.ashlr/fleet/runtime/ — and filtering type=\'dispatch\' rows inside the window. The writers and folds this repository owns are src/core/fleet/fleet-runtime-journal.ts (the journal contract and rotation), src/core/fleet/tick-hooks-live.ts (afterDispatch, what each field means), src/core/fleet/dispatch-router.ts (routeWorkItem: the park/split holds, the seatDecision it journals and the autoModel receipt it carries), src/core/fleet/lane-auto-model.ts (chooseLaneAuto: the receipt\'s gates and verdicts), src/core/fleet/lane-models.ts and the runs dir\'s models.json (the \'auto\' entries the via key names), src/core/router/lane-auto-score.ts (the outcome-score index and sample bar), src/core/router/outcomes.ts (the outcome rows the scorer reads) and src/core/routing/router.ts and seat-reasons.ts (routeSeat, the exclusion reason kinds) with src/core/routing/budget-store.ts (the capacity snapshot and shadow decision log the router reads).';
 
 const NO_CHANGE = 'If the window has rolled forward, the pattern was a one-off burst the fleet recovered from, the holds/skips/exclusions reflect intended policy or genuine capacity that has since cleared, or the cause is owner-only or pinned ops machinery — report no-change and name the evidence.';
 
@@ -635,24 +833,84 @@ function skipPrompt(cell: SkipCell): string {
   ].join('\n');
 }
 
+function laneAutoHeldPrompt(cell: LaneAutoCell): string {
+  const gated = cell.gatedRows > 0
+    ? ` ${cell.gatedRows} of the contributing rows carried zero candidates — gated before scoring ever ran (the billing, engine/backend-match or catalog-eligibility checks chooseLaneAuto applies first); the other ${cell.evaluatedRows} reached scoring and still produced no pick.`
+    : ` All ${cell.evaluatedRows} contributing rows reached scoring with eligible candidates yet still produced no pick — the prior default was not among them and nothing reached the sample bar.`;
+  const scored = cell.scoredRows > 0
+    ? ` ${cell.scoredRows} 'scored' verdict(s) on the same lane/tier/via inside the window show the scorer does engage elsewhere.`
+    : '';
+  const repos = cell.repos.length === 0 ? '' : ` Recorded repositories: ${tallyText(cell.repos)}.`;
+  const sources = cell.sources.length === 0 ? '' : ` Recorded sources: ${tallyText(cell.sources)}.`;
+  const share = cell.dispatchRows > 0 ? ` (${Math.round((cell.rows / cell.dispatchRows) * 100)}% of the ${cell.dispatchRows} in-window dispatch rows carried this verdict)` : '';
+  return [
+    `Phantom's fleet runtime journal keeps recording lane-auto 'held' verdicts for lane '${cell.lane}' tier '${cell.tier}' — ${cell.items} distinct work item(s) inside the window across ${cell.days.length} UTC day(s) (${daysText(cell.days)}), the self-improvement work this backlog exists for.`,
+    '',
+    `A 'held' verdict means chooseLaneAuto resolved the lane's models.json entry '${cell.via}' to 'auto' but produced no model pick — model is null on the receipt.${gated}${scored}${repos}${sources}${share}${seenText(cell)}${examplesText(cell)}${boundText(cell)}`,
+    '',
+    EVIDENCE,
+    '',
+    `Find why this lane's auto selection never engages: read the newest dispatch rows' autoModel receipts and the lane's models.json entry (the runs dir's models.json — '${cell.via}' resolving to 'auto'), then walk the gates chooseLaneAuto applies in order — laneAutoBillingAllows (subscription-only currency, on-demand flags, grok freshness), the lane/engine/backend match, the native catalog offer (readLaneAutoNativeModels), the verified-model registry and the docs-deprecated/retired filters. For rows that reached scoring, check whether the eligible candidates' outcome evidence ever approaches the sample bar or the prior default fell out of eligibility. A lane configured 'auto' that never picks is either dead configuration parking real work or an evidence path that never feeds the scorer.`,
+    '',
+    `Fix what lives here — the lane-models configuration this repository writes, the auto-selection gates in src/core/fleet/lane-auto-model.ts, the outcome-evidence pipeline in src/core/router (outcomes.ts feeding indexLaneAutoScores), or the catalog/registry/docs filters that empty the candidate set.${PINNED} If the holds are intended — the lane's billing posture genuinely admits no auto pick, or a lane like devin-cli whose auto is structurally held pending native admission — report no-change and name the evidence. ${NO_CHANGE}`,
+    '',
+    REPRO,
+  ].join('\n');
+}
+
+function laneAutoFallbackPrompt(cell: LaneAutoCell): string {
+  const picked = cell.pickedModels === null || cell.pickedModels.length === 0
+    ? ''
+    : ` Prior default(s) that kept serving: ${tallyText(cell.pickedModels)}.`;
+  const scored = cell.scoredRows > 0
+    ? ` ${cell.scoredRows} 'scored' verdict(s) on the same lane/tier/via inside the window show the scorer does engage elsewhere.`
+    : '';
+  const repos = cell.repos.length === 0 ? '' : ` Recorded repositories: ${tallyText(cell.repos)}.`;
+  const sources = cell.sources.length === 0 ? '' : ` Recorded sources: ${tallyText(cell.sources)}.`;
+  const share = cell.dispatchRows > 0 ? ` (${Math.round((cell.rows / cell.dispatchRows) * 100)}% of the ${cell.dispatchRows} in-window dispatch rows carried this verdict)` : '';
+  return [
+    `Phantom's fleet runtime journal keeps recording lane-auto 'threshold-fallback' verdicts for lane '${cell.lane}' tier '${cell.tier}' — ${cell.items} distinct work item(s) inside the window across ${cell.days.length} UTC day(s) (${daysText(cell.days)}), the self-improvement work this backlog exists for.`,
+    '',
+    `A 'threshold-fallback' verdict means the scorer ranked no eligible candidate at the sample bar — so the lane's configured prior default kept serving. The outcome evidence indexLaneAutoScores builds (src/core/router/lane-auto-score.ts) never accumulates enough resolved samples per (lane, tier, work_class, model) for this lane/tier/via: the deepest candidate seen carried ${cell.maxSamples} sample(s).${picked}${scored}${repos}${sources}${share}${seenText(cell)}${examplesText(cell)}${boundText(cell)}`,
+    '',
+    EVIDENCE,
+    '',
+    `Find why the evidence starves: whether router outcomes for this lane/tier are being recorded at all — indexLaneAutoScores skips outcome rows missing lane, model, tier or work_class, or with neither merged nor reverted resolved — whether work classes fragment the samples below the bar, whether outcomes resolve too slowly inside the window, or whether the models the config admits are ones the fleet rarely runs. A fallback streak is not an error — it is the scorer honestly reporting it has no evidence; the fix is feeding it evidence or concluding 'auto' is premature for this lane/tier.`,
+    '',
+    `Fix what lives here — the outcome capture and attribution in src/core/router (outcomes.ts and its writers, the work-class join), the lane/tier entries in the runs dir's models.json, or the candidate set chooseLaneAuto admits.${PINNED} If the fallback is intended — the lane genuinely lacks outcome volume and the prior default is the right choice — report no-change and name the evidence. ${NO_CHANGE}`,
+    '',
+    REPRO,
+  ].join('\n');
+}
+
 function runtimeJournalItem(cell: RuntimeJournalCell, repo: string): CloudBacklogItem {
   const prompt = cell.kind === 'seat-exclusion'
     ? seatExclusionPrompt(cell)
     : cell.kind === 'skip-code'
       ? skipPrompt(cell)
-      : holdPrompt(cell);
+      : cell.kind === 'lane-auto-held'
+        ? laneAutoHeldPrompt(cell)
+        : cell.kind === 'lane-auto-fallback'
+          ? laneAutoFallbackPrompt(cell)
+          : holdPrompt(cell);
   const title = cell.kind === 'seat-exclusion'
     ? `Seat ${fieldText(cell.seatId, MAX_NAME_CHARS)} keeps failing eligibility evidence: ${cell.reasonKind}`
     : cell.kind === 'skip-code'
       ? `Fleet dispatches keep skipping on ${cell.code}`
-      : cell.holdKind === 'park'
-        ? `Fleet work keeps parking after seat evaluation: ${fieldText(cell.repo, MAX_NAME_CHARS)}`
-        : `Fleet work keeps exceeding every seat's context: ${fieldText(cell.repo, MAX_NAME_CHARS)}`;
+      : cell.kind === 'lane-auto-held'
+        ? `Lane auto keeps holding ${cell.lane}/${cell.tier} picks (${cell.via})`
+        : cell.kind === 'lane-auto-fallback'
+          ? `Lane auto keeps falling back on ${cell.lane}/${cell.tier} picks (${cell.via})`
+          : cell.holdKind === 'park'
+            ? `Fleet work keeps parking after seat evaluation: ${fieldText(cell.repo, MAX_NAME_CHARS)}`
+            : `Fleet work keeps exceeding every seat's context: ${fieldText(cell.repo, MAX_NAME_CHARS)}`;
   const idKey = cell.kind === 'seat-exclusion'
     ? `seat-exclusion:${cell.seatId}:${cell.reasonKind}`
     : cell.kind === 'skip-code'
       ? `skip-code:${cell.code}`
-      : `${cell.holdKind}-hold:${cell.repo}`;
+      : cell.kind === 'lane-auto-held' || cell.kind === 'lane-auto-fallback'
+        ? `${cell.kind}:${cell.lane}:${cell.tier}:${cell.via}`
+        : `${cell.holdKind}-hold:${cell.repo}`;
   return {
     id: `runtime-journal-${sha(idKey)}`,
     title: title.slice(0, MAX_TITLE_CHARS),

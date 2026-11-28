@@ -16,4 +16,10 @@ describe('host load', () => {
     expect(readHostLoad({ loadavg: () => [1, NaN, -1], cpus: () => [] })).toEqual({ load1: 1, load5: null, load15: null, cores: null, ratio: null });
     expect(describeHostLoad(null)).toBe('Load unknown');
   });
+  it('reports load unknown on win32, where os.loadavg() is a [0,0,0] stub', () => {
+    const load = readHostLoad({ loadavg: () => [0, 0, 0], cpus: () => Array(8).fill({}), platform: () => 'win32' });
+    expect(load).toEqual({ load1: null, load5: null, load15: null, cores: 8, ratio: null });
+    expect(describeHostLoad(load)).toBe('Load unknown');
+    expect(hostLoadTone(load.ratio)).toBe('unknown');
+  });
 });
