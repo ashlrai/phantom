@@ -45,7 +45,7 @@ export function indexLaneAutoScores(outcomes: readonly Observation[]) {
     return {
       model, samples: total?.resolved ?? 0,
       heldMergeRate: total ? total.held / total.resolved : null,
-      firstPassCiRate: total?.ci ? total.passed / total.ci : null,
+      firstPassCiRate: total && total.ci === total.resolved ? total.passed / total.ci : null,
       usdPerHeldMerge: total?.costedMerges && total.costs === total.resolved && Number.isFinite(total.cost)
         ? total.cost / total.costedMerges : null,
     };

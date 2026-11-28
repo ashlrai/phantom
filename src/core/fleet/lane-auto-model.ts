@@ -95,12 +95,16 @@ export function chooseLaneAuto(
   }), evidence.docs);
   const blocked = new Set(docs.models.filter(row => row.verdict === 'deprecated' || row.verdict === 'retired').map(row => row.id));
   receipt.candidates = eligible.filter(id => !blocked.has(id)).sort().map(score);
-  const quality = (row: LaneAutoScore) => ({ ...row, usdPerHeldMerge: null });
-  const ranked = receipt.candidates.filter(row => row.samples >= LANE_AUTO_MIN_SAMPLES)
-    .sort((left, right) => rankLaneAutoScores(quality(left), quality(right)));
-  const tied = ranked.filter(row => rankLaneAutoScores(quality(ranked[0]!), quality(row)) === 0);
+  const ranked = receipt.candidates.filter(row => row.samples >= LANE_AUTO_MIN_SAMPLES);
+  const bestHeld = Math.max(...ranked.map(row => row.heldMergeRate ?? -1));
+  const heldLeaders = ranked.filter(row => row.heldMergeRate === bestHeld);
+  const knownCi = heldLeaders.every(row => row.firstPassCiRate !== null);
+  const bestCi = Math.max(...heldLeaders.map(row => row.firstPassCiRate ?? -1));
+  const tied = heldLeaders.filter(row => !knownCi || row.firstPassCiRate === bestCi);
   const knownCost = tied.every(row => row.usdPerHeldMerge !== null);
-  tied.sort((left, right) => (knownCost ? rankLaneAutoScores(left, right) : 0)
+  tied.sort((left, right) => (knownCost ? rankLaneAutoScores(
+    { ...left, firstPassCiRate: null }, { ...right, firstPassCiRate: null },
+  ) : 0)
     || Number(right.model === prior) - Number(left.model === prior) || left.model.localeCompare(right.model));
   const picked = tied[0]?.model ?? (receipt.candidates.some(row => row.model === prior) ? prior : null);
   return { ...receipt, model: picked, reason: ranked.length ? 'scored' : picked ? 'threshold-fallback' : 'held' };
