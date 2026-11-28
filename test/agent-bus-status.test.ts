@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { realHome } from '../src/core/real-home.js';
 import { readUnifiedBusStatus, type UnifiedBusStatusOptions } from '../src/core/agents/bus-status.js';
+import { busDeadLetterReason, busDeadLetterReport } from '../src/core/agents/bus-dead-letter.js';
 import { announceWork, sendDirectMessage, sendWakeRequest, type UnifiedBusOptions } from '../src/core/agents/bus-unified.js';
 import { writeOwnerChatReceipts, type OwnerChatReceipt } from '../src/core/agents/chat-owner-receipts.js';
 import { acquireCoordination, releaseLiveClaimByOwner } from '../src/core/agents/claim-store.js';
@@ -877,6 +878,25 @@ describe('deadLetters section', () => {
     expect(readUnifiedBusStatus(options).deadLetters).toEqual({
       source: 'available', pending: 5,
       reasons: { exhausted: 1, expired: 1, noRoute: 1, other: 2 }, truncated: false });
+  });
+
+  it('classifies a whitespace-padded reason like the dedicated dead-letter read', () => {
+    const options = setup(NOW);
+    // Stored envelopes are untrusted data: a letter whose recorded reason
+    // carries surrounding whitespace still names its bucket. `agents bus
+    // status` must tally it exactly as `agents bus dead-letters --reason`
+    // and the unified inbox classify the same body — one letter, one verdict.
+    const paddedExhausted = letter('dl-pad', '  exhausted  ');
+    const paddedNoRoute = letter('dl-pad2', '\nno-route\t');
+    post(options, paddedExhausted);
+    post(options, paddedNoRoute);
+    expect(readUnifiedBusStatus(options).deadLetters).toEqual({
+      source: 'available', pending: 2,
+      reasons: { exhausted: 1, expired: 0, noRoute: 1, other: 0 }, truncated: false });
+    // The canonical `busDeadLetterReason` the dedicated reads apply agrees
+    // letter-for-letter on the same stored bodies.
+    expect(busDeadLetterReason(busDeadLetterReport(paddedExhausted.body))).toBe('exhausted');
+    expect(busDeadLetterReason(busDeadLetterReport(paddedNoRoute.body))).toBe('no-route');
   });
 
   it('reports a verified-empty sink on a live store with no letters', () => {
