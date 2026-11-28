@@ -63,4 +63,48 @@ describe('selectChangedFiles generated-file freshness coverage', () => {
       expect(selectChangedFiles([path], [path]).launcherDigestCheck).toBe(false);
     }
   });
+
+  it('selects the caps generated freshness check for the registry, generator and committed output', () => {
+    for (const path of [
+      'capabilities/registry.v1.json',
+      'capabilities/generated/manifest.json',
+      'capabilities/generated/SHA256SUMS',
+      'capabilities/generated/codex/codex-cli.config.toml',
+      'src/core/caps/generate.ts',
+      'src/core/caps/registry.ts',
+      'src/core/caps/schema.ts',
+      'src/core/caps/output.ts',
+      'src/core/caps/service.ts',
+      'src/core/connectors/profile.ts',
+      'src/core/run/engine-registry.ts',
+      'src/core/run/model-catalog.ts',
+    ]) {
+      expect(selectChangedFiles([path], [path]).capsGeneratedCheck).toBe(true);
+    }
+  });
+
+  it('selects the caps generated freshness check when a caps input is deleted', () => {
+    expect(selectChangedFiles(['capabilities/registry.v1.json'], []).capsGeneratedCheck).toBe(true);
+    expect(selectChangedFiles(['src/core/caps/generate.ts'], []).capsGeneratedCheck).toBe(true);
+    expect(selectChangedFiles(['capabilities/generated/manifest.json'], []).capsGeneratedCheck).toBe(true);
+  });
+
+  it('over-selects the whole caps module tree, dispatch.ts included', () => {
+    // dispatch.ts is the OS-1 router, not a generator input, but it lives
+    // under src/core/caps/ so the prefix trigger covers it — a rare 2.6 s
+    // suite run is the price of not enumerating a rotting file list.
+    expect(selectChangedFiles(['src/core/caps/dispatch.ts'], ['src/core/caps/dispatch.ts']).capsGeneratedCheck).toBe(true);
+  });
+
+  it('skips the caps generated freshness check for unrelated paths', () => {
+    for (const path of [
+      'capabilities/stacksync.md',
+      'src/cli/caps.ts',
+      'docs/CAPABILITY-REGISTRY.md',
+      'test/caps-registry.test.ts',
+      'README.md',
+    ]) {
+      expect(selectChangedFiles([path], [path]).capsGeneratedCheck).toBe(false);
+    }
+  });
 });
