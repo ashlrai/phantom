@@ -299,7 +299,7 @@ describe('drive node leases', () => {
     expect(f.a.snapshot().jobs.find(j => j.id === 'job1')!.state).toBe('running');
   });
 
-  it('pull plans past a claim fenced by a rejoined session', () => {
+  it('pull re-routes the job a rejoined session fenced, then plans past it', () => {
     const f = fixture();
     const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
     f.a.heartbeat(worker);
@@ -309,7 +309,44 @@ describe('drive node leases', () => {
     f.a.leave(worker);
     const again = f.a.join('worker', { owners: ['o'], slots: 1 })!;
     f.a.heartbeat(again);
+    // job1's claim died with the departed session, so it is re-routable at
+    // once — the rejoined node takes it first; job2 waits for the free slot.
+    const second = f.a.pull(again)!;
+    expect(second.claim.jobId).toBe('job1');
+    expect(f.a.complete(second.claim, 'done')).toBe(true);
     expect(f.a.pull(again)!.claim.jobId).toBe('job2');
+  });
+
+  it('re-routes a job whose claim outlived its dead session, still fenced', () => {
+    let now = 1_000;
+    const store = new MemoryStore();
+    // claimTtl > nodeTtl: the lease outlives the session that took it.
+    const options = { now: () => now, nodeTtlMs: 100, leaderTtlMs: 20, claimTtlMs: 300 };
+    const a = new DriveNodes(store, options);
+    const b = new DriveNodes(store, options);
+    const gone = a.join('gone', { owners: ['o'] })!;
+    const stay = b.join('stay', { owners: ['o'] })!;
+    a.heartbeat(gone); b.heartbeat(stay);
+    a.enqueue('job', { owner: 'o' });
+    const first = a.pull(gone)!;
+    expect(first.claim.expiresAt).toBeGreaterThan(now + 100); // the lease beats the session
+    // While the claiming session lives the job is not re-routable.
+    now += 50;
+    a.heartbeat(gone); b.heartbeat(stay);
+    expect(a.plan()).toEqual([]);
+    expect(b.pull(stay)).toBeNull();
+    // 'stay' beats again inside its own lease; 'gone' is left to expire.
+    now += 90;
+    b.heartbeat(stay);
+    now += 20; // gone's session lapsed at 1150; its claim lease runs to 1300
+    expect(a.plan().find(r => r.jobId === 'job')?.nodeId).toBe('stay');
+    const second = b.pull(stay)!;
+    expect(second.claim.jobId).toBe('job');
+    expect(second.claim.token).toBeGreaterThan(first.claim.token);
+    // The dead claim stays fenced even though its lease had not expired.
+    expect(a.complete(first.claim, 'late')).toBe(false);
+    expect(a.renewClaim(first.claim)).toBeNull();
+    expect(b.complete(second.claim, 'ok')).toBe(true);
   });
 });
 
