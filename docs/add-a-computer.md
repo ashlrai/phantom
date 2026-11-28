@@ -148,7 +148,8 @@ when no node can take it — and `pull` (without `--json`) prints the claimed
 job, its lease tokens and the paste-ready `renew`, `complete` and `release`
 commands. Run the printed `complete` command with your result text before
 the 30-second claim lapses; for work that takes longer, `phm node renew`
-with the same lease flags under `--watch` keeps the claim alive (see
+with the same lease flags under `--watch` keeps the claim — and this node's
+session — alive on its own (see
 [NODE-ROUTER.md](NODE-ROUTER.md)). If `plan` routed the job to a different
 node, pull on that node instead. Read the outcome back with:
 

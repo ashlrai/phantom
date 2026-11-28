@@ -4,7 +4,10 @@
  * counterpart of `beat --watch`. A pull's lease expires 30 seconds after the
  * last renew, so work that takes minutes loses its claim mid-run unless
  * something keeps renewing; this loop is that something for a manual holder.
- * Each pass is exactly one `phm node renew` through the normal dispatch, so a
+ * Each renew re-arms the claim lease and the holder's session — and the
+ * leader lease when the holder is the recorded leader — so the watch alone
+ * keeps the whole chain alive; no parallel beat watch is needed. Each pass is
+ * exactly one `phm node renew` through the normal dispatch, so a
  * pooled member still reaches the primary through the usual delegation and
  * every refusal keeps its error envelope. The watch flags are consumed here and
  * never forwarded, so an older primary or store parser never sees them. A

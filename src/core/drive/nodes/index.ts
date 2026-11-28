@@ -179,6 +179,25 @@ export class DriveNodes implements QueueV1 {
     return leader && leader.expiresAt > now && this.liveNode(state, leader, now) ? leader : null;
   }
 
+  /** Leader authority for an action by `session`: the live lease, the recorded
+   * lease revived when its own session is the one acting — a lapsed lease is
+   * pending renewal, not a fence, until another session's election rotates the
+   * token — or a fresh election. Beats land on the watch interval, which can
+   * sit exactly on the lease TTL; without revival every pass would rotate the
+   * token and fence every claim the leader ever issued. */
+  private leaderFor(state: NodesState, now: number, session: NodeSession): LeaderLease {
+    const live = this.liveLeader(state, now);
+    if (live !== null) return live;
+    const recorded = state.leader;
+    if (recorded !== null && sameSession(recorded, session)) {
+      recorded.expiresAt = now + this.leaderTtl;
+      return recorded;
+    }
+    const elected: LeaderLease = { ...session, token: nextToken(state), expiresAt: now + this.leaderTtl };
+    state.leader = elected;
+    return elected;
+  }
+
   join(nodeId: string, profile?: NodeProfile): NodeSession | null {
     if (!validId(nodeId)) throw new Error('Invalid drive node ID');
     if (profile?.slots !== undefined && !validSlots(profile.slots)) throw new Error('Invalid drive slots (integer 0-64)');
@@ -211,8 +230,8 @@ export class DriveNodes implements QueueV1 {
     return this.transaction((state, now) => {
       const node = state.nodes.find(n => sameSession(n, session));
       if (!node || node.expiresAt <= now) return null;
-      // Check before extending node liveness, so expired authority never revives.
-      const previous = this.liveLeader(state, now);
+      // Resolve authority before extending node liveness, so expired authority never revives.
+      const leader = this.leaderFor(state, now, session);
       node.heartbeatAt = now;
       node.expiresAt = now + this.nodeTtl;
       if (report?.usage !== undefined) node.usage = report.usage;
@@ -230,11 +249,7 @@ export class DriveNodes implements QueueV1 {
       }
       if (report?.auth !== undefined) node.auth = report.auth;
       if (report?.hostStats !== undefined) node.hostStats = structuredClone(report.hostStats);
-      if (!previous) {
-        state.leader = { ...session, token: nextToken(state), expiresAt: now + this.leaderTtl };
-      } else if (sameSession(previous, session)) {
-        previous.expiresAt = now + this.leaderTtl;
-      }
+      if (sameSession(leader, session)) leader.expiresAt = now + this.leaderTtl;
       return { leader: state.leader };
     });
   }
@@ -288,10 +303,7 @@ export class DriveNodes implements QueueV1 {
       const mine = planRoutes(state, now).find(a => a.nodeId === node.nodeId);
       const job = mine && state.jobs.find(j => j.id === mine.jobId);
       if (!job || !routable(job, now)) return null;
-      let leader = this.liveLeader(state, now);
-      if (!leader) {
-        leader = state.leader = { ...worker, token: nextToken(state), expiresAt: now + this.leaderTtl };
-      }
+      const leader = this.leaderFor(state, now, worker);
       const claim = { ...worker, jobId: job.id, token: nextToken(state), leaderToken: leader.token,
         expiresAt: now + this.claimTtl };
       job.executionHostId = node.capacity?.hostId;
@@ -350,11 +362,22 @@ export class DriveNodes implements QueueV1 {
     }));
   }
 
+  /** The leader lease a claim answers to: the live leader, or — while no other
+   * session has taken the token — the recorded leader whose own session is
+   * still live. A lapsed lease is pending renewal, not a fence; only a new
+   * election's different token fences the claims it issued. */
+  private claimAuthority(state: NodesState, now: number, leaderToken: number): LeaderLease | null {
+    const live = this.liveLeader(state, now);
+    if (live !== null) return live.token === leaderToken ? live : null;
+    const recorded = state.leader;
+    return recorded !== null && recorded.token === leaderToken && this.liveNode(state, recorded, now) ? recorded : null;
+  }
+
   private currentClaim(state: NodesState, claim: JobClaim, now: number): boolean {
     const stored = state.jobs.find(j => j.id === claim.jobId && j.state === 'running')?.claim;
-    const leader = this.liveLeader(state, now);
-    return !!stored && !!leader && stored.token === claim.token && sameSession(stored, claim) &&
-      stored.leaderToken === claim.leaderToken && stored.leaderToken === leader.token &&
+    return !!stored && this.claimAuthority(state, now, claim.leaderToken) !== null &&
+      stored.token === claim.token && sameSession(stored, claim) &&
+      stored.leaderToken === claim.leaderToken &&
       stored.expiresAt > now && this.liveNode(state, stored, now);
   }
 
@@ -391,6 +414,17 @@ export class DriveNodes implements QueueV1 {
       if (!this.currentClaim(state, claim, now)) return null;
       const stored = state.jobs.find(j => j.id === claim.jobId)!.claim!;
       stored.expiresAt = now + this.claimTtl;
+      // A renewed claim is proof the holder is alive: carry its session —
+      // and the leader lease when the holder is that leader — forward with
+      // it, so `renew --watch` keeps a pulled job alive without a parallel
+      // beat watch. Authority still dies with the session or a new
+      // election's token; heartbeatAt stays the last real beat.
+      const node = state.nodes.find(n => sameSession(n, stored));
+      if (node !== undefined) node.expiresAt = now + this.nodeTtl;
+      const leader = state.leader;
+      if (leader !== null && leader.token === stored.leaderToken && sameSession(leader, stored)) {
+        leader.expiresAt = now + this.leaderTtl;
+      }
       return stored;
     });
   }

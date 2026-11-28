@@ -21,11 +21,16 @@ if (leadership?.nodeId === session.nodeId) {
 
 Call `heartbeat(session)` periodically, comfortably within both the node and
 leader TTLs (defaults: 30 seconds and 10 seconds). Every live node participates:
-a follower heartbeat acquires leadership automatically when the old leader
-expires. Leader renewal preserves its token; acquisition allocates a larger
-one. `renewClaim` extends a current claim (default 30 seconds). An expired
-session must `join` again. Duplicate live node IDs are refused. `leave` revokes
-the session immediately and enables failover without waiting for expiry.
+when the recorded leader's lease lapses, its own next heartbeat revives the
+lease with the same fencing token while its session is still live — a lapsed
+lease is pending renewal, not a fence. Only a leader whose session also lapsed,
+or a different session's election, replaces it, and acquisition allocates a
+larger token. `renewClaim` extends a current claim (default 30 seconds) and
+carries the holder's session — plus the leader lease when the holder is the
+recorded leader — forward, so a renewing worker needs no separate heartbeat.
+An expired session must `join` again. Duplicate live node IDs are refused.
+`leave` revokes the session immediately and enables failover without waiting
+for expiry.
 Expired registry entries remain visible with their deadlines for diagnosis.
 
 A durable global counter supplies node sessions, leader epochs and claim fencing
@@ -37,11 +42,13 @@ state before retrying. Completion is terminal and a repeated completion returns
 false. Enqueue deduplicates job IDs, including completed jobs.
 
 The authority compares the stored session, leader epoch, claim token and expiry
-inside the same transaction that completes the job. A leader transition fences
-all claims from its previous epoch immediately, even if their own TTL remains.
-A stale worker cannot renew or complete; a live leader can reassign its job with
-a higher token. Caller-provided expiry never grants authority. Tokens are
-internal concurrency identifiers, not authentication credentials.
+inside the same transaction that completes the job. A leader transition — a new
+election's different token — fences all claims from its previous epoch
+immediately, even if their own TTL remains; a merely lapsed lease whose token
+is still unchallenged does not. A stale worker cannot renew or complete; a live
+leader can reassign its job with a higher token. Caller-provided expiry never
+grants authority. Tokens are internal concurrency identifiers, not
+authentication credentials.
 
 Fencing guarantees one accepted completion, not exactly-once execution of
 arbitrary external effects. A paused worker can resume after failover. Executors

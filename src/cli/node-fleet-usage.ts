@@ -47,8 +47,10 @@ neither — enqueue refuses the pair split either way.
 \`beat --watch\` repeats the beat every --every seconds (default 10, at most 25 — sessions
 expire 30 s after the last beat) until Ctrl-C, re-measuring capacity and host stats on this
 machine each pass unless those flags were given explicitly. \`renew --watch\` repeats the
-renew on the same interval so a pulled job's 30-second claim lease survives real work;
-the watch flags never reach either verb's parser. \`join --watch\` is the one-command
+renew on the same interval so a pulled job's 30-second claim lease — and this node's
+session — survives real work; each renew re-arms both (and the leader lease when this
+node holds it), so no parallel beat watch is needed. The watch flags never reach either
+verb's parser. \`join --watch\` is the one-command
 first run on the standalone registry: it joins, prints the session, then holds it live
 with the same beat watch — refused on a pool-configured Mac, where join releases its
 probe session and \`phm node worker\` holds the live sessions instead.`;

@@ -400,6 +400,7 @@
 /test/dispatch-router-310b.test.ts @masonwyatt23
 /test/doctor-dedupe.test.ts @masonwyatt23
 /test/doctor-merge-path-cli.test.ts @masonwyatt23
+/test/drive-node-claim-liveness.test.ts @masonwyatt23
 /test/drive-pool-routing.test.ts @masonwyatt23
 /test/drive-sim/policy.ts @masonwyatt23
 /test/elite-self-land-315.test.ts @masonwyatt23
