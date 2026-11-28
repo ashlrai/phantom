@@ -1219,7 +1219,10 @@ the typed `fleet.slow-prs.v1` report. This command only reads the local ledger.
 
 `phm fleet outside-outcomes [--days <n>] [--json]` reports outcome metrics for
 merged PRs that are not fleet work (community-scale RSI evidence): on the
-repos running fleet jobs touch plus the workspace checkout, it lists
+repos running fleet jobs touch plus the workspace checkout, plus the
+standing enrolled checkouts (the enrollment registry's repos, scanned in
+the budget the active set leaves and rotated across passes so every
+enrolled repo is covered over time), it lists
 recently-merged PRs whose head is not `codex-bridge/*` and whose author is not
 the fleet App, joins each `owner/name#N` against the standing revert ledger
 (`improve/revert-outcomes.jsonl`), and rolls up per-author merged/reverted
