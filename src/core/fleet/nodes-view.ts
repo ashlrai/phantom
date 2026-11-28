@@ -22,6 +22,7 @@ import { isHostStats, isNodeCapacity, parseState, type HostStats, type NodeRecor
 import { isVersionCap } from '../drive/nodes/phm-version.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { aliasMatches } from './pool-reach.js';
+import { remoteLaneCap } from './unfed-market.js';
 import { sanitizeIdentityText, UNKNOWN } from './runtime-identity.js';
 import { defaultTailnetPeersDeps, readTailnetPeers, type TailnetPeers, type TailnetPeersDeps } from './tailnet-peers.js';
 
@@ -317,11 +318,25 @@ export function capServesLane(cap: string, lane: string): boolean {
   return lane === 'local-model' ? isLocalModelCap(cap) : cap === lane;
 }
 
+/** The lane names a `--can-take`/placement query matches advertised caps
+ * under: the name itself plus the remote cap a market lane resolves to through
+ * the same remoteLaneCap map the claim bridge, `phm nodes plan` and the fleet
+ * resource plan share — so `codex-personal` finds the `codex` computers a
+ * codex-personal job would actually be offered to instead of answering "no
+ * computer" while the plan assigns it. A lane that only runs on this host or
+ * on an API key resolves to no remote cap and keeps the direct match only, and
+ * `local-model` keeps its oMLX-family match through capServesLane. */
+function canTakeLaneNames(lane: string): readonly string[] {
+  const remote = remoteLaneCap(lane);
+  return remote === null || remote === lane ? [lane] : [lane, remote];
+}
+
 /** Require confirmed reachability, free slots and a live advertisement for the lane. */
 export function nodesThatCanTake(view: NodesView, lane: string): NodeRow[] {
+  const names = canTakeLaneNames(lane);
   return view.nodes.filter(node => node.stateCode === 'ready' && node.reachable === true
     && typeof node.freeSlots === 'number' && node.freeSlots > 0 && node.lanes !== UNKNOWN
-    && node.lanes.some(cap => capServesLane(cap, lane)));
+    && node.lanes.some(cap => names.some(name => capServesLane(cap, name))));
 }
 
 export interface NodePlacement {

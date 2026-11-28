@@ -65,7 +65,10 @@ is running there, free memory, CPU headroom, lanes, running jobs and a
 plain-words state such as `ready for work` or `offline since 10:42`.
 `--can-take <lane>` lists only the computers that can take a job for that lane
 now and recommends one: ready remote computers first, most free slots first,
-then name to break ties. If none qualifies, it falls back to this computer only
+then name to break ties. A queue lane name such as `codex-personal` resolves
+to the provider caps its jobs need, the same mapping `phm nodes plan` and the
+claim bridge use; lanes that only run on this host or on an API key keep the
+direct advertised-cap match. If none qualifies, it falls back to this computer only
 when ready. JSON adds `placement` with `lane`, `node` (null when none is ready),
 `target` (`remote`, `local`, `none`), `reason` (`remote-ready`, `local-only`,
 `local-fallback`, `no-ready-node`) and a plain explanation. Unknown reachability
