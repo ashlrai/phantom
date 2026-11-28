@@ -635,7 +635,7 @@ function printModelsHelp(): void {
 
   const subs: [string, string][] = [
     ['check [--diff <file>]', 'Report every model the router can pick: confirmed, stale (over 14 days) or unconfirmed (not routable), and what provider docs say.'],
-    ['radar [--from <folder>] [--fetch [--propose]]', 'Find new and retiring models; optionally file fresh candidates as pending inbox notes.'],
+    ['radar [--from <folder>] [--fetch [--propose]]', 'Find new and retiring models; optionally file pending inbox notes for each finding.'],
     ['radar schedule [--install] [--hour <hour>]', 'Preview or explicitly install the daily model radar user job.'],
     ['verify', 'Show model status, evidence age and configured choices (JSON by default; --text for people).'],
     ['verify <id> --source <url>', 'Mark one model verified once its official doc page names the exact id (--provider adds a new model).'],
@@ -664,7 +664,7 @@ function printModelsHelp(): void {
     ['--diff',    'A saved provider release-notes page; lists new, renamed and retired ids (models check).'],
     ['--from',    'Folder of saved release notes, one file per provider such as anthropic.md (models radar).'],
     ['--fetch',   'Save today\'s official release-notes pages into the folder first (models radar).'],
-    ['--propose', 'File fresh candidates with evidence and an unapplied patch (requires --fetch).'],
+    ['--propose', 'File pending inbox notes for each finding, with evidence (requires --fetch).'],
     ['--install', 'Install the model radar user schedule; otherwise print it.'],
     ['--hour',    'Local hour for the model radar schedule (0–23, default 3).'],
   ];

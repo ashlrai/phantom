@@ -156,7 +156,10 @@ export async function cmdModels(args: string[]): Promise<number>;
   behind `--fetch`. Without `--propose`, exit 0 only when `ok`.
   `--propose` requires a live fetch and uses the existing inbox to file
   evidence and an unapplied patch as pending notes, deduplicated by candidate.
-  It returns `proposals: { filed, existing, failed }` and exits 1 only on a run
+  Notes cover every finding class: patch additions, retirements and renames
+  (each quoting its fetched page), and configured lanes whose model the
+  provider-docs check flags or release notes mention retiring. It returns
+  `proposals: { filed, existing, failed }` and exits 1 only on a run
   or write failure. `ashlr models radar schedule [--install] [--hour <hour>]`
   previews daily user units unless explicitly installed.
 - `ashlr models verify <id> --source <url>`: `markModelVerified`; see
