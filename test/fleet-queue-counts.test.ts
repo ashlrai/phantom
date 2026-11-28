@@ -43,6 +43,21 @@ it('counts ready, parked, running and last-hour merges per lane', async () => {
   expect(report.totals).toEqual({ ready: 3, parked: 1, running: 2, merges: 3, blockedReasons: [{ reason: 'DEP', count: 1 }], stale: 0 });
 });
 
+it('includes unique lane-open jobs in the ready total', async () => {
+  const open = 'RQ-OPEN\texample/phantom\t\twork\tFixture';
+  await writeFile(join(queueDir, 'ready.tsv'), open + '\n');
+  const openOnly = await getLaneQueueCounts({ runsDir: root, now });
+  expect(openOnly.totals.ready).toBe(1);
+  expect(openOnly.lanes).toEqual([]);
+
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    open, open, row('READY', 'RQ-OPEN', 'codex'), row('READY', 'RQ-HINTED', 'devin'),
+  ].join('\n'));
+  const mixed = await getLaneQueueCounts({ runsDir: root, now });
+  expect(mixed.totals.ready).toBe(2);
+  expect(mixed.lanes).toMatchObject([{ lane: 'devin', ready: 1 }]);
+});
+
 it('ignores merge events with missing or invalid timestamps', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
   await writeFile(join(queueDir, 'jobs.jsonl'), [
