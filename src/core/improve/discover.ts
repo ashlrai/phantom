@@ -2243,6 +2243,21 @@
  *     truncated tails are stated as lower bounds, and items emit
  *     only for the fleet's own repository since the verdicts carry
  *     no repo column;
+ *   - the incident lane's outcome journal: one
+ *     ledger/incident-lane.jsonl row per INCIDENT-LANE-1 state
+ *     transition — queued/launched/done/ended/requeued/closed/report —
+ *     whose only consumer was the lane's own per-tick state reload, so
+ *     jobs ending with no RESULT line, detector prefixes whose launches
+ *     always verdict EMPTY, jobs cycling back to the queue and
+ *     incidents reopening after close never became work
+ *     (incidentLaneBacklogItems below). 'ended' splits honestly: EMPTY
+ *     is the templates' designed nothing-to-fix verdict folded per
+ *     detector prefix, other RESULT tokens per prefix, and the silent
+ *     empty-detail endings as one cross-prefix aggregate. A cell emits
+ *     only at the units-and-days recurring bars inside the 7-day
+ *     window; items emit only for the fleet's own repository since the
+ *     lane describes this install's machinery and carries no repo
+ *     column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2429,6 +2444,7 @@ import { modelRadarBacklogItems } from './model-radar-backlog.js';
 import { racingOutcomeBacklogItems } from './racing-outcome-backlog.js';
 import { busHopBacklogItems } from './bus-hop-backlog.js';
 import { ideaVerdictBacklogItems } from './idea-verdict-backlog.js';
+import { incidentLaneBacklogItems } from './incident-lane-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -5088,6 +5104,13 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // stated as lower bounds, and only the fleet's own repository
   // inherits the item since the verdicts carry no repo column.
   await feed('ideaVerdictBacklogItems', () => ideaVerdictBacklogItems({ repo }));
+  // Incident lane outcome journal (<runs>/ledger/incident-lane.jsonl):
+  // per-transition rows from the ops-side INCIDENT-LANE-1 machinery whose
+  // only consumer was the lane's own per-tick reload — silent endings,
+  // per-prefix EMPTY verdicts, requeue cycles and incident reopens become
+  // items too (incidentLaneBacklogItems below). Read-only and bounded;
+  // items emit only for the fleet's own repository.
+  await feed('incidentLaneBacklogItems', () => incidentLaneBacklogItems({ repo }));
   return { items, errors };
 }
 
