@@ -127,6 +127,9 @@ describe('node router', () => {
     // node-a advertises gh and declined: every eligible node released it unrun.
     expect(route.fix).toContain('unrun');
     expect(route.fix).not.toContain('advertises gh');
+    // Job ids are single-use, so the fix must say a NEW id — re-enqueueing
+    // this one is refused as a spec diff.
+    expect(route.fix).toContain('new job id');
   });
 
   it('keeps the caps fix when the declined node never advertised the required cap', () => {
@@ -139,7 +142,50 @@ describe('node router', () => {
     f.store.state.jobs[0]!.declined = [a.session];
     const route = f.box.plan().find(r => r.jobId === 'job-1')!;
     expect(route.nodeId).toBeNull();
-    expect(route.fix).toContain("advertises gh");
+    expect(route.fix).toContain("advertises every required cap (gh)");
+    // The fix is runnable: it names the node and the rejoin that adds the cap
+    // while keeping the profile the node already advertised.
+    expect(route.fix).toContain('phm node join --node node-a --owner acme --caps build,gh');
+  });
+
+  it('the caps fix picks the in-scope node missing the fewest caps and keeps its profile', () => {
+    const f = fixture();
+    // node-a misses both required caps; node-b already has gh and is closer.
+    // Router order is node-id order, so node-a would win a plain first-match.
+    const a = f.box.join('node-a', { owners: ['acme', 'ops'], caps: ['build'], slots: 2 })!;
+    const b = f.mac.join('node-b', { owners: ['acme'], caps: ['gh', 'claude', versionCap('1.2.3')!] })!;
+    f.box.heartbeat(a);
+    f.mac.heartbeat(b);
+    f.box.enqueue('job-1', { owner: 'acme', requires: ['gh', 'aider'] });
+    const route = f.box.plan().find(r => r.jobId === 'job-1')!;
+    expect(route.nodeId).toBeNull();
+    // node-b is missing only aider, so the rejoin targets it — and carries its
+    // owners, non-version caps plus the job's caps (state keeps both lists
+    // sorted), and its slot bound. The join-managed phm-<version> marker stays
+    // out, as joinHintCommand rules.
+    expect(route.fix).toContain('On node-b, rejoin with: phm node join --node node-b --owner acme --caps claude,gh,aider');
+    expect(route.fix).not.toContain(versionCap('1.2.3')!);
+    expect(route.fix).not.toContain('node-a');
+    // node-a's wider profile would have been the worse pick: two missing caps.
+    expect(route.fix).not.toContain('--slots');
+  });
+
+  it('the caps fix names a required phm-<version> cap as a build, not a --caps choice', () => {
+    const f = fixture();
+    const a = f.box.join('node-a', { owners: ['acme'], caps: ['build'] })!;
+    f.box.heartbeat(a);
+    // A job can require the build marker like any cap, but join re-derives it:
+    // no --caps list can advertise a version the node does not run, so the fix
+    // must say so instead of printing a command that cannot deliver it.
+    f.box.enqueue('job-1', { owner: 'acme', requires: [versionCap('2.0.0')!] });
+    const route = f.box.plan().find(r => r.jobId === 'job-1')!;
+    expect(route.nodeId).toBeNull();
+    expect(route.fix).toContain('names a phm build, not a --caps choice');
+    expect(route.fix).toContain('phm node self-update');
+    // The rejoin still closes the fix — the shape that earns --watch — and
+    // keeps only the caps join can actually advertise.
+    expect(route.fix).toContain('rejoin with: phm node join --node node-a --owner acme --caps build');
+    expect(route.fix).not.toContain(`--caps build,${versionCap('2.0.0')!}`);
   });
 
   it('prefers the auth fix over all-declined when another node merely lacks gh auth', () => {

@@ -231,15 +231,19 @@ describe('plan on an empty queue names the scopes the store knows', () => {
 });
 
 describe('unrouted-job join fixes carry --watch on the standalone path', () => {
-  // One live node under 'ops' and two unrouted jobs: j1 has no node in its
-  // owner scope at all (the join fix), j2 has a node that lacks its cap (the
-  // caps fix, which names no join command).
+  // One live node under 'ops' with zero advertised slots and three unrouted
+  // jobs: j1 has no node in its owner scope at all (the join fix), j2 has a
+  // node that lacks its cap (the caps fix, which names a concrete rejoin),
+  // j3 fits the node but the node advertises no slots (the capacity fix,
+  // which names no join command).
   function seed(): { store: MemoryStore; nodes: DriveNodes } {
     const store = new MemoryStore();
     const nodes = new DriveNodes(store);
-    executeNodeFleet('join', ['--node', 'box', '--owner', 'ops'], nodes);
+    const joined = executeNodeFleet('join', ['--node', 'box', '--owner', 'ops'], nodes);
+    executeNodeFleet('beat', ['--node', 'box', '--session', String(joined['session']), '--slots', '0'], nodes);
     executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme'], nodes);
     executeNodeFleet('enqueue', ['--job', 'j2', '--owner', 'ops', '--requires', 'build'], nodes);
+    executeNodeFleet('enqueue', ['--job', 'j3', '--owner', 'ops'], nodes);
     return { store, nodes };
   }
   const fixOf = (out: Record<string, unknown>, jobId: string): string | undefined =>
@@ -264,8 +268,11 @@ describe('unrouted-job join fixes carry --watch on the standalone path', () => {
     for (const verb of ['status', 'list'] as const) {
       const out = runNodeFleet(verb, parseNodeFleetFlags(verb, ['--owner', 'acme,ops']), nodes, () => 'unknown', { rejoinWatch: true });
       expect(fixOf(out, 'j1'), verb).toContain('phm node join --owner acme --watch');
-      // The caps fix names no join command, so it is never rewritten.
-      expect(fixOf(out, 'j2'), verb).toBe("No node owned by 'ops' advertises build. Rejoin a node with --caps including them.");
+      // The caps fix ends in its concrete rejoin — profile and slot bound
+      // preserved — so it carries --watch too.
+      expect(fixOf(out, 'j2'), verb).toBe("No node owned by 'ops' advertises every required cap (build). On box, rejoin with: phm node join --node box --owner ops --caps build --slots 0 --watch");
+      // The capacity fix names no join command, so it is never rewritten.
+      expect(fixOf(out, 'j3'), verb).toBe("Nodes owned by 'ops' have no free job slots. Wait for work to finish or memory headroom to recover.");
     }
   });
 

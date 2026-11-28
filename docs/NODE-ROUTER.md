@@ -275,7 +275,10 @@ before the lease lapses.
 
 Every error ends with a fix. A job with no taker is shown by `phm node plan`
 with the reason: no live node in that owner (join one), no node advertising the
-caps (rejoin with them), or no node with a local `gh` login (`gh auth login`,
+caps (the fix names the in-scope node missing the fewest and prints its
+profile-preserving rejoin with the missing caps added — the same command
+`status`/`list` annotate on the pending job, `--watch` included on the
+standalone path), or no node with a local `gh` login (`gh auth login`,
 then the `--probe-auth` beat the fix prints with the blocked node's id and
 session — `phm node beat` needs both, so the plan names them rather than
 leaving a bare `--probe-auth` that fails as missing-flag). A `session-expired` error — from `beat`,
