@@ -1,0 +1,19 @@
+ .github/CODEOWNERS                         |   1 +
+ contrib/mac/action-classes.json            |  95 ++++++++
+ contrib/mac/action_classes.py              | 154 +++++++++++++
+ contrib/mac/dispatchd.py                   |  45 +++-
+ contrib/mac/install.sh                     |   2 +-
+ contrib/mac/publish.sh                     |   7 +
+ contrib/mac/tests/test_action_classes.py   | 350 ++++++++++++++++++++++++++++
+ contrib/mac/tests/test_install.py          |   2 +-
+ src/cli/completions.ts                     |   1 +
+ src/cli/fleet-action-classes.ts            |  40 ++++
+ src/cli/fleet-subcommand-registry.ts       |   1 +
+ src/core/authority/action-classes.ts       | 351 +++++++++++++++++++++++++++++
+ src/core/comms/teammate-overdue.ts         |  37 +++
+ src/core/fleet/self-tick.ts                |   7 +-
+ src/core/vision/leader-apply.ts            |  14 ++
+ test/authority-action-classes.test.ts      | 196 ++++++++++++++++
+ test/fixtures/authority/tier1-closure.json |   2 +
+ test/slack-overdue-notice-337.test.ts      |  85 +++++++
+ 18 files changed, 1381 insertions(+), 9 deletions(-)

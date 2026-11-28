@@ -1,0 +1,3 @@
+PR #5885: files=2 added(m>=8c)=10 present_on_master=7 deleted(m>=8c)=0 still_on_master=0
+  test/fixtures/authority/tier1-closure.json: add 5/8, del n/a
+  test/m2.doctor-exit-code.test.ts: add all, del n/a

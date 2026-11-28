@@ -1,0 +1,19 @@
+PR #5869: files=18 added(m>=8c)=1110 present_on_master=820 deleted(m>=8c)=9 still_on_master=3
+  .github/CODEOWNERS: add all, del n/a
+  contrib/mac/action-classes.json: add all, del n/a
+  contrib/mac/action_classes.py: add 125/136, del n/a
+  contrib/mac/dispatchd.py: add 5/40, del 3 remain
+  contrib/mac/install.sh: add none, del all
+  contrib/mac/publish.sh: add none, del n/a
+  contrib/mac/tests/test_action_classes.py: add 131/300, del n/a
+  contrib/mac/tests/test_install.py: add none, del all
+  src/cli/completions.ts: add none, del n/a
+  src/cli/fleet-action-classes.ts: add none, del n/a [path absent on master]
+  src/cli/fleet-subcommand-registry.ts: add none, del n/a
+  src/core/authority/action-classes.ts: add 257/264, del n/a
+  src/core/comms/teammate-overdue.ts: add 28/30, del n/a
+  src/core/fleet/self-tick.ts: add all, del all
+  src/core/vision/leader-apply.ts: add none, del n/a
+  test/authority-action-classes.test.ts: add 134/141, del n/a
+  test/fixtures/authority/tier1-closure.json: add all, del n/a
+  test/slack-overdue-notice-337.test.ts: add 60/67, del n/a

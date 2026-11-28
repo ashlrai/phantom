@@ -1,0 +1,2 @@
+DIFFERS	test/fixtures/authority/tier1-closure.json	e8571d1d173f	a8489f18312f
+SAME	test/m2.doctor-exit-code.test.ts	45b1c968edb9	45b1c968edb9

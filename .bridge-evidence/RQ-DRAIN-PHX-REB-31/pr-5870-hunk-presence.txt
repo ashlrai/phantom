@@ -1,0 +1,162 @@
+PR #5870: files=161 added(m>=8c)=13803 present_on_master=3668 deleted(m>=8c)=5556 still_on_master=5111
+  .github/CODEOWNERS: add 4/10, del n/a
+  .github/workflows/dependency-audit.yml: add none, del 14 remain
+  CHANGELOG.md: add 1/16, del n/a
+  docs/AGENT-OPERATIONS.md: add none, del 1 remain
+  docs/ECOSYSTEM-CHANGELOG.md: add none, del n/a
+  docs/GROK-BOT-BUS.md: add none, del n/a [path absent on master]
+  docs/GROK-BOT-COMPANION.md: add none, del n/a
+  docs/MCP-TOOLS.md: add all, del n/a
+  docs/README.md: add none, del n/a
+  docs/cli.md: add none, del 1 remain
+  scripts/build-sea.mjs: add all, del all
+  scripts/ecosystem-changelog.ts: add none, del n/a [path absent on master]
+  src/cli/channels-slack.ts: add all, del n/a
+  src/cli/completions.ts: add 1/5, del all
+  src/cli/connect.ts: add none, del n/a [path absent on master]
+  src/cli/doctor-init.ts: add all, del n/a
+  src/cli/doctor-merge-path.ts: add all, del n/a
+  src/cli/fleet-channel-health.ts: add 1/4, del all
+  src/cli/fleet-slack-trace.ts: add 24/35, del n/a
+  src/cli/fleet-subcommand-registry.ts: add all, del n/a
+  src/cli/fleet-work-result.ts: add all, del all
+  src/cli/help.ts: add 1/6, del n/a
+  src/cli/index.ts: add none, del n/a
+  src/cli/status.ts: add 1/10, del 1 remain
+  src/core/agents/slack-reply-binding.ts: add 6/14, del all
+  src/core/agents/slack-request-trace.ts: add 76/116, del n/a
+  src/core/agents/slack-status.ts: add 43/45, del 1 remain
+  src/core/comms/teammate-overdue.ts: add 28/30, del n/a
+  src/core/comms/work-result-body.ts: add all, del n/a
+  src/core/connect/audit.ts: add none, del n/a [path absent on master]
+  src/core/connect/deps.ts: add none, del n/a [path absent on master]
+  src/core/connect/discovery.ts: add none, del n/a [path absent on master]
+  src/core/connect/requests.ts: add none, del n/a [path absent on master]
+  src/core/connect/services.ts: add none, del n/a [path absent on master]
+  src/core/connect/store.ts: add none, del n/a [path absent on master]
+  src/core/connect/transfer.ts: add none, del n/a [path absent on master]
+  src/core/connect/types.ts: add none, del n/a [path absent on master]
+  src/core/daemon/loop.ts: add all, del all
+  src/core/daemon/runtime-release-dependency-inventory.ts: add all, del n/a
+  src/core/doctor.ts: add 1/29, del n/a
+  src/core/ecosystem/changelog-compact.ts: add none, del n/a [path absent on master]
+  src/core/fleet/bandit-feedback.ts: add none, del n/a [path absent on master]
+  src/core/fleet/channel-health.ts: add 77/99, del all
+  src/core/fleet/dispatch-router.ts: add 2/36, del 1 remain
+  src/core/fleet/fleet-recheck.ts: add 317/339, del 40 remain
+  src/core/fleet/recheck-record.ts: add 51/52, del all
+  src/core/fleet/self-tick.ts: add all, del all
+  src/core/fleet/standing-merge-pass.ts: add none, del 2 remain
+  src/core/fleet/status-actions.ts: add none, del n/a [path absent on master]
+  src/core/fleet/status-automerge.ts: add none, del n/a [path absent on master]
+  src/core/fleet/status-dispatch-yield.ts: add none, del n/a [path absent on master]
+  src/core/fleet/status-learning.ts: add none, del n/a [path absent on master]
+  src/core/fleet/status-phantom.ts: add none, del n/a [path absent on master]
+  src/core/fleet/status-production.ts: add none, del n/a [path absent on master]
+  src/core/fleet/status-queue.ts: add none, del n/a [path absent on master]
+  src/core/fleet/status-readiness-signals.ts: add none, del n/a [path absent on master]
+  src/core/fleet/status-readiness.ts: add none, del n/a [path absent on master]
+  src/core/fleet/status-sources.ts: add none, del n/a [path absent on master]
+  src/core/fleet/status-types.ts: add none, del n/a [path absent on master]
+  src/core/fleet/status.ts: add 269/417, del 5042 remain
+  src/core/fleet/tick-hooks-live.ts: add 2/27, del n/a
+  src/core/fleet/worked-ledger.ts: add none, del n/a
+  src/core/inbox/store.ts: add none, del n/a
+  src/core/merge-path.ts: add all, del n/a
+  src/core/receipt/receipt-dispatch.ts: add all, del all
+  src/core/routing/local-escalation.ts: add none, del n/a [path absent on master]
+  src/core/routing/local-first-bandit.ts: add none, del n/a [path absent on master]
+  src/core/routing/local-route.ts: add none, del n/a [path absent on master]
+  src/core/routing/routing-engines.ts: add none, del n/a [path absent on master]
+  src/core/routing/routing-ledger.ts: add none, del n/a [path absent on master]
+  src/core/run/custody-capture.ts: add all, del n/a
+  src/core/run/engines.ts: add all, del n/a
+  src/core/run/local-inference.ts: add none, del 2 remain
+  src/core/verse/fleet-comms-status-api.ts: add all, del all
+  src/core/verse/fleet-recheck-api.ts: add all, del all
+  src/core/verse/fleet-work-board-api.ts: add 64/65, del all
+  src/mcp/fleet-server.ts: add 25/28, del all
+  src/web-ui/routes/verse/fleet-board/RecheckHistoryStrip.tsx: add all, del all
+  src/web-ui/routes/verse/fleet-board/RecheckNowButton.tsx: add 39/40, del n/a
+  src/web-ui/routes/verse/fleet-board/WorkResultForm.tsx: add all, del n/a
+  src/web-ui/routes/verse/fleet-board/coord-last-verified-334.test.ts: add all, del all
+  src/web-ui/routes/verse/fleet-board/fleet-board.module.css: add all, del n/a
+  src/web-ui/routes/verse/fleet-board/recheck-now-button-340.test.tsx: add 42/43, del n/a
+  src/web-ui/routes/verse/fleet-board/recheck-now-model-340.test.ts: add all, del n/a
+  src/web-ui/routes/verse/fleet-board/recheck-now-model.ts: add all, del n/a
+  src/web-ui/routes/verse/fleet-board/work-board-section.tsx: add all, del all
+  src/web-ui/routes/verse/fleet-board/work-result-form-340.test.tsx: add 69/70, del n/a
+  src/web-ui/routes/verse/fleet-board/work-result-form-model-340.test.ts: add all, del n/a
+  src/web-ui/routes/verse/fleet-board/work-result-form-model.ts: add all, del n/a
+  src/web-ui/routes/verse/fleet-channels/ChannelHealthStrip.tsx: add all, del all
+  src/web-ui/routes/verse/fleet-channels/channel-coverage-line-338.test.tsx: add all, del n/a
+  src/web-ui/routes/verse/fleet-channels/channel-health-model.ts: add 23/25, del n/a
+  test/__snapshots__/cli-status-json.test.ts.snap: add none, del n/a
+  test/capability-original-4311-preservation-10srm2.test.ts: add all, del all
+  test/channel-health-partial-recovery-339s.test.ts: add all, del n/a
+  test/channel-health-slack-binding-338.test.ts: add 183/192, del n/a
+  test/cli-connect.test.ts: add none, del n/a [path absent on master]
+  test/cli-status-json.test.ts: add 3/132, del 3 remain
+  test/config/realio-lane-membership.mjs: add none, del n/a
+  test/coordination-board-unsafe-324.test.ts: add all, del 1 remain
+  test/cos-decline-recutolde60.test.ts: add all, del all
+  test/custody-wrap-receipt.test.ts: add all, del n/a
+  test/doctor-merge-path-cli.test.ts: add all, del n/a
+  test/ecosystem-changelog-compact.test.ts: add none, del n/a [path absent on master]
+  test/fixtures/authority/tier1-closure.json: add 1/22, del n/a
+  test/fixtures/ecosystem-changelog-compact/generated.md: add none, del n/a [path absent on master]
+  test/fixtures/fleet-status-json/README.md: add none, del n/a [path absent on master]
+  test/fixtures/fleet-status-json/corrupt-daemon.json: add none, del n/a [path absent on master]
+  test/fixtures/fleet-status-json/empty.json: add none, del n/a [path absent on master]
+  test/fixtures/fleet-status-json/paused.json: add none, del n/a [path absent on master]
+  test/fleet-capability-audit-reconcile-09snw1.test.ts: add all, del all
+  test/fleet-channel-health-coverage-cli-338.test.ts: add all, del n/a
+  test/fleet-comms-slack-replies-339.test.ts: add 58/59, del n/a
+  test/fleet-coordination-recut64.test.ts: add all, del all
+  test/fleet-coordination.test.ts: add all, del all
+  test/fleet-imessage-path-04sqx2.test.ts: add all, del all
+  test/fleet-job-overlap-04-spu1.test.ts: add all, del all
+  test/fleet-library-pins-recovery-10srl1.test.ts: add all, del all
+  test/fleet-recheck-324.test.ts: add all, del n/a
+  test/fleet-recheck-bridge-age-328s.test.ts: add all, del all
+  test/fleet-recheck-claim-time-326s.test.ts: add 16/17, del all
+  test/fleet-recheck-coord-verified-332.test.ts: add all, del n/a
+  test/fleet-recheck-last-verified-333.test.ts: add all, del n/a
+  test/fleet-recheck-ledger-join-325.test.ts: add 13/14, del all
+  test/fleet-recheck-record-reasons-328s.test.ts: add all, del all
+  test/fleet-recheck-reply-325.test.ts: add all, del n/a
+  test/fleet-recheck-reply-last-verified-334.test.ts: add all, del n/a
+  test/fleet-recheck-runtime-observation-332s.test.ts: add all, del all
+  test/fleet-recheck-task-binding-327s.test.ts: add all, del n/a
+  test/fleet-recheck-text-boundary-329s.test.ts: add all, del n/a
+  test/fleet-safari-import-helper-recutolda60.test.ts: add all, del all
+  test/fleet-slack-trace-339.test.ts: add 122/135, del n/a
+  test/fleet-status-json-snapshot.test.ts: add none, del n/a [path absent on master]
+  test/fleet-status-module-boundaries.test.ts: add none, del n/a [path absent on master]
+  test/fleet-work-board-317.test.ts: add all, del all
+  test/local-escalation.test.ts: add none, del n/a [path absent on master]
+  test/local-first-bandit.test.ts: add none, del n/a [path absent on master]
+  test/local-inference-redirect-952.test.ts: add none, del n/a [path absent on master]
+  test/local-route.test.ts: add none, del n/a [path absent on master]
+  test/local-routing-dispatch.test.ts: add none, del n/a [path absent on master]
+  test/m386.daemon-activity.test.ts: add none, del 2 remain
+  test/mcp-fleet-slack-replies-339.test.ts: add all, del n/a
+  test/merge-path-readonly.test.ts: add all, del n/a
+  test/merge-path.test.ts: add all, del n/a
+  test/recheck-history-damaged-row-mcp-340s.test.ts: add all, del n/a
+  test/recheck-lastdone-api-roundtrip-335s.test.ts: add all, del n/a
+  test/recheck-lastdone-clock-bound-337s.test.ts: add all, del n/a
+  test/recheck-record-api-340.test.ts: add all, del n/a
+  test/recheck-record-last-verified-334.test.ts: add all, del n/a
+  test/recut-cli-c342.test.ts: add all, del n/a
+  test/recut-queue-1166.test.ts: add all, del all
+  test/slack-overdue-notice-337.test.ts: add 60/67, del n/a
+  test/slack-reply-receipt-replay-337s.test.ts: add 21/42, del n/a
+  test/slack-runtime-recheck-298s.test.ts: add all, del all
+  test/slack-status-ignored-reasons-337.test.ts: add all, del n/a
+  test/standing-merge-pass-unclassified-952.test.ts: add none, del n/a [path absent on master]
+  test/work-board-http-result-evidence-338s.test.ts: add all, del n/a
+  test/work-result-api-340.test.ts: add all, del n/a
+  test/work-result-body-340.test.ts: add all, del n/a
+  test/work-result-id-conflict-roundtrip-341s.test.ts: add all, del n/a
+  tmp_fleet-recheck.ts: add none, del n/a [path absent on master]

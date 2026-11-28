@@ -1,0 +1,3 @@
+ test/fixtures/authority/tier1-closure.json | 8 ++++++++
+ test/m2.doctor-exit-code.test.ts           | 3 +++
+ 2 files changed, 11 insertions(+)

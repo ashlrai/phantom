@@ -1,0 +1,20 @@
+PR #5897: files=19 added(m>=8c)=301 present_on_master=216 deleted(m>=8c)=73 still_on_master=1
+  AGENTS.md: add none, del n/a
+  CHANGELOG.md: add 2/28, del n/a
+  README.md: add none, del n/a
+  docs/CLI-REFERENCE.md: add none, del all
+  docs/CODEMAP.md: add all, del n/a
+  docs/FLEET-API.md: add 1/17, del n/a
+  docs/FLEET-VERBS.md: add none, del n/a
+  docs/QUICKSTART.md: add none, del all
+  docs/cli.md: add none, del all
+  examples/quickstart.md: add none, del all
+  notes.md: add none, del all [path absent on master]
+  site/llms-full.txt: add none, del all
+  src/cli/completions.ts: add none, del all
+  src/cli/wb.ts: add 1/5, del n/a
+  src/core/intent/native-stale.ts: add all, del n/a
+  src/core/mcp-native.ts: add all, del 1 remain
+  task_plan.md: add none, del all [path absent on master]
+  test/intent-native-stale-preservation-232s.test.ts: add all, del n/a
+  test/wb-secrets-cli.test.ts: add 1/9, del n/a
