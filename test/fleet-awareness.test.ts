@@ -148,6 +148,24 @@ test('a claim fenced by a rejoined session frees its host slots at once', () => 
   expect(report.hosts[0]).toMatchObject({ hostId: 'mac', slots: 2, running: 0, freeSlots: 2 });
 });
 
+test('leader failover frees the host budget held by the previous epoch', () => {
+  const f = fixture();
+  f.add('old-leader');
+  const worker = f.add('worker', { hostId: 'mac', slots: 1 });
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  f.enqueue('first');
+  const claim = nodes.claim(f.state.leader!, worker, 'first')!;
+  expect(projectFleetAwareness(f.state, f.now()).hosts.find(h => h.hostId === 'mac'))
+    .toMatchObject({ running: 1, freeSlots: 0 });
+
+  f.advance(f.state.leader!.expiresAt - f.now());
+  f.beat('worker', { hostId: 'mac', slots: 1 });
+  expect(f.state.leader!.token).toBeGreaterThan(claim.leaderToken);
+  expect(projectFleetAwareness(f.state, f.now()).hosts.find(h => h.hostId === 'mac'))
+    .toMatchObject({ running: 0, freeSlots: 1 });
+  expect(nodes.complete(claim, 'late')).toBe(false);
+});
+
 test.each(['memory-pressure', 'disk-pressure', 'memory-unmeasured', 'disk-unmeasured'] as const)('hold %s blocks siblings and direct claims', held => {
   const f = fixture(); const a = f.add('a', { hostId: 'mac' }); f.add('b', { hostId: 'mac', slots: 0, held }); f.enqueue();
   expect(f.plan()[0]?.nodeId).toBeNull();

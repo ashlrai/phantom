@@ -299,6 +299,26 @@ describe('drive node leases', () => {
     expect(f.a.snapshot().jobs.find(j => j.id === 'job1')!.state).toBe('running');
   });
 
+  it.each(['pull', 'claim'] as const)('reuses a slot after leader expiry through %s', method => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    f.a.enqueue('job1', { owner: 'o' });
+    f.a.enqueue('job2', { owner: 'o' });
+    const old = f.a.pull(worker)!.claim;
+    expect(f.a.plan()).toMatchObject([{ jobId: 'job2', nodeId: null }]);
+
+    f.advance(20);
+    expect(f.a.renewClaim(old)).toBeNull();
+    expect(f.a.jobOutcome('job1', 'o')).toEqual({ state: 'running' });
+    expect(f.a.plan()).toMatchObject([{ jobId: 'job2', nodeId: 'worker' }]);
+    const next = method === 'pull' ? f.a.pull(worker)?.claim :
+      f.a.claim(f.a.heartbeat(worker)!.leader!, worker, 'job2');
+    expect(next).toMatchObject({ jobId: 'job2' });
+    expect(next!.leaderToken).toBeGreaterThan(leader.token);
+    expect(f.a.complete(old, 'late')).toBe(false);
+  });
+
   it('pull plans past a claim fenced by a rejoined session', () => {
     const f = fixture();
     const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
