@@ -10,8 +10,8 @@ registerPane({
   shortcut: 'mod+alt+q',
   id: 'fleet-queue',
   title: 'Queue',
-  description: 'Parked and ready jobs by lane, with precheck skips',
+  description: 'How deep each lane\'s ready pile is against its live slots, then parked and ready jobs by lane, with precheck skips',
   needsSession: false,
   icon: QueueGlyph,
-  component: lazyPane(() => import('./FleetQueuePane.js').then((m) => m.FleetQueuePane)),
+  component: lazyPane(() => import('./QueuePane.js').then((m) => m.QueuePane)),
 });
