@@ -527,7 +527,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     const known = error instanceof UsageError;
     // Validation, privacy and lock messages in this stack are fixed operator-facing
     // strings (no values echoed), so they are shown; anything else stays masked.
-    const operatorMessage = /^(?:Invalid |Drive |Universe storage|Unsafe drive|Cannot create filesystem root)/;
+    const operatorMessage = /^(?:Invalid |Drive |(?:Universe|Private) storage|Unsafe drive|Cannot create filesystem root)/;
     const message = error instanceof Error && (known || operatorMessage.test(error.message)) ? error.message : 'Node store unavailable or invalid.';
     const fix = known ? error.fix : /^Invalid drive/.test(message) ? 'Check ids (letters, digits, . _ : / -), caps (lowercase) and secret NAMES (UPPER_SNAKE). Run: phm node --help'
       : `Check that ${nodesDirLabel} is a private (0700) directory you own, and that no other process holds its lock.`;
