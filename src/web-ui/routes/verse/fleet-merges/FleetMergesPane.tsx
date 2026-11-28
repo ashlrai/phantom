@@ -1,7 +1,7 @@
 import { paneLinkUrl } from '../dock/pane-link.js';
-import { backlogView } from './merge-backlog-model.js';
+import { backlogView, blockerEvidence } from './merge-backlog-model.js';
 import { mergeBacklogQuery } from './merge-backlog-queries.js';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Button, SkeletonLine } from '../../../components/primitives/index.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -28,6 +28,7 @@ import { MergeWaitCard } from './MergeWaitCard.js';
 import styles from './fleet-merges.module.css';
 
 export function FleetMergesPane({ visible, host }: PaneProps) {
+  const blockerGroup = useId();
   const read = useQuery(fleetMergesQuery, { enabled: visible, freshMs: 0 });
   const outside = useQuery(outsidePrsQuery, { enabled: visible, freshMs: 0 });
   const ci = useQuery(ciRunsQuery, { enabled: visible, freshMs: 0 });
@@ -85,13 +86,24 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
       {backlog.data?.source === 'gh-failed' ? <p>GitHub read failed: {backlog.data.reason}</p> : backlog.status === 'error' ? <p>GitHub read failed: unavailable</p> : !backlogData ? <p role="status">Reading merge backlog…</p> : <>
         <p>{counts.superseded > 0 ? <>{backlogData.countsLine.replace(`${backlog.data!.counts.mergeState.DIRTY ?? 0} DIRTY`, `${counts.liveDirty} DIRTY`).split(' · ').map((part, index) => <span key={index}>{index > 0 && ' · '}{part}{index === 1 && <> · <span className={styles.ciChip}>{counts.superseded} superseded</span></>}</span>)}</> : backlogData.countsLine}</p>
         {backlogData.hotFilesLine && <p data-tone={backlogData.danger ? 'danger' : undefined} className={backlogData.danger ? styles.danger : undefined}>{backlogData.hotFilesLine}</p>}
-        {backlogData.rows.length === 0 ? <p>No open fleet PRs</p> : <ul className={styles.list} aria-label="Merge backlog">{backlogData.rows.slice(0, 12).map(row => <li className={styles.row} key={row.number}>
+        {backlogData.rows.length === 0 ? <p>No open fleet PRs</p> : <ul className={styles.list} aria-label="Merge backlog">{backlogData.rows.slice(0, 12).map(row => {
+          const evidence = blockerEvidence(row.reason, row.action);
+          return <li className={styles.row} key={row.number}>
           <a href={`https://github.com/${backlog.data!.repo}/pull/${row.number}`} target="_blank" rel="noopener noreferrer">#{row.number}</a>
           {row.job && <JobRefs text={row.job} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />}
           <span>· {row.state} {row.ageText} · {row.action}{row.hotFile && ` · ${row.hotFile}`}</span>
           {supersededData.pairs.filter(pair => pair.open === row.number).map(pair => <a key={pair.open} className={styles.ciChip} style={{ color: 'var(--text-secondary)' }} href={`https://github.com/${backlog.data!.repo}/pull/${pair.mergedBy}`} target="_blank" rel="noopener noreferrer">{supersededLabel(pair)}</a>)}
           {row.action === 'recut' && <a href={paneLinkUrl('fleet-outcomes', null, false) ?? undefined} onClick={event => { event.preventDefault(); host.openPane('fleet-outcomes'); }}>Recut in Outcomes</a>}
-        </li>)}</ul>}
+          <details name={blockerGroup} className={styles.blockerDetails}>
+            <summary>Merge evidence for #{row.number}</summary>
+            <div className={styles.blockerEvidence}>
+              <p><strong>Observed:</strong> {evidence.reason}</p>
+              {row.hotFile && <p><strong>Shared changed file:</strong> <code>{row.hotFile}</code>. The snapshot does not identify conflicting lines.</p>}
+              <p><strong>Suggested next step:</strong> {evidence.action}</p>
+              <p>Read-only snapshot; not a merge approval.</p>
+            </div>
+          </details>
+        </li>; })}</ul>}
       </>}
     </section>
     {trend && <p role="img" aria-label={`Merged per hour trend: ${trend.first} then ${trend.last} over ${trend.spanMinutes} minutes`}>{trend.spark} {trend.first} → {trend.last} merged/h over the last {trend.spanMinutes} min</p>}
