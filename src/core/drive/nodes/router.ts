@@ -118,7 +118,8 @@ function authFix(job: QueueJobV1, nodes: NodeRecord[], state: NodesState): strin
 }
 
 /** Deterministic plan: pools rank measured free host slots per observed execution millisecond;
- * standalone legacy queues retain their load policy. Ties break by node ID.
+ * equal pool scores favor fewer active and planned claims, then node ID.
+ * Standalone legacy queues retain their load policy.
  * Pure: the same state and clock always produce the same plan. Jobs without an
  * owner scope are never routed, so a legacy job cannot leak across scopes.
  */
@@ -129,8 +130,12 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const neutralLatency = measuredLatency.length ? measuredLatency.reduce((a, b) => a + b, 0) / measuredLatency.length : 1;
   const reserved = new Map<string, number>();
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
-  const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n, now)]));
   const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
+  const score = (node: NodeRecord) => {
+    if (!state.pool) return -((node.usage ?? 0) + CLAIM_LOAD * claims.get(node.nodeId)!);
+    const host = hosts.get(node.nodeId)!;
+    return ((host.freeSlots ?? 0) - (reserved.get(host.hostId) ?? 0)) / Math.max(1, host.latency.medianMs ?? neutralLatency);
+  };
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
@@ -143,16 +148,14 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       const host = hosts.get(node.nodeId);
       if (state.pool && (!host || !host.eligibleNodeIds.includes(node.nodeId) ||
           (host.freeSlots ?? 0) <= (reserved.get(host.hostId) ?? 0))) { reasons.set('capacity', 1); continue; }
-      const score = (n: NodeRecord) => {
-        const h = hosts.get(n.nodeId)!;
-        return state.pool ? ((h.freeSlots ?? 0) - (reserved.get(h.hostId) ?? 0)) / Math.max(1, h.latency.medianMs ?? neutralLatency) : -load.get(n.nodeId)!;
-      };
-      if (!best || score(node) > score(best)) best = node;
+      const candidateScore = score(node);
+      const bestScore = best ? score(best) : -Infinity;
+      if (!best || candidateScore > bestScore || (state.pool && candidateScore === bestScore &&
+          claims.get(node.nodeId)! < claims.get(best.nodeId)!)) best = node;
     }
     if (best) {
       const host = hosts.get(best.nodeId);
       if (host) reserved.set(host.hostId, (reserved.get(host.hostId) ?? 0) + 1);
-      load.set(best.nodeId, load.get(best.nodeId)! + CLAIM_LOAD);
       claims.set(best.nodeId, claims.get(best.nodeId)! + 1);
       plan.push({ jobId: job.id, owner: job.owner, nodeId: best.nodeId });
       continue;
