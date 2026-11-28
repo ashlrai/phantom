@@ -2744,7 +2744,19 @@ grammar, resolved once when the read starts and composing with
 `--since`/`since` into one `[since, before)` window where a row stamped
 exactly at either bound never matches; a `comms bus --checkpoint` consumer
 binds the raw `--before` value into its filter identity the same way.
-`--channel <name>` narrows
+`--body-kind <kind>` and `--result
+<reserved|admitted|complete|failed>` narrow `comms bus read|watch` to
+envelopes whose body carries that exact kind discriminator or whose
+`work.result` body reports that outcome — the same `busBodyKind`/
+`busBodyResultOutcome` own-field matches `fleet bus-follow`,
+`fleet_bus_inbox`, `agents bus inbox`, `channel read`, `wakes`,
+`agents conversations` and `phm messages` apply: exact and
+case-sensitive, a body carrying no discriminator or no `work.result`
+outcome never matching, every other body kind — a `work.release` body's
+own outcome included — staying out, and an out-of-vocabulary `--result`
+an invalid read, never a widened one. A `comms bus --checkpoint` consumer
+binds both raw values into its filter identity the same way. `--channel
+<name>` narrows
 `comms bus read|watch`, `fleet bus-follow` and `fleet_bus_inbox`'s `channel`
 to envelopes addressed to `group:<name>:*` — the room's whole traffic under
 every topic, the same raw `to`-prefix rule `channel read`, `wakes --channel`,
