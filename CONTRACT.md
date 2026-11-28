@@ -5155,7 +5155,17 @@ BUS DEAD LETTERS markers, so the whole delivery-failure backlog reaches
 a CLI's next turn as marked-untrusted data in a single block; `--json`
 carries it as `framed` beside the full projection the same way, and a
 verified-missing store frames its own missing line rather than an
-invented letter. Identities
+invented letter. `frameBusShow(cli, lines)` renders one resolved
+envelope (`agents bus show <id> --frame <cli>`) — the
+already-formatted show lines, the cursor/priority/id/parties receipt
+row, the scrubbed body summary and the held/holder/job/wake-hint
+evidence rows — through the same shared line renderer under
+BEGIN/END UNTRUSTED AGENT BUS ENVELOPE markers, so the receipt a
+citation names reaches a CLI's next turn as marked-untrusted data in
+a single block and an envelope block can never pass for an inbox
+page, a chain or a feed; `--json` carries it as `framed` beside the
+full lookup the same way, and a not-found or unreadable lookup
+answers its own status rather than an invented envelope. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
