@@ -62,7 +62,7 @@ describe('MCP coordination observations over a real isolated ledger', () => {
     const returnsSchema = tools.find(t => t.name === names[1])?.inputSchema as
       { properties?: Record<string, unknown> } | undefined;
     expect(Object.keys(returnsSchema?.properties ?? {}).sort())
-      .toEqual(['before', 'claim', 'contains', 'from', 'repo', 'result', 'since']);
+      .toEqual(['before', 'claim', 'contains', 'excludeFrom', 'from', 'repo', 'result', 'since']);
     expect(tools.some(tool => tool.name === 'fleet_empties')).toBe(true);
     expect(readdirSync(root)).toEqual([]);
   });

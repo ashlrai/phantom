@@ -79,6 +79,21 @@ describe('fleet coordination returns filters', () => {
     const from = await returnsRead(['--from', 'agent-b']);
     expect(from.json.returns.map((r: any) => r.claimId)).toEqual(['c2']);
 
+    // --exclude-from drops every receipt the named sender label posted;
+    // every receipt carries a sender, so the exclusion always proves its
+    // match, and a label nobody used keeps the whole set.
+    const excluded = await returnsRead(['--exclude-from', 'agent-a']);
+    expect(excluded.json.returns.map((r: any) => r.claimId)).toEqual(['c2']);
+    expect(excluded.json.coverage.matched).toBe(1);
+    const excludedNobody = await returnsRead(['--exclude-from', 'agent-c']);
+    expect(excludedNobody.json.returns.map((r: any) => r.claimId)).toEqual(['c3', 'c2', 'c1']);
+
+    // A sender both included and excluded matches nothing — the same
+    // include-then-exclude composition every bus read's sender filters keep.
+    const bothSenders = await returnsRead(['--from', 'agent-a', '--exclude-from', 'agent-a']);
+    expect(bothSenders.json.returns).toEqual([]);
+    expect(bothSenders.json.coverage.matched).toBe(0);
+
     // [since, before) on the receipt's at stamp: c2 sits exactly on since,
     // c3 exactly on before and stays out.
     const window = await returnsRead(['--since', String(T0 + 1_000), '--before', String(T0 + 2_000)]);
@@ -90,6 +105,8 @@ describe('fleet coordination returns filters', () => {
     // Dimensions AND together.
     const both = await returnsRead(['--from', 'agent-a', '--result', 'BLOCKED']);
     expect(both.json.returns.map((r: any) => r.claimId)).toEqual(['c3']);
+    const narrow = await returnsRead(['--exclude-from', 'agent-b', '--result', 'VERIFIED']);
+    expect(narrow.json.returns.map((r: any) => r.claimId)).toEqual(['c1']);
   });
 
   it('reaches a receipt beyond the unfiltered newest-50 page', async () => {
@@ -138,7 +155,7 @@ describe('fleet coordination returns filters', () => {
   it('rejects malformed filter values before reading the ledger', async () => {
     for (const args of [
       ['--claim', 'has space'], ['--repo', 'no-slash'], ['--result', 'MAYBE'],
-      ['--from', 'bad from'], ['--since', 'not-a-time'], ['--before', 'yesterday-ish'],
+      ['--from', 'bad from'], ['--exclude-from', 'bad from'], ['--since', 'not-a-time'], ['--before', 'yesterday-ish'],
       ['--contains', '   '], ['--contains', 'x'.repeat(513)], ['--unknown-flag', 'x'],
     ]) {
       const result = await cli(['returns', ...args, '--json']);
@@ -159,13 +176,16 @@ describe('fleet coordination returns filters', () => {
 describe('parseCoordinationReturnsFilters', () => {
   it('resolves the shared time grammar once and normalizes repo and needle', () => {
     const parsed = parseCoordinationReturnsFilters({
-      repo: 'Owner/Name', result: 'BLOCKED', since: '1h', contains: '  Two   Words ',
+      repo: 'Owner/Name', result: 'BLOCKED', from: 'agent-a', excludeFrom: 'agent-b',
+      since: '1h', contains: '  Two   Words ',
     }, T0);
     expect(parsed).toEqual({ ok: true, filters: {
-      repo: 'owner/name', result: 'BLOCKED', since: T0 - 3_600_000, contains: 'two words',
+      repo: 'owner/name', result: 'BLOCKED', from: 'agent-a', excludeFrom: 'agent-b',
+      since: T0 - 3_600_000, contains: 'two words',
     } });
     expect(parseCoordinationReturnsFilters({ since: 'bogus' }, T0).ok).toBe(false);
     expect(parseCoordinationReturnsFilters({ result: 'PENDING' }, T0).ok).toBe(false);
+    expect(parseCoordinationReturnsFilters({ excludeFrom: 'bad label' }, T0).ok).toBe(false);
   });
 });
 
