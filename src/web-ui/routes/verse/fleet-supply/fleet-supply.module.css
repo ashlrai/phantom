@@ -46,19 +46,8 @@
 .exhaustion { justify-self: start; color: var(--text-secondary); }
 .exhaustion[data-tone='warn'] { color: var(--status-warning-fg); }
 .exhaustion[data-tone='bad'] { color: var(--status-danger-fg); }
-/* Where tokens go and the waste forecast: plain rows under a rule, the lane first. */
+/* Where tokens go: plain rows under a rule, the lane first. The waste forecast has its own sheet (waste-forecast.module.css). */
 .rows { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .rows strong { color: var(--text-primary); font-weight: var(--font-weight-medium); }
-.rows button:not(.linkButton) { min-height: var(--control-h-sm); margin-inline-start: var(--space-1); padding: 0 var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); font: inherit; cursor: pointer; }
-.rows button:not(.linkButton):hover:not(:disabled) { background: var(--bg-hover); }
-.rows button:not(.linkButton):focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
-.rows button:disabled { color: var(--text-tertiary); cursor: not-allowed; }
 .hint { color: var(--text-primary); }
-/* A weekly window at reset: used so far, what the current burn adds, and hatched for what is left unused. */
-.waste { display: flex; height: 6px; margin-top: var(--space-1); overflow: hidden; border-radius: var(--radius-full); background: var(--border-subtle); }
-.wasteUsed { background: var(--accent-500); }
-.wasteBurn { background: var(--accent-500); opacity: 0.35; }
-.wasteUnused { background: repeating-linear-gradient(135deg, var(--status-unknown-solid) 0 2px, transparent 2px 6px); }
-.rows li[data-tone='warn'] .wasteUnused { background: repeating-linear-gradient(135deg, var(--status-warning-solid) 0 2px, transparent 2px 6px); }
-.rows li[data-tone='bad'] .wasteUnused { background: repeating-linear-gradient(135deg, var(--status-danger-solid) 0 2px, transparent 2px 6px); }
 @media (prefers-reduced-motion: reduce) { .segmentFill, .pip, .fill { transition: none; } }

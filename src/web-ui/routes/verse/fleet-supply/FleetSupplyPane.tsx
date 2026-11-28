@@ -1,13 +1,13 @@
 /**
  * routes/verse/fleet-supply/FleetSupplyPane.tsx — the Supply board: how many job files to write so the lanes stay
  * full. A headline, the fleet's opening slots as one strip, a card per lane (provider mark, a square per slot that
- * opens in the window, filled when a job waits for it), where tokens go, and the weekly waste forecast with its
- * target fix. Slots and waiting jobs come from GET /api/verse/fleet/runs (`phm fleet runs --json`); run-out times
- * and the forecast from GET /api/verse/leader/resources.
+ * opens in the window, filled when a job waits for it), where tokens go, and the weekly waste forecast
+ * (WasteForecast.tsx: a row per weekly window on the shared WindowBar, with its target fix). Slots and waiting
+ * jobs come from GET /api/verse/fleet/runs (`phm fleet runs --json`); run-out times and the forecast from
+ * GET /api/verse/leader/resources (`phm resources ledger --json`).
  */
 import { useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
-import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
 import { refetchQuery } from '../../../data/cache.js';
 import { ApiError, readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -22,9 +22,10 @@ import { supplyLedgerQuery } from './supply-ledger-query.js';
 import { fleetSupplyQuery } from './fleet-supply-queries.js';
 import { heldUntilText } from './held-until-text.js';
 import { laneYield, yieldRanking, yieldText } from './lane-yield-model.js';
-import { boardHeadline, supplyCard, supplyStrip, totalsLine, wasteBar, type SupplyCard } from './supply-board-model.js';
+import { boardHeadline, supplyCard, supplyStrip, totalsLine, type SupplyCard } from './supply-board-model.js';
 import { asRecord, HORIZON_SECONDS, laneSupply, TYPICAL_RUN_SECONDS } from './supply-model.js';
-import { suggestedTarget, wasteForecast, wasteHeadline } from './waste-forecast-model.js';
+import { WasteForecastRows } from './WasteForecast.js';
+import { wasteForecast, wasteHeadline } from './waste-forecast-model.js';
 import styles from './fleet-supply.module.css';
 
 /** The slots a lane opens in the window: a square each, or one bar for a lane too large to count by eye. */
@@ -150,23 +151,7 @@ export function FleetSupplyPane({ visible }: PaneProps) {
     </section>
     {waste && <section className={styles.section} aria-label="Waste forecast">
       <h3 className={styles.title} data-plain>{waste}</h3>
-      <ul className={styles.rows}>{forecasts.map(({ forecast, lane }) => {
-        const row = rows.find(item => item.lane === forecast.lane);
-        const held = row?.held || lane.held === true;
-        const suggestion = row ? suggestedTarget(forecast, { ...row, held: !!held }, lane.burnPctPerHour) : null;
-        const bar = wasteBar(lane.usedPct, forecast.unusedPct, forecast.burnKnown);
-        return <li key={forecast.lane} data-tone={forecast.tone}>
-          <StatusBadge status={forecast.tone} tone={forecast.tone === 'bad' ? 'danger' : forecast.tone === 'warn' ? 'warning' : 'success'}>{forecast.tone === 'bad' ? 'High' : forecast.tone === 'warn' ? 'Watch' : 'On track'}</StatusBadge> {forecast.text}
-          {held && <> · held: release first</>}
-          {suggestion && <> · needs target {suggestion.target} (now {row!.target}, {new Intl.NumberFormat('en-US', { maximumSignificantDigits: 3 }).format(suggestion.perWorkerPctPerHour)}%/h per worker){suggestion.target * suggestion.perWorkerPctPerHour < forecast.neededBurnPctPerHour && ' · capped at 64; may leave usage unused'} <button type="button" disabled={writing} onClick={() => void setTarget(forecast.lane, suggestion.target)}>Set target {suggestion.target}</button></>}
-          {notices[forecast.lane] && <> · <span role="status">{notices[forecast.lane]}</span></>}
-          {bar && <div className={styles.waste} role="img" aria-label={`${forecast.lane} at reset: ${bar.label}`}>
-            <span className={styles.wasteUsed} style={{ width: `${bar.usedPct}%` }} />
-            <span className={styles.wasteBurn} style={{ width: `${bar.burnPct}%` }} />
-            <span className={styles.wasteUnused} style={{ width: `${bar.unusedPct}%` }} />
-          </div>}
-        </li>;
-      })}</ul>
+      <WasteForecastRows forecasts={forecasts} rows={rows} nowMs={now} writing={writing} notices={notices} onSetTarget={(lane, target) => void setTarget(lane, target)} />
     </section>}
     <p className={styles.footer}>Next {HORIZON_SECONDS / 60} min · assumes ~{TYPICAL_RUN_SECONDS / 60} min per job. Waiting = pending files + queued jobs.</p>
   </section>;
