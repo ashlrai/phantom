@@ -94,6 +94,17 @@ describe('lane plan and caps probe', () => {
     expect(probeLocalModelCaps(deps({ headroom: headroom(), platform: 'linux' }))).toEqual([]);
     expect(probeLocalModelCaps(deps({ headroom: headroom(60, 0, 4) }))).toEqual([]);
   });
+
+  it('the disabled hint names the config path the probe actually reads', () => {
+    // An explicit configPath is named verbatim — a relocated ASHLR_HOME or a
+    // caller-supplied file must not be told to edit ~/.ashlr.
+    const probe = localLanePlan(deps({ platform: 'darwin' }));
+    expect(probe.plan.backoff).toBe('disabled');
+    expect(probe.plan.backoffReason).toBe(`Enable with ${configPath} {"schemaVersion":1,"enabled":true}`);
+    // The default probe keeps the familiar ~/ spelling for the standard home.
+    const fallback = localLanePlan({ platform: 'darwin', totalBytes: () => 16 * GiB });
+    expect(fallback.plan.backoffReason).toBe('Enable with ~/.ashlr/local-lanes.json {"schemaVersion":1,"enabled":true}');
+  });
 });
 
 describe('probeNodeLanes merges provider sign-ins with local model caps', () => {
