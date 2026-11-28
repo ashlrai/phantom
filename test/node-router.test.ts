@@ -83,6 +83,37 @@ describe('node router', () => {
     expect(plan.find(r => r.jobId === 'j-plain')).toMatchObject({ nodeId: null,
       fix: "No live node belongs to owner 'o'. Run: phm node join --owner o" });
   });
+
+  it('names gh auth, not missing caps, when a node advertises the cap but cannot auth', () => {
+    const f = fixture();
+    f.box.join('builder', { owners: ['o'], caps: ['build'] });
+    f.mac.join('gh-noauth', { owners: ['o'], caps: ['gh'] });
+    f.box.enqueue('needs-gh', { owner: 'o', requires: ['gh'] });
+    f.box.enqueue('needs-cursor', { owner: 'o', requires: ['cursor'] });
+    const plan = f.box.plan();
+    // gh-noauth advertises the cap; it only lacks local auth, so the caps fix
+    // would send the operator to rejoin a node that already has the lane.
+    expect(plan.find(r => r.jobId === 'needs-gh')).toMatchObject({ nodeId: null,
+      fix: expect.stringContaining('gh auth login') });
+    expect(plan.find(r => r.jobId === 'needs-gh')!.fix).not.toContain('No node owned');
+    // Nobody advertises 'cursor' at all: the caps fix is the true blocker.
+    expect(plan.find(r => r.jobId === 'needs-cursor')!.fix).toContain('advertises cursor');
+  });
+
+  it('names the declined fix, not missing caps, when the decliner still advertises them', () => {
+    const f = fixture();
+    const worker = f.box.join('worker', { owners: ['o'], caps: ['build'] })!;
+    f.mac.join('other', { owners: ['o'], caps: ['gh'] });
+    f.box.enqueue('job', { owner: 'o', requires: ['build'] });
+    const claim = f.box.pull(worker)!.claim;
+    f.box.release(claim, true);
+    const route = f.box.plan().find(r => r.jobId === 'job')!;
+    // 'other' lacks build, but worker advertises it and released unrun — the
+    // caps fix would falsely claim nobody advertises the lane.
+    expect(route.nodeId).toBeNull();
+    expect(route.fix).toContain('unrun');
+    expect(route.fix).not.toContain('No node owned');
+  });
 });
 
 describe('job leases: no job runs twice', () => {

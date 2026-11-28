@@ -142,15 +142,23 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       continue;
     }
     const requires = job.requires ?? [];
-    const fix = !nodes.some(n => n.owners?.includes(job.owner!))
+    // First-blocker reasons are per node and earlier fences mask later ones (a
+    // declined session still reports 'declined' even when it also lacks caps),
+    // so the reason set alone cannot prove "no node advertises the caps". Check
+    // the live records so each fix names a blocker that actually holds.
+    const scoped = nodes.filter(n => n.owners?.includes(job.owner!));
+    const advertises = (n: NodeRecord) => requires.every(c => (n.caps ?? []).includes(c));
+    const fix = scoped.length === 0
       ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
       : reasons.has('capacity')
         ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
-      : reasons.has('declined') && !reasons.has('caps')
-        ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
-      : reasons.has('caps')
-        ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
-        : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
+        : !scoped.some(advertises)
+          ? `No node owned by '${job.owner}' advertises ${requires.join(',')}. Rejoin a node with --caps including them.`
+          : requires.includes('gh') && !scoped.some(n => advertises(n) && n.auth === 'ok')
+            ? `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`
+            : reasons.has('declined')
+              ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
+              : `No node owned by '${job.owner}' can take '${job.id}' right now. Run: phm node plan --owner ${job.owner}`;
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
   return plan;
