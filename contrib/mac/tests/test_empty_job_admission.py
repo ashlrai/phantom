@@ -15,6 +15,38 @@ def prompt(job, attrs='P1, pool=devin', text='Fix src/core/queue/store.ts retry 
 
 
 class EmptyJobAdmission(unittest.TestCase):
+    def test_reserved_requests_dedupe_without_process_evidence_until_terminal(self):
+        for family in ('FLEETCORE', 'CONSOLE'):
+            for terminal in (None, 'finish', 'launch_terminal'):
+                with self.subTest(family=family, terminal=terminal), build(
+                        slots={'codex-cmp': lane_slot()}) as tmp:
+                    home = Path(tmp).resolve(); env = launch_stubs(home)
+                    q = home / '.ashlr-runs/queue'
+                    owner, copy, distinct = (f'RQ-PHX-{family}{n}' for n in (1, 2, 3))
+                    digest = request_hash(owner, 'phantom', prompt(owner))
+                    rows = [dict(event='claim', job=owner, repo='phantom',
+                                 request_hashes=[digest], launch_dedupe=True)]
+                    if terminal:
+                        rows.append(dict(event=terminal, job=owner))
+                    ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
+                    ledger.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+                    for job in (copy, distinct):
+                        queue_job(home, job, 'codex-cmp')
+                        text = 'Fix src/core/queue/store.ts timeout handling.' if job == distinct else None
+                        (q / f'prompts/{job}.md').write_text(prompt(job, **({'text': text} if text else {})))
+                    result = tick(home, env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertTrue(dispatched(home, distinct))
+                    self.assertEqual(dispatched(home, copy), terminal is not None)
+                    if terminal is None:
+                        self.assertIn(copy, '\n'.join(ready_lines(home)))
+                        receipts = list(map(json.loads, ledger.read_text().splitlines()))
+                        self.assertTrue(any(row.get('job') == copy and row.get('event') == 'dispatch_deferred'
+                                            and row.get('reason') == 'duplicate-request'
+                                            and row.get('repeatOf') == owner for row in receipts))
+                        self.assertEqual(tick(home, env).returncode, 0)
+                        self.assertFalse(dispatched(home, copy))
+
     def test_repair_jobs_for_different_prs_are_different_requests(self):
         a, b = 'RQ-FIXUP-phantom-41-aaaaaaa', 'RQ-FIXUP-phantom-42-aaaaaaa'
         self.assertNotEqual(request_hash(a, 'phantom', prompt(a)), request_hash(b, 'phantom', prompt(b)))
@@ -94,6 +126,8 @@ class EmptyJobAdmission(unittest.TestCase):
                     self.assertFalse(dispatched(home, 'RQ-B'))
                     # Once ownership ends, the retained request can retry.
                     (q / 'run/RQ-A.dispatched').unlink(missing_ok=True)
+                    with ledger.open('a') as out:
+                        out.write(json.dumps(dict(event='finish', job='RQ-A')) + '\n')
                     self.assertEqual(tick(home, env).returncode, 0)
                     self.assertTrue(dispatched(home, 'RQ-B'))
 
