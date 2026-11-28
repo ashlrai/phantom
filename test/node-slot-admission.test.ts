@@ -63,6 +63,23 @@ describe('node slot admission', () => {
     expect(nodes.pull(session)?.job.id).toBe('job');
   });
 
+  it('keeps shared reservations in the owner-scoped preview used before a pull', () => {
+    const { nodes } = fixture();
+    const worker = nodes.join('shared', { owners: ['acme', 'mason'], slots: 1 })!;
+    nodes.enqueue('first', { owner: 'acme' });
+    nodes.enqueue('second', { owner: 'mason' });
+
+    expect(nodes.plan('mason')).toEqual(nodes.view(['mason']).routes);
+    expect(nodes.plan('mason')).toEqual([
+      { jobId: 'second', owner: 'mason', nodeId: null, fix: expect.stringContaining('no free job slots') },
+    ]);
+    const first = nodes.pull(worker)!;
+    expect(first.job.id).toBe('first');
+    expect(nodes.complete(first.claim, 'done')).toBe(true);
+    expect(nodes.plan('mason')[0]?.nodeId).toBe('shared');
+    expect(nodes.pull(worker)?.job.id).toBe('second');
+  });
+
   it('also enforces slots on the direct queue claim API', () => {
     const { nodes } = fixture();
     const session = nodes.join('pro', { owners: ['mason'], slots: 0 })!;
