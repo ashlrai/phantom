@@ -1266,6 +1266,12 @@ folded per repository too, so outside merges that keep landing without a
 completed green check verdict (failed checks, checks still incomplete, or
 an empty rollup) become self-targeted backlog items; see
 [core/improve/outside-pr-ci-backlog.ts](../src/core/improve/outside-pr-ci-backlog.ts).
+Each row's `reviews` field — gh's `latestReviews` count plus its computed
+`reviewDecision` — is folded per repository as well, so outside merges
+that keep landing with an empty `latestReviews` array (zero recorded
+reviewers, a real "merged unreviewed" signal distinct from a null record's
+missing evidence) become self-targeted backlog items; see
+[core/improve/outside-pr-review-backlog.ts](../src/core/improve/outside-pr-review-backlog.ts).
 
 `phm fleet pr-hygiene [--repo <owner/name>] [--stale-days <n>] [--limit <n>] [--json]`
 audits one repo's open PRs and emits the `fleet.pr-hygiene.v1` triage report
