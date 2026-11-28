@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BUS_FEED_FRAME_BEGIN, BUS_FEED_FRAME_END, BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END,
+  AGENT_CHAT_FRAME_BEGIN, AGENT_CHAT_FRAME_END, BUS_FEED_FRAME_BEGIN, BUS_FEED_FRAME_END,
+  BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END,
   BUS_INBOX_FRAME_MAX, OWNER_THREAD_FRAME_BEGIN, OWNER_THREAD_FRAME_END,
-  frameBusChannelRead, frameBusInbox, frameBusWakes, frameBusWorkFeed,
+  frameAgentChat, frameBusChannelRead, frameBusInbox, frameBusWakes, frameBusWorkFeed,
   frameCommsBusRead, frameOwnerThread,
 } from '../src/core/agents/bus-cli-adapters.js';
 import type { AgentWakeRow, ChannelReadMessage, InboxMessage } from '../src/core/agents/bus-unified.js';
@@ -30,6 +31,9 @@ describe('bus frame UTF-8 byte budget', () => {
     }],
     ['owner-thread', OWNER_THREAD_FRAME_BEGIN, OWNER_THREAD_FRAME_END,
       (text: string) => frameOwnerThread('codex', Array(200).fill(`1 t telegram inbound ${text}`))],
+    ['chat', AGENT_CHAT_FRAME_BEGIN, AGENT_CHAT_FRAME_END,
+      (text: string) => frameAgentChat('codex',
+        Array(200).fill(`  #1 1970-01-01T00:00:00.000Z agent:a [message] run:x ${text}`))],
   ] as const;
 
   function envelope(text: string): BusEnvelope {

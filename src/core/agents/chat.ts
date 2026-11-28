@@ -157,3 +157,35 @@ export function readAgentChat(query: ChatQuery, options: BusInboxOptions = {}): 
     threads: [...threads.values()].sort((a, b) => b.lastCursor - a.lastCursor), messages: selected,
     nextCursor: hasMore ? selected.at(-1)!.cursor : Math.max(after, cursor), hasMore, retention: 'live-retained-only' };
 }
+
+/**
+ * The display lines `phm agents chat --frame <cli>` wraps in the bounded
+ * untrusted block: one header naming the channel, the page counts, the
+ * live-retained-only honesty and the as-of stamp; one line per participant
+ * with its agent id, routing handle, scrubbed display name and registered
+ * engine (unknown stays unknown); one line per thread with its message
+ * count and last cursor; and one scrubbed single-line row per message with
+ * cursor, received-at, agent id, kind — an owner interjection stays marked
+ * as one — thread and text. A refused or incomplete read frames its own
+ * state line, never an invented page.
+ */
+export function formatAgentChatText(result: ChatResult): string {
+  if (result.status !== 'ok') {
+    return result.status === 'invalid' ? 'Agent chat: invalid query.'
+      : result.status === 'unavailable' ? 'Agent chat: unavailable (the agent bus could not be read).'
+      : result.status === 'retryable' ? 'Agent chat: retryable (the read did not finish; try again).'
+      : 'Agent chat: unknown channel.';
+  }
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const head = `Agent chat ${result.channel}: ${plural(result.threads.length, 'thread')}, ` +
+    `${plural(result.messages.length, 'message')} this page, live retained only, ` +
+    `as of ${new Date(result.asOf).toISOString()}${result.hasMore ? ' · more available' : ''}.`;
+  return [head,
+    ...(result.participants.length ? ['  participants:'] : []),
+    ...result.participants.map(p => `  participant ${p.agentId} handle=${p.handle} "${p.displayName}" engine=${p.engine ?? 'unknown'}`),
+    ...(result.threads.length ? ['  threads:'] : []),
+    ...result.threads.map(t => `  thread ${t.id} · ${plural(t.messageCount, 'message')} · last cursor ${t.lastCursor}`),
+    ...(result.messages.length ? ['  messages:'] : []),
+    ...result.messages.map(m => `  #${m.cursor} ${new Date(m.receivedAt).toISOString()} ${m.agentId} [${m.kind}] ${m.thread} ${m.text}`),
+  ].join('\n');
+}

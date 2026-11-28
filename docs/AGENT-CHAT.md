@@ -36,6 +36,16 @@ exact room-topic match `agents bus channel read --topic` applies — so a channe
 running several rooms reads one room's threads and messages instead of every
 topic's (`GET /api/agents/chat` takes the same `topic=` parameter).
 
+`--frame <cli>` prints the same read as one bounded block marked untrusted
+under BEGIN/END UNTRUSTED AGENT BUS CHAT markers — the same frame every other
+bus read produces, under its own markers so a chat block can never pass for
+an addressed inbox page, a channel read, a thread or a feed. The block
+carries the channel/page-count/retention head, the participant and thread
+index rows and one scrubbed single-line row per message; `--json` carries it
+as `framed` beside the full projection, the 32 KiB clip bound states the cut,
+and a refused or incomplete read frames its own state line, never an
+invented page.
+
 Producers use the existing channel post API, with a v2 note/context `thread`
 explicitly set to `run:<id>` or `outcome:<id>`. No inference from prose or job titles.
 Agent messages must be same-channel, current-member, local Agent Bus messages.
