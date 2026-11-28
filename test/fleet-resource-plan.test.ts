@@ -121,6 +121,28 @@ describe('fleet resource plan', () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  it.each([
+    ['open-only', 'open\tphantom\t\twork\tfixture.md'],
+    ['mixed', 'open\tphantom\tagy\twork\tfixture.md\t{"preferred_lane":null}\nother\tphantom\tcodex-personal\twork\tfixture.md'],
+  ])('credits lane-open supply in the %s advisory queue', async (_kind, ready) => {
+    const dir = await mkdtemp(join(tmpdir(), 'phantom-unfed-open-'));
+    try {
+      await mkdir(join(dir, 'queue'));
+      const snapshot = status();
+      const plan = buildFleetResourcePlan(live, [node], snapshot, ledger, now);
+      await writeFile(join(dir, 'queue/status.json'), JSON.stringify({
+        ...snapshot,
+        lanes: { agy: { ...snapshot.lanes['agy'], target: 2 } },
+        unfed_capacity: { waiting: 2, lanes: { agy: { waiting_elsewhere: 1 } } },
+      }));
+      await writeFile(join(dir, 'queue/ready.tsv'), ready);
+
+      const report = await readUnfedReport({ runsDir: dir, now: () => now, readCapacity: async () => plan });
+      expect(report.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: 0 });
+      expect(report).toMatchObject({ source: 'dispatcher', unfedSlots: 1 });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('includes an expiring reset proposal only when the allowance and bank evidence support it', () => {
     const reading = { ...readings[0]!, used: 95, source: 'codex-budget-overrides-weekly' };
     const weekly = { ...live, readings: [reading], history: { [reading.id]: [
@@ -169,7 +191,7 @@ describe('fleet resource plan', () => {
       expect(plan.lanes.filter(lane => lanes.includes(lane.lane)).map(lane => [lane.queued_jobs, lane.additional_slots])).toEqual([[2, 1], [2, 1]]);
       const readCapacity = async () => plan;
       const unfed = await readUnfedReport({ runsDir: dir, now: () => now, readCapacity });
-      expect(unfed.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: 1 });
+      expect(unfed.resourcePlan).toContainEqual({ lane: 'agy', running: 1, target: 2, unfedSlots: 0 });
       const board = await recordLeaderBoard({ runsDir: dir, nowMs: now, readCapacity });
       expect(board).toMatchObject({ wrote: true, board: { resourcePlan: { lanes: expect.arrayContaining([
         { lane: 'agy', running: 1, target_concurrency: 2 },

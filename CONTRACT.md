@@ -1798,7 +1798,8 @@ when the report establishes no unfed capacity. The report's `marketTruncated` bo
 is true when the bounded work-market journal read omitted older bytes.
 History, overrides, rejections and decision outcomes may then be incomplete
 for the requested window. The additive `resourcePlan` block compares the
-advisory resource-plan target with running jobs and waiting work; it does
+advisory resource-plan target with running jobs and waiting work. Lane-open
+jobs count as potential lane supply in the advisory comparison. It does
 not reinterpret dispatcher decisions or change the exit status. A missing or unreadable journal is indicated by
 the market folds' `available: false`. `foldMarketOverrides` collapses the
 window's `route_decision` rows to each job's latest decision and tallies
