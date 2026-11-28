@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   AGENT_CHAT_FRAME_BEGIN, AGENT_CHAT_FRAME_END, BUS_FEED_FRAME_BEGIN, BUS_FEED_FRAME_END,
   BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END,
-  BUS_INBOX_FRAME_MAX, OWNER_THREAD_FRAME_BEGIN, OWNER_THREAD_FRAME_END,
+  BUS_INBOX_FRAME_MAX, MASON_INBOX_FRAME_BEGIN, MASON_INBOX_FRAME_END,
+  OWNER_THREAD_FRAME_BEGIN, OWNER_THREAD_FRAME_END,
   frameAgentChat, frameBusChannelRead, frameBusInbox, frameBusWakes, frameBusWorkFeed,
-  frameCommsBusRead, frameOwnerThread,
+  frameCommsBusRead, frameMasonInboxRead, frameOwnerThread,
 } from '../src/core/agents/bus-cli-adapters.js';
 import type { AgentWakeRow, ChannelReadMessage, InboxMessage } from '../src/core/agents/bus-unified.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
@@ -34,6 +35,9 @@ describe('bus frame UTF-8 byte budget', () => {
     ['chat', AGENT_CHAT_FRAME_BEGIN, AGENT_CHAT_FRAME_END,
       (text: string) => frameAgentChat('codex',
         Array(200).fill(`  #1 1970-01-01T00:00:00.000Z agent:a [message] run:x ${text}`))],
+    ['mason-inbox', MASON_INBOX_FRAME_BEGIN, MASON_INBOX_FRAME_END,
+      (text: string) => frameMasonInboxRead('codex',
+        Array(200).fill(`[2026-11-28 09:14 cli (cli-a1b2c3d4e5f6g7h8) P2] ${text}`))],
   ] as const;
 
   function envelope(text: string): BusEnvelope {
