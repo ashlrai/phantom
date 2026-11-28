@@ -19,6 +19,8 @@ runs on two nodes.
   belongs to (`--owner acme`) and only ever sees, routes or pulls jobs of those
   owners. Another owner's jobs, packs, secret names and nodes never appear in
   its output. A job without an owner is never routed.
+  An owner-scoped plan accounts for earlier jobs competing for the same node
+  slots across owners, and returns only assignments for the requested owner.
 - **Leases and fencing.** Pulling a job takes a lease (30 seconds by default)
   and a fencing token that only ever increases. Renew before it expires. If a
   node stalls, the lease lapses and another node can pull the job with a higher
