@@ -24,10 +24,31 @@ function fixture() {
   const b = new DriveNodes(store, options);
   const alice = a.join('alice')!;
   const bob = b.join('bob')!;
-  return { a, b, store, alice, bob, advance: (ms: number) => { now += ms; } };
+  return { a, b, store, alice, bob, clock: options.now, advance: (ms: number) => { now += ms; } };
 }
 
 describe('drive node leases', () => {
+  it('preserves live lease deadlines when renewed by an instance with shorter TTLs', () => {
+    const f = fixture();
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    f.a.enqueue('job');
+    const claim = f.a.claim(leader, f.alice, 'job')!;
+    const nodeExpiry = f.a.snapshot().nodes.find(n => n.nodeId === 'alice')!.expiresAt;
+    const short = new DriveNodes(f.store, { now: f.clock, nodeTtlMs: 5, leaderTtlMs: 5, claimTtlMs: 5 });
+
+    f.advance(1);
+    expect(short.heartbeat(f.alice)!.leader).toEqual(leader);
+    expect(short.renewClaim(claim)).toEqual(claim);
+    expect(short.snapshot().nodes.find(n => n.nodeId === 'alice')).toMatchObject({
+      heartbeatAt: 1001, expiresAt: nodeExpiry,
+    });
+
+    f.advance(19);
+    const next = f.b.heartbeat(f.bob)!.leader!;
+    expect(next.nodeId).toBe('bob');
+    expect(short.renewClaim(claim)).toBeNull();
+  });
+
   it('acquires one leader and renews without changing its fencing token', () => {
     const f = fixture();
     const leader = f.a.heartbeat(f.alice)!.leader!;
