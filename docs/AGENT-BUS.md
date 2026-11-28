@@ -3119,7 +3119,12 @@ through `src/core/agents/claim-store.ts`, so overlap is decided in one table.
 A second live claim on an overlapping key is rejected. A team lease's `path`
 is a prefix claim — it covers the path and everything beneath it — so it
 overlaps a bus `path:` glob that matches any path in that subtree, in either
-acquire order. Characters such as `[` or `{` are literal under `globMatches`,
+acquire order. The bus side stays an exact glob: a wildcard-free
+`path:<repo>:<path>` names only that literal path, so a team lease strictly
+deeper than it (for example `src/core/agents` against `src/core`) guards a
+subtree the bus claim never reaches and does not conflict — the same pair of
+bus claims on those paths never conflicts either. Characters such as `[` or
+`{` are literal under `globMatches`,
 never wildcards, so a team path like `src/[id]` stays a concrete prefix claim.
 `*` and `?` are the glob wildcards but also legal filename characters: a team
 path carrying them keeps the same prefix coverage, and the overlap check reads

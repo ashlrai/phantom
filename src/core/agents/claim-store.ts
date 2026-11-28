@@ -130,9 +130,16 @@ function pathsOverlap(teamPath: string, glob: string): boolean {
   if (!left || !right || left.split('/').includes('..') || right.split('/').includes('..')) return false;
   // `globMatches` wildcards are `*`/`?` only — `[`, `{` and friends are
   // literal characters, so a team path like `src/[id]` is still a concrete
-  // prefix claim and must keep its `/**` subtree coverage below.
+  // prefix claim and must keep its `/**` subtree coverage below. With no
+  // wildcards on either side the bus glob names exactly one path — the same
+  // exact-glob rule `claimKeysOverlap` applies between two bus claims — so
+  // the pair overlaps only when that literal path is the team path itself
+  // or beneath it. A team path strictly deeper than the bus literal guards
+  // a subtree the bus claim never reaches (two bus claims on `src/core` and
+  // `src/core/agents/x` never conflict either), so it is disjoint, not a
+  // conflict.
   const wild = (value: string) => /[*?]/.test(value);
-  if (!wild(left) && !wild(right)) return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+  if (!wild(left) && !wild(right)) return left === right || right.startsWith(`${left}/`);
   const sampleRepo = 'o/n';
   const leftKey = `path:${sampleRepo}:${left}`;
   const rightKey = `path:${sampleRepo}:${right}`;

@@ -39,6 +39,24 @@ describe('coordinationRowBlocks', () => {
     expect(coordinationRowBlocks(team, 'path:fake/repo:src2/**')).toBe(false);
   });
 
+  it('does not let a bus path glob claim the team subtree above it', () => {
+    // The bus side of teamHitsKey is an exact glob, not a prefix claim:
+    // path:fake/repo:src/core covers only 'src/core' itself, so a team lease
+    // on the deeper 'src/core/agents' subtree is disjoint — the same pair of
+    // bus claims (src/core vs src/core/agents/x) never conflicts either.
+    const team = row({ origin: 'team', key: 'team:fake/repo::src/core/agents', repo: 'fake/repo', path: 'src/core/agents' });
+    expect(coordinationRowBlocks(team, 'path:fake/repo:src/core')).toBe(false);
+    expect(coordinationRowBlocks(team, 'path:fake/repo:src/core/agents')).toBe(true);
+    expect(coordinationRowBlocks(team, 'path:fake/repo:src/core/agents/x.ts')).toBe(true);
+    expect(coordinationRowBlocks(team, 'path:fake/repo:src/core/agents/**')).toBe(true);
+    // The reverse depth still overlaps: the bus literal lands inside the
+    // team's covered subtree.
+    const shallow = row({ origin: 'team', key: 'team:fake/repo::src/core', repo: 'fake/repo', path: 'src/core' });
+    expect(coordinationRowBlocks(shallow, 'path:fake/repo:src/core/agents/x.ts')).toBe(true);
+    expect(coordinationRowBlocks(shallow, 'path:fake/repo:src/core')).toBe(true);
+    expect(coordinationRowBlocks(shallow, 'path:fake/repo:src/core2/x.ts')).toBe(false);
+  });
+
   it('keeps prefix coverage when a team path holds glob wildcard characters', () => {
     // `*`/`?` are legal filename characters, but the team claim is still a
     // prefix claim: a bus glob matching the bare path or anything beneath it
