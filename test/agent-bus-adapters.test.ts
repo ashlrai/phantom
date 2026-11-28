@@ -65,6 +65,35 @@ describe('channel adapter registry', () => {
     expect(JSON.parse(out.join('\n'))).toMatchObject({ id: 'bus', dryRun: false, status: 'sent' });
   });
 
+  it('channels list honors --root and reports every adapter health verdict', async () => {
+    const root = temp();
+    const out: string[] = [];
+    const code = await runAgentsCli(['bus', 'channels', 'list', '--root', root, '--json'], line => out.push(line));
+    expect(code).toBe(0);
+    const result = JSON.parse(out.join('\n'));
+    expect(result.channels.find((row: { id: string }) => row.id === 'bus')).toMatchObject({ adapterRegistered: true, healthy: true });
+    expect(result.channels.find((row: { id: string }) => row.id === 'handoff')).toMatchObject({ adapterRegistered: true, healthy: true });
+    expect(result.channels.find((row: { id: string }) => row.id === 'slack')).toMatchObject({ adapterRegistered: false, healthy: 'unknown' });
+    // Text mode names the same --root-scoped verdicts, never a guessed healthy.
+    const lines: string[] = [];
+    expect(await runAgentsCli(['bus', 'channels', 'list', '--root', root], line => lines.push(line))).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain('bus: adapter registered, healthy');
+    expect(text).toContain('handoff: adapter registered, healthy');
+    expect(text).toContain('slack: no adapter registered, health unknown');
+    // An unreadable store at --root reports down, not a fabricated healthy.
+    const corrupt = temp();
+    mkdirSync(join(corrupt, 'bus-inbox'), { recursive: true });
+    writeFileSync(join(corrupt, 'bus-inbox', 'messages.json'), 'not json');
+    const down: string[] = [];
+    await runAgentsCli(['bus', 'channels', 'list', '--root', corrupt], line => down.push(line));
+    expect(down.join('\n')).toContain('bus: adapter registered, down');
+    expect(down.join('\n')).toContain('handoff: adapter registered, down');
+    // A non-absolute --root is refused like every other bus read.
+    const errs: string[] = [];
+    expect(await runAgentsCli(['bus', 'channels', 'list', '--root', 'relative/path'], () => {}, line => errs.push(line))).toBe(2);
+  });
+
   it('measures a local bus round trip under 2 seconds at p95', async () => {
     const root = temp();
     const adapter = createBusChannelAdapter({ root });

@@ -53,11 +53,14 @@ shared send policy. See [the Slack bridge section](AGENT-NETWORK.md#slack-bridge
 for scopes, host credential injection, authenticated `probe`/`run` commands and uncertain-send reconciliation. Configuration readiness is not live health.
 
 The following commands inspect the channel contract. `bus` and `handoff` have
-registered local adapters. `channels test bus` and `channels test handoff`
-record one probe envelope in the private bus store and return `sent` when the
-store accepts it. They stop when the kill switch is on or communications are
-paused. Every other channel stays refused until an adapter is registered. No
-command contacts the network.
+registered local adapters. `channels list` reports which adapters are
+registered and each adapter's health verdict — usable, confirmed down or
+unknown — for the bus store `--root` names (the shared fleet root by
+default); an unregistered channel's health stays unknown, never guessed.
+`channels test bus` and `channels test handoff` record one probe envelope in
+that store and return `sent` when the store accepts it. They stop when the
+kill switch is on or communications are paused. Every other channel stays
+refused until an adapter is registered. No command contacts the network.
 
 ```sh
 phm agents bus channels list --json

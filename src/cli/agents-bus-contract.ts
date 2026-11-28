@@ -16,7 +16,7 @@ ashlr agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <na
 ashlr agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <envelope-id>] [--channel <name>] [--topic <topic>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--to <name>] [--thread <label>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--kind <ask|reply|handoff|status|blocker>] [--limit <1..1024>] [--json]
 ashlr agents roster [--json]
 ashlr agents bus contract [--json]
-ashlr agents bus channels list [--json]
+ashlr agents bus channels list [--root <abs>] [--json]
 ashlr agents bus channels test <id> [--root <abs>] [--json]
 ashlr agents apps [<id> <verb>] [--json]  (docs/AGENT-APPS.md)
 ${AGENTS_BUS_UNIFIED_HELP}
@@ -24,8 +24,11 @@ ${AGENTS_BUS_UNIFIED_HELP}
 Profile verbs read ~/.phantom/agents (docs/AGENT-PROFILES.md).
 Print the Agent Bus v2 contract version, providers, body kinds, work statuses and
 claim key forms. The contract command is read-only. channels list reports which
-adapters are registered. channels test bus and channels test handoff record one
-local probe in the private store. Other channels stay refused. No network.
+adapters are registered and each adapter's health verdict for the bus store
+--root names — true usable, false confirmed down, 'unknown' when nothing can
+assess it, never guessed for an unregistered channel. channels test bus and
+channels test handoff record one local probe in that store. Other channels
+stay refused. No network.
 Spec: docs/AGENT-BUS.md ("v2").`;
 
 /** Contract print is read-only. Channel probes write only to the local bus store. */
@@ -77,10 +80,12 @@ export async function runAgentsCli(
     return result.status === 'ok' ? 0 : 1;
   }
   if (rest[0] === 'bus' && rest[1] === 'channels') {
-    if (rest.length === 3 && rest[2] === 'list' && root === undefined) {
-      const channels = listChannelRegistry();
+    if (rest.length === 3 && rest[2] === 'list') {
+      const channels = listChannelRegistry(root === undefined ? {} : { root });
       const result = { dryRun: false, channels };
-      out(json ? JSON.stringify(result) : channels.map(channel => `${channel.id}: ${channel.adapterRegistered ? 'adapter registered' : 'no adapter registered'}`).join('\n'));
+      out(json ? JSON.stringify(result) : channels.map(channel => `${channel.id}: ${channel.adapterRegistered
+        ? `adapter registered, ${channel.healthy === 'unknown' ? 'health unknown' : channel.healthy ? 'healthy' : 'down'}`
+        : 'no adapter registered, health unknown'}`).join('\n'));
       return 0;
     }
     if (rest.length === 4 && rest[2] === 'test' && CHANNEL_IDS.some(id => id === rest[3])) {
