@@ -228,3 +228,55 @@ describe('re-assertion', () => {
     expect(readCloudBacklog([merged, running], NOW).items.find((i) => i.id === 'ev-4')).toMatchObject({ claimedBy: running.id, lastState: 'running' });
   });
 });
+
+describe('area merge outcomes', () => {
+  const MERGE_SHA = 'a'.repeat(40);
+  const mergedTask = (itemId: string, prNumber: number): CloudTaskV1 => ({
+    ...task(itemId, 'merged', DAY, 2 * DAY),
+    pr: { number: prNumber, url: `https://github.com/ashlrai/phantom/pull/${prNumber}`, state: 'merged', draft: false, title: 't' },
+    outcome: { observedAt: NOW.toISOString(), headSha: null, mergeSha: MERGE_SHA, ci: 'success', failedChecks: [], reviewDecision: null, changesRequested: 0 },
+  });
+
+  it('orders unmeasured areas by merge/revert evidence: held first, revert-dominated last', () => {
+    appendUserBacklogItems([
+      item('ao-held', { priority: 2, area: 'alpha-zone' }),
+      item('ao-none', { priority: 2, area: 'beta-zone' }),
+      item('ao-bad', { priority: 2, area: 'gamma-zone' }),
+    ]);
+    const pinned = new Map([
+      ['alpha-zone', { held: 3, reverted: 0 }],
+      ['gamma-zone', { held: 0, reverted: 3 }],
+    ]);
+    const ids = readCloudBacklog([], NOW, pinned).items.map((i) => i.id);
+    expect(ids.indexOf('ao-held')).toBeLessThan(ids.indexOf('ao-none'));
+    expect(ids.indexOf('ao-none')).toBeLessThan(ids.indexOf('ao-bad'));
+    // With every built-in claimed, the held area is the next pick.
+    const claimAll = BUILTIN_IMPROVEMENT_BACKLOG.map((i) => task(i.id, 'running'));
+    expect(nextBacklogItem(claimAll, 'ashlrai/ashlr-hub', NOW, new Set(), pinned)?.id).toBe('ao-held');
+  });
+
+  it('a single standing revert does not demote an area, and held merges alone never promote past measured leverage', () => {
+    appendUserBacklogItems([
+      item('ao-one', { priority: 2, area: 'one-revert' }),
+      item('ao-two', { priority: 2, area: 'two-reverts' }),
+    ]);
+    const pinned = new Map([
+      ['one-revert', { held: 0, reverted: 1 }],
+      ['two-reverts', { held: 1, reverted: 2 }],
+    ]);
+    const ids = readCloudBacklog([], NOW, pinned).items.map((i) => i.id);
+    // one-revert stays in the unmeasured tier (file order keeps it ahead);
+    // two-reverts is revert-dominated and drops behind it.
+    expect(ids.indexOf('ao-one')).toBeLessThan(ids.indexOf('ao-two'));
+  });
+
+  it('folds the tasks\' own merge evidence when no pinned map is given', () => {
+    appendUserBacklogItems([
+      item('ao-real-held', { priority: 2, area: 'real-zone' }),
+      item('ao-real-none', { priority: 2, area: 'plain-zone' }),
+    ]);
+    const t = mergedTask('ao-real-held', 42);
+    const ids = readCloudBacklog([t], NOW).items.map((i) => i.id);
+    expect(ids.indexOf('ao-real-held')).toBeLessThan(ids.indexOf('ao-real-none'));
+  });
+});

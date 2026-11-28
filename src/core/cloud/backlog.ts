@@ -3,6 +3,10 @@
  * plus operator/Leader items at `<cloudHome>/backlog.json`. An item is
  * "claimed" by its newest task; it becomes available again 3 days after
  * that task ends closed/failed/expired, never after merged or a "no-change" report.
+ * Ordering is priority, then measured metric leverage per area kind, then —
+ * for kinds the metric ledger never measured — merge/revert outcomes folded
+ * from the tasks' own post-merge evidence (improve/area-outcomes.ts), then
+ * file order.
  *
  * File: `{ "v": 1, "items": CloudBacklogItem[] }`, 0600, at most
  * CLOUD_BACKLOG_MAX_USER_ITEMS items. Readers validate every item and skip
@@ -11,6 +15,7 @@
 import { join } from 'node:path';
 
 import { kindLeverage, kindOf, readLedger, scoreOutcomes, validateMetricSpec, type MetricSpec } from '../improve/outcomes.js';
+import { backlogAreaOutcomes, type AreaOutcomeCell } from '../improve/area-outcomes.js';
 import { writePrivateFileAtomic } from '../verse/preferences.js';
 import { BUILTIN_IMPROVEMENT_BACKLOG } from './improvement-backlog.js';
 import { cloudHome, ensureCloudDirectory, listCloudTasks, readCloudJsonFile } from './store.js';
@@ -129,7 +134,7 @@ interface Claim {
  * Devin session is working on is never also handed to a cloud session, and
  * the reverse.
  */
-export type BacklogClaimTask = Pick<CloudTaskV1, 'id' | 'backlogItemId' | 'createdAt' | 'updatedAt'> & Partial<Pick<CloudTaskV1, 'report'>> & {
+export type BacklogClaimTask = Pick<CloudTaskV1, 'id' | 'backlogItemId' | 'createdAt' | 'updatedAt'> & Partial<Pick<CloudTaskV1, 'report' | 'repo' | 'pr' | 'supersededBy' | 'intake' | 'outcome'>> & {
   /** A cloud state, or Devin's extra in-progress `blocked` (waiting for Mason). */
   state: CloudTaskState | 'blocked';
 };
@@ -187,31 +192,77 @@ function areaLeverage(): Map<string, number | null> {
 }
 
 /**
+ * Merge/revert outcomes per area kind for kinds the metric ledger cannot
+ * see — every discovered item without a declared `metric` never registers
+ * a proposal, so its area's leverage stays "unmeasured" forever. The fold
+ * reuses observe-sync's checkout-free post-merge evidence (task outcomes,
+ * fleet merge state, the revert journal) joined through `backlogItemId`;
+ * an unreadable source contributes nothing, same fail-closed rule as
+ * areaLeverage.
+ */
+function areaMergeOutcomes(tasks: readonly BacklogClaimTask[], items: readonly CloudBacklogItem[]): Map<string, AreaOutcomeCell> {
+  try {
+    return backlogAreaOutcomes(tasks, items);
+  } catch {
+    return new Map();
+  }
+}
+
+/** Standing reverts an unmeasured area needs before its pick order drops behind clean areas. */
+export const AREA_REVERT_DEMOTE_MIN = 2;
+
+/**
  * Priority first (the operator's intent). Within a priority, areas whose
  * measured outcomes improved their metric go first, unmeasured areas next,
  * areas with a zero or negative measured record last; then file order.
+ *
+ * Kinds the metric ledger never measured fall back to merge/revert
+ * evidence: an area whose items' carrier PRs keep ending in standing
+ * reverts ranks with the measured-bad tier, and within the unmeasured tier
+ * areas with more merges still standing order ahead of areas with none —
+ * held merges are weak positive evidence (a repair landing is the expected
+ * outcome), standing reverts are strong negative evidence (the change did
+ * not hold), so only the latter demotes.
  */
-function ordered<T extends CloudBacklogItem>(items: readonly T[], leverage: Map<string, number | null> = areaLeverage()): T[] {
+function ordered<T extends CloudBacklogItem>(
+  items: readonly T[],
+  leverage: Map<string, number | null> = areaLeverage(),
+  areaOutcomes: ReadonlyMap<string, AreaOutcomeCell> = new Map(),
+): T[] {
   const tier = (area: string) => {
-    const v = leverage.get(kindOf(area)) ?? null;
-    return v === null ? { t: 1, v: 0 } : v > 0 ? { t: 0, v } : { t: 2, v };
+    const kind = kindOf(area);
+    const v = leverage.get(kind) ?? null;
+    if (v !== null) return v > 0 ? { t: 0, v } : { t: 2, v };
+    const o = areaOutcomes.get(kind);
+    if (o !== undefined && o.reverted >= AREA_REVERT_DEMOTE_MIN && o.reverted > o.held) {
+      return { t: 2, v: -o.reverted };
+    }
+    return { t: 1, v: o?.held ?? 0 };
   };
   return items.map((item, index) => ({ item, index, ...tier(item.area) }))
     .sort((a, b) => a.item.priority - b.item.priority || a.t - b.t || b.v - a.v || a.index - b.index)
     .map(({ item }) => item);
 }
 
-export function readCloudBacklog(tasks: readonly BacklogClaimTask[], now: Date): CloudBacklogView {
+/**
+ * Per-kind merge/revert outcome cells for ordering; pass a pinned map to
+ * fix the order in tests. Absent, the cells fold the tasks' own post-merge
+ * evidence (see areaMergeOutcomes).
+ */
+export type BacklogOrderOutcomes = ReadonlyMap<string, AreaOutcomeCell>;
+
+export function readCloudBacklog(tasks: readonly BacklogClaimTask[], now: Date, areaOutcomes?: BacklogOrderOutcomes): CloudBacklogView {
   const newest = newestTaskByItem(tasks);
   const nowMs = now.getTime();
-  const items = ordered(allItems()).map((item) => ({ ...item, ...claimOf(item, newest.get(item.id), nowMs) }));
+  const all = allItems();
+  const items = ordered(all, areaLeverage(), areaOutcomes ?? areaMergeOutcomes(tasks, all)).map((item) => ({ ...item, ...claimOf(item, newest.get(item.id), nowMs) }));
   return { items, nextUp: items.find((item) => item.claimedBy === null)?.id ?? null };
 }
 
 /** Next unclaimed item for `repo`, highest priority first, then built-in order. */
-export function nextBacklogItem(tasks: readonly BacklogClaimTask[], repo: string, now: Date, exclude: ReadonlySet<string> = new Set()): CloudBacklogItem | null {
+export function nextBacklogItem(tasks: readonly BacklogClaimTask[], repo: string, now: Date, exclude: ReadonlySet<string> = new Set(), areaOutcomes?: BacklogOrderOutcomes): CloudBacklogItem | null {
   // An item without a repo targets whichever repo self-improvement is pointed at.
-  return nextBacklogItemWhere(tasks, now, repo, (item, target) => !exclude.has(item.id) && sameCloudRepo(target, repo))?.item ?? null;
+  return nextBacklogItemWhere(tasks, now, repo, (item, target) => !exclude.has(item.id) && sameCloudRepo(target, repo), areaOutcomes)?.item ?? null;
 }
 
 /**
@@ -226,10 +277,12 @@ export function nextBacklogItemWhere(
   now: Date,
   defaultRepo: string | null,
   accept: (item: CloudBacklogItem, repo: string) => boolean,
+  areaOutcomes?: BacklogOrderOutcomes,
 ): { item: CloudBacklogItem; repo: string } | null {
   const newest = newestTaskByItem(tasks);
   const nowMs = now.getTime();
-  for (const item of ordered(allItems())) {
+  const all = allItems();
+  for (const item of ordered(all, areaLeverage(), areaOutcomes ?? areaMergeOutcomes(tasks, all))) {
     const repo = item.repo ?? defaultRepo;
     if (repo === null) continue;
     if (claimOf(item, newest.get(item.id), nowMs).claimedBy !== null) continue;
