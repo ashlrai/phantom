@@ -173,15 +173,45 @@ it('measures wait from re-arrival, not the first-ever enqueue', async () => {
     enqueued('a-1', 90), departed('a-1', 80),
     JSON.stringify({ job: 'a-1', event: 'launch_failed', action: 'retry', ts: minutesAgo(10) }),
     enqueued('a-2', 45), departed('a-2', 40),
-    // a-2 requeued silently (deferred launch): no re-arrival row exists, so
-    // its wait is unknown and the lane reports null rather than 45 minutes.
+    // a-2 requeued with no ledger row naming it (a released batch member, a
+    // manual ready.tsv re-add): its wait is unknown and the lane reports
+    // null rather than 45 minutes.
     enqueued('a-3', 20),
   ].join('\n'));
   expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBeNull();
-  // With the silently requeued job gone, the oldest wait is a-3's 20-minute
+  // With the unevidenced requeue gone, the oldest wait is a-3's 20-minute
   // dwell; a-1's retry restarted its own clock only 10 minutes ago.
   await writeFile(join(queueDir, 'ready.tsv'), [row('READY', 'a-1', 'devin'), row('READY', 'a-3', 'devin')].join('\n'));
   expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(1200);
+});
+
+it('restarts wait at launch_terminal but not after a give_up ending', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    row('READY', 'a-1', 'devin'), row('READY', 'a-3', 'devin'), row('READY', 'c-1', 'codex'),
+  ].join('\n'));
+  await mkdir(join(root, 'metrics'));
+  const path = join(root, 'metrics', 'jobs.jsonl');
+  const enqueued = (job: string, minutes: number) => JSON.stringify({ job, event: 'enqueue', ts: minutesAgo(minutes) });
+  const launched = (job: string, minutes: number) => JSON.stringify({ job, event: 'launch', ts: minutesAgo(minutes) });
+  const terminal = (job: string, minutes: number) =>
+    JSON.stringify({ job, event: 'launch_terminal', reason: 'launcher-exited', ts: minutesAgo(minutes) });
+  await writeFile(path, [
+    enqueued('a-1', 90), launched('a-1', 80),
+    // A deferred (PAUSED/HELD) launch requeues the line and leaves only a
+    // launch_terminal — dispatchd writes no other row for it.
+    terminal('a-1', 20),
+    enqueued('a-3', 30),
+    enqueued('c-1', 70), launched('c-1', 60),
+    // give_up dropped the line; the terminal that follows must not evidence
+    // a wait — a later row-less re-add keeps an unknown dwell.
+    JSON.stringify({ job: 'c-1', event: 'launch_failed', action: 'give_up', ts: minutesAgo(50) }),
+    terminal('c-1', 50),
+  ].join('\n'));
+  const counts = await getLaneQueueCounts({ runsDir: root, now });
+  // devin: a-3 waited 30m, a-1's dwell restarted at its terminal 20m ago.
+  expect(counts.lanes.find(l => l.lane === 'devin')).toMatchObject({ ready: 2, oldestWaitSeconds: 1800 });
+  // codex: c-1's only re-arrival evidence was suppressed by the give_up.
+  expect(counts.lanes.find(l => l.lane === 'codex')).toMatchObject({ ready: 1, oldestWaitSeconds: null });
 });
 
 it('counts batch departures and retried member outcomes as queue marks', async () => {
