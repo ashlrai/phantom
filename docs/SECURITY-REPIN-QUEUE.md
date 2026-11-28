@@ -176,3 +176,51 @@ Superseded by #9054 and #9072; review the cumulative dispatch and work-market di
 |---|---|---|---|---|
 | `contrib/mac/dispatchd.py` | `19adb3ddca651dfaf8dd1f94b558b77bc345c1ea8a42e12aa475e1c918d68cfa` | `unknown` | superseded | — |
 | `contrib/mac/work_market.py` | `4b920a67736079d61c32f7aea266c61ea3a9abcb92bb26fc8b1f1843d5092f22` | `unknown` | superseded | — |
+
+## Mac pool bridge re-pin packet
+
+Review in [#9177](https://github.com/ashlrai/phantom/pull/9177). This supplement
+records proposed digests from the branch tree, not the historical merge blobs
+above or a new live measurement. **Pending Security review and re-pin.** No
+bridge change in this packet has been installed live. Snapshot files are review
+copies of existing live files, not deploy inputs.
+
+- Preview: `contrib/mac/install.sh --dry-run --json` against a scratch bin
+  directory; run the offline verifier with `/bin/bash contrib/mac/host-integration/verify-pool-bridge.sh`.
+- Install after approval: no supported repository command for the bridge entry
+  points. Do not supply the historical candidate's digest as an install pin.
+  Review the full caller pin chain and remeasure the live destinations.
+- **AGY remains held** with `agy-identity-unverified`. **Gemini Neon remains
+  held** because the signed-in Antigravity account does not offer it.
+
+| File | Proposed SHA-256 | Live SHA-256 | Introduced by | Action and Security check |
+|---|---|---|---|---|
+| `contrib/mac/pool_bridge_evidence.py` | `c1206633972b52311b87598dae1c2126527a384c7bb6da91f017362f2aaf50d0` | `unknown` | #9078; updated in #9132 | Held: review launcher trust, account binding, evidence freshness, and unknown usage. |
+| `contrib/mac/pool_bridge_reservation.py` | `1bcbe3ded1d89d13ac22ee448d263462f3d58fcceff65ff0bad6e6f84238f894` | `unknown` | #9132; Flash entry point in #9152 | Held: review workspace and tier scope, narrowed profiles, cancellation and settlement; for Flash, verify native Free/window, host pressure, overage check/scan, caps and fail-closed behavior. |
+| `contrib/mac/host-integration/verify-pool-bridge.sh` | `34bdb7e7a60b274b3511bc9be01842cc6e41494627bb2472a6c27484dd6f6430` | `unknown` | #9152 | Repo-only: verify scratch-only writes, both profiles, process-group exit, and no provider contact. |
+| `contrib/mac/host-integration/launch.candidate.sh` | `8aad95127443e20d263eaaab137868d596ce963bd043fad3bea678c5bc83d3fc` | `f863cb1c9b3938ad4e9ddf242fbf90142fb7e1dbab5b49d81addcb2186b73126` | #3280; deploy-set entry in #9132 | Held: reconcile the historical candidate with live Flash and paid-overage guards before considering any replacement. |
+| `contrib/mac/install.sh` | `3da19669e71820d0d910d330e33cdbfe6587a519bb6cab215f910f87f1d8c62b` | `unknown` | #2955; bridge deploy-set change in #9132 | Repo-only: check preview, matching pin requirement, and exclusion of live review copies. |
+| `contrib/mac/host-integration/launch.sh` | `f863cb1c9b3938ad4e9ddf242fbf90142fb7e1dbab5b49d81addcb2186b73126` | `f863cb1c9b3938ad4e9ddf242fbf90142fb7e1dbab5b49d81addcb2186b73126` | #9132 | Unchanged reference: review live provider-key, Flash, and paid-overage guards. |
+| `contrib/mac/host-integration/devin_flash_lane.py` | `f36d9e5b5d30696f82a145927abb1bc9a356290d9baf43081691d4a1f538f4d4` | `f36d9e5b5d30696f82a145927abb1bc9a356290d9baf43081691d4a1f538f4d4` | #9132 | Unchanged reference: verify the account-bound native Free check and launch window. |
+| `contrib/mac/host-integration/devin-overage-stop.py` | `9d92f38c2107522285f40b7ff18553c043d40e9b3dcf717db7dccd2f5fc56a60` | `9d92f38c2107522285f40b7ff18553c043d40e9b3dcf717db7dccd2f5fc56a60` | #9152 | Unchanged reference: verify paid-overage preflight and post-exit scan. |
+| `contrib/mac/host-integration/agent.sb` | `975545e57a00070ec72d5308cb33f9e611636b570a0977b2316bfb9c33bf641d` | `975545e57a00070ec72d5308cb33f9e611636b570a0977b2316bfb9c33bf641d` | #9152 | Unchanged reference: compare the base Flash profile and state directories with its narrowed profile. |
+| `contrib/mac/host-integration/agy-pace.py` | `f365f34b1e578e726f18f8e1f4b2f4a755127b31c72d34b73232f1ddd0dca891` | `f365f34b1e578e726f18f8e1f4b2f4a755127b31c72d34b73232f1ddd0dca891` | #9132 | Unchanged reference: review the pacer; no admission without trusted identity and usage evidence. |
+| `contrib/mac/host-integration/agy.sb` | `fd4847666f127ec5e64eca79ff40d41915e91f036ff3b8a82f1b06b257ca72d0` | `fd4847666f127ec5e64eca79ff40d41915e91f036ff3b8a82f1b06b257ca72d0` | #9132 | Unchanged reference: review the sandbox and isolated HOME; the verifier did not test AGY. |
+| `contrib/mac/host-integration/zai-pace.py` | `e35cb8df93a93c1903c0702fc7566126034e1a3d99f97afa18ea7e36a7c24bcc` | `e35cb8df93a93c1903c0702fc7566126034e1a3d99f97afa18ea7e36a7c24bcc` | #9132 | Unchanged reference: review pacing and conservative settlement when usage is unknown. |
+| `contrib/mac/host-integration/zai.sb` | `84ece944dcc9d325d67b91883d05c998a2d2371518338b0b03ea534c4e6b8f70` | `84ece944dcc9d325d67b91883d05c998a2d2371518338b0b03ea534c4e6b8f70` | #9132 | Unchanged reference: compare the base Z.ai profile with its narrowed workspace write rules. |
+| `contrib/mac/host-integration/lane_rules.py` | `f1429cee714c9e03da9d8c449f731480ec5e3aeb20faead44b087dd8d6488eef` | `f1429cee714c9e03da9d8c449f731480ec5e3aeb20faead44b087dd8d6488eef` | #9132 | Unchanged reference: review supported lane and tier constraints. |
+| `contrib/mac/host-integration/launcher-snapshot.json` | `dcb3cf76986b361fe1eae308ec1c757e5253c593406d3e2f10f651ae90e7e5a6` | `unknown` | #9132; Flash rows in #9152 | Repo-only: verify all nine manifest hashes and pinned live paths. |
+| `.github/workflows/mac-python.yml` | `dae775726aaa730d186bd1c7246d732082454f7cf81bba48a8ef512db0838b99` | `unknown` | #9177 | CI-only: verify action pins, read-only permissions, no secrets or persisted credentials, and scratch isolation. |
+
+Operator verification on the Mac Pro (macOS, `master` at `9d913b804c`):
+
+```json
+{"schema":"mac-pool-bridge-verify.v1","mode":"macos","ok":true,"profileSha256s":{"zai":"068451e7a89d48a74797ed38fde4a0cdc193a5105113a8c18178ed3b15ba9065","agent":"799209843852cf28a7945383645740f6f01126137b3f9d081d3af13de368bc0a"},"checks":{"zaiInside":true,"zaiOutsideBlocked":true,"agentInside":true,"agentOutsideBlocked":true,"groupCancelled":true}}
+```
+
+The [hosted Mac Python job](https://github.com/ashlrai/phantom/actions/runs/45770417442/job/139741435548)
+on `17f83e0a6dd3fd0a6f488c9ae533edba1854bcb9` reported
+`Ran 1028 tests in 793.375s`, `OK (skipped=1)`, and the same verifier verdict,
+including both profile digests. These runs demonstrate scratch confinement
+and process-group cancellation, not authorization to re-pin, install, or
+dispatch.

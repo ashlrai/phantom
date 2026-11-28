@@ -11,7 +11,7 @@ SOURCE = Path(__file__).resolve().parents[1] / 'host-integration' / 'dispatchd.c
 class HostMachineSampleTests(unittest.TestCase):
     def test_stale_budget_message_does_not_request_a_person(self):
         source = SOURCE.read_text()
-        self.assertIn('STALE_BUDGET %s reset passed; fresh reading unavailable', source)
+        self.assertRegex(source, r'(?m)^\s*ev\("STALE_BUDGET .*"usage unknown; refresh unavailable"')
         self.assertNotIn('ask Mason for a fresh reading', source)
 
     def test_sample_starts_before_os_reads_and_preserves_existing_values(self):

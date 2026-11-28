@@ -283,7 +283,7 @@ child.wait()
 
     def test_uncertain_exit_is_held(self):
         with patch.object(bridge, "exists_group", return_value=True), patch.object(bridge, "stop_group", return_value=False):
-            _, reason, confirmed = bridge.supervise(["/bin/true"], self.ws, {}, "prompt",
+            _, reason, confirmed = bridge.supervise([sys.executable, "-c", "pass"], self.ws, {}, "prompt",
                                                    subprocess.DEVNULL, time.monotonic() + 5, lambda: False)
         self.assertFalse(confirmed)
         self.assertEqual(reason, "cancel-unconfirmed")

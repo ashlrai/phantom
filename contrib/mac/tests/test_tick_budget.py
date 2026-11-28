@@ -11,8 +11,6 @@ class TickBudget(unittest.TestCase):
         with build() as tmp:
             home = Path(tmp).resolve(); runs = home/'.ashlr-runs'; q = runs/'queue'
             env = launch_stubs(home)
-            (home/'stubbin/process_snapshot.py').write_text(
-                'import subprocess\ndef capture(timeout=5): return subprocess.CompletedProcess([], 0, \"1000 idle\\n\", \"\")\n')
             (q/'admission.json').write_text(json.dumps({'cap': 30}))
             queue_job(home, 'RQ-restocked', 'devin')
             (q/'incoming.tsv').write_text((q/'ready.tsv').read_text())
@@ -32,8 +30,6 @@ class TickBudget(unittest.TestCase):
             queue_job(home, 'RQ-ready-claim', 'devin')
             (q/'claimed.tsv').write_text('RQ-ready-claim\tfixture\n')
             env = launch_stubs(home)
-            (home/'stubbin/process_snapshot.py').write_text(
-                'import subprocess\ndef capture(timeout=5): return subprocess.CompletedProcess([], 0, \"1000 idle\\n\", \"\")\n')
             (q/'admission.json').write_text(json.dumps({'cap': 30}))
             # A stale finished tree forces the real maintenance sorting path.
             job = 'RQ-old-tree'; wt = home/'Projects/ashlrai/wt'/job; wt.mkdir()

@@ -106,6 +106,11 @@ fails to allow scratch workspace writes or to block the outside write, or
 if cancellation does not drain all three dummy process IDs. It does not
 exercise a provider, the live state tree, or real protected host paths.
 Linux fixture results are synthetic; only the Mac run verifies Seatbelt.
+
+The [Security re-pin packet](../../docs/SECURITY-REPIN-QUEUE.md#mac-pool-bridge-re-pin-packet)
+records the Mac Pro and hosted macOS verdicts. They demonstrate scratch
+confinement and cancellation, not approval to re-pin, install, or dispatch.
+
 Review and pin the supplied `agent.sb` and `devin-overage-stop.py` before
 adoption. AGY remains held until Security supplies redacted
 `/help` and `/usage` fixtures from the pinned binary, profile and isolated HOME.
