@@ -80,6 +80,8 @@ export interface BriefSources {
   driveReport?: () => string | null;
   holds?: () => Array<{ repo: string; kind: string; reason: string }>;
   autonomy?: () => { on: boolean; mode: string | null };
+  /** The local-git last-hour headline, or null when unavailable. */
+  hourLine?: () => Promise<string | null | undefined> | string | null | undefined;
   /** The unified comms inbox (read-only), or null when unavailable. */
   comms?: () => Promise<UnifiedInbox | null> | UnifiedInbox | null;
 }
@@ -101,11 +103,12 @@ function call<T>(fn: (() => T) | undefined, fallback: T): T {
   }
 }
 
-type ResolvedSources = Required<Omit<BriefSources, 'digest' | 'comms'>> & Pick<BriefSources, 'comms'>;
+type ResolvedSources = Required<Omit<BriefSources, 'digest' | 'comms' | 'hourLine'>> & Pick<BriefSources, 'comms' | 'hourLine'>;
 
-async function defaults(): Promise<ResolvedSources> {
+async function defaults(nowMs: number): Promise<ResolvedSources> {
   const base: ResolvedSources = {
     comms: () => null,
+    hourLine: () => null,
     leader: () => null,
     cloudTasks: () => [],
     devinTasks: () => [],
@@ -118,6 +121,13 @@ async function defaults(): Promise<ResolvedSources> {
     try { await fn(); } catch { /* keep the empty default */ }
   };
   await Promise.all([
+    safe(async () => {
+      const { readHourShipped } = await import('../fleet/shipped-hour.js');
+      base.hourLine = async () => {
+        const report = await readHourShipped({ now: nowMs });
+        return report.complete || report.items.length > 0 ? report.headline : null;
+      };
+    }),
     safe(async () => {
       const { readUnifiedInbox } = await import('./unified-inbox.js');
       base.comms = () => readUnifiedInbox();
@@ -172,7 +182,7 @@ function hhmm(iso: string, timeZone: string): string {
 
 /** Gather the brief from recorded state since `sinceMs`. Never throws. */
 export async function gatherBriefFacts(sinceMs: number, nowMs: number, overrides: BriefSources = {}, timeZone = 'America/New_York'): Promise<BriefFacts> {
-  const base = await defaults();
+  const base = await defaults(nowMs);
   const src = { ...base, ...Object.fromEntries(Object.entries(overrides).filter(([k, v]) => k !== 'digest' && typeof v === 'function')) } as ResolvedSources;
 
   let digest: Awaited<ReturnType<typeof collectDigestFacts>> | null = null;
@@ -206,6 +216,9 @@ export async function gatherBriefFacts(sinceMs: number, nowMs: number, overrides
     comms = null;
   }
 
+  let hourLine: string | null = null;
+  try { hourLine = (await src.hourLine?.()) ?? null; } catch { /* unavailable */ }
+
   const leader = call(src.leader, null);
   const blockers: string[] = [];
   if (comms?.blocker) blockers.push(comms.blocker);
@@ -234,6 +247,7 @@ export async function gatherBriefFacts(sinceMs: number, nowMs: number, overrides
   return {
     nowMs,
     sinceMs,
+    hourLine,
     shipped,
     prsOpened,
     mergeCountUnavailable,
