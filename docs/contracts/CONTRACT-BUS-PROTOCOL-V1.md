@@ -59,6 +59,19 @@ status.
   rendered summary, never the raw body, so a secret-shaped value stays
   unfindable and protocol-v1 payloads stay opaque. The value is bounded
   free text, up to 512 characters; a blank or longer value exits 2.
+- `--body-kind <kind>` keeps only envelopes whose body carries that exact
+  kind discriminator — the same `busBodyKind` own-field match the other bus
+  reads apply: the v2 `kind` field, else a bus-transport v1 `protocol.kind`,
+  else the `type`/`schema` a kindless notice keys on, exact and
+  case-sensitive. A body carrying no discriminator never matches; an
+  unrecognized but printable value (1 to 128 characters) is an honest empty
+  page, and anything else exits 2.
+- `--result <reserved|admitted|complete|failed>` keeps only `work.result`
+  bodies whose own `outcome` strictly equals one `WORK_RESULT_OUTCOMES`
+  code — the same `busBodyResultOutcome` own-field match the other bus
+  reads apply. Every other body kind (a `work.release` body's own
+  `released`/`completed` outcome included) and a result carrying no outcome
+  never match, and a value outside the vocabulary exits 2.
 - Filtered reads keep the cursor, limit and checkpoint semantics documented in
   `phm comms bus --help`. Checkpoints bind the new filters into their identity.
 
