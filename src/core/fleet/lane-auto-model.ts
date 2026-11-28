@@ -4,7 +4,7 @@ import { checkModelsAgainstDocs, loadVerifiedRegistry, MODEL_ALIASES, readDocsRe
 import { readLaneModelConfig, resolveLaneModel } from './lane-models.js';
 import type { FleetEngine } from './fleet-types.js';
 import { readRouterOutcomes } from '../router/outcomes.js';
-import { indexLaneAutoScores, LANE_AUTO_MIN_SAMPLES, rankLaneAutoScores, type LaneAutoScore } from '../router/lane-auto-score.js';
+import { indexLaneAutoScores, LANE_AUTO_MIN_SAMPLES, type LaneAutoScore } from '../router/lane-auto-score.js';
 import { catalogFor, DEFAULT_CLAUDE_MODEL_ID, DEFAULT_LOCAL_MODEL_TAG, GROK_CLI_DEFAULT_MODEL, GROK_CLI_FAST_MODEL, type ModelRoutingTier } from '../run/model-catalog.js';
 import { codexModelForTier } from '../run/learned-router.js';
 import { subscriptionOnlyCurrent } from '../routing/subscription-only.js';
@@ -35,6 +35,20 @@ export interface LaneAutoEvidence {
 }
 
 const providerOf = { codex: 'openai', 'claude-cli': 'anthropic', 'grok-cli': 'xai', local: null, 'devin-cli': 'devin' } as const;
+
+function bestMeasuredScores(
+  candidates: LaneAutoScore[],
+  metric: (candidate: LaneAutoScore) => number | null,
+  better: (left: number, right: number) => number,
+): LaneAutoScore[] {
+  let best: number | null = null;
+  for (const candidate of candidates) {
+    const value = metric(candidate);
+    if (value === null) return candidates;
+    if (best === null || better(value, best) > 0) best = value;
+  }
+  return candidates.filter(candidate => metric(candidate) === best);
+}
 
 export function laneAutoBillingAllows(seat: SeatCapacity, nowMs: number): boolean {
   if (seat.onDemandEnabled === true) return false;
@@ -95,13 +109,12 @@ export function chooseLaneAuto(
   }), evidence.docs);
   const blocked = new Set(docs.models.filter(row => row.verdict === 'deprecated' || row.verdict === 'retired').map(row => row.id));
   receipt.candidates = eligible.filter(id => !blocked.has(id)).sort().map(score);
-  const quality = (row: LaneAutoScore) => ({ ...row, usdPerHeldMerge: null });
-  const ranked = receipt.candidates.filter(row => row.samples >= LANE_AUTO_MIN_SAMPLES)
-    .sort((left, right) => rankLaneAutoScores(quality(left), quality(right)));
-  const tied = ranked.filter(row => rankLaneAutoScores(quality(ranked[0]!), quality(row)) === 0);
-  const knownCost = tied.every(row => row.usdPerHeldMerge !== null);
-  tied.sort((left, right) => (knownCost ? rankLaneAutoScores(left, right) : 0)
-    || Number(right.model === prior) - Number(left.model === prior) || left.model.localeCompare(right.model));
+  const ranked = receipt.candidates.filter(row => row.samples >= LANE_AUTO_MIN_SAMPLES);
+  const heldLeaders = bestMeasuredScores(ranked, row => row.heldMergeRate, (left, right) => left - right);
+  const ciLeaders = bestMeasuredScores(heldLeaders, row => row.firstPassCiRate, (left, right) => left - right);
+  const tied = bestMeasuredScores(ciLeaders, row => row.usdPerHeldMerge, (left, right) => right - left);
+  tied.sort((left, right) => Number(right.model === prior) - Number(left.model === prior)
+    || left.model.localeCompare(right.model));
   const picked = tied[0]?.model ?? (receipt.candidates.some(row => row.model === prior) ? prior : null);
   return { ...receipt, model: picked, reason: ranked.length ? 'scored' : picked ? 'threshold-fallback' : 'held' };
 }

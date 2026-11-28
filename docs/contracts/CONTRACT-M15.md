@@ -176,6 +176,10 @@ permission to launch; `seatAllows` rechecks the selected model and
 current account billing boundary. The optional `onRecordedWorkClasses`
 callback on `readRouterOutcomes` receives the work-market class by exact
 job ID without changing the outcome report.
+Lane auto compares metrics across the remaining candidates as a group.
+First-pass CI and USD per held merge each break ties when every candidate
+still tied has a measured value. The receipt preserves null for unknown
+rates or costs.
 
 ## `src/core/run/orchestrator.ts` (EDIT — orchestrator agent)
 
