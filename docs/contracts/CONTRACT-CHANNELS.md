@@ -24,7 +24,11 @@ mobile, desktop, page, cli.
   allowlist); a missing store is a measured unpaired/zero, and a source that
   cannot be read reports `unknown`, never a fabricated number. The `imessage`
   row's `ready` additionally requires a readable chat.db at
-  `~/Library/Messages/chat.db` under the reported home.
+  `~/Library/Messages/chat.db` under the reported home. The email row's
+  `ready` is also false while the saved `queue/email-drop.json` sets
+  `enabled:false` — the pause `phm comms cycle` and `phm comms email-cycle`
+  honor — and the row then carries `paused: true` plus the resume step as
+  `next`, so a paused channel never reports ready or `connected`.
 - `cli`, `desktop`, and `page` are built in — `add` writes nothing and reports
   the existing path. `mobile` points at the `~/.ashlr/verse-remote.json`
   gateway file; it is never written by this command.

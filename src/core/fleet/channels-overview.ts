@@ -241,6 +241,7 @@ export function buildChannelsOverview(facts: ChannelFacts): ChannelsOverview {
       nextStep = 'fix ~/.ashlr/config.json — it is unreadable or not valid JSON';
     }
     else if (channel === 'email' && facts.emailConfig === 'invalid') { state = 'failing'; reason = 'email-drop config is invalid'; }
+    else if (channel === 'email' && row.paused === true) { state = 'failing'; reason = 'email-drop polling is paused (enabled:false)'; }
     else if (row.configured) { state = 'failing'; reason = row.credential === 'missing' ? `${LABELS[channel]} credential is missing` : `${LABELS[channel]} is not ready`; }
     else state = 'not-set-up';
 
