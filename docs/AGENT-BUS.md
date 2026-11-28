@@ -704,7 +704,7 @@ posts and legacy traffic with the same kind/held/job annotations `inbox`
 reports — so an agent on the unified surface can wait for mail without
 polling `inbox` in a loop or dropping to the raw-envelope stream.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
-[--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
+[--from <agent>] [--exclude-from <agent>] [--to <ref>] [--priority P0..P3]
 [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 [--result <reserved|admitted|complete|failed>]` lists wake
 hints for the agent — addressed under any spelling that resolves to its
@@ -735,7 +735,17 @@ spelling of one identity through the same matcher and exact-label
 fallback `--from` applies — composing with `--from` so a sender both
 included and excluded matches nothing — so "everyone's wakes except the
 noisy bot's" is one filtered read, and `matched` stays the count the
-whole filter set accepts. `--channel` keeps only hints addressed to
+whole filter set accepts. `--to` keeps only hints whose own `to`
+recipient label the ref resolves to — a handle, `agent:<handle>`, stable
+id, alias or bare label matching every registered spelling of one
+identity through the same `agentRefAddressMatcher` rule `--from` and
+`--exclude-from` apply, with an unresolvable ref keeping exact-label
+matching — so the fleet read narrows to one addressee without a
+per-identity pass: `wakes --all --to leaders` answers "which hints are
+pending for leaders" and `--to group:<room>:<topic>` isolates the hints
+addressed to one room topic, while on a per-agent read it narrows the
+already addressee-scoped page to the matching address form. `--channel`
+keeps only hints addressed to
 `group:<name>:*` of one channel — the same room prefix `inbox --channel`,
 `channel read` and `phm messages --channel` match, grammar-validated by
 the shared channel-name rule — decided on the hint's own `to` label, so

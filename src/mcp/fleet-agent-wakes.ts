@@ -23,7 +23,7 @@
  * across all addressees under `scope: 'fleet'`, the same
  * `phm agents bus wakes --all` read — so a leader or comms pass sees who
  * has pending hints in one call instead of one per identity.
- * `since`, `job`, `from`, `excludeFrom`, `channel`, `priority`,
+ * `since`, `job`, `from`, `excludeFrom`, `to`, `channel`, `priority`,
  * `contains`, `thread`, `inReplyTo`, `bodyKind`, `result` and `id` apply
  * the same rules the `phm agents bus wakes` flags share and are validated
  * before any store read; the page always reports `matched` (every hint
@@ -50,8 +50,8 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent`, `job`, `from`, `excludeFrom` and `id` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'channel', 'priority', 'contains', 'id', 'thread', 'inReplyTo', 'bodyKind', 'result']);
-const LABEL_KEYS = ['job', 'from', 'excludeFrom', 'id', 'thread', 'inReplyTo', 'bodyKind'] as const;
+const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'to', 'channel', 'priority', 'contains', 'id', 'thread', 'inReplyTo', 'bodyKind', 'result']);
+const LABEL_KEYS = ['job', 'from', 'excludeFrom', 'to', 'id', 'thread', 'inReplyTo', 'bodyKind'] as const;
 
 export interface FleetAgentWakesArgs {
   /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. Omit for the fleet-wide read: every hint in the bounded queue tail, each row's own `to` naming its addressee. */
@@ -66,6 +66,8 @@ export interface FleetAgentWakesArgs {
   from?: string;
   /** Drop hints sent under any registered spelling of this sender ref. */
   excludeFrom?: string;
+  /** Keep only hints whose own `to` recipient label this ref resolves to — every registered spelling of one identity, exact-label matching when the ref resolves to nothing; the same `agentRefAddressMatcher` rule `phm agents bus wakes --to` and the other bus reads' `--to`/`--from` apply, so the fleet read narrows to one addressee without a per-identity pass. */
+  to?: string;
   /** Keep only hints addressed to `group:<name>:*` of this channel — the same room prefix `phm agents bus wakes --channel` and every other bus read's channel filter match. */
   channel?: string;
   /** Keep only hints in one exact P0–P3 band, decided on the resolved referent — the same match `phm agents bus wakes --priority` applies. */
@@ -90,7 +92,7 @@ export interface FleetAgentWakesArgs {
  * is optional — supplied it selects the addressed read, omitted it selects
  * the fleet-wide read — and every
  * other key takes the same value rules `phm agents bus wakes` flags and
- * the other bus reads share: `job`/`from`/`excludeFrom`/`id`/`thread`/
+ * the other bus reads share: `job`/`from`/`excludeFrom`/`to`/`id`/`thread`/
  * `inReplyTo`/`bodyKind` printable
  * routing labels (`id` the exact hint-id match), `channel` the strict
  * channel-name grammar, the P0–P3 priority enum, the
@@ -186,6 +188,7 @@ export async function readFleetAgentWakes(
     ...(args.job === undefined ? {} : { job: args.job }),
     ...(args.from === undefined ? {} : { from: args.from }),
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
+    ...(args.to === undefined ? {} : { to: args.to }),
     ...(args.channel === undefined ? {} : { channel: args.channel }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
     ...(args.before === undefined ? {} : { before: args.before }),
