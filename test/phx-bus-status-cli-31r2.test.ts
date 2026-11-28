@@ -55,19 +55,34 @@ it('reports exact retained metadata without exposing bodies or changing records 
 it('shows a full retained store of expired records until a post reclaims it', async () => {
   const root = setup(), directory = join(root, 'bus-inbox');
   mkdirSync(directory, { mode: 0o700 });
-  const rows = Array.from({ length: BUS_INBOX_MAX_MESSAGES }, (_, i) => ({
-    cursor: i + 1, receivedAt: 0, envelope: message(`fake-${i}`, 1),
-  }));
+  const expiredRow = (i: number) => ({ cursor: i + 1, receivedAt: 0, envelope: message(`fake-${i}`, 1) });
+  // The row count is a structural upper bound, not the number of real
+  // receipts that fit. Seed the largest readable prefix by UTF-8 byte size.
+  const rows: ReturnType<typeof expiredRow>[] = [];
+  let bytes = 2; // Array brackets.
+  for (let i = 0; i < BUS_INBOX_MAX_MESSAGES; i++) {
+    const row = expiredRow(i);
+    const extra = Buffer.byteLength(JSON.stringify(row)) + (i === 0 ? 0 : 1);
+    if (bytes + extra > BUS_INBOX_MAX_BYTES) break;
+    rows.push(row);
+    bytes += extra;
+  }
   const text = JSON.stringify(rows), file = join(directory, 'messages.json');
+  expect(rows.length).toBeGreaterThan(0);
+  expect(Buffer.byteLength(text)).toBe(bytes);
+  expect(bytes).toBeLessThanOrEqual(BUS_INBOX_MAX_BYTES);
+  expect(bytes + 1 + Buffer.byteLength(JSON.stringify(expiredRow(rows.length)))).toBeGreaterThan(BUS_INBOX_MAX_BYTES);
   writeFileSync(file, text, { mode: 0o600 });
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await cmdCommsBus(['status'], { root, now: () => 1 })).toBe(0);
   expect(JSON.parse(log.mock.calls[0]![0] as string)).toEqual({ source: 'available', ...unknown,
-    retainedCount: BUS_INBOX_MAX_MESSAGES, retainedBytes: Buffer.byteLength(text), liveCount: 0, expiredCount: BUS_INBOX_MAX_MESSAGES });
+    retainedCount: rows.length, retainedBytes: bytes, liveCount: 0, expiredCount: rows.length });
   // Expired rows are reclaimed by the next post, which keeps the cursor going.
-  expect(appendBusInbox(message('fake-extra', 1), { root, now: () => 1 }).status).toBe('posted');
+  expect(appendBusInbox(message('fake-extra', 1), { root, now: () => 1 })).toMatchObject({
+    status: 'posted', cursor: rows.length + 1,
+  });
   const reclaimed = JSON.parse(readFileSync(file, 'utf8')) as { highWater: number; rows: unknown[] };
-  expect(reclaimed.highWater).toBe(BUS_INBOX_MAX_MESSAGES + 1);
+  expect(reclaimed.highWater).toBe(rows.length + 1);
   expect(reclaimed.rows).toHaveLength(1);
 });
 
