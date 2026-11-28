@@ -105,6 +105,19 @@ describe('team invite / join / remove', () => {
     expect(String(err.mock.calls.at(-1)?.[0])).toMatch(/Unknown human member human:octocat.*phm team view/);
   });
 
+  it('CLI: --help and -h print usage for the dispatcher and every verb without acting', async () => {
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const before = log();
+    const verbs = ['list', 'add', 'show', 'view', 'join', 'invite', 'remove', 'role', 'link', 'approve', 'deny', 'claim', 'release', 'say'];
+    for (const argv of [['--help'], ['-h'], ...verbs.flatMap((v) => [[v, '--help'], [v, '-h']]), ['bogus', '--help']]) {
+      expect(await cmdTeam(argv), argv.join(' ')).toBe(0);
+      expect(String(out.mock.calls.at(-1)?.[0]), argv.join(' ')).toContain('Usage: phm team');
+    }
+    // join --help used to append member.joined and say --help posted "--help";
+    // the events log must be untouched by every help invocation above.
+    expect(log()).toBe(before);
+  });
+
   it('view labels approval responsibility per role and explains presence and shared context', async () => {
     const out = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdTeam(['view', '--team', T])).toBe(0);
