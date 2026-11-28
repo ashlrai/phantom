@@ -516,12 +516,23 @@ phm agentnet identity register reviewer --json
 
 `peers read` accepts the shared bus filters (`--from`, `--exclude-from`,
 `--to`, `--since`, `--before`, `--contains`, `--id`, `--kind`, `--body-kind`,
-`--priority`, `--peer-kind`, `--thread`, `--job`, `--result`) applied to the
+`--priority`, `--peer-kind`, `--thread`, `--job`, `--result`, `--in-reply-to`)
+applied to the
 admitted page only — they narrow the view, never the admission, and the cursor
 still advances over every scanned row. `--body-kind` is the shared bus reads'
 spelling of the body-kind discriminator `--kind` also selects; both may appear
 but must agree. `--priority` keeps one exact P0..P3 envelope band — the same
-match every other bus read's `--priority` applies. `peers work-feed` accepts
+match every other bus read's `--priority` applies. `--in-reply-to` keeps only
+the bodies whose own `inReplyTo` field strictly cites the named envelope —
+the shared own-property exact match every other bus read's `--in-reply-to`
+applies, never the `replyTo` alias or a substring: a `peer.message` reply
+stamps the cited parent id on its bus body when it is sent (the same
+`replyTo` → `inReplyTo` convention `postBusReply` and the comms reply verbs
+use), so "who answered envelope X" is one filtered read of the peer page —
+and the same citation lets `busReplyCitations`, the conversation projection
+and every local bus read's `--in-reply-to` credit peer replies like any
+other answer. Work bodies (`work.post`/`work.status`/`work.result`) carry no
+citation and never match. `peers work-feed` accepts
 the shared work-feed query instead —
 `--claims`, `--open`, `--claimable`, `--status`, `--job`, `--repo`,
 `--provider`, `--tier`, `--to`, `--owner`, `--exclude-owner`, `--channel`,

@@ -26,7 +26,14 @@ and result contract are defined in [CONTRACT.md](../../CONTRACT.md#bounded-peer-
 The service derives sender, ID, origin and hops.
 The existing bus stores `{kind: "peer.message", peer: {fromAgent, toAgent|channel,
 kind, text, refs, threadId, origin, hopCount}}`, addressed to the callsign or mapped
-channel topic. `peers read` checks private admission digests: raw bus labels,
+channel topic. A reply (`replyTo` naming a live ledger row) additionally stamps
+the cited parent id as the body's own top-level `inReplyTo` — the same
+`replyTo` → `inReplyTo` convention `postBusReply` and the comms reply verbs
+use — beside the unchanged peer payload, so `busBodyInReplyToMatch`,
+`busReplyCitations`, the conversation projection and every bus read's
+`--in-reply-to` credit a peer reply like any other answer; work bodies
+(`work.post`/`work.status`) keep their strict schema and carry no citation.
+`peers read` checks private admission digests: raw bus labels,
 Slack notes and A2A opt-in metadata cannot authenticate a peer. Claims stay in
 the existing coordination table; replies must carry the preceding message's ID.
 `work.result` replies bypass that ledger, so the read also admits an envelope
@@ -43,7 +50,8 @@ and `peerInboxMessageMatches(message, filters)`. `phm agentnet peers read`
 accepts the optional filters `--from`, `--exclude-from`, `--to`, `--since`,
 `--before`, `--contains`, `--id`, `--kind`, `--body-kind`, `--priority`,
 `--peer-kind`, `--thread` (the
-same flag `send` uses to stamp a thread), `--job` and `--result`; they parse
+same flag `send` uses to stamp a thread), `--job`, `--result` and
+`--in-reply-to`; they parse
 through `parsePeerInboxFilters` — the same printable-label bound, `parseSince`
 time grammar, `busReadContains` needle, `BUS_PRIORITIES` band and
 `WORK_RESULT_OUTCOMES` enum every
@@ -56,7 +64,9 @@ agree when both appear — `priority` the exact P0..P3 envelope band,
 `peerKind`
 the inner kind of a `peer.message` body only, `thread` the `peer.message`
 payload's `threadId` or a note/context body's `thread`, `job` the shared
-`busBodyJobMatch` citation and `result` the `work.result` outcome. Filters are
+`busBodyJobMatch` citation, `result` the `work.result` outcome and
+`inReplyTo` the shared `busBodyInReplyToMatch` own-property exact match —
+never the `replyTo` alias or a substring. Filters are
 a read convenience applied after admission: they never admit an envelope the
 ledger or journal refused, and `nextCursor` still advances over every scanned
 row, so a filtered read is a view of the page, not a subscription. Every
@@ -80,8 +90,9 @@ rides `--claims`/`--open`/`--claimable` exactly like the other readers.
 `peers mesh` takes no query — passing one throws — `peers read` and every
 other verb refuse the feed-only flags, and the read-only peer-inbox filters
 (`--from`, `--exclude-from`, `--kind`, `--body-kind`, `--priority`,
-`--peer-kind`) stay refused on
-`work-feed`: the feed query has no sender, kind or thread dimension.
+`--peer-kind`, `--in-reply-to`) stay refused on
+`work-feed`: the feed query has no sender, kind, thread or reply-citation
+dimension.
 
 Host-owned `~/.ashlr/agentnet/bindings.json` is a private 0600 strict JSON object
 `{version:1, peers:[]}` (max 128). Each binding has `callsign`, `lane`, `sessionId`,

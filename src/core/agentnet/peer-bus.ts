@@ -148,7 +148,14 @@ export async function sendPeerMessage(input: unknown, session: PeerSession, opti
     const message = { fromAgent: sender.callsign, ...(recipient ? { toAgent: recipient.callsign } : { channel: mapping.channel }),
       kind: request.kind, text: scrubSecrets(request.text), refs: request.refs, threadId, origin, hopCount };
     const envelope = { id, from: sender.callsign, to: recipient?.callsign ?? mapping.topic, priority: 'P2' as const,
-      ttl: 86_400_000, body: request.work ?? { kind: 'peer.message', peer: message } };
+      ttl: 86_400_000, body: request.work ?? { kind: 'peer.message', peer: message,
+        // The bus-wide reply citation every other reply path stamps
+        // (`replyTo` input becomes the body's own `inReplyTo`): it rides the
+        // body beside the unchanged peer payload so `busBodyInReplyToMatch`,
+        // `busReplyCitations` and every bus read's `--in-reply-to` credit a
+        // peer reply like any other answer. Work bodies keep their strict
+        // schema clean and carry no citation.
+        ...(request.replyTo === undefined ? {} : { inReplyTo: request.replyTo }) } };
     const digest = createHash('sha256').update(JSON.stringify(envelope)).digest('hex');
     const row: Row = { id, fromAgent: sender.callsign, target, origin, hopCount, threadId, at: now, digest };
     // Reserve before publication. A crash may consume capacity, never allow a duplicate send.
