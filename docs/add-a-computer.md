@@ -64,14 +64,15 @@ Either way, advertise only
 what this computer
 can actually do: jobs select nodes that advertise all their required
 capabilities and share their owner scope. For `gh` jobs, sign in locally
-with `gh auth login`; the keep-alive beat's `--probe-auth` reports that login
-so GitHub jobs can route here. Whenever the join advertises `gh` — detected
-or passed explicitly — the reply also names this machine's login state under
-`ghAuth` (`ok`, `missing` or `unknown`, the same exit-code-only check
-`--probe-auth` runs, paid once at join): anything but `ok` means gh jobs
-cannot route here until `gh auth login` runs and a `--probe-auth` beat
-reports ok, and text mode says so at join instead of letting the first
-unrouted plan discover it.
+with `gh auth login`. Whenever the join advertises `gh` — detected or
+passed explicitly — the join records this machine's login check on the
+node and the reply names it under `ghAuth` (`ok`, `missing` or `unknown`,
+the same exit-code-only check `--probe-auth` runs, paid once at join): an
+`ok` routes GitHub jobs from the start, while anything but `ok` means gh
+jobs cannot route here until `gh auth login` runs and a `--probe-auth`
+beat reports ok — text mode says so at join instead of letting the first
+unrouted plan discover it, and the keep-alive beat's `--probe-auth`
+refreshes the verdict.
 
 A computer serving a local model through oMLX needs no `--caps` entry: opt in
 with `~/.ashlr/local-lanes.json` (`{"schemaVersion":1,"enabled":true}`), check

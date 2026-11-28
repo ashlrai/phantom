@@ -39,11 +39,13 @@ runs on two nodes.
   invalid task) passes `--decline`, and that session is not offered the job
   again. A manual holder that simply stops renewing still lets the lease lapse;
   `release` is the fast path, not a requirement.
-- **Local auth only.** Jobs needing `gh` go only to nodes whose own heartbeat
-  reports a working GitHub CLI login (`phm node beat --probe-auth` runs
-  `gh auth status` locally and reads only its exit code). Phantom never copies,
-  stores or sends a token. Jobs carry secret **names** (`DEPLOY_KEY`), which each
-  node resolves from its own custody; values are rejected at enqueue.
+- **Local auth only.** Jobs needing `gh` go only to nodes whose own join or
+  heartbeat reports a working GitHub CLI login. A standalone join that
+  advertises `gh` records the exit-code-only `gh auth status` check it already
+  runs for the reply; `phm node beat --probe-auth` re-runs the same check on
+  this machine. Phantom never copies, stores or sends a token. Jobs carry
+  secret **names** (`DEPLOY_KEY`), which each node resolves from its own
+  custody; values are rejected at enqueue.
 
 ## Copy-paste example
 
@@ -87,9 +89,11 @@ manual advertisement and skips that lane probe (the local-model and
 refused (`bad-caps`) — omit the flag to auto-detect or name at least one
 capability. Whenever the advertised caps include `gh` — detected or
 explicit — the reply also reports this machine's gh login state as `ghAuth`
-in `--json` (the same exit-code-only check `beat --probe-auth` runs, paid
-once at join), and text mode warns when it is not `ok`: gh jobs cannot route
-until `gh auth login` runs here and a `--probe-auth` beat reports ok. The
+in `--json` and records the same verdict on the node (the exit-code-only
+check `beat --probe-auth` runs, paid once at join), so an `ok` routes gh
+jobs from the start while `missing` or `unknown` keeps them off until `gh
+auth login` runs here and a `--probe-auth` beat reports ok; text mode warns
+when it is not `ok`. The
 same bare join reports `installedClis` in `--json` — the community agent CLI
 binaries present on this computer (`aider`, `gemini`, `copilot`, `goose`,
 `droid` and the other measured harnesses), found by file presence at

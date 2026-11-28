@@ -13,8 +13,9 @@ export interface NodeFleetDeps {
   now?: () => number;
   /** This machine's gh login check — exit code only, never a credential;
    * defaults to `gh auth status` via probeLocalAuth. Feeds `beat
-   * --probe-auth`, the bare join's gh lane detection, and the join reply's
-   * ghAuth when the advertised caps include gh. */
+   * --probe-auth`, the bare join's gh lane detection, and the gh verdict a
+   * standalone join records on the node and reports as ghAuth when the
+   * advertised caps include gh. */
   probeAuth?: () => NodeAuth;
   /** This build's version for the join `phm-<version>` cap and the status/list
    * drift target; defaults to localPhmVersion. */
@@ -443,10 +444,16 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     // probe does not cover, named in the reply as --caps candidates.
     let installedClis: string[] | undefined;
     // The gh login verdict the bare join's sign-in probe already paid for;
-    // the reply reuses it instead of probing twice. An explicit --caps — or
-    // an injected providerLanes seam — leaves it unset, and the reply probes
-    // once when the advertised caps include gh.
+    // joinAuth reuses it for the record and the reply instead of probing
+    // twice. An explicit --caps — or an injected providerLanes seam — leaves
+    // it unset, and joinAuth probes once when the advertised caps include gh.
     let joinGhAuth: NodeAuth | undefined;
+    // The same verdict, computed before runNodeFleet so it can ride the join
+    // itself: a node that advertises gh records its probed login on the record
+    // at join, so gh jobs route immediately instead of reporting "lack local
+    // gh auth" until the first --probe-auth beat. Only the standalone path
+    // sets it — the SSH endpoint's join leaves auth to worker beats.
+    let joinAuth: NodeAuth | undefined;
     if (verb === 'join') {
       // A standalone join defaults --node to this computer's sanitized hostname,
       // the same default a pool join applies. Like the version cap below it stays
@@ -531,11 +538,25 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
         const caps = [...new Set([...nodeFleetListItems(flags.get('--caps'), '--caps'), ...localCaps])];
         flags.set('--caps', caps.join(','));
       }
+      // --caps is final here, so the gh verdict the reply reports can be paid
+      // once and stamped on the node record by the join itself: an `ok` routes
+      // gh jobs from the start, `missing`/`unknown` keeps the auth fence up
+      // with the same fix a later plan would print. The bare join's sign-in
+      // probe already answered; an explicit --caps pays the same
+      // exit-code-only check a --probe-auth beat runs, once, here instead of
+      // after the join. A probe seam that throws stamps 'unknown': the check
+      // could not verify the login.
+      if (nodeFleetListItems(flags.get('--caps'), '--caps').includes('gh')) {
+        joinAuth = joinGhAuth;
+        if (joinAuth === undefined) {
+          try { joinAuth = (deps.probeAuth ?? probeLocalAuth)(); } catch { joinAuth = 'unknown'; }
+        }
+      }
     }
     // rejoinWatch: this path only runs with no pool config (or an injected
     // store), so a session-expired fix may name `join --watch` — the command
     // that both creates the session and holds it live.
-    const out = runNodeFleet(verb, flags, drive, deps.probeAuth ?? probeLocalAuth, { rejoinWatch: true });
+    const out = runNodeFleet(verb, flags, drive, deps.probeAuth ?? probeLocalAuth, { rejoinWatch: true, joinAuth });
     // Standalone join names its keep-alive beat. This stays out of runNodeFleet:
     // pool replies already carry their own `next` (the worker command) and a
     // `next` inside result.result would override it in the spread below. The
@@ -566,20 +587,13 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       if (localLaneError !== null) {
         out['localLanes'] = { state: 'invalid', error: localLaneError, fix: 'Run: phm node lanes' };
       }
-      // An advertised gh cap routes gh jobs only while a --probe-auth beat
-      // reports ok, so the reply names this machine's login state at join —
-      // where `gh auth login` is still cheap — instead of leaving the first
-      // unrouted plan to discover the mismatch. A bare join's sign-in probe
-      // already answered; an explicit --caps pays the same exit-code-only
-      // check a --probe-auth beat runs, once. A probe seam that throws
-      // reports 'unknown': the check could not verify the login.
-      if (advertisesGh) {
-        let ghAuth = joinGhAuth;
-        if (ghAuth === undefined) {
-          try { ghAuth = (deps.probeAuth ?? probeLocalAuth)(); } catch { ghAuth = 'unknown'; }
-        }
-        out['ghAuth'] = ghAuth;
-      }
+      // An advertised gh cap routes gh jobs only while the node's auth report
+      // is ok, so the reply names this machine's login state at join — where
+      // `gh auth login` is still cheap — instead of leaving the first unrouted
+      // plan to discover the mismatch. joinAuth is the verdict the join
+      // already stamped on the record above; reporting it here costs no
+      // second probe.
+      if (joinAuth !== undefined) out['ghAuth'] = joinAuth;
     }
     // status/list name each expired node's rejoin command. Text only: the
     // --json view stays the scope-filtered projection, and a machine caller
