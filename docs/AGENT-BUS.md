@@ -3213,7 +3213,13 @@ never wildcards, so a team path like `src/[id]` stays a concrete prefix claim.
 `*` and `?` are the glob wildcards but also legal filename characters: a team
 path carrying them keeps the same prefix coverage, and the overlap check reads
 the path as a glob on top of that, so the answer can err toward a conflict,
-never toward a miss.
+never toward a miss. A team path that canonicalizes to nothing (`.`, `/`,
+`./`) is the repo root — `claimsOverlap` scopes an empty normalized path
+across the whole repo — so it overlaps every `path:` glob in the repo. A team
+path carrying `..` segments cannot be resolved against the bus side (claim
+keys reject them), so it conflicts with every `path:` glob rather than risk a
+miss; a bus glob canonicalizing to nothing names only the root entry `.` and
+stays disjoint from concrete team prefixes.
 Queued path claims stay
 a read-only view of queue prompt files and can be merged onto that board with
 `claimBoard()`. `phm agents roster` reads this table through `readRosterClaims`.

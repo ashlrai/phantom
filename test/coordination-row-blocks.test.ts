@@ -90,6 +90,35 @@ describe('coordinationRowBlocks', () => {
     expect(coordinationRowBlocks(brace, 'path:fake/repo:src/other/**')).toBe(false);
   });
 
+  it('treats a team path canonicalizing to the repo root as repo-wide', () => {
+    // claimsOverlap's `pa === ''` rule scopes '.', '/', './' and '//' across
+    // the whole repo — the same prefix claim must conflict with every bus
+    // path glob in it, in either acquire order.
+    for (const path of ['.', '/', './', '//']) {
+      const team = row({ origin: 'team', key: `team:fake/repo::${path}`, repo: 'fake/repo', path });
+      expect(coordinationRowBlocks(team, 'path:fake/repo:src/**')).toBe(true);
+      expect(coordinationRowBlocks(team, 'path:fake/repo:docs/x.md')).toBe(true);
+      expect(coordinationRowBlocks(team, 'path:fake/repo:**/*.ts')).toBe(true);
+      expect(coordinationRowBlocks(team, 'repo:fake/repo')).toBe(true);
+      expect(coordinationRowBlocks(team, 'repo:fake/other')).toBe(false);
+      expect(coordinationRowBlocks(team, 'queue:q1')).toBe(false);
+    }
+    // A bus glob canonicalizing to nothing names only the root entry `.`,
+    // which a concrete team prefix does not cover.
+    const concrete = row({ origin: 'team', key: 'team:fake/repo::src', repo: 'fake/repo', path: 'src' });
+    expect(coordinationRowBlocks(concrete, 'path:fake/repo:.')).toBe(false);
+  });
+
+  it('errs toward conflict when a team path carries dot-dot segments', () => {
+    // `..` cannot be resolved against the bus side — claim keys reject it —
+    // so coverage is unprovable and the answer must be conflict, never a miss.
+    const team = row({ origin: 'team', key: 'team:fake/repo::a/../b', repo: 'fake/repo', path: 'a/../b' });
+    expect(coordinationRowBlocks(team, 'path:fake/repo:b/x')).toBe(true);
+    expect(coordinationRowBlocks(team, 'path:fake/repo:**')).toBe(true);
+    expect(coordinationRowBlocks(team, 'path:fake/repo:.')).toBe(false);
+    expect(coordinationRowBlocks(team, 'repo:fake/other')).toBe(false);
+  });
+
   it('blocks wildcard path claims that share a concrete path', () => {
     const held = row({ key: 'path:fake/repo:**/*.ts' });
     expect(coordinationRowBlocks(held, 'path:fake/repo:src/*.ts')).toBe(true);
