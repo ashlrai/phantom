@@ -3238,7 +3238,12 @@ unfindable. Every filter narrows the receipt set before it aggregates,
 so counts, `lastAt` and provider inference describe only the matching
 traffic; the per-envelope filters (`--id`, `--in-reply-to`) stay out —
 an edge is an aggregate, never one receipt, and `agents bus show`
-already serves the single-envelope read. `fleet_agent_edges` (the isolated
+already serves the single-envelope read. `ashlr agents edges` serves the
+same read on the agents CLI surface with the same flags — its argv tail
+parses through the shared `parseFleetEdgesValueArgs`/`parseFleetEdgesQuery`
+rules `phm fleet edges` applies, so the two reads can never disagree about
+what a filter keeps, and `--root` reads a non-default store there too.
+`fleet_agent_edges` (the isolated
 fleet MCP tool) serves the same `readFleetEdges` projection with the same
 `windowMinutes`/`from`/`to`/`channel`/`topic`/`since`/`before`/`priority`/
 `kind`/`job`/`contains` arguments — every other key

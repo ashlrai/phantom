@@ -4,14 +4,15 @@ import { cmdAgents } from './agents.js';
 import { busV2ContractSummary } from '../core/agents/bus-v2-schema.js';
 import { listChannelRegistry, probeRegisteredChannel } from '../core/agents/channel-registry.js';
 import { CHANNEL_IDS, type ChannelId } from '../core/agents/channel-policy.js';
-import { readFleetEdges } from '../core/fleet/fleet-edges.js';
+import { parseFleetEdgesQuery, readFleetEdges } from '../core/fleet/fleet-edges.js';
+import { parseFleetEdgesValueArgs } from './fleet-edges.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { AGENTS_BUS_UNIFIED_HELP, AGENTS_BUS_UNIFIED_VERBS, runAgentsBusUnified } from './agents-bus-unified.js';
 
 const HELP = `ashlr agents list|show <id>|validate <id>|versions <id> [--json]
 ashlr agents chat list|read <outcome:id|run:id> --channel <channel> [--topic <topic>] [--after <cursor>] [--limit <1-100>] [--from <agent>] [--exclude-from <agent>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--id <id>] [--in-reply-to <id>] [--priority <P0|P1|P2|P3>] [--frame <cli>] [--json]
 ashlr agents mesh status [--root <abs>] [--json]
-ashlr agents edges [--json]
+ashlr agents edges [--window-minutes <1..1440>] [--from <agent>] [--to <agent>] [--channel <name>] [--topic <topic>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority <P0|P1|P2|P3>] [--kind <ask|reply|handoff|status|blocker>] [--job <id>] [--contains <text>] [--root <abs>] [--json]
 ashlr agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--topic <topic>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--limit N] [--json]
 ashlr agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <envelope-id>] [--channel <name>] [--topic <topic>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--to <name>] [--thread <label>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--kind <ask|reply|handoff|status|blocker>] [--limit <1..1024>] [--json]
 ashlr agents roster [--json]
@@ -22,6 +23,9 @@ ashlr agents apps [<id> <verb>] [--json]  (docs/AGENT-APPS.md)
 ${AGENTS_BUS_UNIFIED_HELP}
 
 Profile verbs read ~/.phantom/agents (docs/AGENT-PROFILES.md).
+agents edges serves the same fleet.edges.v1 link read phm fleet edges does —
+every filter flag takes the same value rules through the shared
+parseFleetEdgesQuery validation, and --root reads a non-default store.
 Print the Agent Bus v2 contract version, providers, body kinds, work statuses and
 claim key forms. The contract command is read-only. channels list reports which
 adapters are registered. channels test bus and channels test handoff record one
@@ -63,8 +67,14 @@ export async function runAgentsCli(
     }
     rest.push(arg);
   }
-  if (rest.length === 1 && rest[0] === 'edges' && root === undefined) {
-    const result = readFleetEdges();
+  if (rest[0] === 'edges') {
+    const valueParsed = parseFleetEdgesValueArgs(rest.slice(1));
+    const parsed = valueParsed.ok ? parseFleetEdgesQuery(valueParsed.query) : null;
+    if (parsed === null || !parsed.ok) {
+      err(json ? JSON.stringify({ error: 'invalid-argument' }) : HELP);
+      return 2;
+    }
+    const result = readFleetEdges({ ...parsed.options, ...(root === undefined ? {} : { root }) });
     out(JSON.stringify(sanitizePublicJson(result), null, json ? undefined : 2));
     return result.source === 'unavailable' ? 1 : 0;
   }
