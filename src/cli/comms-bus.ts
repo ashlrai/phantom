@@ -18,18 +18,22 @@ import { busReadContains } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { busPageAddressMatchers, busPageRowMatch, filterBusInboxPage, type BusPageAddressRefs, type BusPageFilters, type BusPageMatchers } from '../core/fleet/bus-page-filters.js';
 
-const HELP = `phm comms bus group read <room> <topic> <cursor> [--from <address>] [--exclude-from <address>] [--id <id>] [--priority <P0|P1|P2|P3>] [--body-kind <kind>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
+const HELP = `phm comms bus group read <room> <topic> <cursor> [--from <address>] [--exclude-from <address>] [--id <id>] [--in-reply-to <id>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--thread <label>] [--job <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
 phm comms bus group presence <room> <topic>
 phm comms bus group heartbeat <room> <topic> <id> <member> <online|offline>
 phm comms bus group publish <room> <topic> <id> <from> <ttl-ms> <json-body>
 Group labels are local routing labels, not identities; group read advances the shared bus cursor.
 group read filters apply the shared bus page rules on top of the room+topic address: --from and
---exclude-from resolve sender labels through the identity registry like every bus read, --id is an
-exact envelope match, --priority one P0..P3 band, --body-kind the body's own kind discriminator
-(group.message payloads vs group.presence heartbeats), --since/--before the [since, before) window
-on receivedAt, and --contains the scrubbed one-line summary substring. The room/topic address
-already fixes the to/channel/topic scope, so those filters are not offered; filters narrow shown
-rows, never the scan — keep reading nextCursor until it stops advancing.
+--exclude-from resolve sender labels through the identity registry like every bus read, --id and
+--in-reply-to are exact matches on the envelope id and the body's own inReplyTo citation, --priority
+one P0..P3 band, --kind the protocol-v1 kind a topic-less protocol envelope carries, --thread the v2
+thread label on note/context bodies, --job one job id the body names, --body-kind the body's own kind
+discriminator (group.message payloads vs group.presence heartbeats vs channel-post kinds), --result
+the work.result outcome code, --since/--before the [since, before) window on receivedAt, and
+--contains the scrubbed one-line summary substring. The room+topic address already fixes the
+to/channel scope and the protocol topic — a protocol body's topic must equal --to and
+group:<room>:<topic> is never a protocol topic name — so those filters are not offered; filters
+narrow shown rows, never the scan — keep reading nextCursor until it stops advancing.
 phm comms bus post --file <envelope.json|->
 phm comms bus post --reply-to <id> --id <new-id> --from <address> --text <text> [--ttl-ms <ms>]
 phm comms bus post-batch --file <batch.json|->
@@ -354,8 +358,8 @@ async function peers(args: string[], deps: CommsBusDependencies): Promise<number
   }
 }
 
-/** The shared bus page filters `group read` accepts; the room/topic address already fixes to/channel/topic. */
-const GROUP_READ_FLAGS = ['--from', '--exclude-from', '--id', '--priority', '--body-kind', '--since', '--before', '--contains'] as const;
+/** The shared bus page filters `group read` accepts; the room/topic address already fixes to/channel and the protocol topic. */
+const GROUP_READ_FLAGS = ['--from', '--exclude-from', '--id', '--in-reply-to', '--priority', '--kind', '--thread', '--job', '--body-kind', '--result', '--since', '--before', '--contains'] as const;
 type GroupReadFlag = (typeof GROUP_READ_FLAGS)[number];
 /** The printable routing-label bound every bus id/address field shares. */
 const GROUP_READ_LABEL = /^[\x21-\x7e]{1,128}$/;
@@ -363,19 +367,25 @@ const GROUP_READ_LABEL = /^[\x21-\x7e]{1,128}$/;
 /**
  * Parse the `group read` filter tail into the shared bus page row rule. The
  * room+topic address is the subscription's own scope, so the address-implied
- * filters (`to`, `channel`, protocol `kind`/`topic`, and the body fields
- * group bodies never carry — `inReplyTo`, `thread`, `job`, `result`) are not
- * offered: every accepted flag can match a group row. `--body-kind` is the
- * discriminator that separates `group.message` payloads from `group.presence`
- * heartbeats; `--from`/`--exclude-from` resolve through the same identity
- * registry every bus read's sender filter uses. Returns null on any invalid
- * value — a malformed filter is an argument error, never a widened page.
+ * filters (`to`, `channel` and the protocol `topic` — a protocol body's topic
+ * must equal `--to`, and `group:<room>:<topic>` is never a protocol topic
+ * name) are not offered. Every other shared filter can match a row the
+ * subscription returns: `group.message`/`group.presence` bodies never carry
+ * the body citations, but the same `group:<room>:<topic>` address also holds
+ * unified channel posts and raw envelopes whose note/context, work and
+ * topic-less protocol bodies do, so `--in-reply-to`, `--kind`, `--thread`, `--job` and
+ * `--result` apply the identical `busPageRowMatch` fields `comms bus read`
+ * offers. `--body-kind` stays the discriminator separating `group.message`
+ * payloads from `group.presence` heartbeats; `--from`/`--exclude-from`
+ * resolve through the same identity registry every bus read's sender filter
+ * uses. Returns null on any invalid value — a malformed filter is an argument
+ * error, never a widened page.
  */
 function parseGroupReadFilters(args: string[], options: BusInboxOptions): ((row: BusInboxReceipt) => boolean) | null {
   const values = new Map<GroupReadFlag, string>();
   for (let i = 0; i < args.length; i++) {
     const token = args[i]!;
-    const inline = /^--(from|exclude-from|id|priority|body-kind|since|before|contains)=(.*)$/s.exec(token);
+    const inline = /^--(from|exclude-from|id|in-reply-to|priority|kind|thread|job|body-kind|result|since|before|contains)=(.*)$/s.exec(token);
     const key = (inline ? `--${inline[1]}` : token) as GroupReadFlag;
     if (!(GROUP_READ_FLAGS as readonly string[]).includes(key) || values.has(key)) return null;
     const value = inline ? inline[2] : args[++i];
@@ -395,15 +405,40 @@ function parseGroupReadFilters(args: string[], options: BusInboxOptions): ((row:
     if (!GROUP_READ_LABEL.test(id)) return null;
     filters.id = id;
   }
+  const inReplyTo = values.get('--in-reply-to');
+  if (inReplyTo !== undefined) {
+    if (!GROUP_READ_LABEL.test(inReplyTo)) return null;
+    filters.inReplyTo = inReplyTo;
+  }
   const priority = values.get('--priority');
   if (priority !== undefined) {
     if (!(BUS_PRIORITIES as readonly string[]).includes(priority)) return null;
     filters.priority = priority as BusPriority;
   }
+  const kind = values.get('--kind');
+  if (kind !== undefined) {
+    if (!(BUS_PROTOCOL_KINDS as readonly string[]).includes(kind)) return null;
+    filters.kind = kind as BusPageFilters['kind'];
+  }
+  const thread = values.get('--thread');
+  if (thread !== undefined) {
+    if (!GROUP_READ_LABEL.test(thread)) return null;
+    filters.thread = thread;
+  }
+  const job = values.get('--job');
+  if (job !== undefined) {
+    if (!GROUP_READ_LABEL.test(job)) return null;
+    filters.job = job;
+  }
   const bodyKind = values.get('--body-kind');
   if (bodyKind !== undefined) {
     if (!GROUP_READ_LABEL.test(bodyKind)) return null;
     filters.bodyKind = bodyKind;
+  }
+  const result = values.get('--result');
+  if (result !== undefined) {
+    if (!(WORK_RESULT_OUTCOMES as readonly string[]).includes(result)) return null;
+    filters.result = result as BusPageFilters['result'];
   }
   const now = (options.now ?? Date.now)();
   for (const flag of ['--since', '--before'] as const) {
