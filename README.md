@@ -20,7 +20,7 @@ Chasing open-source RSI (recursive self-improvement) is Phantom's mission. We're
 
 Agents run the factory; the human owner acts as a passive board member. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow. The owner sets direction and is needed only for passwords, 2FA, device approvals and payments. See [how agents work on Phantom](#how-agents-work-on-phantom).
 
-[![Phantom Fleet overview with resource balances, 28 running sessions, 336 active subagents, 362 merges in 24 hours, a Leader inbox with dictation, model and context indicators, a shared tool shelf, and CPU and RAM on every worker.](docs/images/phantom-fleet-overview.png)](docs/images/phantom-fleet-overview.png)
+[![Phantom Fleet overview with resource balances, 28 running sessions, 336 active subagents, 362 merges in 24 hours, Google’s five-hour quota, separate Devin Cloud and Local rows, a Leader inbox with dictation, a shared tool shelf, and per-worker CPU and RAM.](docs/images/phantom-fleet-overview.png)](docs/images/phantom-fleet-overview.png)
 
 *Phantom Fleet overview with sample data. Balances, counts, trends, and inbox controls are illustrative, not measured performance or feature availability. [See the current Fleet capture with demo data](docs/images/phantom-fleet-demo.png) or [read the visual notes](docs/images/CAPTURES.md).*
 

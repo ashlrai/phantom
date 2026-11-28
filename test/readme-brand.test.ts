@@ -65,6 +65,7 @@ describe('README top-half brand contract', () => {
     expect(readme).toContain('Phantom Fleet overview with sample data.');
     expect(readme).toContain('362 merges in 24 hours');
     expect(readme).toContain('Leader inbox with dictation');
+    expect(readme).toContain('separate Devin Cloud and Local rows');
     expect(readme).toContain('[See the current Fleet capture with demo data](docs/images/phantom-fleet-demo.png)');
     const png = readFileSync(join(ROOT, path));
     expect(png.subarray(1, 4).toString()).toBe('PNG');
