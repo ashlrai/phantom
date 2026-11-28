@@ -26,8 +26,9 @@ runs on two nodes.
   for one job get exactly one claim. Pass the token to every external effect so
   a paused node cannot act after losing the job. Only a claim its session can
   still act on consumes capacity: a lapsed claim is re-routable, and a claim
-  fenced by a rejoin or departure frees the node's slot and host budget at
-  once even though the job itself stays fenced until the claim expires.
+  fenced by a rejoin, departure, or loss of its leader epoch frees the node's
+  slot and host budget immediately. Pull can offer the same job again once its
+  claim expires.
 - **Handing a claim back.** A node that pulls a job it will not run releases
   the claim at once with `phm node release`, so the job returns to pending
   instead of showing as running until the lease lapses. A pool worker
