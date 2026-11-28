@@ -160,12 +160,17 @@ function candidates(view: NodesView, doctor: NodesDoctor, reasons: string[]): Of
   return out;
 }
 
-export function planOffload(input: OffloadInputs): { moves: OffloadMove[]; stays: OffloadStay[]; reasons: string[] } {
+export function planOffload(input: OffloadInputs): { moves: OffloadMove[]; stays: OffloadStay[]; waiting: number; reasons: string[] } {
   const { host, view, doctor, queue, recorded } = input;
   const reasons: string[] = [];
   const moves: OffloadMove[] = [];
   const stays: OffloadStay[] = [];
-  if (!queue) return { moves, stays, reasons: ['queue unreadable; ready jobs unknown'] };
+  // `stays` lists every job that did not move, including ones that are not
+  // waiting at all (already running, already chosen for another computer, or
+  // launchable here). `waiting` counts only the stays still queued locally, so
+  // the summary never claims running work is waiting.
+  let waiting = 0;
+  if (!queue) return { moves, stays, waiting, reasons: ['queue unreadable; ready jobs unknown'] };
   const jobs: QueueOrderJob[] = queue.jobs.slice(0, PLAN_JOB_LIMIT);
   if (queue.jobs.length > PLAN_JOB_LIMIT) reasons.push(`only the first ${PLAN_JOB_LIMIT} of ${queue.jobs.length} ready jobs were looked at`);
   // jobsRunning holds node job ids, which are not ready-row ids: the claim
@@ -179,10 +184,10 @@ export function planOffload(input: OffloadInputs): { moves: OffloadMove[]; stays
   }))));
   const pool = host.state === 'busy' ? candidates(view, doctor, reasons) : [];
   for (const job of jobs) {
-    const stay = (why: string) => stays.push({ job: job.id, lane: job.lane, why });
-    if (running.has(job.id)) { stay('already running; running jobs are never moved'); continue; }
-    if (recorded.has(job.id)) { stay('already chosen for another computer'); continue; }
-    if (host.state === 'fine') { stay('this computer would launch it'); continue; }
+    const stay = (why: string, isWaiting = true) => { if (isWaiting) waiting++; stays.push({ job: job.id, lane: job.lane, why }); };
+    if (running.has(job.id)) { stay('already running; running jobs are never moved', false); continue; }
+    if (recorded.has(job.id)) { stay('already chosen for another computer', false); continue; }
+    if (host.state === 'fine') { stay('this computer would launch it', false); continue; }
     if (host.state === 'unknown') { stay('this computer\'s guard is unknown; waiting here'); continue; }
     // job.lane is a market lane; candidates hold provider caps. The claim
     // bridge resolves the lane to the cap a remote node needs (remoteLaneCap);
@@ -208,7 +213,7 @@ export function planOffload(input: OffloadInputs): { moves: OffloadMove[]; stays
     const readiness = open.verified ? 'passes the doctor' : 'is ready on advertised caps';
     moves.push({ job: job.id, lane: job.lane, node: open.row.name, reasons: host.reasons, why: `${host.reasons.join(' and ')} on this computer; ${open.row.name} ${readiness} with a free ${job.lane} slot` });
   }
-  return { moves, stays, reasons: [...new Set(reasons)] };
+  return { moves, stays, waiting, reasons: [...new Set(reasons)] };
 }
 
 // ── Setting and events (the only writes) ───────────────────────────────────────────────────────────────────
@@ -278,7 +283,7 @@ export async function readNodesOffload(deps: NodesOffloadDeps, opts: { dryRun: b
   // was actually checked.
   const summary = host.state !== 'busy' ? `${host.why} No job moves.`
     : queue === null ? `${host.why} The ready queue could not be read, so whether jobs are waiting is unknown.`
-    : n === 0 ? `${host.why} No computer is ready, so ${plan.stays.length ? 'jobs keep waiting here' : 'nothing is queued'}.`
+    : n === 0 ? `${host.why} ${plan.waiting ? 'No computer is ready, so jobs keep waiting here.' : plan.stays.length ? 'No job is waiting to move.' : 'Nothing is queued.'}`
       : !enabled ? `Offload is off. ${count(n, 'job would', 'jobs would')} move if you run \`phm nodes offload on\`.`
         : live ? `${count(written, 'job', 'jobs')} chosen for another computer.` : `${count(n, 'job would', 'jobs would')} move (dry run, nothing recorded).`;
   return { schema: NODES_OFFLOAD_SCHEMA, schemaVersion: 1, asOf: view.asOf, enabled, mode: live ? 'live' : 'dry-run', host, moves: plan.moves, stays: plan.stays, recorded: written, summary, reasons: [...view.reasons, ...plan.reasons] };
