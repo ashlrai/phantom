@@ -242,6 +242,10 @@ and the assistant setting does not replace the required explicit request.
 The Fleet resource bar shows fresh advisor targets, allowance waste estimates at
 their deadlines and the reset proposal from `phm resources plan`. These are
 read-only; the reset chip does not spend a grant.
+The live plan uses eligible ready rows for demand. If the eligible queue cannot
+be read, admission is closed, or a lane is absent from the eligible queue view,
+its demand stays unknown and cannot justify extra slots or a reset proposal.
+A readable eligible lane with no matching rows reports zero queued jobs.
 
 ### Custom resources
 
