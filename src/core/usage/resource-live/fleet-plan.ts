@@ -89,7 +89,12 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
     const points = (sidecar.history[row.id] ?? []).filter(point => point.reset_at === reading.reset_at &&
       time(point.observed_at) <= now).sort((a, b) => time(a.observed_at) - time(b.observed_at));
     const first = points[0], last = points.at(-1);
-    const measured = first && last && time(first.observed_at) < time(last.observed_at) &&
+    const inconsistent = points.some((point, index) => {
+      const previous = points[index - 1];
+      return previous !== undefined && (point.used < previous.used ||
+        (time(point.observed_at) === time(previous.observed_at) && point.used !== previous.used));
+    });
+    const measured = !inconsistent && first && last && time(first.observed_at) < time(last.observed_at) &&
       (!ledger.truncated || jobs.some(job => job.at <= time(first.observed_at)))
       ? jobs.filter(job => job.lane === row.lane && (row.id !== 'claude-fable' || job.fable) &&
         job.at > time(first.observed_at) && job.at <= time(last.observed_at)) : [];
@@ -100,7 +105,7 @@ export function buildFleetResourcePlan(raw: unknown, nodes: NodeRow[], status: u
       ? tokenFit ? spent / tokens * lane!.tokens_per_job! : spent / measured.length : null;
     const jobsPerSlot = minutes === null || lane?.minutes_per_job == null ? null : Math.floor(minutes / lane.minutes_per_job);
     return { id: row.id, label: reading.label, class: reading.class, lane: row.lane, unit: row.unit, remaining: row.remaining, deadline_at: row.deadline_at,
-      jobs_per_slot: jobsPerSlot, measured_jobs_for_quota: ledger.text === null ? null : measured.length,
+      jobs_per_slot: jobsPerSlot, measured_jobs_for_quota: inconsistent || ledger.text === null ? null : measured.length,
       estimated_quota_per_job: perJob, estimate_basis: perJob === null ? null : tokenFit ? 'observed-quota-per-token' : 'observed-quota-per-finish',
       projected_jobs: null as number | null, projected_waste_at_deadline: null as number | null,
       action: row.action };

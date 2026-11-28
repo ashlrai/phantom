@@ -72,6 +72,23 @@ describe('fleet resource plan', () => {
     expect(plan.lanes.find(row => row.lane === 'agy')!.additional_slots).toBeNull();
   });
 
+  it.each([
+    { observed_at: iso(now - hr / 2), used: 7, slots: null },
+    { observed_at: iso(now - hr), used: 9, slots: null },
+    { observed_at: iso(now - hr), used: 8, slots: 1 },
+  ])('requires consistent quota readings for scale-up advice (%j)', ({ observed_at, used, slots }) => {
+    const id = 'codex-personal';
+    const history = { ...live.history, [id]: [...live.history[id]!, { observed_at, used, reset_at: deadline }] };
+    const plan = buildFleetResourcePlan({ ...live, history }, [node], status(), ledger, now);
+    expect(plan.allowances.find(row => row.id === id)).toMatchObject({
+      remaining: 82,
+      measured_jobs_for_quota: slots === null ? null : 2,
+      estimated_quota_per_job: slots === null ? null : 5,
+    });
+    expect(plan.lanes.find(row => row.lane === id)?.additional_slots).toBe(slots);
+    expect(plan.lanes.find(row => row.lane === 'agy')?.additional_slots).toBe(1);
+  });
+
   it('does not double count shared slots and distinguishes unknown from known zero', () => {
     const plan = buildFleetResourcePlan(live, [{ ...node, freeSlots: 1 }], status(), ledger, now);
     expect(plan.lanes.find(row => row.lane === 'codex-personal')?.additional_slots).toBe(1);
