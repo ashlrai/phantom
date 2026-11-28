@@ -3,7 +3,7 @@ export const NODE_FLEET_VERBS = ['join', 'beat', 'enqueue', 'plan', 'pull', 'ren
 
 export const NODE_FLEET_USAGE = `Usage: phm node join [--node <id>] --owner <scope[,scope]> [--caps <cap[,cap]>] [--slots 0-64] [--watch [--every <seconds>]] [--json]
        phm node beat --node <id> --session <n> [--usage 0-1000] [--slots 0-64] [--capacity <sample-json>] [--auth ok|missing|unknown | --probe-auth] [--watch [--every <seconds>]] [--json]
-       phm node enqueue --job <id> --owner <scope> [--requires <cap[,cap]>] [--pack <id>] [--secrets <NAME[,NAME]>] [--task-part <text>] [--task-sha256 sha256:<hex>] [--json]
+       phm node enqueue --job <id> --owner <scope> [--requires <cap[,cap]>] [--pack <id>] [--secrets <NAME[,NAME]>] [--task-part <text>] [--task-sha256 sha256:<hex>] [--task-file <path>|-] [--json]
        phm node plan [--owner <scope>] [--json]
        phm node pull --node <id> --session <n> [--json]
        phm node renew --job <id> --node <id> --session <n> --token <n> --leader-token <n> [--watch [--every <seconds>]] [--json]
@@ -42,7 +42,10 @@ joined). \`--task-sha256\` is \`sha256:\` plus the lowercase hex sha256 of the
 exact joined text (\`sha256sum\` on Linux, \`shasum -a 256\` on macOS). An embedded
 task requires \`--pack codex-file\`, \`--pack codex-file\` requires the embedded
 task (the pack's only input is the task text), and the two flags together or
-neither — enqueue refuses the pair split either way.
+neither — enqueue refuses the pair split either way. \`--task-file <path>\` (or
+\`-\` to read stdin) is the whole-text spelling of the same pair: the file's
+contents become the embedded task and the digest and part split are computed
+for you. It cannot be combined with \`--task-part\`/\`--task-sha256\`.
 
 \`beat --watch\` repeats the beat every --every seconds (default 10, at most 25 — sessions
 expire 30 s after the last beat) until Ctrl-C, re-measuring capacity and host stats on this
