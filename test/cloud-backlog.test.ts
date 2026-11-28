@@ -109,6 +109,53 @@ describe('claims', () => {
     expect(nextBacklogItem([newerFailed, newerRunning], 'ashlrai/ashlr-hub', NOW)?.id).toBe(SECOND);
   });
 
+  it('a second consecutive unmerged ending doubles the wait; the streak orders by creation, not end time', () => {
+    // Two unmerged endings in a row: the newest ended 4 days ago — past the
+    // 3-day first-ending window but inside the doubled 6-day second one.
+    const older = task(FIRST, 'failed', 10 * DAY, 11 * DAY);
+    const newer = task(FIRST, 'closed', 4 * DAY, 5 * DAY);
+    expect(nextBacklogItem([older, newer], 'ashlrai/ashlr-hub', NOW)?.id).toBe(SECOND);
+    // Same pair with the newest ending 7 days ago clears the 6-day window.
+    const olderLate = task(FIRST, 'failed', 20 * DAY, 21 * DAY);
+    const newerLate = task(FIRST, 'closed', 7 * DAY, 8 * DAY);
+    expect(nextBacklogItem([olderLate, newerLate], 'ashlrai/ashlr-hub', NOW)?.id).toBe(FIRST);
+    // The newest task is picked by creation like every other claim rule: an
+    // older-created task that ended more recently does not become "newest".
+    // olderCreated ended 2 days ago but was created first; newerCreated
+    // ended 8 days ago. Streak 2 → 6-day wait measured from newerCreated's
+    // ending → released (an end-time ordering would still be inside it).
+    const olderCreated = task(FIRST, 'failed', 2 * DAY, 20 * DAY);
+    const newerCreated = task(FIRST, 'failed', 8 * DAY, 10 * DAY);
+    expect(nextBacklogItem([olderCreated, newerCreated], 'ashlrai/ashlr-hub', NOW)?.id).toBe(FIRST);
+  });
+
+  it('each further consecutive unmerged ending doubles again, up to the 30-day cap', () => {
+    const tail = [
+      task(FIRST, 'failed', 70 * DAY, 71 * DAY),
+      task(FIRST, 'expired', 60 * DAY, 61 * DAY),
+      task(FIRST, 'closed', 50 * DAY, 51 * DAY),
+      task(FIRST, 'failed', 46 * DAY, 47 * DAY),
+    ];
+    // Five consecutive unmerged endings: the uncapped doubling asks 48 days,
+    // the cap holds the wait at 30 — so 26 days is still claimed.
+    const claimed = [...tail, task(FIRST, 'closed', 26 * DAY, 27 * DAY)];
+    expect(nextBacklogItem(claimed, 'ashlrai/ashlr-hub', NOW)?.id).toBe(SECOND);
+    // 31 days clears the cap — and would still sit inside an uncapped 48-day wait.
+    const released = [...tail, task(FIRST, 'closed', 31 * DAY, 32 * DAY)];
+    expect(nextBacklogItem(released, 'ashlrai/ashlr-hub', NOW)?.id).toBe(FIRST);
+  });
+
+  it('a merged, no-change or still-running older task breaks the consecutive-ending streak', () => {
+    const noChange = { ...task(FIRST, 'closed', 30 * DAY, 31 * DAY), report: { status: 'no-change' as const, summary: 'Already fixed.', testsRun: [], risks: [] } };
+    const failed = task(FIRST, 'failed', 4 * DAY, 5 * DAY);
+    // The failed newest is the FIRST unmerged ending in a row: 3-day window, not 6.
+    expect(nextBacklogItem([noChange, failed], 'ashlrai/ashlr-hub', NOW)?.id).toBe(FIRST);
+    const merged = task(FIRST, 'merged', 30 * DAY, 31 * DAY);
+    expect(nextBacklogItem([merged, failed], 'ashlrai/ashlr-hub', NOW)?.id).toBe(FIRST);
+    const running = task(FIRST, 'running', 0, 40 * DAY);
+    expect(nextBacklogItem([running, failed], 'ashlrai/ashlr-hub', NOW)?.id).toBe(FIRST);
+  });
+
   it('returns null when everything is claimed', () => {
     const tasks = BUILTIN_IMPROVEMENT_BACKLOG.map((i) => task(i.id, 'running'));
     expect(nextBacklogItem(tasks, 'ashlrai/ashlr-hub', NOW)).toBeNull();

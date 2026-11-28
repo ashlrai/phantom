@@ -1946,9 +1946,13 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   install's job lifecycle and carry no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
-  again 3 days after that task ends `closed`, `failed` or `expired`, and never
+  again 3 days after that task ends `closed`, `failed` or `expired` —
+  doubling per consecutive unmerged ending (6, 12, 24 days) and capped at
+  30 days, so a persistently failing item still retries about monthly
+  instead of spending a session every 3 days forever — and never
   after it ends `merged` or its session reported `no-change` (the work was
-  already done) — with one exception: every append stamps the item
+  already done); a merged, no-change or still-running older task breaks the
+  consecutive-ending count — with one exception: every append stamps the item
   `assertedAt`, and re-emitting an id already in the file refreshes its
   prompt and stamp in place instead of duplicating. When the newest task
   ended `merged` but the item's `assertedAt` is later than that task's
