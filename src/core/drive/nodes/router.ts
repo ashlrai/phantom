@@ -1,4 +1,5 @@
 import { scrubSecrets } from '../../util/scrub.js';
+import { isVersionCap } from './phm-version.js';
 import { isNodeCapacity, NODE_HEARTBEAT_MS, type NodeRecord, type NodesState } from './state.js';
 import type { QueueJobV1 } from './queue-v1.js';
 
@@ -62,6 +63,37 @@ export function jobBlockers(node: NodeRecord, job: QueueJobV1): string[] {
 function shortfall(node: NodeRecord, job: QueueJobV1): string | null {
   if (!node.owners?.includes(job.owner!)) return 'owner';
   return jobBlockers(node, job)[0] ?? null;
+}
+
+/** The caps fix names one concrete rejoin instead of "a node": the in-scope
+ * candidate missing the fewest required caps (candidates arrive in router
+ * order — lowest node id first — and ties keep it), rejoining with its whole
+ * advertised profile plus the job's caps, the same rule joinHintCommand
+ * applies to expired-session fixes. "Every required cap" is the honest claim:
+ * this branch runs only when no in-scope node advertises all of them, though
+ * one may already cover a subset. Version-report caps stay out of the hint —
+ * join re-derives the build marker itself — and a required `phm-<version>`
+ * cap is called out separately, because no `--caps` list can advertise a build
+ * the node does not run. Every inlined value comes from a parseState-validated
+ * record, so the command is paste-safe. The fix ends in the join command, so
+ * the standalone path's routesWithJoinWatch adds --watch exactly as it does
+ * for the owner fix. */
+function capsRejoinFix(job: QueueJobV1, candidates: NodeRecord[]): string {
+  const requires = job.requires ?? [];
+  const missing = (n: NodeRecord) => requires.filter(c => !(n.caps ?? []).includes(c)).length;
+  const best = candidates.reduce((a, b) => (missing(b) < missing(a) ? b : a));
+  const versioned = requires.filter(isVersionCap);
+  const caps = [...new Set([...(best.caps ?? []).filter(c => !isVersionCap(c)),
+    ...requires.filter(c => !isVersionCap(c))])];
+  const owners = best.owners?.join(',') ?? job.owner!;
+  const capsArg = caps.length ? ` --caps ${caps.join(',')}` : '';
+  const slots = best.slots === undefined ? '' : ` --slots ${best.slots}`;
+  const rejoin = `phm node join --node ${best.nodeId} --owner ${owners}${capsArg}${slots}`;
+  // The caveat precedes the command so the fix still ends in the join — the
+  // shape routesWithJoinWatch rewrites with --watch on the standalone path.
+  const note = versioned.length === 0 ? '' :
+    ` ${versioned.join(',')} names a phm build, not a --caps choice — join cannot advertise it; the node must run that version (phm node self-update).`;
+  return `No node owned by '${job.owner}' advertises every required cap (${requires.join(',')}).${note} On ${best.nodeId}, rejoin with: ${rejoin}`;
 }
 
 /** Shared capacity slice of fleet.awareness.v1. Pool dispatch recomputes it inside the
@@ -172,11 +204,11 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       : reasons.has('capacity')
         ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
         : capsReady.length === 0
-          ? `No node owned by '${job.owner}' advertises ${requires.join(',')}. Rejoin a node with --caps including them.`
+          ? capsRejoinFix(job, inScope)
           : reasons.has('auth')
             ? authFix(job, nodes, state)
             : reasons.has('declined')
-              ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
+              ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Enqueue a new job id with --requires naming a cap an eligible node advertises.`
               : authFix(job, nodes, state);
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
