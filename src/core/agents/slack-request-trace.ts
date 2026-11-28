@@ -18,7 +18,7 @@
 import { readSlackJournal, type SlackJournalRead, type SlackObservation } from './slack-journal.js';
 import { isSlackChannelId, isSlackTs } from './slack-network.js';
 import { readSlackSendReceipts, type SlackSendReceiptRead } from './slack-send-receipts.js';
-import { bindSlackReplies, type InboundRequest, type SentReceipt, type SlackReplyBinding } from './slack-reply-binding.js';
+import { bindSlackReplies, type InboundRequest, type SentReceipt } from './slack-reply-binding.js';
 
 export type SlackTraceIngress = 'posted' | 'duplicate' | 'failed' | 'unknown';
 export type SlackTraceOutcome = 'answered' | 'uncertain' | 'bus-failed' | 'unanswered';
@@ -76,31 +76,26 @@ export function traceSlackRequests(input: {
   const pending: Pending[] = [];
   for (const entry of entries) {
     if (entry.decision !== 'ingested' || !entry.channelId || !entry.messageTs || !entry.threadTs) continue;
-    if (input.thread !== undefined && entry.threadTs !== input.thread) continue;
     pending.push({
       req: { at: entry.at, channelId: entry.channelId, messageTs: entry.messageTs, threadTs: entry.threadTs,
         ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}) },
       ingress: entry.bus ?? 'unknown',
     });
   }
-  // Every ingested row stays in the trace. Failed rows are bound separately so
-  // they keep their reply evidence; the binder shares one verdict between
-  // duplicate journal rows of the same request id.
-  const bind = (ingress: (i: SlackTraceIngress) => boolean): SlackReplyBinding =>
-    bindSlackReplies({ requests: pending.filter((p) => ingress(p.ingress)).map((p) => p.req), receipts, now });
-  const binding = bind((i) => i !== 'failed');
-  const failedBinding = bind((i) => i === 'failed');
+  // Bind all observations before filtering output: a conflicting location in a
+  // different ingress state or thread must not certify this request as answered.
+  const binding = bindSlackReplies({ requests: pending.map((p) => p.req), receipts, now });
   const nowMs = now.getTime();
   const eligible = (req: InboundRequest): boolean =>
     isSlackChannelId(req.channelId) && isSlackTs(req.messageTs) && isSlackTs(req.threadTs) &&
     Number.isFinite(Date.parse(req.at)) && Date.parse(req.at) <= nowMs;
   const counts = { total: 0, answered: 0, uncertain: 0, busFailed: 0, unanswered: 0 };
-  const rows: SlackTraceRow[] = pending.map((p) => {
+  const rows: SlackTraceRow[] = pending.filter((p) => input.thread === undefined || p.req.threadTs === input.thread).map((p) => {
     const { req, ingress } = p;
     const { requestId, ...evidence } = req;
     const row: SlackTraceRow = { ...evidence, ingress, outcome: 'unanswered' };
     const found = requestId !== undefined && eligible(req)
-      ? (ingress === 'failed' ? failedBinding : binding).byRequestId.get(requestId) : undefined;
+      ? binding.byRequestId.get(requestId) : undefined;
     if (ingress === 'failed') {
       row.outcome = 'bus-failed';
       if (found?.replyTs !== undefined) row.replyTs = found.replyTs;
