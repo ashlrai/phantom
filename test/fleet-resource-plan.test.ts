@@ -121,6 +121,15 @@ describe('fleet resource plan', () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  it('distinguishes unmeasured lane eligibility from an observed empty eligible queue', () => {
+    const demand = new Map([['agy', []]]);
+    const plan = buildFleetResourcePlan(live, [node], status(), ledger, now, [], undefined, demand);
+    expect(plan.lanes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ lane: 'codex-personal', queued_jobs: null, additional_slots: null, target_concurrency: null }),
+      expect.objectContaining({ lane: 'agy', queued_jobs: 0, additional_slots: 0, target_concurrency: 1 }),
+    ]));
+  });
+
   it('includes an expiring reset proposal only when the allowance and bank evidence support it', () => {
     const reading = { ...readings[0]!, used: 95, source: 'codex-budget-overrides-weekly' };
     const weekly = { ...live, readings: [reading], history: { [reading.id]: [
@@ -134,6 +143,8 @@ describe('fleet resource plan', () => {
       action: 'use-reset-now', requires_explicit_request: true, grant, window: 'weekly', queued_jobs: 3,
     });
     expect(plan({ ...bank, queued: 0 }).reset_proposal).toBeNull();
+    expect(buildFleetResourcePlan(weekly, [node], status(), ledger, now, [], bank,
+      new Map([['agy', []]])).reset_proposal).toBeNull();
   });
 
   it('reroutes eligible rows once toward the earliest included deadline and shares the plan with readers', async () => {

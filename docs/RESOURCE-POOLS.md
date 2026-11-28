@@ -242,6 +242,10 @@ and the assistant setting does not replace the required explicit request.
 The Fleet resource bar shows fresh advisor targets, allowance waste estimates at
 their deadlines and the reset proposal from `phm resources plan`. These are
 read-only; the reset chip does not spend a grant.
+When the resource planner has an eligibility scan, it uses that scan for
+lane demand and the personal Codex reset proposal. A scanned lane with no
+eligible jobs has zero demand. A lane absent from the scan has unknown demand
+and supplies no scale-up or reset recommendation from raw dispatcher counts.
 
 ### Custom resources
 
