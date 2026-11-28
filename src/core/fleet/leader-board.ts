@@ -52,6 +52,8 @@ const TIER_RE = /^[a-z][a-z0-9-]{0,15}$/;
 const REBASE_JOB_RE = /^RQ-REBASE-(?!BATCH-)([A-Z0-9][A-Z0-9-]*)-(\d{1,7})-(?:[0-9a-f]{7,40}|u[0-9a-f]{6})$/i;
 /** Batch members share a repo and end with a six-character hash. */
 const REBASE_BATCH_RE = /^RQ-REBASE-BATCH-([A-Za-z][A-Za-z0-9-]*?)-((?:\d{1,7}-)*\d{1,7})-[0-9a-f]{6}$/i;
+/** queuegen retries a failed dirty rebase as `<base id>-retry<N>`; the suffix is attempt noise. */
+const RETRY_SUFFIX_RE = /-retry\d+$/i;
 const KEYED_JOB_ID = /^(?:id|job|job[._-]?id|task|name)=\s*/i;
 
 export interface LeaderBoardLane {
@@ -163,6 +165,8 @@ export function readyRowsForDepth(text: string, routerQueue?: string): { status:
 /**
  * Distinct PRs named by job IDs in ready.tsv. A parked rebase job still
  * counts even when the row lacks the lane required by parseReadyTsv.
+ * queuegen's `<base id>-retry<N>` rebase retries count toward the base
+ * job's PRs — a retry is the same conflict, not a new one.
  */
 export function conflictingPrIds(readyTsvText: string): Set<string> {
   const prs = new Set<string>();
@@ -180,7 +184,7 @@ export function conflictingPrIds(readyTsvText: string): Set<string> {
       : first.includes('=') ? cells.find(cell => KEYED_JOB_ID.test(cell))
       : KNOWN_STATUSES.has(first.toUpperCase()) || parkedCell(first) ? cells[1]
       : first;
-    const jobId = id?.replace(KEYED_JOB_ID, '') ?? '';
+    const jobId = (id?.replace(KEYED_JOB_ID, '') ?? '').replace(RETRY_SUFFIX_RE, '');
     const batch = REBASE_BATCH_RE.exec(jobId);
     if (batch) {
       const repo = batch[1]!.toUpperCase();

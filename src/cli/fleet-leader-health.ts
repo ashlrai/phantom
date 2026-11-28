@@ -35,9 +35,10 @@ export async function readFleetLeaderHealth(opts: FleetLeaderHealthOptions = {})
   const result: FleetLeaderHealth = { schema: 'fleet.leader-health.v1', source: 'unknown',
     consecutiveFailures: null, hoursSinceLastSuccess: null, lastBetAt: null, cause: null };
   let text: string | null;
+  const runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   try {
     text = await (opts.readEvents ?? (path => readFile(path, 'utf8')))(
-      join(homedir(), '.ashlr-runs', 'queue', 'dispatch-events.log'));
+      join(runsDir, 'queue', 'dispatch-events.log'));
   } catch { return result; }
   if (text === null) return result;
   result.source = 'read';
@@ -66,7 +67,7 @@ export async function readFleetLeaderHealth(opts: FleetLeaderHealthOptions = {})
   }
   if (lastFailed) {
     try {
-      const output = await (opts.readLatestOutput ?? readLatestOutput)(join(homedir(), '.ashlr-runs', 'leader'));
+      const output = await (opts.readLatestOutput ?? readLatestOutput)(join(runsDir, 'leader'));
       const firstLine = output?.split(/\r?\n/, 1)[0];
       result.cause = firstLine?.includes('OAuth session expired')
         ? 'Claude sign-in expired: run claude login' : firstLine?.slice(0, 160) || null;

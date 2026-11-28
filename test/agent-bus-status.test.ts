@@ -24,7 +24,7 @@ import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
-function setup(at = 1_000): UnifiedBusStatusOptions & { clock: { now: number } } {
+function setup(at = 1_000): UnifiedBusStatusOptions & { clock: { now: number }; now: () => number } {
   const base = mkdtempSync(join(tmpdir(), 'agent-bus-status-'));
   dirs.push(base);
   const clock = { now: at };
@@ -86,6 +86,8 @@ describe('readUnifiedBusStatus', () => {
     // A verifiably absent fleet coordination ledger holds no pending
     // surface: real zeros across all three classes.
     expect(status.fleetCoordination).toEqual({ source: 'missing', messages: 0, proposals: 0, returns: 0 });
+    // A verifiably absent org store owes the bus no membership events: 0 is proven.
+    expect(status.orgOutbox).toEqual({ source: 'missing', pending: 0 });
     // The process-local adapter table always reads: the two default
     // adapters are registered and probe the verified-missing store;
     // every other channel id honestly reports no adapter and unknown
@@ -1174,6 +1176,108 @@ describe('fleetCoordination section', () => {
   });
 });
 
+describe('orgOutbox section', () => {
+  const STORE_ID = '3f1c6a8e-2b7d-4e9a-8c51-0d2f7a9b6e10';
+  const leader = {
+    id: 'leader', title: 'Leader', charter: 'Board-facing strategy.', tier: 'LEADER', reportsTo: null, status: 'active',
+    scope: 'research', needs: [], laneAffinities: [], budget: { tokens: 100, sessions: 4, maxCostClass: 'included' },
+    sizing: { batchDepth: 100, fanOut: 0 }, sessionId: null,
+  };
+  const engineering = { ...leader, id: 'engineering', title: 'Engineering', tier: 'ORCHESTRATOR', reportsTo: 'leader', scope: 'engineering', needs: ['git'] };
+  const janitor = { ...engineering, id: 'janitor', title: 'Janitor', scope: 'janitor' };
+  const row = (revision: number, delivered: boolean, edits: unknown[]) => ({
+    revision, at: `2026-11-0${revision}T00:00:00.000Z`, applied: true, busDelivered: delivered, edits,
+    proposal: { actor: 'leader', reason: `Change ${revision}.`, expectedRevision: revision - 1, change: { kind: 'retire', id: 'engineering' } },
+  });
+  const store = () => ({
+    schema: 'org.agents.v1', storeId: STORE_ID, revision: 3, agents: [leader, engineering],
+    ledger: [row(1, true, [{ before: null, after: engineering }]), row(2, false, [{ before: null, after: janitor }]),
+      row(3, false, [{ before: engineering, after: { ...engineering, status: 'retired' } }])],
+  });
+  const orgFile = (options: UnifiedBusStatusOptions) => join(options.runsRoot!, 'org', 'agents.json');
+  const writePlane = (options: UnifiedBusStatusOptions, value: unknown) => {
+    const dir = dirname(orgFile(options));
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700);
+    writeFileSync(orgFile(options), typeof value === 'string' ? value : JSON.stringify(value), { mode: 0o600 });
+    chmodSync(orgFile(options), 0o600);
+  };
+
+  it('reports a verified-absent store as missing with a real zero and never creates it', () => {
+    const options = setup();
+    const status = readUnifiedBusStatus(options);
+    expect(status.orgOutbox).toEqual({ source: 'missing', pending: 0 });
+    // Read-only: neither the store nor its directory may appear.
+    expect(existsSync(orgFile(options))).toBe(false);
+    expect(existsSync(dirname(orgFile(options)))).toBe(false);
+    expect(status.store.source).toBe('missing');
+  });
+
+  it('counts the distinct org.membership events the apply pass would post', () => {
+    const options = setup();
+    writePlane(options, store());
+    const status = readUnifiedBusStatus(options);
+    // Revisions 2 and 3 each owe one event — the same pending count the
+    // unified inbox org-outbox source reports for this store.
+    expect(status.orgOutbox).toEqual({ source: 'available', pending: 2 });
+    // A bus `root` override never relocates the org store — the same
+    // resolution org-sync and org-board apply.
+    expect(readUnifiedBusStatus({ ...options, root: join(options.runsRoot!, 'other-fleet') }).orgOutbox)
+      .toEqual({ source: 'available', pending: 2 });
+  });
+
+  it('dedupes repeated edits of one revision to the single event id they share', () => {
+    const options = setup();
+    writePlane(options, {
+      schema: 'org.agents.v1', storeId: STORE_ID, revision: 2, agents: [leader, engineering],
+      ledger: [
+        { revision: 1, at: '2026-11-01T00:00:00.000Z', applied: true, busDelivered: false,
+          proposal: { actor: 'leader', reason: 'r1', expectedRevision: 0, change: { kind: 'upsert', role: janitor } },
+          edits: [{ before: null, after: janitor }, { before: janitor, after: { ...janitor, status: 'retired' } }] },
+        { revision: 2, at: '2026-11-02T00:00:00.000Z', applied: true, busDelivered: false,
+          proposal: { actor: 'leader', reason: 'r2', expectedRevision: 1, change: { kind: 'retire', id: 'janitor' } },
+          edits: [{ before: { ...janitor, status: 'retired' }, after: null }] },
+      ],
+    });
+    // previewOrgOutbox replays three rows but two share the revision-1 event
+    // id — the bus sees two distinct org.membership events, matching the
+    // unified inbox's one-item-per-event-id count.
+    expect(readUnifiedBusStatus(options).orgOutbox).toEqual({ source: 'available', pending: 2 });
+  });
+
+  it('keeps a fully delivered ledger available with a real zero', () => {
+    const options = setup();
+    const delivered = store();
+    for (const entry of delivered.ledger) entry.busDelivered = true;
+    writePlane(options, delivered);
+    expect(readUnifiedBusStatus(options).orgOutbox).toEqual({ source: 'available', pending: 0 });
+  });
+
+  it('keeps an unreadable or invalid store unavailable with a null count while the rest of the bus stays readable', () => {
+    const options = setup();
+    writePlane(options, '{not json');
+    const status = readUnifiedBusStatus(options);
+    expect(status.orgOutbox).toEqual({ source: 'unavailable', pending: null });
+    expect(status.store.source).toBe('missing');
+    expect(status.feed.status).toBe('ok');
+
+    // A chart validateChart refuses — a second leader — is the same verdict
+    // org-sync and the unified inbox report, never a partial backlog.
+    const badChart = store();
+    badChart.agents.push({ ...leader, id: 'leader2' });
+    writePlane(options, badChart);
+    expect(readUnifiedBusStatus(options).orgOutbox).toEqual({ source: 'unavailable', pending: null });
+
+    // Custody failure is the same verdict: a store other users can write
+    // fails readStableRegularFile's protectedFromOtherUsers check (0o022).
+    writePlane(options, store());
+    chmodSync(orgFile(options), 0o666);
+    try {
+      expect(readUnifiedBusStatus(options).orgOutbox).toEqual({ source: 'unavailable', pending: null });
+    } finally { chmodSync(orgFile(options), 0o600); }
+  });
+});
+
 describe('hoplog section', () => {
   const hoplogFile = (options: UnifiedBusStatusOptions) => join(options.root!, 'bus', 'hops.jsonl');
 
@@ -1237,6 +1341,8 @@ describe('phm agents bus status', () => {
     // The CLI forwards only --root, so the ledger resolves its own locator
     // under the isolated worker home — verified absent there too.
     expect(json.fleetCoordination).toEqual({ source: 'missing', messages: 0, proposals: 0, returns: 0 });
+    // The org store resolves under the same isolated runs home — absent too.
+    expect(json.orgOutbox).toEqual({ source: 'missing', pending: 0 });
     expect(json.channels).toEqual({ source: 'available', adapters: [
       { id: 'bus', adapterRegistered: true, healthy: true },
       { id: 'slack', adapterRegistered: false, healthy: 'unknown' },
@@ -1268,9 +1374,27 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('deadLetters missing pending=0 exhausted=0 expired=0 noRoute=0 other=0 truncated=false');
     expect(lines.join('\n')).toContain('sessionHandoffs missing journals=0 open=0 awaitingFailover=0 unreadable=0 truncated=false');
     expect(lines.join('\n')).toContain('fleetCoordination missing messages=0 proposals=0 returns=0');
+    expect(lines.join('\n')).toContain('orgOutbox missing pending=0');
     expect(lines.join('\n')).toContain('channels bus=ok slack=no-adapter imessage=no-adapter email=no-adapter telegram=no-adapter handoff=ok');
     expect(lines.join('\n')).toContain('sendGate open kill=inactive:missing pause=clear');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
     expect(lines.join('\n')).toContain('hoplog missing bytes=0 hops=0 skipped=0 truncated=false');
+  });
+
+  it('names the blamed receipt on the human feed line when the projection refuses', async () => {
+    // The CLI probe reads the wall clock, so the poison post needs a real
+    // receipt time or its TTL is already spent when status runs.
+    const options = setup(Date.now());
+    // A retained post with no resolvable provider poisons the whole feed;
+    // the probe blames that envelope — the same receipt `work feed` prints.
+    expect(appendBusInbox({ id: 'poison-1', from: 'agent:ghost', to: 'leaders', priority: 'P2', ttl: 60_000,
+      body: { kind: 'work.post', jobId: 'RQ-POISON', title: 'x', repo: 'a/b', claimKeys: [] } }, options).status)
+      .toBe('posted');
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['status', '--root', options.root!], t => text.push(t), () => {}, {})).toBe(0);
+    const feedLine = text.join('\n').split('\n').find(line => line.startsWith('feed '));
+    expect(feedLine).toContain('refused');
+    expect(feedLine).toContain('jobs=unknown');
+    expect(feedLine).toContain('receipt=poison-1');
   });
 });

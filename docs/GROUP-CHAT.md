@@ -23,6 +23,13 @@ counts scanned live bus records before room filtering, so keep reading until the
 cursor stops advancing. The bus retains messages locally subject to its existing
 TTL and capacity limits; expiry does not free capacity. No event is executed.
 
+`group read` also takes the shared bus page filters on top of the room+topic
+address: `--from`/`--exclude-from` (sender labels resolved through the identity
+registry like every bus read), `--id`, `--priority`, `--body-kind`,
+`--since`/`--before` and `--contains`. `--body-kind group.message` keeps only
+payloads and drops `group.presence` heartbeats; filters narrow the shown rows,
+never the scan, so an empty filtered page still advances `nextCursor`.
+
 Presence is an untrusted, five-minute observation per room/topic and member.
 Heartbeats refresh it; `offline` removes it until a later online heartbeat.
 Expired observations disappear. The result is a snapshot, not a membership list,

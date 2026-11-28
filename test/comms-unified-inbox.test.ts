@@ -12,13 +12,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createDraft } from '../src/core/cos/drafts.js';
-import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/comms-agent/store.js';
+import { appendDraft as appendCommsDraft, writeInbox as writeCommsInbox, type CommsDraft } from '../src/core/comms-agent/store.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type AppsRecoverySourceRead, type DispatchStuckSourceRead, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type StuckFixesSourceRead, type StrandedWorkSourceRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
 import type { ParkedGroup, ParkedMetDep, ParkedUnmetDep } from '../src/core/fleet/runs-parked-queue.js';
+import type { StuckFixRow } from '../src/core/fleet/stuck-fixes.js';
+import type { StrandedItem } from '../src/core/fleet/stranded-work.js';
 import type { StuckJob as RunningStuckJob } from '../src/core/fleet/running-stuck.js';
+import type { StuckJob as DispatchStuckJob } from '../src/core/fleet/stuck-jobs.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
@@ -45,6 +48,7 @@ import type { FleetAssignment, FleetCoordinationPending, FleetMessage, FleetPend
 import type { ClaimDriftRow, ClaimStoreDrift } from '../src/core/fleet/claim-store-drift.js';
 import type { SessionHandoffList, SessionHandoffListEntry } from '../src/core/agents/session-handoff.js';
 import type { WorkBoardItem, WorkBoardResult } from '../src/core/comms/work-board.js';
+import type { InboxAcksRead, InboxAckReportRow } from '../src/core/fleet/inbox-acks-read.js';
 import type { WorkItemState } from '../src/core/comms/work-item-state.js';
 import type { ChannelHealth, ChannelHealthReport } from '../src/core/fleet/channel-health.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
@@ -142,9 +146,11 @@ describe('readUnifiedInbox sources', () => {
       sources: {
         'needs-you': { state: 'missing', pending: 0 },
         'owner-pair': { state: 'missing', pending: 0 },
+        'inbox-acks': { state: 'missing', pending: 0 },
         imessage: { state: 'missing', pending: 0 },
         'teammate-tasks': { state: 'missing', pending: 0 },
         drafts: { state: 'healthy', pending: 0 },
+        'comms-mail': { state: 'healthy', pending: 0 },
         bus: { state: 'missing', pending: 0 },
         mailbox: { state: 'missing', pending: 0 },
         board: { state: 'missing', pending: 0 },
@@ -189,6 +195,18 @@ describe('readUnifiedInbox sources', () => {
     const blocking = await read({ filter: { blocking: true } });
     expect(blocking.items.filter(i => i.source === 'needs-you').map(i => i.id)).toEqual([secret.id]);
     expect(blocking.sources['needs-you']).toEqual({ state: 'healthy', pending: 2 });
+    // --id keeps only the item whose stable <source>:<ref> id strictly equals
+    // it — the exact-id match --contains (title/detail only) and --job (the
+    // citation set) cannot make; every other source's items drop out.
+    const byId = await read({ filter: { id: secret.id } });
+    expect(byId.items.map(i => i.id)).toEqual([secret.id]);
+    expect(byId.total).toBe(1);
+    expect(byId.filter).toEqual({ id: secret.id });
+    // An id no item carries matches nothing — unknown stays an empty match,
+    // never a padded or invented row.
+    const noMatch = await read({ filter: { id: 'needs-you:nm-000000000000' } });
+    expect(noMatch.items).toEqual([]);
+    expect(noMatch.total).toBe(0);
   });
 
   it('lists unanswered teammate texts, ranking decision requests above chatter', async () => {
@@ -259,6 +277,49 @@ describe('readUnifiedInbox sources', () => {
       listCommsDrafts: async () => { throw new Error('unreadable'); },
     });
     expect(inbox.sources.drafts.state).toBe('degraded');
+  });
+
+  it('lists comms-agent inbox mail no reply draft covers, deduped against draft records', async () => {
+    await writeCommsInbox(runsDir, [
+      { id: 'm-1', transport: 'email', from: 'person@example.com', subject: 'fake hello', body: 'fake body one' },
+      { id: 'm-2', transport: 'imessage', from: '+1555handle', subject: 'fake unclassed', body: 'fake body two' },
+      { id: 'm-3', transport: 'linkedin', from: 'pw@example.com', subject: 'fake answered', body: 'fake body three' },
+    ]);
+    // m-1's pending draft already lists under `drafts`; m-3's sent draft means
+    // the reply was delivered — both suppress their inbox row here.
+    await appendCommsDraft(runsDir, { id: 'c-1', status: 'pending', transport: 'email', recipient: 'person@example.com', subject: 'Re: fake hello', body: 'fake reply', messageId: 'm-1', createdAt: new Date(now - 60_000).toISOString() });
+    await appendCommsDraft(runsDir, { id: 'c-2', status: 'sent', transport: 'linkedin', recipient: 'pw@example.com', subject: 'Re: fake answered', body: 'fake reply', messageId: 'm-3', createdAt: new Date(now - 120_000).toISOString(), resolvedAt: new Date(now - 30_000).toISOString() });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'comms-mail');
+    expect(items.map(i => i.id)).toEqual(['comms-mail:m-2']);
+    expect(items[0]).toMatchObject({
+      kind: 'comms-mail', severity: 'info', blocking: false,
+      title: 'Comms mail via imessage', detail: 'fake unclassed',
+      since: null, expiresAt: null,
+      act: ['phm comms-agent run', 'phm comms-agent drafts'],
+    });
+    // The sender is a handle and the body stays private: neither reaches the item.
+    expect(JSON.stringify(items)).not.toContain('+1555handle');
+    expect(JSON.stringify(items)).not.toContain('fake body');
+    expect(inbox.sources['comms-mail']).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('reports the comms-mail source unavailable on a malformed inbox and degraded when draft coverage cannot be read', async () => {
+    mkdirSync(join(runsDir, 'comms-agent'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(runsDir, 'comms-agent', 'inbox.json'), 'not json', { mode: 0o600 });
+    const bad = await read();
+    expect(bad.sources['comms-mail']).toEqual({ state: 'unavailable', pending: null });
+    expect(bad.items.filter(i => i.source === 'comms-mail')).toHaveLength(0);
+
+    // A drafts-store failure leaves coverage unproven: the message lists
+    // even though a draft record names it — degraded, never suppressed on a guess.
+    await writeCommsInbox(runsDir, [
+      { id: 'm-9', transport: 'email', from: 'a@example.com', subject: 'fake pending', body: 'fake body' },
+    ]);
+    await appendCommsDraft(runsDir, { id: 'c-9', status: 'pending', transport: 'email', recipient: 'a@example.com', subject: 'Re: fake pending', body: 'fake reply', messageId: 'm-9', createdAt: new Date(now).toISOString() });
+    const degraded = await read({ listCommsDrafts: async () => { throw new Error('unreadable'); } });
+    expect(degraded.sources['comms-mail']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'comms-mail').map(i => i.id)).toEqual(['comms-mail:m-9']);
   });
 
   it('lists live unclaimed work envelopes and hides claimed, completed, expired and non-work records', async () => {
@@ -1215,7 +1276,7 @@ describe('bot seat handoffs in the unified inbox', () => {
     branch: null, pr: null, createdAt: new Date(now).toISOString(),
   });
   const seat = (over: Partial<SeatHandoffPlanEntry> = {}): SeatHandoffPlanEntry => ({
-    seatId: 'devin-review', state: 'draining', eligible: true,
+    seatId: 'devin-review', participantId: 'devin-review', state: 'draining', eligible: true,
     handoffs: [handoff('devin-review', 'bus-claim', 'queue:RQ-SEAT-1')], ...over,
   });
   const plan = (seats: SeatHandoffPlanEntry[]): SeatHandoffsPlan =>
@@ -3730,7 +3791,7 @@ describe('readUnifiedInbox job filter', () => {
   const seatPlan = (seats: SeatHandoffPlanEntry[]): SeatHandoffsPlan =>
     ({ schema: 'phantom-bot-handoffs-plan.v1', apply: false, seats });
   const seatEntry = (over: Partial<SeatHandoffPlanEntry> = {}): SeatHandoffPlanEntry => ({
-    seatId: 'devin-review', state: 'draining', eligible: true,
+    seatId: 'devin-review', participantId: 'devin-review', state: 'draining', eligible: true,
     handoffs: [seatHandoff('devin-review', 'node-job', 'RQ-JS-1'),
       seatHandoff('devin-review', 'bus-claim', 'queue:RQ-claim-1', 1)], ...over,
   });
@@ -4100,8 +4161,9 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]');
-    for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--id <item-id>] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]');
+    for (const args of [['--json', '--json'], ['unified'], ['--limit', '0'], ['bogus', '--json'],
+      ['--id'], ['--id', 'has space'], ['--id', 'x'.repeat(257)]]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
     }
@@ -4167,6 +4229,46 @@ describe('phm comms inbox cli', () => {
     report = json();
     expect(report.total).toBe(0);
     expect(report.items).toEqual([]);
+  });
+
+  it('filters the unified JSON view by the item id', async () => {
+    const { command, json } = setupCli();
+    postWork('cli-id-a');
+    postWork('cli-id-b');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    // --id keeps only the item whose stable <source>:<ref> id strictly equals
+    // it — the exact-id match --contains (title/detail only) and --job (the
+    // citation set) cannot make; every other source's items drop out.
+    expect(await command(['--id', 'bus:cli-id-a', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ id: 'bus:cli-id-a' });
+    expect(report.total).toBe(1);
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-id-a']);
+    // The per-source counts stay the unfiltered store truth.
+    expect(report.sources.bus.pending).toBe(2);
+    expect(report.sources['needs-you'].pending).toBe(1);
+
+    // --id ANDs with the other view filters.
+    expect(await command(['--id', 'bus:cli-id-a', '--source', 'bus', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ id: 'bus:cli-id-a', source: 'bus' });
+    expect(report.total).toBe(1);
+    expect(await command(['--id', 'bus:cli-id-a', '--source', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+
+    // An id no item carries matches nothing — unknown stays an empty match.
+    expect(await command(['--id', 'bus:cli-id-absent', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+
+    // A partial id never matches — the match is the whole <source>:<ref> id.
+    expect(await command(['--id', 'cli-id-a', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
   });
 
   it('filters the unified JSON view by --since', async () => {
@@ -4314,6 +4416,68 @@ describe('phm comms inbox cli', () => {
     expect(report.items.map(i => i.kind)).toEqual(['needs-you']);
   });
 
+  it('pages the unified view with --limit', async () => {
+    const { command, json, lines } = setupCli();
+    postWork('cli-limit-1', { priority: 'P0' });
+    postWork('cli-limit-2');
+    postWork('cli-limit-3');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    // --limit keeps the first N ranked items of the matched view — the same
+    // slice GET /api/verse/comms/inbox and fleet_comms_inbox apply; total
+    // stays the true matched count and omitted covers every unshown item.
+    expect(await command(['--limit', '2', '--json'])).toBe(0);
+    let report = json();
+    expect(report.total).toBe(4);
+    expect(report.items).toHaveLength(2);
+    expect(report.omitted).toBe(2);
+    // The per-source counts stay the unfiltered store truth.
+    expect(report.sources.bus.pending).toBe(3);
+    expect(report.sources['needs-you'].pending).toBe(1);
+
+    // --limit ANDs with the view filters and never widens them.
+    expect(await command(['--source', 'bus', '--limit', '1', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ source: 'bus' });
+    expect(report.total).toBe(3);
+    expect(report.items).toHaveLength(1);
+    expect(report.omitted).toBe(2);
+    expect(report.items[0]!.source).toBe('bus');
+
+    // A bound at or beyond the matched count changes nothing.
+    expect(await command(['--limit', '200', '--json'])).toBe(0);
+    report = json();
+    expect(report.items).toHaveLength(4);
+    expect(report.omitted).toBe(0);
+
+    // The human view prints the same page and counts the unshown tail.
+    expect(await command(['--limit', '1'])).toBe(0);
+    const footer = lines().at(-1)!;
+    expect(footer).toContain('4 pending');
+    expect(footer).toContain('3 omitted');
+  });
+
+  it('counts both the item cap and --limit in omitted', async () => {
+    const { command, json } = setupCli();
+    postWorkSnapshot(Array.from({ length: 250 }, (_, i) => `cli-cap-${i}`));
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    // Without --limit the report already caps items at 200 and counts the
+    // rest in omitted; --limit slices that page further and omitted covers
+    // every item still unshown, never a fabricated zero.
+    expect(await command(['--json'])).toBe(0);
+    let report = json();
+    expect(report.total).toBe(251);
+    expect(report.items).toHaveLength(200);
+    expect(report.omitted).toBe(51);
+
+    expect(await command(['--limit', '10', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(251);
+    expect(report.items).toHaveLength(10);
+    expect(report.omitted).toBe(241);
+  });
+
   it('labels the human footer with the applied filter and unfiltered counts', async () => {
     const { command, lines } = setupCli();
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
@@ -4377,6 +4541,10 @@ describe('phm comms inbox cli', () => {
       ['--contains'], ['--contains', ''], ['--contains', '   '], ['--contains', '--json'],
       ['--contains', 'x'.repeat(513)], ['--contains', 'a', '--contains', 'b'],
       ['--contains', 'deploy', '--job'], ['--json', '--contains'],
+      ['--limit'], ['--limit', '--json'], ['--json', '--limit'],
+      ['--limit', '0'], ['--limit', '201'], ['--limit', '1.5'], ['--limit', '-3'],
+      ['--limit', 'x'.repeat(40)], ['--limit', '2', '--limit', '3'],
+      ['--limit', '5', '--source'], ['--source', 'bus', '--limit'],
     ]) {
       expect(await command(args), args.join(' ')).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
@@ -5354,6 +5522,605 @@ describe('readUnifiedInbox queue parked', () => {
   });
 });
 
+describe('readUnifiedInbox stuck fixes', () => {
+  const fixesRead = (over: Partial<StuckFixesSourceRead> = {}): StuckFixesSourceRead => ({
+    state: 'healthy', stuck: [], ...over,
+  });
+  const readFixes = (s: StuckFixesSourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readStuckFixes: async () => s, ...extra });
+  const stuckFix = (over: Partial<StuckFixRow> = {}): StuckFixRow => ({
+    job: 'FIXUP-MAIN-ashlrai-phantom-abc1234', repo: 'ashlrai/phantom',
+    prUrl: 'https://github.com/ashlrai/phantom/pull/4242',
+    publishedAt: new Date(now - 45 * 60_000).toISOString(), ageMinutes: 45, ...over,
+  });
+
+  it('lists each stuck fix PR as a warn naming repo, PR url, job id, publish time and acts', async () => {
+    const inbox = await readFixes(fixesRead({ stuck: [
+      stuckFix(),
+      stuckFix({ job: 'FIXUP-MAIN-ashlrai-website-def5678', repo: null,
+        prUrl: 'https://github.com/ashlrai/website/pull/77', ageMinutes: 130,
+        publishedAt: new Date(now - 130 * 60_000).toISOString() }),
+    ] }));
+    expect(inbox.sources['stuck-fixes']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'stuck-fixes');
+    expect(items).toHaveLength(2);
+
+    const fix = items.find(i => i.id === 'stuck-fixes:FIXUP-MAIN-ashlrai-phantom-abc1234')!;
+    expect(fix).toMatchObject({
+      kind: 'stuck-fix', severity: 'warn', blocking: false,
+      title: 'ashlrai/phantom fix PR stuck 45 min',
+      since: new Date(now - 45 * 60_000).toISOString(), expiresAt: null,
+      jobIds: ['FIXUP-MAIN-ashlrai-phantom-abc1234'],
+      act: ['phm fleet stuck-fixes', 'phm fleet main-health'],
+    });
+    expect(fix.detail).toContain('job FIXUP-MAIN-ashlrai-phantom-abc1234');
+    expect(fix.detail).toContain('https://github.com/ashlrai/phantom/pull/4242');
+    expect(fix.detail).toContain('no MERGED/CLOSED outcome recorded');
+
+    // Past the hour mark the same row the needs-you strip calls urgent
+    // lists 'high' here; an unknown repo falls back to the job id in the title.
+    const old = items.find(i => i.id === 'stuck-fixes:FIXUP-MAIN-ashlrai-website-def5678')!;
+    expect(old).toMatchObject({ severity: 'high', title: 'unknown repo fix PR stuck 130 min' });
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readFixes(fixesRead({ state: 'missing', stuck: [stuckFix()] }));
+    expect(missing.sources['stuck-fixes']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+
+    const unavailable = await readFixes(fixesRead({ state: 'unavailable', stuck: [stuckFix()] }));
+    expect(unavailable.sources['stuck-fixes']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+
+    const throwing = await read({ readStuckFixes: async () => { throw new Error('ledger boom'); } });
+    expect(throwing.sources['stuck-fixes']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+
+    // A degraded read still lists what it found, pending counted.
+    const degraded = await readFixes(fixesRead({ state: 'degraded', stuck: [stuckFix()] }));
+    expect(degraded.sources['stuck-fixes']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(1);
+  });
+
+  it('reads the real metrics/jobs.jsonl under runsDir: stuck, terminal, fresh and non-fix rows', async () => {
+    mkdirSync(join(runsDir, 'metrics'), { recursive: true, mode: 0o700 });
+    const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
+    writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), [
+      // Stuck: PR published 45m ago, no terminal row.
+      JSON.stringify({ job: 'FIXUP-MAIN-ashlrai-phantom-abc1234', repo: 'ashlrai/phantom',
+        url: 'https://github.com/ashlrai/phantom/pull/4242', ts: iso(45 * 60_000) }),
+      // Terminal: a MERGED row for the same job — never stuck.
+      JSON.stringify({ job: 'FIXUP-MAIN-ashlrai-phantom-merged99', state: 'MERGED',
+        url: 'https://github.com/ashlrai/phantom/pull/9', ts: iso(50 * 60_000) }),
+      // Fresh: PR published 10m ago — inside the 20-minute bound.
+      JSON.stringify({ job: 'FIXUP-MAIN-ashlrai-phantom-fresh11',
+        url: 'https://github.com/ashlrai/phantom/pull/10', ts: iso(10 * 60_000) }),
+      // Not a fix job: ordinary job ids never list.
+      JSON.stringify({ job: 'RQ-OTHER-1', url: 'https://github.com/ashlrai/phantom/pull/11', ts: iso(90 * 60_000) }),
+      // Torn line: skipped by the fold, never fatal.
+      '{not json',
+    ].join('\n'), { mode: 0o600 });
+
+    const inbox = await read();
+    expect(inbox.sources['stuck-fixes']).toEqual({ state: 'healthy', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'stuck-fixes');
+    expect(items.map(i => i.id)).toEqual(['stuck-fixes:FIXUP-MAIN-ashlrai-phantom-abc1234']);
+    expect(items[0]).toMatchObject({ kind: 'stuck-fix', severity: 'warn', jobIds: ['FIXUP-MAIN-ashlrai-phantom-abc1234'] });
+    expect(items[0]!.since).toBe(iso(45 * 60_000));
+  });
+
+  it('reports a missing ledger as missing and an unlistable one as unavailable', async () => {
+    // No metrics/jobs.jsonl at all — verified-absent, no fix PR can be on record.
+    const missing = await read();
+    expect(missing.sources['stuck-fixes']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+
+    // A directory where the ledger belongs is a read failure, not verified-empty.
+    mkdirSync(join(runsDir, 'metrics', 'jobs.jsonl'), { recursive: true });
+    const unavailable = await read();
+    expect(unavailable.sources['stuck-fixes']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = fixesRead({ stuck: [stuckFix(), stuckFix({ job: 'FIXUP-MAIN-ashlrai-phantom-zzz9999' })] });
+    const bySource = await readFixes(pending, { filter: { source: 'stuck-fixes' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'stuck-fixes')).toBe(true);
+    const byKind = await readFixes(pending, { filter: { kind: 'stuck-fix' } });
+    expect(byKind.items).toHaveLength(2);
+    expect(byKind.sources['stuck-fixes']).toEqual({ state: 'healthy', pending: 2 });
+    // The FIXUP-MAIN job id is the item's own citation — --job names it directly.
+    const byJob = await readFixes(pending, { filter: { job: 'FIXUP-MAIN-ashlrai-phantom-zzz9999' } });
+    expect(byJob.items.filter(i => i.source === 'stuck-fixes').map(i => i.id))
+      .toEqual(['stuck-fixes:FIXUP-MAIN-ashlrai-phantom-zzz9999']);
+  });
+});
+
+describe('readUnifiedInbox stranded work', () => {
+  const strandedRead = (over: Partial<StrandedWorkSourceRead> = {}): StrandedWorkSourceRead => ({
+    state: 'healthy', items: [], ...over,
+  });
+  const readStranded = (s: StrandedWorkSourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readStrandedWork: async () => s, ...extra });
+  const stranded = (over: Partial<StrandedItem> = {}): StrandedItem => ({
+    job: 'RQ-STRAND-1', repo: 'ashlrai/phantom', lane: 'fast',
+    finished_at: new Date(now - 2 * 3_600_000).toISOString(),
+    diff_files: 3, diff_lines: 120,
+    cause: 'abort_other', pushed_branch: null, recovered_by: null, verify: null,
+    next_step: 'Re-run the job: the publish stopped before any branch was pushed.', ...over,
+  });
+
+  it('lists each unrecovered stranded worktree as a warn naming job, repo, lane, cause, size and acts', async () => {
+    const inbox = await readStranded(strandedRead({ items: [
+      stranded(),
+      stranded({ job: 'RQ-STRAND-2', cause: 'abort_after_push',
+        pushed_branch: 'codex-bridge/RQ-STRAND-2',
+        next_step: 'Recover the pushed branch codex-bridge/RQ-STRAND-2: run phm fleet republish for the ready-made recovery job.' }),
+    ] }));
+    expect(inbox.sources['stranded-work']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'stranded-work');
+    expect(items).toHaveLength(2);
+
+    const first = items.find(i => i.id === 'stranded-work:RQ-STRAND-1')!;
+    expect(first).toMatchObject({
+      kind: 'stranded-worktree', severity: 'warn', blocking: false,
+      title: 'Job RQ-STRAND-1 finished with changes but no pull request',
+      since: new Date(now - 2 * 3_600_000).toISOString(), expiresAt: null,
+      jobIds: ['RQ-STRAND-1'],
+      act: ['phm fleet stranded', 'phm fleet kept-worktrees'],
+    });
+    expect(first.detail).toContain('ashlrai/phantom');
+    expect(first.detail).toContain('fast lane');
+    expect(first.detail).toContain('abort other');
+    expect(first.detail).toContain('3 files, 120 lines');
+    expect(first.detail).toContain('Re-run the job');
+
+    // A pushed-branch abort adds the republish act — the recovery path
+    // `phm fleet stranded`'s own next step names.
+    const pushed = items.find(i => i.id === 'stranded-work:RQ-STRAND-2')!;
+    expect(pushed.act).toEqual(['phm fleet stranded', 'phm fleet republish', 'phm fleet kept-worktrees']);
+    expect(pushed.detail).toContain('abort after push');
+  });
+
+  it('never lists rows a later job recovered or a verify proved on main', async () => {
+    const inbox = await readStranded(strandedRead({ items: [
+      stranded(),
+      stranded({ job: 'RQ-STRAND-DONE', recovered_by: 'RQ-RECOVERY-9',
+        next_step: 'Nothing to do: RQ-RECOVERY-9 recovered this work.' }),
+      stranded({ job: 'RQ-STRAND-MAIN', verify: 'already_on_main',
+        next_step: 'Nothing to do: this work is already on the main branch.' }),
+    ] }));
+    expect(inbox.sources['stranded-work']).toEqual({ state: 'healthy', pending: 1 });
+    expect(inbox.items.filter(i => i.source === 'stranded-work').map(i => i.id))
+      .toEqual(['stranded-work:RQ-STRAND-1']);
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readStranded(strandedRead({ state: 'missing', items: [stranded()] }));
+    expect(missing.sources['stranded-work']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+
+    const unavailable = await readStranded(strandedRead({ state: 'unavailable', items: [stranded()] }));
+    expect(unavailable.sources['stranded-work']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+
+    const throwing = await read({ readStrandedWork: async () => { throw new Error('kept list boom'); } });
+    expect(throwing.sources['stranded-work']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+
+    // A degraded read still lists what it found, pending counted.
+    const degraded = await readStranded(strandedRead({ state: 'degraded', items: [stranded()] }));
+    expect(degraded.sources['stranded-work']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'stranded-work')).toHaveLength(1);
+  });
+
+  it('reads the real kept-worktree fold under runsDir: stranded, made, recovered and out-of-window rows', async () => {
+    mkdirSync(join(runsDir, 'queue', 'run'), { recursive: true });
+    mkdirSync(join(runsDir, 'metrics'), { recursive: true });
+    const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
+    const hint = (job: string) => `remote:      https://github.com/someone/phantom/pull/new/codex-bridge/${job}\n`;
+    // Kept worktrees: two stranded, one published PR (made — never lists),
+    // one recovered by a later job's queue line (nothing left to do), one
+    // finished outside the 3-day window (stale — never lists).
+    writeFileSync(join(runsDir, 'queue', 'status.json'), JSON.stringify({
+      lanes: { claude: { running: 1 } },
+      kept_worktrees: ['RQ-STRAND-A', 'RQ-STRAND-B', 'RQ-PR-1', 'RQ-RECOVERED', 'RQ-OLD'],
+    }));
+    const row = (job: string, fields: object, msAgo: number) =>
+      JSON.stringify({ job, lane: 'claude', ts: iso(msAgo), ...fields });
+    writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), [
+      row('RQ-STRAND-A', { event: 'finish', diff_files: 3, diff_lines: 50, empty: false }, 2 * 3_600_000),
+      row('RQ-STRAND-B', { event: 'finish', diff_files: 1, diff_lines: 8, empty: false }, 5 * 3_600_000),
+      row('RQ-PR-1', { event: 'finish', diff_files: 2, diff_lines: 9, empty: false }, 3 * 3_600_000),
+      row('RQ-RECOVERED', { event: 'finish', diff_files: 4, diff_lines: 40, empty: false }, 4 * 3_600_000),
+      row('RQ-OLD', { event: 'finish', diff_files: 9, diff_lines: 90, empty: false }, 10 * 24 * 3_600_000),
+      'not json',
+    ].join('\n'));
+    for (const job of ['RQ-STRAND-A', 'RQ-STRAND-B', 'RQ-PR-1', 'RQ-RECOVERED']) {
+      writeFileSync(join(runsDir, 'queue', 'run', `${job}.line`), `${job}\tphantom\tclaude\twork\n`);
+    }
+    // The recovery job's own line names RQ-RECOVERED and says recover —
+    // the same evidence `recoveredBy` folds, so the row lists as done.
+    writeFileSync(join(runsDir, 'queue', 'run', 'RQ-RECOVERY-1.line'),
+      'RQ-RECOVERY-1\tphantom\tclaude\tRecover the stranded work of RQ-RECOVERED.\n');
+    writeFileSync(join(runsDir, 'RQ-STRAND-A.publish'), 'NOTE scoped\nRESULT ABORT commit\n');
+    writeFileSync(join(runsDir, 'RQ-STRAND-B.publish'), `${hint('RQ-STRAND-B')}RESULT ABORT default-fetch\n`);
+    writeFileSync(join(runsDir, 'RQ-PR-1.publish'), 'RESULT PR https://github.com/ashlrai/phantom/pull/2 SENS=[]\n');
+    writeFileSync(join(runsDir, 'RQ-RECOVERED.publish'), 'RESULT ABORT commit\n');
+    writeFileSync(join(runsDir, 'RQ-OLD.publish'), 'RESULT ABORT commit\n');
+
+    const inbox = await read();
+    expect(inbox.sources['stranded-work']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'stranded-work');
+    expect(items.map(i => i.id).sort()).toEqual(['stranded-work:RQ-STRAND-A', 'stranded-work:RQ-STRAND-B']);
+    const abort = items.find(i => i.id === 'stranded-work:RQ-STRAND-A')!;
+    expect(abort).toMatchObject({
+      kind: 'stranded-worktree', severity: 'warn',
+      since: iso(2 * 3_600_000), expiresAt: null, jobIds: ['RQ-STRAND-A'],
+      act: ['phm fleet stranded', 'phm fleet kept-worktrees'],
+    });
+    expect(abort.detail).toContain('phantom · claude lane · abort other · 3 files, 50 lines');
+    const pushed = items.find(i => i.id === 'stranded-work:RQ-STRAND-B')!;
+    expect(pushed.act).toEqual(['phm fleet stranded', 'phm fleet republish', 'phm fleet kept-worktrees']);
+    expect(pushed.detail).toContain('abort after push');
+  });
+
+  it('reports a missing status.json as missing and an unlistable one as unavailable', async () => {
+    // No queue/status.json at all — verified-absent, no kept worktree can be listed.
+    const missing = await read();
+    expect(missing.sources['stranded-work']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+
+    // A directory where the kept list belongs is a read failure, not verified-empty.
+    mkdirSync(join(runsDir, 'queue', 'status.json'), { recursive: true });
+    const unavailable = await read();
+    expect(unavailable.sources['stranded-work']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = strandedRead({ items: [stranded(), stranded({ job: 'RQ-STRAND-2' })] });
+    const bySource = await readStranded(pending, { filter: { source: 'stranded-work' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'stranded-work')).toBe(true);
+    const byKind = await readStranded(pending, { filter: { kind: 'stranded-worktree' } });
+    expect(byKind.items).toHaveLength(2);
+    expect(byKind.sources['stranded-work']).toEqual({ state: 'healthy', pending: 2 });
+    // The job id is the item's own citation — --job names it directly.
+    const byJob = await readStranded(pending, { filter: { job: 'RQ-STRAND-2' } });
+    expect(byJob.items.filter(i => i.source === 'stranded-work').map(i => i.id))
+      .toEqual(['stranded-work:RQ-STRAND-2']);
+  });
+});
+
+describe('readUnifiedInbox dispatch stuck', () => {
+  const stuckRead = (over: Partial<DispatchStuckSourceRead> = {}): DispatchStuckSourceRead => ({
+    state: 'healthy', jobs: [], ...over,
+  });
+  const readStuck = (s: DispatchStuckSourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readDispatchStuck: async () => s, ...extra });
+  const stuckJob = (over: Partial<DispatchStuckJob> = {}): DispatchStuckJob => ({
+    job: 'RQ-STUCK-1', lane: 'devin', cause: 'lane_refused_size', events: 3,
+    firstSeen: new Date(now - 2 * 3_600_000).toISOString(),
+    lastSeen: new Date(now - 10 * 60_000).toISOString(),
+    ageSeconds: 7_200,
+    action: 'move to a lane that accepts this size',
+    kind: 'DEVIN_FLASH_REFUSED', reason: 'size-not-sm', ...over,
+  });
+  // Log lines carry the local wall clock, so stamps are built the same way.
+  const localStamp = (ms: number): string => {
+    const d = new Date(ms);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  };
+  const eventLine = (ms: number, rest: string) => `${localStamp(ms)} ${rest}`;
+
+  it('lists each stuck job as a warn naming job, lane, cause, events and acts', async () => {
+    const inbox = await readStuck(stuckRead({ jobs: [
+      stuckJob(),
+      stuckJob({ job: 'RQ-STUCK-2', lane: null, cause: 'lane_refused_repo',
+        action: 'move to a lane that accepts this repo',
+        kind: 'DEVIN_FLASH_REFUSED', reason: 'repo-not-eligible' }),
+      stuckJob({ job: 'RQ-STUCK-3', lane: 'claude', cause: 'worktree_cleanup_failed',
+        action: 'worktree cleanup keeps failing; needs a manual look',
+        kind: 'WT_ORPHAN_REMOVE_FAILED', reason: '(RuntimeError)' }),
+      stuckJob({ job: 'RQ-STUCK-4', lane: null, cause: 'unknown',
+        action: 'cause not recognised; read the event log lines for this job',
+        kind: 'PUBLISH_FAILED', reason: 'exit 3' }),
+    ] }));
+    expect(inbox.sources['dispatch-stuck']).toEqual({ state: 'healthy', pending: 4 });
+    const items = inbox.items.filter(i => i.source === 'dispatch-stuck');
+    expect(items).toHaveLength(4);
+
+    const refused = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-1')!;
+    expect(refused).toMatchObject({
+      kind: 'dispatch-stuck', severity: 'warn', blocking: false,
+      title: 'Job RQ-STUCK-1 cannot launch — dispatch keeps refusing it',
+      since: new Date(now - 2 * 3_600_000).toISOString(), expiresAt: null,
+      jobIds: ['RQ-STUCK-1'],
+      act: ['phm fleet stuck', 'phm queue lane RQ-STUCK-1 <lane>', 'phm queue'],
+    });
+    expect(refused.detail).toContain('lane devin');
+    expect(refused.detail).toContain('waiting 2h');
+    expect(refused.detail).toContain('3 events');
+    expect(refused.detail).toContain('DEVIN_FLASH_REFUSED size-not-sm');
+    expect(refused.detail).toContain('move to a lane that accepts this size');
+
+    // A lane refusal with no ready-list lane falls back to the refusing
+    // lane or unknown — here the read handed null, so the detail says so.
+    const noLane = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-2')!;
+    expect(noLane.detail).toContain('lane unknown');
+    expect(noLane.act).toEqual(['phm fleet stuck', 'phm queue lane RQ-STUCK-2 <lane>', 'phm queue']);
+
+    // A *_FAILED kind is a failure, not a refusal — the title and acts
+    // follow the cause, never a guessed verdict.
+    const cleanup = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-3')!;
+    expect(cleanup.title).toBe('Job RQ-STUCK-3 cannot launch — dispatch keeps failing it');
+    expect(cleanup.act).toEqual(['phm fleet stuck', 'phm fleet worktrees', 'phm queue']);
+    expect(cleanup.detail).toContain('WT_ORPHAN_REMOVE_FAILED (RuntimeError)');
+
+    const unknown = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-4')!;
+    expect(unknown.act).toEqual(['phm fleet stuck', 'phm fleet dispatch-events', 'phm queue']);
+    expect(unknown.detail).toContain('cause not recognised');
+  });
+
+  it('reports unavailable honestly and never lists seam rows under it', async () => {
+    // `phm fleet stuck`'s own rule: a missing or unreadable event log
+    // leaves the stuck set unknown — never an empty list passed off as
+    // fact — so 'missing' cannot appear here at all.
+    const unavailable = await readStuck(stuckRead({ state: 'unavailable', jobs: [stuckJob()] }));
+    expect(unavailable.sources['dispatch-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'dispatch-stuck')).toHaveLength(0);
+
+    const throwing = await read({ readDispatchStuck: async () => { throw new Error('events boom'); } });
+    expect(throwing.sources['dispatch-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'dispatch-stuck')).toHaveLength(0);
+
+    // A degraded ready read still lists every event-proven job — the
+    // events log, not the ready list, proves the stuck set — with the
+    // lane-attribution caveat in the detail.
+    const degraded = await readStuck(stuckRead({ state: 'degraded', jobs: [stuckJob()] }));
+    expect(degraded.sources['dispatch-stuck']).toEqual({ state: 'degraded', pending: 1 });
+    const item = degraded.items.find(i => i.source === 'dispatch-stuck')!;
+    expect(item.detail).toContain('ready.tsv read degraded');
+  });
+
+  it('reads the real dispatch-events.log and ready.tsv under runsDir', async () => {
+    mkdirSync(join(runsDir, 'queue'), { recursive: true });
+    const t = (msAgo: number) => now - msAgo;
+    writeFileSync(join(runsDir, 'queue', 'dispatch-events.log'), [
+      // Stuck: two refusals since the last launch, still active.
+      eventLine(t(2 * 3_600_000), 'DEVIN_FLASH_REFUSED RQ-STUCK-A size-not-sm'),
+      eventLine(t(2 * 3_600_000 - 5 * 60_000), 'DEVIN_FLASH_REFUSED RQ-STUCK-A size-not-sm'),
+      eventLine(t(2 * 3_600_000 - 10 * 60_000), 'DEVIN_FLASH_REFUSED RQ-STUCK-A size-not-sm'),
+      // Stuck: a worktree cleanup failure — lane falls back to unknown.
+      eventLine(t(2 * 3_600_000), 'WT_ORPHAN_REMOVE_FAILED RQ-STUCK-B (RuntimeError)'),
+      eventLine(t(2 * 3_600_000 - 5 * 60_000), 'WT_ORPHAN_REMOVE_FAILED RQ-STUCK-B (RuntimeError)'),
+      // Refused once, then launched — the LAUNCH clears it, never lists.
+      eventLine(t(4 * 3_600_000), 'DEVIN_FLASH_REFUSED RQ-LAUNCHED-1 size-not-sm'),
+      eventLine(t(4 * 3_600_000 - 2 * 60_000), 'LAUNCH RQ-LAUNCHED-1 phantom claude frontier'),
+      // Refused but gone quiet for over an hour — fixed or removed.
+      eventLine(t(5 * 3_600_000), 'DEVIN_FLASH_REFUSED RQ-QUIET-1 size-not-sm'),
+      eventLine(t(5 * 3_600_000 - 5 * 60_000), 'DEVIN_FLASH_REFUSED RQ-QUIET-1 size-not-sm'),
+      eventLine(t(90 * 60_000), 'TICK ok'),
+      'not a log line',
+    ].join('\n') + '\n', { mode: 0o600 });
+    // The ready list names RQ-STUCK-A's lane — it wins over the refusing
+    // lane the event kind would imply.
+    writeFileSync(join(runsDir, 'queue', 'ready.tsv'),
+      'RQ-STUCK-A\tcodex-local\n', { mode: 0o600 });
+
+    const inbox = await read();
+    expect(inbox.sources['dispatch-stuck']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'dispatch-stuck');
+    expect(items.map(i => i.id).sort()).toEqual(['dispatch-stuck:RQ-STUCK-A', 'dispatch-stuck:RQ-STUCK-B']);
+    const lane = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-A')!;
+    expect(lane).toMatchObject({
+      kind: 'dispatch-stuck', severity: 'warn', jobIds: ['RQ-STUCK-A'],
+      act: ['phm fleet stuck', 'phm queue lane RQ-STUCK-A <lane>', 'phm queue'],
+    });
+    expect(lane.detail).toContain('lane codex-local');
+    expect(lane.detail).toContain('DEVIN_FLASH_REFUSED size-not-sm');
+    const cleanup = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-B')!;
+    expect(cleanup.act).toEqual(['phm fleet stuck', 'phm fleet worktrees', 'phm queue']);
+    expect(cleanup.detail).toContain('lane unknown');
+  });
+
+  it('reports a missing or unreadable event log as unavailable — unknown, never an empty list', async () => {
+    // No dispatch-events.log anywhere under runsDir — `phm fleet stuck`
+    // itself reports unknown (exit 1), so the source can never claim a
+    // verified-empty stuck set.
+    const missing = await read();
+    expect(missing.sources['dispatch-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(missing.items.filter(i => i.source === 'dispatch-stuck')).toHaveLength(0);
+
+    // A directory where the log belongs is a degraded read — still
+    // unknown, never verified-empty.
+    mkdirSync(join(runsDir, 'queue', 'dispatch-events.log'), { recursive: true });
+    const degraded = await read();
+    expect(degraded.sources['dispatch-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(degraded.items.filter(i => i.source === 'dispatch-stuck')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = stuckRead({ jobs: [stuckJob(), stuckJob({ job: 'RQ-STUCK-2' })] });
+    const bySource = await readStuck(pending, { filter: { source: 'dispatch-stuck' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'dispatch-stuck')).toBe(true);
+    const byKind = await readStuck(pending, { filter: { kind: 'dispatch-stuck' } });
+    expect(byKind.items).toHaveLength(2);
+    expect(byKind.sources['dispatch-stuck']).toEqual({ state: 'healthy', pending: 2 });
+    // The job id is the item's own citation — --job names it directly.
+    const byJob = await readStuck(pending, { filter: { job: 'RQ-STUCK-2' } });
+    expect(byJob.items.filter(i => i.source === 'dispatch-stuck').map(i => i.id))
+      .toEqual(['dispatch-stuck:RQ-STUCK-2']);
+  });
+});
+
+describe('readUnifiedInbox apps recovery', () => {
+  const INV_A = '123e4567-e89b-42d3-a456-426614174000';
+  const INV_B = '223e4567-e89b-42d3-a456-426614174001';
+  const INV_C = '323e4567-e89b-42d3-a456-426614174002';
+  const recoveryRow = (over: Partial<AppsRecoverySourceRead['invocations'][number]> = {}): AppsRecoverySourceRead['invocations'][number] => ({
+    invocationId: INV_A, latestCursor: 1, latestTime: now - 5 * 60_000,
+    observedApps: ['Phantom', 'Codex'],
+    retainedObservedState: [{ app: 'Phantom', observedRunning: false }, { app: 'Codex', observedRunning: true }],
+    retainedDiagnostics: [{ app: 'Phantom', outcome: 'launch-failed' }, { app: 'Codex', outcome: 'running' }],
+    retainedHealthy: false, recoveries: 1, consecutiveFailures: 3, totalFailedCycles: 5,
+    terminalOutcome: null, ...over,
+  });
+  const recoveryRead = (invocations: AppsRecoverySourceRead['invocations'], over: Partial<AppsRecoverySourceRead> = {}): AppsRecoverySourceRead => ({
+    v: 1, availability: 'available', truncated: false, scanCursor: 0, scannedEvents: 0, invocations, ...over,
+  });
+  const readRecovery = (projection: AppsRecoverySourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readAppsRecovery: () => projection, ...extra });
+
+  it('reports a verified-empty history as healthy with a real zero', async () => {
+    const inbox = await read();
+    expect(inbox.sources['apps-recovery']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'apps-recovery')).toHaveLength(0);
+  });
+
+  it('lists a live failing invocation as warn retrying, a silent one as warn silent and a fresh failed run as high failed', async () => {
+    const inbox = await readRecovery(recoveryRead([
+      recoveryRow(),
+      recoveryRow({ invocationId: INV_B, latestTime: now - 45 * 60_000, retainedHealthy: null,
+        retainedObservedState: null, observedApps: null, consecutiveFailures: 0 }),
+      recoveryRow({ invocationId: INV_C, terminalOutcome: 'failed', latestTime: now - 10 * 60_000,
+        retainedHealthy: null, totalFailedCycles: 6 }),
+      // Finished and healthy runs never list.
+      recoveryRow({ invocationId: '423e4567-e89b-42d3-a456-426614174003', terminalOutcome: 'completed',
+        latestTime: now - 20 * 60_000, retainedHealthy: null }),
+      recoveryRow({ invocationId: '523e4567-e89b-42d3-a456-426614174004', retainedHealthy: true,
+        retainedObservedState: [{ app: 'Phantom', observedRunning: true }],
+        retainedDiagnostics: [{ app: 'Phantom', outcome: 'running' }], consecutiveFailures: 0, totalFailedCycles: 0 }),
+    ]));
+    expect(inbox.sources['apps-recovery']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'apps-recovery');
+    expect(items).toHaveLength(3);
+
+    const retrying = items.find(i => i.id === `apps-recovery:${INV_A}`)!;
+    expect(retrying).toMatchObject({
+      kind: 'apps-recovery-retrying', severity: 'warn', blocking: false,
+      title: 'App recovery retrying: Phantom',
+      since: new Date(now - 5 * 60_000).toISOString(), expiresAt: null,
+    });
+    expect(retrying.detail).toContain('3 consecutive failed cycles');
+    expect(retrying.act).toEqual([
+      `phm fleet apps-recovery-check --invocation ${INV_A} --max-age-ms 1800000 --json`,
+      'phm fleet apps-recovery-state --json',
+    ]);
+
+    const silent = items.find(i => i.id === `apps-recovery:${INV_B}`)!;
+    expect(silent).toMatchObject({
+      kind: 'apps-recovery-silent', severity: 'warn', blocking: false,
+      title: 'App recovery silent for 45 min', expiresAt: null,
+    });
+
+    const failed = items.find(i => i.id === `apps-recovery:${INV_C}`)!;
+    expect(failed).toMatchObject({
+      kind: 'apps-recovery-failed', severity: 'high', blocking: false,
+      title: 'App recovery failed: Phantom',
+      since: new Date(now - 10 * 60_000).toISOString(),
+      expiresAt: new Date(now - 10 * 60_000 + 24 * 3_600_000).toISOString(),
+    });
+    expect(failed.detail).toContain('terminal outcome failed');
+  });
+
+  it('ages a failed verdict out of the view once its announcement window closes', async () => {
+    const inbox = await readRecovery(recoveryRead([
+      recoveryRow({ invocationId: INV_C, terminalOutcome: 'failed', latestTime: now - 25 * 3_600_000 }),
+    ]));
+    expect(inbox.sources['apps-recovery']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'apps-recovery')).toHaveLength(0);
+  });
+
+  it('reports an unreadable or invalid-cursor history as unavailable — unknown, never an empty list', async () => {
+    for (const availability of ['unavailable', 'invalid-cursor'] as const) {
+      const inbox = await readRecovery(recoveryRead([recoveryRow()], { availability }));
+      expect(inbox.sources['apps-recovery']).toEqual({ state: 'unavailable', pending: null });
+      expect(inbox.items.filter(i => i.source === 'apps-recovery')).toHaveLength(0);
+    }
+    const throwing = await read({ readAppsRecovery: () => { throw new Error('history boom'); } });
+    expect(throwing.sources['apps-recovery']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'apps-recovery')).toHaveLength(0);
+  });
+
+  it('marks a truncated scan degraded and still lists only the proven verdicts', async () => {
+    const inbox = await readRecovery(recoveryRead([
+      // A truncated projection answers 'unknown' for every live row — the
+      // silent invocation cannot be proven and never lists.
+      recoveryRow({ invocationId: INV_B, latestTime: now - 45 * 60_000, retainedHealthy: null,
+        retainedObservedState: null, observedApps: null }),
+      recoveryRow({ invocationId: INV_C, terminalOutcome: 'failed', latestTime: now - 10 * 60_000,
+        retainedHealthy: null }),
+    ], { truncated: true }));
+    expect(inbox.sources['apps-recovery']).toEqual({ state: 'degraded', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'apps-recovery');
+    expect(items.map(i => i.id)).toEqual([`apps-recovery:${INV_C}`]);
+    expect(items[0]!.kind).toBe('apps-recovery-failed');
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    const pending = recoveryRead([recoveryRow(), recoveryRow({ invocationId: INV_C, terminalOutcome: 'failed' })]);
+    const bySource = await readRecovery(pending, { filter: { source: 'apps-recovery' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'apps-recovery')).toBe(true);
+    const byKind = await readRecovery(pending, { filter: { kind: 'apps-recovery-failed' } });
+    expect(byKind.items.map(i => i.id)).toEqual([`apps-recovery:${INV_C}`]);
+    expect(byKind.sources['apps-recovery']).toEqual({ state: 'healthy', pending: 2 });
+  });
+
+  it('reads the real runs bus-inbox apps-watch events under runsDir', async () => {
+    const post = (id: string, body: Record<string, unknown>, at = now) => {
+      const receipt = appendBusInbox({
+        id, from: 'apps-watch', to: 'leaders', priority: 'P2', ttl: 24 * 3_600_000, body,
+      }, { root: runsDir, now: () => at });
+      expect(receipt.status).toBe('posted');
+    };
+    const base = { recoveries: 1, consecutiveFailures: 2, totalFailedCycles: 4 };
+    // A live invocation still failing its last observation.
+    post(`apps-watch-${INV_A}-cycle-3`, {
+      kind: 'apps-watch.observation.v1', invocationId: INV_A, cycle: 3, healthy: false,
+      observedState: [{ app: 'Phantom', observedRunning: false }, { app: 'Codex', observedRunning: true }],
+      diagnostics: [{ app: 'Phantom', outcome: 'launch-failed' }, { app: 'Codex', outcome: 'running' }],
+      ...base,
+    });
+    // A live invocation gone quiet for 45 minutes.
+    post(`apps-watch-${INV_B}-cycle-1`, {
+      kind: 'apps-watch.observation.v1', invocationId: INV_B, cycle: 1, healthy: true,
+      observedState: [{ app: 'Phantom', observedRunning: true }],
+      diagnostics: [{ app: 'Phantom', outcome: 'running' }],
+      recoveries: 0, consecutiveFailures: 0, totalFailedCycles: 0,
+    }, now - 45 * 60_000);
+    // A finished run that failed — its summary is the latest word.
+    post(`apps-watch-${INV_C}-summary`, {
+      kind: 'apps-watch.summary.v1', invocationId: INV_C, apps: ['Phantom'], outcome: 'failed',
+      cycles: 5, lastObservedState: [{ app: 'Phantom', observedRunning: false }],
+      lastDiagnostics: [{ app: 'Phantom', outcome: 'launch-failed' }],
+      ...base,
+    });
+    // A completed run — finished history, never pending.
+    post(`apps-watch-623e4567-e89b-42d3-a456-426614174005-summary`, {
+      kind: 'apps-watch.summary.v1', invocationId: '623e4567-e89b-42d3-a456-426614174005',
+      apps: ['Codex'], outcome: 'completed', cycles: 2,
+      lastObservedState: [{ app: 'Codex', observedRunning: true }],
+      recoveries: 0, consecutiveFailures: 0, totalFailedCycles: 0,
+    });
+
+    const inbox = await read();
+    expect(inbox.sources['apps-recovery']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'apps-recovery');
+    expect(items.map(i => i.id).sort()).toEqual([
+      `apps-recovery:${INV_A}`, `apps-recovery:${INV_B}`, `apps-recovery:${INV_C}`,
+    ].sort());
+    expect(items.find(i => i.id === `apps-recovery:${INV_A}`)!.kind).toBe('apps-recovery-retrying');
+    expect(items.find(i => i.id === `apps-recovery:${INV_B}`)!.kind).toBe('apps-recovery-silent');
+    expect(items.find(i => i.id === `apps-recovery:${INV_C}`)!.kind).toBe('apps-recovery-failed');
+  });
+});
+
 describe('readUnifiedInbox channel health', () => {
   const bridge = (channel: 'slack' | 'imessage', over: Partial<ChannelHealth> = {}): ChannelHealth => ({
     channel, configured: true, processAlive: true, runtimeHost: 'test-host',
@@ -5630,5 +6397,107 @@ describe('readUnifiedInbox owner pair', () => {
     // A pair wait names no job — --job never matches it.
     const byJob = await readPair(pending, { filter: { job: 'job-1' } });
     expect(byJob.items.filter(i => i.source === 'owner-pair')).toHaveLength(0);
+  });
+});
+
+describe('readUnifiedInbox inbox acks', () => {
+  const ackRow = (over: Partial<InboxAckReportRow> = {}): InboxAckReportRow => ({
+    raw: '2026-11-07T09:00:00.000Z [src:telegram id:tg-1] check the deploy',
+    entryId: 'tg-1', channel: 'telegram', text: 'check the deploy',
+    state: 'pending', reason: 'no leader reply after this entry yet', ...over,
+  });
+  const acksRead = (entries: InboxAckReportRow[], over: Partial<InboxAcksRead> = {}): InboxAcksRead => ({
+    inbox: 'healthy', ledger: 'healthy', replies: 'healthy', entries, malformedLedgerRows: 0, ...over,
+  });
+  const readAcks = (result: InboxAcksRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readInboxAcks: async () => result, ...extra });
+
+  it('lists entries still owed a channel ack as warn inbox-ack items', async () => {
+    const inbox = await readAcks(acksRead([ackRow()]));
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'healthy', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'inbox-acks:tg-1')!;
+    expect(item).toMatchObject({
+      source: 'inbox-acks', kind: 'inbox-ack', severity: 'warn', blocking: false,
+      since: '2026-11-07T09:00:00.000Z', expiresAt: null,
+      act: ['phm fleet inbox-acks --flush', 'phm fleet inbox-acks', 'phm comms inbox read'],
+    });
+    expect(item.title).toContain('telegram');
+    expect(item.detail).toContain('check the deploy');
+    expect(item.detail).toContain('no leader reply');
+    expect(item.jobIds).toBeUndefined();
+  });
+
+  it('never lists settled rows — acked, skipped and no-channel are recorded decisions', async () => {
+    const inbox = await readAcks(acksRead([
+      ackRow({ entryId: 'done-1', state: 'acked' }),
+      ackRow({ entryId: 'skip-1', state: 'skipped', reason: 'channel has no sender' }),
+      ackRow({ entryId: 'raw-1', channel: null, state: 'no-channel', reason: 'came from web; no reply channel wired' }),
+    ]));
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'inbox-acks')).toHaveLength(0);
+  });
+
+  it('reports a verified-absent inbox missing and a real zero pending', async () => {
+    const inbox = await readAcks(acksRead([], { inbox: 'missing', ledger: 'missing', replies: 'missing' }));
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'missing', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'inbox-acks')).toHaveLength(0);
+  });
+
+  it('reports an unreadable inbox or ack ledger unavailable — pending stays unknown', async () => {
+    for (const over of [{ inbox: 'unavailable' as const }, { ledger: 'unavailable' as const }]) {
+      const inbox = await readAcks(acksRead([ackRow()], over));
+      expect(inbox.sources['inbox-acks']).toEqual({ state: 'unavailable', pending: null });
+      expect(inbox.items.filter(i => i.source === 'inbox-acks')).toHaveLength(0);
+    }
+  });
+
+  it('degrades when a reply journal is only partly readable — pending is an upper bound', async () => {
+    const inbox = await readAcks(acksRead([ackRow()], { replies: 'degraded' }));
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'degraded', pending: 1 });
+    expect(inbox.items.filter(i => i.source === 'inbox-acks')).toHaveLength(1);
+  });
+
+  it('degrades to unavailable when the read throws', async () => {
+    const inbox = await read({ readInboxAcks: async () => { throw new Error('acks boom'); } });
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'inbox-acks')).toHaveLength(0);
+  });
+
+  it('reads the real journals — a later leader reply settles the entry, a newer one stays pending', async () => {
+    mkdirSync(join(runsDir, 'leader'), { recursive: true });
+    mkdirSync(join(runsDir, 'queue'), { recursive: true });
+    writeFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'),
+      '2026-11-07T09:00:00.000Z [src:telegram id:tg-old] first message\n' +
+      '2026-11-07T11:00:00.000Z [src:imessage id:im-new] second message\n', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'leader', 'PLAN-LOG.md'),
+      '## 2026-11-07T10:00:00Z planner pass\n\n**Reply for Mason**: got it, on it\n', { mode: 0o600 });
+    const inbox = await read();
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'healthy', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'inbox-acks');
+    expect(items.map(i => i.id)).toEqual(['inbox-acks:im-new']);
+    expect(items[0]!.since).toBe('2026-11-07T11:00:00.000Z');
+  });
+
+  it('a recorded ledger ack settles the entry for the shared read too', async () => {
+    mkdirSync(join(runsDir, 'leader'), { recursive: true });
+    mkdirSync(join(runsDir, 'queue'), { recursive: true });
+    writeFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'),
+      '2026-11-07T09:00:00.000Z [src:telegram id:tg-old] first message\n', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'queue', 'inbox-acks.jsonl'),
+      `${JSON.stringify({ entryId: 'tg-old', status: 'acked' })}\n`, { mode: 0o600 });
+    const inbox = await read();
+    expect(inbox.sources['inbox-acks']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'inbox-acks')).toHaveLength(0);
+  });
+
+  it('narrows under --source and --kind like every other source', async () => {
+    const pending = acksRead([ackRow()]);
+    const bySource = await readAcks(pending, { filter: { source: 'inbox-acks' } });
+    expect(bySource.items.map(i => i.id)).toEqual(['inbox-acks:tg-1']);
+    const byKind = await readAcks(pending, { filter: { kind: 'inbox-ack' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['inbox-acks:tg-1']);
+    // An owed ack names no job — --job never matches it.
+    const byJob = await readAcks(pending, { filter: { job: 'job-1' } });
+    expect(byJob.items.filter(i => i.source === 'inbox-acks')).toHaveLength(0);
   });
 });

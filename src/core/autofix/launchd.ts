@@ -12,13 +12,11 @@
  */
 import { join } from 'node:path';
 
-import { ledgerLine, scrubText, skipIfRecorded } from './guard.js';
+import { launchdRunsLedgerPath, ledgerLine, planOrSkip, safeReportToken, scrubText, skipIfRecorded } from './guard.js';
 import {
-  CRASH_THRESHOLD, FRESH_MS, HOUR_MS, OPERATOR_QUIET_MS, RESIDENT_LABEL, SAMPLE_GAP_MS,
+  CRASH_THRESHOLD, FRESH_MS, HOUR_MS, LAUNCHD_LABEL_RE, OPERATOR_QUIET_MS, RESIDENT_LABEL, SAMPLE_GAP_MS,
   type AutofixHost, type LaunchdJob, type LedgerLine, type RunsSample,
 } from './types.js';
-
-const LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/;
 
 export type CrashReason = 'active' | 'no-samples' | 'stale' | 'gap' | 'flat' | 'below-threshold';
 
@@ -147,8 +145,7 @@ function serviceTarget(host: AutofixHost, job: LaunchdJob): string {
 }
 
 function rqPath(host: AutofixHost, label: string): string {
-  const safe = label.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80);
-  return join(host.runsDir(), 'ledger', 'rq', `RQ-AUTOFIX-LAUNCHD-${safe}.md`);
+  return join(host.runsDir(), 'ledger', 'rq', `RQ-AUTOFIX-LAUNCHD-${safeReportToken(label, 80)}.md`);
 }
 
 function writeRq(host: AutofixHost, label: string, body: string): string {
@@ -161,7 +158,7 @@ function rememberSample(host: AutofixHost, label: string, sample: RunsSample): v
   const line = JSON.stringify({
     label, atMs: sample.atMs, runs: sample.runs, lastExitCode: sample.lastExitCode, pid: sample.pid,
   });
-  host.appendFile(join(host.runsDir(), 'ledger', 'launchd-runs.jsonl'), `${line}\n`);
+  host.appendFile(launchdRunsLedgerPath(host.runsDir()), `${line}\n`);
 }
 
 function finish(ctx: FixContext, line: LedgerLine): LedgerLine {
@@ -171,7 +168,7 @@ function finish(ctx: FixContext, line: LedgerLine): LedgerLine {
 export function fixLaunchdCrashloop(job: LaunchdJob, ctx: FixContext): LedgerLine | null {
   const nowMs = ctx.host.now().getTime();
   const ts = new Date(nowMs).toISOString();
-  if (job.domain === 'system' || !LABEL_RE.test(job.label)) {
+  if (job.domain === 'system' || !LAUNCHD_LABEL_RE.test(job.label)) {
     return ledgerLine(ts, 'launchd-crashloop', job.label, 'refuse-domain', { domain: job.domain }, { disabled: job.disabled }, 'refused');
   }
   const target = serviceTarget(ctx.host, job);
@@ -243,16 +240,10 @@ export function fixLaunchdCrashloop(job: LaunchdJob, ctx: FixContext): LedgerLin
     }
   }
 
-  if (ctx.dryRun) {
-    return ledgerLine(ts, 'launchd-crashloop', job.label, 'disable-keepalive', before, {
-      disabled: true, bootedOut: true,
-    }, 'dry-run');
-  }
-  const planned = ledgerLine(ts, 'launchd-crashloop', job.label, 'disable-keepalive', before, {
+  const plan = planOrSkip(ctx, ts, 'launchd-crashloop', job.label, 'disable-keepalive', before, {
     disabled: true, bootedOut: true,
-  }, 'applied');
-  const skipped = skipIfRecorded(ctx.ledger, planned);
-  if (skipped) return skipped;
+  });
+  if (plan.done) return plan.line;
 
   const disabled = ctx.host.exec(['launchctl', 'disable', target]);
   const booted = ctx.host.exec(['launchctl', 'bootout', target]);

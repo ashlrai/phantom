@@ -85,7 +85,7 @@ export async function cmdFleetLaneIdle(
   }
   if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) return 2;
   try {
-    const lanes = explainIdleLanes(JSON.parse(await reader(join(homedir(), '.ashlr-runs', 'queue', 'status.json'))));
+    const lanes = explainIdleLanes(JSON.parse(await reader(join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'status.json'))));
     console.log(args.includes('--json')
       ? JSON.stringify(sanitizePublicJson({ schema: 'fleet.lane-idle.v1', readOnly: true, lanes }))
       : sanitizePublicJson(lanes.map(lane => lane.line).join('\n') || 'No lanes below target.'));

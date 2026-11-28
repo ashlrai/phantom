@@ -7,6 +7,7 @@ import { ashlrHome } from '../core/cloud/store.js';
 import { callPool, configurePool, readPoolConfig, serveNodeRpc, type NodeRpcRequest, type PoolConfig } from '../core/drive/nodes/pool-host.js';
 import { callNodeSsh, sshApprovalStep, validSshHost } from '../core/drive/nodes/ssh.js';
 import { probeNodeLanes, runNodeWorker } from '../core/drive/nodes/worker.js';
+import { poolJoinReadinessNote } from '../core/drive/nodes/pool-readiness.js';
 
 export function hasNodePool(): boolean { return existsSync(join(ashlrHome(), 'node-pool', 'config.json')); }
 
@@ -74,6 +75,19 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
   const json = args.includes('--json');
   const emit = (value: unknown) => console.log(json ? JSON.stringify(value) : JSON.stringify(value, null, 2));
   try {
+    // Join has two forms that must not mix: enrollment flags --primary/
+    // --backup (probe this machine's lanes and capacity, first join only)
+    // and explicit router-client flags --caps/--slots (an existing pool
+    // member re-pinning its registration). --caps/--slots flip the call to
+    // the explicit path below, where leftover --primary/--backup would cross
+    // SSH as a masked pool refusal — or, with no pool config yet, read as
+    // "no node pool configuration". Refuse the mix by name before either.
+    if (verb === 'join') {
+      const has = (name: string) => args.some(a => a === name || a.startsWith(`${name}=`));
+      if ((has('--primary') || has('--backup')) && (has('--caps') || has('--slots'))) {
+        throw new PoolUsageError('Pool join cannot combine --primary/--backup enrollment flags with --caps/--slots explicit flags. Enrollment probes this machine\'s lanes and capacity itself: drop --caps/--slots to enroll, or drop --primary/--backup for an explicit join.');
+      }
+    }
     if (verb === 'pool' || (verb === 'join' && !args.some(a => /^--(?:caps|slots)(?:=|$)/.test(a)))) {
       const f = flags(args, [...(verb === 'pool' ? ['--role'] : []), '--node', '--owner', '--primary', '--backup']);
       const role = verb === 'join' ? 'worker' : f.get('--role') as PoolConfig['role'];
@@ -145,9 +159,17 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
             return 1;
           }
         }
+        // A registered join that is not ready names why in the same note slot
+        // the probe-release warning uses, so first-run operators are not left
+        // reading bare `ready: false` with empty lanes or a held capacity.
+        const readiness = poolJoinReadinessNote(lanes, capacity);
+        const notes = [
+          ...(released ? [] : ['the probe session was not released; it expires within about 30 seconds — a worker started now may report node-already-live once']),
+          ...(readiness === undefined ? [] : [readiness]),
+        ];
         emit({ schemaVersion: 1, command: verb, registered: true, role: config.role, lanes, capacity,
           ready: !capacity.held && lanes.length > 0,
-          ...(released ? {} : { note: 'the probe session was not released; it expires within about 30 seconds — a worker started now may report node-already-live once' }),
+          ...(notes.length ? { note: notes.join(' ') } : {}),
           next: 'phm node worker --runner /absolute/host-owned-runner --json', ...result.result });
         return 0;
       }

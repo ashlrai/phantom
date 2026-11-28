@@ -89,7 +89,7 @@ describe('buildInventory', () => {
   });
 
   it('connectors: on PATH is ready, missing program needs setup, unchecked endpoint is unknown; credentials are counted, never shown', () => {
-    expect(find('connector:docs')).toEqual({ kind: 'connector', id: 'connector:docs', name: 'docs', state: 'ready', detail: 'MCP server on this machine. Library docs.', lastChecked: AT, usedByLanes: ['claude', 'codex-local'], next: null });
+    expect(find('connector:docs')).toEqual({ kind: 'connector', id: 'connector:docs', name: 'docs', state: 'ready', detail: 'MCP server on this machine. Library docs. Program found on this machine; it was not started.', lastChecked: AT, usedByLanes: ['claude', 'codex-local'], next: null });
     expect(find('connector:tracker')).toMatchObject({
       state: 'needs setup', usedByLanes: ['claude'],
       detail: 'CLI. Its program is not on PATH. Lists 2 credential names; whether each is set is not checked here.',
@@ -97,6 +97,12 @@ describe('buildInventory', () => {
     });
     expect(find('connector:remote')).toMatchObject({ state: 'unknown', usedByLanes: [], next: null });
     expect(find('connector:remote')!.detail).toContain('No lane is listed, so no lane can run it.');
+    const configured = { ...full, connectors: [
+      { ...connectors[0]!, id: 'credentialed', credentials: 1 },
+      { ...connectors[0]!, id: 'unassigned', lanes: [] },
+    ] };
+    expect(find('connector:credentialed', configured)).toMatchObject({ state: 'unknown', usedByLanes: ['claude', 'codex-local'] });
+    expect(find('connector:unassigned', configured)).toMatchObject({ state: 'unknown', usedByLanes: [] });
   });
 
   it('plugins and skills: on is ready, off is off, a bad manifest is error, unknown stays unknown', () => {
@@ -108,7 +114,7 @@ describe('buildInventory', () => {
     expect(find('skill:Learned from merged PRs/fix-flaky-test')).toMatchObject({ state: 'off', usedByLanes: [] });
     expect(find('skill:Learned from merged PRs/ship-small')).toMatchObject({ state: 'ready', usedByLanes: [] });
     // Declared for a lane but in no installed list: still listed, once.
-    expect(find('skill:lane-tools/deploy')).toMatchObject({ state: 'ready', usedByLanes: ['claude'] });
+    expect(find('skill:lane-tools/deploy')).toMatchObject({ state: 'unknown', usedByLanes: ['claude'] });
   });
 
   it('tools: some lane has it is ready, no lane has it needs setup, undeclared is unknown, revoked is off', () => {
@@ -119,10 +125,11 @@ describe('buildInventory', () => {
       next: { text: 'Give a lane Computer use, then record it in <runs>/queue/lane-tools.json.', command: 'phm tools parity' },
     });
     expect(find('tool:shell')).toMatchObject({ state: 'unknown', detail: 'No source says which lanes have it.', usedByLanes: 'unknown', next: null });
-    expect(find('tool:mcp:figma')).toMatchObject({ name: 'figma', state: 'ready', detail: 'MCP server figma. Declared for 1 lane.', usedByLanes: ['claude'] });
+    expect(find('tool:mcp:figma')).toMatchObject({ name: 'figma', state: 'unknown', detail: 'MCP server figma. Declared for 1 lane; availability not checked.', usedByLanes: ['claude'] });
     // `docs` is a connector, so it is not listed a second time as a tool.
     expect(find('tool:mcp:docs')).toBeUndefined();
     expect(find('tool:registry/triage')).toMatchObject({ state: 'ready', detail: 'Shared instruction template. Sort new issues.', usedByLanes: 'all' });
+    expect(find('tool:registry/lookup')).toMatchObject({ state: 'off', detail: 'Shared connector call, registered but invocation is disabled. Find a ticket.' });
     expect(find('tool:registry/old-call')).toMatchObject({ state: 'off', detail: 'Shared connector call, revoked. Retired call.' });
   });
 
@@ -143,15 +150,15 @@ describe('buildInventory', () => {
     expect(empty.kinds.find(k => k.kind === 'connector')).toMatchObject({ total: 0, counts: { unknown: 0 } });
   });
 
-  it('lane parity: what each lane can use and lacks, with the gap as a number', () => {
+  it('lane parity: what each lane reports and lacks, with the gap as a number', () => {
     const { parity } = buildInventory(full);
-    // 3 connectors + 7 capabilities + figma + 2 active registry tools; the revoked one is off for everyone.
-    expect(parity.compared).toBe(13);
-    expect(parity.lanes.map(l => [l.lane, l.has.length, l.gap, l.unknown])).toEqual([['claude', 7, 2, 4], ['codex-local', 3, 6, 4], ['zai', 1, 4, 8]]);
-    expect(parity.widestGap).toBe(4);
+    // 3 connectors + 7 capabilities + figma + 1 active skill; connector calls are off.
+    expect(parity.compared).toBe(12);
+    expect(parity.lanes.map(l => [l.lane, l.has.length, l.gap, l.unknown])).toEqual([['claude', 6, 2, 4], ['codex-local', 3, 5, 4], ['zai', 1, 3, 8]]);
+    expect(parity.widestGap).toBe(3);
     const local = parity.lanes[1]!;
     expect(local.has).toEqual(['connector:docs', 'tool:github-read', 'tool:registry/triage']);
-    expect([...local.lacks].sort()).toEqual(['connector:tracker', 'connector:remote', 'tool:browser', 'tool:computer-use', 'tool:mcp:figma', 'tool:registry/lookup'].sort());
+    expect([...local.lacks].sort()).toEqual(['connector:tracker', 'connector:remote', 'tool:browser', 'tool:computer-use', 'tool:mcp:figma'].sort());
     for (const lane of parity.lanes) expect(lane.has.length + lane.lacks.length + lane.unknown).toBe(parity.compared);
     // Lanes a source names come after the roster.
     expect(buildInventory({ ...full, roster: ['zai'] }).parity.lanes.map(l => l.lane)).toEqual(['zai', 'claude', 'codex-local']);
@@ -172,12 +179,12 @@ describe('buildInventory', () => {
 
   it('prints the same rows as plain text', () => {
     const text = formatInventory(buildInventory(full));
-    expect(text.split('\n')[0]).toBe('Inventory: 26 items. 11 ready, 3 needs setup, 2 off, 2 error, 8 unknown.');
+    expect(text.split('\n')[0]).toBe('Inventory: 26 items. 8 ready, 3 needs setup, 3 off, 2 error, 10 unknown.');
     expect(text).toContain('Connectors (3): 1 ready, 1 needs setup, 0 off, 0 error, 1 unknown');
     expect(text).toContain('Next: Install its program so it is on PATH, then check it again.  Run: phm connectors show tracker');
     expect(text).toContain('Next: add the bot with `phm channels add telegram`\n');
-    expect(text).toContain('Tool gap between lanes: 4. Each lane against 13 tools and connectors.');
-    expect(text).toMatch(/codex-local\s+can use 3, lacks 6, unknown 4/);
+    expect(text).toContain('Tool gap between lanes: 3. Each lane against 12 tools and connectors.');
+    expect(text).toMatch(/codex-local\s+reported 3, lacks 5, unknown 4/);
     expect(formatInventory(filterInventory(buildInventory({ ...full, connectors: [] }), 'connector'))).toContain('Connectors (0): none found');
   });
 });

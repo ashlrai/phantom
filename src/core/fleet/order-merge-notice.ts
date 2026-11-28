@@ -90,7 +90,7 @@ const defaultSenders: OrderMergeNoticeSenders = {
 };
 
 export async function sendOrderMergeNotices(root: string, notices: readonly OrderMergeNotice[],
-  senders: OrderMergeNoticeSenders = defaultSenders): Promise<{ sent: number; skipped: number; failed: number }> {
+  senders: OrderMergeNoticeSenders = defaultSenders, opts: { now?: () => number } = {}): Promise<{ sent: number; skipped: number; failed: number }> {
   const counts = { sent: 0, skipped: 0, failed: 0 };
   if (!notices.length) return counts;
   const ledger = join(root, 'queue', 'order-notices.jsonl');
@@ -107,7 +107,8 @@ export async function sendOrderMergeNotices(root: string, notices: readonly Orde
         try {
           if (send) await send(notice);
           const status = send ? 'sent' : 'skipped';
-          appendFileSync(ledger, `\n${JSON.stringify({ key: notice.key, status,
+          appendFileSync(ledger, `\n${JSON.stringify({ key: notice.key, status, channel: notice.channel,
+            at: new Date((opts.now ?? Date.now)()).toISOString(),
             ...(!send ? { reason: 'channel has no sender' } : {}) })}\n`, { mode: 0o600 });
           seen.add(notice.key);
           counts[status]++;

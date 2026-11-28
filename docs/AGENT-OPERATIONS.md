@@ -233,7 +233,12 @@ row recording `empty: true` — the diff check found nothing publishable —
 closes the attempt the same way and charges the row's recorded `tokens_total`,
 so empty runs count as failed attempts with their real spend instead of
 waiting out the censor horizon; `empty` absent, `false` or `null` stays open
-for the reconciler. Batch
+for the reconciler. The cell names the cause behind both: `launchDeaths`
+counts dead-launch closes and `emptyFailures` counts only infra-class empty
+finishes (`empty_class: 'error'`, or `exit_code`/`pool_error` re-deriving it
+on rows that predate the field — `no_diff` no-ops and `unknown` capture gaps
+never count), and recurring counts feed the `launch-death` and
+`empty-failure` improvement patterns alongside the blunt low-merge one. Batch
 sessions count per member: a `batch_claim` row is the member's dispatch
 record and the session's `launch` row (under its `RQ-BATCH-*` id) opens one
 attempt per member; a requeue-word `task_outcome` or a session-id
@@ -992,7 +997,9 @@ imports cannot overwrite each other's batches. Unreadable or malformed records
 make the snapshot `unavailable`, with unknown balances. Bucket projections
 include remaining amount, source, timestamp, reset, last-two and trailing-12-hour
 burn per hour, and projected exhaustion. Rates use observations in the current
-uninterrupted window; refills and resets break the series. The 12-hour rate uses
+uninterrupted window. Refills, resets, and transitions between automatic and
+manual readings break the series for both burn estimates and final-hour usage.
+The 12-hour rate uses
 the earliest available reading within that interval, so it can cover less than
 12 hours. Projection uses the last-two rate from the observation timestamp and
 is unknown if exhaustion would occur after reset. Capacity has no burn estimate.
@@ -1251,6 +1258,30 @@ per pass),
 and `phm improve discover` folds repos whose outside merges keep carrying
 standing revert verdicts into self-targeted backlog items — see
 [core/improve/outside-pr-backlog.ts](../src/core/improve/outside-pr-backlog.ts).
+The same journal is also folded per recorded agent attribution, so an
+agent product whose outside merges recurently revert across repos — too
+spread out for any single repo cell to reach the bar — becomes a
+fleet-repo backlog item; see
+[core/improve/outside-pr-agent-backlog.ts](../src/core/improve/outside-pr-agent-backlog.ts).
+Each row's `ci` field — the bounded per-PR check-rollup verdict — is
+folded per repository too, so outside merges that keep landing without a
+completed green check verdict (failed checks, checks still incomplete, or
+an empty rollup) become self-targeted backlog items; see
+[core/improve/outside-pr-ci-backlog.ts](../src/core/improve/outside-pr-ci-backlog.ts).
+Each row's `reviews` field — gh's `latestReviews` count plus its computed
+`reviewDecision` — is folded per repository as well, so outside merges
+that keep landing with an empty `latestReviews` array (zero recorded
+reviewers, a real "merged unreviewed" signal distinct from a null record's
+missing evidence) become self-targeted backlog items; see
+[core/improve/outside-pr-review-backlog.ts](../src/core/improve/outside-pr-review-backlog.ts).
+The same journal is also folded per attributed agent on its positive
+verdict, so an agent product whose outside merges keep landing clean —
+no standing revert, a `success` check-rollup verdict and at least one
+recorded reviewer — becomes a fleet-repo study item asking which
+conventions its held merges share that contributor guidance does not
+yet name; dependency-automation slugs are excluded as non-study
+subjects. See
+[core/improve/outside-pr-held-backlog.ts](../src/core/improve/outside-pr-held-backlog.ts).
 
 `phm fleet pr-hygiene [--repo <owner/name>] [--stale-days <n>] [--limit <n>] [--json]`
 audits one repo's open PRs and emits the `fleet.pr-hygiene.v1` triage report

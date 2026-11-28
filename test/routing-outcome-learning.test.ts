@@ -271,6 +271,11 @@ describe('outcome learning', () => {
       // not erased by the relaunch's assign.
       expect(cell).toMatchObject({ attempts: 3, merges: 1, goodMerges: 1, censored: 0 });
       expect(cell?.mergeRate).toBeCloseTo(1 / 3);
+      // The cause is named too: J-9's first attempt and J-10's give_up are
+      // launch deaths; J-9's merged relaunch and the orphan row are not.
+      expect(cell).toMatchObject({ launchDeaths: 2, emptyFailures: 0 });
+      expect(cell?.launchDeathRate).toBeCloseTo(2 / 3);
+      expect(cell?.emptyFailureRate).toBe(0);
     });
 
     it('closes an attempt whose finish recorded an empty diff, carrying its spend', () => {
@@ -325,6 +330,74 @@ describe('outcome learning', () => {
       expect(cell?.meanUsage).toBeCloseTo(4500 / 7);
       // Each merged attempt launched one hour before its verdict.
       expect(cell?.meanMinutesToMerge).toBeCloseTo(60);
+      // None of these empties is infrastructure-dead evidence: E1 is a
+      // recorded no_diff no-op, E4's pre-field row re-derives unknown (no
+      // exit status), and E5's finish names no open assign.
+      expect(cell).toMatchObject({ emptyFailures: 0, launchDeaths: 0 });
+      expect(cell?.emptyFailureRate).toBe(0);
+      expect(cell?.launchDeathRate).toBe(0);
+    });
+
+    it('names infrastructure-dead empty finishes and dead launches as their own evidence', () => {
+      const ledger = [
+        // Three error-class empties in one cell — the recurring threshold
+        // the empty-failure improvement pattern reads. F1 records the
+        // class; F2 and F3 predate empty_class and re-derive it from the
+        // row's own exit_code/pool_error exactly like classify_empty.
+        JSON.stringify({ event: 'launch', job: 'J-F1', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-F1', lane: 'devin', tokens_total: 300, wall_s: 120, empty: true, empty_class: 'error', exit_code: 1 }),
+        JSON.stringify({ event: 'launch', job: 'J-F2', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T01:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-F2', lane: 'devin', tokens_total: 400, wall_s: 140, empty: true, exit_code: 1 }),
+        JSON.stringify({ event: 'launch', job: 'J-F3', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T02:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-F3', lane: 'devin', tokens_total: 500, wall_s: 160, empty: true, pool_error: 'rate_limited' }),
+        // The exclusions that keep healthy work out of the count: a clean
+        // exit re-derives no_diff, a recorded unknown wins over the fields
+        // beside it, and a non-empty finish never qualifies at all.
+        JSON.stringify({ event: 'launch', job: 'J-F4', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T03:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-F4', lane: 'devin', tokens_total: 600, wall_s: 180, empty: true, exit_code: 0 }),
+        JSON.stringify({ event: 'launch', job: 'J-F5', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T04:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-F5', lane: 'devin', tokens_total: 700, wall_s: 200, empty: true, empty_class: 'unknown' }),
+        JSON.stringify({ event: 'launch', job: 'J-F6', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T05:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-F6', lane: 'devin', tokens_total: 800, wall_s: 220, empty: false, exit_code: 0 }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-F6', prUrl: 'https://github.com/ashlrai/phantom/pull/41', outcome: 'CLOSED', closedAt: '2026-11-01T06:00:00+00:00', ts: '2026-11-01T06:01:00+00:00' }),
+        // Three dead launches in the same cell: retry and give_up rows
+        // count alike — the attempt died before producing anything.
+        JSON.stringify({ event: 'launch', job: 'J-L1', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T07:00:00+00:00' }),
+        JSON.stringify({ event: 'launch_failed', job: 'J-L1', lane: 'devin', reason: 'spawn-failed', action: 'retry', attempt: 1, ts: '2026-11-01T07:05:00+00:00' }),
+        JSON.stringify({ event: 'launch', job: 'J-L2', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T08:00:00+00:00' }),
+        JSON.stringify({ event: 'launch_terminal', job: 'J-L2', reason: 'launcher-exited', ts: '2026-11-01T08:05:00+00:00' }),
+        JSON.stringify({ event: 'launch', job: 'J-L3', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T09:00:00+00:00' }),
+        JSON.stringify({ event: 'launch_failed', job: 'J-L3', lane: 'devin', reason: 'provider_credits', action: 'give_up', attempt: 2, ts: '2026-11-01T09:10:00+00:00' }),
+        // One healthy merged attempt keeps the cell from being all-dead.
+        JSON.stringify({ event: 'launch', job: 'J-L4', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T10:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-L4', lane: 'devin', tokens_total: 1000, wall_s: 400 }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-L4', prUrl: 'https://github.com/ashlrai/phantom/pull/42', outcome: 'MERGED', mergedAt: '2026-11-01T11:00:00+00:00', ts: '2026-11-01T11:01:00+00:00' }),
+      ].join('\n');
+      const view = outcomeLearningView(learnFleetOutcomes(null, ledger));
+      expect(view.finished).toBe(10);
+      expect(view.malformed).toBe(0);
+      const cell = view.cells.find((c) => c.resource === 'devin' && c.jobType === 'work');
+      // F1-F3 empty-error, F4-F6 clean closes, L1-L3 dead launches, L4
+      // merged: ten attempts, one merge.
+      expect(cell).toMatchObject({
+        attempts: 10, merges: 1, goodMerges: 1,
+        emptyFailures: 3, launchDeaths: 3,
+      });
+      expect(cell?.emptyFailureRate).toBeCloseTo(3 / 10);
+      expect(cell?.launchDeathRate).toBeCloseTo(3 / 10);
+      // Both named causes reach the improvement backlog; the blunt
+      // low-merge pattern still fires alongside them.
+      const patterns = view.improvementJobs
+        .filter((job) => job.resource === 'devin' && job.repo === 'phantom' && job.jobType === 'work')
+        .map((job) => job.pattern);
+      expect(patterns).toEqual(expect.arrayContaining(['empty-failure', 'launch-death', 'low-merge']));
+      const emptyJob = view.improvementJobs.find((job) => job.pattern === 'empty-failure');
+      const launchJob = view.improvementJobs.find((job) => job.pattern === 'launch-death');
+      expect(emptyJob).toMatchObject({ attempts: 10, resource: 'devin', repo: 'phantom', jobType: 'work' });
+      expect(emptyJob?.rate).toBeCloseTo(3 / 10);
+      expect(launchJob?.rate).toBeCloseTo(3 / 10);
+      expect(emptyJob?.task).toContain('3 of 10');
+      expect(launchJob?.task).toContain('3 of 10');
     });
 
     it('folds batch members per line and never the session id', () => {
@@ -388,6 +461,10 @@ describe('outcome learning', () => {
       // 1 merge. J-E's unborn bundle contributes nothing.
       expect(cell).toMatchObject({ attempts: 3, merges: 1, goodMerges: 1, censored: 0 });
       expect(cell?.mergeRate).toBeCloseTo(1 / 3);
+      // The dead session's launch_terminal closes its member attempts as
+      // launch deaths; J-C's solo relaunch merge is not one.
+      expect(cell).toMatchObject({ launchDeaths: 2, emptyFailures: 0 });
+      expect(cell?.launchDeathRate).toBeCloseTo(2 / 3);
     });
 
     it('keeps jobs-ledger token readings out of the allowance-unit fields', () => {

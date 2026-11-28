@@ -21,7 +21,7 @@ export function RepoBacklogStrip({ visible }: { visible: boolean }) {
       <tbody>{view.rows.map(row => <tr key={row.repo}>
         <th scope="row">{row.repo}</th>
         {row.state === 'ok' ? <>
-          <td>{row.open}</td><td>{row.dirty}</td><td>{row.behind}</td><td>{row.oldestDirtyText}</td>
+          <td>{row.open}{!row.complete && ' sampled'}</td><td>{row.dirty}</td><td>{row.behind}</td><td>{row.oldestDirtyText}</td>
         </> : <td colSpan={4}>{STATE_TEXT[row.state]}</td>}
       </tr>)}</tbody>
     </table>}

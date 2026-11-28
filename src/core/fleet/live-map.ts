@@ -194,9 +194,18 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
     const id = node('computer', `computer:${row.name}`, row.name, row.stateCode, row.isSelf ? `${row.state} (this computer)` : row.state);
     if (!row.isSelf) nodes.get(id)!.remote = true;
     for (const job of row.jobsRunning === 'unknown' ? [] : row.jobsRunning) {
-      if (liveSource && !nodes.has(`job:${job}`)) continue;
+      // jobsRunning holds node job ids; the claim bridge runs a ready row as
+      // `ready:<job>:<attempt>` (routerJobId in drive/nodes/ready-bridge.ts),
+      // and ready job ids never contain ':'. The map's job id is the ready
+      // row's own. A bridge claim is evidence the local live-jobs reader
+      // cannot see — the row left ready.tsv and executes on the node — so it
+      // draws even when the live report has no such job; a plain computer
+      // claim still waits for the live report's confirmation.
+      const bridgeJob = /^ready:(.+):\d+$/.exec(job)?.[1];
+      const jobKey = bridgeJob ?? job;
+      if (liveSource && bridgeJob === undefined && !nodes.has(`job:${jobKey}`)) continue;
       // A job only the node pool knows about: shown, with its lane unknown.
-      const jobId = node('job', `job:${job}`, job, 'running', 'lane unknown', 'unknown');
+      const jobId = node('job', `job:${jobKey}`, jobKey, 'running', 'lane unknown', 'unknown');
       if (!nodes.get(jobId)!.state) Object.assign(nodes.get(jobId)!, { lane: null, repo: null, state: 'running' });
       edge('runs-on', jobId, id);
     }

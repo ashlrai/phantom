@@ -610,7 +610,7 @@ describe('standalone join version reporting', () => {
       expect(code).toBe(0);
       const node = store.state.nodes.find(n => n.nodeId === 'laptop')!;
       expect(node.caps).toEqual(['build', 'phm-9.9.9']);
-      expect(versionFromCaps(node.caps)).toBe('9.9.9');
+      expect(versionFromCaps(node.caps!)).toBe('9.9.9');
     } finally { vi.restoreAllMocks(); }
   });
   it('leaves --caps untouched when this build version cannot be determined', async () => {
@@ -638,7 +638,7 @@ describe('standalone join sign-in lanes', () => {
     try {
       const store = new MemoryStore();
       const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--json'],
-        { store, phmVersion: () => '9.9.9', providerLanes: () => ['gh', 'claude', 'codex'] });
+        { store, phmVersion: () => '9.9.9', providerLanes: () => ['gh', 'claude', 'codex'], probeAuth: () => 'ok' as const });
       expect(code).toBe(0);
       const node = store.state.nodes.find(n => n.nodeId === 'laptop')!;
       expect(node.caps).toEqual(['claude', 'codex', 'gh', 'phm-9.9.9']);
@@ -692,6 +692,99 @@ describe('standalone join sign-in lanes', () => {
       expect(text).toContain('caps: none');
       expect(text).toContain('No codex, claude or gh sign-ins detected on this machine');
       expect(text).toContain('pass --caps');
+      // The empty probe must still point at --caps for CLIs auto-detect never
+      // probes (aider, gemini, ...): --caps takes any capability name.
+      expect(text).toContain('accepts any capability name');
+    } finally { vi.restoreAllMocks(); }
+  });
+});
+
+describe('standalone join gh auth report', () => {
+  it('names this machine\'s gh login state when the advertised caps include gh', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      // An explicit --caps skips the sign-in lane probe but still pays the
+      // one gh login check the reply reports: routing refuses gh jobs until a
+      // --probe-auth beat reports ok, so the join names the mismatch here.
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build,gh', '--json'],
+        { store, phmVersion: () => '9.9.9', probeAuth: () => 'missing' });
+      expect(code).toBe(0);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out).toMatchObject({ command: 'join', ghAuth: 'missing', caps: ['build', 'gh', 'phm-9.9.9'] });
+      expect(out['next']).toContain('--probe-auth');
+      expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.caps).toEqual(['build', 'gh', 'phm-9.9.9']);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('warns in text mode when the advertised gh cap has no working login', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const deps = { store, phmVersion: () => null };
+      // 'missing' means gh ran and reported no login: the fix is gh auth login.
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build,gh'],
+        { ...deps, probeAuth: () => 'missing' })).toBe(0);
+      const missing = lines.at(-1)!;
+      expect(missing).toContain('gh is advertised but gh reports no login on this machine');
+      expect(missing).toContain('gh auth login');
+      // 'unknown' means gh could not be run at all: the fix names install too.
+      expect(await cmdNodeFleet('join', ['--node', 'desktop', '--owner', 'acme', '--caps', 'gh'],
+        { ...deps, probeAuth: () => 'unknown' })).toBe(0);
+      expect(lines.at(-1)!).toContain('could not check its gh login');
+      expect(lines.at(-1)!).toContain('install gh');
+      // A verified login stays quiet — the caps line already carries the fact.
+      expect(await cmdNodeFleet('join', ['--node', 'tablet', '--owner', 'acme', '--caps', 'gh'],
+        { ...deps, probeAuth: () => 'ok' })).toBe(0);
+      expect(lines.at(-1)!).not.toContain('gh auth login');
+      expect(lines.at(-1)!).not.toContain('could not check its gh login');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('reports ghAuth ok and never probes when gh is not advertised', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const probeAuth = vi.fn((): 'ok' | 'missing' | 'unknown' => 'ok');
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build,gh', '--json'],
+        { store, phmVersion: () => null, probeAuth })).toBe(0);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ ghAuth: 'ok' });
+      // No gh cap: the auth probe must not run at all and no ghAuth rides out.
+      probeAuth.mockClear();
+      expect(await cmdNodeFleet('join', ['--node', 'desktop', '--owner', 'acme', '--caps', 'build', '--json'],
+        { store, phmVersion: () => null, probeAuth })).toBe(0);
+      expect(JSON.parse(lines.at(-1)!)).not.toHaveProperty('ghAuth');
+      expect(probeAuth).not.toHaveBeenCalled();
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('a bare join whose lanes name gh probes the login once for the reply', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const probeAuth = vi.fn((): 'ok' | 'missing' | 'unknown' => 'missing');
+      // providerLanes stands in for the sign-in lane probe; with it injected
+      // the gh verdict is not already known, so the reply pays the one check.
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--json'],
+        { store, phmVersion: () => '9.9.9', providerLanes: () => ['gh'], probeAuth });
+      expect(code).toBe(0);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out).toMatchObject({ ghAuth: 'missing', autoCaps: ['gh'] });
+      expect(out['caps']).toEqual(['gh', 'phm-9.9.9']);
+      expect(probeAuth).toHaveBeenCalledTimes(1);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('a probe seam that throws reports ghAuth unknown instead of failing the join', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'gh', '--json'],
+        { store, phmVersion: () => null, probeAuth: () => { throw new Error('probe seam failed'); } });
+      expect(code).toBe(0);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ ghAuth: 'unknown' });
+      expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.caps).toContain('gh');
     } finally { vi.restoreAllMocks(); }
   });
 });
@@ -752,7 +845,7 @@ describe('join dropped-profile report', () => {
     try {
       const store = new MemoryStore();
       let now = 1_000_000;
-      const deps = { store, now: () => now, phmVersion: () => '9.9.9' };
+      const deps = { store, now: () => now, phmVersion: () => '9.9.9', probeAuth: () => 'ok' as const };
       // First join: nothing to drop, so the reply carries no `dropped` key.
       expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme,beta',
         '--caps', 'build,gh', '--slots', '2', '--json'], deps)).toBe(0);
@@ -841,7 +934,7 @@ describe('join dropped-profile report', () => {
     try {
       const store = new MemoryStore();
       let now = 1_000_000;
-      const deps = { store, now: () => now, phmVersion: () => '9.9.9' };
+      const deps = { store, now: () => now, phmVersion: () => '9.9.9', probeAuth: () => 'ok' as const };
       await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme,beta', '--caps', 'build,gh', '--json'], deps);
       now += 31_000;
       expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build'], deps)).toBe(0);
@@ -1048,6 +1141,73 @@ describe('text output names outcomes in plain words', () => {
       expect(last(lines)).toBe(`Node box was not left; it is live as session ${live}. Run: phm node leave --node box --session ${live}`);
       expect(await cmdNodeFleet('leave', ['--node', 'box', '--session', live], deps)).toBe(0);
       expect(last(lines)).toBe('Node box left the registry.');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('enqueue names the stored spec when a retry conflicts on the job id', async () => {
+    const { deps, nodes, lines } = harness();
+    try {
+      executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'build'], nodes());
+      // An identical retry is still the plain idempotent answer — and the JSON
+      // now carries the stored job's state for consumers that want it.
+      expect(executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'build'], nodes()))
+        .toMatchObject({ enqueued: false, existing: { state: 'pending', owner: 'acme', differs: [] } });
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'build'], deps)).toBe(0);
+      expect(last(lines)).toBe('Job j1 already exists; nothing changed.');
+      // Flag order and repeats carry no meaning — the same spec, no diff.
+      expect(executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'build,build'], nodes()))
+        .toMatchObject({ enqueued: false, existing: { differs: [] } });
+      // A corrected flag is not silently swallowed: the reply names the field
+      // and both sides, and text says ids are single-use.
+      const conflict = executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'quantum,gh'], nodes());
+      expect(conflict).toMatchObject({ enqueued: false, existing: {
+        state: 'pending', owner: 'acme',
+        differs: [{ field: 'requires', queued: 'build', requested: 'gh,quantum' }] } });
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'quantum'], deps)).toBe(0);
+      expect(last(lines)).toBe('Job j1 already exists — pending under owner acme — spec differs: requires (queued build; requested quantum). Job ids are single-use — pick a new id for different work.');
+      // A different owner scope collides on the same global id — the stored
+      // owner is named so the producer sees whose job holds the id.
+      const other = executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'bob'], nodes());
+      expect(other).toMatchObject({ enqueued: false, existing: { owner: 'acme',
+        differs: expect.arrayContaining([{ field: 'owner', queued: 'acme', requested: 'bob' }]) } });
+      // Multi-field conflicts list each field once, in canonical order.
+      const multi = executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'gh',
+        '--pack', 'pack-fix', '--secrets', 'DEPLOY_KEY'], nodes()) as { existing: { differs: { field: string }[] } };
+      expect(multi.existing.differs.map(d => d.field)).toEqual(['requires', 'pack', 'secrets']);
+      // An embedded task conflicts by digest — the reply shows prefixes, never text.
+      const taskText = 'Summarize the README in one line.';
+      const digest = createHash('sha256').update(taskText).digest('hex');
+      executeNodeFleet('enqueue', ['--job', 'j2', '--owner', 'acme', '--pack', 'codex-file',
+        '--task-part', taskText, '--task-sha256', `sha256:${digest}`], nodes());
+      const otherTask = 'Write a sonnet about queues.';
+      const otherDigest = createHash('sha256').update(otherTask).digest('hex');
+      const taskConflict = executeNodeFleet('enqueue', ['--job', 'j2', '--owner', 'acme', '--pack', 'codex-file',
+        '--task-part', otherTask, '--task-sha256', `sha256:${otherDigest}`], nodes());
+      expect(taskConflict).toMatchObject({ enqueued: false, existing: { differs: [
+        { field: 'task', queued: `embedded ${digest.slice(0, 12)}`, requested: `embedded ${otherDigest.slice(0, 12)}` }] } });
+      expect(JSON.stringify(taskConflict)).not.toContain(taskText);
+      expect(JSON.stringify(taskConflict)).not.toContain(otherTask);
+      // A finished job's id stays reserved; even an identical retry says so.
+      // j1 and j2 are withdrawn first so the pull below claims j3, not them.
+      executeNodeFleet('withdraw', ['--job', 'j1', '--owner', 'acme'], nodes());
+      executeNodeFleet('withdraw', ['--job', 'j2', '--owner', 'acme'], nodes());
+      const session = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme', '--caps', 'build'], nodes())['session']);
+      executeNodeFleet('enqueue', ['--job', 'j3', '--owner', 'acme'], nodes());
+      const claim = executeNodeFleet('pull', ['--node', 'box', '--session', session], nodes())['claim'] as
+        { jobId: string; token: number; leaderToken: number };
+      executeNodeFleet('complete', ['--job', 'j3', '--node', 'box', '--session', session,
+        '--token', String(claim.token), '--leader-token', String(claim.leaderToken), '--result', 'done'], nodes());
+      expect(executeNodeFleet('enqueue', ['--job', 'j3', '--owner', 'acme'], nodes()))
+        .toMatchObject({ enqueued: false, existing: { state: 'completed', differs: [] } });
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j3', '--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe('Job j3 already exists and is completed; job ids are single-use — pick a new id for different work.');
+      // A producer withdrawal reads the same way — terminal, id still reserved.
+      executeNodeFleet('enqueue', ['--job', 'j4', '--owner', 'acme'], nodes());
+      executeNodeFleet('withdraw', ['--job', 'j4', '--owner', 'acme'], nodes());
+      expect(executeNodeFleet('enqueue', ['--job', 'j4', '--owner', 'acme', '--requires', 'gh'], nodes()))
+        .toMatchObject({ enqueued: false, existing: { state: 'completed', producerWithdrawn: true,
+          differs: [{ field: 'requires', queued: '(none)', requested: 'gh' }] } });
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j4', '--owner', 'acme', '--requires', 'gh'], deps)).toBe(0);
+      expect(last(lines)).toBe('Job j4 already exists — completed (withdrawn by the producer) under owner acme — spec differs: requires (queued (none); requested gh). Job ids are single-use — pick a new id for different work.');
     } finally { vi.restoreAllMocks(); }
   });
   it('beat confirms the heartbeat in plain words, naming auth only when probed', async () => {
@@ -1357,7 +1517,7 @@ describe('fleet flag value validation', () => {
       ['withdraw', ['--job', 'j1', '--owner', 'acme,ops']],
       ['result', ['--job', 'j1', '--owner', 'acme,ops']],
     ] as const) {
-      expect(run(verb, args, f), verb).toMatchObject({ code: 'bad-owner', exit: 2 });
+      expect(run(verb, [...args], f), verb).toMatchObject({ code: 'bad-owner', exit: 2 });
     }
     // An empty or all-invalid list is refused on the list verbs too.
     for (const args of [['--owner', ''], ['--owner', ' , '], ['--owner', 'acme,,bad id']]) {
@@ -1375,7 +1535,7 @@ describe('fleet flag value validation', () => {
       ['enqueue', ['--job', 'j1', '--owner', 'acme', '--secrets', 'deploy_key'], 'bad-secrets'],
       ['enqueue', ['--job', 'j1', '--owner', 'acme', '--secrets', 'DEPLOY_KEY,sk-live-value'], 'bad-secrets'],
     ] as const) {
-      expect(run(verb, args, f), `${verb} ${args.join(' ')}`).toMatchObject({ code, exit: 2 });
+      expect(run(verb, [...args], f), `${verb} ${args.join(' ')}`).toMatchObject({ code, exit: 2 });
     }
     // Nothing was recorded by the refused calls.
     expect(f.a.snapshot().nodes.map(n => n.nodeId)).not.toContain('n1');
@@ -1392,7 +1552,7 @@ describe('fleet flag value validation', () => {
       ['join', ['--node', 'n1', '--owner', 'acme', '--caps', 'Build']],
       ['enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'GH']],
     ] as const) {
-      const err = run(verb, args, f);
+      const err = run(verb, [...args], f);
       expect(err.fix, `${verb} ${args.join(' ')}`).toMatch(/Run: phm node --help$/);
       expect(err.fix!.match(/Run: phm node --help/g), `${verb} ${args.join(' ')}`).toHaveLength(1);
     }

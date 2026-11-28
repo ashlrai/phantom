@@ -281,7 +281,12 @@ Run `phm capacity publish --json` on each node to refresh its local capacity
 snapshot once with that node's own local CLI authentication. Only usage metadata
 is published; credentials stay local. Exit 0 means published or already fresh,
 1 means unavailable (follow the returned recovery instruction), and 2 means bad
-arguments or configuration. Unknown usage remains ineligible; publishing does
+arguments or configuration. The JSON `state` names the outcome: `published`,
+`published-shared`, `fresh` or `dormant` on success; `unconfigured` when this
+node has no account configuration yet (a first-run state, not a lease
+conflict), and `idle`, `lease-held-elsewhere`, `sample-timeout` or `failed`
+otherwise.
+Unknown usage remains ineligible; publishing does
 not guarantee a seat qualifies. Resident daemons start the publisher at startup
 and check every minute outside tick dispatch. The daemon normally waits five
 minutes between its own samples. A snapshot dated after the local clock triggers

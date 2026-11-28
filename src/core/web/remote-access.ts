@@ -1,6 +1,116 @@
-/** Cloudflare Access identity check for the opt-in phone gateway. */
+/** Cloudflare Access identity check and shared helpers for the opt-in phone gateway. */
+import { createHash } from 'node:crypto';
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, writeSync, type Stats } from 'node:fs';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { isIP } from 'node:net';
+
+export const REMOTE_UUID_RE = /^[0-9a-f-]{36}$/;
+export const REMOTE_SUBJECT_RE = /^[A-Za-z0-9_-]{8,256}$/;
+export const REMOTE_BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
+export const REMOTE_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+const GATEWAY_CONFIG_MAX_BYTES = 8192;
+
+export function isRemoteRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function isPublicHttpsOrigin(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    const origin = new URL(value);
+    return origin.protocol === 'https:' && origin.origin === value && origin.hostname.includes('.')
+      && isIP(origin.hostname) === 0
+      && origin.hostname !== 'localhost' && !origin.hostname.endsWith('.localhost');
+  } catch { return false; }
+}
+
+export function isBase64UrlOfByteLength(value: unknown, byteLength: number): value is string {
+  return typeof value === 'string' && REMOTE_BASE64URL_RE.test(value)
+    && Buffer.from(value, 'base64url').length === byteLength;
+}
+
+export function sha256Hex(value: string | Uint8Array): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+export function lstatOrNull(path: string): Stats | null {
+  try { return lstatSync(path); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+export function isPrivateOwnedStat(stat: Stats, kind: 'file' | 'directory' | 'socket'): boolean {
+  const matchesKind = kind === 'directory' ? stat.isDirectory() : kind === 'socket' ? stat.isSocket() : stat.isFile();
+  return !stat.isSymbolicLink() && matchesKind
+    && (stat.mode & 0o077) === 0
+    && (typeof process.getuid !== 'function' || stat.uid === process.getuid());
+}
+
+export function assertPrivatePath(path: string, kind: 'file' | 'directory' | 'socket', message: string): Stats {
+  const stat = lstatSync(path);
+  if (!isPrivateOwnedStat(stat, kind)) throw new Error(message);
+  return stat;
+}
+
+export function ensurePrivateDirectory(root: string, message: string): void {
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  assertPrivatePath(root, 'directory', message);
+}
+
+export function withExclusivePrivateLock<T>(
+  root: string,
+  lockPath: string,
+  messages: { dir: string; lock: string },
+  run: () => T,
+): T {
+  ensurePrivateDirectory(root, messages.dir);
+  const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
+  const fd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow, 0o600);
+  try {
+    writeSync(fd, `${process.pid}\n`);
+    fsyncSync(fd);
+    if ((fstatSync(fd).mode & 0o077) !== 0) throw new Error(messages.lock);
+    return run();
+  } finally {
+    closeSync(fd);
+    rmSync(lockPath, { force: true });
+  }
+}
+
+export function readPrivateJsonObject(
+  path: string,
+  maxBytes: number,
+  label: string,
+  notPrivateMessage = `${label} is not private`,
+): Record<string, unknown> {
+  const stat = assertPrivatePath(path, 'file', notPrivateMessage);
+  if (stat.size > maxBytes) throw new Error(`${label} is too large`);
+  let data: unknown;
+  try { data = JSON.parse(readFileSync(path, 'utf8')) as unknown; }
+  catch { throw new Error(`${label} is unreadable`); }
+  if (!isRemoteRecord(data)) throw new Error(`${label} is invalid`);
+  return data;
+}
+
+export async function readBoundedResponse(response: Response, maxBytes: number): Promise<Buffer | null> {
+  const declared = Number(response.headers.get('content-length') ?? '0');
+  if (declared > maxBytes || !response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) { await reader.cancel(); return null; }
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks, total);
+  } finally { reader.releaseLock(); }
+}
 
 export interface RemoteAccessConfig {
   /** Exact public HTTPS origin, also used for WebAuthn. */
@@ -24,20 +134,49 @@ const AUDIENCE = /^[a-f0-9]{64}$/i;
 
 /** No defaults: incomplete provisioned config cannot make a gateway usable. */
 export function parseRemoteAccessConfig(value: unknown): RemoteAccessConfig | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const input = value as Record<string, unknown>;
-  const { publicOrigin, teamDomain, audience, allowedSubjects } = input;
-  if (typeof publicOrigin !== 'string' || typeof teamDomain !== 'string' || typeof audience !== 'string') return null;
+  if (!isRemoteRecord(value)) return null;
+  const { publicOrigin, teamDomain, audience, allowedSubjects } = value;
+  if (!isPublicHttpsOrigin(publicOrigin) || typeof teamDomain !== 'string' || typeof audience !== 'string') return null;
   if (!TEAM_DOMAIN.test(teamDomain) || !AUDIENCE.test(audience)) return null;
   if (!Array.isArray(allowedSubjects) || allowedSubjects.length === 0
-    || allowedSubjects.some((subject: unknown) => typeof subject !== 'string' || !/^[A-Za-z0-9_-]{8,256}$/.test(subject))) return null;
-  try {
-    const origin = new URL(publicOrigin);
-    if (origin.protocol !== 'https:' || origin.origin !== publicOrigin || !origin.hostname.includes('.')
-      || isIP(origin.hostname) !== 0
-      || origin.hostname === 'localhost' || origin.hostname.endsWith('.localhost')) return null;
-  } catch { return null; }
+    || allowedSubjects.some((subject: unknown) => typeof subject !== 'string' || !REMOTE_SUBJECT_RE.test(subject))) return null;
   return { publicOrigin, teamDomain, audience, allowedSubjects: [...new Set(allowedSubjects as string[])] };
+}
+
+/** Read and validate a private 0600 remote gateway config without following symlinks. */
+export function readRemoteGatewayConfig(path: string): { access: RemoteAccessConfig; gatewayPort: number } {
+  const before = lstatSync(path);
+  if (!before.isFile() || before.isSymbolicLink()) {
+    throw new Error('Remote gateway config must be a private 0600 file owned by this user');
+  }
+  const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  try {
+    const stat = fstatSync(fd);
+    if (!isPrivateOwnedStat(stat, 'file') || stat.ino !== before.ino || stat.dev !== before.dev
+      || stat.size > GATEWAY_CONFIG_MAX_BYTES) {
+      throw new Error('Remote gateway config must be a private 0600 file owned by this user');
+    }
+    const buffer = Buffer.alloc(GATEWAY_CONFIG_MAX_BYTES + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const count = readSync(fd, buffer, size, buffer.length - size, null);
+      if (!count) break;
+      size += count;
+    }
+    if (size > GATEWAY_CONFIG_MAX_BYTES) {
+      throw new Error('Remote gateway config must be a private 0600 file owned by this user');
+    }
+    const value: unknown = JSON.parse(buffer.subarray(0, size).toString('utf8'));
+    if (!isRemoteRecord(value) || Object.keys(value).some((key) => key !== 'access' && key !== 'gatewayPort')) {
+      throw new Error('Invalid remote gateway config');
+    }
+    const access = parseRemoteAccessConfig(value.access);
+    const gatewayPort = value.gatewayPort;
+    if (!access || !Number.isInteger(gatewayPort) || (gatewayPort as number) < 1 || (gatewayPort as number) > 65535) {
+      throw new Error('Remote gateway Access config or port is invalid');
+    }
+    return { access, gatewayPort: gatewayPort as number };
+  } finally { closeSync(fd); }
 }
 
 /**

@@ -66,6 +66,8 @@ export const COMMAND_SECTION = 'Command';
 export const PLAYBOOK_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,47}$/;
 /** Macros are `!` + an id-shaped name. */
 export const PLAYBOOK_MACRO_PATTERN = /^![a-z0-9][a-z0-9-]{1,47}$/;
+/** Version numbers in filenames (`v<N>.md`) and API query params: positive integer, 1–6 digits. */
+export const PLAYBOOK_VERSION_PATTERN = /^[1-9]\d{0,5}$/;
 
 /** A playbook's markdown source never exceeds this (UTF-8 bytes). */
 export const PLAYBOOK_MAX_BYTES = 12 * 1024;
@@ -193,6 +195,10 @@ export type PlaybookParseResult =
   | { ok: true; meta: PlaybookMeta; sections: PlaybookSections; warnings: PlaybookValidationIssue[] }
   | { ok: false; errors: PlaybookValidationIssue[] };
 
+export type PlaybookCanonicalResult =
+  | { ok: true; meta: PlaybookMeta; sections: PlaybookSections; warnings: PlaybookValidationIssue[]; source: string }
+  | { ok: false; errors: PlaybookValidationIssue[] };
+
 // ---------------------------------------------------------------------------
 // Verse contract
 // ---------------------------------------------------------------------------
@@ -227,6 +233,30 @@ export type PlaybookSaveResponse =
   | { ok: true; playbook: PlaybookV1 }
   | { ok: false; errors: PlaybookValidationIssue[] };
 
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function isPositivePlaybookVersion(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1;
+}
+
+export function parsePositivePlaybookVersion(raw: string): number | null {
+  return PLAYBOOK_VERSION_PATTERN.test(raw) ? Number(raw) : null;
+}
+
+const UTF8_ENCODER = new TextEncoder();
+
+/** UTF-8 byte length. Browser- and Node-safe. Pure. */
+export function utf8ByteLength(text: string): number {
+  return UTF8_ENCODER.encode(text).length;
+}
+
+/** Normalize CRLF and lone CR line endings to LF. Pure. */
+export function normalizeLineEndings(text: string): string {
+  return text.replace(/\r\n?/g, '\n');
+}
+
 export function formatPlaybookRef(ref: Pick<PlaybookRef, 'id' | 'version'>): string {
   return `${ref.id}@v${ref.version}`;
 }
@@ -240,9 +270,8 @@ export function parsePlaybookRefText(text: string): { id: string; version: numbe
 
 /** Is this a well-formed PlaybookRef? (Records are read back from disk.) */
 export function isPlaybookRef(value: unknown): value is PlaybookRef {
-  if (!value || typeof value !== 'object') return false;
-  const r = value as Record<string, unknown>;
-  return typeof r['id'] === 'string' && PLAYBOOK_ID_PATTERN.test(r['id'])
-    && typeof r['version'] === 'number' && Number.isInteger(r['version']) && r['version'] >= 1
-    && typeof r['sha'] === 'string' && /^[0-9a-f]{12}$/.test(r['sha']);
+  if (!isPlainRecord(value)) return false;
+  return typeof value['id'] === 'string' && PLAYBOOK_ID_PATTERN.test(value['id'])
+    && isPositivePlaybookVersion(value['version'])
+    && typeof value['sha'] === 'string' && /^[0-9a-f]{12}$/.test(value['sha']);
 }

@@ -11,6 +11,7 @@ import {
 } from '../src/core/fleet/bus-page-filters.js';
 import { createAgentBusApi } from '../src/core/verse/agent-bus-api.js';
 import { handleVerseApi, setWorkbenchApiModulesForTest, type VerseApiContext } from '../src/core/verse/verse-api.js';
+import { readFleetEdges, type FleetEdges } from '../src/core/fleet/fleet-edges.js';
 
 const PATH = '/api/verse/agent-bus';
 const roots: string[] = [];
@@ -183,7 +184,7 @@ describe('GET /api/verse/agent-bus filters', () => {
     let status = 0; let wire: Record<string, unknown> = {};
     const res = {
       headersSent: false,
-      writeHead(code: number) { status = code; this.headersSent = true; },
+      writeHead(this: { headersSent: boolean }, code: number) { status = code; this.headersSent = true; },
       end(body: string) { wire = JSON.parse(body) as Record<string, unknown>; },
     } as unknown as ServerResponse;
     const ctx = { cfg: {}, token, allowDispatch: true,
@@ -241,5 +242,147 @@ describe('GET /api/verse/agent-bus filters', () => {
       const res = await get(PATH + query);
       expect(res.status, query).toBe(400);
     }
+  });
+});
+
+describe('GET /api/verse/agent-bus/edges filters', () => {
+  const EDGES = '/api/verse/agent-bus/edges';
+  const token = 'fake-mutation-token';
+  function setup() {
+    const root = mkdtempSync(join(tmpdir(), 'fake-bus-edges-'));
+    roots.push(root);
+    let now = 1_000;
+    const options = { root, now: () => now };
+    const seed = (env: unknown, at?: number) => {
+      if (at !== undefined) now = at;
+      return appendBusInbox(env, options);
+    };
+    const handler = createAgentBusApi({
+      edges: edgeOptions => readFleetEdges({ ...edgeOptions, root, now: () => now }),
+    });
+    return { seed, handler };
+  }
+  async function get(handler: ReturnType<typeof createAgentBusApi>, url: string) {
+    const req = Readable.from([]) as unknown as IncomingMessage;
+    req.url = url; req.method = 'GET'; req.headers = {};
+    let status = 0; let wire: Record<string, unknown> = {};
+    const res = {
+      headersSent: false,
+      writeHead(this: { headersSent: boolean }, code: number) { status = code; this.headersSent = true; },
+      end(body: string) { wire = JSON.parse(body) as Record<string, unknown>; },
+    } as unknown as ServerResponse;
+    const ctx = { cfg: {}, token, allowDispatch: true,
+      readSession: { id: 'fake-session', expiresAt: Date.now() + 60_000 } } as VerseApiContext;
+    const handled = await handler(ctx, req, res, EDGES, 'GET');
+    return { handled, status, wire };
+  }
+  const links = (wire: Record<string, unknown>) =>
+    ((wire['edges'] as FleetEdges['edges']) ?? [])
+      .map(edge => `${edge.from.address}->${edge.to.address}`).sort();
+
+  it('serves the same filtered link read the CLI and MCP edges reads apply', async () => {
+    const { seed, handler } = setup();
+    // One edge per pair keeps the assertions exact; the long-lived 'ab'
+    // receipt stays retained at the read clock so only the window can drop it.
+    expect(seed(envelope('ab', { from: 'a', to: 'b', ttl: 9_000_000 }), 1_000).status).toBe('posted');
+    expect(seed(envelope('ba', { from: 'b', to: 'a' }), 200_000).status).toBe('posted');
+    expect(seed(envelope('og', { from: 'c', to: 'group:ops:general' }), 200_000).status).toBe('posted');
+    expect(seed(envelope('oa', { from: 'd', to: 'group:ops:alerts' }), 200_000).status).toBe('posted');
+    expect(seed(envelope('eg', { from: 'e', to: 'group:eng:general' }), 200_000).status).toBe('posted');
+    expect(seed(envelope('lead', { from: 'f', to: 'leaders' }), 200_000).status).toBe('posted');
+
+    const all = await get(handler, EDGES);
+    expect(all.status).toBe(200);
+    expect(all.wire).toMatchObject({ schema: 'fleet.edges.v1', source: 'available' });
+    // 'leaders' broadcasts are never agent-to-agent links.
+    expect(links(all.wire)).toEqual(['a->b', 'b->a', 'c->group:ops:general',
+      'd->group:ops:alerts', 'e->group:eng:general']);
+
+    expect(links((await get(handler, `${EDGES}?from=a`)).wire)).toEqual(['a->b']);
+    expect(links((await get(handler, `${EDGES}?to=a`)).wire)).toEqual(['b->a']);
+    expect(links((await get(handler, `${EDGES}?from=a&to=b`)).wire)).toEqual(['a->b']);
+    expect(links((await get(handler, `${EDGES}?channel=ops`)).wire))
+      .toEqual(['c->group:ops:general', 'd->group:ops:alerts']);
+    expect(links((await get(handler, `${EDGES}?topic=general`)).wire))
+      .toEqual(['c->group:ops:general', 'e->group:eng:general']);
+    expect(links((await get(handler, `${EDGES}?channel=ops&topic=alerts`)).wire))
+      .toEqual(['d->group:ops:alerts']);
+    expect(links((await get(handler, `${EDGES}?channel=missing`)).wire)).toEqual([]);
+
+    // windowMinutes keeps only links inside the trailing window: the 'ab'
+    // receipt at t=1_000 is outside a one-minute window ending at 200_000.
+    const windowed = await get(handler, `${EDGES}?windowMinutes=1`);
+    expect(windowed.status).toBe(200);
+    expect(links(windowed.wire)).toEqual(['b->a', 'c->group:ops:general',
+      'd->group:ops:alerts', 'e->group:eng:general']);
+    const day = await get(handler, `${EDGES}?windowMinutes=1440`);
+    expect(links(day.wire)).toHaveLength(5);
+  });
+
+  it('serves the shared row-slice filters before the link projection', async () => {
+    const { seed, handler } = setup();
+    const post = (id: string, over: Record<string, unknown> = {}, at = 200_000) => {
+      expect(seed(envelope(id, over), at).status, id).toBe('posted');
+    };
+    post('m1', { from: 'a', to: 'b', priority: 'P1',
+      body: { kind: 'note', thread: 'job:RQ-9', text: 'please deploy the fix?' } });
+    post('m2', { from: 'a', to: 'b', priority: 'P2', body: { kind: 'note', text: 'ship has sailed' } });
+    post('m3', { from: 'c', to: 'd', priority: 'P0',
+      body: { kind: 'handoff', text: 'taking over the lane' } }, 100_000);
+    // kind/priority/job/contains narrow the receipt set before it aggregates —
+    // the same bounds the CLI flags and MCP arguments apply.
+    expect(links((await get(handler, `${EDGES}?kind=ask`)).wire)).toEqual(['a->b']);
+    expect(links((await get(handler, `${EDGES}?kind=Ask`)).wire)).toEqual(['a->b']);
+    expect(links((await get(handler, `${EDGES}?kind=handoff`)).wire)).toEqual(['c->d']);
+    expect(links((await get(handler, `${EDGES}?priority=P0`)).wire)).toEqual(['c->d']);
+    expect(links((await get(handler, `${EDGES}?job=RQ-9`)).wire)).toEqual(['a->b']);
+    expect(links((await get(handler, `${EDGES}?contains=deploy`)).wire)).toEqual(['a->b']);
+    // since/before compose into the [since, before) receipt-time window.
+    expect(links((await get(handler, `${EDGES}?since=150000`)).wire)).toEqual(['a->b']);
+    expect(links((await get(handler, `${EDGES}?before=150000`)).wire)).toEqual(['c->d']);
+    expect(links((await get(handler, `${EDGES}?since=150000&before=250000`)).wire)).toEqual(['a->b']);
+    // The filters compose conjunctively.
+    expect(links((await get(handler, `${EDGES}?kind=ask&priority=P2`)).wire)).toEqual([]);
+    expect(links((await get(handler, `${EDGES}?kind=status&since=150000`)).wire)).toEqual(['a->b']);
+  });
+
+  it('keeps a missing store honest — null edges, never an invented empty list', async () => {
+    const { handler } = setup();
+    const res = await get(handler, EDGES);
+    expect(res.status).toBe(200);
+    expect(res.wire).toMatchObject({ schema: 'fleet.edges.v1', source: 'missing', edges: null });
+  });
+
+  it('rejects malformed filter values, unknown keys and duplicate params before reading', async () => {
+    const { handler } = setup();
+    for (const query of [
+      '?windowMinutes=0', '?windowMinutes=1441', '?windowMinutes=1.5', '?windowMinutes=abc',
+      '?windowMinutes=', '?from=has%20space', '?from=', '?to=bad%20label',
+      '?channel=Bad%20Room', '?channel=', '?topic=has%20space', '?topic=UPPER',
+      '?since=bogus', '?since=', '?before=soon', '?priority=P4', '?priority=p1',
+      '?kind=unknown', '?job=has%20space', '?job=', '?contains=',
+      '?after=0', '?limit=5', '?bogus=1', '?windowMinutes=1&windowMinutes=2',
+      '?from=a&from=b',
+    ]) {
+      const res = await get(handler, EDGES + query);
+      expect(res.status, query).toBe(400);
+    }
+  });
+
+  it('requires a read session and refuses non-GET methods', async () => {
+    const { handler } = setup();
+    const req = Readable.from([]) as unknown as IncomingMessage;
+    req.url = EDGES; req.method = 'GET'; req.headers = {};
+    let status = 0;
+    const res = { headersSent: false, writeHead(this: { headersSent: boolean }, code: number) { status = code; this.headersSent = true; },
+      end() { return this; } } as unknown as ServerResponse;
+    const ctx = { cfg: {}, token, allowDispatch: true } as VerseApiContext;
+    expect(await handler(ctx, req, res, EDGES, 'GET')).toBe(true);
+    expect(status).toBe(401);
+    const postReq = Readable.from([]) as unknown as IncomingMessage;
+    postReq.url = EDGES; postReq.method = 'POST'; postReq.headers = {};
+    status = 0;
+    expect(await handler(ctx, postReq, res, EDGES, 'POST')).toBe(true);
+    expect(status).toBe(404);
   });
 });

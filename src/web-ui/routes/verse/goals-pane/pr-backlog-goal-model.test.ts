@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { RepoBacklogRow } from '../fleet-merges/repo-backlog-model.js';
 import { prBacklogGoal, prBacklogTotal } from './pr-backlog-goal-model.js';
 
-const ok = (repo: string, open: number, dirty: number): RepoBacklogRow => ({ repo, state: 'ok', open, dirty, behind: 0, oldestDirtyText: '—' });
-const down = (repo: string, state: 'unavailable' | 'not-enrolled'): RepoBacklogRow => ({ repo, state, open: null, dirty: null, behind: null, oldestDirtyText: '—' });
+const ok = (repo: string, open: number, dirty: number): RepoBacklogRow => ({ repo, state: 'ok', complete: true, open, dirty, behind: 0, oldestDirtyText: '—' });
+const down = (repo: string, state: 'unavailable' | 'not-enrolled'): RepoBacklogRow => ({ repo, state, complete: false, open: null, dirty: null, behind: null, oldestDirtyText: '—' });
 
 describe('prBacklogGoal', () => {
   it('is unknown with no reading, no repo, or only unreadable repos', () => {
@@ -34,4 +34,12 @@ describe('prBacklogGoal', () => {
     expect(prBacklogGoal(rows, 7).trend).toBe('unchanged since you opened Phantom');
     expect(prBacklogGoal(rows, 8).trend).toBe('down 1 since you opened Phantom');
   });
+});
+
+it('never turns a capped or unusable sample into a goal or exact trend', () => {
+  const row = { ...ok('a/b', 0, 0), complete: false };
+  expect(prBacklogTotal([row])).toBeNull();
+  expect(prBacklogGoal([row], 5)).toMatchObject({ value: '0 sampled · total unknown · 0 DIRTY', tone: 'unknown' });
+  expect(prBacklogGoal([row], 5).trend).toBeUndefined();
+  expect(prBacklogGoal([{ ...row, open: 100 }], 5)).toMatchObject({ value: '100 sampled · total unknown · 0 DIRTY', tone: 'open' });
 });

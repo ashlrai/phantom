@@ -957,3 +957,36 @@ describe('phm messages projection', () => {
     expect((await send('/api/verse/agent-bus/messages?after=1')).status).toBe(400);
   });
 });
+
+describe('phm messages --frame', () => {
+  it('prints the timeline as a bounded untrusted block and carries it as framed in JSON', async () => {
+    const { cmdMessages } = await import('../src/cli/messages.js');
+    const root = store();
+    post(root, T0, { id: 'f1', from: 'agent:atlas', to: 'agent:nova', body: { kind: 'note', text: 'ship the parser fix' } });
+    const options = { root, now: () => T0 + 60_000 };
+    // --text prints the bare framed block; a bad cli is a usage error.
+    const text: string[] = [], errs: string[] = [];
+    expect(await cmdMessages(['--frame', 'claude', '--text'], t => text.push(t), t => errs.push(t), options)).toBe(0);
+    const block = text.join('\n');
+    expect(block).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+    expect(block).toContain('ship the parser fix');
+    expect(block).toContain('END UNTRUSTED AGENT BUS TIMELINE');
+    expect(block).not.toContain('"schema"');
+    expect(await cmdMessages(['--frame', 'gemini'], () => {}, t => errs.push(t), options)).toBe(2);
+    expect(await cmdMessages(['--frame'], () => {}, t => errs.push(t), options)).toBe(2);
+    expect(await cmdMessages(['--frame', 'claude', '--frame', 'grok'], () => {}, t => errs.push(t), options)).toBe(2);
+    // Default JSON output carries the block as `framed` beside the projection.
+    const json: string[] = [];
+    expect(await cmdMessages(['--frame', 'codex'], t => json.push(t), () => {}, options)).toBe(0);
+    const parsed = JSON.parse(json.join('\n')) as { schema: string; framed: string };
+    expect(parsed.schema).toBe('agent-messages.v1');
+    expect(parsed.framed).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+    expect(parsed.framed).toContain('ship the parser fix');
+    // A verified-missing store frames its own state line, never an invented page.
+    const missing = store();
+    const missingOut: string[] = [];
+    expect(await cmdMessages(['--frame', 'claude', '--text'], t => missingOut.push(t), () => {}, { root: missing, now: () => T0 + 60_000 })).toBe(0);
+    expect(missingOut.join('\n')).toContain('No agent messages.');
+    expect(missingOut.join('\n')).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+  });
+});

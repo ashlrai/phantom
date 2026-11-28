@@ -8,7 +8,7 @@
  * empty view.
  */
 import {
-  isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource,
+  isUnifiedInboxItemId, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource,
   UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_SOURCES, UNIFIED_INBOX_KINDS,
   type UnifiedInboxFilter,
 } from './unified-inbox.js';
@@ -20,7 +20,7 @@ export const UNIFIED_INBOX_QUERY_LIMIT_DEFAULT = 50;
 
 /** The query keys the read accepts — the CLI/MCP filter dimensions plus `limit`. */
 export const UNIFIED_INBOX_QUERY_PARAMS = [
-  'limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains',
+  'limit', 'source', 'kind', 'severity', 'blocking', 'id', 'job', 'since', 'before', 'contains',
 ] as const;
 
 export interface UnifiedInboxQuery {
@@ -43,7 +43,9 @@ const invalid = (error: string): UnifiedInboxQueryResult => ({ ok: false, error 
  * set. `source`, `kind` and `severity` take exactly the stored vocabularies
  * (`UNIFIED_INBOX_SOURCES`, `UNIFIED_INBOX_KINDS`, `info|warn|high`),
  * `blocking` takes the literals `true` or `false` — the two states
- * `UnifiedInboxFilter.blocking` distinguishes — `job` the shared printable
+ * `UnifiedInboxFilter.blocking` distinguishes — `id` the item's stable
+ * `<source>:<ref>` id under the shared `isUnifiedInboxItemId` rule, `job`
+ * the shared printable
  * label rule, `since` and `before` the shared `parseSince` grammar (15m, 2h,
  * 1d, epoch ms or an ISO time, resolved against `options.now`) — `since`
  * the inclusive lower bound, `before` the exclusive upper bound composing
@@ -97,6 +99,13 @@ export function parseUnifiedInboxQuery(
       return invalid('blocking takes true or false.');
     }
     filter.blocking = blocking === 'true';
+  }
+  const id = params.get('id');
+  if (id !== null) {
+    if (!isUnifiedInboxItemId(id)) {
+      return invalid('id takes a non-empty item id (<source>:<ref>, printable label of at most 256 chars).');
+    }
+    filter.id = id;
   }
   const job = params.get('job');
   if (job !== null) {

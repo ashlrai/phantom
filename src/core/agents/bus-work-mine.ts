@@ -139,7 +139,8 @@ export interface BusWorkMineOptions {
   /** Keep only pending items whose displayed descriptive text carries this
    * search string — the same case-insensitive substring rule every other
    * bus read's `--contains` applies, matched over each section's scrubbed
-   * one-line display text (feed job title/detail/dispatch, body and thread
+   * one-line display text (feed job title/detail/dispatch/result-reason,
+   * body and thread
    * summaries, board post text and titles, claim-blocked job titles and
    * leased-message summaries, seat handoff work refs, session
    * checkpoint lane/model/repo/signal/tier/needs and work-board request
@@ -273,15 +274,13 @@ export interface BusWorkMineOptions {
    * applies. `board`, `channels`, `sessions`, `seats` and
    * `coordination` carry no per-item topic in their projections and stay
    * unfiltered, like they do under `channel`. `wakes` and `inbox`
-   * delegate to reads that carry no topic filter of their own, so the
-   * digest applies the same `groupAddressTopicOf` verdict to the rows
-   * those reads return: `wakes` filters the resolved page's hints on
-   * their own `to` labels — `matched` is exact when the bounded queue
-   * tail read is complete and a proven lower bound when `truncated`,
-   * the same convention the section's own `truncated` flag already
-   * documents — while `inbox` pages the delegated read to the store's
-   * end and applies the verdict itself, so its `matched` stays the true
-   * topic-filtered total across the retained store. The value takes the
+   * delegate to reads that carry the same group-topic filter, so the
+   * digest forwards `topic` to both verbatim: `wakes` counts the
+   * topic-matched hints inside the bounded queue-tail match — `matched`
+   * exact when the tail read is complete and a proven lower bound when
+   * `truncated`, the same convention the section's own `truncated` flag
+   * already documents — while `inbox`'s `matched:true` read reports the
+   * true topic-filtered total across the retained store. The value takes the
    * strict channel-name grammar `agentChannelNameSchema` validates —
    * the same grammar a `group:<room>:<topic>` label's topic segment
    * must satisfy — composing with `channel` into one room AND topic;
@@ -1351,11 +1350,6 @@ const WORK_MINE_THREADS_MAX = 20;
 const WORK_MINE_BLOCKED_MAX = 20;
 /** Bounded scan over the retained store, same page bound the inbox reader uses. */
 const WORK_MINE_NEXT_MAX_PAGES = Math.ceil(BUS_INBOX_MAX_MESSAGES / BUS_INBOX_MAX_READ) + 1;
-/** Delegated-inbox pages a topic-filtered digest collects: the shared read has
- * no topic filter of its own, so `inbox` under `topic` pages it to the store's
- * end and applies `groupAddressTopicOf` itself — the same page bound the
- * pending-work walk uses keeps the collect bounded by the retained store. */
-const WORK_MINE_INBOX_TOPIC_MAX_PAGES = WORK_MINE_NEXT_MAX_PAGES;
 /** Display clip for one mail summary; the digest carries no raw body, so JSON and human output share it. */
 const WORK_MINE_SUMMARY_MAX = 200;
 
@@ -1567,10 +1561,7 @@ function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: stri
  * resumes strictly before it and `agents bus inbox --after` redelivers nothing
  * shown and skips nothing pending.
  */
-/** The shared-read filters `work mine`'s inbox section forwards verbatim —
- * `topic` is deliberately absent: the delegated read carries no group-topic
- * filter of its own, so a topic-filtered digest applies `groupAddressTopicOf`
- * to the rows the read returns instead of asking it to. */
+/** The shared-read filters `work mine`'s inbox section forwards verbatim. */
 function workMineInboxFilters(options: BusWorkMineOptions, contains?: string) {
   return {
     ...(options.job === undefined ? {} : { job: options.job }),
@@ -1578,6 +1569,7 @@ function workMineInboxFilters(options: BusWorkMineOptions, contains?: string) {
     ...(options.before === undefined ? {} : { before: options.before }),
     ...(options.priority === undefined ? {} : { priority: options.priority }),
     ...(options.channel === undefined ? {} : { channel: options.channel }),
+    ...(options.topic === undefined ? {} : { topic: options.topic }),
     ...(options.from === undefined ? {} : { from: options.from }),
     ...(options.excludeFrom === undefined ? {} : { excludeFrom: options.excludeFrom }),
     ...(options.id === undefined ? {} : { id: options.id }),
@@ -1589,8 +1581,7 @@ function workMineInboxFilters(options: BusWorkMineOptions, contains?: string) {
   };
 }
 
-/** One inbox row's digest item — the same projection the unfiltered and
- * topic-filtered paths share, so a row reads identically either way. */
+/** One inbox row's digest item. */
 function workMineInboxItem(message: InboxMessage): BusWorkMineInboxMessage {
   return {
     cursor: message.cursor, id: message.envelope.id, ts: new Date(message.receivedAt).toISOString(),
@@ -1610,7 +1601,6 @@ function workMineInboxItem(message: InboxMessage): BusWorkMineInboxMessage {
 function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number,
   contains?: string): BusWorkMineInbox {
   const filters = workMineInboxFilters(options, contains);
-  if (options.topic !== undefined) return inboxTopicSection(agent, options, nowMs, filters);
   const page = readAgentInbox(agent, { ...filters, limit: WORK_MINE_INBOX_MAX + 1, matched: true },
     { root: options.root, now: () => nowMs });
   if (page.status !== 'ok') return { status: page.status, reason: page.reason };
@@ -1628,56 +1618,6 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number,
     status: 'ok', agent: page.agent, nextCursor, truncated,
     matched: page.matched ?? shown.length,
     messages: shown.map(workMineInboxItem),
-  };
-}
-
-/**
- * The `topic`-filtered twin of the inbox section: the delegated read carries
- * no group-topic filter, so the digest pages it to the store's end — the same
- * bounded collect `pendingWorkSections` runs — gathers every row the shared
- * filters accept, and applies the `groupAddressTopicOf` verdict itself.
- * `matched` is then the true topic-filtered total across the retained store,
- * the same honesty the unfiltered section's `matched:true` read reports; the
- * shown window keeps the oldest WORK_MINE_INBOX_MAX topic matches in cursor
- * order and `nextCursor` resumes strictly before the first undelivered one —
- * or at the store's end when the topic set fits — so `agents bus inbox
- * --after` redelivers nothing shown and skips nothing pending.
- */
-function inboxTopicSection(agent: string, options: BusWorkMineOptions, nowMs: number,
-  filters: ReturnType<typeof workMineInboxFilters>): BusWorkMineInbox {
-  const topic = options.topic!;
-  const collected: InboxMessage[] = [];
-  let agentName = agent, after = 0, nextCursor = 0, finished = false;
-  for (let index = 0; index < WORK_MINE_INBOX_TOPIC_MAX_PAGES && !finished; index += 1) {
-    const page = readAgentInbox(agent, { ...filters, after, limit: BUS_INBOX_MAX_READ },
-      { root: options.root, now: () => nowMs });
-    if (page.status !== 'ok') return { status: page.status, reason: page.reason };
-    agentName = page.agent;
-    collected.push(...page.messages);
-    nextCursor = page.nextCursor;
-    if (page.messages.length < BUS_INBOX_MAX_READ) { finished = true; break; }
-    if (page.nextCursor <= after) {
-      return { status: 'retryable', reason: 'Bus store cursor did not advance.' };
-    }
-    after = page.nextCursor;
-  }
-  if (!finished) {
-    return { status: 'retryable', reason: 'Bus store scan exceeded the bounded read.' };
-  }
-  // Cursor order is the store's own receipt order, so the oldest window is
-  // the smallest cursors — the same cap the unfiltered section keeps.
-  const matched = collected
-    .filter(message => groupAddressTopicOf(message.envelope.to) === topic)
-    .sort((a, b) => a.cursor - b.cursor);
-  const truncated = matched.length > WORK_MINE_INBOX_MAX;
-  const shown = matched.slice(0, WORK_MINE_INBOX_MAX);
-  const resumeCursor = truncated ? shown[shown.length - 1]!.cursor : nextCursor;
-  return {
-    status: 'ok', agent: agentName, nextCursor: resumeCursor, truncated,
-    matched: matched.length,
-    messages: shown
-      .sort((a, b) => a.priority.localeCompare(b.priority) || a.cursor - b.cursor)
-      .map(workMineInboxItem),
   };
 }
 
@@ -2589,12 +2529,12 @@ function claimContainsMatch(claim: BusWorkMineClaim, needle: string): boolean {
  * resolved message never lists — the three thread sections keep threads
  * whose latest message is addressed to the topic, and work-board requests
  * keep those whose `to` parses to it — a board item naming no provable
- * `to` never lists. `wakes` and `inbox` delegate to reads carrying no
- * topic filter of their own, so the digest applies the verdict to the
- * rows they return: `wakes` filters the resolved page's own `to` labels
- * (`matched` exact on a complete tail read, a proven lower bound under
- * `truncated`) while `inbox` pages the delegated read to the store's end
- * and reports the true topic-filtered total. `board`, `channels`,
+ * `to` never lists. `wakes` and `inbox` forward `topic` to the shared
+ * reads verbatim: `wakes` counts the topic-matched hints inside the
+ * bounded queue-tail match (`matched` exact on a complete tail read, a
+ * proven lower bound under `truncated`) while `inbox` reports the true
+ * topic-filtered total its store-wide matched scan counts. `board`,
+ * `channels`,
  * `sessions`, `seats` and `coordination` carry no per-item topic and
  * stay unfiltered. `options.thread`
  * applies the thread-label rule every bus read's `--thread` shares across
@@ -2905,6 +2845,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       ...(contains === undefined ? {} : { contains }),
       ...(options.priority === undefined ? {} : { priority: options.priority }),
       ...(options.channel === undefined ? {} : { channel: options.channel }),
+      ...(options.topic === undefined ? {} : { topic: options.topic }),
       ...(options.from === undefined ? {} : { from: options.from }),
       ...(options.excludeFrom === undefined ? {} : { excludeFrom: options.excludeFrom }),
       ...(options.id === undefined ? {} : { id: options.id }),
@@ -2913,26 +2854,11 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       ...(options.result === undefined ? {} : { result: options.result }),
       ...(options.thread === undefined ? {} : { thread: options.thread }),
       ...(beforeMs === undefined ? {} : { before: beforeMs }) });
-  // The wakes read carries no group-topic filter of its own, so under
-  // `topic` the digest applies the same `groupAddressTopicOf` verdict to the
-  // resolved page's own `to` labels. `matched` is exact when the bounded
-  // queue tail read is complete (`page.truncated === false` proves every
-  // hint the other filters accept is on the page) and a proven lower bound
-  // when it is not — the same convention the section's `truncated` flag
-  // already documents — and `truncated` stays honest either way: the page's
-  // own truncation or a filtered set larger than the shown cap.
   const wakes: BusWorkMineWakes = page.status === 'ok'
-    ? (() => {
-        const rows = options.topic === undefined ? page.wakes
-          : page.wakes.filter(row => groupAddressTopicOf(row.to) === options.topic);
-        const complete = page.truncated === false;
-        return { status: 'ok' as const, agent: page.agent, scope: page.scope,
-          matched: options.topic === undefined ? page.matched : rows.length,
-          truncated: options.topic === undefined
-            ? (page.truncated || page.matched > WORK_MINE_WAKES_MAX)
-            : (!complete || rows.length > WORK_MINE_WAKES_MAX),
-          wakes: rows.slice(-WORK_MINE_WAKES_MAX) };
-      })()
+    ? { status: 'ok' as const, agent: page.agent, scope: page.scope,
+        matched: page.matched,
+        truncated: page.truncated || page.matched > WORK_MINE_WAKES_MAX,
+        wakes: page.wakes.slice(-WORK_MINE_WAKES_MAX) }
     : { status: page.status, reason: page.reason };
 
   const inbox = inboxSection(agent, options, nowMs, contains);
