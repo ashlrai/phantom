@@ -12,7 +12,7 @@ import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { ensurePrivateDirectory } from '../verse/preferences.js';
-import { WORK_STATUSES, claimKeysOverlap, parseClaimKey } from './bus-v2-schema.js';
+import { WORK_STATUSES, claimKeysOverlap, parseClaimKey, pathGlobsOverlap } from './bus-v2-schema.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 
 export const COORDINATION_MAX_ROWS = 1024;
@@ -113,7 +113,11 @@ interface OverlapRow {
 
 function teamTargetOf(row: { repo: string | null; branch: string | null; path: string | null }): ClaimTarget | null {
   if (!row.repo) return null;
-  return { repo: row.repo, ...(row.branch ? { branch: row.branch } : {}), ...(row.path ? { path: row.path } : {}) };
+  // A stored path that normalizes to nothing ('/', './/') is the repo-wide
+  // claim claimsOverlap's empty-path rule already grants it; dropping it
+  // here keeps team-vs-team and team-vs-bus reads on that one rule.
+  const path = row.path && normPath(row.path) ? row.path : null;
+  return { repo: row.repo, ...(row.branch ? { branch: row.branch } : {}), ...(path ? { path } : {}) };
 }
 
 function live(row: StoredClaim, now: number): boolean {
@@ -127,22 +131,28 @@ function normPath(path: string): string {
 function pathsOverlap(teamPath: string, glob: string): boolean {
   const left = normPath(teamPath);
   const right = normPath(glob);
-  if (!left || !right || left.split('/').includes('..') || right.split('/').includes('..')) return false;
+  // A team path that normalizes to nothing is the repo-wide prefix claim
+  // claimsOverlap's empty-path rule grants it — it overlaps every path glob.
+  if (!left) return true;
+  if (!right) return false;
   // `globMatches` wildcards are `*`/`?` only — `[`, `{` and friends are
   // literal characters, so a team path like `src/[id]` is still a concrete
   // prefix claim and must keep its `/**` subtree coverage below.
   const wild = (value: string) => /[*?]/.test(value);
   if (!wild(left) && !wild(right)) return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
-  const sampleRepo = 'o/n';
-  const leftKey = `path:${sampleRepo}:${left}`;
-  const rightKey = `path:${sampleRepo}:${right}`;
   // A team path is a prefix claim — `claimsOverlap` covers the path itself
   // and everything beneath it — whether or not it carries `*`/`?` filename
   // characters. The pair overlaps when the bus glob matches the bare path
   // or any path under it, so the subtree joins the intersection as
   // `left/**`. Checking only the bare globs let a bus glob covering the
-  // subtree slip past a live team claim.
-  return claimKeysOverlap(leftKey, rightKey) || claimKeysOverlap(`${leftKey}/**`, rightKey);
+  // subtree slip past a live team claim. `..` segments and the other
+  // characters a claim key refuses are ordinary literal atoms to the raw
+  // glob check, which weighs them exactly instead of missing the overlap.
+  // The intersection search is quadratic in glob length, so an absurdly
+  // long stored path errs toward conflict — the documented safe direction —
+  // rather than paying unbounded memory on every overlap read.
+  if (wild(left) && wild(right) && (left.length + 1) * (right.length + 1) > 4_000_000) return true;
+  return pathGlobsOverlap(left, right) || pathGlobsOverlap(`${left}/**`, right);
 }
 
 function teamHitsKey(target: ClaimTarget, key: string): boolean {

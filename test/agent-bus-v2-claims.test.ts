@@ -166,6 +166,50 @@ describe('executeBusClaimBody', () => {
     expect(acquire('path:ashlrai/phantom:src/*/bar/**', 'bus-lane', 600_000, 'op-2', root3)).toMatchObject({ status: 'acquired' });
   });
 
+  it('conflicts with degenerate team paths instead of missing the overlap', () => {
+    const root = tempDir('v2claim-');
+    // A team path of '/' normalizes to nothing — the repo-wide claim
+    // claimsOverlap's empty-path rule grants it — so every path glob in the
+    // repo must conflict, in either acquire order.
+    const team = acquireCoordination({ root, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: '/' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-d1',
+      teamTarget: { repo: 'ashlrai/phantom', path: '/' }, now: NOW });
+    expect(team.status).toBe('acquired');
+    expect(acquire('path:ashlrai/phantom:src/**', 'bus-lane', 600_000, 'op-1', root))
+      .toMatchObject({ status: 'conflict', holder: { owner: 'agent:team-lane' } });
+    expect(acquire('pr:ashlrai/phantom#7', 'bus-lane', 600_000, 'op-2', root))
+      .toMatchObject({ status: 'conflict' });
+    expect(acquire('queue:RQ-D1', 'bus-lane', 600_000, 'op-3', root)).toMatchObject({ status: 'acquired' });
+    const root2 = tempDir('v2claim-');
+    expect(acquire('path:ashlrai/phantom:src/**', 'bus-lane', 600_000, 'op-1', root2)).toMatchObject({ status: 'acquired' });
+    expect(acquireCoordination({ root: root2, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: '/' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-d2',
+      teamTarget: { repo: 'ashlrai/phantom', path: '/' }, now: NOW }).status).toBe('conflict');
+
+    // A '..' segment can never form a claim key, but it is an ordinary
+    // literal atom to the glob check: 'a/../b' sits inside 'a/**' yet stays
+    // disjoint from 'docs/**', so the answer must be exact, not a blanket
+    // conflict and never a miss.
+    const root3 = tempDir('v2claim-');
+    const dotdot = acquireCoordination({ root: root3, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'a/../b' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-d3',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'a/../b' }, now: NOW });
+    expect(dotdot.status).toBe('acquired');
+    expect(acquire('path:ashlrai/phantom:a/**', 'bus-lane', 600_000, 'op-1', root3))
+      .toMatchObject({ status: 'conflict', holder: { owner: 'agent:team-lane' } });
+    expect(acquire('path:ashlrai/phantom:docs/**', 'bus-lane', 600_000, 'op-2', root3))
+      .toMatchObject({ status: 'acquired' });
+    const root4 = tempDir('v2claim-');
+    expect(acquire('path:ashlrai/phantom:a/**', 'bus-lane', 600_000, 'op-1', root4)).toMatchObject({ status: 'acquired' });
+    expect(acquireCoordination({ root: root4, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'a/../b' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-d4',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'a/../b' }, now: NOW }).status).toBe('conflict');
+  });
+
   it('lets non-overlapping keys coexist across claim forms', () => {
     const root = tempDir('v2claim-');
     expect(acquire('repo:ashlrai/phantom', 'a', 600_000, 'op-1', root)).toMatchObject({ status: 'acquired' });

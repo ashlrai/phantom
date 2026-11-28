@@ -3042,7 +3042,10 @@ never wildcards, so a team path like `src/[id]` stays a concrete prefix claim.
 `*` and `?` are the glob wildcards but also legal filename characters: a team
 path carrying them keeps the same prefix coverage, and the overlap check reads
 the path as a glob on top of that, so the answer can err toward a conflict,
-never toward a miss.
+never toward a miss. A team path that normalizes to nothing (`/`) is the
+repo-wide claim the team overlap rule already grants an empty path, and a `..`
+segment — which can never form a claim key — is weighed as an ordinary literal
+glob atom, so neither shape can slip past a live bus claim.
 Queued path claims stay
 a read-only view of queue prompt files and can be merged onto that board with
 `claimBoard()`. `phm agents roster` reads this table through `readRosterClaims`.
