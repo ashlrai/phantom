@@ -23,7 +23,8 @@ export function postBusReply(requestId: string, replyId: string, body: unknown,
   // Validate data before inspecting properties or spreading caller input.
   const input = validateBusEnvelope({ id: replyId, from: requestId, to: requestId, priority: 'P2', ttl: 1, body });
   if (!input.ok || replyId === requestId || input.value.body === null || typeof input.value.body !== 'object' ||
-      Array.isArray(input.value.body) || Object.hasOwn(input.value.body, 'inReplyTo')) return replyResult('invalid-input');
+      Array.isArray(input.value.body) || Object.hasOwn(input.value.body, 'inReplyTo') ||
+      (Object.hasOwn(input.value.body, 'in_reply_to') && input.value.body['in_reply_to'] !== requestId)) return replyResult('invalid-input');
   try {
     const clock = options.now ?? Date.now, started = clock();
     if (!Number.isSafeInteger(started) || started < 0) return replyResult('transport-refused');
