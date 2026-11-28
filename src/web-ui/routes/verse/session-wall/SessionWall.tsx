@@ -45,6 +45,8 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { LeaderHealth } from '../leader-thread/LeaderHealth.js';
 import { LeaderDock } from './LeaderDock.js';
 import { WallFind } from './WallFind.js';
+import { ThreadDraftMark } from '../fleet-sessions/ThreadDraftMark.js';
+import { useHasThreadDraft } from '../fleet-sessions/thread-draft-store.js';
 import { newLabel, railEntries, railStep, SessionRail } from './SessionRail.js';
 import { leaderIdOf, loadLeaderHidden, saveLeaderHidden, useLeaderRoom } from './wall-leader.js';
 import { nextUnseen, noteWallSeen, unseenCount, unseenSessions } from './wall-seen.js';
@@ -69,13 +71,15 @@ import steerStyles from './wall-steer.module.css';
 const spoke = (session: WallSession) => (session.lastMessageAgeSeconds === null ? 'last spoke unknown' : `spoke ${sessionAge(session.lastMessageAgeSeconds)} ago`);
 
 /** One session on the wall. The card is a single button, so its text stays plain; the opened conversation renders markdown. */
-function Card({ entry, fresh, at, onOpen }: { entry: WallEntry; fresh: number; at: string; onOpen: (id: string) => void }) {
+function Card({ entry, fresh, at, onOpen, reading = false }: { entry: WallEntry; fresh: number; at: string; onOpen: (id: string) => void; /** Its conversation is on screen beside the cards. */ reading?: boolean }) {
   const { session } = entry, summaryId = useId(), freshId = useId(), markId = useId(), vitalsId = useId(), taskId = useId();
   // Measured against the read's own time, so the step's age and the read agree.
   const vitals = cardVitals(entry, at), drawn = hasVitals(vitals), left = summaryLeft(entry.summary, vitals);
   const earlier = entry.messageCount - entry.messages.length;
   const mark = steerMark(entry);
-  const described = [mark && markId, fresh > 0 && freshId, entry.task !== undefined && taskId, drawn && vitalsId, summaryId].filter(Boolean).join(' ');
+  // Words typed to this session and not sent wait in its reply box; the card says so unless that box is on screen.
+  const draftId = useId(), drafted = useHasThreadDraft(session.id) && !reading;
+  const described = [mark && markId, fresh > 0 && freshId, drafted && draftId, entry.task !== undefined && taskId, drawn && vitalsId, summaryId].filter(Boolean).join(' ');
   return <li className={styles.card} data-state={session.state} data-steer={mark?.tone} data-pr={vitals.pr ? '' : undefined}>
     <button type="button" className={styles.open} data-card={session.id} onClick={() => onOpen(session.id)}
       aria-label={`${session.id}, ${STATE_WORD[session.state]}`} aria-describedby={described}>
@@ -85,6 +89,7 @@ function Card({ entry, fresh, at, onOpen }: { entry: WallEntry; fresh: number; a
         <span className={styles.state} data-state={session.state}>{STATE_WORD[session.state]}</span>
         {mark && <span id={markId} className={steerStyles.mark} data-tone={mark.tone}>{mark.text}</span>}
         {fresh > 0 && <span id={freshId} className={styles.fresh}>{fresh} new</span>}
+        <ThreadDraftMark id={session.id} open={reading} markId={draftId} />
         <span className={styles.muted}>{spoke(session)}</span>
       </span>
       <TaskLine task={entry.task} place="card" id={taskId} />
@@ -206,7 +211,7 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
               {order === 'lane' && head.name !== null && <ProviderBadge of={head.name} iconOnly size={12} />}
               <strong>{head.label}</strong><span>{head.count}</span>
             </li>}
-            <Card entry={entry} fresh={unseenCount(entry, readingId)} at={read.generatedAt} onOpen={onOpen} />
+            <Card entry={entry} fresh={unseenCount(entry, readingId)} at={read.generatedAt} onOpen={onOpen} reading={entry.session.id === readingId} />
           </Fragment>;
         })}
       </ul>}
