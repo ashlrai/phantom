@@ -1064,11 +1064,14 @@ twice, and, because the view sorts newest-first under the `--limit` cap,
 plain newest page can never show once more than the cap match. `--contains`
 keeps only jobs whose descriptive text carries the needle as a
 case-insensitive substring — the announcement title, the newest status
-detail and the declared dispatch scope/acceptance, each scrubbed,
+detail, the declared dispatch scope/acceptance and the newest
+`work.result` citation's reason code, each scrubbed,
 single-lined and clipped at the same bounds the job line renders, with
 whitespace collapsed on both sides like every other `--contains` bus
-read — so "which announced jobs mention X" is one filtered read; ids,
-claim keys, statuses and routing labels are structured fields with their
+read — so "which announced jobs mention X" and "which jobs reported a
+result for reason X" are each one filtered read; ids,
+claim keys, statuses, result outcomes and routing labels are structured
+fields with their
 own filters, never search text, and a secret-shaped value is scrubbed
 before the match even though the stored envelope keeps it. `--result`
 keeps only jobs whose newest retained `work.result` citation carries that
@@ -1585,7 +1588,8 @@ the case-insensitive substring rule every other bus `--contains` read
 applies, matched over each section's scrubbed one-line display text and
 never over raw bodies, ids, claim keys as keys, statuses or routing
 labels: feed and announced jobs match the feed's job search text
-(title, newest status detail, declared dispatch); a claim lists only
+(title, newest status detail, declared dispatch, newest result reason);
+a claim lists only
 when its displayed evidence carries the needle — a blocked announced
 job's title/detail or a resolved leased message's summary; `next`,
 `handoffs` and `mailbox` mail match the body summary; dead letters match

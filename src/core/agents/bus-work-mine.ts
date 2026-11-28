@@ -139,7 +139,8 @@ export interface BusWorkMineOptions {
   /** Keep only pending items whose displayed descriptive text carries this
    * search string — the same case-insensitive substring rule every other
    * bus read's `--contains` applies, matched over each section's scrubbed
-   * one-line display text (feed job title/detail/dispatch, body and thread
+   * one-line display text (feed job title/detail/dispatch/result-reason,
+   * body and thread
    * summaries, board post text and titles, claim-blocked job titles and
    * leased-message summaries, seat handoff work refs, session
    * checkpoint lane/model/repo/signal/tier/needs and work-board request

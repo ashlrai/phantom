@@ -340,11 +340,12 @@ grammar inbox --since takes), --before keeps only jobs whose last activity
 is strictly before its own cutoff on the same field so the pair reads one
 [since, before) window and older pages stay reachable past the newest-first
 --limit cap, while --job keeps one job id. --contains on
-work feed keeps only jobs whose title, newest status detail or declared
-dispatch scope/acceptance carries the needle as a case-insensitive
-substring over the same scrubbed display-clipped text the job line renders
-— ids, keys, statuses and labels stay structured fields with their own
-filters, and a secret-shaped value stays unfindable. --limit pages the
+work feed keeps only jobs whose title, newest status detail, declared
+dispatch scope/acceptance or newest work.result reason code carries the
+needle as a case-insensitive substring over the same scrubbed
+display-clipped text the job line renders — ids, keys, statuses, result
+outcomes and labels stay structured fields with their own filters, and a
+secret-shaped value stays unfindable. --limit pages the
 filtered view newest-first (1..200) and reports matched as the true
 filtered total before the cap and omitted as the rest, with claims holds
 regrouped under the shown jobs only — the same page fleet_work_feed's

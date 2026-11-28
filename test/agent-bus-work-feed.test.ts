@@ -439,6 +439,33 @@ describe('work-feed view filters', () => {
     expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['title']);
   });
 
+  it('keeps jobs whose newest work.result reason code carries the --contains needle', () => {
+    const result = (reason: string) =>
+      ({ id: 'm-r', from: 'agent:worker', outcome: 'failed' as const, reason, receivedAt: 150 });
+    const jobs = [
+      viewJob({ id: 'tests-red', result: result('tests-red') }),
+      viewJob({ id: 'quota', result: result('quota-exceeded') }),
+      viewJob({ id: 'no-reason', result: { id: 'm-r2', from: 'agent:worker', outcome: 'complete', receivedAt: 150 } }),
+      viewJob({ id: 'no-result' }),
+    ];
+    const feed = okResult(jobs);
+    // The reason code is the same scrubbed, display-clipped text the job
+    // line renders as reason=<code> — a contains match is always visible
+    // in the row it selects, case-insensitive like every other needle.
+    expect(ids(projectBusWorkFeedView(feed, { contains: 'tests-red' }))).toEqual(['tests-red']);
+    expect(ids(projectBusWorkFeedView(feed, { contains: 'QUOTA' }))).toEqual(['quota']);
+    expect(ids(projectBusWorkFeedView(feed, { contains: 'reason' }))).toEqual([]);
+    // A job whose result carries no reason, and a job with no result at
+    // all, never match — unknown stays out of a positive filter.
+    for (const needle of ['complete', 'failed', 'reserved', 'admitted']) {
+      expect(ids(projectBusWorkFeedView(feed, { contains: needle }))).toEqual([]);
+    }
+    // The needle still composes with --result: outcome stays structured,
+    // reason stays text — "failed jobs whose reason mentions quota".
+    expect(ids(projectBusWorkFeedView(feed, { contains: 'quota', result: 'failed' }))).toEqual(['quota']);
+    expect(ids(projectBusWorkFeedView(feed, { contains: 'quota', result: 'complete' }))).toEqual([]);
+  });
+
   it('keeps jobs announced to group:<channel>:* under every topic', () => {
     const result = okResult([
       viewJob({ id: 'room-a', to: 'group:release:general', updatedAt: 400 }),
