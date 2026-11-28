@@ -306,6 +306,9 @@ describe('generator yield', () => {
       expect(JSON.parse(String(log.mock.calls[0]![0]))).toMatchObject({ jobsKnown: false, generationKnown: true, generators: [{ generator: 'ideas', drafted: 1 }] });
       expect(await cmdQueueYield([])).toBe(0);
       expect(log.mock.calls.flat().join('\n')).toContain('Generator\tDrafted\tRejected\tLaunched');
+      expect(await cmdQueueYield(['--help'])).toBe(0);
+      expect(await cmdQueueYield(['--since', '24h', '-h'])).toBe(0);
+      expect(log.mock.calls.flat().join('\n')).toContain('Usage: phm queue yield');
     } finally { vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(dir, { recursive: true, force: true }); }
   });
 });
