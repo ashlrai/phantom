@@ -37,6 +37,14 @@
  *     lane/model that keeps losing measured capability reaches the backlog
  *     instead of sitting in `phm eval passk alerts`, a report someone had
  *     to run;
+ *   - the scheduled pass^k eval's own run journal: the terminal records
+ *     `phm eval passk schedule --install`'s nightly unit appends to
+ *     ~/.ashlr/logs/eval-passk.jsonl — dated report documents, undated
+ *     {skipped:true} provider verdicts and `error:`/stack stderr —
+ *     (evalPasskBacklogItems below), so a schedule whose every night
+ *     skips for want of a local provider or whose runs keep dying before
+ *     a verdict reaches the backlog instead of leaving the lane-scores
+ *     projection frozen on the last good report;
  *   - the fleet friction fold's firing categories: the dispatch→merge drags
  *     `phm friction` scores over a 7-day window — empty finishes,
  *     anomalous diffs, requeues, lane auth, quota, invalid tiers, red
@@ -2380,6 +2388,7 @@ import { fleetPolicyBacklogItems } from './policy-backlog.js';
 import { localGateBacklogItems } from './gate-backlog.js';
 import { cosReconcileBacklogItems } from './cos-reconcile-backlog.js';
 import { passkAlertBacklogItems } from './passk-backlog.js';
+import { evalPasskBacklogItems } from './eval-passk-backlog.js';
 import { frictionBacklogItems } from './friction-backlog.js';
 import { tickHealthBacklogItems } from './tick-health-backlog.js';
 import { discoveryErrorsBacklogItems } from './discovery-errors-backlog.js';
@@ -2649,6 +2658,14 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // regression or the journal shows it recurring across eval reports;
   // same healthy-only evidence bar and the same fleet-repo gate.
   await feed('passkAlertBacklogItems', () => passkAlertBacklogItems({ repo }));
+
+  // Scheduled pass^k eval run journal: the nightly unit's own health —
+  // skip verdicts, failed runs and a stale eval still recording
+  // unmeasured runs — becomes backlog items too. Until now the journal
+  // had no reader at all, so a schedule that never lands another report
+  // left the lane-scores projection silently frozen; same fleet-repo
+  // gate as the sibling passk-alert source.
+  await feed('evalPasskBacklogItems', () => evalPasskBacklogItems({ repo }));
 
   // Fleet friction fold: the dispatch→merge drag categories `phm friction`
   // scores become backlog items too — until now they only surfaced in that
