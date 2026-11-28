@@ -139,7 +139,10 @@ job carries one, the lease token pair and expiry, and paste-ready `renew`,
 node can never run.
 
 `phm node plan` prints one `job -> node` line per routable job, or `nobody`
-with the fix when no live node can take it. An empty route set is not the
+with the fix when no live node can take it. With `--owner`, the preview
+shows only that owner's jobs. Earlier jobs from any owner still consume
+shared capacity in the preview, just as they do during `pull`.
+An empty route set is not the
 same as an empty queue, so the text answer reads the scope once more: with no
 jobs queued it names the `phm node enqueue` command — and names the owner
 scopes the store does know first when the requested `--owner` is not one of
