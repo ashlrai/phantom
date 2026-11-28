@@ -73,6 +73,32 @@ describe('router catalog refresh', () => {
     expect(report.unknown).toHaveLength(2); expect(data.unseen).toEqual({});
     expect(catalogPatch(renderCatalog(empty), renderCatalog(empty))).toBe('');
   });
+  it('requires current absence evidence to deprecate or propose removal of a previously unseen model', () => {
+    const unseenSince = '2026-01-01T00:00:00Z';
+    const current: CatalogData = {
+      tiers: { 'gpt-old': 'lite', alias: 'lite' },
+      unassigned: [],
+      unseen: { 'gpt-old': unseenSince, alias: unseenSince },
+    };
+    const unverified = diffCatalog(current, [
+      { id: 'codex', status: 'ok', models: [] },
+      { id: 'devin', status: 'unknown', models: [] },
+    ], MODEL_CATALOG_PATTERNS, now);
+    expect(unverified.report.unknown).toEqual([
+      { model: 'alias', reason: 'No owning source pattern' },
+      { model: 'gpt-old', reason: 'Owning source unavailable' },
+    ]);
+    expect(unverified.report.unseen).toEqual(['alias', 'gpt-old'].map(model => ({ model, unseenSince })));
+    expect(unverified.data.unseen).toEqual(current.unseen);
+    expect(unverified.report.deprecations).toEqual([]);
+    expect(unverified.report.proposedRemovals).toEqual([]);
+
+    const verified = diffCatalog(unverified.data, ['codex', 'devin'].map(id => ({
+      id, status: 'ok', models: [],
+    })), MODEL_CATALOG_PATTERNS, now);
+    expect(verified.report.deprecations).toEqual([{ model: 'gpt-old', unseenSince }]);
+    expect(verified.report.proposedRemovals).toEqual([{ model: 'gpt-old', unseenSince }]);
+  });
   it('handles empty and invalid rules', () => {
     expect(diffCatalog(empty, [], [], now).report.additions).toEqual([]);
     expect(diffCatalog(empty, [], [{ pattern: '[', sources: ['codex'] }], now).report.rejectedRules).toHaveLength(1);
