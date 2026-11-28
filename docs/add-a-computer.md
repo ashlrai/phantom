@@ -59,7 +59,11 @@ the CLI's binary at the usual install locations (file presence only; nothing
 is executed and no sign-in is checked). The reply names any cap it cannot
 find under `unverifiedCaps` in `--json` and in a plain-words line in text
 mode: jobs requiring those caps will route here and cannot run until the CLI
-is installed, so install it or rejoin without the cap.
+is installed, so install it or rejoin without the cap. `phm node status` and
+`phm node list` re-run the same file-presence check on every read and tag the
+node's line `unverified-caps=<cap>` for any advertised agent CLI still missing
+a binary — a cap installed (or removed) after the join reads correctly, and
+the `--json` view stays the plain caps list.
 Capability names are open, not a fixed list: a job's `--requires` is matched
 against the caps a node advertises, so name the agent CLIs this computer can
 run — `codex`, `claude`, `aider`, `gemini`, `copilot`, `goose`, `droid` and the
