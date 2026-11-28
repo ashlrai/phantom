@@ -133,7 +133,7 @@ describe('the reader', () => {
     readOwner: vi.fn(async () => ({ sourceState: 'healthy' as const, entries: [] })),
     readReplies: vi.fn(async () => ({ schema: 'leader.replies.v1' as const, version: 1 as const, sourceState: 'healthy' as const, entries: [], replies: [] })),
     readOrders: vi.fn(async () => { throw new Error('no trace'); }), readControls: vi.fn(async () => []),
-    readOutput: vi.fn(async (job: string): Promise<SessionThreadOutputRead> => ({ source: 'healthy', truncated: false, lines: [`${job} wrote: compiling the sidecar`] } as SessionThreadOutputRead)),
+    readOutput: vi.fn(async (job: string): Promise<SessionThreadOutputRead> => ({ source: 'live', truncated: false, lines: [`${job} wrote: compiling the sidecar`] })),
   });
 
   it('reads the end of every job log, not only a running session\'s as the short threads do, and searches it', async () => {
@@ -229,6 +229,26 @@ describe('phm sessions find', () => {
     expect(JSON.parse(json.out)).toMatchObject({ schema: 'fleet.session-find.v1', words: ['keychain', 'prompt'], results: [{ session: { id: 'RQ-A' } }] });
     vi.restoreAllMocks();
     expect((await run(['nowhere'])).code).toBe(0);
+  });
+
+  it('the CLI --frame prints the matches as a bounded untrusted block and carries it as framed in JSON', async () => {
+    const text = await run(['rebase', '--frame', 'claude']);
+    expect(text.code).toBe(0);
+    expect(text.out).toContain('BEGIN UNTRUSTED AGENT SESSION TRANSCRIPT');
+    expect(text.out).toContain('END UNTRUSTED AGENT SESSION TRANSCRIPT');
+    expect(text.out).toContain('holds "rebase"');
+    vi.restoreAllMocks();
+    const json = await run(['rebase', '--frame', 'grok', '--json']);
+    expect(json.code).toBe(0);
+    expect(JSON.parse(json.out)).toMatchObject({ schema: 'fleet.session-find.v1', framed: expect.stringContaining('BEGIN UNTRUSTED AGENT SESSION TRANSCRIPT') });
+    vi.restoreAllMocks();
+    // Unknown cli names, repeats and a missing value are usage errors before any read.
+    for (const args of [['rebase', '--frame', 'gemini'], ['rebase', '--frame', 'claude', '--frame', 'grok'], ['rebase', '--frame']]) {
+      vi.restoreAllMocks();
+      const read = vi.fn();
+      expect([args, (await run(args, read as never)).code]).toEqual([args, 2]);
+      expect(read).not.toHaveBeenCalled();
+    }
   });
 
   it('exits 2 for bad usage and 1 when sessions cannot be read', async () => {

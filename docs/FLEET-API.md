@@ -926,7 +926,7 @@ the system setting) stops the pulse; lines keep their thickness.
 
 ### Live sessions
 
-`phm sessions [--lane <lane>] [--repo <repo>] [--json] [--live]` shows every
+`phm sessions [--lane <lane>] [--repo <repo>] [--json] [--live] [--frame <cli>]` shows every
 agent session as one tree: the leader, then workers, then their subagents.
 `--json` prints `fleet.live-sessions.v1`, and
 `GET /api/verse/fleet/control/live-sessions[?lane=<lane>][&repo=<repo>][&live=1]`
@@ -970,11 +970,14 @@ computers in `fleet.compute.v1`) and adds the `subagent.v1` records under
 Rows sort by lane order, then start time, then job id, with the same keys in
 the same order. The server reads the session map at most once every 5 seconds.
 Selecting a session in the pane opens the worker log, which has the existing
-pause and stop controls.
+pause and stop controls. `--frame <cli>` prints the same read as one bounded
+block marked untrusted under BEGIN/END UNTRUSTED AGENT SESSION TRANSCRIPT
+markers — the same frame the bus reads produce, under its own markers — with
+`--json` carrying it as `framed` beside the document.
 
 ### Session threads
 
-`phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]` reads
+`phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json] [--frame <cli>]` reads
 every session as a short conversation, and
 `GET /api/verse/fleet/control/session-threads[?lane=L][&repo=R][&live=1]`
 serves the same `fleet.session-threads.v1` document with a current read
@@ -1083,11 +1086,13 @@ with no sessions, and 400 for anything but `lane`, `repo` and `live=1`, once
 each. One build per filter serves every caller for 5 seconds. The CLI exits 1
 when the list cannot be read; with `--json` it still prints the document, with
 `sources.sessions` `unavailable` and no threads. Text is scrubbed the same way
-as the session list.
+as the session list. `--frame <cli>` prints the same read as one bounded block
+marked untrusted under BEGIN/END UNTRUSTED AGENT SESSION TRANSCRIPT markers,
+with `--json` carrying it as `framed` beside the document.
 
 ### Session thread
 
-`phm sessions thread <id> [--all] [--json]` reads one session as a conversation, and
+`phm sessions thread <id> [--all] [--json] [--frame <cli>]` reads one session as a conversation, and
 `GET /api/verse/fleet/control/session-thread?id=<id>[&depth=full]` serves the same
 `fleet.session-thread.v1` document with a current read session. The id is
 `leader`, a job id or a subagent id from the session tree. It adds no source:
@@ -1208,10 +1213,13 @@ rest. The route answers 404 for an id the list does not hold (finished
 sessions leave after an hour), 503 when the session list cannot be read, and
 400 for anything but one `id`. The CLI exits 2 for an unknown id and 1 when
 the list cannot be read. Text is scrubbed the same way as the session list.
+`--frame <cli>` prints the same read as one bounded block marked untrusted
+under BEGIN/END UNTRUSTED AGENT SESSION TRANSCRIPT markers, with `--json`
+carrying it as `framed` beside the document.
 
 ### Session find
 
-`phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json]`
+`phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json] [--frame <cli>]`
 looks for words in every session's whole conversation, and
 `GET /api/verse/fleet/control/session-find?q=<words>[&lane=L][&repo=R][&live=1]`
 serves the same `fleet.session-find.v1` document with a current read session.
@@ -1244,6 +1252,9 @@ the fleet at most once per filter per 5 seconds, whatever the words. It
 answers 400 without a usable `q` or for an unknown parameter, and 503 when the
 session list cannot be read. The CLI exits 0 for a read (finding nothing is
 still a read), 1 when the list cannot be read and 2 for bad usage.
+`--frame <cli>` prints the same read as one bounded block marked untrusted
+under BEGIN/END UNTRUSTED AGENT SESSION TRANSCRIPT markers, with `--json`
+carrying it as `framed` beside the document.
 
 ### Desktop workbench actions (WB-4)
 

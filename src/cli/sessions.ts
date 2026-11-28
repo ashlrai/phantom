@@ -9,6 +9,7 @@
  * src/core/agents/session.ts.
  */
 import { parseArgs } from 'node:util';
+import { frameSessionTranscript, getBusCliAdapter, type BusCliAdapter } from '../core/agents/bus-cli-adapters.js';
 import { listGatewaySessions, revokeGatewaySession } from '../core/gateway-sessions.js';
 import {
   AgentSessionError, createAgentSession, getAgentSession, listAgentSessions, resumeAgentSession, terminateAgentSession,
@@ -25,7 +26,7 @@ import { FIND_QUERY_CHARS, findWords, renderSessionFindText, type SessionFindV1 
 import { reconcileSessions, renderSessionReconciliation } from '../core/fleet/session-reconciliation.js';
 
 const USAGE = `Usage:
-  phm sessions [--lane <lane>] [--repo <repo>] [--json] [--live]
+  phm sessions [--lane <lane>] [--repo <repo>] [--json] [--live] [--frame <cli>]
                                       Every agent session as one tree: leader, workers,
                                       subagents. Each row: model, repo, state, when it last
                                       spoke (quiet after 10 min) and its last message.
@@ -35,20 +36,20 @@ const USAGE = `Usage:
                                       What one session is doing now: its last 200 log lines,
                                       redacted; --follow streams new ones (one JSON object
                                       per line with --json). Exit 2 for an unknown id.
-  phm sessions thread <id> [--all] [--json]
+  phm sessions thread <id> [--all] [--json] [--frame <cli>]
                                       One session as a conversation: a summary, then its brief,
                                       recorded steps, commands, changed files, notes, the bus
                                       messages about it and its last message. The id is
                                       leader, a job id or a subagent id. It shows the newest
                                       few of each; --all shows the earlier ones the same
                                       records hold. Read only; exit 2 for an unknown id.
-  phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]
+  phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json] [--frame <cli>]
                                       Every session as a short conversation on one screen:
                                       its summary and its newest 3 messages, yours included,
                                       leader first. Up to 40 sessions, running ones before
                                       ended ones. Read only; exit 1
                                       when the session list could not be read.
-  phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json]
+  phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json] [--frame <cli>]
                                       The sessions whose whole conversation holds every
                                       word, with the messages that hold one. Looks through
                                       what thread <id> --all shows, in up to 120
@@ -66,6 +67,12 @@ const USAGE = `Usage:
                                       omit it to retry a blocked turn)
   phm sessions terminate <sesn_id> [--reason <text>] [--json]
                                       End an agent session; its queue jobs are untouched
+--frame <cli> on the tree, thread, threads and find prints the same read as one
+bounded block marked untrusted under BEGIN/END UNTRUSTED AGENT SESSION
+TRANSCRIPT markers — the same frame the bus reads produce, under its own
+markers so a session block can never pass for a bus page — with --json
+carrying it as framed beside the full projection and the cut stated when the
+32 KiB bound clips the page. <cli> is claude, codex, devin, cursor or grok.
 Agent session statuses: idle, running, rescheduling, terminated. See docs/SESSIONS.md.
 `;
 
@@ -75,6 +82,19 @@ const AGENT_VERBS: Record<string, string[]> = {
   resume: ['scope', 'acceptance'],
   terminate: ['reason'],
 };
+
+/**
+ * `--frame <cli>` resolves through the same adapter table every bus read uses.
+ * parseArgs keeps only the last value on a repeat, so the raw args are counted
+ * here; a repeated flag or an unknown cli name is a usage error decided before
+ * any store read. `adapter` stays undefined when the flag is absent.
+ */
+function resolveSessionFrame(args: readonly string[], frame: string | undefined): { ok: true; adapter?: BusCliAdapter } | { ok: false } {
+  if (args.filter(arg => arg === '--frame' || arg.startsWith('--frame=')).length > 1) return { ok: false };
+  if (frame === undefined) return { ok: true };
+  const adapter = getBusCliAdapter(frame);
+  return adapter === undefined ? { ok: false } : { ok: true, adapter };
+}
 
 function sessionLine(s: AgentSession): string {
   const last = s.turns.at(-1);
@@ -143,10 +163,10 @@ async function runAgentVerb(verb: string, args: string[], json: boolean): Promis
 /** `phm sessions [--lane L] [--repo R] [--json] [--live]`: the session tree. The reader is injectable for tests. */
 export async function cmdLiveSessions(args: string[], read: typeof readLiveSessions = readLiveSessions): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { process.stdout.write(USAGE); return 0; }
-  let values: { json?: boolean; live?: boolean; lane?: string; repo?: string };
+  let values: { json?: boolean; live?: boolean; lane?: string; repo?: string; frame?: string };
   try {
     ({ values } = parseArgs({ args, strict: true, allowPositionals: false,
-      options: { json: { type: 'boolean' }, live: { type: 'boolean' }, lane: { type: 'string' }, repo: { type: 'string' } } }));
+      options: { json: { type: 'boolean' }, live: { type: 'boolean' }, lane: { type: 'string' }, repo: { type: 'string' }, frame: { type: 'string' } } }));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : 'Invalid arguments'}\n${USAGE}`);
     return 2;
@@ -157,8 +177,15 @@ export async function cmdLiveSessions(args: string[], read: typeof readLiveSessi
       return 2;
     }
   }
+  const frame = resolveSessionFrame(args, values.frame);
+  if (!frame.ok) { process.stderr.write(`${USAGE}\n`); return 2; }
   const list = await read({ lane: values.lane ?? null, repo: values.repo ?? null, ...(values.live ? { live: true } : {}) });
-  console.log(values.json ? JSON.stringify(list, null, 2) : renderLiveSessionsText(list));
+  if (frame.adapter !== undefined) {
+    const framed = frameSessionTranscript(frame.adapter.cli, renderLiveSessionsText(list).split('\n'));
+    console.log(values.json ? JSON.stringify({ ...list, framed }, null, 2) : framed);
+  } else {
+    console.log(values.json ? JSON.stringify(list, null, 2) : renderLiveSessionsText(list));
+  }
   return 0;
 }
 
@@ -168,19 +195,26 @@ export async function cmdLiveSessions(args: string[], read: typeof readLiveSessi
  */
 export async function cmdSessionThread(args: string[],
   read: (id: string, depth?: SessionThreadDepth) => Promise<SessionThreadV1> = (id, depth) => readSessionThread(id, { depth })): Promise<number> {
-  let values: { json?: boolean; all?: boolean }, positionals: string[];
+  let values: { json?: boolean; all?: boolean; frame?: string }, positionals: string[];
   try {
-    ({ values, positionals } = parseArgs({ args, strict: true, allowPositionals: true, options: { json: { type: 'boolean' }, all: { type: 'boolean' } } }));
+    ({ values, positionals } = parseArgs({ args, strict: true, allowPositionals: true, options: { json: { type: 'boolean' }, all: { type: 'boolean' }, frame: { type: 'string' } } }));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : 'Invalid arguments'}\n${USAGE}`);
     return 2;
   }
   const id = positionals[0];
   if (positionals.length !== 1 || id === undefined || !SESSION_ID_RE.test(id)) {
-    process.stderr.write('Usage: phm sessions thread <id> [--all] [--json]. The id is leader, a job id or a subagent id from `phm sessions`.\n');
+    process.stderr.write('Usage: phm sessions thread <id> [--all] [--json] [--frame <cli>]. The id is leader, a job id or a subagent id from `phm sessions`.\n');
     return 2;
   }
+  const frame = resolveSessionFrame(args, values.frame);
+  if (!frame.ok) { process.stderr.write(`${USAGE}\n`); return 2; }
   const thread = values.all ? await read(id, 'full') : await read(id);
+  if (frame.adapter !== undefined) {
+    const framed = frameSessionTranscript(frame.adapter.cli, renderSessionThreadText(thread).split('\n'));
+    console.log(values.json ? JSON.stringify({ ...thread, framed }, null, 2) : framed);
+    return thread.session ? 0 : thread.sources.sessions === 'unavailable' ? 1 : 2;
+  }
   if (thread.session) { console.log(values.json ? JSON.stringify(thread, null, 2) : renderSessionThreadText(thread)); return 0; }
   const unreadable = thread.sources.sessions === 'unavailable';
   if (values.json) console.log(JSON.stringify(thread, null, 2));
@@ -188,15 +222,15 @@ export async function cmdSessionThread(args: string[],
   return unreadable ? 1 : 2;
 }
 
-const THREADS_USAGE = 'Usage: phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]\n';
+const THREADS_USAGE = 'Usage: phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json] [--frame <cli>]\n';
 
 /** `phm sessions threads [--lane L] [--repo R] [--live] [--json]`: every session as a short conversation. Exit 0 read, 1 sessions unreadable, 2 usage. */
 export async function cmdSessionThreads(args: string[],
   read: (filter: { lane: string | null; repo: string | null; live?: boolean }) => Promise<SessionThreadsV1> = filter => readSessionThreads(filter)): Promise<number> {
-  let values: { json?: boolean; live?: boolean; lane?: string; repo?: string };
+  let values: { json?: boolean; live?: boolean; lane?: string; repo?: string; frame?: string };
   try {
     ({ values } = parseArgs({ args, strict: true, allowPositionals: false,
-      options: { json: { type: 'boolean' }, live: { type: 'boolean' }, lane: { type: 'string' }, repo: { type: 'string' } } }));
+      options: { json: { type: 'boolean' }, live: { type: 'boolean' }, lane: { type: 'string' }, repo: { type: 'string' }, frame: { type: 'string' } } }));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : 'Invalid arguments'}\n${THREADS_USAGE}`);
     return 2;
@@ -207,15 +241,20 @@ export async function cmdSessionThreads(args: string[],
       return 2;
     }
   }
+  const frame = resolveSessionFrame(args, values.frame);
+  if (!frame.ok) { process.stderr.write(`${THREADS_USAGE}`); return 2; }
   const threads = await read({ lane: values.lane ?? null, repo: values.repo ?? null, ...(values.live ? { live: true } : {}) });
   const unreadable = threads.sources.sessions === 'unavailable';
-  if (values.json) console.log(JSON.stringify(threads, null, 2));
+  if (frame.adapter !== undefined) {
+    const framed = frameSessionTranscript(frame.adapter.cli, renderSessionThreadsText(threads).split('\n'));
+    console.log(values.json ? JSON.stringify({ ...threads, framed }, null, 2) : framed);
+  } else if (values.json) console.log(JSON.stringify(threads, null, 2));
   else if (unreadable) process.stderr.write(`${threads.gaps.join('\n')}\n`);
   else console.log(renderSessionThreadsText(threads));
   return unreadable ? 1 : 0;
 }
 
-const FIND_USAGE = 'Usage: phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json]\n';
+const FIND_USAGE = 'Usage: phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json] [--frame <cli>]\n';
 
 /**
  * `phm sessions find <words> [--lane L] [--repo R] [--live] [--json]`: the sessions whose whole conversation holds every word.
@@ -223,10 +262,10 @@ const FIND_USAGE = 'Usage: phm sessions find <words> [--lane <lane>] [--repo <re
  */
 export async function cmdSessionFind(args: string[],
   read: (query: string, filter: { lane: string | null; repo: string | null; live?: boolean }) => Promise<SessionFindV1> = (query, filter) => readSessionFind(query, filter)): Promise<number> {
-  let values: { json?: boolean; live?: boolean; lane?: string; repo?: string }, positionals: string[];
+  let values: { json?: boolean; live?: boolean; lane?: string; repo?: string; frame?: string }, positionals: string[];
   try {
     ({ values, positionals } = parseArgs({ args, strict: true, allowPositionals: true,
-      options: { json: { type: 'boolean' }, live: { type: 'boolean' }, lane: { type: 'string' }, repo: { type: 'string' } } }));
+      options: { json: { type: 'boolean' }, live: { type: 'boolean' }, lane: { type: 'string' }, repo: { type: 'string' }, frame: { type: 'string' } } }));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : 'Invalid arguments'}\n${FIND_USAGE}`);
     return 2;
@@ -242,9 +281,14 @@ export async function cmdSessionFind(args: string[],
       return 2;
     }
   }
+  const frame = resolveSessionFrame(args, values.frame);
+  if (!frame.ok) { process.stderr.write(`${FIND_USAGE}`); return 2; }
   const found = await read(query, { lane: values.lane ?? null, repo: values.repo ?? null, ...(values.live ? { live: true } : {}) });
   const unreadable = found.sources.sessions === 'unavailable';
-  if (values.json) console.log(JSON.stringify(found, null, 2));
+  if (frame.adapter !== undefined) {
+    const framed = frameSessionTranscript(frame.adapter.cli, renderSessionFindText(found).split('\n'));
+    console.log(values.json ? JSON.stringify({ ...found, framed }, null, 2) : framed);
+  } else if (values.json) console.log(JSON.stringify(found, null, 2));
   else if (unreadable) process.stderr.write(`${found.gaps.join('\n')}\n`);
   else console.log(renderSessionFindText(found));
   return unreadable ? 1 : 0;
