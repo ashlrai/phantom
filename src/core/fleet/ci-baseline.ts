@@ -2244,6 +2244,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       if (output.some(line => CHECKOUT_GROUP.test(line) || PASS_LINE.test(line)) ||
           parseBaselineFailures(r.stdout, repo).length > 0) return null;
     }
+    // An aggregator may summarize a verified failure, but it cannot be the
+    // only evidence behind a failed workflow or job conclusion.
+    const failed = run.conclusion === 'failure' || data.jobs.some(job => job.conclusion === 'failure');
+    if (!incomplete && failed && !result.some(job => job.conclusion === 'failure')) return null;
     return { entries: result, incomplete };
   }
   const branch = await json<{ commit: { sha: string } }>(`repos/${repo}/branches/master`);
