@@ -577,6 +577,23 @@ job-memory, lifecycle (`started`/`exited`), aggregate
 unparsed: `exited` lines fire on ordinary test failures and on the
 stop-others SIGTERM cascade, so they can never be runner identities.
 
+The scheduled companion smoke gets the same treatment.
+`.github/workflows/companion-smoke.yml` builds the ref and runs
+`node scripts/companion-workflow-smoke.mjs --published`, which prints
+one `<mark> <check-id>: <detail>` row per companion seam -- `ok  `,
+`warn`, `FAIL` or `skip` -- and closes with the tally `N pass, N
+warn, N fail, N skip`; only FAIL rows fail the step. Rows group under
+`scripts/companion-workflow-smoke.mjs > (companion-smoke)
+<check-id>` -- the check id is the unit a master fix restores -- and
+count only inside a log carrying the smoke's own tally whose fail
+count equals the FAIL rows, so a truncated or interleaved log stays
+unparsed. The dependency set is a closed input list (the script and
+the workflow step that invokes it): the checks exercise published
+companions plus the ref's built `dist/` graph, which has no enumerable
+closure. Like the other non-test identities these groups can never
+resolve through a vitest pass line: `shared-baseline`, `pr-caused` or
+`unknown` -- never `probable-flake`.
+
 Two unaffected fresh PRs at distinct head commits sharing a failure produce
 `queue-master-fix` and a ready brief. PRs at the same commit remain visible in
 the group but contribute only one head toward that threshold. Test/import
@@ -612,6 +629,19 @@ at 100 each. A run or job listing supplies evidence only when its item count
 matches `total_count` and each item has a distinct, valid ID. Incomplete or
 capped listings leave that evidence unknown. Master reproduction remains an
 explicit step in the fix brief.
+
+Groups also come from master evidence alone. The observation groups
+above require an open PR to reproduce a failure, but master runs at
+the tip also carry scheduled and master-push workflows that never run
+on PR heads -- the companion smoke, custody, the daily perf-budget
+drift run -- plus suite breaks no open PR happens to hit. Each parsed
+master failure no open PR reproduced still emits a group: empty
+`prs`/`runs`/`unaffectedPrs`, `shared-baseline`, `queue-master-fix`,
+`master: 'fail'`, and a brief naming the master-run provenance. A test
+id an open PR did observe keeps its observation group -- the richer
+evidence wins -- and each id emits once. These groups queue a master
+fix through the same `--queue` path but never produce update-branch
+plans (no unaffected PRs) or rerun proposals (no PR runs).
 
 `phm ci baseline --queue --json` appends only master-fix briefs to
 `~/.ashlr-runs/queue/router-queue.md`, at tier `work`, deduplicated by queue
