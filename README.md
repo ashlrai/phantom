@@ -80,7 +80,7 @@ Open [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/) and paste the 
 
 Provider installation and sign-in may take longer. [Full first-session guide](docs/QUICKSTART.md#make-your-first-useful-turn) · [Troubleshooting](docs/QUICKSTART.md#troubleshoot-account-setup-and-return-to-the-tour).
 
-This source tree targets version 3.30.91; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.92; check canonical release availability and exact matching assets before installation.
 The npm badge reads the registry; source version and published release can differ. [Qualified releases](https://github.com/ashlrai/phantom/releases/latest).
 
 ### Connect your coding agent
