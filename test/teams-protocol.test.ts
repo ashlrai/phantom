@@ -31,6 +31,10 @@ describe('team protocol', () => {
     expect(claimsOverlap({ repo: 'a/b', path: 'src' }, { repo: 'a/b', path: 'src/x.ts' })).toBe(true);
     expect(claimsOverlap({ repo: 'a/b', path: 'src' }, { repo: 'a/b', path: 'docs' })).toBe(false);
     expect(claimsOverlap({ repo: 'a/b' }, { repo: 'a/c' })).toBe(false);
+    // `.` segments and empty segments name the same files on disk.
+    expect(claimsOverlap({ repo: 'a/b', path: 'src/./x' }, { repo: 'a/b', path: 'src/x' })).toBe(true);
+    expect(claimsOverlap({ repo: 'a/b', path: 'src//x' }, { repo: 'a/b', path: 'src/x' })).toBe(true);
+    expect(claimsOverlap({ repo: 'a/b', path: 'src/./x' }, { repo: 'a/b', path: 'src/y' })).toBe(false);
   });
 
   it('first human is owner; presence and messages fold', () => {

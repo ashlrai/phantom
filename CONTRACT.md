@@ -3277,7 +3277,11 @@ label a `note`/`context` body carries (null for every other kind and shape),
 `busBodyResultOutcome(body)`, the read-side predicate that returns the
 `outcome` a `work.result` body reports (null for every other kind and
 shape — a `work.release` body's own `released`/`completed` vocabulary stays
-out), and the exported `repoSlugSchema` — the `owner/name` slug `work.post` and
+out), `canonClaimPath(path)`, the canonical repo-relative form claim-scope
+comparisons share — leading `./`/`/` runs and trailing `/` stripped, `.`
+segments and empty segments dropped so `a/./b` and `a//b` scope like `a/b`,
+`..` kept verbatim for callers' own guards — and the exported
+`repoSlugSchema` — the `owner/name` slug `work.post` and
 `workJob` enforce and `busWorkFeedRepoKey` validates `--repo` feed filters
 against. `note`/`context` bodies may also carry `inReplyTo`, the printable
 envelope-id citation naming the message they answer — the same field

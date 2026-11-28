@@ -166,6 +166,31 @@ describe('executeBusClaimBody', () => {
     expect(acquire('path:ashlrai/phantom:src/*/bar/**', 'bus-lane', 600_000, 'op-2', root3)).toMatchObject({ status: 'acquired' });
   });
 
+  it('conflicts across claim paths that differ only by dot or empty segments', () => {
+    // 'src/./core' and 'src//core' name the same files as 'src/core', so a
+    // team lease on either spelling is the same prefix claim — the overlap
+    // check canonicalizes before comparing rather than missing the conflict.
+    for (const [index, spelling] of ['src/./core', 'src//core'].entries()) {
+      const root = tempDir('v2claim-');
+      const team = acquireCoordination({ root, origin: 'team',
+        key: teamClaimKey({ repo: 'ashlrai/phantom', path: spelling }), owner: 'agent:team-lane',
+        leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: `team-ev-${index}`,
+        teamTarget: { repo: 'ashlrai/phantom', path: spelling }, now: NOW });
+      expect(team.status).toBe('acquired');
+      expect(acquire('path:ashlrai/phantom:src/core/**', 'bus-lane', 600_000, `op-${index}`, root))
+        .toMatchObject({ status: 'conflict', holder: { owner: 'agent:team-lane' } });
+      expect(acquire('path:ashlrai/phantom:src/./core/x.ts', 'bus-lane', 600_000, `op-b-${index}`, root))
+        .toMatchObject({ status: 'conflict' });
+    }
+    // Provably disjoint scopes still coordinate independently.
+    const root2 = tempDir('v2claim-');
+    expect(acquireCoordination({ root: root2, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src/./core' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-d1',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src/./core' }, now: NOW }).status).toBe('acquired');
+    expect(acquire('path:ashlrai/phantom:src/./docs/**', 'bus-lane', 600_000, 'op-1', root2)).toMatchObject({ status: 'acquired' });
+  });
+
   it('lets non-overlapping keys coexist across claim forms', () => {
     const root = tempDir('v2claim-');
     expect(acquire('repo:ashlrai/phantom', 'a', 600_000, 'op-1', root)).toMatchObject({ status: 'acquired' });
@@ -1073,7 +1098,7 @@ describe('POST /api/verse/agent-bus claim operations', () => {
     let wire: unknown;
     const res = {
       headersSent: false,
-      writeHead(code: number) { status = code; this.headersSent = true; },
+      writeHead(this: { headersSent: boolean }, code: number) { status = code; this.headersSent = true; },
       end(payload: string) { wire = JSON.parse(payload); },
     } as unknown as ServerResponse;
     const ctx = { cfg: {}, token: HTTP_TOKEN, allowDispatch, readSession: { id: 'fake-session', expiresAt: now + 60_000 } } as VerseApiContext;
