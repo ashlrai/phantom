@@ -216,6 +216,43 @@ describe('buildChannelsOverview', () => {
     const row = byChannel(buildChannelsOverview(facts).channels)['imessage']!;
     expect(row).toMatchObject({ state: 'unknown', reason: 'imessage bridge process liveness unverifiable' });
   });
+
+  it('merges owner-thread delivery receipts into last outbound: newest proven wins, receipt-less channels stay unknown', () => {
+    const facts = connectedFacts();
+    facts.outboundAt = {
+      email: hoursAgo(1), telegram: hoursAgo(2), desktop: hoursAgo(5),
+      slack: hoursAgo(0.25), imessage: hoursAgo(5),
+    };
+    const by = byChannel(buildChannelsOverview(facts).channels);
+    expect(by['email']!.lastOutboundAt).toBe(hoursAgo(1));
+    expect(by['telegram']!.lastOutboundAt).toBe(hoursAgo(2));
+    expect(by['desktop']!.lastOutboundAt).toBe(hoursAgo(5));
+    // The receipt is newer than the dedicated reply store's hoursAgo(0.5).
+    expect(by['slack']!.lastOutboundAt).toBe(hoursAgo(0.25));
+    // The dedicated reply store's hoursAgo(3) is newer than the receipt's hoursAgo(5).
+    expect(by['imessage']!.lastOutboundAt).toBe(hoursAgo(3));
+    // No owner-channel receipts exist for these — honest unknown, never a guess.
+    for (const channel of ['mobile', 'page', 'cli'] as const) {
+      expect(by[channel]!.lastOutboundAt).toBe('unknown');
+    }
+  });
+
+  it('a proven receipt fills an unreadable or empty dedicated reply store', () => {
+    const facts = connectedFacts();
+    facts.relay.slack = { inbound: 'unknown', replies: 'unknown' };
+    facts.relay.imessage = { inbound: [hoursAgo(4)], replies: [] };
+    facts.outboundAt = { slack: hoursAgo(1), imessage: hoursAgo(2) };
+    const by = byChannel(buildChannelsOverview(facts).channels);
+    expect(by['slack']!.lastOutboundAt).toBe(hoursAgo(1));
+    expect(by['imessage']!.lastOutboundAt).toBe(hoursAgo(2));
+    // Without a receipt, an unreadable store still reads unknown and an empty
+    // one still reads "never sent" — the receipt adds proof, it never invents it.
+    const bare = connectedFacts();
+    bare.relay.slack = { inbound: 'unknown', replies: 'unknown' };
+    const bareBy = byChannel(buildChannelsOverview(bare).channels);
+    expect(bareBy['slack']!.lastOutboundAt).toBe('unknown');
+    expect(bareBy['imessage']!.lastOutboundAt).toBe(hoursAgo(3));
+  });
 });
 
 describe('phm channels (overview CLI)', () => {
@@ -286,6 +323,45 @@ describe('default reader', () => {
     expect(by['telegram']).toMatchObject({ state: 'not-set-up', address: null });
     expect(by['mobile']).toMatchObject({ state: 'not-set-up', verifiedSenders: 0 });
     expect(view.channels).toHaveLength(8);
+  });
+
+  it('folds the owner-thread delivery journal into last outbound per channel', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'channels-overview-'));
+    roots.push(root);
+    const runsDir = join(root, '.ashlr-runs');
+    mkdirSync(join(runsDir, 'leader'), { recursive: true });
+    writeFileSync(join(runsDir, 'leader', 'delivery-receipts.jsonl'), [
+      { messageId: 'm1', channel: 'telegram', state: 'delivered', at: hoursAgo(2) },
+      // A newer failed attempt never claims the outbound time.
+      { messageId: 'm1', channel: 'telegram', state: 'failed', at: hoursAgo(0.5) },
+      { messageId: 'm1', channel: 'desktop', state: 'delivered', at: hoursAgo(5) },
+      { messageId: 'm1', channel: 'email', state: 'delivered', at: hoursAgo(1) },
+      { messageId: 'm1', channel: 'slack', state: 'delivered', at: hoursAgo(4) },
+      { messageId: 'm1', channel: 'imessage', state: 'delivered', at: hoursAgo(3) },
+      // Off-contract channel name: the writer only ever emits owner channels.
+      { messageId: 'm1', channel: 'mobile', state: 'delivered', at: hoursAgo(0.1) },
+    ].map((r) => JSON.stringify(r)).join('\n') + '\n');
+    const source = (name: string): ChannelSource => ({
+      configMissing: () => [`${name} config`],
+      processAlive: () => false,
+      inbound: () => [],
+      replies: () => [],
+    });
+    const reader = createDefaultChannelsReader({
+      cfg: {} as never, homeDir: root, runsDir, env: {}, now: () => NOW,
+      sources: { slack: source('slack'), imessage: source('imessage') },
+      mobileDevices: () => 0,
+    });
+    const by = byChannel(buildChannelsOverview(await reader()).channels);
+    expect(by['telegram']!.lastOutboundAt).toBe(hoursAgo(2));
+    expect(by['desktop']!.lastOutboundAt).toBe(hoursAgo(5));
+    expect(by['email']!.lastOutboundAt).toBe(hoursAgo(1));
+    // The dedicated reply stores read empty, so the receipt is the proven outbound.
+    expect(by['slack']!.lastOutboundAt).toBe(hoursAgo(4));
+    expect(by['imessage']!.lastOutboundAt).toBe(hoursAgo(3));
+    for (const channel of ['mobile', 'page', 'cli'] as const) {
+      expect(by[channel]!.lastOutboundAt).toBe('unknown');
+    }
   });
 
   it('propagates an unreadable pairing store as unknown verified senders', async () => {

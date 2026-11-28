@@ -44,6 +44,7 @@ import {
 import { buildChannelsStatus, channelKindForSource, emailPairedCount, type ChannelsStatus } from './channels.js';
 import { readInboxEntries } from './mason-inbox.js';
 import { maskHandle } from './teammate-status.js';
+import { readLatestDeliveredAt } from '../leader/delivery-receipts.js';
 
 export * from './channels-schema.js';
 
@@ -60,6 +61,14 @@ export interface ChannelFacts {
   health: ChannelHealthReport | null;
   /** Slack/iMessage inbound and reply times (ISO); 'unknown' when the receipt store was unreadable. */
   relay: Record<ChannelName, { inbound: Unknowable<string[]>; replies: Unknowable<string[]> }>;
+  /**
+   * Newest confirmed owner-thread delivery per channel (ISO `at`), folded
+   * from `<runsDir>/leader/delivery-receipts.jsonl` — the per-channel
+   * delivery receipts `phm comms thread` joins. A channel absent here has
+   * no proven outbound on that journal; mobile, page and cli have no
+   * owner-channel receipts at all. Never a fabricated time.
+   */
+  outboundAt?: Partial<Record<ReceiverChannel, string>>;
   verified: { email: Unknowable<number>; mobile: Unknowable<number>; slack: Unknowable<number>; imessage: Unknowable<number> };
   emailConfig: 'ok' | 'missing' | 'invalid';
   /**
@@ -93,6 +102,35 @@ function newest(times: Unknowable<string[]>): Unknowable<string | null> {
   let best = Number.NEGATIVE_INFINITY;
   for (const t of times) { const ms = Date.parse(t); if (Number.isFinite(ms) && ms > best) best = ms; }
   return Number.isFinite(best) ? new Date(best).toISOString() : null;
+}
+
+/**
+ * ISO `at` of the newest proven owner-thread delivery on a channel,
+ * normalized; null when the facts carry none or an unparseable value —
+ * the receipt journal proves a send landed, nothing more.
+ */
+function provenOutboundAt(facts: ChannelFacts, channel: ReceiverChannel): string | null {
+  const raw = facts.outboundAt?.[channel];
+  if (typeof raw !== 'string') return null;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+/**
+ * The channel's last outbound across every receipt source: the dedicated
+ * reply store's verdict ('unknown' | ISO | null) overlaid with the
+ * owner-thread delivery receipts, which record sends the dedicated store
+ * cannot see — a different transport path, a missing store, or iMessage's
+ * last-send record that only remembers the newest attempt. A proven
+ * receipt fills an unknown or empty verdict and wins only when it is
+ * newer; it never overturns a newer dedicated-store time, and an
+ * unverifiable channel stays 'unknown', never a guessed time.
+ */
+function lastOutboundAcross(facts: ChannelFacts, channel: ReceiverChannel, dedicated: Unknowable<string | null>): Unknowable<string | null> {
+  const receipt = provenOutboundAt(facts, channel);
+  if (dedicated === 'unknown') return receipt ?? 'unknown';
+  if (dedicated === null) return receipt;
+  return receipt !== null && Date.parse(receipt) > Date.parse(dedicated) ? receipt : dedicated;
 }
 
 function within24h(times: Unknowable<string[]>, nowMs: number, parse: (t: string) => number = Date.parse): Unknowable<number> {
@@ -156,7 +194,7 @@ function relayRow(channel: ChannelName, facts: ChannelFacts, nowMs: number): Cha
   return {
     channel, label: LABELS[channel], state, reason: plain(reason),
     lastInboundAt: newest(relay.inbound),
-    lastOutboundAt: newest(relay.replies),
+    lastOutboundAt: lastOutboundAcross(facts, channel, newest(relay.replies)),
     messages24h: within24h(relay.inbound, nowMs),
     verifiedSenders: facts.verified[channel],
     address: maskAddress(facts.addresses[channel]),
@@ -217,8 +255,10 @@ export function buildChannelsOverview(facts: ChannelFacts): ChannelsOverview {
       lastInboundAt: row.lastSeenAt === 'unknown' ? 'unknown'
         : row.lastSeenAt === null ? null
           : Number.isFinite(lastSeenMs) ? new Date(lastSeenMs).toISOString() : 'unknown',
-      // No per-channel delivery receipt exists for these yet: honest unknown.
-      lastOutboundAt: 'unknown',
+      // Desktop, Telegram and Email have no dedicated reply store, but the
+      // owner-thread delivery journal proves their outbound sends; mobile,
+      // page and cli have no owner-channel receipts, so they stay unknown.
+      lastOutboundAt: provenOutboundAt(facts, channel) ?? 'unknown',
       messages24h: facts.inbox === null ? 'unknown' : within24h(inboxBy.get(channel) ?? [], nowMs, parseInboxAt),
       verifiedSenders,
       address: maskAddress(facts.addresses[channel]),
@@ -326,6 +366,7 @@ export function createDefaultChannelsReader(opts: DefaultChannelsReaderOptions =
       inbox: inboxRead.sourceState === 'degraded' ? null : inboxRead.entries.map((e) => ({ at: e.at, source: e.source })),
       health,
       relay,
+      outboundAt: readLatestDeliveredAt(runsDir),
       verified: {
         email: await settle(() => emailPairedCount(runsDir)),
         mobile: await settle(opts.mobileDevices ?? (() => createRemoteDeviceStore().list().filter((d) => d.revokedAt === null).length)),
