@@ -344,14 +344,17 @@
  *   - the fleet runtime journal's recurring adverse dispatch evidence:
  *     the seat-router exclusions whose reason kinds mean broken or
  *     missing eligibility evidence (unknown-usage, unreachable,
- *     signed-out, other), the seat-evaluated park and split holds, and
- *     the code-shaped skip reasons — each folded per cell across
- *     distinct items and UTC days inside the 7-day window
+ *     signed-out, other), the seat-evaluated park and split holds, the
+ *     code-shaped skip reasons, and the route.lane-auto.v1 autoModel
+ *     verdicts that never pick ('held') or never leave the configured
+ *     prior default ('threshold-fallback') — each folded per cell
+ *     across distinct items and UTC days inside the 7-day window
  *     (runtimeJournalBacklogItems below). Until now the journal's only
  *     readers were the Fleet live projection and the ops/attribution
  *     joins, and tick.json keeps only the LAST tick's held list, so
- *     recurring holds, chronic seat exclusions and repeating skip codes
- *     were invisible history that never became work;
+ *     recurring holds, chronic seat exclusions, repeating skip codes
+ *     and starved lane-auto verdicts were invisible history that never
+ *     became work;
  *   - the incident-gate decision ledger's recurring failure classes and
  *     stuck tightenings: the per-class rows `ashlr fleet incident-gate
  *     --apply` appends to fleet/incident-gates.jsonl under the Ashlr
@@ -2728,15 +2731,18 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet/runtime/runs.jsonl under the ASHLR home — records every
   // work-item outcome with the route decision behind it (backend, lane,
   // seatId, the SeatRouter seatDecision with per-seat exclusion details,
-  // the park/split RouteHold, the skipReason). Until now its only
+  // the park/split RouteHold, the skipReason, the route.lane-auto.v1
+  // autoModel verdict). Until now its only
   // readers were the Fleet live projection (/api/verse/fleet/live
   // behind `phm fleet lane-slots`/`phm lanes`/`phm map`) and the
   // ops/attribution joins, and tick.json keeps only the LAST tick's
   // held list — so recurring seat-exclusion evidence (unknown-usage,
   // unreachable, signed-out, other; capacity and policy kinds never
   // emit), seat-evaluated park/split holds (policy holds carry no
-  // seatDecision and are intended backpressure) and code-shaped skip
-  // reasons were invisible history. Same bounded tail read the writer's
+  // seatDecision and are intended backpressure), code-shaped skip
+  // reasons and lane-auto verdicts that never pick ('held') or never
+  // leave the prior default ('threshold-fallback') were invisible
+  // history. Same bounded tail read the writer's
   // own rotation bound allows — RUNS_JOURNAL_MAX_BYTES per file across
   // the current and .1 predecessor — each cell emitting only at the
   // recurring bars of distinct items across distinct UTC days inside
