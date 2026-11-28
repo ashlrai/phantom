@@ -35,7 +35,8 @@ which computer. Queued jobs no computer can take are grouped by lane with the
 reason ("waiting: 2 gemini jobs (no computer advertises the gemini lane)").
 It only plans; it launches, moves and stops nothing.
 doctor: what each joined computer is missing before it can take jobs: reachable,
-which lane CLIs (claude, codex, devin, gemini, local model) are installed and
+which lane CLIs (claude, codex, devin, gemini, local model, plus any community
+agent CLI the computer advertises such as aider or goose) are installed and
 signed in, which ashlrai repo clones exist and free disk, with one fix line per gap.
 Other computers show unknown where they cannot be checked yet.
 offload: opt-in, off by default. When this computer would hold a launch (over load

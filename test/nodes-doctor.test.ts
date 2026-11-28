@@ -136,6 +136,47 @@ describe('readNodesDoctor', () => {
     expect(report.nodes.find(n => n.name === 'node-c')!.lanes.find(l => l.lane === 'local-model')!.status).toBe('unknown');
   });
 
+  it('a node advertising a community agent-CLI cap gets a lane check for it', async () => {
+    // node-d joined with --caps aider,codex: the doctor examines the aider
+    // lane instead of ignoring the cap. Remote probes do not exist, so the
+    // advertised cap is the evidence — the same rule the standard lanes follow.
+    const pool: NodesRegistry = { source: 'pool-witness', selfNode: 'home-mac',
+      pool: { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' }, state: {
+        version: 'drive.nodes.v1', sequence: 1, observedAt: NOW - 1_000,
+        nodes: [{ nodeId: 'node-d', session: 1, heartbeatAt: NOW - 2_000, expiresAt: NOW + 30_000, caps: ['aider', 'codex'], slots: 2 }],
+        leader: null, jobs: [] } };
+    const viewDeps: NodesViewDeps = { ...deps([['node-d', true]]), readRegistry: () => pool };
+    const report = await readNodesDoctor({ view: viewDeps, probe: fake({ 'home-mac': healthy() }) });
+    const d = report.nodes.find(n => n.name === 'node-d')!;
+    expect(d.lanes.map(l => l.lane)).toEqual(['claude', 'codex', 'devin', 'gemini', 'local-model', 'aider']);
+    expect(d.lanes.find(l => l.lane === 'aider')).toMatchObject({ status: 'ready' });
+    expect(d.lanes.find(l => l.lane === 'codex')).toMatchObject({ status: 'ready' });
+  });
+
+  it('non-agent caps add no lane checks; a community cap this computer lacks is a gap', async () => {
+    // node-e advertises build, gh and a runner pack — none are agent CLIs, so
+    // its lane set stays the five standard lanes. This computer joined with
+    // --caps aider and the probe found no aider binary: the advertised lane
+    // is a named gap, the same verdict a standard lane gets.
+    const pool: NodesRegistry = { source: 'pool-witness', selfNode: 'home-mac',
+      pool: { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' }, state: {
+        version: 'drive.nodes.v1', sequence: 1, observedAt: NOW - 1_000,
+        nodes: [
+          { nodeId: 'home-mac', session: 1, heartbeatAt: NOW - 2_000, expiresAt: NOW + 30_000, caps: ['aider'], slots: 1 },
+          { nodeId: 'node-e', session: 1, heartbeatAt: NOW - 2_000, expiresAt: NOW + 30_000, caps: ['build', 'gh', 'pack:codex-file'], slots: 2 },
+        ],
+        leader: null, jobs: [] } };
+    const viewDeps: NodesViewDeps = { ...deps([['node-e', true]]), readRegistry: () => pool };
+    const reply = healthy();
+    reply.lanes['aider'] = { installed: false, signedIn: false };
+    const report = await readNodesDoctor({ view: viewDeps, probe: fake({ 'home-mac': reply }) });
+    const e = report.nodes.find(n => n.name === 'node-e')!;
+    expect(e.lanes.map(l => l.lane)).toEqual(['claude', 'codex', 'devin', 'gemini', 'local-model']);
+    const self = report.nodes.find(n => n.name === 'home-mac')!;
+    expect(self.lanes.find(l => l.lane === 'aider')).toMatchObject({ status: 'not-installed' });
+    expect(self.gaps).toContain('home-mac: aider is not installed. Install it on that Mac.');
+  });
+
   it('a computer with no node records reports an unknown advertisement, not "not advertised"', async () => {
     // node-c is on the tailnet but never joined this registry, so its lane
     // advertisement is unknown — distinct from node-b, which joined and
@@ -248,6 +289,16 @@ describe('localProbe lane verdicts', () => {
     const reply = localProbe(runFn(() => ({ status: 0 })), home);
     expect(reply.lanes['gemini']).toMatchObject({ installed: true, signedIn: 'unknown' });
     expect(reply.lanes['gemini']!.reason).toBeUndefined();
+  });
+
+  it('a community agent CLI reports file presence with unknown sign-in', () => {
+    // droid is a --caps community harness, not a standard lane: the probe
+    // covers it by the same file-presence check join pays, and no sign-in
+    // command exists for it, so signedIn stays 'unknown' — never guessed.
+    touch('droid');
+    const reply = localProbe(runFn(() => ({ status: 0 })), home);
+    expect(reply.lanes['droid']).toMatchObject({ installed: true, signedIn: 'unknown' });
+    expect(reply.lanes['droid']!.reason).toBeUndefined();
   });
 });
 
