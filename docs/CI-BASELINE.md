@@ -48,6 +48,17 @@ unpinned checkout (which falls back to the event's merge commit on pull
 requests), a non-SHA ref or a second checkout of anything else leaves the
 job unverifiable. A log with a checkout step and no valid head proof keeps
 freshness unknown even when it contains no recognizable failure or test pass.
+One exception: a `git log -1` receipt naming a different SHA is excused
+when the same log shows the checkout resolved to the event merge ref
+(`refs/remotes/pull/<n>/merge` or the merge queue's `gh-readonly-queue`
+branch) -- actions/checkout's pull_request default. ci.yml's OS aggregate
+gates are the only always-on jobs that take that default; they run
+`ci-os-gate.mjs`, a pure needs-context reducer that never reads the
+workspace, so their merge-tree logs carry no head evidence either way and
+drop from evidence like the checkout-free aggregators below, whether they
+passed or report a derivative need failure. A binding receipt, a git-log
+echo of any other ref, or consumable output (a recognizable failure or
+per-test pass) in a merge-tree log keeps the run unknown.
 Jobs that never check out the workspace (aggregators such
 as Merge Gate) cannot emit any proof; their logs are dropped from evidence
 only when they carry no parseable failure or per-test pass output. The
@@ -485,8 +496,15 @@ marker to the step's script when every script line is a `node --test`
 invocation or one whitelisted gate script, all gate lines naming the
 same file: `ci-fetch-range`, `ci-source-binding`, `ci-site-lane`,
 `ci-mac-rotation`, `ci-dep-graph`, `ci-fast-select`, `ci-fast-inputs`,
-`ci-green-reuse` and `ci-mcp-selection` group under
-`.github/scripts/<script> > (<gate>)`. Mixed bash, `uses:` actions,
+`ci-green-reuse`, `ci-mcp-selection`, `ci-os-paths` and
+`ci-os-typecheck` group under
+`.github/scripts/<script> > (<gate>)`. `ci-os-gate` is not listed: it only
+runs in the OS aggregate gate jobs, whose pull_request logs drop as
+merge-tree aggregators and whose verified failures always derive from a
+`needs` result the upstream job's own log already reports. A `tsc`
+diagnostic inside a gate step's output suppresses the gate group the same
+way a vitest `FAIL` or TAP `not ok` does, because the per-file
+`(typecheck)` groups own it. Mixed bash, `uses:` actions,
 non-whitelisted scripts and ambiguous multi-script steps stay
 unattributed, and a `not ok` or vitest `FAIL` line in the step's own
 output means the companion test runner owns the failure -- the gate
