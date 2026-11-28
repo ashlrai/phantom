@@ -9,14 +9,14 @@ import type { AshlrConfig } from '../core/types.js';
 
 export const usage = `Usage: phm bus thread create <title> [--peer <id>] [--json]
        phm bus thread join <thread-id> [--peer <id>] [--json]
-       phm bus thread read|pending|hops <thread-id> [--peer <id>] [--from <peer>] [--exclude-from <peer>] [--contains <text>] [--since <15m|2h|1d|ISO|ms>] [--before <15m|2h|1d|ISO|ms>] [--json]
-       phm bus thread receipts <thread-id> [--peer <id>] [--since <15m|2h|1d|ISO|ms>] [--before <15m|2h|1d|ISO|ms>] [--json]
+       phm bus thread read|pending|hops <thread-id> [--peer <id>] [--from <peer>] [--exclude-from <peer>] [--contains <text>] [--since <15m|2h|1d|ISO|ms>] [--before <15m|2h|1d|ISO|ms>] [--id <envelope-id>] [--json]
+       phm bus thread receipts <thread-id> [--peer <id>] [--since <15m|2h|1d|ISO|ms>] [--before <15m|2h|1d|ISO|ms>] [--id <envelope-id>] [--json]
        phm bus thread ack <thread-id> <delivery-id> [--peer <id>] [--json]
        phm bus thread post <thread-id> <body> [--peer <id>] [--json]
-       phm bus thread list [--peer <id>] [--contains <text>] [--json]
+       phm bus thread list [--peer <id>] [--contains <text>] [--job <id>] [--json]
        phm bus board pending [--peer <id>] [--all] [--job <id>] [--id <envelope-id>] [--contains <text>] [--since <15m|2h|1d|ISO|ms>] [--before <15m|2h|1d|ISO|ms>] [--from <agent>] [--exclude-from <agent>] [--json]
        phm bus task create <thread-id> <fleet-item-id> <title> [--peer <id>] [--json]
-       phm bus task list <thread-id> [--peer <id>] [--contains <text>] [--json]
+       phm bus task list <thread-id> [--peer <id>] [--contains <text>] [--job <id>] [--json]
        phm bus task claim|renew|release <task-id> [--peer <id>] [--json]
        phm bus task handoff <task-id> <peer-id> [--peer <id>] [--json]
 
@@ -31,28 +31,33 @@ board pending digests one peer's unacknowledged deliveries and per-task hold
 state; --all instead returns the fleet-wide digest every thread member shares
 (the same read fleet_bus_board and comms inbox's board source project, reported
 under peers rather than peer). --job keeps only threads carrying a task whose
-fleet item id cites it. Thread delivery reads support --from and --exclude-from
-on the stored sender label; including and excluding the same label matches
+fleet item id cites it — on board pending that scopes the whole digest, on
+thread list it keeps only the joined threads carrying such a task, and on
+task list it keeps only the tasks whose itemId cites it. Thread delivery
+reads support --from and --exclude-from on the stored sender label;
+including and excluding the same label matches
 nothing. board pending takes the same two flags as agent refs resolved through
 the identity registry — the rule every other bus read's sender filter applies,
 with exact-label matching kept on an unresolvable ref or unreadable registry —
 so deliveries keep only posts the named identity sent while tasks, which
 record no author, never match under --from and stay listed under
---exclude-from. --id keeps only the unacknowledged delivery whose stored
-envelope id — the id thread ack and hops report — strictly equals it, the
-same exact-id match every other bus read applies; tasks record no envelope
-id, so under --id the task list is provably empty rather than padded, and a
-thread rollup lists only while that surviving delivery remains. --contains,
---since and --before are the same rules
-every other bus read applies — the normalized needle over scrubbed display
-text, and the [since, before) window on each row's recorded timestamp —
-scoped to the fields each read carries: thread read, pending and hops take
-all five on each delivery's createdAt, post text and sender label, thread
-receipts takes --since/--before on receivedAt, and thread/task list take
---contains on the stored title. Tasks and threads record no timestamp, so a
-time bound is valid only where a recorded time exists; --job, --id and --all
-remain board pending only, and a filter valid nowhere on the command is a
-usage error.`;
+--exclude-from. --id keeps only rows keyed by the stored envelope id — the id
+thread ack and hops report — strictly equal to it: on board pending the
+unacknowledged delivery (tasks record no envelope id, so under --id the task
+list is provably empty rather than padded, and a thread rollup lists only
+while that surviving delivery remains), on thread read, pending and hops the
+matching delivery, and on thread receipts the receipts whose deliveryId names
+it. --contains, --since and --before are the same rules every other bus read
+applies — the normalized needle over scrubbed display text, and the
+[since, before) window on each row's recorded timestamp — scoped to the
+fields each read carries: thread read, pending and hops take all five on each
+delivery's createdAt, post text and sender label plus --id on the delivery's
+stored envelope id, thread receipts takes --since/--before on receivedAt plus
+--id on deliveryId, and thread/task list take --contains on the stored title
+plus --job on the fleet item citation. Tasks and threads record no timestamp,
+so a time bound is valid only where a recorded time exists; --all remains
+board pending only, and a filter valid nowhere on the command is a usage
+error.`;
 
 const ARITIES: Record<string, number> = {
   'thread:create': 1, 'thread:join': 1, 'thread:post': 2,
@@ -165,18 +170,23 @@ export async function cmdFleetBus(args: string[], deps: FleetBusDeps = {}): Prom
   // Each board read takes only the filters its stored rows carry: deliveries
   // and receipts keep a recorded-time window, deliveries and titles keep the
   // --contains text rule, the delivery reads keep the --from/--exclude-from
-  // sender rule on the stored sender label, board pending keeps the same two
-  // flags resolved through the agent identity registry plus the --id exact
-  // envelope match on each delivery's stored id, and --job/--all stay board
-  // pending's own flags.
+  // sender rule on the stored sender label, the delivery reads and receipts
+  // keep the --id exact envelope match on the stored delivery id, board
+  // pending keeps the same two sender flags resolved through the agent
+  // identity registry plus the --id exact envelope match on each delivery's
+  // stored id, and --job/--all stay the digest and title reads' own flags —
+  // --job scopes board pending's whole digest and narrows thread/task list
+  // to the rows citing that fleet item.
   // Anywhere else a flag is refused rather than silently dropped, and --all
   // leaves no single peer view for --peer to select.
   const TIME_FILTERED = new Set(['board:pending', 'thread:read', 'thread:pending', 'thread:hops', 'thread:receipts']);
   const TEXT_FILTERED = new Set(['board:pending', 'thread:read', 'thread:pending', 'thread:hops', 'thread:list', 'task:list']);
   const SENDER_FILTERED = new Set(['board:pending', 'thread:read', 'thread:pending', 'thread:hops']);
+  const ID_FILTERED = new Set(['board:pending', 'thread:read', 'thread:pending', 'thread:hops', 'thread:receipts']);
+  const JOB_FILTERED = new Set(['board:pending', 'thread:list', 'task:list']);
   if ((parsed.all === true && parsed.command !== 'board:pending') ||
-    (parsed.job !== undefined && parsed.command !== 'board:pending') ||
-    (parsed.id !== undefined && parsed.command !== 'board:pending') ||
+    (parsed.job !== undefined && !JOB_FILTERED.has(parsed.command)) ||
+    (parsed.id !== undefined && !ID_FILTERED.has(parsed.command)) ||
     ((parsed.since !== undefined || parsed.before !== undefined) && !TIME_FILTERED.has(parsed.command)) ||
     (parsed.contains !== undefined && !TEXT_FILTERED.has(parsed.command)) ||
     ((parsed.from !== undefined || parsed.excludeFrom !== undefined) && !SENDER_FILTERED.has(parsed.command)) ||
@@ -208,10 +218,12 @@ export async function cmdFleetBus(args: string[], deps: FleetBusDeps = {}): Prom
     ...(parsed.contains === undefined ? {} : { contains: parsed.contains }),
     ...(parsed.from === undefined ? {} : { from: parsed.from }),
     ...(parsed.excludeFrom === undefined ? {} : { excludeFrom: parsed.excludeFrom }),
+    ...(parsed.id === undefined ? {} : { id: parsed.id }),
   };
   const receiptFilter: BusBoardReceiptFilter = {
     ...(boardSinceMs === undefined ? {} : { sinceMs: boardSinceMs }),
     ...(boardBeforeMs === undefined ? {} : { beforeMs: boardBeforeMs }),
+    ...(parsed.id === undefined ? {} : { id: parsed.id }),
   };
   // board pending's sender flags take agent refs resolved through the
   // identity registry — the rule every other bus read's sender filter
@@ -244,7 +256,7 @@ export async function cmdFleetBus(args: string[], deps: FleetBusDeps = {}): Prom
       case 'thread:post': result = await board.post(actor, first!, second!); break;
       case 'thread:read': result = board.readThread(actor, first!, false, deliveryFilter); break;
       case 'thread:pending': result = board.readThread(actor, first!, true, deliveryFilter); break;
-      case 'thread:list': result = board.listThreads(actor, parsed.contains); break;
+      case 'thread:list': result = board.listThreads(actor, parsed.contains, parsed.job); break;
       case 'thread:ack': result = board.acknowledge(actor, first!, second!); break;
       case 'thread:receipts': result = board.receipts(actor, first!, receiptFilter); break;
       case 'thread:hops': result = board.hops(actor, first!, deliveryFilter); break;
@@ -254,7 +266,7 @@ export async function cmdFleetBus(args: string[], deps: FleetBusDeps = {}): Prom
           : board.pending(actor, Date.now(), parsed.job, parsed.contains, boardSinceMs, boardBeforeMs, pendingSender, parsed.id);
         break;
       case 'task:create': result = board.createTask(actor, first!, second!, third!); break;
-      case 'task:list': result = board.listTasks(actor, first!, parsed.contains); break;
+      case 'task:list': result = board.listTasks(actor, first!, parsed.contains, parsed.job); break;
       case 'task:claim': result = board.claimTask(actor, first!); break;
       case 'task:handoff': result = board.handoffTask(actor, first!, second!); break;
       case 'task:renew': result = board.renewTask(actor, first!); break;

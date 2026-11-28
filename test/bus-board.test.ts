@@ -15,7 +15,7 @@ let boardRoot: string;
 let queueDir: string;
 let fleet: SharedStore;
 const cfg = { foundry: {} } as AshlrConfig;
-const disabledCfg = { foundry: { eventBus: false } } as AshlrConfig;
+const disabledCfg = { foundry: { eventBus: false } } as unknown as AshlrConfig;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'bus-board-'));
@@ -306,13 +306,35 @@ describe('bus board thread read filters', () => {
     expect(store.receipts('alice', first, { beforeMs: cutoff })).toHaveLength(1);
     expect(store.receipts('alice', first, { sinceMs: cutoff, beforeMs: cutoff })).toHaveLength(0);
 
-    // Title reads take --contains under the same normalized rule.
+    // --id keeps only rows keyed by the stored envelope id — the same exact
+    // retained-envelope match board pending --id applies: the delivery reads
+    // match delivery.id and receipts match deliveryId.
+    const [firstPost, secondPost] = store.readThread('bob', first);
+    expect(store.readThread('bob', first, false, { id: firstPost!.id }).map((row) => row.id))
+      .toEqual([firstPost!.id]);
+    expect(store.readThread('bob', first, false, { id: 'absent-envelope' })).toHaveLength(0);
+    expect(store.hops('bob', first, { id: secondPost!.id }).map((hop) => hop.envelopeId))
+      .toEqual([secondPost!.id]);
+    expect(store.receipts('alice', first, { id: firstPost!.id }).map((row) => row.deliveryId))
+      .toEqual([firstPost!.id]);
+    expect(store.receipts('alice', first, { id: secondPost!.id }).map((row) => row.deliveryId))
+      .toEqual([secondPost!.id]);
+    expect(store.receipts('alice', first, { id: 'absent-envelope' })).toHaveLength(0);
+
+    // Title reads take --contains under the same normalized rule, and --job
+    // keeps only threads carrying a task whose itemId cites it and tasks
+    // whose itemId equals it — the same citation board pending --job applies.
     expect(store.listThreads('bob').map((row) => row.id).sort()).toEqual([first, second].sort());
     expect(store.listThreads('bob', 'frobnicate').map((row) => row.id)).toEqual([first]);
     expect(store.listThreads('bob', '  ABSENT  ')).toHaveLength(0);
+    expect(store.listThreads('bob', undefined, 'item-frob').map((row) => row.id)).toEqual([first]);
+    expect(store.listThreads('bob', undefined, 'item-absent')).toHaveLength(0);
+    expect(store.listThreads('bob', 'watering', 'item-frob')).toHaveLength(0);
     expect(store.listTasks('alice', first).map((row) => row.itemId).sort()).toEqual(['item-frob', 'item-other']);
     expect(store.listTasks('alice', first, 'frobnicate').map((row) => row.itemId)).toEqual(['item-frob']);
     expect(store.listTasks('alice', first, 'absent')).toHaveLength(0);
+    expect(store.listTasks('alice', first, undefined, 'item-frob').map((row) => row.itemId)).toEqual(['item-frob']);
+    expect(store.listTasks('alice', first, undefined, 'item-absent')).toHaveLength(0);
   });
 });
 
@@ -1136,11 +1158,25 @@ describe('phm bus CLI end-to-end', () => {
     expect(allFloor).toBe(0);
     expect(JSON.parse(output.at(-1)!).result.deliveries.matched).toBe(0);
 
-    // --job and --all stay board pending's own flags, and a filter valid
-    // nowhere on the command — a time bound on a title-only list, a text
-    // needle on text-less receipts — is refused rather than silently dropped.
-    expect((await call(['thread', 'list', '--job', 'job-7'])).code).toBe(2);
+    // --job also narrows the title reads to rows citing the fleet item:
+    // thread list keeps only joined threads carrying such a task and task
+    // list only the tasks whose itemId equals it, composing with --contains.
+    const jobThreads = await call(['thread', 'list', '--job', 'job-7']);
+    expect(jobThreads.code).toBe(0);
+    expect(jobThreads.value.result.map((row: { id: string }) => row.id)).toEqual([thread]);
+    const jobTasks = await call(['task', 'list', thread, '--job', 'job-7']);
+    expect(jobTasks.code).toBe(0);
+    expect(jobTasks.value.result.map((row: { itemId: string }) => row.itemId)).toEqual(['job-7']);
+    expect((await call(['task', 'list', thread, '--job', 'job-absent'])).value.result).toHaveLength(0);
+    expect((await call(['task', 'list', thread, '--job', 'job-7', '--contains', 'absent'])).value.result).toHaveLength(0);
+
+    // --all stays board pending's own flag, --job stays off the delivery
+    // reads and receipts (they record no fleet item citation), and a filter
+    // valid nowhere on the command — a time bound on a title-only list, a
+    // text needle on text-less receipts — is refused rather than dropped.
     expect((await call(['thread', 'list', '--all'])).code).toBe(2);
+    expect((await call(['thread', 'read', thread, '--job', 'job-7'])).code).toBe(2);
+    expect((await call(['thread', 'receipts', thread, '--job', 'job-7'])).code).toBe(2);
     expect((await call(['task', 'list', thread, '--before', '1d'])).code).toBe(2);
     expect((await call(['thread', 'receipts', thread, '--contains', 'x'])).code).toBe(2);
     // --contains now reaches the title reads it always applied to.
@@ -1180,11 +1216,25 @@ describe('phm bus CLI end-to-end', () => {
     expect(allResult.deliveries.items[0].id).toBe(target);
     expect(allResult.tasks.matched).toBe(0);
 
-    // --id stays board pending's own flag: it composes with the other
-    // filters, is a usage error on any other command, and an ungrammatical
-    // id is refused at parse like every other flag value.
+    // --id composes with the other filters and reaches the per-thread reads
+    // whose rows carry the same stored envelope id: thread read, pending and
+    // hops keep the matching delivery and receipts keeps the receipts naming
+    // it, while it stays a usage error on the title reads — thread and task
+    // ids are board identifiers, not retained envelope ids — and an
+    // ungrammatical id is refused at parse like every other flag value.
     expect((await call(['board', 'pending', '--id', target, '--contains', 'absent'], 'bob')).value.result.deliveries.matched).toBe(0);
-    expect((await call(['thread', 'read', thread, '--id', target], 'bob')).code).toBe(2);
+    const byThreadId = await call(['thread', 'read', thread, '--id', target], 'bob');
+    expect(byThreadId.code).toBe(0);
+    expect(byThreadId.value.result.map((row: { id: string }) => row.id)).toEqual([target]);
+    expect((await call(['thread', 'pending', thread, '--id', target], 'bob')).value.result).toHaveLength(1);
+    expect((await call(['thread', 'hops', thread, '--id', target], 'bob')).value.result[0].envelopeId).toBe(target);
+    expect((await call(['thread', 'receipts', thread, '--id', target], 'alice')).value.result).toHaveLength(0);
+    await call(['thread', 'ack', thread, target], 'bob');
+    const acked = await call(['thread', 'receipts', thread, '--id', target], 'alice');
+    expect(acked.code).toBe(0);
+    expect(acked.value.result.map((row: { deliveryId: string }) => row.deliveryId)).toEqual([target]);
+    expect((await call(['task', 'list', thread, '--id', target], 'bob')).code).toBe(2);
+    expect((await call(['thread', 'list', '--id', target], 'bob')).code).toBe(2);
     expect((await call(['board', 'pending', '--id', 'has space'], 'bob')).code).toBe(2);
   });
 

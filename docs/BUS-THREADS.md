@@ -127,8 +127,8 @@ The view and receipt check share one locked snapshot; labels remain cooperative
 and neither a pending read nor a receipt grants execution authority.
 
 Thread reads support filters scoped to the fields each read's rows carry. `thread read`, `thread pending`
-and `thread hops` accept `--contains`, `--since`, `--before`, `--from` and
-`--exclude-from`: `--contains` keeps only posts whose text carries the
+and `thread hops` accept `--contains`, `--since`, `--before`, `--from`,
+`--exclude-from` and `--id`: `--contains` keeps only posts whose text carries the
 normalized needle under the same scrubbed display-text rule, `--since`
 (15m, 2h, 1d, epoch ms or an ISO time) keeps only deliveries whose
 `createdAt` reaches the inclusive cutoff, and `--before` keeps only
@@ -137,15 +137,28 @@ deliveries recorded strictly before its own cutoff, so the pair reads one
 named peer sent and `--exclude-from` drops them, compared on the stored
 `sender` routing label so a
 sender both included and excluded matches nothing and a label no delivery
-carries is an honest empty match; `thread hops` filters the same deliveries
+carries is an honest empty match; `--id` keeps only the delivery whose
+stored envelope id — the id `thread ack` and `hops` report — strictly
+equals it, the same exact retained-envelope match `board pending --id`
+applies; `thread hops` filters the same deliveries
 before projecting metadata. `thread receipts`
-accepts `--since`/`--before` on each receipt's `receivedAt`. `thread list`
-and `task list` accept `--contains` on the stored thread or task title.
+accepts `--since`/`--before` on each receipt's `receivedAt` plus `--id`
+keeping only receipts whose `deliveryId` names that envelope — the
+sender-side "was that delivery acknowledged" read. `thread list`
+and `task list` accept `--contains` on the stored thread or task title plus
+`--job` on the fleet item citation: `thread list --job` keeps only joined
+threads carrying a task whose `itemId` cites it — the same thread-scope rule
+`board pending --job` applies — and `task list --job` keeps only the tasks
+whose `itemId` equals it.
 A flag is valid only where the row carries the field it filters: `--contains`
 on `thread receipts` (receipt rows keep no text), `--since`/`--before` on
-`thread list` or `task list` (threads and tasks record no timestamp) and
+`thread list` or `task list` (threads and tasks record no timestamp),
+`--job` on the delivery reads and receipts (deliveries and receipts record
+no fleet item citation — the thread-scope question `thread list --job`
+answers), `--id` on `thread list` or `task list` (thread and task ids are
+board identifiers, not retained envelope ids), and
 `--from`/`--exclude-from` anywhere but the delivery reads are
-usage errors rather than silently ignored flags, and `--job`/`--all` remain
+usage errors rather than silently ignored flags, and `--all` remains
 `board pending` only. Filtering reads history only: it never acknowledges a
 delivery, claims a task or grants authority.
 
