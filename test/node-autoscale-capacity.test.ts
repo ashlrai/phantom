@@ -116,6 +116,38 @@ describe('harness adapters', () => {
     expect(sessions.find(s => s.harness === 'devin')?.memBytes).toBeNull();
     expect(sessions.find(s => s.harness === 'grok')?.memBytes).toBe(10);
   });
+
+  it('does not count a harness process spawned beneath a web browser as a session', () => {
+    // `claude --chrome-native-host` is the Claude for Chrome native messaging
+    // host: the same versioned binary and kernel name as a real session, but a
+    // ~12 MiB helper Chrome spawns — not an agent session. argv is never read,
+    // so a browser ancestor is the only signal that excludes it; without the
+    // check its tiny footprint publishes an absurd agents_runnable_now.
+    const rows: ProcessRow[] = [
+      { pid: 1, ppid: 0, name: 'launchd', memBytes: MIB, cpuPercent: 0 },
+      { pid: 722, ppid: 1, name: 'Google Chrome', memBytes: 900 * MIB, cpuPercent: 0 },
+      { pid: 1256, ppid: 722, name: '2.1.126', memBytes: 12 * MIB, cpuPercent: 0 },
+      { pid: 1300, ppid: 1, name: 'zsh', memBytes: 5 * MIB, cpuPercent: 0 },
+      { pid: 1400, ppid: 1300, name: '2.1.321', memBytes: 320 * MIB, cpuPercent: 3 },
+    ];
+    expect(harnessSessions(rows, childrenFromRows(rows))).toEqual([
+      { harness: 'claude', rootPid: 1400, processes: 1, memBytes: 320 * MIB, cpuPercent: 3 },
+    ]);
+  });
+
+  it('excludes a browser-spawned harness at any depth and keeps sessions whose ancestry is unreadable', () => {
+    const rows: ProcessRow[] = [
+      { pid: 1, ppid: 0, name: 'launchd', memBytes: MIB, cpuPercent: 0 },
+      { pid: 50, ppid: 1, name: 'firefox', memBytes: 400 * MIB, cpuPercent: 0 },
+      { pid: 51, ppid: 50, name: 'node', memBytes: 30 * MIB, cpuPercent: 0 },
+      { pid: 52, ppid: 51, name: 'codex', memBytes: 200 * MIB, cpuPercent: 2 },
+      // pgrep+footprint rows carry no ppid: ancestry unprovable, session kept.
+      { pid: 60, ppid: null, name: 'grok', memBytes: 100, cpuPercent: null },
+    ];
+    expect(harnessSessions(rows, childrenFromRows(rows))).toEqual([
+      { harness: 'grok', rootPid: 60, processes: 1, memBytes: 100, cpuPercent: null },
+    ]);
+  });
 });
 
 describe('measurement parsers (recorded host output)', () => {
@@ -172,6 +204,40 @@ describe('measurement parsers (recorded host output)', () => {
     expect(s.mem).toEqual({ totalBytes: MBP_RECORDED.totalBytes, freeBytes: (265797 + 221999) * 16384, freePercent: 43, pressureLevel: 1 });
     expect(s.swap.usedBytes).toBe(Math.round(7113.31 / 1024 * GIB));
     expect(s.cpu.busyPercent).toBe(95);
+  });
+
+  it('measures through ps and a browser-spawned harness helper is not a session', async () => {
+    // Recorded shape of the real table: `claude --chrome-native-host` (pid
+    // 1256, ~12 MiB, parent Google Chrome) shares the versioned binary's
+    // kernel name with a real session. Counted as a session its footprint
+    // would publish claude runnable counts in the hundreds.
+    const ps = [
+      '    1     0    512   0.0 launchd',
+      '  722     1 921600   0.0 Google Chrome',
+      ' 1256   722  12288   0.0 2.1.126',
+      ' 1300     1   5120   0.0 zsh',
+      ' 1400  1300 204800   8.0 codex',
+    ].join('\n') + '\n';
+    const run = async (file: string, args: string[]): Promise<string | null> => {
+      if (file === '/bin/ps') return ps;
+      if (file === '/usr/bin/vm_stat') return MBP_RECORDED.vmStat;
+      if (file === '/usr/bin/memory_pressure') return MBP_RECORDED.pressure;
+      if (file === '/usr/sbin/sysctl') return args[0] === '-n' ? '1\n' : MBP_RECORDED.swap;
+      return null;
+    };
+    const host: MeasureHost = {
+      platform: 'darwin', now: () => T0, hostname: () => 'MacBook-Pro-2.local', loadavg: () => MBP_RECORDED.load,
+      totalmem: () => MBP_RECORDED.totalBytes, freemem: () => 0, sleep: async () => {}, run,
+      cpus: () => Array.from({ length: 18 }, () => ({ model: '', speed: 0, times: { user: 0, nice: 0, sys: 0, irq: 0, idle: 0 } })),
+    };
+    const s = await measureNode({ host });
+    expect(s.processSource).toBe('ps');
+    expect(s.sessions).toEqual([
+      { harness: 'codex', rootPid: 1400, processes: 1, memBytes: 200 * MIB, cpuPercent: 8 },
+    ]);
+    const doc = computeNodeCapacity(s);
+    expect(doc.per_harness_footprint.claude).toBeUndefined();
+    expect(doc.agents_runnable_now.claude).toBeNull();
   });
 });
 

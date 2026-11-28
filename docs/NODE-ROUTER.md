@@ -552,7 +552,11 @@ The document (`phantom.node-capacity.v1`) carries `node`, `measured_at`, `cpu`,
 `mem_free`, `swap`, `per_harness_footprint`, `agents_runnable_now` and `basis`.
 A harness session is the vendor CLI plus every child it spawns (MCP servers,
 tool runners), measured with `ps`, or with `pgrep` and `footprint` where `ps` is
-denied. macOS reads `vm_stat`, `memory_pressure` and `sysctl`; Linux reads
+denied. A harness-rooted process spawned beneath a web browser is a browser
+helper, not a session — the Claude for Chrome native-messaging host shares the
+versioned `claude` binary's kernel name — so a `ps` parent chain through a
+browser excludes it; the `pgrep` fallback cannot prove ancestry and keeps it
+counted. macOS reads `vm_stat`, `memory_pressure` and `sysctl`; Linux reads
 `/proc/meminfo` (MemAvailable and swap), `/proc/pressure/memory` PSI `some
 avg10` — the same bands host admission applies — and `/proc/vmstat` `pswpout`.
 Windows has no reader for load average, memory pressure or swap, and
