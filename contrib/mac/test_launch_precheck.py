@@ -33,6 +33,59 @@ class LaunchState(unittest.TestCase):
         self.assertEqual(active, {'RQ-ONE'})
 
 
+class LandFreshness(unittest.TestCase):
+    job = "RQ-PHX-CONSOLELAND791"
+    prompt = job + " (repo=phantom, pr=41): Recut source PRs #41 and #42."
+
+    def test_all_sources_must_be_terminal_in_both_live_and_local_evidence(self):
+        from launch_precheck import land_freshness, terminal_target
+        for states in (("MERGED", "MERGED"), ("CLOSED", "CLOSED"), ("MERGED", "CLOSED"),
+                       ("MERGED", "OPEN"), ("OPEN", "CLOSED"), ("MERGED", None)):
+            with self.subTest(states=states):
+                def runner(cmd, timeout, **kwargs):
+                    self.assertEqual(cmd[:6], ["locus", "exec", "--", "gh", "pr", "view"])
+                    self.assertEqual((timeout, cmd[-1]), (3, "number,state"))
+                    n = int(cmd[6])
+                    return subprocess.CompletedProcess(cmd, 0, json.dumps(dict(number=n, state=states[n - 41])), "")
+                expected = "source_prs_terminal" if all(s in ("MERGED", "CLOSED") for s in states) else None
+                self.assertEqual(land_freshness(self.job, "phantom", self.prompt, "/fixture", runner), expected)
+                local = {f"https://github.com/ashlrai/phantom/pull/{n}": s for n, s in zip((41, 42), states)}
+                self.assertEqual(terminal_target(self.job, "phantom", self.prompt, local), expected)
+
+    def test_unavailable_malformed_mismatched_or_oversized_reads_never_skip(self):
+        from launch_precheck import land_freshness
+        for code, output in ((1, "private output"), (0, "{"), (0, "[]"), (0, "x" * 65537),
+                             (0, '{"number":42,"state":"MERGED"}')):
+            self.assertIsNone(land_freshness(self.job, "phantom", self.prompt, "/fixture",
+                lambda *a, **k: subprocess.CompletedProcess([], code, output, "")))
+        def timeout(*args, **kwargs): raise subprocess.TimeoutExpired([], 3)
+        self.assertIsNone(land_freshness(self.job, "phantom", self.prompt, "/fixture", timeout))
+
+    def test_only_task_sources_count_and_incomplete_sets_stay_unknown(self):
+        from launch_precheck import land_sources
+        self.assertEqual(land_sources(self.job, "phantom", "Context #99\n" + self.prompt + "\nRules #88"), (41, 42))
+        self.assertEqual(land_sources(self.job, "phantom", self.prompt + " https://github.com/ashlrai/phantom/pull/42 phantom#41"), (41, 42))
+        self.assertEqual(land_sources(self.job, "phantom", self.prompt.replace("#41 and #42", "#41/#42")), (41, 42))
+        for job in ("LAND-RECUT-phantom-41", "RQ-LAND-PR41"):
+            self.assertEqual(land_sources(job, "phantom", f"{job} (repo=phantom): Recut the source."), (41,))
+        for prompt in (self.prompt + " locus#43", self.prompt + " https://github.com/other/phantom/pull/43",
+                       self.prompt + " other/phantom#43", self.prompt + "\n" + self.prompt,
+                       self.prompt + " #43 #44 #45 #46 #47 #48 #49", "Context #41"):
+            self.assertEqual(land_sources(self.job, "phantom", prompt), ())
+        self.assertEqual(land_sources("RQ-LANDSKIPQ8", "phantom", "RQ-LANDSKIPQ8 (repo=phantom): test #41"), ())
+
+    def test_legacy_single_source_receipt_cannot_retire_mixed_work(self):
+        from launch_precheck import precheck
+        for code, reason, expected in ((10, "pr_41_MERGED", None), (11, "pr_41_green_clean", None),
+                                       (12, "id_open_pr_99", (12, "id_open_pr_99"))):
+            def runner(cmd, *args, **kwargs):
+                if cmd[0] == "/bin/bash":
+                    return subprocess.CompletedProcess(cmd, code, f"SKIP {self.job} code={code} reason={reason}\n", "")
+                n = int(cmd[6])
+                return subprocess.CompletedProcess(cmd, 0, json.dumps(dict(number=n, state="MERGED" if n == 41 else "OPEN")), "")
+            self.assertEqual(precheck(self.job, "phantom", self.prompt, "/fixture", "/fixture/runs", runner), expected)
+
+
 class RepairFreshness(unittest.TestCase):
     def test_only_current_complete_matching_evidence_retires_a_repair(self):
         from launch_precheck import repair_freshness
