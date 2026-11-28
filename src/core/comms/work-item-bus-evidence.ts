@@ -188,6 +188,9 @@ export function deriveBusWorkItemEvidence(
   let verifiedCursor = -Infinity, blockerCursor = -Infinity;
   for (const row of receipts) {
     if (!request || row.cursor <= request.cursor || row.receivedAt < request.receivedAt) continue;
+    // A reply must reverse the request's participants; citing its id alone
+    // does not make an unrelated message evidence for this work item.
+    if (row.envelope.from !== request.envelope.to || row.envelope.to !== request.envelope.from) continue;
     if (isGroupPresenceBody(row.envelope.body)) continue;
     // Match the classifier's private five-minute future-skew boundary; it has
     // no historical TTL. Check Date validity before reply conversion to ISO.
