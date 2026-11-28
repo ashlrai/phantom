@@ -51,7 +51,11 @@ export async function cmdNodeSelfUpdate(args: string[], deps: SelfUpdateDeps = {
     if (json) console.log(JSON.stringify({ command: 'self-update', ...plan }));
     else {
       console.log(`target: ${plan.target ?? 'unknown'} (plan only)`);
-      for (const n of plan.nodes) console.log(`node ${n.nodeId} ${n.live ? 'live' : 'expired'} version=${n.version ?? 'unreported'} slots=${n.slots ?? '-'} ${n.status}`);
+      // slots is the advertised admission bound, the same field `phm node
+      // status` prints: a reported number, or 'unbounded' when none was ever
+      // reported — an absent bound is legacy routing, not a measured zero, so
+      // it must not read as the '-' placeholder an empty list uses.
+      for (const n of plan.nodes) console.log(`node ${n.nodeId} ${n.live ? 'live' : 'expired'} version=${n.version ?? 'unreported'} slots=${n.slots ?? 'unbounded'} ${n.status}`);
       plan.steps.forEach((s, i) => console.log(`${i + 1}. ${s}`));
     }
     return 0;

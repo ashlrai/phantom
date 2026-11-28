@@ -1,8 +1,14 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { compareVersions, planNodeSelfUpdate, versionCap, versionFromCaps } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNodeSelfUpdate } from '../src/cli/node-self-update.js';
+import type { NodeView } from '../src/core/drive/nodes/index.js';
 
-const node = (nodeId: string, caps: string[], slots?: number) => ({ nodeId, live: true, caps, ...(slots === undefined ? {} : { slots }) });
+// planNodeSelfUpdate reads only nodeId/live/caps/slots, but the CLI dep hands
+// back full NodeViews, so the fixture carries every required field.
+const node = (nodeId: string, caps: string[], slots?: number): NodeView => ({
+  nodeId, live: true, caps, owners: ['ashlr'], lanes: [], usage: null, auth: 'unknown',
+  heartbeatAt: 0, expiresAt: 0, ...(slots === undefined ? {} : { slots }),
+});
 
 describe('node phm version reporting and drift plan', () => {
   it('round-trips a version through a valid capability and rejects junk', () => {
@@ -82,6 +88,22 @@ describe('phm node self-update', () => {
     expect(plan.nodes.map((n: { status: string }) => n.status)).toEqual(['unknown', 'unreported']);
     expect(plan.drifted).toEqual(['w2']);
     expect(plan.steps.join(' ')).not.toContain('matches the target');
+  });
+  it('prints the advertised slot bound in text mode: a number, or unbounded — never the empty-list dash', async () => {
+    const out: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s: string) => { out.push(s); });
+    vi.spyOn(console, 'error').mockImplementation((s: string) => { out.push(s); });
+    const nodesFn = vi.fn(async () => [
+      node('bounded', ['phm-3.30.34'], 4), node('open', ['phm-3.30.34']),
+    ]);
+    const code = await cmdNodeSelfUpdate(['--owner', 'ashlr'], { nodes: nodesFn, localVersion: () => '3.30.34' });
+    expect(code).toBe(0);
+    const lines = out.join('\n').split('\n');
+    expect(lines.some(l => l.includes('node bounded live') && l.includes('slots=4'))).toBe(true);
+    // An absent bound is legacy unbounded routing, the same word `phm node
+    // status` prints — not '-' (which reads as an empty list / held node).
+    expect(lines.some(l => l.includes('node open live') && l.includes('slots=unbounded'))).toBe(true);
+    expect(lines.some(l => l.includes('slots=-'))).toBe(false);
   });
   it('returns a fixed error when the registry cannot be read', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
