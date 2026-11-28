@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
-import { AGENT_COMMANDS, cmdHelp, HELP_ENTRIES } from '../src/cli/help.js';
+import { AGENT_COMMANDS, cmdHelp, HELP_ENTRIES, searchHelpEntries, type HelpEntry } from '../src/cli/help.js';
 import { TOP_LEVEL_COMMANDS } from '../src/cli/completions.js';
 
 let captured: string[] = [];
@@ -192,9 +192,46 @@ describe('cmdHelp routing', () => {
     expect(output()).toContain('enroll kill on|off');
   });
 
+  it('help --search matches every word of a multi-word query, in any order', async () => {
+    // "join computer" is how a newcomer looks for the node router; the words
+    // sit in different halves of the entry (cmd vs desc), so a contiguous
+    // substring search can never find it.
+    expect(await cmdHelp(['--search', 'join computer'])).toBe(0);
+    expect(output()).toContain('node join|beat|enqueue|plan|pull|complete|status');
+    expect(await cmdHelp(['--search', 'computer join'])).toBe(0);
+    expect(output()).toContain('node join|beat|enqueue|plan|pull|complete|status');
+  });
+
+  it('help --search still requires every word, so unrelated rows stay out', async () => {
+    expect(await cmdHelp(['--search', 'join zzzznomatch'])).toBe(0);
+    expect(output()).toContain('no commands match');
+    // A multi-word miss names the way out: drop a word, or browse --all.
+    expect(output()).toContain('drop a word and retry');
+  });
+
+  it('searchHelpEntries ANDs words across cmd and desc and keeps single-word substring behavior', () => {
+    const entries: HelpEntry[] = [
+      { cmd: 'node join [--owner <scope>]', desc: 'Join this computer to the node router.', topic: 'autonomy' },
+      { cmd: 'org join --member <id>', desc: 'Opt this machine into org lanes.', topic: 'autonomy' },
+      { cmd: 'fleet join', desc: 'Unrelated fleet verb.', topic: 'autonomy' },
+    ];
+    // Both words may come from different halves of one entry, in any order.
+    expect(searchHelpEntries('computer join', entries).map(e => e.cmd)).toEqual(['node join [--owner <scope>]']);
+    expect(searchHelpEntries('join computer', entries).map(e => e.cmd)).toEqual(['node join [--owner <scope>]']);
+    // One word keeps the old cmd-or-desc substring match.
+    expect(searchHelpEntries('join', entries)).toHaveLength(3);
+    // A word absent from an entry excludes it even when another word matches.
+    expect(searchHelpEntries('computer org', entries).map(e => e.cmd)).toEqual([]);
+    // Edge punctuation does not defeat a word; a punctuation-only query matches nothing.
+    expect(searchHelpEntries('computer,', entries).map(e => e.cmd)).toEqual(['node join [--owner <scope>]']);
+    expect(searchHelpEntries('   ', entries)).toEqual([]);
+  });
+
   it('help --search with no hits says so', async () => {
     expect(await cmdHelp(['--search', 'zzzznotathing'])).toBe(0);
     expect(output()).toContain('no commands match');
+    // One word already is the narrowest query; no widen hint is printed.
+    expect(output()).not.toContain('drop a word');
   });
 
   it('unknown topic is a usage error (exit 2) that lists the valid topics on stderr', async () => {
