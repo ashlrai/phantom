@@ -79,6 +79,21 @@ describe('decidePlannerAutorun — fixed check order', () => {
 });
 
 describe('decidePlannerAutorun — defaults and edge inputs', () => {
+  it('allows empty full lanes to restock at five minutes, retaining shorter configured gaps', () => {
+    expect(decidePlannerAutorun(input({ phxReady: 0, lanes: [], health: okHealth(minutesAgo(5)) })).reason).toBe('supply-floor');
+    expect(decidePlannerAutorun(input({ phxReady: 0, minGapMinutes: 1, health: okHealth(minutesAgo(1)) })).run).toBe(true);
+  });
+
+  it.each([1, Number.NaN, -1])('keeps the normal gap for supply %s without confirmed emptiness', phxReady => {
+    expect(decidePlannerAutorun(input({ phxReady, health: okHealth(minutesAgo(5)) })).reason).toBe('too-soon');
+  });
+
+  it('keeps the normal gap when the queue is unreadable, and respects ORCH_OFF when empty', () => {
+    expect(decidePlannerAutorun(input({ phxReady: 0, queueUnreadable: true, health: okHealth(minutesAgo(5)) })).reason).toBe('too-soon');
+    expect(decidePlannerAutorun(input({ phxReady: 0, orchOff: true })).reason).toBe('orch-off');
+    expect(decidePlannerAutorun(input({ phxReady: 0, health: failingHealth('usage-limit') })).reason).toBe('planner-failing');
+  });
+
   it('defaults to a 24-job floor: 23 is low, 24 is enough', () => {
     expect(decidePlannerAutorun(input({ phxReady: 23 })).reason).toBe('low-supply');
     expect(decidePlannerAutorun(input({ phxReady: 24 })).reason).toBe('enough-supply');

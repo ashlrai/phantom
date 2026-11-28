@@ -27,6 +27,21 @@ async function runsDir(): Promise<string> {
 }
 
 describe('readPlannerHealth', () => {
+  it('uses the newest non-future request, ignoring skip observations and file order', async () => {
+    const dir = await runsDir();
+    try {
+      await writeFile(join(dir, 'queue/dispatch-events.log'), [
+        GOOD('13:00:00'), row('15:00:00', 'PLANNER_REQUEST restock'),
+        row('23:59:59', 'PLANNER_REQUEST restock'), row('14:00:00', 'PLANNER_REQUEST restock'),
+        row('17:59:00', 'PLANNER_TICK skip reason=too-soon phx=0 free=1'),
+      ].join('\n'));
+      const health = await readPlannerHealth(dir, now);
+      expect(health.status).toBe('ok');
+      expect(Date.parse(health.lastGoodPassAt!)).toBe(ms(13, 0));
+      expect(Date.parse(health.lastRequestedAt!)).toBe(ms(15, 0));
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('flags a usage-limit death behind rc=0 rows and parses the advertised reset', async () => {
     const dir = await runsDir();
     try {

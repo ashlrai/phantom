@@ -43,6 +43,8 @@ import { localIso, localTimestamp, readSource, type Source } from './runs-parked
 export type PlannerStatus = 'ok' | 'failing' | 'unknown';
 export interface PlannerHealth {
   status: PlannerStatus;
+  /** Newest accepted planner-tick request; skips and previews never advance it. */
+  lastRequestedAt?: string | null;
   /** ISO of the oldest failed LEADER row in the newest failing streak; null unless failing. */
   failingSince: string | null;
   /** ISO of the newest good LEADER pass in the retained tail; null when none was read. */
@@ -180,7 +182,18 @@ export async function readPlannerHealth(
     events = await readSource(join(runsRoot, 'dispatch-events.log'), MAX_EVENTS_TAIL, true);
   }
   const runLog = await newestRunLog(runsRoot);
-  return assess(events, runLog.text, now);
+  const health = assess(events, runLog.text, now);
+  let requestedMs = -Infinity;
+  for (const line of events.text.split('\n')) {
+    const match = EVENT_ROW.exec(line.replace(/\r$/, ''));
+    if (!match || match[3] !== 'PLANNER_REQUEST') continue;
+    const stamp = localTimestamp(`${match[1]} ${match[2]}`);
+    if (Number.isFinite(stamp.ms) && stamp.ms <= now && stamp.ms > requestedMs) {
+      requestedMs = stamp.ms;
+      health.lastRequestedAt = stamp.at;
+    }
+  }
+  return health;
 }
 
 /** Earliest retry supported by the failure evidence; NaN means unknown. */
