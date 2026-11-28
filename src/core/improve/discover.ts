@@ -2263,6 +2263,24 @@
  *     fresh hints file; off-contract reports are dropped, 'unknown'
  *     verdicts carry no diagnosis, and items emit only for the
  *     fleet's own repository since the reports carry no repo column;
+ *   - the friction-ledger seam: ~/.ashlr/friction-ledger.jsonl holds
+ *     the FrictionItem rows upsertFrictionItems merges — today
+ *     absorbNoopChurn folding queue/noop-streak.json DONE-NOOP
+ *     streaks into 'noop-streak:<job>' items on `phm select` and
+ *     planner-brief reads — whose only close path is the pick
+ *     grader's 7d grade, and whose only readers were those same
+ *     selection surfaces (current friction ranking, never a trend),
+ *     so friction persisting past the grading horizon, items no
+ *     funded pick can close, and ledger-integrity failures produced
+ *     no autonomous work (frictionItemBacklogItems below). A
+ *     per-source cell emits only for open items aged at least the
+ *     grader's own 7-day horizon; an oversize cell emits when the
+ *     file exceeds FRICTION_MAX_BYTES (the reader's zero-item
+ *     answer while the writer bounds rows by count, never bytes);
+ *     a rejected-rows cell emits when within-bound lines fail the
+ *     seam's own validation — writes the atomic writer cannot
+ *     produce. Items emit only for the fleet's own repository
+ *     since the ledger is this install's machinery;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2450,6 +2468,7 @@ import { racingOutcomeBacklogItems } from './racing-outcome-backlog.js';
 import { busHopBacklogItems } from './bus-hop-backlog.js';
 import { ideaVerdictBacklogItems } from './idea-verdict-backlog.js';
 import { loopHintsBacklogItems } from './loop-hints-backlog.js';
+import { frictionItemBacklogItems } from './friction-item-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -5128,6 +5147,17 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // only for the fleet's own repository since the reports carry no
   // repo column.
   await feed('loopHintsBacklogItems', () => loopHintsBacklogItems({ repo }));
+
+  // Friction-ledger seam (~/.ashlr/friction-ledger.jsonl): open
+  // FrictionItem rows persisting past the pick grader's own 7-day
+  // close horizon, a file that outgrew the reader's byte bound, and
+  // rows the validated reader refuses become items too — until now
+  // the ledger's only readers were `phm select`'s friction top and
+  // the planner brief, current ranking rather than a trend
+  // (frictionItemBacklogItems below). Read-only through the seam's
+  // own bounded validated reader; items emit only for the fleet's
+  // own repository.
+  await feed('frictionItemBacklogItems', () => frictionItemBacklogItems({ repo }));
   return { items, errors };
 }
 
