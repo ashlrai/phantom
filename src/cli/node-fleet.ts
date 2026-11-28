@@ -136,11 +136,39 @@ async function joinSignInLanes(probeAuth: () => NodeAuth): Promise<{ lanes: stri
   return { lanes: [...Object.keys(probeProviderBinaries()), ...(ghAuth === 'ok' ? ['gh'] : [])].sort(), ghAuth };
 }
 
+/** nodeId -> advertised agent-CLI caps with no binary on this machine, from one
+ * `check` probe over every node's caps (only caps naming a known agent CLI are
+ * ever probed, so build/gh/pack/phm caps cost nothing). Returns undefined when
+ * nothing is unverified so callers can omit the annotation entirely. */
+function statusUnverifiedCaps(
+  nodes: readonly { nodeId?: unknown; caps?: unknown }[],
+  deps: ProviderBinaryDeps,
+  check: (caps: readonly string[], deps: ProviderBinaryDeps) => string[],
+): Map<string, string[]> | undefined {
+  const all = new Set<string>();
+  for (const n of nodes) {
+    if (typeof n.nodeId !== 'string' || !Array.isArray(n.caps)) continue;
+    for (const c of n.caps) if (typeof c === 'string') all.add(c);
+  }
+  if (all.size === 0) return undefined;
+  const missing = new Set(check([...all], deps));
+  if (missing.size === 0) return undefined;
+  const out = new Map<string, string[]>();
+  for (const n of nodes) {
+    if (typeof n.nodeId !== 'string' || !Array.isArray(n.caps)) continue;
+    const bad = n.caps.filter((c): c is string => typeof c === 'string' && missing.has(c));
+    if (bad.length > 0) out.set(n.nodeId, bad);
+  }
+  return out.size > 0 ? out : undefined;
+}
+
 function text(verb: string, out: Record<string, unknown>, notes?: {
   rejoin?: ReadonlyMap<string, string>;
   drift?: SelfUpdatePlan;
   knownScopes?: readonly string[];
   planEmpty?: string;
+  /** nodeId -> advertised agent-CLI caps with no binary on this machine, live-checked. */
+  unverifiedCaps?: ReadonlyMap<string, readonly string[]>;
 }): string {
   if (verb === 'join') {
     // Join is the first command every new node runs; its text answer is a
@@ -270,8 +298,18 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
       const row = notes?.drift?.nodes.find(n => n.nodeId === nodeId);
       return row !== undefined && row.status !== 'current' ? ` phm=${row.status}` : '';
     };
+    // The join's unverifiedCaps warning is a one-shot reply field — nothing
+    // stores it — so an advertised agent-CLI cap whose binary is missing would
+    // read as ready forever. Status re-checks file presence live (the same
+    // allowlisted paths, no execution) and names the caps it cannot back, so
+    // "is my node ready" answers honestly weeks after the join. A standalone
+    // registry only ever holds this machine's nodes, so the check is exact.
+    const unverifiedFor = (nodeId: string): string => {
+      const caps = notes?.unverifiedCaps?.get(nodeId);
+      return caps !== undefined && caps.length > 0 ? ` unverified-caps=${caps.join(',')}` : '';
+    };
     const lines = [`Owner scope: ${scope}`,
-      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} slots=${n.slots ?? 'unbounded'}${n.capacity?.held ? ` held=${n.capacity.held}` : ''} caps=${n.caps.join(',') || '-'}${driftFor(n.nodeId)}${n.live ? '' : rejoinFor(n.nodeId)}`),
+      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} slots=${n.slots ?? 'unbounded'}${n.capacity?.held ? ` held=${n.capacity.held}` : ''} caps=${n.caps.join(',') || '-'}${driftFor(n.nodeId)}${unverifiedFor(n.nodeId)}${n.live ? '' : rejoinFor(n.nodeId)}`),
       ...jobs.map(j => `job ${j.id} ${jobStateWords(j)}${fixes.has(j.id) ? ` — ${fixes.get(j.id)}` : ''}`)];
     // An empty scope is the first-run case: say so and print the join command,
     // the same next step `phm node plan` prints for a job with no live node.
@@ -652,7 +690,16 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     const planEmpty = !json && verb === 'plan' && Array.isArray(out['routes']) && (out['routes'] as unknown[]).length === 0
       ? planEmptyNote(drive, flags.get('--owner'))
       : undefined;
-    console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out, { rejoin, drift, knownScopes, planEmpty }));
+    // status/list re-check advertised agent-CLI caps against this machine's
+    // binaries, live — the same file-presence rule the join's unverifiedCaps
+    // reply applies, re-run so a cap installed (or removed) after the join
+    // reads correctly. One probe covers every node's caps; only caps naming a
+    // known agent CLI are ever checked, so build/gh/pack/phm caps cost nothing.
+    // Text only, like rejoin/drift: --json consumers already get caps per node.
+    const unverifiedCaps = !json && (verb === 'status' || verb === 'list') && Array.isArray(out['nodes'])
+      ? statusUnverifiedCaps(out['nodes'] as { nodeId?: unknown; caps?: unknown }[], deps.cliBinaryDeps ?? {}, unverifiedCliCaps)
+      : undefined;
+    console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out, { rejoin, drift, knownScopes, planEmpty, unverifiedCaps }));
     if (joinWatch !== null) {
       // The join printed its session; now hold it live exactly like
       // `phm node beat --watch` — same loop, same fresh capacity/host-stats
