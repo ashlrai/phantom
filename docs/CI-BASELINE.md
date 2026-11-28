@@ -580,8 +580,12 @@ transitively from master (100-file cap) with bundler resolution: `.js`/`.jsx`
 specifiers map to `.ts`/`.tsx` sources, extensionless specifiers try file then
 directory `index`, `?raw`/`?url`/`?inline` queries and non-code files (`.css`,
 `.json`, assets) join the closure as leaves without recursion, and package
-imports track dependency manifests. Independence also unions the runner
-harness a test's own imports never see: each `vitest.config.*`/`vitest.workspace.*`
+imports track dependency manifests. Literal CommonJS `require()` calls join
+the same closure. Relative CommonJS loads try the literal path, then the
+`.js`, `.json` and `.node` suffixes. Computed calls and relative loads
+that do not resolve to a file leave independence unknown. Independence also
+unions the runner harness a test's own imports never see: each
+`vitest.config.*`/`vitest.workspace.*`
 file whose literal `include` globs cover the suite (a config with none governs
 every suite), that config's import closure, its `setupFiles`/`globalSetup`
 entries and their closures, the nearest `tsconfig.json`/`jsconfig.json`
