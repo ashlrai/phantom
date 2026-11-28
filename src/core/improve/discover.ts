@@ -2162,6 +2162,7 @@ import { commsRunBacklogItems } from './comms-run-backlog.js';
 import { cruiseShadowBacklogItems } from './cruise-shadow-backlog.js';
 import { cruiseAlertsBacklogItems } from './cruise-alerts-backlog.js';
 import { growthBacklogItems } from './growth-backlog.js';
+import { northstarBacklogItems } from './northstar-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 import { reviewBlocksBacklogItems } from './review-blocks-backlog.js';
 import { capacityHistoryBacklogItems } from './capacity-history-backlog.js';
@@ -4393,6 +4394,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the fleet's own repository inherits the items since the exports
   // describe this install's fleet.
   items.push(...await growthBacklogItems({ repo }));
+
+  // Batch-session north-star journal (<runs>/metrics/northstar.jsonl):
+  // the ashlr.northstar.v1 before/after rows `batch_sessions.py
+  // northstar --record` appends around a cutover epoch — tasks/session,
+  // iterations/hour and merged-PRs/iteration projected from
+  // metrics/jobs.jsonl through batcher.read_rows
+  // (northstarBacklogItems below). Until now the journal had no
+  // repository reader at all: the command's only artifact was the
+  // one-time bus/batch-sessions-first-numbers.md note, so a cutover
+  // whose after-window showed the north star falling — or a fleet
+  // that recorded zero finished sessions across a meaningful
+  // after-window — never became work. A pair joins only on the shared
+  // recorded_at batch and the cutover epoch the windows share, the
+  // freshest record per cutover is the one evaluated, rates compare
+  // only where both sides are non-null and both windows span at least
+  // an hour, truncated tails are stated as lower bounds, and only the
+  // fleet's own repository inherits the items since the journal
+  // describes this install's batch-session experiment.
+  items.push(...await northstarBacklogItems({ repo }));
 
   // Fleet-hop telemetry spool (~/.ashlr/telemetry/fleet-hop-spool.jsonl):
   // the queue.v1 fleet_hop outbox emitFleetHop appends to whenever the
