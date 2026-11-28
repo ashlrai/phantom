@@ -9,6 +9,20 @@ evidence, unknown reasons, and proposed update-branch commands. Latest workflow
 runs are checked against the current head and full checkout SHA in job logs.
 Master evidence queries GitHub Actions by both branch and current commit SHA,
 so a newer run on another branch at the same commit cannot replace a master run.
+Runs of workflows that automate releases and operations rather than check the
+ref's code (`release-please`, `release-prep`, `auto-tag`, `release-train`,
+`full-suite-fixforward`, `ecosystem-stats`, `attest-ci-build` and
+`publish-canonical-npm`, matched by workflow file basename) are not master
+check evidence: they land on nearly every tip through push, schedule and
+workflow_run triggers, their jobs check out unpinned refs that can never
+satisfy the head-proof rule, and none of them prints a failure shape the
+parsers recognize — a red run there is release-pipeline evidence carried by
+its own ledgers, not a `shared-baseline` group. Counting them would mark
+every open PR unknown on every tip and leave probable-flake and
+update-branch readiness unreachable. The exclusion is deliberately narrow:
+a workflow that can print a recognized failure — or one the list has never
+seen — still counts, so an unrecognized automation workflow fails toward
+unknown, never toward clean.
 A job proves its checkout one of three ways: echoing `git log -1
 --format=%H` followed by the head SHA; printing the `Bound candidate <sha>
 to event tree|merge ...` receipt `.github/scripts/ci-source-binding.mjs`

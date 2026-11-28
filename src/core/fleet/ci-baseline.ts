@@ -10,7 +10,7 @@ import { nextFixGeneration } from './ci-fix-generations.js';
 
 type Failure = { testId: string; file: string; names: string; excerpt: string };
 type Pr = { number: number; headRefOid: string; headRefName: string; files: { path: string }[] };
-type Run = { id: number; head_sha: string; workflow_id: number; status: string; conclusion?: string };
+type Run = { id: number; head_sha: string; workflow_id: number; status: string; conclusion?: string; path?: string };
 type Job = { id: number; conclusion: string; head_sha: string };
 type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: number };
 
@@ -21,6 +21,32 @@ type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: n
 // and `neutral` are deliberate non-verdicts (path filters, `if:` gates,
 // required-check-neutral), not incomplete checks, and stay ignored.
 const INCOMPLETE_CONCLUSIONS = new Set(['cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
+
+// Master-tip workflow runs that automate releases and operations rather than
+// check the ref's code. They trigger on master pushes, schedules and
+// workflow_run completions, so one lands on nearly every tip; their jobs
+// check out unpinned refs (a release branch, a sparse script dir) that can
+// never satisfy the head-proof rule, and none of them runs a suite,
+// typecheck, lint or gate step the failure parsers recognize — a red run
+// here is release-pipeline evidence (its own ledgers and backlogs carry
+// it), never a `shared-baseline` group. Left in the evidence set each one
+// returns null from logs() and marks masterKnown false, so probable-flake
+// and update-branch readiness stay unreachable on every tip. Only basenames
+// of workflows with NO parsed failure surface belong here: a workflow that
+// can print a vitest/TAP/tsc/eslint/docs/build/audit/gate failure — or one
+// this list has never seen — still counts, so an unrecognized automation
+// workflow fails toward unknown, the safe direction.
+const NON_CHECK_MASTER_WORKFLOWS = new Set([
+  'release-please.yml',
+  'release-prep.yml',
+  'auto-tag.yml',
+  'release-train.yml',
+  'full-suite-fixforward.yml',
+  'ecosystem-stats.yml',
+  'attest-ci-build.yml',
+  'publish-canonical-npm.yml',
+]);
+const workflowBaseName = (path: string | undefined): string => path?.split('/').pop() ?? '';
 
 function completeActionsPage<T extends { id: number }>(rows: T[] | undefined, total: number | undefined): rows is T[] {
   return Array.isArray(rows) && rows.length === total && rows.length <= 100 &&
@@ -2182,7 +2208,9 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?head_sha=${encodeURIComponent(ref)}&branch=master&per_page=100`);
     if (!data || !completeActionsPage(data.workflow_runs, data.total_count)) return null;
     const seen = new Set<number>();
-    return data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
+    return data.workflow_runs
+      .filter(r => !NON_CHECK_MASTER_WORKFLOWS.has(workflowBaseName(r.path)))
+      .filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
   }
   async function logs(run: Run, head: string): Promise<{ entries: { conclusion: string; text: string }[]; incomplete: boolean } | null> {
     const data = await json<{ jobs: Job[]; total_count: number }>(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
