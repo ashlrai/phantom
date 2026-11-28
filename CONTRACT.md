@@ -5324,7 +5324,22 @@ list — through the same markers, scrub and bound under BEGIN/END
 UNTRUSTED AGENT BUS MESSAGES, each line the raw `from`/`to` routing
 labels with the envelope id, priority and scrubbed one-line summary;
 `--json` carries it as `framed` beside the page and an empty page
-frames its own marker pair. Identities
+frames its own marker pair. `frameCoordinationBoard(cli, board)`,
+`frameCoordinationInbox(cli, view)` and `frameCoordinationReturns(cli,
+view)` render the advisory fleet coordination ledger's bounded reads
+(`phm fleet coordination board|inbox|returns --frame <cli>`, the
+`phm fleet inbox` alias framing the inbox read) — the board's claims,
+scrubbed message bodies and proposal tasks, the addressed inbox slice
+and the parsed RESULT receipts — each row a bracketed
+id/repo/from/to/at line carrying its scrubbed, clipped payload, through
+the same shared line renderer under BEGIN/END UNTRUSTED FLEET
+COORDINATION BOARD, INBOX and RETURNS markers, so ledger text reaches a
+CLI's next turn as marked-untrusted data in a single block and no
+coordination block can pass for a bus page, a digest, a feed, a
+timeline, an inbox or a transcript; `--json` carries it as `framed`
+beside the full projection the same way, and a state other than
+`known` frames its own honest state line — never counts an unreadable
+ledger cannot prove. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one

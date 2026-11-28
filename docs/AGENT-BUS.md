@@ -246,6 +246,19 @@ drains legacy pending mail gives a CLI's next turn the same marked-untrusted
 block every other bus page does, and `--json` carries it as `framed` beside
 the page.
 
+The advisory fleet coordination ledger's bounded reads carry the same
+treatment under their own markers: `phm fleet coordination board
+--frame <cli>`, `phm fleet coordination inbox --agent <name> --frame
+<cli>` (the `phm fleet inbox` alias frames the same read) and `phm fleet
+coordination returns --frame <cli>` print the ledger's claims, messages,
+proposals and RESULT receipts as one block marked untrusted under
+BEGIN/END UNTRUSTED FLEET COORDINATION BOARD, INBOX and RETURNS markers
+— the ledger's agent labels are coordination names, never authenticated
+identities — with the same scrub, flattening and 32 KiB clip bound every
+bus `--frame` read shares, `--json` carrying the block as `framed`
+beside the full projection, and an unreadable ledger framing its own
+`state=unknown` line rather than counts it cannot prove.
+
 ## Write
 
 POST `/api/verse/agent-bus` sends one envelope; the caller needs

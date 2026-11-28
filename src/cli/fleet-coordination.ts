@@ -9,6 +9,8 @@ import { parseCoordinationInboxFilters, projectCoordinationInbox, type Coordinat
 import { parseCoordinationReturnsFilters, projectCoordinationReturns } from '../core/fleet/coordination-returns-view.js';
 import { claimNoticeDir, claimNoticePaths } from '../core/fleet/claim-notice-send.js';
 import { appendClaimThreadBinding, validateClaimThreadKey } from '../core/fleet/claim-thread-binding-write.js';
+import { BUS_CLIS, type BusCli } from '../core/agents/bus-identity.js';
+import { frameCoordinationBoard, frameCoordinationInbox, frameCoordinationReturns } from '../core/agents/bus-cli-adapters.js';
 
 const USAGE = 'Usage: ashlr fleet coordination <claim|release|return|returns|handoff|board|post|inbox|assign> [options]';
 export const FLEET_COORDINATION_HELP = [
@@ -17,10 +19,10 @@ export const FLEET_COORDINATION_HELP = [
   '  release <claim-id> --agent name --lease <lease> [--json]',
   '  return <claim-id> --agent name --lease <lease> (--pr n --head sha | --tests text | --artifact text | --blocked dependency) [--ttl-seconds 86400] [--json] — evidence, not authority; does not merge, verify or close anything; agent labels do not authenticate senders (the lease fences only release).',
   '  handoff <claim-id> --agent name --lease <lease> --to name [--ttl-seconds 3600] [--json]',
-  '  board [--json]',
-  '  returns [--claim <id>] [--repo owner/name] [--result VERIFIED|BLOCKED] [--from name] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains text] [--json] — RESULT receipts from coordination return, newest first; evidence, not authority. The filters narrow the parsed set before the newest-50 page, so a filtered read reaches receipts the unfiltered cap hides: --claim keeps one claim id\'s receipts, --repo one repo (case-insensitive), --result one verdict, --from one sender label, --since/--before keep receipts inside one [since, before) window on their at stamp, --contains keeps receipts whose repo, verdict, evidence kind or evidence text carries the text (case-insensitive).',
+  '  board [--frame <cli>] [--json] — --frame prints the whole ledger as one bounded untrusted block (BEGIN/END UNTRUSTED FLEET COORDINATION BOARD); --json carries it as framed beside the projection.',
+  '  returns [--claim <id>] [--repo owner/name] [--result VERIFIED|BLOCKED] [--from name] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains text] [--frame <cli>] [--json] — RESULT receipts from coordination return, newest first; evidence, not authority. The filters narrow the parsed set before the newest-50 page, so a filtered read reaches receipts the unfiltered cap hides: --claim keeps one claim id\'s receipts, --repo one repo (case-insensitive), --result one verdict, --from one sender label, --since/--before keep receipts inside one [since, before) window on their at stamp, --contains keeps receipts whose repo, verdict, evidence kind or evidence text carries the text (case-insensitive). --frame <cli> (one of ' + BUS_CLIS.join(', ') + ') prints the same receipts as one bounded untrusted block — BEGIN/END UNTRUSTED FLEET COORDINATION RETURNS — and --json carries it as framed beside the full projection.',
   '  post --from name --to name --message "text" [--id id] [--ttl-seconds 3600] [--json]',
-  '  inbox --agent name [--from sender] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains text] [--json] — filters narrow the addressed read: --from keeps posts one sender label wrote (proposals carry no sender and drop out), --since/--before keep records inside one [since, before) window on their at stamp, --contains keeps messages whose body and proposals whose repo+task carry the text (case-insensitive).',
+  '  inbox --agent name [--from sender] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains text] [--frame <cli>] [--json] — filters narrow the addressed read: --from keeps posts one sender label wrote (proposals carry no sender and drop out), --since/--before keep records inside one [since, before) window on their at stamp, --contains keeps messages whose body and proposals whose repo+task carry the text (case-insensitive). --frame <cli> prints the same slice as one bounded untrusted block — BEGIN/END UNTRUSTED FLEET COORDINATION INBOX — and --json carries it as framed beside the projection.',
   '  assign --repo owner/repo --task "work" --to name [--ttl-seconds 3600] [--json]',
   'Claims coordinate only. Assign proposes work and never spawns an agent.',
   'Keep the lease from claim/handoff private; it fences release and later handoffs.',
@@ -28,9 +30,9 @@ export const FLEET_COORDINATION_HELP = [
 const VALUES: Record<string, string[]> = {
   claim: ['--repo', '--task', '--agent', '--ttl-seconds', '--thread'], release: ['--agent', '--lease'],
   return: ['--agent', '--lease', '--pr', '--head', '--tests', '--artifact', '--blocked', '--ttl-seconds'],
-  handoff: ['--agent', '--lease', '--to', '--ttl-seconds'], board: [],
-  returns: ['--claim', '--repo', '--result', '--from', '--since', '--before', '--contains'],
-  post: ['--from', '--to', '--message', '--id', '--ttl-seconds'], inbox: ['--agent', '--from', '--since', '--before', '--contains'],
+  handoff: ['--agent', '--lease', '--to', '--ttl-seconds'], board: ['--frame'],
+  returns: ['--claim', '--repo', '--result', '--from', '--since', '--before', '--contains', '--frame'],
+  post: ['--from', '--to', '--message', '--id', '--ttl-seconds'], inbox: ['--agent', '--from', '--since', '--before', '--contains', '--frame'],
   assign: ['--repo', '--task', '--to', '--ttl-seconds'],
 };
 export async function cmdFleetCoordination(args: string[], deps: { runsRoot?: string; now?: () => number } = {}): Promise<number> {
@@ -58,8 +60,17 @@ export async function cmdFleetCoordination(args: string[], deps: { runsRoot?: st
   if (ttl !== undefined && !/^[1-9]\d{0,5}$/.test(ttl)) return invalid();
   const ttlMs = ttl === undefined ? undefined : Number(ttl) * 1000;
   const value = (name: string): string => values[`--${name}`] ?? '';
-  const output = (result: unknown): void => {
+  const frame = values['--frame'];
+  if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) return invalid();
+  const frameCli = frame as BusCli | undefined;
+  const output = (result: unknown, frameBlock?: string): void => {
     // Structured local output makes explicit unknown/error states visible in both modes.
+    // --frame replaces the human page with the bounded untrusted block; --json carries it as framed beside the projection.
+    if (frameBlock !== undefined) {
+      if (json) console.log(JSON.stringify({ ...(result as Record<string, unknown>), framed: frameBlock }));
+      else console.log(frameBlock);
+      return;
+    }
     console.log(JSON.stringify(result, null, json ? undefined : 2));
   };
   if (sub === 'returns') {
@@ -69,7 +80,7 @@ export async function cmdFleetCoordination(args: string[], deps: { runsRoot?: st
       before: values['--before'], contains: values['--contains'] }, now);
     if (!parsed.ok) return invalid();
     const result = projectCoordinationReturns(readFleetBoard({ reap: false, now }), now, parsed.filters);
-    output(result);
+    output(result, frameCli === undefined ? undefined : frameCoordinationReturns(frameCli, result));
     return result.state === 'known' ? 0 : 1;
   }
   if (sub === 'board' || sub === 'inbox') {
@@ -83,7 +94,12 @@ export async function cmdFleetCoordination(args: string[], deps: { runsRoot?: st
       filters = parsed.filters;
     }
     const board = readFleetBoard({ reap: false, now });
-    output(sub === 'board' ? board : projectCoordinationInbox(board, value('agent'), filters));
+    if (sub === 'board') {
+      output(board, frameCli === undefined ? undefined : frameCoordinationBoard(frameCli, board));
+    } else {
+      const view = projectCoordinationInbox(board, value('agent'), filters);
+      output(view, frameCli === undefined ? undefined : frameCoordinationInbox(frameCli, view));
+    }
     return board.state === 'known' ? 0 : 1;
   }
   if (sub === 'return') {
