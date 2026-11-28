@@ -22,6 +22,16 @@ function options(args: string[], flags: string[], values: string[]): Record<stri
   }
   return result;
 }
+
+/** The statuses a seat message reports when the send was actually accepted:
+ * a seat-to-seat DM posts or dedupes on the bus; an owner notice is recorded
+ * or deduped on the thread. Every other status — refused, halted,
+ * unavailable, unknown sender or recipient — is a failed send, so the verb
+ * exits nonzero like `agents bus dm` does; a refusal is never a silent 0. */
+function seatMessageDelivered(result: unknown): boolean {
+  const status = result !== null && typeof result === 'object' ? (result as { status?: unknown }).status : undefined;
+  return status === 'posted' || status === 'duplicate' || status === 'accepted' || status === 'sent';
+}
 export async function runBotsCli(argv: string[], out = console.log, home?: string): Promise<number> {
   try {
     const [verb, ...args] = argv;
@@ -31,6 +41,7 @@ export async function runBotsCli(argv: string[], out = console.log, home?: strin
     const name = ['show', 'explain'].includes(verb) ? args.shift()! : '';
     const opts = options(args, ['--json', '--dry-run', '--apply'], VALUE_FLAGS);
     let result: unknown;
+    let exitCode = 0;
     if (verb === 'seats') result = await listSeats({ home });
     else if (verb === 'handoffs') result = await (opts['--apply'] ? applySeatHandoffs : planSeatHandoffs)({ home });
     else if (verb === 'handoff') {
@@ -45,9 +56,10 @@ export async function runBotsCli(argv: string[], out = console.log, home?: strin
     else if (verb === 'message') {
       if (!opts['--from'] || !opts['--to'] || !opts['--text']) throw new Error('Missing --from, --to or --text.');
       result = await sendSeatMessage({ from: opts['--from'], to: opts['--to'], text: opts['--text'] }, { home });
+      exitCode = seatMessageDelivered(result) ? 0 : 1;
     } else if (verb === 'show' || verb === 'explain') {
       const bot = await readPhantomBot(name, home); result = verb === 'show' ? bot : await explainPhantomBot(bot);
     } else throw new Error('Unknown bots verb.');
-    out(JSON.stringify(result, null, 2)); return 0;
+    out(JSON.stringify(result, null, 2)); return exitCode;
   } catch (error) { out(JSON.stringify({ ok: false, error: (error as Error).message })); return 1; }
 }
