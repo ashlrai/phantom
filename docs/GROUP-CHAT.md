@@ -23,6 +23,15 @@ counts scanned live bus records before room filtering, so keep reading until the
 cursor stops advancing. The bus retains messages locally subject to its existing
 TTL and capacity limits; expiry does not free capacity. No event is executed.
 
+`group read` also takes the shared bus-read filters after the cursor —
+`--from`/`--exclude-from` (sender identity labels), `--priority`, `--id`,
+`--in-reply-to`, `--kind`, `--topic` (the protocol-v1 body topic, not the room
+topic), `--thread`, `--job`, `--since`, `--before` and `--contains` — each the
+same match `phm comms bus read` applies. The positional room and topic already
+pin the `group:<room>:<topic>` address, so `--to`, `--channel` and a group-topic
+filter do not apply; filtered rows still advance `nextCursor` exactly like every
+other bus read filter.
+
 Presence is an untrusted, five-minute observation per room/topic and member.
 Heartbeats refresh it; `offline` removes it until a later online heartbeat.
 Expired observations disappear. The result is a snapshot, not a membership list,
