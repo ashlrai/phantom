@@ -272,7 +272,7 @@ export function readFleetLiveReplica(now = Date.now()): FleetLiveSnapshotV1 | nu
     summary: { building: null, queued: null, parked: null, waitingVerify: null, mergedToday: null,
       revertsToday: null, merged7d: null, postMergeGreenPct7d: null, cycleTimeP50Ms7d: null },
     lanes: FLEET_ENGINES.map(lane => ({ lane, slots: null, busy: null, capReason: source.reason })),
-    runs: [], funnel: null, repos: [], mirrors: null,
+    runs: [], funnel: null, repos: [], mirrors: null, pausedRepos: null,
   };
 }
 

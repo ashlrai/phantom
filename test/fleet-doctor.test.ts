@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetDoctor, runFleetDoctor, type FleetDoctorOptions } from '../src/cli/fleet-doctor.js';
+import type { FleetTickStateV1 } from '../src/core/fleet/fleet-runtime-journal.js';
 
 const NOW = Date.parse('2026-11-02T12:00:00Z');
 const at = (minAgo: number) => new Date(NOW - minAgo * 60_000).toISOString();
@@ -48,7 +49,7 @@ describe('fleet doctor', () => {
 
   it('prints one ok line per check and exits 0 when healthy', async () => {
     expect(await cmdFleetDoctor([], healthy())).toBe(0);
-    expect(out).toHaveLength(9);
+    expect(out).toHaveLength(10);
     expect(out.every(l => l.startsWith('ok '))).toBe(true);
   });
 
@@ -98,12 +99,57 @@ describe('fleet doctor', () => {
     expect(await cmdFleetDoctor(['--json'], healthy())).toBe(0);
     const parsed = JSON.parse(out[0]!);
     expect(parsed).toMatchObject({ v: 1, level: 'ok' });
-    expect(parsed.checks.map((c: { name: string }) => c.name)).toEqual(['leader', 'heartbeat', 'stuck-prs', 'slow-prs', 'waste', 'kept', 'worktrees', 'guardian', 'lanes']);
+    expect(parsed.checks.map((c: { name: string }) => c.name)).toEqual(['leader', 'heartbeat', 'stuck-prs', 'slow-prs', 'waste', 'kept', 'worktrees', 'guardian', 'lanes', 'repos']);
   });
 
   it('rejects bad usage with 2 and prints help with 0', async () => {
     expect(await cmdFleetDoctor(['--nope'])).toBe(2);
     expect(await cmdFleetDoctor(['--json', '--json'])).toBe(2);
     expect(await cmdFleetDoctor(['--help'])).toBe(0);
+  });
+});
+
+describe('fleet doctor — repos check', () => {
+  const tick = (pausedRepos: FleetTickStateV1['pausedRepos'], tickAt = at(1)): FleetTickStateV1 => ({
+    v: 1, at: tickAt, capabilityKind: 'resident-standing', dryRun: false, standing: null,
+    lanes: [], presence: { present: null, reason: '', evidenceAt: null }, holdProduction: null,
+    pausedRepos, waitingVerify: null, openPrsByRepo: null, ledgerHead: null, held: [],
+    watch: { available: false, reason: null },
+  });
+
+  it('is ok with no tick, nothing paused, or only policy pauses — and names them', async () => {
+    expect((await runFleetDoctor(healthy({ readTick: () => null }))).checks[9])
+      .toEqual({ name: 'repos', level: 'ok', reason: 'no standing tick recorded' });
+    expect((await runFleetDoctor(healthy({ readTick: () => tick([]) }))).checks[9])
+      .toEqual({ name: 'repos', level: 'ok', reason: 'nothing paused this tick' });
+    const policy = await runFleetDoctor(healthy({ readTick: () => tick([
+      { repo: 'ashlrai/a', reason: 'On quarantine: red post-merge', kind: 'hold' },
+      { repo: 'ashlrai/b', reason: "It is not in the grant's current rollout stage.", kind: 'stage' },
+      { repo: 'ashlrai/c', reason: '3 fleet PRs are already open (limit 2)', kind: 'backpressure' },
+    ]) }));
+    expect(policy.checks[9]).toMatchObject({ level: 'ok' });
+    expect(policy.checks[9]!.reason).toContain('3 repos paused by hold, stage or backpressure');
+    expect(policy.checks[9]!.reason).toContain('ashlrai/a (On quarantine: red post-merge)');
+    expect(policy.level).toBe('ok');
+  });
+
+  it('warns when a repo cannot produce (mirror/origin/unreported kind) and on a stale tick', async () => {
+    const report = await runFleetDoctor(healthy({ readTick: () => tick([
+      { repo: 'ashlrai/stale', reason: 'Its mirror is not current (fetch failed).', kind: 'mirror' },
+      { repo: 'ashlrai/noorigin', reason: 'It has no GitHub origin the grant can be checked against.', kind: 'origin' },
+      { repo: 'ashlrai/held', reason: 'On owner-hold: paused by you', kind: 'hold' },
+      { repo: 'old/record', reason: 'pre-kind pause' },
+    ]) }));
+    const repos = report.checks[9]!;
+    expect(repos.level).toBe('warn');
+    expect(repos.reason).toContain('3 repos cannot produce');
+    expect(repos.reason).toContain('ashlrai/stale (Its mirror is not current (fetch failed).)');
+    expect(repos.reason).toContain('1 more paused by policy');
+    expect(report.level).toBe('warn');
+
+    const stale = await runFleetDoctor(healthy({ readTick: () => tick([], at(45)) }));
+    expect(stale.checks[9]).toMatchObject({ level: 'warn', reason: 'last standing tick is 45 min old; paused repos unknown' });
+    const badKind = await runFleetDoctor(healthy({ readTick: () => ({ ...tick([]), pausedRepos: 'nope' } as unknown as FleetTickStateV1) }));
+    expect(badKind.checks[9]).toMatchObject({ level: 'warn', reason: 'tick state has no paused-repo record' });
   });
 });

@@ -11,9 +11,11 @@ import { summarizeFleetSlowPrs } from './fleet-slow-prs.js';
 import { parseKeptWorktrees, summarizeFleetKept } from './fleet-kept.js';
 import { parseIdleLanes } from '../core/fleet/idle-lanes.js';
 import { readGuardianDoctorCheck } from '../core/fleet/guardian-doctor.js';
+import { readTickState, type FleetTickStateV1 } from '../core/fleet/fleet-runtime-journal.js';
+import type { FleetPausedRepoKind } from '../core/fleet/fleet-types.js';
 import { readFile, readdir, stat } from 'node:fs/promises';
 
-const USAGE = 'Usage: ashlr fleet doctor [--json]\nRead-only health check: one line per check (leader, heartbeat, stuck-prs, slow-prs, waste, kept, worktrees, guardian, lanes) as ok, warn or red, with the reason. Checks run together with a 2.5 second deadline each. Exits 1 when any check is red, 2 on bad usage.';
+const USAGE = 'Usage: ashlr fleet doctor [--json]\nRead-only health check: one line per check (leader, heartbeat, stuck-prs, slow-prs, waste, kept, worktrees, guardian, lanes, repos) as ok, warn or red, with the reason. Checks run together with a 2.5 second deadline each. Exits 1 when any check is red, 2 on bad usage.';
 
 export type DoctorLevel = 'ok' | 'warn' | 'red';
 export interface DoctorCheck { name: string; level: DoctorLevel; reason: string; nextStep?: string }
@@ -33,6 +35,8 @@ export interface FleetDoctorOptions {
   readGuardian?: typeof readGuardianDoctorCheck;
   /** Queue status text for the kept check; defaults to reading queue/status.json. */
   readKeptStatus?: () => Promise<string>;
+  /** Last standing tick for the repos check; defaults to reading fleet/runtime/tick.json. */
+  readTick?: () => FleetTickStateV1 | null;
   now?: () => number;
 }
 
@@ -43,6 +47,10 @@ const POOL_ERROR_RED = 5;
 const LEADER_RED = 3;
 const KEPT_WARN = 20;
 const KEPT_RED = 60;
+/** Same freshness window the Fleet live snapshot gives tick state. */
+const TICK_FRESH_MS = 10 * 60_000;
+/** Pause kinds that are policy or throttle outcomes, not faults; anything else (or unreported) needs a look. */
+const POLICY_PAUSE_KINDS = new Set<FleetPausedRepoKind>(['stage', 'hold', 'backpressure']);
 
 const defaultFs: FleetWorktreeStaleFs = {
   async listDirs(root) { return (await readdir(root, { withFileTypes: true })).filter(e => e.isDirectory()).map(e => e.name); },
@@ -134,6 +142,36 @@ async function lanesCheck(o: FleetDoctorOptions): Promise<DoctorCheck> {
   return check('lanes', 'warn', `held with queued work: ${lanes.map(lane => `${lane.lane} (${lane.queued})`).join(', ')}`);
 }
 
+const shortReason = (reason: string): string => (reason.length > 100 ? `${reason.slice(0, 99)}…` : reason);
+const pausedName = (p: { repo: string; reason: string }): string => `${p.repo} (${shortReason(p.reason)})`;
+
+/** The last standing tick's paused repos: faults warn, policy pauses inform, a stale tick warns. */
+async function reposCheck(o: FleetDoctorOptions, now: number): Promise<DoctorCheck> {
+  const tick = (o.readTick ?? readTickState)();
+  if (tick === null) return check('repos', 'ok', 'no standing tick recorded');
+  const at = Date.parse(tick.at);
+  const ageMs = Number.isFinite(at) ? now - at : NaN;
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > TICK_FRESH_MS) {
+    return check('repos', 'warn', Number.isFinite(ageMs) && ageMs >= 0
+      ? `last standing tick is ${Math.round(ageMs / 60_000)} min old; paused repos unknown`
+      : 'standing tick has no readable time; paused repos unknown');
+  }
+  if (!Array.isArray(tick.pausedRepos)) return check('repos', 'warn', 'tick state has no paused-repo record');
+  const paused = tick.pausedRepos.filter((p): p is { repo: string; reason: string; kind?: FleetPausedRepoKind } =>
+    typeof p === 'object' && p !== null && typeof p.repo === 'string' && typeof p.reason === 'string');
+  if (paused.length === 0) return check('repos', 'ok', 'nothing paused this tick');
+  const attention = paused.filter(p => p.kind === undefined || !POLICY_PAUSE_KINDS.has(p.kind));
+  const policy = paused.length - attention.length;
+  if (attention.length > 0) {
+    const shown = attention.slice(0, 2).map(pausedName).join('; ');
+    const more = attention.length > 2 ? `; +${attention.length - 2} more` : '';
+    return check('repos', 'warn', `${attention.length} repo${attention.length === 1 ? '' : 's'} cannot produce: ${shown}${more}${policy > 0 ? `; ${policy} more paused by policy` : ''}`);
+  }
+  const shown = paused.slice(0, 2).map(pausedName).join('; ');
+  const more = paused.length > 2 ? `; +${paused.length - 2} more` : '';
+  return check('repos', 'ok', `${paused.length} repo${paused.length === 1 ? '' : 's'} paused by hold, stage or backpressure: ${shown}${more}`);
+}
+
 /** Typed API behind the verb; agents call this directly. A throwing reader degrades to warn, never crashes. */
 export async function runFleetDoctor(o: FleetDoctorOptions = {}): Promise<FleetDoctorReport> {
   const now = (o.now ?? Date.now)();
@@ -161,6 +199,7 @@ export async function runFleetDoctor(o: FleetDoctorOptions = {}): Promise<FleetD
     safe('worktrees', () => worktreeCheck(o, readJobs, now)),
     safe('guardian', () => (o.readGuardian ?? readGuardianDoctorCheck)({ now: () => now })),
     safe('lanes', () => lanesCheck(o)),
+    safe('repos', () => reposCheck(o, now)),
   ]);
   const level: DoctorLevel = checks.some(c => c.level === 'red') ? 'red' : checks.some(c => c.level === 'warn') ? 'warn' : 'ok';
   return { v: 1, generatedAt: new Date(now).toISOString(), level, checks };

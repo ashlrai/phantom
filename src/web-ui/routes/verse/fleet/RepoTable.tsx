@@ -141,6 +141,21 @@ export function mirrorsText(mirrors: FleetMirrorSummary | null | undefined): str
   return `Fleet mirrors: ${mirrors.count} working ${mirrors.count === 1 ? 'copy' : 'copies'}${shown ? ` (${shown}${more})` : ''} — the fleet's own clones of the repos above.`;
 }
 
+/**
+ * The repos the last fresh standing tick kept out of production, with the
+ * tick's own reason (mirror not current, on a hold, outside the stage,
+ * backpressure). `undefined` = an older server (say nothing); `null` = no
+ * fresh tick to report (say so — unknown is never "none"); `[]` = the tick
+ * paused nothing (the healthy case, so say nothing).
+ */
+export function pausedReposText(paused: FleetLiveSnapshotV1['pausedRepos']): string | null {
+  if (paused === undefined || (Array.isArray(paused) && paused.length === 0)) return null;
+  if (paused === null) return 'Paused repos: unknown — no fresh standing tick to report them.';
+  const shown = paused.slice(0, 4).map((p) => `${p.repo} — ${p.reason}`).join('; ');
+  const more = paused.length > 4 ? `; and ${paused.length - 4} more` : '';
+  return `Paused this tick: ${shown}${more}`;
+}
+
 const today = (row: FleetRepoRow) => (row.mergesToday === null ? '—' : `${formatMetric(row.mergesToday)}${row.maxMergesPerDay !== null ? ` / ${volumeLimitLabel(row.maxMergesPerDay)}` : ''}`);
 
 export function RepoTable({ read, actions, now, compact }: { read: OptionalRead<FleetLiveSnapshotV1> | undefined; actions: SurfaceActions; now: number; compact: boolean }) {
@@ -206,6 +221,7 @@ export function RepoTable({ read, actions, now, compact }: { read: OptionalRead<
         </div>
       )}
       {live && mirrorsText(live.mirrors) ? <p className={styles.muted}>{mirrorsText(live.mirrors)}</p> : null}
+      {live && pausedReposText(live.pausedRepos) ? <p className={styles.muted}>{pausedReposText(live.pausedRepos)}</p> : null}
     </Card>
   );
 }

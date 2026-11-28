@@ -624,6 +624,16 @@ export interface FleetLiveSummary {
  */
 export type FleetLiveState = 'dark' | 'idle' | 'running' | 'paused' | 'stopped';
 
+/**
+ * Why the standing tick kept a repo out of production. `mirror`/`origin` are
+ * faults (prep failed, no GitHub origin to check the grant against);
+ * `stage`/`hold`/`backpressure` are policy or throttle outcomes. Written into
+ * tick.json by the daemon; absent on records from before the field existed.
+ */
+export type FleetPausedRepoKind = 'mirror' | 'origin' | 'stage' | 'hold' | 'backpressure';
+
+export const FLEET_PAUSED_REPO_KINDS: readonly FleetPausedRepoKind[] = ['mirror', 'origin', 'stage', 'hold', 'backpressure'];
+
 export interface FleetLiveSnapshotV1 {
   liveJobs?: LiveJobsReport;
   source?: FleetReplicaSource;
@@ -666,6 +676,15 @@ export interface FleetLiveSnapshotV1 {
    * absent from a snapshot served by an older build.
    */
   mirrors?: FleetMirrorSummary | null;
+  /**
+   * The repos the last fresh standing tick paused, with the tick's own reason
+   * ("Its mirror is not current (…)", "On quarantine: …", "not in the grant's
+   * current rollout stage"…). `repo` is nameWithOwner when known, else the
+   * enrolled directory's name — the same label the runtime journal uses.
+   * `null` = no fresh standing tick to report (unknown is never "none");
+   * absent from a snapshot served by an older build.
+   */
+  pausedRepos?: { repo: string; reason: string; kind?: FleetPausedRepoKind }[] | null;
 }
 
 /** Enrolled fleet mirror clones, apart from Mason's repos (FleetLiveSnapshotV1.mirrors). */

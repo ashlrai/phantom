@@ -207,7 +207,7 @@ import {
 import { repoIdentityOfPath, resolveRepoLabel } from './repo-identity.js';
 import { noteTickPhase } from '../daemon/tick-progress.js';
 import { runTickPhase } from '../daemon/tick-phases.js';
-import { DEVIN_CLI_LANE, FLEET_ENGINES, grantEngineOfLane, type DispatchOutcome, type FleetEngine, type LandingRecord, type RepoHold, type RepoHoldChange, type SetRepoHoldRequest } from './fleet-types.js';
+import { DEVIN_CLI_LANE, FLEET_ENGINES, grantEngineOfLane, type DispatchOutcome, type FleetEngine, type FleetPausedRepoKind, type LandingRecord, type RepoHold, type RepoHoldChange, type SetRepoHoldRequest } from './fleet-types.js';
 import { laneAutoBillingAllows, loadLaneAutoEvidence, readLaneAutoNativeModels, type LaneAutoEvidence } from './lane-auto-model.js';
 
 // ---------------------------------------------------------------------------
@@ -1745,28 +1745,28 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       }
 
       // ── Paused repos ─────────────────────────────────────────────────────
-      const pausedReasons = new Map<string, { repo: string; reason: string }>();
-      const pause = (path: string, repo: string, reason: string): void => {
-        if (!pausedReasons.has(resolve(path))) pausedReasons.set(resolve(path), { repo, reason });
+      const pausedReasons = new Map<string, { repo: string; reason: string; kind: FleetPausedRepoKind }>();
+      const pause = (path: string, repo: string, reason: string, kind: FleetPausedRepoKind): void => {
+        if (!pausedReasons.has(resolve(path))) pausedReasons.set(resolve(path), { repo, reason, kind });
       };
-      for (const m of mirrorPaused) pause(m.path, m.repo, m.reason);
+      for (const m of mirrorPaused) pause(m.path, m.repo, m.reason, 'mirror');
       for (const path of enrolled) {
         const nwo = repoOfPath.get(resolve(path)) ?? null;
         if (nwo === null) {
-          pause(path, dirLabel(path), 'It has no GitHub origin the grant can be checked against.');
+          pause(path, dirLabel(path), 'It has no GitHub origin the grant can be checked against.', 'origin');
           continue;
         }
         if (!policyRepos.some((r) => r.toLowerCase() === nwo.toLowerCase())) {
-          pause(path, nwo, "It is not in the grant's current rollout stage.");
+          pause(path, nwo, "It is not in the grant's current rollout stage.", 'stage');
           continue;
         }
         const active = holds.filter((h) => h.repo.toLowerCase() === nwo.toLowerCase());
         if (active.length > 0) {
-          pause(path, nwo, `On ${active.map((h) => h.kind).join(' + ')}: ${active[0]!.reason}`);
+          pause(path, nwo, `On ${active.map((h) => h.kind).join(' + ')}: ${active[0]!.reason}`, 'hold');
           continue;
         }
         const bpReason = Object.entries(bp.pausedRepos).find(([repo]) => repo.toLowerCase() === nwo.toLowerCase())?.[1];
-        if (bpReason) pause(path, nwo, bpReason);
+        if (bpReason) pause(path, nwo, bpReason, 'backpressure');
       }
 
       // ── Seats, budget, lanes ─────────────────────────────────────────────

@@ -283,7 +283,7 @@ describe('U6 — mirrors and enrollment in beforeTick', () => {
     expect(result.holdProduction).toBeNull();
     expect(result.pausedRepos).toContain(STALE_MIRROR);
     expect(result.pausedRepos).not.toContain(PATH);
-    expect(hooks.lastTickState()?.pausedRepos).toContainEqual({ repo: 'ashlrai/stale', reason: 'Its mirror is not current (fetch failed).' });
+    expect(hooks.lastTickState()?.pausedRepos).toContainEqual({ repo: 'ashlrai/stale', reason: 'Its mirror is not current (fetch failed).', kind: 'mirror' });
     // Mirrors are prepared before dispatch reads holds; observations may read directives earlier.
     expect(calls.order.indexOf('mirrors')).toBeLessThan(calls.order.indexOf('holds'));
   });
@@ -300,6 +300,24 @@ describe('U6 — mirrors and enrollment in beforeTick', () => {
     await createLiveTickHooks({ deps: deps() }).beforeTick(ctx);
     expect(calls.reconciles).toBe(1);
     expect(calls.audits.some((a) => /enrollment reconciled to the grant: \+1 −1/.test(a))).toBe(true);
+  });
+
+  it('tags each paused repo with its kind for the tick record', async () => {
+    const OUTSIDE = '/tmp/mirrors/ashlrai__outside';
+    const NOORIGIN = '/tmp/mirrors/ashlrai__noorigin';
+    w.enrolled = [PATH, OUTSIDE, NOORIGIN];
+    w.holds = [{ v: 1, repo: REPO, kind: 'quarantine', reason: 'red post-merge', since: NOW_ISO, until: null, setBy: 'leader', landingId: null }];
+    const hooks = createLiveTickHooks({ deps: {
+      ...deps(),
+      repoIdentity: (path) => (path === PATH ? REPO : path === OUTSIDE ? 'ashlrai/outside' : null),
+    } });
+    await hooks.beforeTick(ctx);
+    const paused = hooks.lastTickState()?.pausedRepos ?? [];
+    expect(paused.map((p) => [p.repo, p.kind])).toEqual([
+      [REPO, 'hold'],
+      ['ashlrai/outside', 'stage'],
+      ['ashlrai__noorigin', 'origin'],
+    ]);
   });
 
   it('touches no mirror and no enrollment on a dry run', async () => {

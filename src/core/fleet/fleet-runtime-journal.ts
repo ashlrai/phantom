@@ -28,7 +28,8 @@ import { boundSeatReasons } from '../routing/seat-reasons.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
 import type { OperatorPresence } from './dispatch-router.js';
-import type { FleetEngine, FleetLaneState, RouteHold } from './fleet-types.js';
+import type { FleetEngine, FleetLaneState, FleetPausedRepoKind, RouteHold } from './fleet-types.js';
+import { FLEET_PAUSED_REPO_KINDS } from './fleet-types.js';
 
 export const RUNS_JOURNAL_MAX_BYTES = 2 * 1024 * 1024;
 const MAX_LINE_BYTES = 32 * 1024;
@@ -73,7 +74,8 @@ export interface FleetTickStateV1 {
   presence: OperatorPresence;
   /** Non-null ⇒ no new production this tick, and why. */
   holdProduction: string | null;
-  pausedRepos: { repo: string; reason: string }[];
+  /** Repos kept out of production this tick; `kind` is absent on pre-kind records. */
+  pausedRepos: { repo: string; reason: string; kind?: FleetPausedRepoKind }[];
   waitingVerify: number | null;
   openPrsByRepo: Record<string, number> | null;
   ledgerHead: { seq: number; hash: string } | null;
@@ -192,7 +194,11 @@ export function writeTickState(state: FleetTickStateV1, file: string = tickState
     const bounded: FleetTickStateV1 = {
       ...state,
       holdProduction: state.holdProduction ? scrubSecrets(state.holdProduction).slice(0, 600) : null,
-      pausedRepos: state.pausedRepos.slice(0, 64).map((p) => ({ repo: p.repo, reason: scrubSecrets(p.reason).slice(0, 400) })),
+      pausedRepos: state.pausedRepos.slice(0, 64).map((p) => ({
+        repo: p.repo,
+        reason: scrubSecrets(p.reason).slice(0, 400),
+        ...(p.kind !== undefined && FLEET_PAUSED_REPO_KINDS.includes(p.kind) ? { kind: p.kind } : {}),
+      })),
       held: state.held.slice(-MAX_HELD_PER_TICK).map((h) => ({
         ...h,
         title: cleanTitle(h.title),
