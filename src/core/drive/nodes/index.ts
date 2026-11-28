@@ -1,7 +1,7 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
 import { validNodeTask, type EmbeddedNodeTask } from './task.js';
 import { actionableClaim, jobBlockers, nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
-import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
+import { liveLeader, validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
 import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
 import { isNodeCapacity, isHostStats, type NodeCapacitySample, type HostStats } from './state.js';
 export { planRoutes } from './router.js';
@@ -170,11 +170,6 @@ export class DriveNodes implements QueueV1 {
     return state.nodes.some(n => sameSession(n, session) && n.expiresAt > now);
   }
 
-  private liveLeader(state: NodesState, now: number): LeaderLease | null {
-    const leader = state.leader;
-    return leader && leader.expiresAt > now && this.liveNode(state, leader, now) ? leader : null;
-  }
-
   join(nodeId: string, profile?: NodeProfile): NodeSession | null {
     if (!validId(nodeId)) throw new Error('Invalid drive node ID');
     if (profile?.slots !== undefined && !validSlots(profile.slots)) throw new Error('Invalid drive slots (integer 0-64)');
@@ -206,7 +201,7 @@ export class DriveNodes implements QueueV1 {
       const node = state.nodes.find(n => sameSession(n, session));
       if (!node || node.expiresAt <= now) return null;
       // Check before extending node liveness, so expired authority never revives.
-      const previous = this.liveLeader(state, now);
+      const previous = liveLeader(state, now);
       node.heartbeatAt = now;
       node.expiresAt = now + this.nodeTtl;
       if (report?.usage !== undefined) node.usage = report.usage;
@@ -272,7 +267,7 @@ export class DriveNodes implements QueueV1 {
       const mine = planRoutes(state, now).find(a => a.nodeId === node.nodeId);
       const job = mine && state.jobs.find(j => j.id === mine.jobId);
       if (!job || !routable(job, now)) return null;
-      let leader = this.liveLeader(state, now);
+      let leader = liveLeader(state, now);
       if (!leader) {
         leader = state.leader = { ...worker, token: nextToken(state), expiresAt: now + this.leaderTtl };
       }
@@ -336,7 +331,7 @@ export class DriveNodes implements QueueV1 {
 
   private currentClaim(state: NodesState, claim: JobClaim, now: number): boolean {
     const stored = state.jobs.find(j => j.id === claim.jobId && j.state === 'running')?.claim;
-    const leader = this.liveLeader(state, now);
+    const leader = liveLeader(state, now);
     return !!stored && !!leader && stored.token === claim.token && sameSession(stored, claim) &&
       stored.leaderToken === claim.leaderToken && stored.leaderToken === leader.token &&
       stored.expiresAt > now && this.liveNode(state, stored, now);
@@ -348,13 +343,12 @@ export class DriveNodes implements QueueV1 {
    * Owner scope stays the leader's deliberate choice. */
   claim(leader: LeaderLease, worker: NodeSession, jobId: string): JobClaim | null {
     return this.transaction((state, now) => {
-      const current = this.liveLeader(state, now);
+      const current = liveLeader(state, now);
       if (!current || current.token !== leader.token || !sameSession(current, leader) ||
           !this.liveNode(state, worker, now)) return null;
       const node = state.nodes.find(n => sameSession(n, worker))!;
       if (!nodeCanAcceptWork(node, now)) return null;
-      const active = state.jobs.filter(j => j.state === 'running' && j.claim &&
-        j.claim.expiresAt > now && j.claim.nodeId === worker.nodeId && j.claim.session === worker.session).length;
+      const active = state.jobs.filter(j => j.claim?.nodeId === worker.nodeId && actionableClaim(state, j, now)).length;
       if (node.slots !== undefined && active >= node.slots) return null;
       if (state.pool && !nodeCapacityView(state, now).some(h => h.eligibleNodeIds.includes(node.nodeId) && (h.freeSlots ?? 0) > 0)) return null;
       const job = state.jobs.find(j => j.id === jobId);
@@ -421,7 +415,7 @@ export class DriveNodes implements QueueV1 {
           ? { state: 'withdrawn' as const } : { state: 'completed' as const, result: job.result ?? '' };
       }
       const stored = job.claim;
-      const leader = this.liveLeader(state, now);
+      const leader = liveLeader(state, now);
       if (job.state === 'running' && stored && stored.expiresAt > now && this.liveNode(state, stored, now) &&
           !!leader && stored.leaderToken === leader.token) return { state: 'held' as const };
       const token = nextToken(state);
