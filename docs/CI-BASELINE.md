@@ -5,8 +5,17 @@ Run `phm ci baseline --json` to inspect open PRs in ashlrai/phantom. Use
 read-only: it does not rerun jobs, change tests, merge PRs, or update branches.
 
 The version 1 JSON report contains failure groups, per-PR freshness, master
-evidence, unknown reasons, and proposed update-branch commands. Latest workflow
-runs are checked against the current head and full checkout SHA in job logs.
+evidence, unknown reasons, and proposed update-branch commands.
+
+An additive `repairShadow` object is a deterministic advisory sample for offline
+repair-routing evaluation. Its first supported class, `refresh-generated-docs`,
+covers two exact generated-doc assertions on Phantom. It needs verified master
+failure and at least two unaffected PRs on distinct exact heads per assertion.
+It groups overlapping PRs once and returns at most eight example heads, without
+logs, excerpts, or free-form text. It is not a queue entry, authorization, or a
+command to run a model.
+
+Latest workflow runs are checked against the current head and full checkout SHA in job logs.
 Master evidence queries GitHub Actions by both branch and current commit SHA,
 so a newer run on another branch at the same commit cannot replace a master run.
 Runs of workflows that automate releases and operations rather than check the
