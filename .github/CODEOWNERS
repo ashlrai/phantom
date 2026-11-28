@@ -376,6 +376,7 @@
 /test/desktop-artifact-installer.test.ts @masonwyatt23
 /test/desktop-consumer-install.test.ts @masonwyatt23
 /test/desktop-consumer-upgrade.test.ts @masonwyatt23
+/test/desktop-install-platform.test.ts @masonwyatt23
 /test/desktop-managed-resident-runtime.test.ts @masonwyatt23
 /test/desktop-metadata-launch-trust.test.ts @masonwyatt23
 /test/desktop-native-update-status.test.ts @masonwyatt23
@@ -637,6 +638,7 @@
 /test/improve-devin-review-backlog.test.ts @masonwyatt23
 /test/improve-discover-feed-isolation.test.ts @masonwyatt23
 /test/improve-discover.test.ts @masonwyatt23
+/test/improve-discovery-errors-backlog.test.ts @masonwyatt23
 /test/improve-disk-backlog.test.ts @masonwyatt23
 /test/improve-disk-sweep-backlog.test.ts @masonwyatt23
 /test/improve-dispatch-production-backlog.test.ts @masonwyatt23

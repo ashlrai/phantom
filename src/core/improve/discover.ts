@@ -2173,6 +2173,8 @@ import { cosReconcileBacklogItems } from './cos-reconcile-backlog.js';
 import { passkAlertBacklogItems } from './passk-backlog.js';
 import { frictionBacklogItems } from './friction-backlog.js';
 import { tickHealthBacklogItems } from './tick-health-backlog.js';
+import { discoveryErrorsBacklogItems } from './discovery-errors-backlog.js';
+import { appendDiscoveryPass } from './discovery-pass-journal.js';
 import { creditReleaseBacklogItems } from './credit-release-backlog.js';
 import { crossReviewBacklogItems } from './xreview-backlog.js';
 import { emptyTagBacklogItems } from './empty-tag-backlog.js';
@@ -2446,6 +2448,19 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // while its phase or reason recurs inside the 7-day window and only for
   // the fleet's own repository.
   await feed('tickHealthBacklogItems', () => tickHealthBacklogItems({ repo }));
+
+  // Unattended discovery pass journal: the per-source errors autoDiscover's
+  // discoverBacklog pass records — feed() isolation catches, GitHub poll
+  // failures and the hot-patch read — become backlog items too. Until now
+  // the scheduler's improve job read only the pass's added count and
+  // dropped the errors array entirely, so a feed that started throwing
+  // went silent forever while its items stopped being added; only `phm
+  // improve discover` printed them, and nobody runs it on a schedule.
+  // Same bounded no-follow tail read; a source emits only while it recurs
+  // across in-window passes and days, a missing journal is a clean empty
+  // source, an unreadable one emits the degraded-source item, and only
+  // the fleet's own repository inherits the items.
+  await feed('discoveryErrorsBacklogItems', () => discoveryErrorsBacklogItems({ repo }));
 
   // Post-merge credit release funnel: the per-reason skip tallies and
   // source-completeness verdicts the producer-maintenance sweep records on
@@ -5106,6 +5121,15 @@ export async function autoDiscover(deps: AutoDiscoverDeps = {}): Promise<{ ran: 
       } catch { res.errors.push('Could not read the hot-patch log.'); }
     }
     const added = backlog.appendUserBacklogItems(res.items.filter((i) => backlog.validBacklogItem(i) !== null), new Date(now));
+    // Journal the pass so discoveryErrorsBacklogItems can fold recurring
+    // per-source failures into work — until now the errors array was
+    // returned to this caller and dropped: only `phm improve discover`
+    // printed it, so a feed that started throwing went silent forever.
+    // Best-effort like the syncs in cloud-api; a journal problem never
+    // stalls discovery.
+    try {
+      appendDiscoveryPass(res.errors, added);
+    } catch { /* observability only */ }
     return { ran: true, added, errors: res.errors };
   } catch (err) {
     return { ran: false, added: 0, errors: [err instanceof Error ? err.message : String(err)] };
