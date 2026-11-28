@@ -362,7 +362,8 @@ export function currentUnfed(statusJson: string, readyTsv: string | null, market
     const hardCap = isRecord(slot) && count(slot.hard_cap) ? slot.hard_cap : null;
     const target = laneLaunchTarget(laneLaunchTarget(tickTarget, configuredTarget), hardCap);
     const statusHeld = value.held === true;
-    const view = ctx === null ? null : marketLaneView(lane, value.running, target, statusHeld, ctx);
+    const view = ctx === null ? null : marketLaneView(lane, value.running, target, statusHeld, ctx,
+      typeof value.healthy === 'boolean' ? value.healthy : null);
     const held = view?.held ?? (statusHeld || operatorHolds?.has(lane) === true);
     const headroom = Math.max(0, target - value.running);
     const readyHinted = hints === null ? null : hints.byLane.get(lane) ?? 0;

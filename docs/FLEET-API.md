@@ -439,7 +439,7 @@ planners, each lane, each job under it.
 JSON is the default; `phm org --text` prints it for people.
 The map endpoint above carries the tree in its `tree` field.
 
-With a [fleet replica configured](NODE-ROUTER.md#one-fleet-across-enrolled-macs),
+With a [fleet replica configured](https://github.com/ashlrai/phantom/blob/master/docs/NODE-ROUTER.md#one-fleet-across-enrolled-macs),
 the worker reads the leader's tree, live totals, queue and resource ledger.
 `source` identifies the observation: `machine`, `via` (`local` or
 `leader-replica`), `asOf`, `ageSeconds`, `stale` and `reason`. Lanes name
@@ -578,7 +578,11 @@ so those filters find none until one reports; the `gaps` list says so.
 Every node and edge has the same keys in the same order, sorted by level and
 id, so the same facts always print the same JSON. A job runs on a computer when
 that computer's pool claim names it, or when a worker process for it was seen
-on this computer. Messages to or from something not on the map, such as a
+on this computer. The claim bridge runs a ready row on a node under a
+`ready:<job>:<attempt>` id; the map shows that work as `job:<job>` — the ready
+row's own id — with lane and repo unknown unless another source reported them,
+even when the local live-jobs reader cannot see the remote run. Messages to or
+from something not on the map, such as a
 channel, are counted in `unmappedMessages` and never assigned to a node by
 guessing. The server builds the graph at most once every 5 seconds, and the
 pane polls no faster than that while it is visible. Selecting a node opens the

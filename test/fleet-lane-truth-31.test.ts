@@ -187,3 +187,29 @@ it('refuses a personal-home symlink into the company home', async () => {
   await symlink(join(home, '.codex'), join(home, '.codex-2'));
   expect(await defaultLaneTruthReaders(home, now).meters()).toEqual([]);
 });
+
+it('the default lanes reader honors ASHLR_RUNS_DIR under the real home only', async () => {
+  const runs = await mkdtemp(join(tmpdir(), 'lane-truth-runs-')); dirs.push(runs);
+  const relocated = await mkdtemp(join(tmpdir(), 'lane-truth-fixture-')); dirs.push(relocated);
+  const queue = join(runs, 'queue');
+  await mkdir(queue, { recursive: true });
+  const slots = JSON.stringify({ 'codex-personal': { target: 2, running: 1, queued: 3, held: false } });
+  const path = join(queue, 'slots.json');
+  await writeFile(path, slots);
+  const mtime = new Date(now);
+  await utimes(path, mtime, mtime);
+  const previous = process.env.ASHLR_RUNS_DIR;
+  process.env.ASHLR_RUNS_DIR = runs;
+  try {
+    // No-arg readers resolve the process home, so the override applies.
+    expect(await defaultLaneTruthReaders(undefined, now).lanes()).toEqual([
+      { lane: 'codex-personal', target: 2, running: 1, queued: 3, held: false },
+    ]);
+    // A relocated home keeps its own .ashlr-runs; the override cannot leak in.
+    expect(await defaultLaneTruthReaders(relocated, now).lanes()).toEqual([]);
+  } finally {
+    if (previous === undefined) delete process.env.ASHLR_RUNS_DIR;
+    else process.env.ASHLR_RUNS_DIR = previous;
+  }
+  expect(await readFile(path, 'utf8')).toBe(slots);
+});

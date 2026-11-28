@@ -318,7 +318,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         const bound = slots ?? dropped.slots;
         restore = joinHintCommand(nodeId, {
           owners: [...new Set([...owners, ...(dropped.owners ?? [])])].sort(),
-          caps: [...new Set([...caps, ...(dropped.caps ?? [])])],
+          caps: [...new Set([...caps, ...(dropped.caps ?? [])])].sort(),
           ...(bound === undefined ? {} : { slots: bound }),
         }, { watch: opts.rejoinWatch === true });
       }

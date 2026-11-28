@@ -8,6 +8,7 @@ export const AUTOFIX_SCHEMA = 'autofix.v1';
 export const LEDGER_NAME = 'autofix.jsonl';
 export const SHA_RE = /^[0-9a-f]{40}$/;
 export const LANE_RE = /^[a-z][a-z0-9-]{1,30}$/;
+export const LAUNCHD_LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/;
 
 export const FIXER_IDS = [
   'release-stuck-draft',
@@ -18,16 +19,35 @@ export const FIXER_IDS = [
 
 export type FixerId = (typeof FIXER_IDS)[number] | 'pinned-hand-edit';
 
-export type FixResult =
-  | 'applied'
-  | 'dry-run'
-  | 'skipped'
-  | 'refused'
-  | 'refused_admitted'
-  | 'refused_stale'
-  | 'refused_operator'
-  | 'failed'
-  | 'detect-only';
+const FIX_RESULTS = [
+  'applied', 'dry-run', 'skipped', 'refused', 'refused_admitted',
+  'refused_stale', 'refused_operator', 'failed', 'detect-only',
+] as const;
+
+export type FixResult = (typeof FIX_RESULTS)[number];
+
+const INCIDENT_STATUSES = ['fixed', 'failed', 'intentional', 'refused'] as const;
+export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
+
+const FIXER_ID_SET: ReadonlySet<string> = new Set([...FIXER_IDS, 'pinned-hand-edit']);
+const FIX_RESULT_SET: ReadonlySet<string> = new Set(FIX_RESULTS);
+const INCIDENT_STATUS_SET: ReadonlySet<string> = new Set(INCIDENT_STATUSES);
+
+export function isAutofixRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function isFixerId(value: unknown): value is FixerId {
+  return typeof value === 'string' && FIXER_ID_SET.has(value);
+}
+
+export function isFixResult(value: unknown): value is FixResult {
+  return typeof value === 'string' && FIX_RESULT_SET.has(value);
+}
+
+export function isIncidentStatus(value: unknown): value is IncidentStatus {
+  return typeof value === 'string' && INCIDENT_STATUS_SET.has(value);
+}
 
 export interface LedgerLine {
   ts: string;
@@ -126,7 +146,7 @@ export interface LaneView {
 /** One line appended to ~/.ashlr-runs/ledger/incidents.jsonl. */
 export interface IncidentStatusLine {
   key: string;
-  status: 'fixed' | 'failed' | 'intentional' | 'refused';
+  status: IncidentStatus;
   reason: string;
   ts: string;
 }
@@ -177,6 +197,24 @@ export interface AutofixHost {
   listDir(path: string): string[];
   exec(argv: readonly string[]): ExecResult;
   restartLanePool(lane: string): Promise<{ beforeTarget: number; afterTarget: number }>;
+}
+
+export function defaultLaunchdJob(
+  label: string,
+  plistMtimeMs: number | null,
+  rollbackMtimeMs: number | null,
+  samples: RunsSample[] = [],
+): LaunchdJob {
+  return {
+    label,
+    domain: 'gui',
+    disabled: false,
+    samples,
+    logTail: '',
+    plistMtimeMs,
+    rollbackMtimeMs,
+    authorityGoverned: label === RESIDENT_LABEL,
+  };
 }
 
 export function emptySnapshot(): AutofixSnapshot {

@@ -1,6 +1,7 @@
 import { lstat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { isDriveTarget } from '../core/drive/apps.js';
 import { driveLoop, type DriveDependencies } from '../core/drive/supervisor.js';
 import { readDrivePressure } from '../core/drive/host-pressure.js';
 import { checkDrivePublisher, ScriptDriveBridge } from '../core/drive/script-bridge.js';
@@ -58,7 +59,7 @@ export async function driveControlPresent(path: string): Promise<boolean> {
 }
 
 export async function cmdDrive(args: string[], dependencies?: DriveDependencies): Promise<number> {
-  if (['devin', 'claude', 'codex', 'phantom'].includes(args[0] ?? '')) return (await import('./drive-app.js')).cmdDriveApp(args);
+  if (isDriveTarget(args[0])) return (await import('./drive-app.js')).cmdDriveApp(args);
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(HELP); return 0; }
   let options: DriveOptions;
   try { options = parseDriveOptions(args); }

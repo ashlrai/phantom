@@ -8,6 +8,21 @@ afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, {
 it.each([['--bad'], ['--runs-dir'], ['--repo', 'relative'], ['--runs-dir', 'relative'], ['--note'], ['--json', '--json'], ['--write', '--write'], ['--note', 'a', '--note', 'b']])('rejects bad flags %j (%#)', async (...args) => {
   expect(await cmdFleetPlannerBrief(args, { stdout: { write: () => undefined } })).toBe(2);
 });
+it('roots the brief at ASHLR_RUNS_DIR when --runs-dir is absent', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'brief-env-')); roots.push(root);
+  await mkdir(join(root, 'leader')); await writeFile(join(root, 'leader/ORCHESTRATION.md'), '# Live');
+  const previous = process.env.ASHLR_RUNS_DIR;
+  process.env.ASHLR_RUNS_DIR = root;
+  let output = '';
+  const io = { stdout: { write: (s: string) => { output += s; } } };
+  try {
+    expect(await cmdFleetPlannerBrief(['--repo', root, '--write', '--json'], io)).toBe(0);
+    expect(JSON.parse(output).path).toBe(join(root, 'queue/planner-brief.prompt'));
+  } finally {
+    if (previous === undefined) delete process.env.ASHLR_RUNS_DIR;
+    else process.env.ASHLR_RUNS_DIR = previous;
+  }
+});
 it('reports missing orchestration as exit 1 and writes the private prompt with counts and path', async () => {
   const root = await mkdtemp(join(tmpdir(), 'brief-cli-')); roots.push(root);
   let output = '';

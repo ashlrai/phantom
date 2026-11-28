@@ -217,7 +217,7 @@ export function appendBusInbox(input: unknown, options: BusInboxOptions = {}): B
   } catch { return { status: 'unavailable' }; }
 }
 /** nextCursor advances over expired records, including an entirely expired page.
- * Scan is capped at 1 MiB / 1024 retained records; output at 100 envelopes.
+ * Scan is capped at 1 MiB / BUS_INBOX_MAX_MESSAGES retained records; output at 100 envelopes.
  * TTL is measured from the original receipt using the supplied clock.
  * Both times are nonnegative safe integers, so their nonnegative difference is
  * safe; avoid adding TTL to receivedAt, which could exceed MAX_SAFE_INTEGER.

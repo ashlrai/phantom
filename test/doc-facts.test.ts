@@ -76,9 +76,8 @@ const DOCS = [
   'docs/verify-changed.md',
   // Operating guides AGENTS.md and README.md link to. Linked guides that are
   // missing here name a verb completions SUBCOMMANDS does not offer: QUEUE
-  // (`queue yield`, whose --help exits 2, and a `phm foo bar` example),
-  // AGENT-BUS (`agents mesh status`, whose --help exits 2) and FLEET-API
-  // (`fleet merge-recover`, whose -h exits 2).
+  // (`queue yield`, whose --help exits 2, and a `phm foo bar` example) and
+  // AGENT-BUS (`agents mesh status`, whose --help exits 2).
   'docs/AGENT-APPS.md',
   'docs/AGENT-NETWORK-CHANNELS.md',
   'docs/AGENT-PROFILES.md',
@@ -123,15 +122,18 @@ const DOCS = [
   'docs/CAPABILITY-REGISTRY.md',
   'docs/CLOUD-LANES.md',
   'docs/COMPANY-CONTEXT.md',
+  'docs/COS.md',
   'docs/CROSS-REVIEW.md',
   'docs/DONE-CONTRACT.md',
   'docs/DRIVE.md',
   'docs/DRIVER.md',
+  'docs/FLEET-API.md',
   'docs/FLEET-MERGE-BATCH.md',
   'docs/FLEET-USAGE-PACING.md',
   'docs/GROUP-CHAT.md',
   'docs/GROWTH.md',
   'docs/IDEATION.md',
+  'docs/IMESSAGE.md',
   'docs/IMPACT-METRICS.md',
   'docs/JEV-INTEGRATION.md',
   'docs/JOB-COST.md',
@@ -158,10 +160,7 @@ const DOCS = [
   'docs/WORKER.md',
   'docs/WORKTREE-PRUNE.md',
   'docs/WORLD.md',
-  // Fleet operating guides, held out until completion offered the fleet verbs
-  // they document. COS.md and IMESSAGE.md wait on `fleet cos` and
-  // `fleet imessage-acks`, whose --help does not yet pass
-  // test/cli-help-no-side-effects.
+  // Fleet operating guides whose fleet verbs completions SUBCOMMANDS offers.
   'docs/BRIEF-SEND.md',
   'docs/DISK-MAINT.md',
   'docs/FLEET-EMPTIES.md',

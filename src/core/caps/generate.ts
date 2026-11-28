@@ -22,13 +22,20 @@
 import { createHash } from 'node:crypto';
 import { stringify as tomlStringify } from 'smol-toml';
 import { assertMetadata } from '../connectors/profile.js';
-import { gatedCapabilities, hostedSurfaces } from './registry.js';
+import {
+  activeSensitivityFlags,
+  compareById,
+  gatedCapabilities,
+  hostedSurfaces,
+  hostsForSurface,
+  isGatedCapability,
+} from './registry.js';
 import { CAPS_SCHEMA_ID, type AdapterFormat, type Capability, type CapsRegistry, type CapsSession, type CapsSurface } from './schema.js';
 
-export const CAPS_ADAPTERS_SCHEMA_ID = 'caps.adapters.v1';
+const CAPS_ADAPTERS_SCHEMA_ID = 'caps.adapters.v1' as const;
 
 /** Security's pin-stage tool; the hand-off is documented in docs/CAPABILITY-REGISTRY.md. */
-export const PIN_STAGE = Object.freeze({
+const PIN_STAGE = Object.freeze({
   tool: 'SEC-PIN-STAGE-TOOL-2',
   lib: 'pin_stage_lib',
   libRev: 'fe77a6a8',
@@ -55,13 +62,13 @@ export interface CapsBundle {
 }
 
 export interface CapsManifest {
-  schema: typeof CAPS_ADAPTERS_SCHEMA_ID;
+  schema: 'caps.adapters.v1';
   registrySchema: typeof CAPS_SCHEMA_ID;
   generator: 'phm caps generate';
   registrySha256: string;
   bundleSha256: string;
   artifacts: Array<{ path: string; surface: string | null; format: CapsArtifact['format']; sha256: string; bytes: number }>;
-  pinStage: typeof PIN_STAGE & { stagedDir: string };
+  pinStage: { readonly tool: string; readonly lib: string; readonly libRev: string; readonly stagedRoot: string; stagedDir: string };
   gated: Array<{ capability: string; surfaces: string[]; flags: string[]; hardLimitGates: string[] }>;
   surfaces: Record<string, { adapter: AdapterFormat; capabilities: Record<string, string[]>; hosts: string[] }>;
 }
@@ -80,8 +87,6 @@ export function stableJson(value: unknown): string {
   return `${JSON.stringify(sort(value), null, 2)}\n`;
 }
 
-const byId = <T extends { id: string }>(a: T, b: T): number => a.id.localeCompare(b.id);
-
 // ---------------------------------------------------------------------------
 // Per-format MCP server rendering
 // ---------------------------------------------------------------------------
@@ -93,15 +98,11 @@ const ENV_SYNTAX: Record<'claude' | 'vscode' | 'gemini', EnvSyntax> = {
   gemini: (n) => `$${n}`,
 };
 
-function isGated(c: Capability): boolean {
-  return c.sensitivity.external_send || c.sensitivity.spend || c.sensitivity.delete;
-}
-
 /** Ungated MCP capabilities a surface may load directly, sorted by id. */
 function directMcp(reg: CapsRegistry, surfaceId: string, only?: readonly string[]): Capability[] {
   return reg.capabilities
-    .filter((c) => c.kind === 'mcp' && c.launch && !isGated(c) && c.surfaces.includes(surfaceId) && (!only || only.includes(c.id)))
-    .sort(byId);
+    .filter((c) => c.kind === 'mcp' && c.launch && !isGatedCapability(c) && c.surfaces.includes(surfaceId) && (!only || only.includes(c.id)))
+    .sort(compareById);
 }
 
 function envNames(c: Capability): string[] {
@@ -219,7 +220,7 @@ function sessionArtifacts(reg: CapsRegistry, session: CapsSession): Draft[] {
 
 function capabilityIndex(reg: CapsRegistry, surfaceId: string): Record<string, string[]> {
   const index: Record<string, string[]> = {};
-  for (const c of [...reg.capabilities].sort(byId)) {
+  for (const c of [...reg.capabilities].sort(compareById)) {
     if (!c.surfaces.includes(surfaceId)) continue;
     (index[c.kind] ??= []).push(c.id);
   }
@@ -230,14 +231,14 @@ function capabilityIndex(reg: CapsRegistry, surfaceId: string): Record<string, s
 export function generateCapsAdapters(reg: CapsRegistry): CapsBundle {
   const registrySha256 = sha256(stableJson(reg));
   const drafts = [
-    ...[...reg.surfaces].sort(byId).flatMap((s) => surfaceArtifacts(reg, s)),
-    ...[...reg.sessions].sort(byId).flatMap((s) => sessionArtifacts(reg, s)),
+    ...[...reg.surfaces].sort(compareById).flatMap((s) => surfaceArtifacts(reg, s)),
+    ...[...reg.sessions].sort(compareById).flatMap((s) => sessionArtifacts(reg, s)),
   ].sort((a, b) => a.path.localeCompare(b.path));
   const adapters: CapsArtifact[] = drafts.map((d) => ({ ...d, sha256: sha256(d.content) }));
   // sha256sum/shasum -c format, which the pin-stage tool can verify directly.
   const sums = adapters.map((a) => `${a.sha256}  ${a.path}\n`).join('');
   const bundleSha256 = sha256(sums);
-  const artifacts: CapsArtifact[] = [...adapters, { path: 'SHA256SUMS', surface: null, format: 'checksums', content: sums, sha256: sha256(sums) }];
+  const artifacts: CapsArtifact[] = [...adapters, { path: 'SHA256SUMS', surface: null, format: 'checksums', content: sums, sha256: bundleSha256 }];
 
   const manifest: CapsManifest = {
     schema: CAPS_ADAPTERS_SCHEMA_ID,
@@ -247,16 +248,16 @@ export function generateCapsAdapters(reg: CapsRegistry): CapsBundle {
     bundleSha256,
     artifacts: artifacts.map((a) => ({ path: a.path, surface: a.surface, format: a.format, sha256: a.sha256, bytes: Buffer.byteLength(a.content) })),
     pinStage: { ...PIN_STAGE, stagedDir: `${PIN_STAGE.stagedRoot}/${bundleSha256}` },
-    gated: gatedCapabilities(reg).sort(byId).map((c) => ({
+    gated: gatedCapabilities(reg).sort(compareById).map((c) => ({
       capability: c.id,
       surfaces: [...c.surfaces].sort(),
-      flags: (['external_send', 'spend', 'delete'] as const).filter((f) => c.sensitivity[f]),
+      flags: activeSensitivityFlags(c),
       hardLimitGates: [...c.hardLimitGates].sort(),
     })),
-    surfaces: Object.fromEntries([...reg.surfaces].sort(byId).map((s) => [s.id, {
+    surfaces: Object.fromEntries([...reg.surfaces].sort(compareById).map((s) => [s.id, {
       adapter: s.adapter,
       capabilities: capabilityIndex(reg, s.id),
-      hosts: reg.hosting.filter((e) => e.guest === s.id).map((e) => e.host).sort(),
+      hosts: hostsForSurface(reg, s.id),
     }])),
   };
   const manifestContent = stableJson(manifest);

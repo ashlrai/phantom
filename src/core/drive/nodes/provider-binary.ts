@@ -23,13 +23,23 @@ export function providerBinaryCandidates(provider: NodeProvider, deps: ProviderB
   return isNodeProvider(provider) ? binaryCandidates(provider, deps) : [];
 }
 
-/** The same allowlist for any plain CLI name (used by the read-only node doctor). */
+/** The same allowlist for any plain CLI name (used by the read-only node doctor).
+ * The first group covers macOS and user-level installs; the version-manager and
+ * Linux directories appended after the Node prefix resolve only when nothing
+ * earlier exists, so an existing resolution never changes. They exist so a
+ * contributor node on Linux can find the same provider CLIs. PATH is never
+ * consulted. */
 export function binaryCandidates(name: string, deps: ProviderBinaryDeps = {}): string[] {
   if (!/^[a-z][a-z0-9-]{0,31}$/.test(name)) return [];
   const home = deps.home ?? homedir();
   const dirs = ['/opt/homebrew/bin', '/usr/local/bin',
     ...(isAbsolute(home) ? [join(home, '.local', 'bin'), join(home, '.npm-global', 'bin')] : []),
-    dirname(deps.execPath ?? process.execPath)];
+    dirname(deps.execPath ?? process.execPath),
+    ...(isAbsolute(home)
+      ? [join(home, '.volta', 'bin'), join(home, '.bun', 'bin'),
+        join(home, '.local', 'share', 'mise', 'shims'), join(home, '.asdf', 'shims')]
+      : []),
+    '/usr/bin', '/bin', '/snap/bin'];
   return [...new Set(dirs.filter(dir => isAbsolute(dir)).map(dir => join(dir, name)))];
 }
 

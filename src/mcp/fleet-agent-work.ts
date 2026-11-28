@@ -31,7 +31,7 @@
  * `agent` is required and resolves through the server-owned identity
  * registry with the same handle/`agent:`/stable-id/alias refs
  * `resolveAgent` accepts; `job`, `since`, `before`, `contains`,
- * `priority`, `channel`, `from`, `excludeFrom`, `id`, `inReplyTo`,
+ * `priority`, `channel`, `topic`, `from`, `excludeFrom`, `id`, `inReplyTo`,
  * `bodyKind`, `result` and `thread` apply the same rules the
  * `phm agents bus work mine` flags share and are validated before any
  * store read. Read-only: no caller
@@ -53,7 +53,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent` and `job` share — the same bound every bus read applies. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'before', 'priority', 'channel', 'from', 'excludeFrom', 'id', 'inReplyTo', 'bodyKind', 'result', 'thread']);
+const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'before', 'priority', 'channel', 'topic', 'from', 'excludeFrom', 'id', 'inReplyTo', 'bodyKind', 'result', 'thread']);
 
 export interface FleetAgentWorkArgs {
   /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. */
@@ -70,6 +70,8 @@ export interface FleetAgentWorkArgs {
   priority?: BusPriority;
   /** Keep only pending items provably addressed to `group:<name>:*` of one bus channel — the same `--channel` rule every bus read shares. */
   channel?: string;
+  /** Keep only pending items provably addressed under one `group:<room>:<topic>` topic — the same `--topic` rule every bus read shares. */
+  topic?: string;
   /** Keep only pending items provably sent by this agent ref — the same `--from` rule every bus read shares. */
   from?: string;
   /** Keep only pending items NOT provably sent by this agent ref — the same `--exclude-from` rule every bus read shares. */
@@ -94,8 +96,10 @@ export interface FleetAgentWorkArgs {
  * `job` a printable routing label, `contains` the bounded free-text
  * needle `busReadContains` normalizes, `since` the shared `15m`/`2h`/`1d`/
  * epoch-ms/ISO grammar resolved to a safe non-negative epoch-ms integer,
- * `priority` one exact P0..P3 band, `channel` the strict channel-name
- * grammar every bus `--channel` read validates, `from`/`excludeFrom`/`id`/
+ * `priority` one exact P0..P3 band, `channel` and `topic` the strict
+ * channel-name grammar every bus `--channel`/`--topic` read validates —
+ * the topic value being the segment a `group:<room>:<topic>` label
+ * carries — `from`/`excludeFrom`/`id`/
  * `inReplyTo`/`bodyKind`/`thread` the same printable-label bound every bus
  * `--from`/`--exclude-from`/`--id`/`--in-reply-to`/`--body-kind`/`--thread` read
  * validates, and `result` one exact `WORK_RESULT_OUTCOMES` code — the
@@ -148,6 +152,11 @@ export function parseFleetAgentWorkArgs(args: Record<string, unknown>): FleetAge
     if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
     parsed.channel = channel;
   }
+  const topic = args.topic;
+  if (topic !== undefined) {
+    if (typeof topic !== 'string' || !agentChannelNameSchema.safeParse(topic).success) return null;
+    parsed.topic = topic;
+  }
   for (const key of ['from', 'excludeFrom', 'id', 'inReplyTo', 'bodyKind', 'thread'] as const) {
     const value = args[key];
     if (value !== undefined) {
@@ -184,6 +193,7 @@ export async function readFleetAgentWork(
     ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
     ...(args.channel === undefined ? {} : { channel: args.channel }),
+    ...(args.topic === undefined ? {} : { topic: args.topic }),
     ...(args.from === undefined ? {} : { from: args.from }),
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
     ...(args.id === undefined ? {} : { id: args.id }),

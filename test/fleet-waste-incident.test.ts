@@ -106,6 +106,23 @@ describe('cmdFleetWasteIncident', () => {
     ]);
   });
 
+  it('roots the evidence read at ASHLR_RUNS_DIR when --runs-dir is absent', async () => {
+    logSpy();
+    const dir = await mkdtemp(join(tmpdir(), 'waste-incident-env-'));
+    dirs.push(dir);
+    const seen: Array<string | undefined> = [];
+    const spy = async (runsDir?: string) => { seen.push(runsDir); return [highInput('fake-a')]; };
+    const previous = process.env.ASHLR_RUNS_DIR;
+    process.env.ASHLR_RUNS_DIR = dir;
+    try {
+      expect(await cmdFleetWasteIncident(['--json'], { read: spy, now: () => base, post: okPost() })).toBe(0);
+      expect(seen).toEqual([dir]);
+    } finally {
+      if (previous === undefined) delete process.env.ASHLR_RUNS_DIR;
+      else process.env.ASHLR_RUNS_DIR = previous;
+    }
+  });
+
   it('prints usage on --help and -h with exit 0', async () => {
     const log = logSpy();
     expect(await cmdFleetWasteIncident(['--help'])).toBe(0);

@@ -36,7 +36,51 @@ interface EcosystemIndexShape {
   repositories?: unknown;
 }
 
-export const DEFAULT_ECOSYSTEM_FOCUS: EcosystemFocus = {
+export const DAY_MS = 24 * 60 * 60 * 1000;
+
+const UNICODE_DASH_RE = /[\u2010-\u2015]/g;
+
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function normalizeUnicodeDashes(value: string, replacement = '-'): string {
+  return value.replace(UNICODE_DASH_RE, replacement);
+}
+
+/**
+ * Walk up from `startDir` looking for the nearest directory that contains
+ * package.json. Returns that directory, or null if none is found.
+ */
+export function findPackageRepoRoot(startDir: string): string | null {
+  let dir = resolve(startDir);
+  const root = resolve('/');
+  while (dir !== root) {
+    if (existsSync(join(dir, 'package.json'))) return dir;
+    const parent = resolve(dir, '..');
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return existsSync(join(root, 'package.json')) ? root : null;
+}
+
+export function resolveRepoDocPath(moduleUrl: string, ...segments: string[]): string | null {
+  try {
+    let baseDir: string;
+    try {
+      baseDir = dirname(fileURLToPath(moduleUrl));
+    } catch {
+      baseDir = process.cwd();
+    }
+    const repoRoot = findPackageRepoRoot(baseDir) ?? process.cwd();
+    const candidate = join(repoRoot, ...segments);
+    return existsSync(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+const DEFAULT_ECOSYSTEM_FOCUS: EcosystemFocus = {
   coreFleetRepos: [
     'ashlr-hub',
     'phantom-secrets',
@@ -92,34 +136,8 @@ let focusCache: {
   byName: Map<string, StrategicTier>;
 } | null = null;
 
-function findRepoRoot(startDir: string): string | null {
-  let dir = resolve(startDir);
-  const root = resolve('/');
-  while (dir !== root) {
-    if (existsSync(join(dir, 'package.json'))) return dir;
-    const parent = resolve(dir, '..');
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return existsSync(join(root, 'package.json')) ? root : null;
-}
-
-function moduleDir(): string {
-  try {
-    return dirname(fileURLToPath(import.meta.url));
-  } catch {
-    return process.cwd();
-  }
-}
-
 function ecosystemIndexPath(): string | null {
-  try {
-    const repoRoot = findRepoRoot(moduleDir()) ?? process.cwd();
-    const candidate = join(repoRoot, 'docs', 'ecosystem-index.json');
-    return existsSync(candidate) ? candidate : null;
-  } catch {
-    return null;
-  }
+  return resolveRepoDocPath(import.meta.url, 'docs', 'ecosystem-index.json');
 }
 
 function stringArray(value: unknown): string[] {
@@ -131,13 +149,12 @@ function stringArray(value: unknown): string[] {
 function externalCandidates(value: unknown): EcosystemFocus['externalCoreCandidates'] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
-    if (!entry || typeof entry !== 'object') return [];
-    const record = entry as Record<string, unknown>;
-    if (typeof record['id'] !== 'string' || typeof record['status'] !== 'string') return [];
+    if (!isPlainRecord(entry)) return [];
+    if (typeof entry['id'] !== 'string' || typeof entry['status'] !== 'string') return [];
     return [{
-      id: record['id'],
-      status: record['status'],
-      ...(typeof record['owner'] === 'string' ? { owner: record['owner'] } : {}),
+      id: entry['id'],
+      status: entry['status'],
+      ...(typeof entry['owner'] === 'string' ? { owner: entry['owner'] } : {}),
     }];
   });
 }
@@ -157,11 +174,15 @@ function addAliases(byName: Map<string, StrategicTier>, name: unknown, tier: Str
   if (name.startsWith('@ashlr/')) byName.set(name.slice('@ashlr/'.length), tier);
 }
 
+function populateTierAliases(byName: Map<string, StrategicTier>, focus: EcosystemFocus): void {
+  for (const id of focus.coreFleetRepos) addAliases(byName, id, 'core-fleet');
+  for (const id of focus.forceMultiplierRepos) addAliases(byName, id, 'force-multiplier');
+  for (const id of focus.supportingRepos) addAliases(byName, id, 'supporting');
+}
+
 function buildFromDefault(): { focus: EcosystemFocus; byName: Map<string, StrategicTier> } {
   const byName = new Map<string, StrategicTier>();
-  for (const id of DEFAULT_ECOSYSTEM_FOCUS.coreFleetRepos) addAliases(byName, id, 'core-fleet');
-  for (const id of DEFAULT_ECOSYSTEM_FOCUS.forceMultiplierRepos) addAliases(byName, id, 'force-multiplier');
-  for (const id of DEFAULT_ECOSYSTEM_FOCUS.supportingRepos) addAliases(byName, id, 'supporting');
+  populateTierAliases(byName, DEFAULT_ECOSYSTEM_FOCUS);
   return { focus: DEFAULT_ECOSYSTEM_FOCUS, byName };
 }
 
@@ -188,9 +209,7 @@ function loadFocus(): { focus: EcosystemFocus; byName: Map<string, StrategicTier
     if (focus.externalCoreCandidates.length === 0) focus.externalCoreCandidates = fallback.focus.externalCoreCandidates;
 
     const byName = new Map<string, StrategicTier>();
-    for (const id of focus.coreFleetRepos) addAliases(byName, id, 'core-fleet');
-    for (const id of focus.forceMultiplierRepos) addAliases(byName, id, 'force-multiplier');
-    for (const id of focus.supportingRepos) addAliases(byName, id, 'supporting');
+    populateTierAliases(byName, focus);
     const repos = Array.isArray(parsed.repositories) ? parsed.repositories as EcosystemIndexRepo[] : [];
     for (const repo of repos) {
       const tier = isStrategicTier(repo.strategicTier) ? repo.strategicTier : 'inventory';
@@ -220,7 +239,7 @@ export function strategicTierOfRepo(repo: string): StrategicTier {
   }
 }
 
-export function strategicTierMultiplier(tier: StrategicTier): number {
+function strategicTierMultiplier(tier: StrategicTier): number {
   return TIER_MULTIPLIER[tier] ?? 1.0;
 }
 

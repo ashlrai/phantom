@@ -53,6 +53,10 @@ export function explainLaunchStall(facts: LaunchStallFacts, now: Date | number):
   const nowMs = typeof now === 'number' ? now : now.getTime();
   const { lane, running, target, queued } = facts;
   const launchMs = ms(facts.lastLaunchAt);
+  const resetMs = ms(facts.usageResetAt);
+  const windowElapsed = resetMs !== null && resetMs <= nowMs;
+  const usageFrac = windowElapsed ? undefined : facts.usageFrac;
+  const futureReset = resetMs !== null && resetMs > nowMs ? facts.usageResetAt : undefined;
   const countsKnown = running !== undefined && target !== undefined && queued !== undefined;
   const stalled = countsKnown && queued > 0 && running < target && (launchMs === null || nowMs - launchMs > STALL_AFTER_MS);
   const reasons: string[] = [];
@@ -64,14 +68,21 @@ export function explainLaunchStall(facts: LaunchStallFacts, now: Date | number):
   let action = '';
   if (facts.held) {
     reasons.push(`held: ${facts.heldReason ?? 'reason not recorded'}`);
-    action = facts.heldReason
-      ? `lane held: ${facts.heldReason}${facts.usageResetAt ? ` until ${facts.usageResetAt}` : ''}; nothing to do before then`
-      : 'lane held with no recorded reason; the owner should find who set the hold';
+    if (facts.heldReason) {
+      action = futureReset
+        ? `lane held: ${facts.heldReason} until ${futureReset}; nothing to do before then`
+        : `lane held: ${facts.heldReason}; check the current hold status`;
+    } else {
+      action = 'lane held with no recorded reason; the owner should find who set the hold';
+    }
   }
-  if (facts.usageFrac !== undefined && facts.usageFrac >= 1) {
-    reasons.push(`usage exhausted: ${Math.round(facts.usageFrac * 100)}% used, resets ${facts.usageResetAt ?? 'at an unknown time'}`);
-    action ||= `usage exhausted until ${facts.usageResetAt ?? 'an unknown reset time'}; wait for the reset or move work to another lane`;
-  } else if (facts.usageFrac === undefined) missing.push('usage');
+  if (usageFrac !== undefined && usageFrac >= 1) {
+    reasons.push(`usage exhausted: ${Math.round(usageFrac * 100)}% used, resets ${futureReset ?? 'at an unknown time'}`);
+    action ||= `usage exhausted until ${futureReset ?? 'an unknown reset time'}; wait for the reset or move work to another lane`;
+  } else if (usageFrac === undefined) {
+    if (windowElapsed) reasons.push(`usage window ended at ${facts.usageResetAt}`);
+    missing.push('usage');
+  }
   const heads = facts.headLines;
   if (heads.length > 0 && heads.every(h => h.blockedBy)) {
     const shown = heads.slice(0, HEAD_LINES).map(h => `${h.id} (${h.blockedBy})`).join(', ');

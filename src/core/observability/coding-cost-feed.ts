@@ -1,5 +1,12 @@
 /** Metadata-only spend feed for router rewards and PostHog. No network or credentials. */
-import { createHash } from 'node:crypto';
+import {
+  isNonNegativeFinite,
+  isNonNegativeSafeInt,
+  isObservabilityRecord,
+  isPositiveSafeInt,
+  parseStrictUtcIsoMs,
+  uuidV5Url,
+} from './hop-events.js';
 
 export interface CodingSpendRecord {
   schemaVersion: 1;
@@ -49,41 +56,29 @@ export interface CodingCostRollup extends Totals {
 }
 
 const label = (v: unknown): v is string => typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:/@-]{0,199}$/.test(v);
-const count = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
-function time(v: unknown): boolean {
-  if (typeof v !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(v) || !Number.isFinite(Date.parse(v))) return false;
-  return new Date(v).toISOString() === (v.includes('.') ? v : v.replace('Z', '.000Z'));
-}
 const spendKeys = ['schemaVersion', 'kind', 'recordId', 'timestamp', 'repo', 'taskId', 'attemptId', 'pool', 'taskClass', 'engine', 'model', 'tokensIn', 'tokensOut', 'costUsd', 'costBasis'];
 const mergeKeys = ['schemaVersion', 'kind', 'timestamp', 'repo', 'prNumber', 'taskIds'];
 
 /** Reject extra fields rather than forwarding prompts, arbitrary properties or credentials. */
 export function parseCodingCostRecord(value: unknown): CodingSpendRecord | CodingMergeRecord {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid coding cost record');
-  const r = value as Record<string, unknown>;
+  if (!isObservabilityRecord(value)) throw new Error('Invalid coding cost record');
+  const r = value;
   const keys = r['kind'] === 'spend' ? spendKeys : mergeKeys;
-  if (Object.keys(r).length !== keys.length || keys.some(k => !Object.hasOwn(r, k)) || r['schemaVersion'] !== 1 || !time(r['timestamp']) || !label(r['repo'])) throw new Error('Invalid coding cost record');
+  if (Object.keys(r).length !== keys.length || keys.some(k => !Object.hasOwn(r, k)) || r['schemaVersion'] !== 1 || parseStrictUtcIsoMs(r['timestamp']) === null || !label(r['repo'])) throw new Error('Invalid coding cost record');
   if (r['kind'] === 'spend') {
     if (!['recordId', 'taskId', 'attemptId', 'pool', 'taskClass', 'engine', 'model'].every(k => label(r[k])) ||
-      !['tokensIn', 'tokensOut'].every(k => r[k] === null || count(r[k])) ||
-      !(r['costUsd'] === null || (typeof r['costUsd'] === 'number' && Number.isFinite(r['costUsd']) && r['costUsd'] >= 0)) ||
+      !['tokensIn', 'tokensOut'].every(k => r[k] === null || isNonNegativeSafeInt(r[k])) ||
+      !(r['costUsd'] === null || isNonNegativeFinite(r['costUsd'])) ||
       !['reported', 'estimated', 'unknown'].includes(String(r['costBasis'])) ||
       (r['costBasis'] === 'unknown') !== (r['costUsd'] === null)) throw new Error('Invalid coding spend record');
     return r as unknown as CodingSpendRecord;
   }
-  if (r['kind'] !== 'merged' || !count(r['prNumber']) || r['prNumber'] === 0 || !Array.isArray(r['taskIds']) || !r['taskIds'].length || !r['taskIds'].every(label) || new Set(r['taskIds']).size !== r['taskIds'].length) throw new Error('Invalid coding merge record');
+  if (r['kind'] !== 'merged' || !isPositiveSafeInt(r['prNumber']) || !Array.isArray(r['taskIds']) || !r['taskIds'].length || !r['taskIds'].every(label) || new Set(r['taskIds']).size !== r['taskIds'].length) throw new Error('Invalid coding merge record');
   return r as unknown as CodingMergeRecord;
 }
 
 const identity = (...parts: unknown[]): string => JSON.stringify(parts);
-function eventUuid(value: string): string {
-  // RFC 4122 UUIDv5 in the URL namespace, namespaced again for this feed.
-  const bytes = createHash('sha1').update(Buffer.from('6ba7b8119dad11d180b400c04fd430c8', 'hex')).update(`phantom-router:${value}`).digest().subarray(0, 16);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
+const eventUuid = (value: string): string => uuidV5Url(`phantom-router:${value}`);
 const dimensions = (r: CodingSpendRecord): string => identity(r.repo, r.pool, r.taskClass, r.engine, r.model);
 
 function totals(rows: CodingSpendRecord[]): Totals {

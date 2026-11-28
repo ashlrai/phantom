@@ -340,6 +340,10 @@ phm pool admission --json
 
 ## Utilization and unfed capacity
 
+`phm fleet launch-stall-why` treats quota usage as unknown once its recorded
+reset time is at or before report time. A hold still reported by the dispatcher
+remains visible and prompts a check of the current hold status.
+
 `phm fleet autopilot --once --json` requires a healthy `ready.tsv` read to
 identify starved lanes or propose restock. When that read is missing or
 degraded, per-lane `ready` stays null. The dispatcher’s `queued` count remains
@@ -389,6 +393,8 @@ their matching requirements envelopes when `router-queue.md` is readable.
 An invalid envelope excludes the row. When the envelope file is unavailable,
 the tier tally falls back to the row's own fields.
 `phm fleet ready-supply` uses the same rule for hinted and lane-open jobs.
+The fleet truth `queued` count and the repos manager's per-repo `queueDepth`
+follow it too, so repeated READY rows cannot inflate either.
 The planner uses those counts for its supply floor, so repeated READY rows
 cannot inflate the backlog. Parked rows are counted separately.
 Planner autorun measures lane headroom against the configured target capped
@@ -570,6 +576,14 @@ the dispatcher would record (`derivedReasons: true` in `--json`), otherwise
 reasons stay unknown. For API lanes whose derived cost class is metered, rows
 without `max_cost_class=metered` receive `metered_api_opt_in_required`. The
 dispatcher verdict includes any changes in cost class from promotional windows.
+The derived view reads the same status.json lane records the report already
+trusts, so a published `healthy: false` on omlx — the dispatcher's per-tick
+loopback verdict — records `local_unhealthy` on that lane exactly as the
+dispatcher's per-destination gate does, replacing `invalid_capability_advertisement`
+(the lane keeps one `unavailable` code, last writer wins); a missing or
+non-boolean reading stays unknown and blocks nothing. Per-destination gates
+with no published reading — codex-local health and scope, Devin scope and
+recovery-lane exclusion — stay unmodelled.
 Ready rows are validated exactly like the dispatcher's
 `work_market.requirements`: a malformed job id, tier or requirements spec —
 including a spec-less row whose `queue/router-queue.md` `(attrs)` envelope
@@ -627,8 +641,10 @@ Open jobs have no per-lane attribution.
 
 The Leader board estimates the number of conflicting PRs from rebase job IDs
 in `ready.tsv`. It includes parked rebase jobs, expands batches into their
-member PRs, and counts each PR once across job IDs. References in titles,
-prompts, and requirements do not contribute to the estimate.
+member PRs, and counts each PR once across job IDs. Queuegen's `-retry<N>`
+rebase retries resolve to their base job's PRs — a retry is the same
+conflict, not a new one. References in titles, prompts, and requirements do
+not contribute to the estimate.
 
 `phm queue` owns the separate `queue.v1` coordination snapshot at
 `~/.ashlr-runs/queue/queue.v1.json`. `--dir <directory>` selects an isolated store.
@@ -1769,7 +1785,9 @@ re-pinning before dispatcher installation; no live cutover is part of this chang
 Run `phm fleet parked --json` for the read-only `health` summary
 (`fleet.queue-health.v1`). It separates ready and parked counts and groups
 repeated precheck skips, including `RESTOCK`, by job, code and reason over the
-last 24 hours. A READY row's lane hint resolves like `work_market.requirements`:
+last 24 hours. Each job counts once in each side: a repeated READY row or a
+duplicated parked hold counts at its first valid row, so `parked`, `byLane`,
+`groups`, `total` and the health parked count all name jobs, not lines. A READY row's lane hint resolves like `work_market.requirements`:
 the requirements JSON's `preferred_lane` wins over the lane cell and explicit
 `null` is lane-open, while an absent key falls back to the lane cell. A row
 carrying no requirements cell resolves its spec from the matching

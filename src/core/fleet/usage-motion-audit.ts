@@ -108,14 +108,18 @@ function emptyJournal(): Omit<JournalRead, 'state' | 'truncated'> {
  * observed at writtenAt ?? fetchedAt ?? observedAt. A row naming a lane but
  * carrying a bad timestamp or invalid pctUsed is a defect for that lane;
  * unparsable lines are unattributable drops.
+ *
+ * The journal is append-only and chronological, so when it outgrows the row
+ * bound the newest rows are the evidence — the retained window is the tail,
+ * never the head (the same newest-window contract readLedgerTail applies to
+ * the fleet ledgers). A truncated tail is stated as a lower bound.
  */
 function parseMotionJournal(text: string): JournalRead {
   const out: JournalRead = { state: 'healthy', truncated: false, ...emptyJournal() };
   const seen = new Map<string, Map<number, number>>(); // lane → observed ms → pctUsed
-  for (const rawLine of text.split('\n')) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    if (out.rows >= MAX_JOURNAL_ROWS) { out.truncated = true; break; }
+  const lines = text.split('\n').map((rawLine) => rawLine.trim()).filter((line) => line !== '');
+  if (lines.length > MAX_JOURNAL_ROWS) out.truncated = true;
+  for (const line of lines.slice(-MAX_JOURNAL_ROWS)) {
     out.rows++;
     let value: unknown;
     try { value = JSON.parse(line); } catch { out.dropped++; continue; }

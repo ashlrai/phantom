@@ -77,7 +77,9 @@ let factsCache: { key: string; at: number; facts: Promise<Map<string, RepoFacts>
 async function readyDepth(runsDir: string): Promise<Map<string, number> | null> {
   const source = await readSource(join(runsDir, 'queue', 'ready.tsv'), 2 * 1024 * 1024, false);
   if (source.state !== 'healthy') return null;
-  const parsed = parseReadyTsv(source.text);
+  // Depth feeds the repo_share score, so it counts jobs, not lines: repeated
+  // READY rows for one job are one unit of ready work (uniqueReady).
+  const parsed = parseReadyTsv(source.text, null, true);
   const depths = new Map<string, number>();
   const rows = [...parsed.rows.filter(row => row.status === 'READY'), ...parsed.unhintedRows];
   for (const row of rows) {

@@ -97,9 +97,10 @@ const DETACHED_SCRIPT_FILE = /\.(?:[cm]?[jt]sx?)$/;
  * The program's only reach outside contrib/ is
  * src/core/authority/protected-paths.ts, and a dependency bump can break
  * it through the shared manifests, so the trigger names those inputs; a
- * new cross-boundary import must extend it. examples/, test/ and the
- * root configs stay outside every project on their own boundaries —
- * each needs its own verified program before a check can claim it.
+ * new cross-boundary import must extend it. examples/ and the root
+ * configs stay outside every project on their own boundaries — each
+ * needs its own verified program before a check can claim it. test/ is
+ * covered per changed file by runTestTypecheck below, not as a program.
  */
 const CONTRIB_DIR = 'contrib';
 const CONTRIB_ROUTER_DIR = 'contrib/router';
@@ -129,10 +130,11 @@ const SHARED_MANIFEST_FILE = /^package(?:-lock)?\.json$/;
  * project selects on) rather than a file list that would silently rot;
  * a new cross-boundary import needs no trigger edit. A dependency bump
  * can also break the program through @types, so the shared manifests
- * join the trigger. test/, docs/, examples/ and the root configs stay
- * outside: scripts import no test/ module (the shipped fixture bundle
- * rejects test/ inputs outright), and each remaining tree needs its own
- * verified program before a check can claim it.
+ * join the trigger. docs/, examples/ and the root configs stay outside:
+ * scripts import no test/ module (the shipped fixture bundle rejects
+ * test/ inputs outright), and each remaining tree needs its own verified
+ * program before a check can claim it. test/ gets a file-scoped check
+ * instead — see testTypecheckFiles below.
  */
 const SCRIPTS_DIR = 'scripts';
 const BACKEND_SRC_FILE = /^src\/(?!web-ui\/|raycast\/)/;
@@ -183,6 +185,26 @@ const REALIO_LANE_INPUTS = new Set([
 const VERSE_ROUTE_FILE = /^src\/core\/verse\/.*-api\.ts$/;
 const VERSE_SYNC_IO_CHECKER = 'scripts/check-verse-sync-io.mjs';
 
+/**
+ * The Merge Gate "Check generated files" job regenerates docs/llms.txt from
+ * the docs page tree and verifies bin/ashlr's sha256 is still listed in the
+ * canonical launcher digest manifest, then fails on any drift. verify-changed
+ * runs the same read-only --check modes when a diff can stale either output,
+ * so the verdict lands locally instead of as a red gate step. The index
+ * inputs are every docs markdown page (docs/internal pages are excluded from
+ * the index but still trigger the cheap check), the index source block, the
+ * committed index itself, and the generator plus its page model. The digest
+ * inputs are the launcher bytes, the manifest and the checker.
+ */
+const LLMS_INDEX_INPUT = /^docs\/(?:.*\.md|llms-source\.txt|llms\.txt)$/;
+const LLMS_INDEX_GENERATOR = 'scripts/generate-docs-llms.mjs';
+const LLMS_INDEX_PAGE_MODEL = 'scripts/lib/docs-pages.mjs';
+const LAUNCHER_DIGEST_INPUTS = new Set([
+  'bin/ashlr',
+  'scripts/canonical-launcher-digests.json',
+  'scripts/canonical-launcher-digests.mjs',
+]);
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -218,8 +240,24 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     scriptsTypecheck: changed.some((path) =>
       (path.startsWith(`${SCRIPTS_DIR}/`) && TS_FAMILY_FILE.test(path)) ||
       SHARED_MANIFEST_FILE.test(path) || BACKEND_SRC_FILE.test(path)),
+    // The backend suites are the last authored TypeScript surface no
+    // check type-checked: ~6 000 .ts-family files under test/ sit outside
+    // every tsconfig project, ESLint lints but cannot type-check, and
+    // vitest transpiles without checking — so a type error in a test
+    // ships silently until it changes runtime behavior. The whole tree
+    // is too large for one file-list verdict inside the per-run budget,
+    // so the check is file-scoped like the lane lints: the changed
+    // .ts-family files themselves are the tsc roots and only diagnostics
+    // located in them fail the run; pre-existing errors in unchanged
+    // files they import print as a WARN count. Deletions carry no file
+    // to check and stay out.
+    testTypecheckFiles: changed.filter((path) =>
+      existing.has(path) && path.startsWith('test/') && TS_FAMILY_FILE.test(path)),
     realioLaneCheck: changed.some((path) => REALIO_LANE_TEST_FILE.test(path) || REALIO_LANE_INPUTS.has(path)),
     verseSyncIoCheck: changed.some((path) => VERSE_ROUTE_FILE.test(path) || path === VERSE_SYNC_IO_CHECKER),
+    llmsIndexCheck: changed.some((path) =>
+      LLMS_INDEX_INPUT.test(path) || path === LLMS_INDEX_GENERATOR || path === LLMS_INDEX_PAGE_MODEL),
+    launcherDigestCheck: changed.some((path) => LAUNCHER_DIGEST_INPUTS.has(path)),
   };
 }
 
@@ -1911,6 +1949,101 @@ export function runScriptsTypecheck(root, files, spawn = spawnSync) {
   return runFileListTypecheck(root, files, spawn, 'scripts');
 }
 
+/**
+ * Ambient `any` declarations for the untyped JavaScript modules the
+ * backend suites import — operational .mjs/.js scripts under scripts/
+ * and test/helpers that no tsconfig project or sibling .d.mts covers.
+ * vitest transpiles without checking, so those imports are legal today;
+ * under tsc strict each one is a TS7016 "could not find a declaration
+ * file" error that says nothing about the test's own correctness.
+ * Declaring the wildcards any is the honest type — the modules
+ * genuinely carry none — and file resolution still wins for every
+ * specifier that does resolve to a .ts source, so src/ imports keep
+ * their real types. The file is always a program root in
+ * runTestTypecheck, never a diagnostic target.
+ */
+const TEST_TYPECHECK_SHIM = 'test/untyped-js-imports.d.ts';
+
+/** One tsc diagnostic line: `path(line,col): error|warning TSnnnn: …`. */
+const TSC_DIAGNOSTIC_LINE = /^([^\s].*?)\((\d+),(\d+)\): (?:error|warning) TS\d+/;
+
+/** Repo-relative diagnostic path normalization for changed-file matching. */
+function normalizeTscPath(path) {
+  return path.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+/**
+ * Type-check the changed backend test files in one tsc run — the same
+ * file-list invocation the contrib and scripts checks share, plus
+ * --esModuleInterop (the backend tsconfig sets it and suites rely on
+ * default-import interop) and the untyped-JS shim root. Unlike those
+ * whole-program checks the verdict is file-scoped: tsc still follows
+ * each file's imports into src/ and test/helpers, but only diagnostics
+ * located in the changed files themselves fail the run — the same
+ * changed-file boundary the lane lints apply. Diagnostics in unchanged
+ * files are pre-existing debt the diff did not introduce; they print
+ * as a bounded WARN count instead of failing, and are caught when
+ * their own file changes. A non-zero tsc result with no parseable
+ * diagnostics at all (compiler-level failure, spawn error, signal)
+ * still fails.
+ */
+export function runTestTypecheck(root, files, spawn = spawnSync) {
+  const roots = [...new Set([TEST_TYPECHECK_SHIM, ...files])];
+  const result = spawn(process.execPath,
+    ['--max-old-space-size=4096', 'node_modules/typescript/bin/tsc', '--noEmit',
+     '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022',
+     '--strict', '--skipLibCheck', '--esModuleInterop', '--jsx', 'react-jsx', ...roots],
+    { cwd: root, encoding: 'utf8', timeout: 300000, killSignal: 'SIGKILL' });
+  if (result.error || result.signal) {
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL test typecheck');
+    return false;
+  }
+  if (result.status === 0) {
+    console.log('PASS test typecheck');
+    return true;
+  }
+  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+  // tsc prints diagnostic paths relative to cwd — repo paths stay
+  // repo-relative, anything else can come back with `..` segments or
+  // absolute — so both sides resolve against root before comparing.
+  const changed = new Set(files.map((path) => resolve(root, path)));
+  const ownDiagnostics = [];
+  const otherDiagnostics = [];
+  let unparsedErrors = 0;
+  for (const line of output.split('\n')) {
+    const match = line.match(TSC_DIAGNOSTIC_LINE);
+    if (!match) {
+      if (/\berror\b/.test(line)) unparsedErrors++;
+      continue;
+    }
+    (changed.has(resolve(root, match[1])) ? ownDiagnostics : otherDiagnostics).push(line);
+  }
+  if (unparsedErrors > 0 || (ownDiagnostics.length === 0 && otherDiagnostics.length === 0)) {
+    // A non-zero exit the file-scoped read cannot classify: a compiler
+    // or environment failure (bad flags, missing types, spawn-level
+    // error text) rather than file diagnostics.
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    console.log('FAIL test typecheck');
+    return false;
+  }
+  if (otherDiagnostics.length > 0) {
+    const files = [...new Set(otherDiagnostics.map((line) => normalizeTscPath(line.match(TSC_DIAGNOSTIC_LINE)[1])))].sort();
+    const shown = files.slice(0, 10).join(', ');
+    console.log(`WARN test typecheck: ${otherDiagnostics.length} pre-existing diagnostic(s) in ${files.length} unchanged file(s) suppressed (${shown}${files.length > 10 ? ', …' : ''}); they fail when their own file changes`);
+  }
+
+  if (ownDiagnostics.length > 0) {
+    for (const line of ownDiagnostics) console.log(line);
+    console.log('FAIL test typecheck');
+    return false;
+  }
+  console.log('PASS test typecheck');
+  return true;
+}
+
 /** Shared root for the typecheck cache and slots; worktrees resolve to the git common dir. */
 export function tscSharedRoot(root, env = process.env, exec = execFileSync) {
   return env.PHANTOM_TSC_CACHE_DIR
@@ -2334,7 +2467,7 @@ function main() {
     const projectScope = projectNames.length > 1
       ? `${projectNames.slice(0, -1).join(', ')} and ${projectNames.at(-1)}`
       : projectNames[0] ?? null;
-    const scope = [projectScope, selection.contribTypecheck && 'contrib', selection.scriptsTypecheck && 'scripts'].filter(Boolean).join(' and ') || 'typecheck skipped';
+    const scope = [projectScope, selection.contribTypecheck && 'contrib', selection.scriptsTypecheck && 'scripts', selection.testTypecheckFiles.length > 0 && 'test'].filter(Boolean).join(' and ') || 'typecheck skipped';
     console.log(`verify: ${new Set(changed).size} changed files (${comparison?.mode ?? 'merge-base'}), ${scope}${projects.backend || projects.web || projects.desktop ? ', incremental' : changed.length ? ': no project change' : ': no changes'}`);
     const shebangScripts = selectShebangScripts(changed, existing, (path) => readFirstLine(root, path));
     pythonFiles = [...new Set([...selection.pythonFiles, ...shebangScripts.python])];
@@ -2413,6 +2546,16 @@ function main() {
     }
   } else {
     console.log('PASS docs check skipped: no markdown change or file deletion');
+  }
+  if (selection.llmsIndexCheck) {
+    run('docs llms index freshness', 'scripts/generate-docs-llms.mjs', ['--check']);
+  } else {
+    console.log('PASS docs llms index freshness skipped: no docs page or index input change');
+  }
+  if (selection.launcherDigestCheck) {
+    run('canonical launcher digests', 'scripts/canonical-launcher-digests.mjs', ['--check']);
+  } else {
+    console.log('PASS canonical launcher digests skipped: no launcher or manifest change');
   }
   const preflight = eslintPreflight(root);
   if (!preflight.ok) {
@@ -2608,7 +2751,7 @@ function main() {
   } else {
     run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
   }
-  if (projects.backend || projects.web || projects.desktop || selection.contribTypecheck || selection.scriptsTypecheck) try {
+  if (projects.backend || projects.web || projects.desktop || selection.contribTypecheck || selection.scriptsTypecheck || selection.testTypecheckFiles.length > 0) try {
     const timeout = Number(process.env.PHANTOM_TSC_TIMEOUT_SECONDS ?? 900);
     if (!Number.isFinite(timeout) || !Number.isInteger(timeout * 1000) || timeout * 1000 < 1 || timeout * 1000 > 2_147_483_647) {
       throw new Error('PHANTOM_TSC_TIMEOUT_SECONDS must be a positive number of seconds within the supported timeout range');
@@ -2643,6 +2786,16 @@ function main() {
           } else if (!runScriptsTypecheck(root, scriptsFiles)) {
             process.exitCode = 1;
           }
+        }
+      }
+      if (selection.testTypecheckFiles.length === 0) {
+        console.log('PASS test typecheck skipped: no changed TypeScript file under test/');
+      } else {
+        const testTs = parserPackagePreflight(root, 'typescript');
+        if (!testTs.ok) {
+          console.log(`SKIP test typecheck: ${testTs.reason}`);
+        } else if (!runTestTypecheck(root, selection.testTypecheckFiles)) {
+          process.exitCode = 1;
         }
       }
       if (projects.backend) {

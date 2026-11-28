@@ -12,11 +12,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createDraft } from '../src/core/cos/drafts.js';
-import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/comms-agent/store.js';
+import { appendDraft as appendCommsDraft, writeInbox as writeCommsInbox, type CommsDraft } from '../src/core/comms-agent/store.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type RouterQueueStuckRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type DispatchStuckSourceRead, type JobsStuckSourceRead, type QueueParkedRead, type RouterQueueStuckRead, type StuckFixesSourceRead, type StrandedWorkSourceRead, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
+import type { ParkedGroup, ParkedMetDep, ParkedUnmetDep } from '../src/core/fleet/runs-parked-queue.js';
+import type { StuckFixRow } from '../src/core/fleet/stuck-fixes.js';
+import type { StrandedItem } from '../src/core/fleet/stranded-work.js';
+import type { StuckJob as RunningStuckJob } from '../src/core/fleet/running-stuck.js';
+import type { StuckJob as DispatchStuckJob } from '../src/core/fleet/stuck-jobs.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
@@ -143,6 +148,7 @@ describe('readUnifiedInbox sources', () => {
         imessage: { state: 'missing', pending: 0 },
         'teammate-tasks': { state: 'missing', pending: 0 },
         drafts: { state: 'healthy', pending: 0 },
+        'comms-mail': { state: 'healthy', pending: 0 },
         bus: { state: 'missing', pending: 0 },
         mailbox: { state: 'missing', pending: 0 },
         board: { state: 'missing', pending: 0 },
@@ -257,6 +263,49 @@ describe('readUnifiedInbox sources', () => {
       listCommsDrafts: async () => { throw new Error('unreadable'); },
     });
     expect(inbox.sources.drafts.state).toBe('degraded');
+  });
+
+  it('lists comms-agent inbox mail no reply draft covers, deduped against draft records', async () => {
+    await writeCommsInbox(runsDir, [
+      { id: 'm-1', transport: 'email', from: 'person@example.com', subject: 'fake hello', body: 'fake body one' },
+      { id: 'm-2', transport: 'imessage', from: '+1555handle', subject: 'fake unclassed', body: 'fake body two' },
+      { id: 'm-3', transport: 'linkedin', from: 'pw@example.com', subject: 'fake answered', body: 'fake body three' },
+    ]);
+    // m-1's pending draft already lists under `drafts`; m-3's sent draft means
+    // the reply was delivered — both suppress their inbox row here.
+    await appendCommsDraft(runsDir, { id: 'c-1', status: 'pending', transport: 'email', recipient: 'person@example.com', subject: 'Re: fake hello', body: 'fake reply', messageId: 'm-1', createdAt: new Date(now - 60_000).toISOString() });
+    await appendCommsDraft(runsDir, { id: 'c-2', status: 'sent', transport: 'linkedin', recipient: 'pw@example.com', subject: 'Re: fake answered', body: 'fake reply', messageId: 'm-3', createdAt: new Date(now - 120_000).toISOString(), resolvedAt: new Date(now - 30_000).toISOString() });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'comms-mail');
+    expect(items.map(i => i.id)).toEqual(['comms-mail:m-2']);
+    expect(items[0]).toMatchObject({
+      kind: 'comms-mail', severity: 'info', blocking: false,
+      title: 'Comms mail via imessage', detail: 'fake unclassed',
+      since: null, expiresAt: null,
+      act: ['phm comms-agent run', 'phm comms-agent drafts'],
+    });
+    // The sender is a handle and the body stays private: neither reaches the item.
+    expect(JSON.stringify(items)).not.toContain('+1555handle');
+    expect(JSON.stringify(items)).not.toContain('fake body');
+    expect(inbox.sources['comms-mail']).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('reports the comms-mail source unavailable on a malformed inbox and degraded when draft coverage cannot be read', async () => {
+    mkdirSync(join(runsDir, 'comms-agent'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(runsDir, 'comms-agent', 'inbox.json'), 'not json', { mode: 0o600 });
+    const bad = await read();
+    expect(bad.sources['comms-mail']).toEqual({ state: 'unavailable', pending: null });
+    expect(bad.items.filter(i => i.source === 'comms-mail')).toHaveLength(0);
+
+    // A drafts-store failure leaves coverage unproven: the message lists
+    // even though a draft record names it — degraded, never suppressed on a guess.
+    await writeCommsInbox(runsDir, [
+      { id: 'm-9', transport: 'email', from: 'a@example.com', subject: 'fake pending', body: 'fake body' },
+    ]);
+    await appendCommsDraft(runsDir, { id: 'c-9', status: 'pending', transport: 'email', recipient: 'a@example.com', subject: 'Re: fake pending', body: 'fake reply', messageId: 'm-9', createdAt: new Date(now).toISOString() });
+    const degraded = await read({ listCommsDrafts: async () => { throw new Error('unreadable'); } });
+    expect(degraded.sources['comms-mail']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'comms-mail').map(i => i.id)).toEqual(['comms-mail:m-9']);
   });
 
   it('lists live unclaimed work envelopes and hides claimed, completed, expired and non-work records', async () => {
@@ -1213,7 +1262,7 @@ describe('bot seat handoffs in the unified inbox', () => {
     branch: null, pr: null, createdAt: new Date(now).toISOString(),
   });
   const seat = (over: Partial<SeatHandoffPlanEntry> = {}): SeatHandoffPlanEntry => ({
-    seatId: 'devin-review', state: 'draining', eligible: true,
+    seatId: 'devin-review', participantId: 'devin-review', state: 'draining', eligible: true,
     handoffs: [handoff('devin-review', 'bus-claim', 'queue:RQ-SEAT-1')], ...over,
   });
   const plan = (seats: SeatHandoffPlanEntry[]): SeatHandoffsPlan =>
@@ -3728,7 +3777,7 @@ describe('readUnifiedInbox job filter', () => {
   const seatPlan = (seats: SeatHandoffPlanEntry[]): SeatHandoffsPlan =>
     ({ schema: 'phantom-bot-handoffs-plan.v1', apply: false, seats });
   const seatEntry = (over: Partial<SeatHandoffPlanEntry> = {}): SeatHandoffPlanEntry => ({
-    seatId: 'devin-review', state: 'draining', eligible: true,
+    seatId: 'devin-review', participantId: 'devin-review', state: 'draining', eligible: true,
     handoffs: [seatHandoff('devin-review', 'node-job', 'RQ-JS-1'),
       seatHandoff('devin-review', 'bus-claim', 'queue:RQ-claim-1', 1)], ...over,
   });
@@ -4098,8 +4147,8 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]');
-    for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]');
+    for (const args of [['--json', '--json'], ['unified'], ['--limit', '0'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
     }
@@ -4312,6 +4361,68 @@ describe('phm comms inbox cli', () => {
     expect(report.items.map(i => i.kind)).toEqual(['needs-you']);
   });
 
+  it('pages the unified view with --limit', async () => {
+    const { command, json, lines } = setupCli();
+    postWork('cli-limit-1', { priority: 'P0' });
+    postWork('cli-limit-2');
+    postWork('cli-limit-3');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    // --limit keeps the first N ranked items of the matched view — the same
+    // slice GET /api/verse/comms/inbox and fleet_comms_inbox apply; total
+    // stays the true matched count and omitted covers every unshown item.
+    expect(await command(['--limit', '2', '--json'])).toBe(0);
+    let report = json();
+    expect(report.total).toBe(4);
+    expect(report.items).toHaveLength(2);
+    expect(report.omitted).toBe(2);
+    // The per-source counts stay the unfiltered store truth.
+    expect(report.sources.bus.pending).toBe(3);
+    expect(report.sources['needs-you'].pending).toBe(1);
+
+    // --limit ANDs with the view filters and never widens them.
+    expect(await command(['--source', 'bus', '--limit', '1', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ source: 'bus' });
+    expect(report.total).toBe(3);
+    expect(report.items).toHaveLength(1);
+    expect(report.omitted).toBe(2);
+    expect(report.items[0]!.source).toBe('bus');
+
+    // A bound at or beyond the matched count changes nothing.
+    expect(await command(['--limit', '200', '--json'])).toBe(0);
+    report = json();
+    expect(report.items).toHaveLength(4);
+    expect(report.omitted).toBe(0);
+
+    // The human view prints the same page and counts the unshown tail.
+    expect(await command(['--limit', '1'])).toBe(0);
+    const footer = lines().at(-1)!;
+    expect(footer).toContain('4 pending');
+    expect(footer).toContain('3 omitted');
+  });
+
+  it('counts both the item cap and --limit in omitted', async () => {
+    const { command, json } = setupCli();
+    postWorkSnapshot(Array.from({ length: 250 }, (_, i) => `cli-cap-${i}`));
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    // Without --limit the report already caps items at 200 and counts the
+    // rest in omitted; --limit slices that page further and omitted covers
+    // every item still unshown, never a fabricated zero.
+    expect(await command(['--json'])).toBe(0);
+    let report = json();
+    expect(report.total).toBe(251);
+    expect(report.items).toHaveLength(200);
+    expect(report.omitted).toBe(51);
+
+    expect(await command(['--limit', '10', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(251);
+    expect(report.items).toHaveLength(10);
+    expect(report.omitted).toBe(241);
+  });
+
   it('labels the human footer with the applied filter and unfiltered counts', async () => {
     const { command, lines } = setupCli();
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
@@ -4375,6 +4486,10 @@ describe('phm comms inbox cli', () => {
       ['--contains'], ['--contains', ''], ['--contains', '   '], ['--contains', '--json'],
       ['--contains', 'x'.repeat(513)], ['--contains', 'a', '--contains', 'b'],
       ['--contains', 'deploy', '--job'], ['--json', '--contains'],
+      ['--limit'], ['--limit', '--json'], ['--json', '--limit'],
+      ['--limit', '0'], ['--limit', '201'], ['--limit', '1.5'], ['--limit', '-3'],
+      ['--limit', 'x'.repeat(40)], ['--limit', '2', '--limit', '3'],
+      ['--limit', '5', '--source'], ['--source', 'bus', '--limit'],
     ]) {
       expect(await command(args), args.join(' ')).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
@@ -5005,6 +5120,786 @@ describe('readUnifiedInbox router queue', () => {
     // The READY id is the item's own citation — --job names it directly.
     const byJob = await readQueue(pending, { filter: { job: 'RQ-ALPHA' } });
     expect(byJob.items.filter(i => i.source === 'router-queue').map(i => i.id)).toEqual(['router-queue:RQ-ALPHA']);
+  });
+});
+
+describe('readUnifiedInbox jobs stuck', () => {
+  const stuckRead = (over: Partial<JobsStuckSourceRead> = {}): JobsStuckSourceRead => ({
+    state: 'healthy', jobs: [], ...over,
+  });
+  const readStuck = (s: JobsStuckSourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readJobsStuck: async () => s, ...extra });
+  const stuckJob = (over: Partial<RunningStuckJob> = {}): RunningStuckJob => ({
+    job: 'J-STUCK', lane: 'codex-local', kind: 'stuck', pid: 4242,
+    age_min: 125, last_log_at: '2026-11-07T09:00:00.000Z',
+    why: 'log silent for 45m', ...over,
+  });
+
+  it('lists each ghost and stuck marker as a warn naming its id, age, last log and acts', async () => {
+    const inbox = await readStuck(stuckRead({ jobs: [
+      stuckJob({ job: 'J-GHOST', kind: 'ghost', age_min: 200, last_log_at: null,
+        why: 'its process (pid 4242) is gone but the run marker is still open' }),
+      stuckJob(),
+      stuckJob({ job: 'J-UNDATED', age_min: null, last_log_at: null, why: 'no log after 3h' }),
+    ] }));
+    expect(inbox.sources['jobs-stuck']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'jobs-stuck');
+    expect(items).toHaveLength(3);
+
+    const ghost = items.find(i => i.id === 'jobs-stuck:J-GHOST')!;
+    expect(ghost).toMatchObject({
+      kind: 'stuck-ghost', severity: 'warn', blocking: false,
+      title: 'Job J-GHOST counted running but its process is gone',
+      since: new Date(now - 200 * 60_000).toISOString(), expiresAt: null,
+      jobIds: ['J-GHOST'],
+    });
+    expect(ghost.detail).toContain('lane codex-local');
+    expect(ghost.detail).toContain('age 3h20m');
+    expect(ghost.detail).toContain('last log none');
+    expect(ghost.act).toEqual(['phm jobs stuck', 'phm fleet stray-stop --stuck --apply']);
+
+    const stuck = items.find(i => i.id === 'jobs-stuck:J-STUCK')!;
+    expect(stuck).toMatchObject({
+      kind: 'stuck-job', severity: 'warn', blocking: false,
+      title: 'Job J-STUCK running with a silent log',
+      since: new Date(now - 125 * 60_000).toISOString(), expiresAt: null,
+      jobIds: ['J-STUCK'],
+    });
+    expect(stuck.detail).toContain('age 2h5m');
+    expect(stuck.detail).toContain('last log 2026-11-07T09:00:00.000Z');
+    expect(stuck.detail).toContain('log silent for 45m');
+
+    // age_min null — the marker kept no start — stays honestly undated.
+    const undated = items.find(i => i.id === 'jobs-stuck:J-UNDATED')!;
+    expect(undated.since).toBeNull();
+    expect(undated.detail).toContain('age unknown');
+    expect(undated.detail).toContain('last log none');
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readStuck(stuckRead({ state: 'missing', jobs: [stuckJob()] }));
+    expect(missing.sources['jobs-stuck']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'jobs-stuck')).toHaveLength(0);
+
+    const unavailable = await readStuck(stuckRead({ state: 'unavailable', jobs: [stuckJob()] }));
+    expect(unavailable.sources['jobs-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'jobs-stuck')).toHaveLength(0);
+
+    const throwing = await read({ readJobsStuck: async () => { throw new Error('markers boom'); } });
+    expect(throwing.sources['jobs-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'jobs-stuck')).toHaveLength(0);
+
+    // A degraded read still lists what it found, pending counted.
+    const degraded = await readStuck(stuckRead({ state: 'degraded', jobs: [stuckJob()] }));
+    expect(degraded.sources['jobs-stuck']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'jobs-stuck')).toHaveLength(1);
+  });
+
+  it('reads the real run markers under runsDir: a dead-pid marker is a ghost, a silent old log is stuck', async () => {
+    const runDir = join(runsDir, 'queue', 'run');
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
+    const dispatchedSecs = (msAgo: number) => String(Math.floor((now - msAgo) / 1000));
+    // Marker layout: queue/run/<job>.{line,dispatched,fin}; <job>.{launch,log,base} at the runs root.
+    // Ghost: a pid no OS can hand out, marker still open, started 3h ago.
+    writeFileSync(join(runDir, 'J-GHOST.line'), 'J-GHOST\tashlrai/phantom\tcodex-local\n', { mode: 0o600 });
+    writeFileSync(join(runDir, 'J-GHOST.dispatched'), dispatchedSecs(3 * 3_600_000), { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-GHOST.launch'), 'pid 16777216\n', { mode: 0o600 });
+    // Stuck: the test process's own pid is alive; started 100m ago, log quiet 40m.
+    writeFileSync(join(runDir, 'J-STUCK.line'), 'J-STUCK\tashlrai/phantom\tcodex-local\n', { mode: 0o600 });
+    writeFileSync(join(runDir, 'J-STUCK.dispatched'), dispatchedSecs(100 * 60_000), { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-STUCK.launch'), `pid ${process.pid}\n`, { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-STUCK.log'), 'fake log\n', { mode: 0o600 });
+    utimesSync(join(runsDir, 'J-STUCK.log'), new Date(now - 40 * 60_000), new Date(now - 40 * 60_000));
+    // Healthy: started 10m ago with a fresh log and a live pid — running, not stuck.
+    writeFileSync(join(runDir, 'J-OK.line'), 'J-OK\tashlrai/phantom\tcodex-local\n', { mode: 0o600 });
+    writeFileSync(join(runDir, 'J-OK.dispatched'), dispatchedSecs(10 * 60_000), { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-OK.launch'), `pid ${process.pid}\n`, { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-OK.log'), 'fake log\n', { mode: 0o600 });
+    // Finished: an unmatched .fin with no .base closes the marker — never lists.
+    writeFileSync(join(runDir, 'J-DONE.line'), 'J-DONE\tashlrai/phantom\tcodex-local\n', { mode: 0o600 });
+    writeFileSync(join(runDir, 'J-DONE.dispatched'), dispatchedSecs(3 * 3_600_000), { mode: 0o600 });
+    writeFileSync(join(runsDir, 'J-DONE.launch'), 'pid 16777216\n', { mode: 0o600 });
+    writeFileSync(join(runDir, 'J-DONE.fin'), '0\n', { mode: 0o600 });
+
+    const inbox = await read();
+    expect(inbox.sources['jobs-stuck']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'jobs-stuck');
+    expect(items.map(i => i.id).sort()).toEqual(['jobs-stuck:J-GHOST', 'jobs-stuck:J-STUCK']);
+    const ghost = items.find(i => i.id === 'jobs-stuck:J-GHOST')!;
+    expect(ghost).toMatchObject({
+      kind: 'stuck-ghost', severity: 'warn',
+      since: new Date(now - 3 * 3_600_000).toISOString(),
+      jobIds: ['J-GHOST'],
+    });
+    expect(ghost.detail).toContain('lane codex-local');
+    expect(ghost.detail).toContain('its process (pid 16777216) is gone');
+    const stuck = items.find(i => i.id === 'jobs-stuck:J-STUCK')!;
+    expect(stuck).toMatchObject({
+      kind: 'stuck-job', severity: 'warn',
+      since: new Date(now - 100 * 60_000).toISOString(),
+      jobIds: ['J-STUCK'],
+    });
+    expect(stuck.detail).toContain('log silent for');
+  });
+
+  it('reports a missing marker dir as missing and an unlistable one as unavailable', async () => {
+    // No queue/run at all — verified-absent, so nothing can be running.
+    const missing = await read();
+    expect(missing.sources['jobs-stuck']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'jobs-stuck')).toHaveLength(0);
+
+    // queue/run exists but is a file — readdir cannot list it, so the
+    // stuck set is unknown rather than a fabricated empty read.
+    mkdirSync(join(runsDir, 'queue'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(runsDir, 'queue', 'run'), 'not a dir\n', { mode: 0o600 });
+    const unavailable = await read();
+    expect(unavailable.sources['jobs-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'jobs-stuck')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = stuckRead({ jobs: [stuckJob({ job: 'J-GHOST', kind: 'ghost' }), stuckJob({ job: 'J-STUCK' })] });
+    const bySource = await readStuck(pending, { filter: { source: 'jobs-stuck' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'jobs-stuck')).toBe(true);
+    const byKind = await readStuck(pending, { filter: { kind: 'stuck-ghost' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['jobs-stuck:J-GHOST']);
+    expect(byKind.sources['jobs-stuck']).toEqual({ state: 'healthy', pending: 2 });
+    // The marker's job id is the item's own citation — --job names it directly.
+    const byJob = await readStuck(pending, { filter: { job: 'J-STUCK' } });
+    expect(byJob.items.filter(i => i.source === 'jobs-stuck').map(i => i.id)).toEqual(['jobs-stuck:J-STUCK']);
+  });
+});
+
+describe('readUnifiedInbox queue parked', () => {
+  const parkedRead = (over: Partial<QueueParkedRead> = {}): QueueParkedRead => ({
+    state: 'healthy', waiting: [], stale: [], groups: [], ...over,
+  });
+  const parkedGroup = (over: Partial<ParkedGroup> = {}): ParkedGroup => ({
+    reason: 'BYHAND', lane: 'devin', count: 2, jobs: ['RQ-HAND-1', 'RQ-HAND-2'], ...over,
+  });
+  const readParked = (q: QueueParkedRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readQueueParked: async () => q, ...extra });
+  const waiting = (over: Partial<ParkedUnmetDep> = {}): ParkedUnmetDep => ({
+    job: 'RQ-WAIT', lane: 'devin', unmet: ['RQ-GATE-1'], ...over,
+  });
+  const stale = (over: Partial<ParkedMetDep> = {}): ParkedMetDep => ({
+    job: 'RQ-STALE', lane: 'codex-local', gates: ['RQ-DONE'], ...over,
+  });
+
+  it('lists each parked row once under its own state — waiting info, stale warn', async () => {
+    const inbox = await readParked(parkedRead({
+      waiting: [waiting({ unmet: ['RQ-GATE-1', 'RQ-GATE-2'] }), waiting({ job: 'RQ-WAIT-2', lane: null, unmet: ['RQ-GATE-3'] })],
+      stale: [stale()],
+    }));
+    expect(inbox.sources['queue-parked']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'queue-parked');
+    expect(items).toHaveLength(3);
+
+    const wait = items.find(i => i.id === 'queue-parked:RQ-WAIT')!;
+    expect(wait).toMatchObject({
+      kind: 'parked-dep-waiting', severity: 'info', blocking: false,
+      title: 'Job RQ-WAIT parked on unmet dependency gates',
+      since: null, expiresAt: null,
+      jobIds: ['RQ-GATE-1', 'RQ-GATE-2', 'RQ-WAIT'],
+      act: ['phm fleet queue-parked', 'phm fleet autopilot --once'],
+    });
+    expect(wait.detail).toContain('lane devin');
+    expect(wait.detail).toContain('waiting on gates RQ-GATE-1, RQ-GATE-2');
+    expect(wait.detail).toContain('no MERGED outcome recorded');
+
+    const noLane = items.find(i => i.id === 'queue-parked:RQ-WAIT-2')!;
+    expect(noLane.detail).toContain('lane unknown');
+
+    const staleItem = items.find(i => i.id === 'queue-parked:RQ-STALE')!;
+    expect(staleItem).toMatchObject({
+      kind: 'parked-dep-stale', severity: 'warn', blocking: false,
+      title: 'Job RQ-STALE parked past merged dependency gates',
+      since: null, expiresAt: null,
+      jobIds: ['RQ-DONE', 'RQ-STALE'],
+    });
+    expect(staleItem.detail).toContain('all gates MERGED (RQ-DONE)');
+    expect(staleItem.detail).toContain('never unparked');
+  });
+
+  it('lists each non-dependency parked group once as info parked-group, never borrowing the dep verdicts', async () => {
+    const inbox = await readParked(parkedRead({
+      waiting: [waiting()],
+      groups: [
+        parkedGroup(),
+        parkedGroup({ reason: 'MERGERATE', lane: 'codex-local', count: 9, jobs: ['RQ-M-1', 'RQ-M-2', 'RQ-M-3', 'RQ-M-4', 'RQ-M-5', 'RQ-M-6', 'RQ-M-7', 'RQ-M-8'] }),
+        parkedGroup({ reason: 'HOLD', lane: null, count: 1, jobs: ['RQ-HOLD-1'] }),
+      ],
+    }));
+    expect(inbox.sources['queue-parked']).toEqual({ state: 'healthy', pending: 4 });
+    const items = inbox.items.filter(i => i.source === 'queue-parked');
+    expect(items).toHaveLength(4);
+
+    const byHand = items.find(i => i.id === 'queue-parked:BYHAND:devin')!;
+    expect(byHand).toMatchObject({
+      kind: 'parked-group', severity: 'info', blocking: false,
+      title: '2 jobs parked BYHAND',
+      since: null, expiresAt: null,
+      jobIds: ['RQ-HAND-1', 'RQ-HAND-2'],
+      act: ['phm fleet queue-parked', 'phm fleet parked'],
+    });
+    expect(byHand.detail).toContain('lane devin');
+    expect(byHand.detail).toContain('jobs RQ-HAND-1, RQ-HAND-2');
+    expect(byHand.detail).toContain('non-dependency reason');
+
+    // The group's true count is 9 but the projection lists only eight ids —
+    // the overflow is named, never passed off as the whole set.
+    const merge = items.find(i => i.id === 'queue-parked:MERGERATE:codex-local')!;
+    expect(merge.title).toBe('9 jobs parked MERGERATE');
+    expect(merge.detail).toContain('+1 more');
+    expect(merge.jobIds).toHaveLength(8);
+
+    const noLane = items.find(i => i.id === 'queue-parked:HOLD:unknown')!;
+    expect(noLane.detail).toContain('lane unknown');
+    expect(noLane.title).toBe('1 job parked HOLD');
+  });
+
+  it('suppresses parked groups under missing and unavailable like the dep rows', async () => {
+    const groups = [parkedGroup()];
+    const missing = await readParked(parkedRead({ state: 'missing', groups }));
+    expect(missing.sources['queue-parked']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+
+    const unavailable = await readParked(parkedRead({ state: 'unavailable', groups }));
+    expect(unavailable.sources['queue-parked']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readParked(parkedRead({ state: 'missing', waiting: [waiting()], stale: [stale()] }));
+    expect(missing.sources['queue-parked']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+
+    const unavailable = await readParked(parkedRead({ state: 'unavailable', waiting: [waiting()], stale: [stale()] }));
+    expect(unavailable.sources['queue-parked']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+
+    const throwing = await read({ readQueueParked: async () => { throw new Error('queue boom'); } });
+    expect(throwing.sources['queue-parked']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+  });
+
+  it('lists every parked row degraded when the ready read is partial, saying so in the detail', async () => {
+    const inbox = await readParked(parkedRead({ state: 'degraded', waiting: [waiting()], stale: [stale()], groups: [parkedGroup()] }));
+    expect(inbox.sources['queue-parked']).toEqual({ state: 'degraded', pending: 3 });
+    for (const item of inbox.items.filter(i => i.source === 'queue-parked')) {
+      expect(item.detail).toContain('ready.tsv read degraded');
+    }
+  });
+
+  it('reads the real ready.tsv, prompts and jobs.jsonl under runsDir', async () => {
+    mkdirSync(join(runsDir, 'queue', 'prompts'), { recursive: true });
+    mkdirSync(join(runsDir, 'metrics'), { recursive: true });
+    const waitPrompt = join(runsDir, 'queue', 'prompts', 'wait.md');
+    const stalePrompt = join(runsDir, 'queue', 'prompts', 'stale.md');
+    writeFileSync(waitPrompt, 'DEPENDENCY GATE: RQ-OPEN, RQ-DONE\n', { mode: 0o600 });
+    writeFileSync(stalePrompt, 'DEPENDENCY GATE: RQ-DONE\n', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'queue', 'ready.tsv'), [
+      `PARKED-DEP.devin\tRQ-WAIT\tdevin\twork\tphantom\t${waitPrompt}`,
+      `PARKED-DEP.codex-local\tRQ-STALE\tcodex-local\twork\tphantom\t${stalePrompt}`,
+      'PARKED-BYHAND.devin\tRQ-HAND-1\tdevin\twork\tphantom\tprompts/hand1.md',
+      'PARKED-BYHAND.devin\tRQ-HAND-2\tdevin\twork\tphantom\tprompts/hand2.md',
+      'PARKED-DEPENDENCY.devin\tRQ-DEP-ALIAS\tdevin\twork\tphantom\tpool/x.md',
+      'READY\tRQ-FREE\tdevin\twork\tphantom\tprompts/free.md',
+    ].join('\n'), { mode: 0o600 });
+    writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'),
+      `${JSON.stringify({ event: 'outcome', state: 'MERGED', job: 'RQ-DONE' })}\n`, { mode: 0o600 });
+
+    const inbox = await read();
+    // DEP rows keep their dedicated items; the DEP alias row has no prompt
+    // gate ids so it lists nowhere — and the two BYHAND rows roll up into
+    // one parked-group item, never one per job.
+    expect(inbox.sources['queue-parked']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'queue-parked');
+    expect(items.map(i => i.id).sort()).toEqual(['queue-parked:BYHAND:devin', 'queue-parked:RQ-STALE', 'queue-parked:RQ-WAIT']);
+    const group = items.find(i => i.id === 'queue-parked:BYHAND:devin')!;
+    expect(group).toMatchObject({ kind: 'parked-group', severity: 'info', blocking: false, title: '2 jobs parked BYHAND' });
+    expect(group.jobIds).toEqual(['RQ-HAND-1', 'RQ-HAND-2']);
+    expect(group.detail).toContain('lane devin');
+    const waitItem = items.find(i => i.id === 'queue-parked:RQ-WAIT')!;
+    expect(waitItem).toMatchObject({ kind: 'parked-dep-waiting', severity: 'info' });
+    // Only the unmet gate is named — RQ-DONE merged, so this item never cites it.
+    expect(waitItem.jobIds).toEqual(['RQ-OPEN', 'RQ-WAIT']);
+    const staleItem = items.find(i => i.id === 'queue-parked:RQ-STALE')!;
+    expect(staleItem).toMatchObject({ kind: 'parked-dep-stale', severity: 'warn' });
+    expect(staleItem.jobIds).toEqual(['RQ-DONE', 'RQ-STALE']);
+    // READY rows are the router-queue/market's concern, never this source's.
+    expect(items.some(i => i.id === 'queue-parked:RQ-FREE')).toBe(false);
+  });
+
+  it('reports a missing ready.tsv as missing and an unreadable one degraded', async () => {
+    const missing = await read();
+    expect(missing.sources['queue-parked']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+
+    mkdirSync(join(runsDir, 'queue'));
+    // A directory where the file belongs is a read failure, not verified-empty.
+    mkdirSync(join(runsDir, 'queue', 'ready.tsv'));
+    const degraded = await read();
+    expect(degraded.sources['queue-parked']).toEqual({ state: 'degraded', pending: 0 });
+    expect(degraded.items.filter(i => i.source === 'queue-parked')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = parkedRead({
+      waiting: [waiting({ unmet: ['RQ-GATE-1', 'RQ-DONE'] })],
+      stale: [stale()],
+    });
+    const bySource = await readParked(pending, { filter: { source: 'queue-parked' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'queue-parked')).toBe(true);
+    const byKind = await readParked(pending, { filter: { kind: 'parked-dep-stale' } });
+    expect(byKind.items.map(i => i.id)).toEqual(['queue-parked:RQ-STALE']);
+    expect(byKind.sources['queue-parked']).toEqual({ state: 'healthy', pending: 2 });
+    // The parked job's own id and each gate id it names are both citations.
+    const byJob = await readParked(pending, { filter: { job: 'RQ-WAIT' } });
+    expect(byJob.items.filter(i => i.source === 'queue-parked').map(i => i.id)).toEqual(['queue-parked:RQ-WAIT']);
+    const byGate = await readParked(pending, { filter: { job: 'RQ-GATE-1' } });
+    expect(byGate.items.filter(i => i.source === 'queue-parked').map(i => i.id)).toEqual(['queue-parked:RQ-WAIT']);
+    const byGateStale = await readParked(pending, { filter: { job: 'RQ-DONE' } });
+    expect(byGateStale.items.filter(i => i.source === 'queue-parked').map(i => i.id).sort())
+      .toEqual(['queue-parked:RQ-STALE', 'queue-parked:RQ-WAIT']);
+  });
+});
+
+describe('readUnifiedInbox stuck fixes', () => {
+  const fixesRead = (over: Partial<StuckFixesSourceRead> = {}): StuckFixesSourceRead => ({
+    state: 'healthy', stuck: [], ...over,
+  });
+  const readFixes = (s: StuckFixesSourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readStuckFixes: async () => s, ...extra });
+  const stuckFix = (over: Partial<StuckFixRow> = {}): StuckFixRow => ({
+    job: 'FIXUP-MAIN-ashlrai-phantom-abc1234', repo: 'ashlrai/phantom',
+    prUrl: 'https://github.com/ashlrai/phantom/pull/4242',
+    publishedAt: new Date(now - 45 * 60_000).toISOString(), ageMinutes: 45, ...over,
+  });
+
+  it('lists each stuck fix PR as a warn naming repo, PR url, job id, publish time and acts', async () => {
+    const inbox = await readFixes(fixesRead({ stuck: [
+      stuckFix(),
+      stuckFix({ job: 'FIXUP-MAIN-ashlrai-website-def5678', repo: null,
+        prUrl: 'https://github.com/ashlrai/website/pull/77', ageMinutes: 130,
+        publishedAt: new Date(now - 130 * 60_000).toISOString() }),
+    ] }));
+    expect(inbox.sources['stuck-fixes']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'stuck-fixes');
+    expect(items).toHaveLength(2);
+
+    const fix = items.find(i => i.id === 'stuck-fixes:FIXUP-MAIN-ashlrai-phantom-abc1234')!;
+    expect(fix).toMatchObject({
+      kind: 'stuck-fix', severity: 'warn', blocking: false,
+      title: 'ashlrai/phantom fix PR stuck 45 min',
+      since: new Date(now - 45 * 60_000).toISOString(), expiresAt: null,
+      jobIds: ['FIXUP-MAIN-ashlrai-phantom-abc1234'],
+      act: ['phm fleet stuck-fixes', 'phm fleet main-health'],
+    });
+    expect(fix.detail).toContain('job FIXUP-MAIN-ashlrai-phantom-abc1234');
+    expect(fix.detail).toContain('https://github.com/ashlrai/phantom/pull/4242');
+    expect(fix.detail).toContain('no MERGED/CLOSED outcome recorded');
+
+    // Past the hour mark the same row the needs-you strip calls urgent
+    // lists 'high' here; an unknown repo falls back to the job id in the title.
+    const old = items.find(i => i.id === 'stuck-fixes:FIXUP-MAIN-ashlrai-website-def5678')!;
+    expect(old).toMatchObject({ severity: 'high', title: 'unknown repo fix PR stuck 130 min' });
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readFixes(fixesRead({ state: 'missing', stuck: [stuckFix()] }));
+    expect(missing.sources['stuck-fixes']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+
+    const unavailable = await readFixes(fixesRead({ state: 'unavailable', stuck: [stuckFix()] }));
+    expect(unavailable.sources['stuck-fixes']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+
+    const throwing = await read({ readStuckFixes: async () => { throw new Error('ledger boom'); } });
+    expect(throwing.sources['stuck-fixes']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+
+    // A degraded read still lists what it found, pending counted.
+    const degraded = await readFixes(fixesRead({ state: 'degraded', stuck: [stuckFix()] }));
+    expect(degraded.sources['stuck-fixes']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(1);
+  });
+
+  it('reads the real metrics/jobs.jsonl under runsDir: stuck, terminal, fresh and non-fix rows', async () => {
+    mkdirSync(join(runsDir, 'metrics'), { recursive: true, mode: 0o700 });
+    const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
+    writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), [
+      // Stuck: PR published 45m ago, no terminal row.
+      JSON.stringify({ job: 'FIXUP-MAIN-ashlrai-phantom-abc1234', repo: 'ashlrai/phantom',
+        url: 'https://github.com/ashlrai/phantom/pull/4242', ts: iso(45 * 60_000) }),
+      // Terminal: a MERGED row for the same job — never stuck.
+      JSON.stringify({ job: 'FIXUP-MAIN-ashlrai-phantom-merged99', state: 'MERGED',
+        url: 'https://github.com/ashlrai/phantom/pull/9', ts: iso(50 * 60_000) }),
+      // Fresh: PR published 10m ago — inside the 20-minute bound.
+      JSON.stringify({ job: 'FIXUP-MAIN-ashlrai-phantom-fresh11',
+        url: 'https://github.com/ashlrai/phantom/pull/10', ts: iso(10 * 60_000) }),
+      // Not a fix job: ordinary job ids never list.
+      JSON.stringify({ job: 'RQ-OTHER-1', url: 'https://github.com/ashlrai/phantom/pull/11', ts: iso(90 * 60_000) }),
+      // Torn line: skipped by the fold, never fatal.
+      '{not json',
+    ].join('\n'), { mode: 0o600 });
+
+    const inbox = await read();
+    expect(inbox.sources['stuck-fixes']).toEqual({ state: 'healthy', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'stuck-fixes');
+    expect(items.map(i => i.id)).toEqual(['stuck-fixes:FIXUP-MAIN-ashlrai-phantom-abc1234']);
+    expect(items[0]).toMatchObject({ kind: 'stuck-fix', severity: 'warn', jobIds: ['FIXUP-MAIN-ashlrai-phantom-abc1234'] });
+    expect(items[0]!.since).toBe(iso(45 * 60_000));
+  });
+
+  it('reports a missing ledger as missing and an unlistable one as unavailable', async () => {
+    // No metrics/jobs.jsonl at all — verified-absent, no fix PR can be on record.
+    const missing = await read();
+    expect(missing.sources['stuck-fixes']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+
+    // A directory where the ledger belongs is a read failure, not verified-empty.
+    mkdirSync(join(runsDir, 'metrics', 'jobs.jsonl'), { recursive: true });
+    const unavailable = await read();
+    expect(unavailable.sources['stuck-fixes']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'stuck-fixes')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = fixesRead({ stuck: [stuckFix(), stuckFix({ job: 'FIXUP-MAIN-ashlrai-phantom-zzz9999' })] });
+    const bySource = await readFixes(pending, { filter: { source: 'stuck-fixes' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'stuck-fixes')).toBe(true);
+    const byKind = await readFixes(pending, { filter: { kind: 'stuck-fix' } });
+    expect(byKind.items).toHaveLength(2);
+    expect(byKind.sources['stuck-fixes']).toEqual({ state: 'healthy', pending: 2 });
+    // The FIXUP-MAIN job id is the item's own citation — --job names it directly.
+    const byJob = await readFixes(pending, { filter: { job: 'FIXUP-MAIN-ashlrai-phantom-zzz9999' } });
+    expect(byJob.items.filter(i => i.source === 'stuck-fixes').map(i => i.id))
+      .toEqual(['stuck-fixes:FIXUP-MAIN-ashlrai-phantom-zzz9999']);
+  });
+});
+
+describe('readUnifiedInbox stranded work', () => {
+  const strandedRead = (over: Partial<StrandedWorkSourceRead> = {}): StrandedWorkSourceRead => ({
+    state: 'healthy', items: [], ...over,
+  });
+  const readStranded = (s: StrandedWorkSourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readStrandedWork: async () => s, ...extra });
+  const stranded = (over: Partial<StrandedItem> = {}): StrandedItem => ({
+    job: 'RQ-STRAND-1', repo: 'ashlrai/phantom', lane: 'fast',
+    finished_at: new Date(now - 2 * 3_600_000).toISOString(),
+    diff_files: 3, diff_lines: 120,
+    cause: 'abort_other', pushed_branch: null, recovered_by: null, verify: null,
+    next_step: 'Re-run the job: the publish stopped before any branch was pushed.', ...over,
+  });
+
+  it('lists each unrecovered stranded worktree as a warn naming job, repo, lane, cause, size and acts', async () => {
+    const inbox = await readStranded(strandedRead({ items: [
+      stranded(),
+      stranded({ job: 'RQ-STRAND-2', cause: 'abort_after_push',
+        pushed_branch: 'codex-bridge/RQ-STRAND-2',
+        next_step: 'Recover the pushed branch codex-bridge/RQ-STRAND-2: run phm fleet republish for the ready-made recovery job.' }),
+    ] }));
+    expect(inbox.sources['stranded-work']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'stranded-work');
+    expect(items).toHaveLength(2);
+
+    const first = items.find(i => i.id === 'stranded-work:RQ-STRAND-1')!;
+    expect(first).toMatchObject({
+      kind: 'stranded-worktree', severity: 'warn', blocking: false,
+      title: 'Job RQ-STRAND-1 finished with changes but no pull request',
+      since: new Date(now - 2 * 3_600_000).toISOString(), expiresAt: null,
+      jobIds: ['RQ-STRAND-1'],
+      act: ['phm fleet stranded', 'phm fleet kept-worktrees'],
+    });
+    expect(first.detail).toContain('ashlrai/phantom');
+    expect(first.detail).toContain('fast lane');
+    expect(first.detail).toContain('abort other');
+    expect(first.detail).toContain('3 files, 120 lines');
+    expect(first.detail).toContain('Re-run the job');
+
+    // A pushed-branch abort adds the republish act — the recovery path
+    // `phm fleet stranded`'s own next step names.
+    const pushed = items.find(i => i.id === 'stranded-work:RQ-STRAND-2')!;
+    expect(pushed.act).toEqual(['phm fleet stranded', 'phm fleet republish', 'phm fleet kept-worktrees']);
+    expect(pushed.detail).toContain('abort after push');
+  });
+
+  it('never lists rows a later job recovered or a verify proved on main', async () => {
+    const inbox = await readStranded(strandedRead({ items: [
+      stranded(),
+      stranded({ job: 'RQ-STRAND-DONE', recovered_by: 'RQ-RECOVERY-9',
+        next_step: 'Nothing to do: RQ-RECOVERY-9 recovered this work.' }),
+      stranded({ job: 'RQ-STRAND-MAIN', verify: 'already_on_main',
+        next_step: 'Nothing to do: this work is already on the main branch.' }),
+    ] }));
+    expect(inbox.sources['stranded-work']).toEqual({ state: 'healthy', pending: 1 });
+    expect(inbox.items.filter(i => i.source === 'stranded-work').map(i => i.id))
+      .toEqual(['stranded-work:RQ-STRAND-1']);
+  });
+
+  it('reports missing and unavailable honestly and never lists seam rows under them', async () => {
+    const missing = await readStranded(strandedRead({ state: 'missing', items: [stranded()] }));
+    expect(missing.sources['stranded-work']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+
+    const unavailable = await readStranded(strandedRead({ state: 'unavailable', items: [stranded()] }));
+    expect(unavailable.sources['stranded-work']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+
+    const throwing = await read({ readStrandedWork: async () => { throw new Error('kept list boom'); } });
+    expect(throwing.sources['stranded-work']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+
+    // A degraded read still lists what it found, pending counted.
+    const degraded = await readStranded(strandedRead({ state: 'degraded', items: [stranded()] }));
+    expect(degraded.sources['stranded-work']).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'stranded-work')).toHaveLength(1);
+  });
+
+  it('reads the real kept-worktree fold under runsDir: stranded, made, recovered and out-of-window rows', async () => {
+    mkdirSync(join(runsDir, 'queue', 'run'), { recursive: true });
+    mkdirSync(join(runsDir, 'metrics'), { recursive: true });
+    const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
+    const hint = (job: string) => `remote:      https://github.com/someone/phantom/pull/new/codex-bridge/${job}\n`;
+    // Kept worktrees: two stranded, one published PR (made — never lists),
+    // one recovered by a later job's queue line (nothing left to do), one
+    // finished outside the 3-day window (stale — never lists).
+    writeFileSync(join(runsDir, 'queue', 'status.json'), JSON.stringify({
+      lanes: { claude: { running: 1 } },
+      kept_worktrees: ['RQ-STRAND-A', 'RQ-STRAND-B', 'RQ-PR-1', 'RQ-RECOVERED', 'RQ-OLD'],
+    }));
+    const row = (job: string, fields: object, msAgo: number) =>
+      JSON.stringify({ job, lane: 'claude', ts: iso(msAgo), ...fields });
+    writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), [
+      row('RQ-STRAND-A', { event: 'finish', diff_files: 3, diff_lines: 50, empty: false }, 2 * 3_600_000),
+      row('RQ-STRAND-B', { event: 'finish', diff_files: 1, diff_lines: 8, empty: false }, 5 * 3_600_000),
+      row('RQ-PR-1', { event: 'finish', diff_files: 2, diff_lines: 9, empty: false }, 3 * 3_600_000),
+      row('RQ-RECOVERED', { event: 'finish', diff_files: 4, diff_lines: 40, empty: false }, 4 * 3_600_000),
+      row('RQ-OLD', { event: 'finish', diff_files: 9, diff_lines: 90, empty: false }, 10 * 24 * 3_600_000),
+      'not json',
+    ].join('\n'));
+    for (const job of ['RQ-STRAND-A', 'RQ-STRAND-B', 'RQ-PR-1', 'RQ-RECOVERED']) {
+      writeFileSync(join(runsDir, 'queue', 'run', `${job}.line`), `${job}\tphantom\tclaude\twork\n`);
+    }
+    // The recovery job's own line names RQ-RECOVERED and says recover —
+    // the same evidence `recoveredBy` folds, so the row lists as done.
+    writeFileSync(join(runsDir, 'queue', 'run', 'RQ-RECOVERY-1.line'),
+      'RQ-RECOVERY-1\tphantom\tclaude\tRecover the stranded work of RQ-RECOVERED.\n');
+    writeFileSync(join(runsDir, 'RQ-STRAND-A.publish'), 'NOTE scoped\nRESULT ABORT commit\n');
+    writeFileSync(join(runsDir, 'RQ-STRAND-B.publish'), `${hint('RQ-STRAND-B')}RESULT ABORT default-fetch\n`);
+    writeFileSync(join(runsDir, 'RQ-PR-1.publish'), 'RESULT PR https://github.com/ashlrai/phantom/pull/2 SENS=[]\n');
+    writeFileSync(join(runsDir, 'RQ-RECOVERED.publish'), 'RESULT ABORT commit\n');
+    writeFileSync(join(runsDir, 'RQ-OLD.publish'), 'RESULT ABORT commit\n');
+
+    const inbox = await read();
+    expect(inbox.sources['stranded-work']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'stranded-work');
+    expect(items.map(i => i.id).sort()).toEqual(['stranded-work:RQ-STRAND-A', 'stranded-work:RQ-STRAND-B']);
+    const abort = items.find(i => i.id === 'stranded-work:RQ-STRAND-A')!;
+    expect(abort).toMatchObject({
+      kind: 'stranded-worktree', severity: 'warn',
+      since: iso(2 * 3_600_000), expiresAt: null, jobIds: ['RQ-STRAND-A'],
+      act: ['phm fleet stranded', 'phm fleet kept-worktrees'],
+    });
+    expect(abort.detail).toContain('phantom · claude lane · abort other · 3 files, 50 lines');
+    const pushed = items.find(i => i.id === 'stranded-work:RQ-STRAND-B')!;
+    expect(pushed.act).toEqual(['phm fleet stranded', 'phm fleet republish', 'phm fleet kept-worktrees']);
+    expect(pushed.detail).toContain('abort after push');
+  });
+
+  it('reports a missing status.json as missing and an unlistable one as unavailable', async () => {
+    // No queue/status.json at all — verified-absent, no kept worktree can be listed.
+    const missing = await read();
+    expect(missing.sources['stranded-work']).toEqual({ state: 'missing', pending: 0 });
+    expect(missing.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+
+    // A directory where the kept list belongs is a read failure, not verified-empty.
+    mkdirSync(join(runsDir, 'queue', 'status.json'), { recursive: true });
+    const unavailable = await read();
+    expect(unavailable.sources['stranded-work']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'stranded-work')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = strandedRead({ items: [stranded(), stranded({ job: 'RQ-STRAND-2' })] });
+    const bySource = await readStranded(pending, { filter: { source: 'stranded-work' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'stranded-work')).toBe(true);
+    const byKind = await readStranded(pending, { filter: { kind: 'stranded-worktree' } });
+    expect(byKind.items).toHaveLength(2);
+    expect(byKind.sources['stranded-work']).toEqual({ state: 'healthy', pending: 2 });
+    // The job id is the item's own citation — --job names it directly.
+    const byJob = await readStranded(pending, { filter: { job: 'RQ-STRAND-2' } });
+    expect(byJob.items.filter(i => i.source === 'stranded-work').map(i => i.id))
+      .toEqual(['stranded-work:RQ-STRAND-2']);
+  });
+});
+
+describe('readUnifiedInbox dispatch stuck', () => {
+  const stuckRead = (over: Partial<DispatchStuckSourceRead> = {}): DispatchStuckSourceRead => ({
+    state: 'healthy', jobs: [], ...over,
+  });
+  const readStuck = (s: DispatchStuckSourceRead, extra: Partial<UnifiedInboxOptions> = {}) =>
+    read({ readDispatchStuck: async () => s, ...extra });
+  const stuckJob = (over: Partial<DispatchStuckJob> = {}): DispatchStuckJob => ({
+    job: 'RQ-STUCK-1', lane: 'devin', cause: 'lane_refused_size', events: 3,
+    firstSeen: new Date(now - 2 * 3_600_000).toISOString(),
+    lastSeen: new Date(now - 10 * 60_000).toISOString(),
+    ageSeconds: 7_200,
+    action: 'move to a lane that accepts this size',
+    kind: 'DEVIN_FLASH_REFUSED', reason: 'size-not-sm', ...over,
+  });
+  // Log lines carry the local wall clock, so stamps are built the same way.
+  const localStamp = (ms: number): string => {
+    const d = new Date(ms);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  };
+  const eventLine = (ms: number, rest: string) => `${localStamp(ms)} ${rest}`;
+
+  it('lists each stuck job as a warn naming job, lane, cause, events and acts', async () => {
+    const inbox = await readStuck(stuckRead({ jobs: [
+      stuckJob(),
+      stuckJob({ job: 'RQ-STUCK-2', lane: null, cause: 'lane_refused_repo',
+        action: 'move to a lane that accepts this repo',
+        kind: 'DEVIN_FLASH_REFUSED', reason: 'repo-not-eligible' }),
+      stuckJob({ job: 'RQ-STUCK-3', lane: 'claude', cause: 'worktree_cleanup_failed',
+        action: 'worktree cleanup keeps failing; needs a manual look',
+        kind: 'WT_ORPHAN_REMOVE_FAILED', reason: '(RuntimeError)' }),
+      stuckJob({ job: 'RQ-STUCK-4', lane: null, cause: 'unknown',
+        action: 'cause not recognised; read the event log lines for this job',
+        kind: 'PUBLISH_FAILED', reason: 'exit 3' }),
+    ] }));
+    expect(inbox.sources['dispatch-stuck']).toEqual({ state: 'healthy', pending: 4 });
+    const items = inbox.items.filter(i => i.source === 'dispatch-stuck');
+    expect(items).toHaveLength(4);
+
+    const refused = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-1')!;
+    expect(refused).toMatchObject({
+      kind: 'dispatch-stuck', severity: 'warn', blocking: false,
+      title: 'Job RQ-STUCK-1 cannot launch — dispatch keeps refusing it',
+      since: new Date(now - 2 * 3_600_000).toISOString(), expiresAt: null,
+      jobIds: ['RQ-STUCK-1'],
+      act: ['phm fleet stuck', 'phm queue lane RQ-STUCK-1 <lane>', 'phm queue'],
+    });
+    expect(refused.detail).toContain('lane devin');
+    expect(refused.detail).toContain('waiting 2h');
+    expect(refused.detail).toContain('3 events');
+    expect(refused.detail).toContain('DEVIN_FLASH_REFUSED size-not-sm');
+    expect(refused.detail).toContain('move to a lane that accepts this size');
+
+    // A lane refusal with no ready-list lane falls back to the refusing
+    // lane or unknown — here the read handed null, so the detail says so.
+    const noLane = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-2')!;
+    expect(noLane.detail).toContain('lane unknown');
+    expect(noLane.act).toEqual(['phm fleet stuck', 'phm queue lane RQ-STUCK-2 <lane>', 'phm queue']);
+
+    // A *_FAILED kind is a failure, not a refusal — the title and acts
+    // follow the cause, never a guessed verdict.
+    const cleanup = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-3')!;
+    expect(cleanup.title).toBe('Job RQ-STUCK-3 cannot launch — dispatch keeps failing it');
+    expect(cleanup.act).toEqual(['phm fleet stuck', 'phm fleet worktrees', 'phm queue']);
+    expect(cleanup.detail).toContain('WT_ORPHAN_REMOVE_FAILED (RuntimeError)');
+
+    const unknown = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-4')!;
+    expect(unknown.act).toEqual(['phm fleet stuck', 'phm fleet dispatch-events', 'phm queue']);
+    expect(unknown.detail).toContain('cause not recognised');
+  });
+
+  it('reports unavailable honestly and never lists seam rows under it', async () => {
+    // `phm fleet stuck`'s own rule: a missing or unreadable event log
+    // leaves the stuck set unknown — never an empty list passed off as
+    // fact — so 'missing' cannot appear here at all.
+    const unavailable = await readStuck(stuckRead({ state: 'unavailable', jobs: [stuckJob()] }));
+    expect(unavailable.sources['dispatch-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(unavailable.items.filter(i => i.source === 'dispatch-stuck')).toHaveLength(0);
+
+    const throwing = await read({ readDispatchStuck: async () => { throw new Error('events boom'); } });
+    expect(throwing.sources['dispatch-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'dispatch-stuck')).toHaveLength(0);
+
+    // A degraded ready read still lists every event-proven job — the
+    // events log, not the ready list, proves the stuck set — with the
+    // lane-attribution caveat in the detail.
+    const degraded = await readStuck(stuckRead({ state: 'degraded', jobs: [stuckJob()] }));
+    expect(degraded.sources['dispatch-stuck']).toEqual({ state: 'degraded', pending: 1 });
+    const item = degraded.items.find(i => i.source === 'dispatch-stuck')!;
+    expect(item.detail).toContain('ready.tsv read degraded');
+  });
+
+  it('reads the real dispatch-events.log and ready.tsv under runsDir', async () => {
+    mkdirSync(join(runsDir, 'queue'), { recursive: true });
+    const t = (msAgo: number) => now - msAgo;
+    writeFileSync(join(runsDir, 'queue', 'dispatch-events.log'), [
+      // Stuck: two refusals since the last launch, still active.
+      eventLine(t(2 * 3_600_000), 'DEVIN_FLASH_REFUSED RQ-STUCK-A size-not-sm'),
+      eventLine(t(2 * 3_600_000 - 5 * 60_000), 'DEVIN_FLASH_REFUSED RQ-STUCK-A size-not-sm'),
+      eventLine(t(2 * 3_600_000 - 10 * 60_000), 'DEVIN_FLASH_REFUSED RQ-STUCK-A size-not-sm'),
+      // Stuck: a worktree cleanup failure — lane falls back to unknown.
+      eventLine(t(2 * 3_600_000), 'WT_ORPHAN_REMOVE_FAILED RQ-STUCK-B (RuntimeError)'),
+      eventLine(t(2 * 3_600_000 - 5 * 60_000), 'WT_ORPHAN_REMOVE_FAILED RQ-STUCK-B (RuntimeError)'),
+      // Refused once, then launched — the LAUNCH clears it, never lists.
+      eventLine(t(4 * 3_600_000), 'DEVIN_FLASH_REFUSED RQ-LAUNCHED-1 size-not-sm'),
+      eventLine(t(4 * 3_600_000 - 2 * 60_000), 'LAUNCH RQ-LAUNCHED-1 phantom claude frontier'),
+      // Refused but gone quiet for over an hour — fixed or removed.
+      eventLine(t(5 * 3_600_000), 'DEVIN_FLASH_REFUSED RQ-QUIET-1 size-not-sm'),
+      eventLine(t(5 * 3_600_000 - 5 * 60_000), 'DEVIN_FLASH_REFUSED RQ-QUIET-1 size-not-sm'),
+      eventLine(t(90 * 60_000), 'TICK ok'),
+      'not a log line',
+    ].join('\n') + '\n', { mode: 0o600 });
+    // The ready list names RQ-STUCK-A's lane — it wins over the refusing
+    // lane the event kind would imply.
+    writeFileSync(join(runsDir, 'queue', 'ready.tsv'),
+      'RQ-STUCK-A\tcodex-local\n', { mode: 0o600 });
+
+    const inbox = await read();
+    expect(inbox.sources['dispatch-stuck']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'dispatch-stuck');
+    expect(items.map(i => i.id).sort()).toEqual(['dispatch-stuck:RQ-STUCK-A', 'dispatch-stuck:RQ-STUCK-B']);
+    const lane = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-A')!;
+    expect(lane).toMatchObject({
+      kind: 'dispatch-stuck', severity: 'warn', jobIds: ['RQ-STUCK-A'],
+      act: ['phm fleet stuck', 'phm queue lane RQ-STUCK-A <lane>', 'phm queue'],
+    });
+    expect(lane.detail).toContain('lane codex-local');
+    expect(lane.detail).toContain('DEVIN_FLASH_REFUSED size-not-sm');
+    const cleanup = items.find(i => i.id === 'dispatch-stuck:RQ-STUCK-B')!;
+    expect(cleanup.act).toEqual(['phm fleet stuck', 'phm fleet worktrees', 'phm queue']);
+    expect(cleanup.detail).toContain('lane unknown');
+  });
+
+  it('reports a missing or unreadable event log as unavailable — unknown, never an empty list', async () => {
+    // No dispatch-events.log anywhere under runsDir — `phm fleet stuck`
+    // itself reports unknown (exit 1), so the source can never claim a
+    // verified-empty stuck set.
+    const missing = await read();
+    expect(missing.sources['dispatch-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(missing.items.filter(i => i.source === 'dispatch-stuck')).toHaveLength(0);
+
+    // A directory where the log belongs is a degraded read — still
+    // unknown, never verified-empty.
+    mkdirSync(join(runsDir, 'queue', 'dispatch-events.log'), { recursive: true });
+    const degraded = await read();
+    expect(degraded.sources['dispatch-stuck']).toEqual({ state: 'unavailable', pending: null });
+    expect(degraded.items.filter(i => i.source === 'dispatch-stuck')).toHaveLength(0);
+  });
+
+  it('narrows under --source, --kind and --job like every other source', async () => {
+    const pending = stuckRead({ jobs: [stuckJob(), stuckJob({ job: 'RQ-STUCK-2' })] });
+    const bySource = await readStuck(pending, { filter: { source: 'dispatch-stuck' } });
+    expect(bySource.items).toHaveLength(2);
+    expect(bySource.items.every(i => i.source === 'dispatch-stuck')).toBe(true);
+    const byKind = await readStuck(pending, { filter: { kind: 'dispatch-stuck' } });
+    expect(byKind.items).toHaveLength(2);
+    expect(byKind.sources['dispatch-stuck']).toEqual({ state: 'healthy', pending: 2 });
+    // The job id is the item's own citation — --job names it directly.
+    const byJob = await readStuck(pending, { filter: { job: 'RQ-STUCK-2' } });
+    expect(byJob.items.filter(i => i.source === 'dispatch-stuck').map(i => i.id))
+      .toEqual(['dispatch-stuck:RQ-STUCK-2']);
   });
 });
 

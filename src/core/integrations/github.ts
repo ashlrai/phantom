@@ -12,6 +12,7 @@
  */
 
 import { credentialSpawnSync as spawnSync, credentialExecFile as execFile } from './secrets.js';
+import { asIntegrationRecord as objectRecord } from './dep-parser.js';
 import { backlogScanContext } from '../portfolio/scan-snapshot.js';
 import { createHash } from 'node:crypto';
 import type { GithubStatus, ProtectedPrObservedBypass, ProtectedRemoteRepositoryExpectation } from '../types.js';
@@ -516,9 +517,7 @@ function parseCiStatus(raw: string | null): GithubStatus['ci'] {
  */
 export async function githubCiStatusAsync(cwd: string, signal?: AbortSignal): Promise<Pick<GithubStatus, 'isRepo' | 'repo' | 'ci'>> {
   try {
-    const parsed = safeJson(await runGhAsync(cwd, ['repo', 'view', '--json', 'nameWithOwner'], signal));
-    const repo = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)['nameWithOwner'] : null;
+    const repo = objectRecord(safeJson(await runGhAsync(cwd, ['repo', 'view', '--json', 'nameWithOwner'], signal)))?.['nameWithOwner'] ?? null;
     if (typeof repo !== 'string' || !repo) return { isRepo: false, repo: null, ci: 'none' };
     return { isRepo: true, repo, ci: parseCiStatus(await runGhAsync(cwd, ['run', 'list', '--limit', '5', '--json', 'status,conclusion'], signal)) };
   } catch { return { isRepo: false, repo: null, ci: 'none' }; }
@@ -537,15 +536,8 @@ export function githubStatus(cwd: string): GithubStatus {
   const repoRaw = runGh(cwd, ['repo', 'view', '--json', 'nameWithOwner']);
   if (!repoRaw) return NOT_A_REPO;
 
-  const repoParsed = safeJson(repoRaw);
-  if (
-    repoParsed === null ||
-    typeof repoParsed !== 'object' ||
-    Array.isArray(repoParsed)
-  ) {
-    return NOT_A_REPO;
-  }
-  const repoObj = repoParsed as Record<string, unknown>;
+  const repoObj = objectRecord(safeJson(repoRaw));
+  if (!repoObj) return NOT_A_REPO;
   const repoSlug =
     typeof repoObj['nameWithOwner'] === 'string'
       ? repoObj['nameWithOwner']
@@ -1124,12 +1116,6 @@ function readExactBranchAuthority(
   ]);
   return result.kind === 'ok'
     ? parseExactBranchAuthority(safeJson(result.stdout), branch)
-    : null;
-}
-
-function objectRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
     : null;
 }
 

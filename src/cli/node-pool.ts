@@ -74,6 +74,19 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
   const json = args.includes('--json');
   const emit = (value: unknown) => console.log(json ? JSON.stringify(value) : JSON.stringify(value, null, 2));
   try {
+    // Join has two forms that must not mix: enrollment flags --primary/
+    // --backup (probe this machine's lanes and capacity, first join only)
+    // and explicit router-client flags --caps/--slots (an existing pool
+    // member re-pinning its registration). --caps/--slots flip the call to
+    // the explicit path below, where leftover --primary/--backup would cross
+    // SSH as a masked pool refusal — or, with no pool config yet, read as
+    // "no node pool configuration". Refuse the mix by name before either.
+    if (verb === 'join') {
+      const has = (name: string) => args.some(a => a === name || a.startsWith(`${name}=`));
+      if ((has('--primary') || has('--backup')) && (has('--caps') || has('--slots'))) {
+        throw new PoolUsageError('Pool join cannot combine --primary/--backup enrollment flags with --caps/--slots explicit flags. Enrollment probes this machine\'s lanes and capacity itself: drop --caps/--slots to enroll, or drop --primary/--backup for an explicit join.');
+      }
+    }
     if (verb === 'pool' || (verb === 'join' && !args.some(a => /^--(?:caps|slots)(?:=|$)/.test(a)))) {
       const f = flags(args, [...(verb === 'pool' ? ['--role'] : []), '--node', '--owner', '--primary', '--backup']);
       const role = verb === 'join' ? 'worker' : f.get('--role') as PoolConfig['role'];

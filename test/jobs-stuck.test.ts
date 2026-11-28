@@ -55,6 +55,15 @@ it('markers closed by a matching .fin are not running; a .fin from another attem
   expect(r.stuck.map(s => s.job)).toEqual(['rerun']);
 });
 
+it('an empty .fin is not a finish marker, even when no .base survives to key it', async () => {
+  await job('torn', { ageMin: 200, logQuietMin: 100 });
+  await rm(join(dir, 'torn.base'));
+  await writeFile(join(dir, 'queue', 'run', 'torn.fin'), ' \n');
+  const r = await readStuckJobs({ runsDir: dir, now: () => NOW, alive: alive(4001) });
+  expect(r.running).toBe(1);
+  expect(r.stuck.map(s => s.job)).toEqual(['torn']);
+});
+
 it('unreadable markers are unknown, not fine', async () => {
   const r = await readStuckJobs({ runsDir: join(dir, 'nope'), now: () => NOW });
   expect(r).toMatchObject({ known: false, stuck: [] });
@@ -87,7 +96,7 @@ it('apply closes ghost markers, stops stuck fleet processes, and never signals a
 });
 
 it('stops at most four stuck jobs per tick and leaves the rest for the next one', async () => {
-  const procs = [];
+  const procs: ReturnType<typeof proc>[] = [];
   for (let i = 0; i < 6; i++) { await job(`slow${i}`, { ageMin: 200 + i, logQuietMin: 90, pid: 4200 + i }); procs.push(proc(6000 + i, `claude -p slow${i}`)); }
   const kill = vi.fn();
   const res = await actOnStuckJobs({ runsDir: dir, now: () => NOW, alive: () => true, kill, graceMs: 0, readers: { readProcesses: async () => procs } });

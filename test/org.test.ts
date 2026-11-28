@@ -301,13 +301,20 @@ describe('cmdOrg', () => {
     vi.stubEnv('ASHLR_HOME', home);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
+      const orgToml = join(home, 'org.toml');
       expect(await cmdOrg(['plan', '--queue', join(home, 'unread-queue.json'), '--json'])).toBe(0);
       expect(JSON.parse(log.mock.lastCall![0])).toEqual({
         schema: 'org.plan.v1', state: 'not-configured', generatedAt: null, leader: null,
         budgets: null, roles: null, assignments: null, unassigned: null, held: null, joinsDir: null,
+        file: orgToml,
       });
       expect(await cmdOrg(['plan'])).toBe(0);
-      expect(log).toHaveBeenLastCalledWith('Team org not configured; planning skipped.');
+      expect(log).toHaveBeenLastCalledWith(`Team org not configured; planning skipped. No org file at ${orgToml}. org.toml holds org ids and lane shares only, never credentials: get a copy from your org leader, or start a new org with phm org init --member <id> --machine <id>.`);
+      // --file names the probed path, not the default: the skip reports the
+      // override the caller actually passed.
+      const override = join(home, 'elsewhere', 'org.toml');
+      expect(await cmdOrg(['plan', '--file', override, '--json'])).toBe(0);
+      expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ state: 'not-configured', file: override });
       expect(await cmdOrg(['plan', '--queue', '--json'])).toBe(1);
       expect(JSON.parse(log.mock.lastCall![0])).toMatchObject({ schema: 'org.error.v1', error: { code: 'rejected' } });
     } finally { vi.unstubAllEnvs(); }
@@ -581,6 +588,32 @@ describe('cmdOrg', () => {
     expect(text).toContain('phm org join --member grace --machine g-mac --json');
     expect(text).toContain('phm org plan --json');
     expect(errs).toEqual([]);
+    vi.unstubAllEnvs();
+  });
+
+  it('accepts comma-separated --lane lists on init and join', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = join(home, 'org.toml');
+    // init: --lane a,b declares both lanes; =<share> still binds its own lane only.
+    expect(await cmdOrg(['init', '--member', 'ada', '--machine', 'ada-mac', '--lane', 'claude,devin=20', '--json'])).toBe(0);
+    expect(JSON.parse(logs.pop()!).lanes).toEqual([{ lane: 'claude', share: 100 }, { lane: 'devin', share: 20 }]);
+    // join: the same list spelling opts this machine into both declared lanes;
+    // a space after the comma trims away and a bare item keeps the declared share.
+    expect(await cmdOrg(['join', '--file', file, '--member', 'ada', '--machine', 'ada-mac',
+      '--lane', 'claude=10, devin', '--json'])).toBe(0);
+    expect(JSON.parse(logs.pop()!).record.lanes).toEqual([{ lane: 'claude', share: 10 }, { lane: 'devin', share: 20 }]);
+    // A lane repeated across the comma is still refused, a bad share names its
+    // item, and a stray comma lands on the empty-name error — never dropped.
+    for (const [lane, said] of [
+      ['claude,claude', 'more than once'],
+      ['claude,devin=abc', 'share must be a number'],
+      ['claude,', 'needs a lane name'],
+    ] as const) {
+      expect(await cmdOrg(['join', '--file', file, '--member', 'ada', '--machine', 'ada-mac', '--lane', lane, '--json']), lane).toBe(1);
+      expect(JSON.parse(logs.pop()!).error.message).toContain(said);
+    }
     vi.unstubAllEnvs();
   });
 

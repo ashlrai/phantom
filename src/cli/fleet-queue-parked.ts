@@ -5,7 +5,7 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = 'Usage: phm fleet queue-parked [--root <absolute>] [--json]\n'
   + 'Read-only view of parked jobs: parked reasons, BLOCKED jobs with unmet dependency gates, and EVIDENCE-ONLY jobs whose gates are all MERGED. '
-  + 'Reads <root>/queue/ready.tsv, queue/precheck-skips.tsv and metrics/jobs.jsonl (default ~/.ashlr-runs). '
+  + 'Reads <root>/queue/ready.tsv, queue/precheck-skips.tsv and metrics/jobs.jsonl (default ASHLR_RUNS_DIR or ~/.ashlr-runs). '
   + 'Exit 1 when ready.tsv is absent or degraded. All-met rows are never permission to launch, unpark or dispatch.';
 
 // Mutation options are named explicitly so a mistyped action fails before any read.
@@ -47,7 +47,7 @@ export async function cmdFleetQueueParked(args: string[]): Promise<number> {
     console.error(usage);
     return 2;
   };
-  let root = join(homedir(), '.ashlr-runs');
+  let root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   let json = false;
   let rootSeen = false;
   for (let i = 0; i < args.length; i++) {

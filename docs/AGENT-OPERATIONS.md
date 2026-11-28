@@ -233,7 +233,12 @@ row recording `empty: true` — the diff check found nothing publishable —
 closes the attempt the same way and charges the row's recorded `tokens_total`,
 so empty runs count as failed attempts with their real spend instead of
 waiting out the censor horizon; `empty` absent, `false` or `null` stays open
-for the reconciler. Batch
+for the reconciler. The cell names the cause behind both: `launchDeaths`
+counts dead-launch closes and `emptyFailures` counts only infra-class empty
+finishes (`empty_class: 'error'`, or `exit_code`/`pool_error` re-deriving it
+on rows that predate the field — `no_diff` no-ops and `unknown` capture gaps
+never count), and recurring counts feed the `launch-death` and
+`empty-failure` improvement patterns alongside the blunt low-merge one. Batch
 sessions count per member: a `batch_claim` row is the member's dispatch
 record and the session's `launch` row (under its `RQ-BATCH-*` id) opens one
 attempt per member; a requeue-word `task_outcome` or a session-id
@@ -413,8 +418,12 @@ ANDed: `--from`/`--exclude-from` keep or drop mail one sender label wrote
 handle, `agent:` address, id and aliases all match, with exact-label matching
 when the ref resolves to nothing or the registry is unreadable), `--priority`
 keeps one P0..P3 band, `--job` keeps envelopes whose body cites that job,
-`--channel` keeps mail addressed to `group:<name>:*`, `--since`/`--before`
-bound the store acceptance time as one `[since, before)` window, `--contains`
+`--channel` keeps mail addressed to `group:<name>:*`, `--topic` keeps only
+mail whose `to` is a well-formed `group:<room>:<topic>` address carrying
+that exact topic component (the shared `groupAddressTopicOf` match every
+other bus read's `--topic` applies, composing with `--channel` into one room
+AND one topic), `--since`/`--before` bound the store acceptance time as one
+`[since, before)` window, `--contains`
 keeps envelopes whose scrubbed one-line summary carries the needle, and
 `--in-reply-to`/`--thread` keep bodies citing that envelope id or carrying
 that conversation label. `--result` keeps only `work.result` bodies
@@ -1221,10 +1230,19 @@ merge's own evidence — `createdAt` (the PR's open timestamp, so open→merge
 latency is computable) and `reviews` (gh's `latestReviews` count plus its
 computed `reviewDecision`, the same fields the cloud tracker reads for
 fleet outcomes; `null` when gh returned no parseable review fields, and a
-real zero-reviewer list stays a real "merged unreviewed" signal). An
+real zero-reviewer list stays a real "merged unreviewed" signal) and `ci`
+(the check-rollup verdict — `success`/`failure`/`pending`/`none`, the same
+vocabulary the cloud tracker reports — read per surviving outside PR
+through a bounded `gh pr view --json statusCheckRollup` pass capped at 120
+reads per run; `null` when gh returned no parseable rollup, an honest
+unknown distinct from a real empty-rollup `none`) and `diff` (gh's
+recorded merge size — `additions`, `deletions` and `changedFiles`,
+frozen at merge; `null` when gh returned no parseable triple, an honest
+unknown distinct from a real empty diff). An
 unreadable revert ledger
 marks every verdict `unknown`, never "not reverted"; a missing `gh` reports
-`sourceState: 'missing'`. Read-only — `gh pr list` and the local ledger
+`sourceState: 'missing'`. Read-only — `gh pr list`, bounded `gh pr view`
+and the local ledger
 only; see
 [core/fleet/outside-pr-outcomes.ts](../src/core/fleet/outside-pr-outcomes.ts).
 The cloud scheduler's hourly improve tick also journals each read into
@@ -1232,11 +1250,28 @@ The cloud scheduler's hourly improve tick also journals each read into
 `fleet.outside-pr-scan.v1` rows via
 [core/fleet/outside-outcome-sync.ts](../src/core/fleet/outside-outcome-sync.ts);
 the sync re-journals a PR only when its recorded evidence — verdict, open
-timestamp or review evidence — changes, so steady state costs one scan row
+timestamp, review evidence, CI verdict or merge-size triple — changes,
+so steady state costs one scan row
 per pass),
 and `phm improve discover` folds repos whose outside merges keep carrying
 standing revert verdicts into self-targeted backlog items — see
 [core/improve/outside-pr-backlog.ts](../src/core/improve/outside-pr-backlog.ts).
+The same journal is also folded per recorded agent attribution, so an
+agent product whose outside merges recurently revert across repos — too
+spread out for any single repo cell to reach the bar — becomes a
+fleet-repo backlog item; see
+[core/improve/outside-pr-agent-backlog.ts](../src/core/improve/outside-pr-agent-backlog.ts).
+Each row's `ci` field — the bounded per-PR check-rollup verdict — is
+folded per repository too, so outside merges that keep landing without a
+completed green check verdict (failed checks, checks still incomplete, or
+an empty rollup) become self-targeted backlog items; see
+[core/improve/outside-pr-ci-backlog.ts](../src/core/improve/outside-pr-ci-backlog.ts).
+Each row's `reviews` field — gh's `latestReviews` count plus its computed
+`reviewDecision` — is folded per repository as well, so outside merges
+that keep landing with an empty `latestReviews` array (zero recorded
+reviewers, a real "merged unreviewed" signal distinct from a null record's
+missing evidence) become self-targeted backlog items; see
+[core/improve/outside-pr-review-backlog.ts](../src/core/improve/outside-pr-review-backlog.ts).
 
 `phm fleet pr-hygiene [--repo <owner/name>] [--stale-days <n>] [--limit <n>] [--json]`
 audits one repo's open PRs and emits the `fleet.pr-hygiene.v1` triage report

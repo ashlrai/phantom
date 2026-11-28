@@ -444,6 +444,10 @@ interface MarketLaneView {
   dataClass: string;
   running: number;
   target: number;
+  /** dispatchd's per-tick omlx loopback verdict, published as the lane's
+   * status.json `healthy`; only a proven false marks the lane unhealthy —
+   * missing or non-boolean stays unknown and never blocks. */
+  localUnhealthy: boolean;
 }
 
 function executorCapabilities(lane: string, slot: Record<string, unknown>): ReadonlySet<string> | null {
@@ -465,9 +469,14 @@ function hardDown(slot: Record<string, unknown>, operatorHold: boolean): boolean
     || String(slot.held_reason ?? '').startsWith('credits exhausted'));
 }
 
-/** Build the lane_view slice for one status.json lane. */
+/** Build the lane_view slice for one status.json lane. `localHealthy` is the
+ * dispatcher's published health for the lane's on-host executor — status.json
+ * carries `healthy` for omlx only, so other lanes and missing readings stay
+ * unknown. dispatchd gates every omlx row on that verdict
+ * (`local_unhealthy`), independent of slot holds. */
 export function marketLaneView(
   lane: string, running: number, target: number, statusHeld: boolean, ctx: MarketContext,
+  localHealthy?: boolean | null,
 ): MarketLaneView {
   const slot = isRecord(ctx.slots[lane]) ? ctx.slots[lane] as Record<string, unknown> : {};
   const family = lane.startsWith('codex') && lane !== 'codex-local' ? 'codex' : lane;
@@ -511,6 +520,7 @@ export function marketLaneView(
     backoff: Boolean(slot.backoff) || signal.backoff === true,
     local, repos, dataClass,
     running, target,
+    localUnhealthy: lane === 'omlx' && localHealthy === false,
   };
 }
 
@@ -547,10 +557,15 @@ export function derivedRowCodes(row: ReadyMarketRow, lane: string, v: MarketLane
   if (v.quota !== null && v.quota <= 0) reasons.push('quota_exhausted');
   if (v.backoff) reasons.push('provider_backoff');
   if (v.running >= v.target) reasons.push('saturated');
-  // The dispatcher keeps one `unavailable` verdict per lane: lane_view's
-  // invalid_capability_advertisement is overwritten by the per-destination
-  // metered-API opt-in gate, and choose appends that single code — never both.
-  if (METERED_API_LANES.has(lane) && v.costClass === 'metered' && row.maxCostClass !== 'metered') {
+  // The dispatcher keeps one `unavailable` verdict per lane, last writer
+  // wins: lane_view's invalid_capability_advertisement is overwritten by the
+  // per-destination metered-API opt-in gate, and choose appends that single
+  // code — never both. dispatchd's omlx loopback-health gate writes last for
+  // that lane, so a proven unhealthy omlx replaces every earlier unavailable
+  // code with local_unhealthy.
+  if (v.localUnhealthy) {
+    reasons.push('local_unhealthy');
+  } else if (METERED_API_LANES.has(lane) && v.costClass === 'metered' && row.maxCostClass !== 'metered') {
     reasons.push('metered_api_opt_in_required');
   } else if (v.capabilities === null) {
     reasons.push('invalid_capability_advertisement');

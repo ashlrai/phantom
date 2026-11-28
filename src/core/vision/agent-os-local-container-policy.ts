@@ -7,19 +7,25 @@
  * attest.
  */
 
-import { createHash } from 'node:crypto';
+import {
+  canonicalEpochJsonDigest,
+  deepFreezeEpochValue as deepFreeze,
+  epochPlainRecord as record,
+  exactEpochKeys as exactKeys,
+  immutablePlainDataSnapshot as immutableDataSnapshot,
+  isValidRawEpochDigest,
+} from './agent-os-epoch-shared.js';
 
 export const AGENT_OS_LOCAL_CONTAINER_POLICY_V1 =
   'ashlr-agent-os-local-container-create-policy-v1' as const;
-export const AGENT_OS_LOCAL_CONTAINER_POLICY_DIGEST_DOMAIN_V1 =
+const AGENT_OS_LOCAL_CONTAINER_POLICY_DIGEST_DOMAIN_V1 =
   'ashlr:agent-os:local-container-create-policy:v1\0' as const;
 
-export const AGENT_OS_LOCAL_CONTAINER_MAX_DURATION_MS_V1 = 5 * 60_000;
-export const AGENT_OS_LOCAL_CONTAINER_MAX_OUTPUT_BYTES_V1 = 2 * 1024 * 1024;
+const AGENT_OS_LOCAL_CONTAINER_MAX_DURATION_MS_V1 = 5 * 60_000;
+const AGENT_OS_LOCAL_CONTAINER_MAX_OUTPUT_BYTES_V1 = 2 * 1024 * 1024;
 export const AGENT_OS_LOCAL_CONTAINER_NATIVE_PRODUCER_ENTRYPOINT_V1 =
   '/opt/ashlr/bin/agent-os-observation-producer' as const;
 
-const RAW_SHA256_RE = /^[a-f0-9]{64}$/u;
 const IMAGE_REPOSITORY_RE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$/u;
 const NUMERIC_USER_RE = /^(?:[1-9][0-9]{0,9}):(?:[1-9][0-9]{0,9})$/u;
 const NO_AUTHORITY = Object.freeze({
@@ -149,27 +155,6 @@ const RESTART_KEYS = ['maximumRetryCount', 'name'] as const;
 const LOGGING_KEYS = ['driver', 'options'] as const;
 const PRODUCER_KEYS = ['allowedDigests', 'digest', 'entrypoint'] as const;
 
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
-}
-
 function denseArray(value: unknown, maximum: number): value is unknown[] {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype ||
     value.length > maximum || Reflect.ownKeys(value).some((key) => typeof key === 'symbol') ||
@@ -208,7 +193,7 @@ function digestPinnedImage(value: unknown): value is string {
   if (markerIndex < 1 || markerIndex !== value.lastIndexOf(marker)) return false;
   const repository = value.slice(0, markerIndex);
   const digest = value.slice(markerIndex + marker.length);
-  return IMAGE_REPOSITORY_RE.test(repository) && RAW_SHA256_RE.test(digest);
+  return IMAGE_REPOSITORY_RE.test(repository) && isValidRawEpochDigest(digest);
 }
 
 function canonicalAbsolutePath(value: unknown, allowRoot: boolean): value is string {
@@ -228,7 +213,7 @@ function validDigestAllowlist(value: unknown): value is string[] {
   if (!denseArray(value, 16) || value.length < 1) return false;
   let prior = '';
   for (const entry of value) {
-    if (typeof entry !== 'string' || !RAW_SHA256_RE.test(entry) || entry <= prior) return false;
+    if (!isValidRawEpochDigest(entry) || entry <= prior) return false;
     prior = entry;
   }
   return true;
@@ -238,7 +223,7 @@ function validProducer(value: unknown): value is AgentOsLocalContainerCreatePoli
   const producer = record(value);
   return Boolean(producer && exactKeys(producer, PRODUCER_KEYS) &&
     producer['entrypoint'] === AGENT_OS_LOCAL_CONTAINER_NATIVE_PRODUCER_ENTRYPOINT_V1 &&
-    typeof producer['digest'] === 'string' && RAW_SHA256_RE.test(producer['digest']) &&
+    isValidRawEpochDigest(producer['digest']) &&
     validDigestAllowlist(producer['allowedDigests']) &&
     producer['allowedDigests'].includes(producer['digest']));
 }
@@ -254,56 +239,6 @@ function oneAll(value: unknown): value is ['ALL'] {
 function emptyRecord(value: unknown): value is Record<string, never> {
   const row = record(value);
   return Boolean(row && exactKeys(row, []));
-}
-
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
-  if (value !== null && typeof value === 'object' && !seen.has(value)) {
-    seen.add(value);
-    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested, seen);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function plainDataGraph(value: unknown, seen = new Set<object>(), depth = 0): boolean {
-  if (value === null || typeof value === 'boolean' || typeof value === 'string' ||
-    typeof value === 'number') return typeof value !== 'number' || Number.isSafeInteger(value);
-  if (typeof value !== 'object' || depth > 16 || seen.size >= 256 || seen.has(value)) return false;
-  seen.add(value);
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (Array.isArray(value)) {
-      if (prototype !== Array.prototype || value.length > 128) return false;
-    } else if (prototype !== Object.prototype && prototype !== null) return false;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string')) return false;
-    for (const descriptor of Object.values(descriptors)) {
-      if (!Object.hasOwn(descriptor, 'value') || !plainDataGraph(descriptor.value, seen, depth + 1)) {
-        return false;
-      }
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function immutableDataSnapshot<T>(value: T): T | null {
-  try {
-    if (!plainDataGraph(value)) return null;
-    const snapshot = structuredClone(value);
-    return plainDataGraph(snapshot) ? deepFreeze(snapshot) : null;
-  } catch {
-    return null;
-  }
-}
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const row = value as Record<string, unknown>;
-  return `{${Object.keys(row).sort().map((key) =>
-    `${JSON.stringify(key)}:${canonicalJson(row[key])}`).join(',')}}`;
 }
 
 export function agentOsLocalContainerCreatePolicyDigestV1(value: unknown): string | null {
@@ -354,8 +289,7 @@ function policyReason(value: unknown): Exclude<AgentOsLocalContainerPolicyReason
   if (!oneAll(capabilities['drop'])) return 'required-capability-drop-missing';
   if (policy['readonlyRootfs'] !== true) return 'writable-rootfs-forbidden';
   if (policy['noNewPrivileges'] !== true) return 'no-new-privileges-required';
-  if (typeof policy['seccompProfileDigest'] !== 'string' ||
-    !RAW_SHA256_RE.test(policy['seccompProfileDigest'])) return 'seccomp-profile-unbound';
+  if (!isValidRawEpochDigest(policy['seccompProfileDigest'])) return 'seccomp-profile-unbound';
   const restart = record(policy['restart']);
   if (!restart || !exactKeys(restart, RESTART_KEYS) || restart['name'] !== 'no' ||
     restart['maximumRetryCount'] !== 0) return 'restart-forbidden';
@@ -370,15 +304,15 @@ export function inspectAgentOsLocalContainerCreatePolicyV1(
   value: unknown,
 ): AgentOsLocalContainerPolicyInspectionV1 {
   try {
-    const snapshot = immutableDataSnapshot(value);
+    const snapshot = immutableDataSnapshot(value, { rejectProxy: false });
     if (!snapshot) return withheld('invalid-input');
     const reason = policyReason(snapshot);
     if (reason) return withheld(reason);
     const policy = snapshot as AgentOsLocalContainerCreatePolicyV1;
-    const createConfigDigest = createHash('sha256')
-      .update(AGENT_OS_LOCAL_CONTAINER_POLICY_DIGEST_DOMAIN_V1, 'utf8')
-      .update(canonicalJson(policy), 'utf8')
-      .digest('hex');
+    const createConfigDigest = canonicalEpochJsonDigest(
+      AGENT_OS_LOCAL_CONTAINER_POLICY_DIGEST_DOMAIN_V1,
+      policy,
+    );
     return deepFreeze({
       schemaVersion: 1,
       mode: 'agent-os-local-container-policy-inspection-v1' as const,
@@ -401,7 +335,7 @@ export function buildAgentOsLocalContainerCreatePolicyV1(
   const row = record(input);
   if (!row || !exactKeys(row, INPUT_KEYS)) return withheld('invalid-input');
   if (!digestPinnedImage(row['image'])) return withheld('image-not-digest-pinned');
-  if (typeof row['producerDigest'] !== 'string' || !RAW_SHA256_RE.test(row['producerDigest']) ||
+  if (!isValidRawEpochDigest(row['producerDigest']) ||
     !validDigestAllowlist(row['allowedProducerDigests']) ||
     !row['allowedProducerDigests'].includes(row['producerDigest'])) {
     return withheld('producer-not-allowlisted');
@@ -410,8 +344,7 @@ export function buildAgentOsLocalContainerCreatePolicyV1(
     return withheld('identity-invalid');
   }
   if (!canonicalAbsolutePath(row['workingDir'], false)) return withheld('working-directory-invalid');
-  if (typeof row['seccompProfileDigest'] !== 'string' ||
-    !RAW_SHA256_RE.test(row['seccompProfileDigest'])) return withheld('seccomp-profile-unbound');
+  if (!isValidRawEpochDigest(row['seccompProfileDigest'])) return withheld('seccomp-profile-unbound');
   if (!isAgentOsLocalContainerLimitsV1(row['limits'])) return withheld('limits-missing-or-invalid');
   const limits = row['limits'] as AgentOsLocalContainerLimitsV1;
   const policy: AgentOsLocalContainerCreatePolicyV1 = {

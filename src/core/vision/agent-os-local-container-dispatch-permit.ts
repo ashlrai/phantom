@@ -1,17 +1,24 @@
-import { createHash } from 'node:crypto';
-import { isProxy } from 'node:util/types';
+import {
+  canonicalEpochDomainBytes,
+  canonicalEpochJsonDigest,
+  decodeEpochBase64url,
+  exactOwnDataKeys as exactKeys,
+  immutablePlainDataSnapshot,
+  isValidEpochTimestamp as timestamp,
+  isValidPrefixedEpochDigest,
+  isValidRawEpochDigest,
+  nonProxyPlainRecord as record,
+} from './agent-os-epoch-shared.js';
 
 export const AGENT_OS_LOCAL_CONTAINER_DISPATCH_PERMIT_V1 =
   'ashlr-agent-os-local-container-dispatch-permit-v1' as const;
 export const AGENT_OS_LOCAL_CONTAINER_DISPATCH_PERMIT_SIGNATURE_ALGORITHM_V1 = 'ed25519' as const;
-export const AGENT_OS_LOCAL_CONTAINER_DISPATCH_PERMIT_MAX_LIFETIME_MS_V1 = 5 * 60_000;
-export const AGENT_OS_LOCAL_CONTAINER_DISPATCH_PERMIT_MAX_FUTURE_SKEW_MS_V1 = 5_000;
+const AGENT_OS_LOCAL_CONTAINER_DISPATCH_PERMIT_MAX_LIFETIME_MS_V1 = 5 * 60_000;
+const AGENT_OS_LOCAL_CONTAINER_DISPATCH_PERMIT_MAX_FUTURE_SKEW_MS_V1 = 5_000;
 
 const SIGNATURE_DOMAIN = 'ashlr:agent-os:local-container-dispatch-permit:signature:v1\0';
 const DIGEST_DOMAIN = 'ashlr:agent-os:local-container-dispatch-permit:digest:v1\0';
-const RAW_DIGEST_RE = /^[a-f0-9]{64}$/u;
-const PREFIXED_DIGEST_RE = /^sha256:[a-f0-9]{64}$/u;
-const BASE64URL_RE = /^[A-Za-z0-9_-]+$/u;
+const PERMIT_GRAPH_OPTIONS = Object.freeze({ maxDepth: 8, maxNodes: 64, allowArrays: false });
 
 export const AGENT_OS_LOCAL_CONTAINER_DISPATCH_SCOPE_V1 = Object.freeze({
   action: 'agent-os-observation-container-once' as const,
@@ -114,98 +121,6 @@ const ENVELOPE_KEYS = [
   ...UNSIGNED_KEYS, 'permitDigest', 'signature', 'signatureAlgorithm',
 ] as const;
 
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value) || isProxy(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    return prototype === Object.prototype || prototype === null
-      ? value as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  try {
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string')) return false;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    const actual = Object.keys(descriptors).sort();
-    const expected = [...keys].sort();
-    return actual.length === expected.length && actual.every((key, index) => key === expected[index]) &&
-      Object.values(descriptors).every((descriptor) => Object.hasOwn(descriptor, 'value'));
-  } catch {
-    return false;
-  }
-}
-
-function plainDataGraph(value: unknown, seen = new Set<object>(), depth = 0): boolean {
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return true;
-  if (typeof value === 'number') return Number.isSafeInteger(value);
-  if (typeof value !== 'object' || isProxy(value) || depth > 8 || seen.size >= 64 || seen.has(value)) return false;
-  seen.add(value);
-  const row = record(value);
-  if (!row) return false;
-  try {
-    return Object.values(Object.getOwnPropertyDescriptors(row)).every((descriptor) =>
-      Object.hasOwn(descriptor, 'value') && plainDataGraph(descriptor.value, seen, depth + 1));
-  } catch {
-    return false;
-  }
-}
-
-function immutableSnapshot<T>(value: T): T | null {
-  try {
-    if (!plainDataGraph(value)) return null;
-    const snapshot = structuredClone(value);
-    if (!plainDataGraph(snapshot)) return null;
-    return deepFreeze(snapshot);
-  } catch {
-    return null;
-  }
-}
-
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
-  if (value !== null && typeof value === 'object' && !seen.has(value)) {
-    seen.add(value);
-    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested, seen);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const row = value as Record<string, unknown>;
-  return `{${Object.keys(row).sort().map((key) =>
-    `${JSON.stringify(key)}:${canonicalJson(row[key])}`).join(',')}}`;
-}
-
-function domainBytes(value: unknown): Buffer {
-  return Buffer.concat([Buffer.from(SIGNATURE_DOMAIN, 'utf8'), Buffer.from(canonicalJson(value), 'utf8')]);
-}
-
-function digest(value: unknown): string {
-  return createHash('sha256').update(DIGEST_DOMAIN, 'utf8').update(canonicalJson(value), 'utf8').digest('hex');
-}
-
-function timestamp(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length !== 24) return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
-function nonce(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > 128 || !BASE64URL_RE.test(value)) return false;
-  try {
-    const bytes = Buffer.from(value, 'base64url');
-    return bytes.byteLength >= 16 && bytes.byteLength <= 64 && bytes.toString('base64url') === value;
-  } catch {
-    return false;
-  }
-}
-
 function scope(value: unknown): boolean {
   const row = record(value);
   return Boolean(row && exactKeys(row, SCOPE_KEYS) && SCOPE_KEYS.every((key) =>
@@ -214,21 +129,21 @@ function scope(value: unknown): boolean {
 
 function bindings(value: unknown): value is AgentOsLocalContainerDispatchPermitBindingsV1 {
   const row = record(value);
-  return Boolean(row && exactKeys(row, BINDING_KEYS) && nonce(row['requestNonce']) &&
+  return Boolean(row && exactKeys(row, BINDING_KEYS) &&
+    decodeEpochBase64url(row['requestNonce'], 16, 64) !== null &&
     timestamp(row['deadlineAt']) && row['slots'] === 1 &&
     ['requestDigest', 'brokerDigest', 'engineDigest', 'imageDigest', 'producerDigest', 'seccompDigest',
-      'createConfigDigest'].every((key) => typeof row[key] === 'string' && RAW_DIGEST_RE.test(row[key] as string)) &&
-    typeof row['executionIdentityDigest'] === 'string' &&
-    PREFIXED_DIGEST_RE.test(row['executionIdentityDigest']) &&
-    typeof row['capacityEvidenceDigest'] === 'string' && PREFIXED_DIGEST_RE.test(row['capacityEvidenceDigest']));
+      'createConfigDigest'].every((key) => isValidRawEpochDigest(row[key])) &&
+    isValidPrefixedEpochDigest(row['executionIdentityDigest']) &&
+    isValidPrefixedEpochDigest(row['capacityEvidenceDigest']));
 }
 
 function unsigned(value: unknown): AgentOsLocalContainerDispatchPermitUnsignedV1 | null {
   const row = record(value);
   if (!row || !exactKeys(row, UNSIGNED_KEYS) || row['schemaVersion'] !== 1 ||
     row['protocol'] !== AGENT_OS_LOCAL_CONTAINER_DISPATCH_PERMIT_V1 ||
-    typeof row['permitId'] !== 'string' || !RAW_DIGEST_RE.test(row['permitId']) ||
-    typeof row['keyId'] !== 'string' || !RAW_DIGEST_RE.test(row['keyId']) ||
+    !isValidRawEpochDigest(row['permitId']) ||
+    !isValidRawEpochDigest(row['keyId']) ||
     !timestamp(row['issuedAt']) || !timestamp(row['expiresAt']) || !scope(row['scope']) ||
     !bindings(row['bindings'])) return null;
   return row as unknown as AgentOsLocalContainerDispatchPermitUnsignedV1;
@@ -238,17 +153,11 @@ function envelope(value: unknown): AgentOsLocalContainerDispatchPermitEnvelopeV1
   const row = record(value);
   if (!row || !exactKeys(row, ENVELOPE_KEYS) ||
     row['signatureAlgorithm'] !== AGENT_OS_LOCAL_CONTAINER_DISPATCH_PERMIT_SIGNATURE_ALGORITHM_V1 ||
-    typeof row['permitDigest'] !== 'string' || !RAW_DIGEST_RE.test(row['permitDigest']) ||
-    typeof row['signature'] !== 'string' || !BASE64URL_RE.test(row['signature'])) return null;
+    !isValidRawEpochDigest(row['permitDigest']) ||
+    decodeEpochBase64url(row['signature'], 64, 64) === null) return null;
   const selected = Object.fromEntries(UNSIGNED_KEYS.map((key) => [key, row[key]]));
   const parsed = unsigned(selected);
-  if (!parsed || digest(parsed) !== row['permitDigest']) return null;
-  try {
-    const decoded = Buffer.from(row['signature'], 'base64url');
-    if (decoded.byteLength !== 64 || decoded.toString('base64url') !== row['signature']) return null;
-  } catch {
-    return null;
-  }
+  if (!parsed || canonicalEpochJsonDigest(DIGEST_DOMAIN, parsed) !== row['permitDigest']) return null;
   return row as unknown as AgentOsLocalContainerDispatchPermitEnvelopeV1;
 }
 
@@ -279,15 +188,15 @@ function inspection(
 export function canonicalAgentOsLocalContainerDispatchPermitBytesV1(
   value: unknown,
 ): Buffer | null {
-  const snapshot = immutableSnapshot(value);
+  const snapshot = immutablePlainDataSnapshot(value, PERMIT_GRAPH_OPTIONS);
   const parsed = unsigned(snapshot);
-  return parsed ? domainBytes(parsed) : null;
+  return parsed ? canonicalEpochDomainBytes(SIGNATURE_DOMAIN, parsed) : null;
 }
 
 export function digestAgentOsLocalContainerDispatchPermitV1(value: unknown): string | null {
-  const snapshot = immutableSnapshot(value);
+  const snapshot = immutablePlainDataSnapshot(value, PERMIT_GRAPH_OPTIONS);
   const parsed = unsigned(snapshot);
-  return parsed ? digest(parsed) : null;
+  return parsed ? canonicalEpochJsonDigest(DIGEST_DOMAIN, parsed) : null;
 }
 
 export function verifyAgentOsLocalContainerDispatchPermitV1(
@@ -296,15 +205,15 @@ export function verifyAgentOsLocalContainerDispatchPermitV1(
   verifier: AgentOsLocalContainerDispatchPermitVerifierV1,
   nowMs: number,
 ): AgentOsLocalContainerDispatchPermitInspectionV1 {
-  const ownedValue = immutableSnapshot(value);
-  const ownedBindings = immutableSnapshot(expectedBindings);
+  const ownedValue = immutablePlainDataSnapshot(value, PERMIT_GRAPH_OPTIONS);
+  const ownedBindings = immutablePlainDataSnapshot(expectedBindings, PERMIT_GRAPH_OPTIONS);
   if (!ownedValue || !ownedBindings || !bindings(ownedBindings) ||
     !Number.isSafeInteger(nowMs) || nowMs < 0) return inspection('withheld', 'invalid-input');
   const parsed = envelope(ownedValue);
   if (!parsed) return inspection('withheld', 'invalid-permit');
   const verifierRow = record(verifier);
   if (!verifierRow || !exactKeys(verifierRow, ['keyId', 'verify']) ||
-    typeof verifierRow['keyId'] !== 'string' || !RAW_DIGEST_RE.test(verifierRow['keyId']) ||
+    !isValidRawEpochDigest(verifierRow['keyId']) ||
     typeof verifierRow['verify'] !== 'function' || parsed.keyId !== verifierRow['keyId']) {
     return inspection('withheld', 'permit-key-mismatch', {
       permitDigest: parsed.permitDigest, keyId: parsed.keyId, requestDigest: parsed.bindings.requestDigest,
@@ -330,7 +239,7 @@ export function verifyAgentOsLocalContainerDispatchPermitV1(
     permitDigest: parsed.permitDigest, keyId: parsed.keyId, requestDigest: parsed.bindings.requestDigest,
   });
   const parsedUnsigned = Object.fromEntries(UNSIGNED_KEYS.map((key) => [key, parsed[key]]));
-  const bytes = domainBytes(parsedUnsigned);
+  const bytes = canonicalEpochDomainBytes(SIGNATURE_DOMAIN, parsedUnsigned);
   const callbackBytes = Buffer.from(bytes);
   const signature = Buffer.from(parsed.signature, 'base64url');
   let verified = false;

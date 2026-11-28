@@ -83,7 +83,8 @@ when `gh auth status` passes — reported as `autoCaps` in `--json` and named in
 text mode; an empty probe reports `autoCaps: []` and says so, since the node
 then advertises no sign-in lanes. An explicit `--caps` list is the complete
 manual advertisement and skips that probe (the local-model and `phm-<version>`
-caps still merge in).
+caps still merge in); a `--caps` that names no capability is refused
+(`bad-caps`) — omit the flag to auto-detect or name at least one capability.
 A job with no live node prints a `phm node join --owner` fix that names the
 caps it needs.
 
@@ -125,10 +126,15 @@ node can never run.
 `phm node plan` prints one `job -> node` line per routable job, or `nobody`
 with the fix when no live node can take it. An empty route set is not the
 same as an empty queue, so the text answer reads the scope once more: with no
-jobs queued it names the `phm node enqueue` command, and otherwise it counts
-the scope's jobs by state (`pending`, `running`, `completed`) — claimed or
-finished work is not routable, and the note says so instead of implying the
-queue is empty.
+jobs queued it names the `phm node enqueue` command — and names the owner
+scopes the store does know first when the requested `--owner` is not one of
+them (a mistyped scope) or when `plan` runs bare on a store that knows any,
+so the correction is visible instead of an invitation to enqueue into a scope
+no node serves; a scope that owns a node but has no jobs keeps the plain
+enqueue line, and a bare `plan` with exactly one known scope prints it as the
+enqueue target instead of `<scope>`. Otherwise the note counts the scope's
+jobs by state (`pending`, `running`, `completed`) — claimed or finished work
+is not routable, and the note says so instead of implying the queue is empty.
 
 The other verbs print plain-words outcomes too: `join` answers in a sentence
 naming the node, session, owner scopes and caps, states the 30-second session
@@ -153,9 +159,10 @@ legacy routing, not a measured zero) and its last measured hold as
 command that restores each expired node's last advertised profile and keeps it
 live (the same hint a session-expired error prints; the join-managed
 `phm-<version>` build marker is left out because join re-derives it), annotate each node whose advertised
-`phm-<version>` cap is not this build (`phm=behind`, `phm=ahead` or
-`phm=unreported` — beats never re-stamp caps, so a node that outlived an
-upgrade reads as behind) and point at `phm node self-update --owner <scope>`
+`phm-<version>` cap is not this build (`phm=behind`, `phm=ahead`,
+`phm=unreported`, or `phm=unknown` when this machine's own version cannot be
+determined and no `--target` applies — beats never re-stamp caps, so a node
+that outlived an upgrade reads as behind) and point at `phm node self-update --owner <scope>`
 when any node drifted, mark producer withdrawals, carry the
 same fix `phm node plan` prints on a job that still has no taker, and an
 empty scope says so with the join command; `enqueue` says when the job id already
@@ -295,7 +302,10 @@ the node's own build replaces any stale `phm-*` cap copied into `--caps`).
 `phm node self-update --owner <scope> --json` compares every node against this
 machine's version (or `--target x.y.z`) and prints a plan. It is plan only: it
 never updates or restarts a node. A node showing `unreported` predates this or
-has not rejoined. Update primary and backup first, then workers.
+has not rejoined; a node showing `unknown` reported a build but no comparable
+target exists (this machine's version is unreadable and no `--target` was
+given), so drift is unmeasured rather than assumed current. Update primary and
+backup first, then workers.
 
 ## One fleet across enrolled Macs
 
@@ -538,7 +548,10 @@ tool runners), measured with `ps`, or with `pgrep` and `footprint` where `ps` is
 denied. macOS reads `vm_stat`, `memory_pressure` and `sysctl`; Linux reads
 `/proc/meminfo` (MemAvailable and swap), `/proc/pressure/memory` PSI `some
 avg10` — the same bands host admission applies — and `/proc/vmstat` `pswpout`.
-A platform or file with no reader reports unknown, never normal. Memory
+Windows has no reader for load average, memory pressure or swap, and
+`os.loadavg()`'s `[0,0,0]` stub there is not a measurement: `cpu.load_*`,
+`cpu.run_queue_per_core`, `mem_free.pressure_level` and the swap fields stay
+null. A platform or file with no reader reports unknown, never normal. Memory
 headroom is the memory above memguard's raise line (30% free).
 CPU headroom is 85% of cores minus busy cores. Measured zero CPU headroom
 blocks placements even when CPU cost per session is unknown or recorded as zero.
@@ -578,10 +591,13 @@ A baseline must be strictly older than the current sample to carry its
 footprints forward, even if the original learning timestamp predates both.
 A measured host-wide stop can still establish zero for a reported count.
 Each live session of a harness needs a positive memory reading to refresh its
-footprint. A zero RSS total leaves that harness on its eligible learned
-footprint, or leaves its footprint and runnable count unknown if no usable
-measurement exists and no host-wide stop applies. Other harnesses keep their
-own measurements.
+footprint. A session-tree total below 1 MiB cannot hold a vendor CLI plus its
+children — it is a process caught mid-exec, not a session cost — so it is
+ignored the same way. A zero RSS total or an implausibly small one leaves that
+harness on its eligible learned footprint, or leaves its footprint and runnable
+count unknown if no usable measurement exists and no host-wide stop applies.
+Other harnesses keep their own measurements, and a capacity file carrying an
+implausibly small footprint is not a valid document.
 
 `phm node route` scores each job's feasible placements by learned lane merge
 rate per token and per minute, using one or more capacity documents, a
@@ -608,7 +624,11 @@ capacity unknown.
 Fleet-wide runnable totals include a node's per-harness count only when the
 node also reports usable memory headroom and its own current footprint for
 that harness. A measured stop, such as swap growth or zero headroom, still
-reduces a reported count to zero.
+reduces a reported count to zero. `phm node route` reports those totals in
+its own output — `fleet_runnable` in the `phantom.node-route.v1` JSON
+envelope and a `fleet runnable now:` line in text, one `harness=count` or
+`harness=unknown` entry per adapter — describing capacity right now,
+independent of the jobs being planned.
 Learned footprints used for totals or placement must come from observations
 at or before both the containing snapshot and report time.
 For a node without its own harness footprint, routing can borrow measurements

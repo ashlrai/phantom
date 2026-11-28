@@ -46,7 +46,7 @@ import { readEnvironmentCredential } from './secrets.js';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { DepEdge } from './dep-parser.js';
+import { asIntegrationRecord, unwrapJsonArray, type DepEdge } from './dep-parser.js';
 import {
   acquireOutwardMutationFence,
   ownsOutwardMutationFence,
@@ -175,6 +175,42 @@ const SPAN_KIND_CLIENT = 3; // matches agent/src/span.rs
 const PAT_ENV = 'ASHLR_PULSE_PAT';
 /** Optional separate read-scoped PAT for the command poller (falls back to PAT_ENV). */
 const READ_PAT_ENV = 'ASHLR_PULSE_READ_PAT';
+/** Spec fleet PAT env var (accepted ahead of READ_PAT_ENV / PAT_ENV by fleet callers). */
+const FLEET_PAT_ENV = 'PULSE_FLEET_PAT';
+
+// ---------------------------------------------------------------------------
+// Shared Pulse config/credential/kill-switch helpers — all no-throw
+// ---------------------------------------------------------------------------
+
+/** Build the structural PulseExporterConfig with `enabled: true` and optional user attribution. */
+export function buildPulseExporterConfig(
+  cfg: Pick<PulseExporterConfig, 'user'>,
+  endpoint?: string,
+): PulseExporterConfig {
+  return {
+    pulse: { enabled: true, endpoint },
+    ...(cfg.user ? { user: { id: cfg.user.id, name: cfg.user.name } } : {}),
+  };
+}
+
+/** Resolve the fleet Pulse PAT (PULSE_FLEET_PAT → ASHLR_PULSE_READ_PAT → ASHLR_PULSE_PAT). */
+export function resolveFleetPulsePat(): string | null {
+  const pat =
+    readEnvironmentCredential(FLEET_PAT_ENV) ??
+    readEnvironmentCredential(READ_PAT_ENV) ??
+    readEnvironmentCredential(PAT_ENV);
+  return pat && pat.length > 0 ? pat : null;
+}
+
+/** Match policy.killSwitchOn(): only a proven ENOENT is permissive. */
+export function isGlobalKillSwitchOn(): boolean {
+  try {
+    lstatSync(join(homedir(), '.ashlr', 'KILL'));
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers — all no-throw
@@ -194,16 +230,6 @@ function resolvePat(explicit?: string): string | null {
 function resolveReadPat(explicit?: string): string | null {
   const pat = explicit ?? readEnvironmentCredential(READ_PAT_ENV) ?? readEnvironmentCredential(PAT_ENV);
   return pat && pat.length > 0 ? pat : null;
-}
-
-/** Match policy.killSwitchOn(): only a proven ENOENT is permissive. */
-function globalKillSwitchOn(): boolean {
-  try {
-    lstatSync(join(homedir(), '.ashlr', 'KILL'));
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
-  }
 }
 
 function strAttr(key: string, value: string): OtlpAttr {
@@ -264,7 +290,7 @@ export async function fencedPulseFetch(
     if (!authority || !ownsOutwardMutationFence(authority)) return null;
     // The global control plane is not repo-scoped. KILL is the only policy gate
     // here and must be re-read after authority acquisition.
-    if (globalKillSwitchOn() || rest.signal?.aborted) return null;
+    if (isGlobalKillSwitchOn() || rest.signal?.aborted) return null;
 
     const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
     const signal = rest.signal
@@ -525,10 +551,6 @@ export async function shipDepEdges(
 }
 
 // ---------------------------------------------------------------------------
-// Public: connectivity probe
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Public: command POLLER (cloud queues → local executes)
 // ---------------------------------------------------------------------------
 
@@ -546,16 +568,13 @@ export interface PollResult {
  * null when the object lacks a usable id (we never invent ids). NEVER throws.
  */
 function coerceCommand(raw: unknown): FleetCommand | null {
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const o = raw as Record<string, unknown>;
+  const o = asIntegrationRecord(raw);
+  if (!o) return null;
   const id = typeof o['id'] === 'string' ? o['id'] : null;
   if (!id) return null;
 
   const str = (k: string): string | null => (typeof o[k] === 'string' ? (o[k] as string) : null);
-  const obj = (k: string): Record<string, unknown> | null => {
-    const v = o[k];
-    return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
-  };
+  const obj = (k: string): Record<string, unknown> | null => asIntegrationRecord(o[k]);
 
   return {
     id,
@@ -623,18 +642,7 @@ export async function pollFleetCommands(
     }
 
     // Accept a bare array OR { commands: [...] } / { data: [...] } wrappers.
-    let items: unknown[] = [];
-    if (Array.isArray(body)) {
-      items = body;
-    } else if (body !== null && typeof body === 'object') {
-      const b = body as Record<string, unknown>;
-      for (const key of ['commands', 'data', 'items']) {
-        if (Array.isArray(b[key])) {
-          items = b[key] as unknown[];
-          break;
-        }
-      }
-    }
+    const items = unwrapJsonArray(body, ['commands', 'data', 'items']) ?? [];
 
     const commands: FleetCommand[] = [];
     for (const it of items) {

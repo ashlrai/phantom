@@ -26,15 +26,15 @@ it('caps detail at 300 characters', () => {
 });
 
 it('sourceProblems gives no entry for healthy sources', () => {
-  const sources: UnifiedInboxSources = { 'needs-you': ok, 'needs-you-delivery': ok, imessage: ok, 'teammate-tasks': ok, 'owner-thread': ok, 'owner-delivery': ok, 'owner-pair': ok, drafts: ok, bus: ok, mailbox: ok, board: ok, 'work-board': ok, conversations: ok, wakes: ok, seats: ok, 'peer-dispatch': ok, 'peer-inbox': ok, 'session-handoff': ok, 'org-outbox': ok, gmail: ok, linkedin: ok, requests: ok, 'email-inbox': ok, 'email-outbox': ok, 'team-approvals': ok, proposals: ok, slack: ok, 'slack-sends': ok, 'leader-delivery': ok, 'leader-network': ok, 'leader-replies': ok, coordination: ok, 'claim-drift': ok, 'send-gate': ok, 'router-queue': ok, 'channel-health': ok } as UnifiedInboxSources;
+  const sources: UnifiedInboxSources = { 'needs-you': ok, 'needs-you-delivery': ok, imessage: ok, 'teammate-tasks': ok, 'owner-thread': ok, 'owner-delivery': ok, 'owner-pair': ok, drafts: ok, 'comms-mail': ok, bus: ok, mailbox: ok, board: ok, 'work-board': ok, conversations: ok, wakes: ok, seats: ok, 'peer-dispatch': ok, 'peer-inbox': ok, 'session-handoff': ok, 'org-outbox': ok, gmail: ok, linkedin: ok, requests: ok, 'email-inbox': ok, 'email-outbox': ok, 'team-approvals': ok, proposals: ok, slack: ok, 'slack-sends': ok, 'leader-delivery': ok, 'leader-network': ok, 'leader-replies': ok, coordination: ok, 'claim-drift': ok, 'send-gate': ok, 'router-queue': ok, 'jobs-stuck': ok, 'channel-health': ok, 'queue-parked': ok, 'stuck-fixes': ok, 'stranded-work': ok, 'dispatch-stuck': ok } as UnifiedInboxSources;
   expect(sourceProblems(sources)).toEqual([]);
 });
 
 it('sourceProblems explains each unhealthy state with its command', () => {
   const sources = {
-    'needs-you': ok, 'needs-you-delivery': ok, imessage: { state: 'missing', pending: 0 }, 'teammate-tasks': ok, 'owner-thread': ok, 'owner-delivery': ok, 'owner-pair': ok, drafts: { state: 'degraded', pending: 2 },
+    'needs-you': ok, 'needs-you-delivery': ok, imessage: { state: 'missing', pending: 0 }, 'teammate-tasks': ok, 'owner-thread': ok, 'owner-delivery': ok, 'owner-pair': ok, drafts: { state: 'degraded', pending: 2 }, 'comms-mail': ok,
     bus: { state: 'unavailable', pending: 0 }, mailbox: ok, board: ok, 'work-board': ok, conversations: ok, wakes: ok, seats: ok, 'peer-dispatch': ok, 'peer-inbox': ok, 'session-handoff': ok, 'org-outbox': ok, gmail: { state: 'missing', pending: 0 }, linkedin: ok, requests: ok, 'email-inbox': ok, 'email-outbox': ok,
-    'team-approvals': ok, proposals: ok, slack: ok, 'slack-sends': ok, 'leader-delivery': ok, 'leader-network': ok, 'leader-replies': ok, coordination: ok, 'claim-drift': ok, 'send-gate': ok, 'router-queue': ok, 'channel-health': ok,
+    'team-approvals': ok, proposals: ok, slack: ok, 'slack-sends': ok, 'leader-delivery': ok, 'leader-network': ok, 'leader-replies': ok, coordination: ok, 'claim-drift': ok, 'send-gate': ok, 'router-queue': ok, 'jobs-stuck': ok, 'channel-health': ok, 'queue-parked': ok, 'stuck-fixes': ok, 'stranded-work': ok, 'dispatch-stuck': ok,
   } as UnifiedInboxSources;
   expect(sourceProblems(sources)).toEqual([
     { source: 'imessage', name: 'iMessage', meaning: 'not set up on this Mac', command: 'phm fleet teammate-texts' },
