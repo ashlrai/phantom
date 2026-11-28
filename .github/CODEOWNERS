@@ -715,6 +715,7 @@
 /test/improve-proposal-outcome-backlog.test.ts @masonwyatt23
 /test/improve-queue-reroute-backlog.test.ts @masonwyatt23
 /test/improve-queue-visit-backlog.test.ts @masonwyatt23
+/test/improve-racing-outcome-backlog.test.ts @masonwyatt23
 /test/improve-rate-limit-backlog.test.ts @masonwyatt23
 /test/improve-reasoning-insight-backlog.test.ts @masonwyatt23
 /test/improve-recheck-backlog.test.ts @masonwyatt23
