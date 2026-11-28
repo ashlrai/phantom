@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
   closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync,
@@ -15,7 +15,7 @@ import {
   verifyUnsignedRuntimeReleaseManifest,
 } from '../daemon/runtime-release-manifest.js';
 import { requireBeforeRuntimeReleaseObservationDeadline, type RuntimeReleaseObservationDeadline } from '../daemon/runtime-release-observation-deadline.js';
-import { extractPinnedRuntimeArchive, readCompatiblePinnedRuntimeArchive } from './archive.js';
+import { extractPinnedRuntimeArchive, readCompatiblePinnedRuntimeArchive, sameFileIdentity, sha256Hex } from './archive.js';
 import { desktopUpdateProfileForPackage, type DesktopUpdateProfile } from '../desktop/update-manifest.js';
 import type { InstallLocalRuntimeOptions, LocalRuntimeInstallation, LocalRuntimeStatus } from './types.js';
 export type { InstallLocalRuntimeOptions, LocalRuntimeInstallation, LocalRuntimeResolution, LocalRuntimeStatus } from './types.js';
@@ -46,7 +46,6 @@ function exact(value: Record<string, unknown>, keys: string[]): boolean {
 function boundedText(value: unknown, limit: number): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= limit && !value.includes('\0');
 }
-function hash(value: string | Buffer): string { return createHash('sha256').update(value).digest('hex'); }
 function observation(duration: number): RuntimeReleaseObservationDeadline {
   return { deadline: performance.now() + duration, now: () => performance.now() };
 }
@@ -65,15 +64,12 @@ function safeFile(stat: BigIntStats): boolean {
   return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1n &&
     (typeof process.getuid !== 'function' || stat.uid === BigInt(process.getuid())) && (stat.mode & 0o022n) === 0n;
 }
-function same(a: BigIntStats, b: BigIntStats): boolean {
-  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
-}
 function readBounded(path: string, limit: number): Buffer {
   const before = lstatSync(path, { bigint: true });
   if (!safeFile(before) || before.size < 1n || before.size > BigInt(limit)) fail('record is unsafe or exceeds its byte limit');
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    if (!same(before, fstatSync(fd, { bigint: true }))) fail('record changed while opening');
+    if (!sameFileIdentity(before, fstatSync(fd, { bigint: true }))) fail('record changed while opening');
     const bytes = Buffer.alloc(Number(before.size));
     let offset = 0;
     while (offset < bytes.length) {
@@ -81,7 +77,7 @@ function readBounded(path: string, limit: number): Buffer {
       if (!count) fail('record changed while reading');
       offset += count;
     }
-    if (!same(before, fstatSync(fd, { bigint: true })) || !same(before, lstatSync(path, { bigint: true }))) fail('record changed while reading');
+    if (!sameFileIdentity(before, fstatSync(fd, { bigint: true })) || !sameFileIdentity(before, lstatSync(path, { bigint: true }))) fail('record changed while reading');
     return bytes;
   } finally { closeSync(fd); }
 }
@@ -123,7 +119,7 @@ function readSelection(store: string): Snapshot | null {
   return { selection: value as unknown as Selection, bytes };
 }
 function receiptId(receipt: Pick<Receipt, 'sha256' | 'manifestDigest'>): string {
-  return hash(JSON.stringify({ sha256: receipt.sha256, manifestDigest: receipt.manifestDigest }));
+  return sha256Hex(JSON.stringify({ sha256: receipt.sha256, manifestDigest: receipt.manifestDigest }));
 }
 function readReceipt(store: string, id: string): Receipt {
   const directory = join(store, 'releases', id);

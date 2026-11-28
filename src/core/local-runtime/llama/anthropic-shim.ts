@@ -48,6 +48,7 @@
  */
 
 import type { LocalAgentRequestDefaults } from './config.js';
+import { isPlainRecord } from './paths.js';
 
 export interface AnthropicTextBlock {
   readonly type: 'text';
@@ -65,35 +66,28 @@ interface AnthropicRequestLike {
   readonly [key: string]: unknown;
 }
 
-/** Flatten Anthropic content (string, or an array of blocks) to plain text. */
-export function anthropicContentText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
+function extractTextBlocks(content: unknown): string[] {
+  if (typeof content === 'string') return content ? [content] : [];
+  if (!Array.isArray(content)) return [];
   const parts: string[] = [];
   for (const block of content) {
     if (typeof block === 'string') { if (block) parts.push(block); continue; }
-    if (block && typeof block === 'object') {
-      const text = (block as { text?: unknown }).text;
+    if (isPlainRecord(block)) {
+      const text = block['text'];
       if (typeof text === 'string' && text) parts.push(text);
     }
   }
-  return parts.join('\n');
+  return parts;
+}
+
+/** Flatten Anthropic content (string, or an array of blocks) to plain text. */
+export function anthropicContentText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  return extractTextBlocks(content).join('\n');
 }
 
 function existingSystemBlocks(system: unknown): AnthropicTextBlock[] {
-  if (Array.isArray(system)) {
-    const out: AnthropicTextBlock[] = [];
-    for (const block of system) {
-      if (typeof block === 'string') { if (block) out.push({ type: 'text', text: block }); continue; }
-      if (block && typeof block === 'object') {
-        const text = (block as { text?: unknown }).text;
-        if (typeof text === 'string' && text) out.push({ type: 'text', text });
-      }
-    }
-    return out;
-  }
-  if (typeof system === 'string' && system) return [{ type: 'text', text: system }];
-  return [];
+  return extractTextBlocks(system).map((text) => ({ type: 'text', text }));
 }
 
 /**
@@ -219,10 +213,7 @@ export function applyLocalAgentDefaults<T extends AnthropicRequestLike>(
   // overriding an effort the client already chose.
   if (defaults.reasoningEffort !== null) {
     const existing = body['chat_template_kwargs'];
-    const kwargs =
-      typeof existing === 'object' && existing !== null && !Array.isArray(existing)
-        ? (existing as Record<string, unknown>)
-        : undefined;
+    const kwargs = isPlainRecord(existing) ? existing : undefined;
     if (kwargs?.['reasoning_effort'] === undefined) {
       patch['chat_template_kwargs'] = { ...(kwargs ?? {}), reasoning_effort: defaults.reasoningEffort };
     }

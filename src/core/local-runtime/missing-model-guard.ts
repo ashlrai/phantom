@@ -40,10 +40,11 @@
  * the install path freezes into the shim like `resolve-model`'s.
  */
 
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { localRuntimeDir } from './llama/paths.js';
+import { isPlainRecord, localRuntimeDir } from './llama/paths.js';
+import { readBoundedJsonFile } from './llama/record.js';
 
 /**
  * Minimum time between attempts once the model is known missing: 30 minutes.
@@ -54,7 +55,7 @@ import { localRuntimeDir } from './llama/paths.js';
 export const MISSING_MODEL_BACKOFF_MS = 30 * 60 * 1000;
 
 /** How often a holding attempt re-stats the model path for early recovery. */
-export const MISSING_MODEL_POLL_MS = 30 * 1000;
+const MISSING_MODEL_POLL_MS = 30 * 1000;
 
 /** What a start attempt should do about a model that may be absent. */
 export type MissingModelDecision = 'run' | 'blocked' | 'retry-after';
@@ -111,16 +112,10 @@ export function missingModelStatePath(): string {
  * report. Never throws.
  */
 export function readMissingModelLastFailedAt(statePath: string): number | null {
-  try {
-    const stat = statSync(statePath);
-    if (!stat.isFile() || stat.size > STATE_FILE_MAX_BYTES) return null;
-    const parsed: unknown = JSON.parse(readFileSync(statePath, 'utf8'));
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-    const at = (parsed as Record<string, unknown>)['lastFailedAt'];
-    return typeof at === 'number' && Number.isFinite(at) && at >= 0 ? at : null;
-  } catch {
-    return null;
-  }
+  const parsed = readBoundedJsonFile(statePath, STATE_FILE_MAX_BYTES);
+  if (!isPlainRecord(parsed)) return null;
+  const at = parsed['lastFailedAt'];
+  return typeof at === 'number' && Number.isFinite(at) && at >= 0 ? at : null;
 }
 
 /**
