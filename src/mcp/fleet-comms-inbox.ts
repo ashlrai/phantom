@@ -1,6 +1,6 @@
 import { fixedOwnerRunsDir } from '../core/comms/owner-channel.js';
 import {
-  isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, readUnifiedInbox,
+  isUnifiedInboxItemId, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, readUnifiedInbox,
   UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_MAX_ITEMS,
   type UnifiedInbox, type UnifiedInboxFilter, type UnifiedInboxOptions,
 } from '../core/comms/unified-inbox.js';
@@ -18,7 +18,7 @@ export interface FleetCommsInboxDeps {
 
 /** The job-id rule every bus read surface shares: a printable label, 1-128 chars. */
 const JOB_ID = /^[\x21-\x7e]{1,128}$/;
-const INBOX_KEYS = new Set(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains']);
+const INBOX_KEYS = new Set(['limit', 'source', 'kind', 'severity', 'blocking', 'id', 'job', 'since', 'before', 'contains']);
 
 export function parseFleetCommsInboxArgs(args: Record<string, unknown>): FleetCommsInboxArgs | null {
   if (Object.keys(args).some(key => !INBOX_KEYS.has(key))) return null;
@@ -41,6 +41,12 @@ export function parseFleetCommsInboxArgs(args: Record<string, unknown>): FleetCo
   if (args.blocking !== undefined) {
     if (typeof args.blocking !== 'boolean') return null;
     filter.blocking = args.blocking;
+  }
+  if (args.id !== undefined) {
+    // The exact-id rule every bus read's --id applies, widened for the
+    // namespaced <source>:<ref> item id under the shared isUnifiedInboxItemId rule.
+    if (typeof args.id !== 'string' || !isUnifiedInboxItemId(args.id)) return null;
+    filter.id = args.id;
   }
   if (args.job !== undefined) {
     if (typeof args.job !== 'string' || !JOB_ID.test(args.job)) return null;

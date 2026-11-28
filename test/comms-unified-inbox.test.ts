@@ -195,6 +195,18 @@ describe('readUnifiedInbox sources', () => {
     const blocking = await read({ filter: { blocking: true } });
     expect(blocking.items.filter(i => i.source === 'needs-you').map(i => i.id)).toEqual([secret.id]);
     expect(blocking.sources['needs-you']).toEqual({ state: 'healthy', pending: 2 });
+    // --id keeps only the item whose stable <source>:<ref> id strictly equals
+    // it — the exact-id match --contains (title/detail only) and --job (the
+    // citation set) cannot make; every other source's items drop out.
+    const byId = await read({ filter: { id: secret.id } });
+    expect(byId.items.map(i => i.id)).toEqual([secret.id]);
+    expect(byId.total).toBe(1);
+    expect(byId.filter).toEqual({ id: secret.id });
+    // An id no item carries matches nothing — unknown stays an empty match,
+    // never a padded or invented row.
+    const noMatch = await read({ filter: { id: 'needs-you:nm-000000000000' } });
+    expect(noMatch.items).toEqual([]);
+    expect(noMatch.total).toBe(0);
   });
 
   it('lists unanswered teammate texts, ranking decision requests above chatter', async () => {
@@ -4149,8 +4161,9 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]');
-    for (const args of [['--json', '--json'], ['unified'], ['--limit', '0'], ['bogus', '--json']]) {
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--id <item-id>] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]');
+    for (const args of [['--json', '--json'], ['unified'], ['--limit', '0'], ['bogus', '--json'],
+      ['--id'], ['--id', 'has space'], ['--id', 'x'.repeat(257)]]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
     }
@@ -4216,6 +4229,46 @@ describe('phm comms inbox cli', () => {
     report = json();
     expect(report.total).toBe(0);
     expect(report.items).toEqual([]);
+  });
+
+  it('filters the unified JSON view by the item id', async () => {
+    const { command, json } = setupCli();
+    postWork('cli-id-a');
+    postWork('cli-id-b');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    // --id keeps only the item whose stable <source>:<ref> id strictly equals
+    // it — the exact-id match --contains (title/detail only) and --job (the
+    // citation set) cannot make; every other source's items drop out.
+    expect(await command(['--id', 'bus:cli-id-a', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ id: 'bus:cli-id-a' });
+    expect(report.total).toBe(1);
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-id-a']);
+    // The per-source counts stay the unfiltered store truth.
+    expect(report.sources.bus.pending).toBe(2);
+    expect(report.sources['needs-you'].pending).toBe(1);
+
+    // --id ANDs with the other view filters.
+    expect(await command(['--id', 'bus:cli-id-a', '--source', 'bus', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ id: 'bus:cli-id-a', source: 'bus' });
+    expect(report.total).toBe(1);
+    expect(await command(['--id', 'bus:cli-id-a', '--source', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+
+    // An id no item carries matches nothing — unknown stays an empty match.
+    expect(await command(['--id', 'bus:cli-id-absent', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+
+    // A partial id never matches — the match is the whole <source>:<ref> id.
+    expect(await command(['--id', 'cli-id-a', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
   });
 
   it('filters the unified JSON view by --since', async () => {

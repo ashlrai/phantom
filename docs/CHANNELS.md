@@ -228,7 +228,7 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 
 ## Unified inbox
 
-`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]`
+`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--id <item-id>] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
@@ -890,7 +890,12 @@ the item's own classification, finer than `--source` where one source emits
 several kinds (the `bus` source's `bus-work`/`bus-handoff`/`bus-dead-letter`
 split, the `board` source's `board-delivery`/`board-task` split) — `--severity
 <info|warn|high>` one
-severity band, `--blocking` only items that block, `--job <id>` only items
+severity band, `--blocking` only items that block, `--id <item-id>` only
+the item whose stable `<source>:<ref>` id strictly equals the value — the
+same exact-id match every bus read's `--id` applies, the one dimension
+that pinpoints a single projected item since `--contains` searches
+title/detail only (never the id) and `--job` matches the citation set —
+`--job <id>` only items
 that provably name that job — a bus, mailbox or peer-mail body's
 `busBodyJobMatch` citation, a feed job's id, a board task's fleet item or a
 delivery on a
@@ -926,7 +931,7 @@ could not be read, never a fabricated 0 — a filtered view never
 reports a busy or degraded source as empty. `GET /api/verse/comms/inbox` —
 the desktop and agent read of the same report — accepts the same dimensions
 as query parameters (`source`, `kind`, `severity`, `blocking=true|false`,
-`job`, `since`, `before`, `contains`, each at most once, plus `limit` 1–200 default
+`id`, `job`, `since`, `before`, `contains`, each at most once, plus `limit` 1–200 default
 50), validated by `parseUnifiedInboxQuery` — the same value rules `phm
 comms inbox` and `fleet_comms_inbox` apply — and echoes the applied
 `filter` on the response exactly like

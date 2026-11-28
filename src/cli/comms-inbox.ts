@@ -1,7 +1,7 @@
 import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
-import { readUnifiedInbox, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_MAX_ITEMS,
+import { readUnifiedInbox, isUnifiedInboxItemId, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_MAX_ITEMS,
   type UnifiedInbox, type UnifiedInboxFilter, type UnifiedInboxKind, type UnifiedInboxSeverity, type UnifiedInboxSource } from '../core/comms/unified-inbox.js';
 import { createChannelReceiver } from '../core/fleet/channel-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -9,7 +9,7 @@ import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js'
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { entryInstant, parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]
+const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--id <item-id>] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines
@@ -33,7 +33,12 @@ one source's items, --kind one item kind — the item's own classification,
 finer than --source where one source emits several kinds (the bus source's
 bus-work/bus-handoff/bus-dead-letter split, the board source's board-delivery/board-task
 split) — --severity one severity band, --blocking only items that
-block, --job only items that provably name one job id — a bus or mailbox
+block, --id only the item whose stable <source>:<ref> id strictly equals
+the value — the exact-id match every bus read's --id applies, so an agent
+holding a cited item id re-resolves exactly that item across every source
+in one read (--contains searches title/detail only, never the id, and
+--job matches the citation set, not the item id) — --job only items that
+provably name one job id — a bus or mailbox
 body's job citation, a feed job's id, a board task's fleet item or a
 delivery on a job-carrying thread, a conversation thread's jobs, a wake hint's cited job, a teammate
 task's job, a seat's node-job handoff or a peer-dispatch receipt's job — and --since only items whose
@@ -116,6 +121,7 @@ function describeUnifiedFilter(filter: UnifiedInboxFilter): string {
     ...(filter.kind === undefined ? [] : [`kind=${filter.kind}`]),
     ...(filter.severity === undefined ? [] : [`severity=${filter.severity}`]),
     ...(filter.blocking === undefined ? [] : ['blocking']),
+    ...(filter.id === undefined ? [] : [`id=${filter.id}`]),
     ...(filter.job === undefined ? [] : [`job=${filter.job}`]),
     ...(filter.since === undefined ? [] : [`since=${new Date(filter.since).toISOString()}`]),
     ...(filter.before === undefined ? [] : [`before=${new Date(filter.before).toISOString()}`]),
@@ -155,7 +161,8 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
     if (args.length === 0 || args[0] !== 'read' && args[0] !== 'post') {
       let json = false, blocking = false;
       let source: UnifiedInboxSource | undefined, kind: UnifiedInboxKind | undefined,
-        severity: UnifiedInboxSeverity | undefined, job: string | undefined, contains: string | undefined;
+        severity: UnifiedInboxSeverity | undefined, itemId: string | undefined,
+        job: string | undefined, contains: string | undefined;
       let sinceMs: number | undefined, beforeMs: number | undefined, limit: number | undefined;
       const seen = new Set<string>();
       for (let i = 0; i < args.length; i++) {
@@ -176,6 +183,14 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
           const value = args[++i];
           if (value === undefined || !isUnifiedInboxSeverity(value)) return invalid();
           seen.add(arg); severity = value; continue;
+        }
+        if (arg === '--id' && !seen.has(arg)) {
+          const value = args[++i];
+          // The exact-id rule every bus read's --id applies, widened for the
+          // namespaced <source>:<ref> item id: a bounded printable label — a
+          // flag-looking, blank or over-long value is a missing id, not a match.
+          if (value === undefined || value.startsWith('--') || !isUnifiedInboxItemId(value)) return invalid();
+          seen.add(arg); itemId = value; continue;
         }
         if (arg === '--job' && !seen.has(arg)) {
           const value = args[++i];
@@ -228,10 +243,12 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       }
       const filter: UnifiedInboxFilter | undefined =
         source === undefined && kind === undefined && severity === undefined && !blocking &&
+          itemId === undefined &&
           job === undefined && sinceMs === undefined && beforeMs === undefined && contains === undefined ? undefined
           : { ...(source === undefined ? {} : { source }),
               ...(kind === undefined ? {} : { kind }),
               ...(severity === undefined ? {} : { severity }),
+              ...(itemId === undefined ? {} : { id: itemId }),
               ...(job === undefined ? {} : { job }),
               ...(sinceMs === undefined ? {} : { since: sinceMs }),
               ...(beforeMs === undefined ? {} : { before: beforeMs }),

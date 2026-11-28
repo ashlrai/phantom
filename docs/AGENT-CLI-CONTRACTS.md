@@ -77,7 +77,9 @@ stdout with or without `--json`:
 Missing is not evidence of a healthy empty inbox. With no verb, `phm comms
 inbox` is instead the unified pending view ([docs/CHANNELS.md](CHANNELS.md#unified-inbox)):
 `--source <name>`, `--kind <name>`, `--severity <info|warn|high>`,
-`--blocking`, `--job <id>`, `--since <15m|2h|1d|ISO>`, `--before
+`--blocking`, `--id <item-id>` (the item's stable `<source>:<ref>` id,
+the exact-id match `--contains` and `--job` cannot make), `--job <id>`,
+`--since <15m|2h|1d|ISO>`, `--before
 <15m|2h|1d|ISO>` (the exclusive upper bound composing with `--since` into
 one `[since, before)` window) and `--contains
 <text>` narrow its items while `sources` keeps
