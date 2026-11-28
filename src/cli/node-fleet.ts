@@ -262,9 +262,30 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
   }
   if (verb === 'enqueue') {
     // enqueued:false means the job id is already taken — enqueue is idempotent
-    // on the id, so this is a fact, not a failure.
+    // on the id, so this is a fact, not a failure. When the stored spec differs
+    // from this request the flat "nothing changed" would hide that the queued
+    // job is not what was asked for; name the state and the differing fields
+    // instead. Job ids are single-use — withdraw cannot free one — so the only
+    // fix is a new id.
     const jobId = String(out['jobId']);
-    return out['enqueued'] === true ? `Enqueued ${jobId}.` : `Job ${jobId} already exists; nothing changed.`;
+    if (out['enqueued'] === true) return `Enqueued ${jobId}.`;
+    const existing = out['existing'] as { state?: string; owner?: string | null; producerWithdrawn?: true;
+      differs?: { field: string; queued: string; requested: string }[] } | undefined;
+    if (existing === undefined) return `Job ${jobId} already exists; nothing changed.`;
+    const state = existing.state === 'completed'
+      ? (existing.producerWithdrawn === true ? 'completed (withdrawn by the producer)' : 'completed')
+      : existing.state === 'running' ? 'running' : 'pending';
+    const owner = typeof existing.owner === 'string' && existing.owner ? ` under owner ${existing.owner}` : '';
+    const differs = existing.differs ?? [];
+    if (differs.length === 0) {
+      // An identical retry on live work changed nothing; on a finished job the
+      // same words would hide that the id is dead and stays reserved.
+      return existing.state === 'completed'
+        ? `Job ${jobId} already exists and is ${state}; job ids are single-use — pick a new id for different work.`
+        : `Job ${jobId} already exists; nothing changed.`;
+    }
+    const diffs = differs.map(d => `${d.field} (queued ${d.queued}; requested ${d.requested})`).join(', ');
+    return `Job ${jobId} already exists — ${state}${owner} — spec differs: ${diffs}. Job ids are single-use — pick a new id for different work.`;
   }
   if (verb === 'withdraw') {
     const jobId = String(out['jobId']);
