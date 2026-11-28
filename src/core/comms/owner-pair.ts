@@ -16,7 +16,7 @@
  * times). Everything outside the bridge is injected, so tests send nothing.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { parse } from 'smol-toml';
 import { parseTeamIdentities, type TeamIdentity } from '../agents/channel-policy.js';
 import { parseMasonIdentities } from '../agents/leader-network.js';
@@ -183,7 +183,20 @@ export function readOwnerPairStatus(configDir: string): OwnerPairStatusV1 {
 }
 
 /** Send the one pairing text to each own handle (cap 4) and record one pending pair. `auto` is the self-tick: at most one start per 24 h. */
+const starts = new Map<string, Promise<PairStartResult>>();
+
 export async function startOwnerPair(deps: PairDeps, input: { handle?: string; auto?: boolean } = {}): Promise<PairStartResult> {
+  const explicit = input.handle?.trim();
+  if (explicit !== undefined && !IMESSAGE_HANDLE_RE.test(explicit)) return { status: 'bad-handle' };
+  const key = resolve(deps.configDir);
+  const existing = starts.get(key);
+  if (existing) return existing;
+  const attempt = startOwnerPairAttempt(deps, input);
+  starts.set(key, attempt);
+  try { return await attempt; } finally { starts.delete(key); }
+}
+
+async function startOwnerPairAttempt(deps: PairDeps, input: { handle?: string; auto?: boolean }): Promise<PairStartResult> {
   const now = clock(deps);
   if (boundHandle(deps.configDir)) return { status: 'already-paired' };
   const state = readPairState(deps.configDir);
