@@ -140,6 +140,14 @@ describe('swap and pressure backoff', () => {
     expect(planOmlxLocalLanes({ totalBytes: 16 * GiB, headroom: head(60), config: open(), platform: 'linux' }).caps).toEqual([]);
   });
 
+  it('the disabled reason names the provided config path and never guesses a home', () => {
+    const named = planOmlxLocalLanes({ totalBytes: 16 * GiB, headroom: head(60), config: null, platform: 'darwin', configPath: '/fleet/ashlr/local-lanes.json' });
+    expect(named.backoffReason).toBe('Enable with /fleet/ashlr/local-lanes.json {"schemaVersion":1,"enabled":true}');
+    const fallback = planOmlxLocalLanes({ totalBytes: 16 * GiB, headroom: head(60), config: null, platform: 'darwin' });
+    expect(fallback.backoffReason).toContain('local-lanes.json');
+    expect(fallback.backoffReason).not.toContain('/fleet/');
+  });
+
   it('backoff is decided at probe time: a later pressured node stops advertising', () => {
     const first = plan(16, 60, 0);
     const later = plan(16, 60, 0, open(), 2);
