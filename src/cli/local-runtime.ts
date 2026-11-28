@@ -65,7 +65,6 @@ import {
   installAnthropicProxyAgent,
   installLaunchAgent,
   isLoopbackHost,
-  launchAgentInstalled,
   launchAgentLoaded,
   launchAgentLogPaths,
   launchAgentPlistPath,
@@ -640,9 +639,4 @@ export async function cmdLocalRuntime(args: string[]): Promise<number> {
     console.error(`local-runtime failed unexpectedly: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
-}
-
-/** True when the launch agent is present — exported for the doctor surface. */
-export function localRuntimeLaunchAgentInstalled(): boolean {
-  return launchAgentInstalled();
 }

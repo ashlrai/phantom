@@ -145,6 +145,23 @@ describe('normaliseAnthropicRequest', () => {
     expect(anthropicContentText([{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }])).toBe('a\nb');
     expect(anthropicContentText(undefined)).toBe('');
   });
+
+  it('normalises mixed string and block entries identically in system arrays and content', () => {
+    const mixed = ['', 'first', { type: 'image' }, { type: 'text', text: '' }, { type: 'text', text: 'second' }, null];
+    expect(anthropicContentText(mixed)).toBe('first\nsecond');
+    const out = normaliseAnthropicRequest({
+      system: mixed,
+      messages: [
+        { role: 'system', content: 'lifted' },
+        { role: 'user', content: 'hi' },
+      ],
+    });
+    expect(out.system).toEqual([
+      { type: 'text', text: 'first' },
+      { type: 'text', text: 'second' },
+      { type: 'text', text: 'lifted' },
+    ]);
+  });
 });
 
 describe('applyLocalAgentDefaults', () => {

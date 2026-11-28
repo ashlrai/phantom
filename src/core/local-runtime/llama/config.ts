@@ -29,7 +29,7 @@ export const DEFAULT_LLAMA_HOST = '127.0.0.1';
  * throughput collapses rather than degrading. This is a DEFAULT REQUEST — the
  * live server's `/props.total_slots` remains the source of truth.
  */
-export const DEFAULT_LLAMA_SLOTS = 4;
+const DEFAULT_LLAMA_SLOTS = 4;
 
 /**
  * Total context, SHARED across slots — llama-server divides `-c` by `--parallel`,
@@ -68,7 +68,7 @@ export const DEFAULT_LLAMA_SLOTS = 4;
  * Operators on less memory override it with `--ctx` or
  * `models.llamaServer.context`.
  */
-export const DEFAULT_LLAMA_CONTEXT = 262_144;
+const DEFAULT_LLAMA_CONTEXT = 262_144;
 
 /**
  * Default port for the Anthropic normalising proxy (anthropic-proxy.ts).
@@ -122,8 +122,8 @@ interface LlamaServerConfigSection {
  * a template exception fires BEFORE inference, so the turn dies with no
  * partial output. Hence a closed list rather than a string passthrough.
  */
-export const LOCAL_AGENT_REASONING_EFFORTS = ['low', 'medium', 'xhigh'] as const;
-export type LocalAgentReasoningEffort = (typeof LOCAL_AGENT_REASONING_EFFORTS)[number];
+export type LocalAgentReasoningEffort = 'low' | 'medium' | 'xhigh';
+const LOCAL_AGENT_REASONING_EFFORTS: readonly LocalAgentReasoningEffort[] = ['low', 'medium', 'xhigh'];
 
 /**
  * Per-request defaults the Anthropic lane applies when the CLIENT DID NOT.
@@ -303,7 +303,7 @@ export function allowsNonLoopback(cfg?: AshlrConfig): boolean {
  * Absolute, because a bare name does not survive `sandbox-exec`'s `execvp`,
  * and because the ownership record compares argv against this exact string.
  */
-export function resolveLlamaServerBin(configured?: string): string | null {
+function resolveLlamaServerBin(configured?: string): string | null {
   const explicit = configured ?? str(process.env['LLAMA_SERVER_BIN']);
   if (explicit) {
     if (explicit.includes('/')) return existsSync(explicit) ? explicit : null;
