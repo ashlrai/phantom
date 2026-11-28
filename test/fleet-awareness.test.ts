@@ -58,6 +58,32 @@ test('unknown, stale, future and expired reports never become pool capacity; exa
   expect(projectFleetAwareness(legacy.state, legacy.now()).hosts[0]?.freeSlots).toBeNull();
 });
 
+test('delayed or future capacity reports renew liveness without replacing a newer host hold', () => {
+  const f = fixture();
+  const worker = f.add('worker', { hostId: 'mac', slots: 1 });
+  const older = f.now();
+  f.advance(100);
+  f.beat('worker', { hostId: 'mac', slots: 0, held: 'memory-pressure' });
+  const heldAt = f.now();
+  f.enqueue();
+  const nodes = new DriveNodes(f.store, { now: f.now });
+
+  for (const sampledAtMs of [older, f.now() + 1_000]) {
+    f.advance(100);
+    expect(nodes.heartbeat(worker, { slots: 1, capacity: {
+      hostId: 'mac', ramBytes: 128 * 1024 ** 3, slots: 1, held: null, sampledAtMs,
+    } })).not.toBeNull();
+    expect(nodes.view(['mason']).nodes[0]).toMatchObject({
+      heartbeatAt: f.now(), slots: 0, capacity: { held: 'memory-pressure', sampledAtMs: heldAt },
+    });
+    expect(f.plan()[0]?.nodeId).toBeNull();
+    expect(nodes.pull(worker)).toBeNull();
+  }
+
+  f.beat('worker', { hostId: 'mac', slots: 1 });
+  expect(nodes.pull(worker)?.job.id).toBe('job');
+});
+
 test.each([
   { paused: 'disk guard' },
   { admission: { admit: false } },
