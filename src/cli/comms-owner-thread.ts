@@ -3,6 +3,8 @@
  * Status and thread are reads. send-owner writes only to the configured owner.
  */
 import { rejectUnknownOptions } from './args.js';
+import { BUS_CLIS, type BusCli } from '../core/agents/bus-identity.js';
+import { frameOwnerThread } from '../core/agents/bus-cli-adapters.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings } from '../core/comms/owner-channel.js';
 import { liveOwnerTransports } from '../core/comms/owner-live-transport.js';
 import { OWNER_CHANNELS, isOwnerChannel } from '../core/comms/leader-mailbox.js';
@@ -18,7 +20,7 @@ import {
   type OwnerThreadReadFilter,
 } from '../core/comms/owner-thread.js';
 
-const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--before-at <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--reply-to <key>] [--awaiting] [--undelivered] [--json]';
+const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--before-at <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--reply-to <key>] [--awaiting] [--undelivered] [--frame <cli>] [--json]';
 const SEND_USAGE = 'usage: phm comms send-owner --text <message> [--reply-to <key>] [--idempotency-key <key>] [--json]';
 
 const HELLO_USAGE = 'usage: phm comms owner hello [--json]';
@@ -128,11 +130,21 @@ export async function cmdCommsOwnerStatus(json: boolean, options = ownerThreadOp
 export async function cmdCommsOwner(args: string[], options = ownerThreadOptions()): Promise<number> {
   const verb = args[0];
   if (verb === 'thread') {
-    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json', '--awaiting', '--undelivered'], values: ['--limit', '--channel', '--direction', '--since', '--before-at', '--contains', '--reply-to'] });
+    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json', '--awaiting', '--undelivered'], values: ['--limit', '--channel', '--direction', '--since', '--before-at', '--contains', '--reply-to', '--frame'] });
     if (bad) { console.error(bad.message); console.error(THREAD_USAGE); return 2; }
     const limitRaw = args[args.indexOf('--limit') + 1];
     const limit = args.includes('--limit') ? Number(limitRaw) : 200;
     if (args.includes('--limit') && (!Number.isInteger(limit) || limit < 1 || limit > 200)) {
+      console.error(THREAD_USAGE);
+      return 2;
+    }
+    // The same --frame rule every bus and comms read applies: one of the
+    // session CLIs; a missing or unknown value is a usage error, and the
+    // first occurrence wins like every other flag on this read.
+    const frameValue = args.includes('--frame') ? args[args.indexOf('--frame') + 1] : undefined;
+    const frame = frameValue !== undefined && (BUS_CLIS as readonly string[]).includes(frameValue)
+      ? frameValue as BusCli : undefined;
+    if (args.includes('--frame') && frame === undefined) {
       console.error(THREAD_USAGE);
       return 2;
     }
@@ -156,7 +168,7 @@ export async function cmdCommsOwner(args: string[], options = ownerThreadOptions
     const json = args.includes('--json');
     const awaiting = new Set(view.awaitingReply ?? []);
     const undelivered = new Set(view.undeliveredReplies ?? []);
-    emit(json, view, view.messages.map(message => {
+    const lines = view.messages.map(message => {
       const line = `${message.seq} ${message.at} ${message.channel} ${message.direction} ${message.text}`;
       if (message.direction === 'inbound') return awaiting.has(message.id) ? `${line} [awaiting reply]` : line;
       const marker = undelivered.has(message.id) ? ' [undelivered]' : '';
@@ -165,7 +177,19 @@ export async function cmdCommsOwner(args: string[], options = ownerThreadOptions
       const states = Object.entries(perChannel).sort(([a], [b]) => a.localeCompare(b))
         .map(([channel, receipt]) => `${channel}:${receipt.state}`);
       return `${line}${marker}${states.length ? ` [${states.join(' ')}]` : ''}`;
-    }).join('\n') || '(empty)');
+    });
+    // --frame prints the same rows as one bounded block marked untrusted —
+    // every line is channel-relayed text — with --json carrying it as
+    // `framed` beside the full view. An unreadable thread frames its own
+    // unavailable state, an empty one its '(empty)' line — never a bare
+    // marker pair and never an unreadable store passed off as empty.
+    if (frame !== undefined) {
+      const framed = frameOwnerThread(frame, 'unavailable' in view ? ['(owner thread unavailable)']
+        : lines.length > 0 ? lines : ['(empty)']);
+      emit(json, { ...view, framed }, framed);
+      return 'unavailable' in view ? 1 : 0;
+    }
+    emit(json, view, lines.join('\n') || '(empty)');
     return 'unavailable' in view ? 1 : 0;
   }
   if (verb === 'send-owner') {

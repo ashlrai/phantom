@@ -3,6 +3,7 @@ import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdCommsOwner, cmdCommsOwnerStatus } from '../src/cli/comms-owner-thread.js';
+import { OWNER_THREAD_FRAME_BEGIN, OWNER_THREAD_FRAME_END } from '../src/core/agents/bus-cli-adapters.js';
 import { createLeaderMailbox } from '../src/core/comms/leader-mailbox.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerChannelTransport, type OwnerDelivery, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { liveOwnerTransports, proveOwnerDirectMessage, resolveLiveEmailRecipient, resolveLiveIMessageHandle, resolveLiveSlackOwnerId } from '../src/core/comms/owner-live-transport.js';
@@ -382,6 +383,51 @@ describe('owner thread', () => {
     expect(status.schema).toBe('comms.owner-thread.status.v1');
     expect(status.adapters.every(adapter => adapter.secretHandle === null || adapter.secretHandle.startsWith('phm_'))).toBe(true);
     expect(sent.status).toBe('sent');
+  });
+
+  it('frames the thread read as bounded untrusted data under --frame', async () => {
+    const { options } = fixture();
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'deploy the fix?', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await sendOwnerReply({ text: 'on it', idempotencyKey: 'reply-owner-01' }, options);
+    const lines: string[] = [];
+    const write = console.log;
+    console.log = (line?: unknown) => { lines.push(String(line)); };
+    try {
+      expect(await cmdCommsOwner(['thread', '--frame', 'claude'], options)).toBe(0);
+      expect(await cmdCommsOwner(['thread', '--frame', 'codex', '--json'], options)).toBe(0);
+      expect(await cmdCommsOwner(['thread', '--frame', 'emacs'], options)).toBe(2);
+      expect(await cmdCommsOwner(['thread', '--frame'], options)).toBe(2);
+      expect(await cmdCommsOwner(['send-owner', '--frame', 'claude'], options)).toBe(2);
+    } finally { console.log = write; }
+    const framed = lines[0] ?? '';
+    expect(framed.startsWith(OWNER_THREAD_FRAME_BEGIN)).toBe(true);
+    expect(framed.endsWith(OWNER_THREAD_FRAME_END)).toBe(true);
+    expect(framed).toContain('deploy the fix?');
+    expect(framed).toContain('on it');
+    const json = JSON.parse(lines[1] ?? '{}') as { schema: string; framed?: string };
+    expect(json.schema).toBe('comms.owner-thread.v1');
+    expect(json.framed?.startsWith(OWNER_THREAD_FRAME_BEGIN)).toBe(true);
+    expect(json.framed).toContain('deploy the fix?');
+  });
+
+  it('frames an empty thread with its own state line, never a bare marker pair', async () => {
+    const { options } = fixture();
+    const lines: string[] = [];
+    const write = console.log;
+    console.log = (line?: unknown) => { lines.push(String(line)); };
+    try { expect(await cmdCommsOwner(['thread', '--frame', 'devin'], options)).toBe(0); } finally { console.log = write; }
+    expect(lines[0]).toBe([OWNER_THREAD_FRAME_BEGIN, '(empty)', OWNER_THREAD_FRAME_END].join('\n'));
+  });
+
+  it('frames an unreadable thread as unavailable, never as an empty conversation', async () => {
+    const { options } = fixture();
+    mkdirSync(join(options.runsDir, 'leader'), { recursive: true });
+    writeFileSync(join(options.runsDir, 'leader', 'owner-thread.json'), 'not json', { mode: 0o600 });
+    const lines: string[] = [];
+    const write = console.log;
+    console.log = (line?: unknown) => { lines.push(String(line)); };
+    try { expect(await cmdCommsOwner(['thread', '--frame', 'claude'], options)).toBe(1); } finally { console.log = write; }
+    expect(lines[0]).toBe([OWNER_THREAD_FRAME_BEGIN, '(owner thread unavailable)', OWNER_THREAD_FRAME_END].join('\n'));
   });
 
   it('keeps email, Slack and iMessage on the account home when HOME is forged', async () => {
