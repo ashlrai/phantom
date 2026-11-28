@@ -189,7 +189,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
-    if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
+    if (!job.owner || !routable(job, now)) continue;
     const reasons = new Map<string, number>();
     let best: NodeRecord | null = null;
     for (const node of nodes) {
@@ -234,5 +234,6 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
               : authFix(job, nodes, state);
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
-  return plan;
+  // Scope the output after all owners have competed for shared capacity.
+  return owner === undefined ? plan : plan.filter(assignment => assignment.owner === owner);
 }
