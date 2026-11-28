@@ -210,8 +210,17 @@ export class DriveNodes implements QueueV1 {
       node.heartbeatAt = now;
       node.expiresAt = now + this.nodeTtl;
       if (report?.usage !== undefined) node.usage = report.usage;
-      if (report?.slots !== undefined) node.slots = report.slots;
-      if (report?.capacity !== undefined) { node.capacity = structuredClone(report.capacity); node.slots = report.capacity.slots; }
+      if (report?.capacity !== undefined) node.capacity = structuredClone(report.capacity);
+      // The advertised bound is the tighter of the operator's --slots and the
+      // measured sample's slots: an explicit bound throttles below what the
+      // host measured, the measurement caps an over-optimistic bound, and a
+      // held sample (slots 0) always advertises zero. This is the same min the
+      // pool worker's routerSlots applies before it sends both fields equal —
+      // a bare capacity.slots overwrite would let a ready measurement silently
+      // lift an operator's --slots 0 hold or lower throttle on every beat.
+      if (report?.slots !== undefined && report.capacity !== undefined) node.slots = Math.min(report.slots, report.capacity.slots);
+      else if (report?.slots !== undefined) node.slots = report.slots;
+      else if (report?.capacity !== undefined) node.slots = report.capacity.slots;
       if (report?.auth !== undefined) node.auth = report.auth;
       if (report?.hostStats !== undefined) node.hostStats = structuredClone(report.hostStats);
       if (!previous) {

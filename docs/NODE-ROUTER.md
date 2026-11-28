@@ -201,7 +201,11 @@ reports `memory-unmeasured`. `held` is `null` or `memory-unmeasured`,
 `"slots":0`. A node held for a reason the sample cannot express (`cpu-*`,
 `host-slots-*`) makes `measure` exit 1; on that beat omit `--capacity` and pass
 `--slots 0`, as the worker does, so the node holds admission rather than
-reading wrongly ready. A `--capacity`
+reading wrongly ready. When one beat carries both `--slots` and `--capacity`,
+the advertised bound is the tighter of the two — the explicit `--slots`
+throttles below the measured `slots` and the sample caps an over-optimistic
+bound, while a held sample (`"slots":0`) advertises zero either way, so a
+measured sample never lifts an operator's lower bound or hold. A `--capacity`
 value that is not one JSON object in that shape is refused as `bad-capacity`
 (exit 2) before the beat is recorded; its fix prints the `measure` command.
 

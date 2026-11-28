@@ -610,7 +610,7 @@ describe('standalone join version reporting', () => {
       expect(code).toBe(0);
       const node = store.state.nodes.find(n => n.nodeId === 'laptop')!;
       expect(node.caps).toEqual(['build', 'phm-9.9.9']);
-      expect(versionFromCaps(node.caps)).toBe('9.9.9');
+      expect(versionFromCaps(node.caps!)).toBe('9.9.9');
     } finally { vi.restoreAllMocks(); }
   });
   it('leaves --caps untouched when this build version cannot be determined', async () => {
@@ -1315,6 +1315,60 @@ describe('beat --capacity sample honesty', () => {
   });
 });
 
+describe('beat --slots vs measured capacity bound', () => {
+  const sample = (slots: number, held: string | null = null) =>
+    ({ hostId: 'laptop.local', ramBytes: 17_179_869_184, slots, held, sampledAtMs: 1_000 });
+  const beatArgs = (session: number, extra: string[]) =>
+    ['--node', 'laptop', '--session', String(session), ...extra];
+  const slotsOf = (f: ReturnType<typeof fixture>) =>
+    f.a.snapshot().nodes.find(n => n.nodeId === 'laptop')!.slots;
+
+  it('advertises the tighter of an explicit --slots and the measured sample', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', { owners: ['acme'] })!;
+    // An operator throttle below the measured bound is honored, not lifted
+    // back to the sample's slots on the next beat.
+    executeNodeFleet('beat', beatArgs(worker.session, ['--slots', '2', '--capacity', JSON.stringify(sample(4))]), f.a);
+    expect(slotsOf(f)).toBe(2);
+    // An explicit --slots 0 hold survives a ready measurement: without the
+    // tighter bound the sample's slots would silently re-open admission.
+    executeNodeFleet('beat', beatArgs(worker.session, ['--slots', '0', '--capacity', JSON.stringify(sample(4))]), f.a);
+    expect(slotsOf(f)).toBe(0);
+    // An over-optimistic bound is still capped by what the host measured.
+    executeNodeFleet('beat', beatArgs(worker.session, ['--slots', '9', '--capacity', JSON.stringify(sample(4))]), f.a);
+    expect(slotsOf(f)).toBe(4);
+  });
+
+  it('a held sample still advertises zero under an explicit --slots', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', { owners: ['acme'] })!;
+    executeNodeFleet('beat', beatArgs(worker.session,
+      ['--slots', '4', '--capacity', JSON.stringify(sample(0, 'memory-pressure'))]), f.a);
+    expect(slotsOf(f)).toBe(0);
+  });
+
+  it('single-source beats keep their existing bound', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', { owners: ['acme'] })!;
+    executeNodeFleet('beat', beatArgs(worker.session, ['--capacity', JSON.stringify(sample(4))]), f.a);
+    expect(slotsOf(f)).toBe(4);
+    executeNodeFleet('beat', beatArgs(worker.session, ['--slots', '3']), f.a);
+    expect(slotsOf(f)).toBe(3);
+  });
+
+  it('a held node takes no job even when --slots asked for slots', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', { owners: ['acme'], caps: ['build'] })!;
+    f.a.heartbeat(worker);
+    f.a.enqueue('job', { owner: 'acme' });
+    // --slots 4 with a held sample resolves the bound to 0, so the router
+    // finds no free slot and routes the job to nobody.
+    executeNodeFleet('beat', beatArgs(worker.session,
+      ['--slots', '4', '--capacity', JSON.stringify(sample(0, 'memory-pressure'))]), f.a);
+    expect(f.a.plan('acme')[0]).toMatchObject({ jobId: 'job', nodeId: null });
+  });
+});
+
 describe('fleet flag value validation', () => {
   function failure(fn: () => unknown): { code?: string; message?: string; fix?: string; exit?: number } {
     try { fn(); } catch (e) { return e as { code?: string; message?: string; fix?: string; exit?: number }; }
@@ -1357,7 +1411,7 @@ describe('fleet flag value validation', () => {
       ['withdraw', ['--job', 'j1', '--owner', 'acme,ops']],
       ['result', ['--job', 'j1', '--owner', 'acme,ops']],
     ] as const) {
-      expect(run(verb, args, f), verb).toMatchObject({ code: 'bad-owner', exit: 2 });
+      expect(run(verb, [...args], f), verb).toMatchObject({ code: 'bad-owner', exit: 2 });
     }
     // An empty or all-invalid list is refused on the list verbs too.
     for (const args of [['--owner', ''], ['--owner', ' , '], ['--owner', 'acme,,bad id']]) {
@@ -1375,7 +1429,7 @@ describe('fleet flag value validation', () => {
       ['enqueue', ['--job', 'j1', '--owner', 'acme', '--secrets', 'deploy_key'], 'bad-secrets'],
       ['enqueue', ['--job', 'j1', '--owner', 'acme', '--secrets', 'DEPLOY_KEY,sk-live-value'], 'bad-secrets'],
     ] as const) {
-      expect(run(verb, args, f), `${verb} ${args.join(' ')}`).toMatchObject({ code, exit: 2 });
+      expect(run(verb, [...args], f), `${verb} ${args.join(' ')}`).toMatchObject({ code, exit: 2 });
     }
     // Nothing was recorded by the refused calls.
     expect(f.a.snapshot().nodes.map(n => n.nodeId)).not.toContain('n1');
@@ -1392,7 +1446,7 @@ describe('fleet flag value validation', () => {
       ['join', ['--node', 'n1', '--owner', 'acme', '--caps', 'Build']],
       ['enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'GH']],
     ] as const) {
-      const err = run(verb, args, f);
+      const err = run(verb, [...args], f);
       expect(err.fix, `${verb} ${args.join(' ')}`).toMatch(/Run: phm node --help$/);
       expect(err.fix!.match(/Run: phm node --help/g), `${verb} ${args.join(' ')}`).toHaveLength(1);
     }
